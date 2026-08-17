@@ -1,0 +1,214 @@
+{
+  "schema_version": 1,
+  "source_date_epoch": 1704067200,
+  "project": {
+    "license": "Apache-2.0",
+    "repository": "https://github.com/ulfe-lmi/slaif-agent-site",
+    "version": "0.0.0"
+  },
+  "application_licenses": {
+    "automatic": [
+      "0BSD",
+      "Apache-2.0",
+      "Apache-2.0 OR BSD-2-Clause",
+      "Apache-2.0 OR MIT",
+      "BSD-2-Clause",
+      "BSD-3-Clause",
+      "BlueOak-1.0.0",
+      "ISC",
+      "MIT",
+      "MIT AND PSF-2.0",
+      "PSF-2.0"
+    ],
+    "attribution_review": [
+      "CC-BY-4.0"
+    ],
+    "explicit_review": [
+      "MPL-2.0"
+    ],
+    "prohibited_tokens": [
+      "AGPL",
+      "BUSL",
+      "BSL",
+      "Commons Clause",
+      "Elastic License",
+      "LicenseRef-NonCommercial",
+      "LicenseRef-Source-Available",
+      "SSPL"
+    ],
+    "unknown_direct_fails": true
+  },
+  "container_license_policy": {
+    "classification": "container-os-runtime-aggregation",
+    "inventory_all_packages": true,
+    "unknown_metadata_result": "legal-review-required",
+    "application_allowlist_does_not_reclassify_os_packages": true,
+    "legal_advice": false
+  },
+  "attribution_notes": {
+    "pkg:npm/caniuse-lite@1.0.30001809": "CC-BY-4.0 browser compatibility data; retain attribution and source link.",
+    "pkg:pypi/agent-cow-postgresql@0.2.0": "MIT foundation derived from agent-cow-python; retain upstream and downstream attribution."
+  },
+  "license_metadata_reviews": {
+    "pkg:pypi/certifi@2026.7.22": {
+      "license": "MPL-2.0",
+      "source": "https://github.com/certifi/python-certifi"
+    },
+    "pkg:pypi/colorama@0.4.6": {
+      "license": "BSD-3-Clause",
+      "source": "https://github.com/tartley/colorama"
+    },
+    "pkg:pypi/packaging@25.0": {
+      "license": "Apache-2.0 OR BSD-2-Clause",
+      "source": "https://github.com/pypa/packaging"
+    },
+    "pkg:pypi/pathspec@1.1.1": {
+      "license": "MPL-2.0",
+      "source": "https://github.com/cpburnz/python-pathspec"
+    }
+  },
+  "sources": {
+    "python_registry": "https://pypi.org/simple",
+    "npm_registry": "https://registry.npmjs.org",
+    "foundation": {
+      "distribution": "agent-cow-postgresql",
+      "import": "agentcow.postgres",
+      "version": "0.2.0",
+      "wheel_sha256": "c469d24700fabb93a58f464d3539a32e936097f93035a95f193062859546f5b1",
+      "sdist_sha256": "eae8d434d2fc03c4faa08b44b4863fc8f8efb44ee33eaad3adc22e7eb96a062c"
+    },
+    "denied_hosted_package_prefixes": [
+      "@aws-sdk/",
+      "@azure/",
+      "@datadog/",
+      "@google-cloud/",
+      "@sentry/",
+      "@supabase/",
+      "@vercel/",
+      "auth0",
+      "boto3",
+      "cloudinary",
+      "firebase",
+      "google-cloud-",
+      "newrelic",
+      "sentry-sdk",
+      "supabase"
+    ],
+    "telemetry_must_default_off": true
+  },
+  "github_actions": {
+    "DavidAnson/markdownlint-cli2-action": "21c1be1b93ad9ed58fa840aacc3f279cde2a72ff",
+    "actions/checkout": "3d3c42e5aac5ba805825da76410c181273ba90b1",
+    "actions/dependency-review-action": "a1d282b36b6f3519aa1f3fc636f609c47dddb294",
+    "actions/setup-node": "820762786026740c76f36085b0efc47a31fe5020",
+    "actions/setup-python": "5fda3b95a4ea91299a34e894583c3862153e4b97",
+    "actions/upload-artifact": "043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
+    "astral-sh/setup-uv": "20cfd1bf945f4377ade1205e4dbc17946fc9a30d",
+    "github/codeql-action/analyze": "ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd",
+    "github/codeql-action/init": "ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd",
+    "pnpm/action-setup": "0977fd99725f1db4007ccb2928dbb4e90d06cc86"
+  },
+  "oci_sources": {
+    "apache": "docker.io/library/httpd:2.4.68-alpine3.23@sha256:4a15e9c73f25334bc03cfb3c692c9adfc103bb46ca89cee1f0b9a5fcbc7b21f6",
+    "nginx": "docker.io/library/nginx:1.29.7-alpine3.23@sha256:e7257f1ef28ba17cf7c248cb8ccf6f0c6e0228ab9c315c152f9c203cd34cf6d1",
+    "node": "docker.io/library/node:24.14.1-alpine3.23@sha256:8510330d3eb72c804231a834b1a8ebb55cb3796c3e4431297a24d246b8add4d5",
+    "postgres": "docker.io/library/postgres:18.6-alpine3.23@sha256:697c180dbf244d3ce4a8f4cbc0156cde840af055c1bf8b76aebe422a4822086f",
+    "python": "docker.io/library/python:3.12.12-alpine3.23@sha256:2d91681153dd4b8cdb52d4fd34a17b9edbafa4dd3086143cfd4b6c3a84c1acb0",
+    "uv": "ghcr.io/astral-sh/uv:0.12.5@sha256:e85be844203885286c60ffad8a858d48afb6c5a5c237ca0e67f12e74b8f174b1"
+  },
+  "alpine_package_overrides": {
+    "registry": "https://dl-cdn.alpinelinux.org/alpine/v3.23",
+    "images": {
+      "apache": {
+        "install": ["apr-util-ldap=1.6.4-r0", "apr-util=1.6.4-r0", "libcrypto3=3.5.7-r0", "libssl3=3.5.7-r0"],
+        "remove": ["perl"]
+      },
+      "backend": {
+        "install": ["libcrypto3=3.5.7-r0", "libssl3=3.5.7-r0"],
+        "remove": []
+      },
+      "browser-worker": {
+        "install": ["libcrypto3=3.5.7-r0", "libssl3=3.5.7-r0"],
+        "remove": ["npm"]
+      },
+      "nginx": {
+        "install": ["libcrypto3=3.5.7-r0", "libssl3=3.5.7-r0"],
+        "remove": ["curl"]
+      },
+      "web": {
+        "install": ["libcrypto3=3.5.7-r0", "libssl3=3.5.7-r0"],
+        "remove": ["npm"]
+      }
+    }
+  },
+  "scanner_tools": {
+    "syft": {
+      "image": "docker.io/anchore/syft:v1.51.0@sha256:678bfa565b60f747aac0f8e964fe5588a24445b8d0a480e91f6efd70020dfbb0",
+      "version": "1.51.0",
+      "source": "https://github.com/anchore/syft",
+      "source_commit": "2293641e3bd628a01bb37639318d62c0ebe89b39",
+      "license": "Apache-2.0",
+      "release_checksums_sha256": "3d85f1d0e1266cae4346514124665f10b7cefd9cce815be13921d199917e5581",
+      "release_signature_sha256": "67dd064fafa735d072a890425c5c760ddff6858e2b06b9c5be0e98bd0c9b318a",
+      "release_certificate_sha256": "1c38ee03d2ac29767dccfad74e8d9a718b504ad435626461e7afbf5cb31175d6"
+    },
+    "grype": {
+      "image": "docker.io/anchore/grype:v0.117.0@sha256:ddf9e9f204049f3a4a0955ef70873cabab6a31432125ad4f20a490b54950a253",
+      "version": "0.117.0",
+      "source": "https://github.com/anchore/grype",
+      "source_commit": "b5fa92bbcbef655497e3be840a2f718380e2cdd3",
+      "license": "Apache-2.0",
+      "release_checksums_sha256": "960a8acecdd2fa4b20520cb04d7e11ab40df58fc22769b513a25b8257d18dcfe",
+      "release_signature_sha256": "e75bfdcb96ca4dbe5821a0d7b73ba192c60c199abe393ad0282c37782fb9f37d",
+      "release_certificate_sha256": "9513e6e1f55e0d756ca714c57b2aa14721f4f0c0f1f0c6eed0a1c0c135a64e8e"
+    }
+  },
+  "required_images": {
+    "apache": {
+      "local_reference": "slaif-agent-site-apache:test",
+      "base": "apache",
+      "expected_components": ["httpd"]
+    },
+    "backend": {
+      "local_reference": "slaif-agent-site-backend:local",
+      "base": "python",
+      "expected_components": ["slaif-agent-site", "fastapi", "asyncpg"]
+    },
+    "browser-worker": {
+      "local_reference": "slaif-agent-site-browser-worker:local",
+      "base": "node",
+      "expected_components": ["@slaif-agent-site/browser-worker"]
+    },
+    "nginx": {
+      "local_reference": "slaif-agent-site-nginx:local",
+      "base": "nginx",
+      "expected_components": ["nginx"]
+    },
+    "postgres": {
+      "local_reference": "docker.io/library/postgres:18.6-alpine3.23@sha256:697c180dbf244d3ce4a8f4cbc0156cde840af055c1bf8b76aebe422a4822086f",
+      "base": "postgres",
+      "expected_components": ["postgresql"]
+    },
+    "web": {
+      "local_reference": "slaif-agent-site-web:local",
+      "base": "node",
+      "expected_components": ["@slaif-agent-site/web", "next", "react"]
+    }
+  },
+  "vulnerability_policy": {
+    "fail_severities": ["Critical"],
+    "review_severities": ["High"],
+    "maximum_database_age_hours": 120,
+    "maximum_exception_days": 90,
+    "unfixed_critical_still_fails": true
+  },
+  "evidence": {
+    "formats": ["application/gzip", "application/json", "application/spdx+json", "application/zip", "text/plain"],
+    "retention_days": 14,
+    "normalization": "JSON/text are UTF-8 and deterministic; binary application artifacts retain exact bytes",
+    "checksum": "SHA-256",
+    "required_index_version": 1,
+    "forbidden_host_prefixes": ["/home/runner/", "/home/ubuntu/", "/Users/", "C:\\\\Users\\\\"],
+    "forbidden_secret_markers": ["BEGIN PRIVATE KEY", "postgresql://", "ghp_", "github_pat_", "AKIA"]
+  }
+}

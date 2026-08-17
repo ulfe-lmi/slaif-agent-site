@@ -1,0 +1,7 @@
+Syft standard SBOM: syft docker-archive:<image.tar> -o spdx-json
+Syft scan SBOM: SYFT_GOLANG_CAPTURE_SYMBOLS=stdlib syft docker-archive:<image.tar> -o syft-json
+Grype DB: grype db update; grype db status -o json
+Grype scan: GRYPE_CHECK_FOR_APP_UPDATE=false GRYPE_DB_AUTO_UPDATE=false grype sbom:<normalized.syft.json> -o json
+All scan inputs are local immutable image archives or normalized SBOMs. Scan
+containers receive no Docker socket. Grype alone receives public network access
+during database update; SBOM generation and vulnerability matching use none.

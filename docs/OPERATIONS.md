@@ -104,6 +104,34 @@ request-ID and CSP headers on page/API/404 responses, secret absence in
 configuration/history/logs, and exact-project cleanup. It does not test product
 workflows because they do not exist.
 
+## Supply-chain evidence
+
+Run the complete build-only gate into a new temporary destination:
+
+```bash
+tools/supply_chain/run.sh /tmp/slaif-supply-chain-evidence
+python -m tools.supply_chain.evidence validate-bundle \
+  --evidence /tmp/slaif-supply-chain-evidence
+```
+
+The runner performs two clean application and project-image builds, creates
+six SPDX and symbol-aware scan SBOMs, updates one public Grype database, scans
+with network disabled, checks Critical and High evidence, rejects secret/host
+markers, and writes `SHA256SUMS`. A pre-existing destination is rejected so an
+old or partial bundle cannot be mistaken for current evidence.
+
+Registry and database access are external availability dependencies of this
+CI/build check, not runtime services. Exact image pulls and builds retry at most
+three times with 30-second delays. A failed or stale vulnerability database is
+a failed gate; operators must not substitute an old result or exception.
+
+CI retains the checksummed directory for 14 days. It contains package and
+vulnerability metadata and should remain CI-private even though it is scanned
+for configured credential and host-path markers. It does not contain local
+Compose secrets, database volumes, logs, site content, or browser artifacts.
+See the [supply-chain guide](SUPPLY_CHAIN.md) for file layout, update procedure,
+and limitations.
+
 ## Production boundary
 
 This pre-alpha stack has no authentication, setup administrator, service

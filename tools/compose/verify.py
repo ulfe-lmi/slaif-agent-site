@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -63,8 +65,8 @@ EXPECTED_IMAGES = {
     "browser-worker": "slaif-agent-site-browser-worker:local",
     "nginx": "slaif-agent-site-nginx:local",
     "postgres": (
-        "postgres:18.6-trixie@sha256:"
-        "06cad38a5d9f5d24b4d83d86def30795d5e4b757fedbf5281172b576dedcd941"
+        "postgres:18.6-alpine3.23@sha256:"
+        "697c180dbf244d3ce4a8f4cbc0156cde840af055c1bf8b76aebe422a4822086f"
     ),
     "web": "slaif-agent-site-web:local",
 }
@@ -91,6 +93,12 @@ EXPECTED_BUILD_FILES = {
     "nginx": "infra/nginx/Dockerfile",
     "secrets-init": "services/backend/Dockerfile",
     "web": "apps/web/Dockerfile",
+}
+EXPECTED_BUILD_ARGS = {
+    "SOURCE_DATE_EPOCH": "1704067200",
+    "SLAIF_IMAGE_CREATED": "2024-01-01T00:00:00Z",
+    "SLAIF_IMAGE_REVISION": os.environ.get("GITHUB_SHA", "local"),
+    "SLAIF_IMAGE_VERSION": os.environ.get("SLAIF_IMAGE_VERSION", "0.0.0"),
 }
 EXPECTED_MOUNTS = {
     **{name: set() for name in REQUIRED_SERVICES},
@@ -134,6 +142,23 @@ def _fail(condition: bool, message: str) -> None:
 
 
 def validate_config(config: dict[str, Any]) -> None:
+    _fail(
+        bool(
+            re.fullmatch(
+                r"(?:local|[0-9a-f]{40})", EXPECTED_BUILD_ARGS["SLAIF_IMAGE_REVISION"]
+            )
+        ),
+        "build revision is malformed",
+    )
+    _fail(
+        bool(
+            re.fullmatch(
+                r"[0-9A-Za-z][0-9A-Za-z.+_-]{0,63}",
+                EXPECTED_BUILD_ARGS["SLAIF_IMAGE_VERSION"],
+            )
+        ),
+        "build version is malformed",
+    )
     services = config.get("services", {})
     _fail(set(services) == REQUIRED_SERVICES, "service inventory mismatch")
     _fail(
@@ -181,6 +206,11 @@ def validate_config(config: dict[str, Any]) -> None:
             == expected_build_file,
             f"{name}: build source mismatch",
         )
+        if expected_build_file is not None:
+            _fail(
+                build.get("args") == EXPECTED_BUILD_ARGS,
+                f"{name}: deterministic build arguments mismatch",
+            )
         if name not in {"secrets-init"}:
             _fail(bool(service.get("tmpfs")), f"{name}: bounded tmpfs missing")
         _fail(

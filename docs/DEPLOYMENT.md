@@ -36,6 +36,15 @@ files, initializes PostgreSQL, and runs the one-shot bootstrap. A returning
 start validates and reuses the credentials and data, reruns the idempotent
 bootstrap proof, and then starts the same service graph.
 
+### PostgreSQL baseline
+
+Initial supported PostgreSQL installations use fresh volumes created by the
+Alpine/musl image pinned in this repository. Raw database volumes are not
+portable between glibc and musl image families, and this pre-alpha release has
+no legacy-installation or cross-family migration support. Never delete a
+non-disposable volume merely to bypass this boundary; a future real migration
+requires a separately designed and tested logical process.
+
 ## Implemented public surface
 
 | Path | Upstream | Current behavior |
@@ -95,12 +104,18 @@ The reviewed OCI inputs are:
 
 | Repository and readable version | Immutable top-level digest | License | Platforms reviewed |
 | --- | --- | --- | --- |
-| `python:3.12.12-slim-bookworm` | `sha256:593bd06efe90efa80dc4eee3948be7c0fde4134606dd40d8dd8dbcade98e669c` | PSF | amd64, arm64 and official additional targets |
+| `python:3.12.12-alpine3.23` | `sha256:2d91681153dd4b8cdb52d4fd34a17b9edbafa4dd3086143cfd4b6c3a84c1acb0` | PSF | official multi-platform index |
 | `ghcr.io/astral-sh/uv:0.12.5` | `sha256:e85be844203885286c60ffad8a858d48afb6c5a5c237ca0e67f12e74b8f174b1` | Apache-2.0 or MIT | amd64, arm64 |
-| `node:24.14.1-bookworm-slim` | `sha256:b506e7321f176aae77317f99d67a24b272c1f09f1d10f1761f2773447d8da26c` | MIT | amd64, arm64, ppc64le, s390x |
-| `postgres:18.6-trixie` | `sha256:06cad38a5d9f5d24b4d83d86def30795d5e4b757fedbf5281172b576dedcd941` | PostgreSQL | official multi-platform index |
-| `nginx:1.29.6-alpine3.23` | `sha256:f46cb72c7df02710e693e863a983ac42f6a9579058a59a35f1ae36c9958e4ce0` | two-clause BSD | official multi-platform index |
-| `httpd:2.4.66-alpine3.23` | `sha256:968c8b4098fcecb473762b45f6c541a3b2b2cfab2caccb1edbd2cece071ef160` | Apache-2.0 | official multi-platform index |
+| `node:24.14.1-alpine3.23` | `sha256:8510330d3eb72c804231a834b1a8ebb55cb3796c3e4431297a24d246b8add4d5` | MIT | official multi-platform index |
+| `postgres:18.6-alpine3.23` | `sha256:697c180dbf244d3ce4a8f4cbc0156cde840af055c1bf8b76aebe422a4822086f` | PostgreSQL | official multi-platform index |
+| `nginx:1.29.7-alpine3.23` | `sha256:e7257f1ef28ba17cf7c248cb8ccf6f0c6e0228ab9c315c152f9c203cd34cf6d1` | two-clause BSD | official multi-platform index |
+| `httpd:2.4.68-alpine3.23` | `sha256:4a15e9c73f25334bc03cfb3c692c9adfc103bb46ca89cee1f0b9a5fcbc7b21f6` | Apache-2.0 | official multi-platform index |
+
+Project images apply exact Alpine security package revisions recorded in the
+machine supply-chain policy. The Node runtime stages remove the unused bundled
+npm CLI tree, the NGINX stage removes unused curl and its orphaned libraries,
+and the Apache reference removes unused Perl. These removals do not change the
+public edge, health, service, network, or secret topology.
 
 The new Web registry inputs are exact and frozen with these npm integrity
 values:
@@ -169,7 +184,9 @@ Edge configuration cannot replace application authentication or authorization.
 ## Scope and limitations
 
 This topology is defense in depth, not a hostile multi-tenant isolation or
-production certification. Service-to-service authentication, online database
-credentials, TLS automation, egress policy enforcement, backups, rotation,
-metrics, and full vulnerability/SBOM release policy remain deferred. See
-[operations](OPERATIONS.md) for lifecycle and failure handling.
+production certification. CI now creates six-image SPDX and vulnerability
+evidence under the bounded [supply-chain policy](SUPPLY_CHAIN.md), but it does
+not sign or publish release images. Service-to-service authentication, online
+database credentials, TLS automation, egress policy enforcement, backups,
+rotation, metrics, release signing, and deployment approval remain deferred.
+See [operations](OPERATIONS.md) for lifecycle and failure handling.
