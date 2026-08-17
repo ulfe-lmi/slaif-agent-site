@@ -67,6 +67,8 @@ jobs:
         with:
           node-version: "24"
       - name: Render Mermaid diagrams
+        env:
+          PUPPETEER_EXECUTABLE_PATH: /usr/bin/google-chrome
         run: python tools/check_mermaid.py
 
   dependency-review:
