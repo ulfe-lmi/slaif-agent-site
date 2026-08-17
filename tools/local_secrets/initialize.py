@@ -167,18 +167,34 @@ def initialize(
 
     isolated_files = 0
     if control_directory is not None:
-        if not control_directory.exists() and validate_only:
-            raise SecretInitializationError("Control secret directory is unavailable")
+        control_file = control_directory / CONTROL_DSN_FILE
+        expected_control_dsn = dsn_files["service-control-dsn"]
+        initialize_control_file = not control_file.exists()
+        if initialize_control_file:
+            if validate_only:
+                raise SecretInitializationError(
+                    "Control secret directory is unavailable"
+                )
+            if control_directory.exists() and any(control_directory.iterdir()):
+                raise SecretInitializationError(
+                    "Control secret directory policy mismatch"
+                )
+            # A new named volume is an existing root-owned mount. Keep it owned by
+            # the initializer until the only file has been created, then transfer
+            # the final directory; no broad DAC_OVERRIDE capability is required.
+            _prepare_directory(
+                control_directory,
+                mode=CONTROL_DIRECTORY_MODE,
+                uid=DIRECTORY_UID,
+                gid=DIRECTORY_UID,
+            )
+            _write_once(control_file, expected_control_dsn, uid=APPLICATION_UID)
         _prepare_directory(
             control_directory,
             mode=CONTROL_DIRECTORY_MODE,
             uid=CONTROL_DIRECTORY_UID,
             gid=CONTROL_DIRECTORY_GID,
         )
-        control_file = control_directory / CONTROL_DSN_FILE
-        expected_control_dsn = dsn_files["service-control-dsn"]
-        if not validate_only and not control_file.exists():
-            _write_once(control_file, expected_control_dsn, uid=APPLICATION_UID)
         actual_control_dsn = _read_secret(control_file, uid=APPLICATION_UID)
         if not secrets.compare_digest(actual_control_dsn, expected_control_dsn):
             raise SecretInitializationError("isolated Control locator mismatch")

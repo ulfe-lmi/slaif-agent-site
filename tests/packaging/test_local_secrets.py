@@ -66,6 +66,7 @@ class LocalSecretTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as parent:
             directory = Path(parent) / "secrets"
             control_directory = Path(parent) / "control"
+            control_directory.mkdir(mode=0o755)
             count = INITIALIZER.initialize(
                 directory, control_directory=control_directory
             )
