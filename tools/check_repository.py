@@ -162,6 +162,7 @@ class RepositoryPolicy:
         self.check_readme()
         self.check_oap()
         self.check_workflows()
+        self.check_python_quality_configuration()
         self.check_foundation_dependencies()
         return sorted(set(self.errors))
 
@@ -478,6 +479,39 @@ class RepositoryPolicy:
                         f"line {number} foundation dependency is not exactly "
                         "version-pinned",
                     )
+
+    def check_python_quality_configuration(self) -> None:
+        path = self.root / "pyproject.toml"
+        if not path.is_file():
+            return
+        document = self.load_toml(path)
+        if document is None:
+            return
+        tool = document.get("tool")
+        ruff: object = None
+        if isinstance(tool, dict):
+            ruff = tool.get("ruff")
+        if not isinstance(ruff, dict):
+            self.error(path, "tool.ruff configuration is required")
+            return
+
+        for key in ("exclude", "extend-exclude", "force-exclude"):
+            if key in ruff:
+                self.error(
+                    path,
+                    f"tool.ruff.{key} may not narrow declared Python quality paths",
+                )
+
+        configured = repr(ruff)
+        for required in (
+            "tests/repository/test_mermaid.py",
+            "tools/check_mermaid.py",
+        ):
+            if required in configured or Path(required).name in configured:
+                self.error(
+                    path,
+                    f"Ruff configuration may not ignore required file {required}",
+                )
 
     def load_toml(self, path: Path) -> dict[str, object] | None:
         try:

@@ -61,11 +61,6 @@ pythonpath = ["."]
 testpaths = ["services/backend/tests", "tests/repository"]
 
 [tool.ruff]
-extend-exclude = [
-  "tests/repository/test_mermaid.py",
-  "tools/check_mermaid.py",
-]
-force-exclude = true
 line-length = 88
 target-version = "py312"
 

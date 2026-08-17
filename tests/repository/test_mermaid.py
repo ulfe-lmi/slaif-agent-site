@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from io import StringIO
-from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+from io import StringIO
+from pathlib import Path
 
 from tools.check_mermaid import (
     MAX_RENDERER_OUTPUT,
@@ -51,17 +51,32 @@ class MermaidCheckTestCase(unittest.TestCase):
         blocks = extract_mermaid_blocks(path, self.root)
 
         self.assertEqual([block.opening_line for block in blocks], [2, 7])
-        self.assertEqual([block.source.as_posix() for block in blocks], ["docs/diagrams.md"] * 2)
+        self.assertEqual(
+            [block.source.as_posix() for block in blocks], ["docs/diagrams.md"] * 2
+        )
         self.assertEqual(blocks[0].content, "flowchart LR\n    A --> B\n")
         self.assertEqual(blocks[1].content, "sequenceDiagram\n    A->>B: message\n")
 
-    def test_discovery_excludes_generated_cache_and_environment_directories(self) -> None:
+    def test_discovery_excludes_generated_cache_and_environment_directories(
+        self,
+    ) -> None:
         self.write("README.md", "# Included\n")
         self.write("docs/guide.md", "# Included\n")
-        for directory in (".cache", ".git", ".venv", "build", "generated", "node_modules", "vendor"):
+        for directory in (
+            ".cache",
+            ".git",
+            ".venv",
+            "build",
+            "generated",
+            "node_modules",
+            "vendor",
+        ):
             self.write(f"{directory}/excluded.md", "# Excluded\n")
 
-        discovered = [path.relative_to(self.root).as_posix() for path in discover_markdown(self.root)]
+        discovered = [
+            path.relative_to(self.root).as_posix()
+            for path in discover_markdown(self.root)
+        ]
 
         self.assertEqual(discovered, ["README.md", "docs/guide.md"])
 
@@ -96,13 +111,17 @@ class MermaidCheckTestCase(unittest.TestCase):
         self.write("README.md", "# No diagrams\n\n```text\nplain\n```\n")
         stream = StringIO()
 
-        def unexpected_runner(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+        def unexpected_runner(
+            *args: object, **kwargs: object
+        ) -> subprocess.CompletedProcess[str]:
             self.fail("renderer must not run when there are no Mermaid blocks")
 
         status = run_check(self.root, runner=unexpected_runner, stream=stream)
 
         self.assertEqual(status, 0)
-        self.assertIn("0 diagram(s) in 0 file(s); 1 Markdown file(s) scanned", stream.getvalue())
+        self.assertIn(
+            "0 diagram(s) in 0 file(s); 1 Markdown file(s) scanned", stream.getvalue()
+        )
 
     def test_renderer_command_uses_exact_package_and_argument_list(self) -> None:
         command = build_renderer_command(Path("input.mmd"), Path("output.svg"))
@@ -150,8 +169,10 @@ class MermaidCheckTestCase(unittest.TestCase):
             self.assertNotIn(self.root.resolve(), path.resolve().parents)
             self.assertFalse(path.exists())
 
-    def test_renderer_failure_has_source_line_and_bounded_normalized_output(self) -> None:
-        source = self.write(
+    def test_renderer_failure_has_source_line_and_bounded_normalized_output(
+        self,
+    ) -> None:
+        self.write(
             "docs/failure.md",
             "intro\n```mermaid\nflowchart LR\n```\n",
         )
@@ -191,13 +212,17 @@ class MermaidCheckTestCase(unittest.TestCase):
         failures = render_blocks([block], self.root, runner=outputless_runner)
 
         self.assertEqual(len(failures), 1)
-        self.assertEqual(failures[0].reason, "renderer succeeded without creating its output")
+        self.assertEqual(
+            failures[0].reason, "renderer succeeded without creating its output"
+        )
 
     def test_extraction_failure_prevents_renderer_invocation(self) -> None:
         self.write("broken.md", "```mermaid\nflowchart LR\n")
         stream = StringIO()
 
-        def unexpected_runner(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+        def unexpected_runner(
+            *args: object, **kwargs: object
+        ) -> subprocess.CompletedProcess[str]:
             self.fail("renderer must not run after extraction failure")
 
         status = run_check(self.root, runner=unexpected_runner, stream=stream)

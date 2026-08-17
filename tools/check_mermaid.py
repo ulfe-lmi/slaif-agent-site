@@ -12,14 +12,14 @@ does not create a Node manifest or write generated files into the repository.
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass
-from pathlib import Path
 import re
 import subprocess
 import sys
 import tempfile
-from typing import Callable, Sequence, TextIO
-
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass
+from pathlib import Path
+from typing import TextIO
 
 MERMAID_CLI_VERSION = "11.16.0"
 MERMAID_PACKAGE = f"@mermaid-js/mermaid-cli@{MERMAID_CLI_VERSION}"
@@ -188,8 +188,13 @@ def render_blocks(
     failures: list[RenderFailure] = []
     with tempfile.TemporaryDirectory(prefix="slaif-mermaid-") as temporary_name:
         temporary_root = Path(temporary_name).resolve()
-        if temporary_root == repository_root or repository_root in temporary_root.parents:
-            raise RuntimeError("temporary Mermaid output directory is inside repository root")
+        if (
+            temporary_root == repository_root
+            or repository_root in temporary_root.parents
+        ):
+            raise RuntimeError(
+                "temporary Mermaid output directory is inside repository root"
+            )
         for index, block in enumerate(blocks, start=1):
             input_path = temporary_root / f"diagram-{index:03d}.mmd"
             output_path = temporary_root / f"diagram-{index:03d}.svg"
@@ -207,14 +212,18 @@ def render_blocks(
                 failures.append(
                     RenderFailure(
                         block=block,
-                        reason=f"renderer timed out after {RENDER_TIMEOUT_SECONDS} seconds",
+                        reason=(
+                            f"renderer timed out after {RENDER_TIMEOUT_SECONDS} seconds"
+                        ),
                         stdout=bounded_output(exc.stdout, temporary_root),
                         stderr=bounded_output(exc.stderr, temporary_root),
                     )
                 )
                 continue
             except OSError as exc:
-                failures.append(block_failure(block, f"renderer could not start: {exc}"))
+                failures.append(
+                    block_failure(block, f"renderer could not start: {exc}")
+                )
                 continue
 
             stdout = bounded_output(result.stdout, temporary_root)
@@ -280,7 +289,9 @@ def run_check(
     if extraction_errors:
         for error in sorted(extraction_errors):
             print(f"ERROR {error}", file=stream)
-        print(f"FAIL Mermaid extraction ({len(extraction_errors)} error(s))", file=stream)
+        print(
+            f"FAIL Mermaid extraction ({len(extraction_errors)} error(s))", file=stream
+        )
         return 1
 
     failures = render_blocks(blocks, root, runner=runner)

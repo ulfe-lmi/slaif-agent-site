@@ -353,6 +353,48 @@ class RepositoryPolicyTestCase(unittest.TestCase):
             sum("forbidden foundation" in error for error in errors), len(forms)
         )
 
+    def test_python_quality_accepts_complete_unexcluded_roots(self) -> None:
+        self.write(
+            "pyproject.toml",
+            "[tool.ruff]\n"
+            "line-length = 88\n"
+            'target-version = "py312"\n'
+            "\n[tool.ruff.lint]\n"
+            'select = ["E", "F", "I"]\n',
+        )
+
+        self.assertEqual(self.errors_from("check_python_quality_configuration"), [])
+
+    def test_python_quality_rejects_path_exclusion(self) -> None:
+        self.write(
+            "pyproject.toml",
+            '[tool.ruff]\nextend-exclude = ["tests/repository/test_mermaid.py"]\n',
+        )
+
+        errors = self.errors_from("check_python_quality_configuration")
+
+        self.assertTrue(any("extend-exclude" in error for error in errors))
+        self.assertTrue(any("test_mermaid.py" in error for error in errors))
+
+    def test_python_quality_rejects_force_exclude(self) -> None:
+        self.write("pyproject.toml", "[tool.ruff]\nforce-exclude = true\n")
+
+        errors = self.errors_from("check_python_quality_configuration")
+
+        self.assertTrue(any("force-exclude" in error for error in errors))
+
+    def test_python_quality_rejects_mermaid_per_file_ignore(self) -> None:
+        self.write(
+            "pyproject.toml",
+            "[tool.ruff]\n"
+            "\n[tool.ruff.lint.per-file-ignores]\n"
+            '"tools/check_mermaid.py" = ["E501"]\n',
+        )
+
+        errors = self.errors_from("check_python_quality_configuration")
+
+        self.assertTrue(any("tools/check_mermaid.py" in error for error in errors))
+
 
 if __name__ == "__main__":
     unittest.main()
