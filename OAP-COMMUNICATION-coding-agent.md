@@ -1,8 +1,8 @@
 # OAP Communication Protocol — Coding Agent
 
-**File:** `OAP-COMMUNICATION-coding-agent.md`  
-**Applies to:** the OAP coding/execution agent only  
-**Protocol version:** 1.2  
+**File:** `OAP-COMMUNICATION-coding-agent.md`
+**Applies to:** the OAP coding/execution agent only
+**Protocol version:** 1.2
 
 ## 1. Purpose
 
