@@ -1,0 +1,10 @@
+packages:
+  - packages/*
+
+allowBuilds:
+  esbuild: false
+
+autoInstallPeers: false
+
+overrides:
+  vite: 7.3.1
