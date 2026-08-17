@@ -15,8 +15,10 @@ DATABASE_HOST = "postgres"
 POSTGRES_UID = 999
 APPLICATION_UID = 10001
 MARKER_UID = 0
+DIRECTORY_UID = 0
+SECRET_DIRECTORY_GID = 10002
 SECRET_MODE = 0o400
-DIRECTORY_MODE = 0o711
+DIRECTORY_MODE = 0o710
 MARKER = ".initialized-v1"
 LOGINS = (
     ("bootstrap", "slaif_bootstrap_login"),
@@ -37,8 +39,13 @@ class SecretInitializationError(RuntimeError):
 
 
 def _validate_directory(directory: Path) -> None:
-    info = directory.stat()
-    if not stat.S_ISDIR(info.st_mode) or stat.S_IMODE(info.st_mode) != DIRECTORY_MODE:
+    info = directory.stat(follow_symlinks=False)
+    if (
+        not stat.S_ISDIR(info.st_mode)
+        or stat.S_IMODE(info.st_mode) != DIRECTORY_MODE
+        or info.st_uid != DIRECTORY_UID
+        or info.st_gid != SECRET_DIRECTORY_GID
+    ):
         raise SecretInitializationError("private secret directory policy mismatch")
 
 
@@ -93,7 +100,12 @@ def initialize(directory: Path, *, validate_only: bool = False) -> int:
         if validate_only:
             raise SecretInitializationError("secret directory is unavailable")
         directory.mkdir(mode=DIRECTORY_MODE, parents=True)
-    os.chmod(directory, DIRECTORY_MODE)
+    directory_fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        os.fchown(directory_fd, DIRECTORY_UID, SECRET_DIRECTORY_GID)
+        os.fchmod(directory_fd, DIRECTORY_MODE)
+    finally:
+        os.close(directory_fd)
     _validate_directory(directory)
 
     password_files = {
@@ -133,7 +145,7 @@ def initialize(directory: Path, *, validate_only: bool = False) -> int:
     if not validate_only and not marker.exists():
         _write_once(marker, "initialized-v1:" + ("0" * 48), uid=MARKER_UID)
     _read_secret(marker, uid=MARKER_UID)
-    directory_fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
+    directory_fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     try:
         os.fsync(directory_fd)
     finally:

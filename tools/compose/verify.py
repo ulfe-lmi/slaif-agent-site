@@ -107,6 +107,10 @@ EXPECTED_CAP_ADD = {
     "postgres": {"CHOWN", "DAC_OVERRIDE", "FOWNER", "SETGID", "SETUID"},
     "secrets-init": {"CHOWN", "DAC_READ_SEARCH"},
 }
+EXPECTED_GROUP_ADD = {
+    "bootstrap": {"10002"},
+    "postgres": {"10002"},
+}
 SECRET_MOUNT_SERVICES = {"bootstrap", "postgres", "secrets-init"}
 LONG_RUNNING_APPLICATIONS = REQUIRED_SERVICES - {
     "bootstrap",
@@ -182,6 +186,10 @@ def validate_config(config: dict[str, Any]) -> None:
         _fail(
             set(service.get("cap_add", [])) == EXPECTED_CAP_ADD.get(name, set()),
             f"{name}: added capability policy mismatch",
+        )
+        _fail(
+            set(service.get("group_add", [])) == EXPECTED_GROUP_ADD.get(name, set()),
+            f"{name}: supplemental group policy mismatch",
         )
         mounts = service.get("volumes", [])
         actual_mounts = {
@@ -290,6 +298,10 @@ def validate_running(root: Path, project: str) -> None:
             host["ReadonlyRootfs"] is True, f"{name}: runtime root filesystem writable"
         )
         _fail(host["CapDrop"] == ["ALL"], f"{name}: runtime cap-drop mismatch")
+        _fail(
+            set(host.get("GroupAdd") or []) == EXPECTED_GROUP_ADD.get(name, set()),
+            f"{name}: runtime supplemental group mismatch",
+        )
         _fail(
             "no-new-privileges:true" in host["SecurityOpt"],
             f"{name}: runtime security option mismatch",

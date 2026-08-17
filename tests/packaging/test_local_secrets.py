@@ -28,6 +28,8 @@ class LocalSecretTests(unittest.TestCase):
         INITIALIZER.POSTGRES_UID = os.getuid()
         INITIALIZER.APPLICATION_UID = os.getuid()
         INITIALIZER.MARKER_UID = os.getuid()
+        INITIALIZER.DIRECTORY_UID = os.getuid()
+        INITIALIZER.SECRET_DIRECTORY_GID = os.getgid()
         with tempfile.TemporaryDirectory() as parent:
             directory = Path(parent) / "secrets"
             count = INITIALIZER.initialize(directory)
@@ -44,6 +46,10 @@ class LocalSecretTests(unittest.TestCase):
             ]
             self.assertEqual(len(passwords), 11)
             self.assertEqual(len(set(passwords)), 11)
+            info = directory.stat()
+            self.assertEqual(stat.S_IMODE(info.st_mode), 0o710)
+            self.assertEqual(info.st_uid, os.getuid())
+            self.assertEqual(info.st_gid, os.getgid())
             for path in directory.iterdir():
                 self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o400)
 
@@ -51,9 +57,11 @@ class LocalSecretTests(unittest.TestCase):
         INITIALIZER.POSTGRES_UID = os.getuid()
         INITIALIZER.APPLICATION_UID = os.getuid()
         INITIALIZER.MARKER_UID = os.getuid()
+        INITIALIZER.DIRECTORY_UID = os.getuid()
+        INITIALIZER.SECRET_DIRECTORY_GID = os.getgid()
         with tempfile.TemporaryDirectory() as parent:
             directory = Path(parent) / "secrets"
-            directory.mkdir(mode=0o711)
+            directory.mkdir(mode=0o710)
             broken = directory / "postgres-password"
             broken.touch(mode=0o400)
             with self.assertRaises(INITIALIZER.SecretInitializationError):

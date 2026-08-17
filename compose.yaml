@@ -93,6 +93,8 @@ services:
       - FOWNER
       - SETGID
       - SETUID
+    group_add:
+      - "10002"
     environment:
       PGDATA: /var/lib/postgresql/data
       POSTGRES_DB: slaif
@@ -121,6 +123,8 @@ services:
   bootstrap:
     <<: *common-security
     image: slaif-agent-site-backend:local
+    group_add:
+      - "10002"
     command: ["python", "-m", "slaif_agent_site.bootstrap", "compose"]
     restart: "no"
     environment:

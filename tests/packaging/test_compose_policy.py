@@ -50,6 +50,8 @@ def _configuration() -> dict[str, object]:
             service["tmpfs"] = ["/tmp:size=16m"]
         if name in VERIFY.EXPECTED_CAP_ADD:
             service["cap_add"] = sorted(VERIFY.EXPECTED_CAP_ADD[name])
+        if name in VERIFY.EXPECTED_GROUP_ADD:
+            service["group_add"] = sorted(VERIFY.EXPECTED_GROUP_ADD[name])
         if name in VERIFY.EXPECTED_BUILD_FILES:
             service["build"] = {"dockerfile": VERIFY.EXPECTED_BUILD_FILES[name]}
         services[name] = service

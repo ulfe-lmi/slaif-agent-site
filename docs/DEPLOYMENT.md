@@ -121,8 +121,10 @@ network membership does not grant application authority.
 The private `local-secrets` volume contains a PostgreSQL administrator password,
 ten distinct fixed-login passwords, provisioner/owner DSNs, and nine future
 service DSNs. Files are mode `0400`; PostgreSQL's password belongs to UID 999
-and bootstrap-readable files to UID 10001. Only initializer, PostgreSQL, and
-bootstrap mount this volume. No long-running application receives a DSN.
+and bootstrap-readable files to UID 10001. The directory is mode `0710`, owned
+by root and dedicated group 10002; only PostgreSQL and bootstrap receive that
+supplemental traversal group. Only initializer, PostgreSQL, and bootstrap mount
+this volume. No long-running application receives a DSN.
 
 Institutional deployments may replace the generator with externally managed
 files that use the same names and fixed principal model. They must preserve

@@ -63,7 +63,16 @@ docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif -Atc \
 docker run --rm --network none --read-only --cap-drop ALL --cap-add DAC_READ_SEARCH \
   --user 0:0 --volume "${PROJECT}_local-secrets:/secrets:ro" \
   --entrypoint python slaif-agent-site-backend:local -c \
-  "import os,pathlib,stat; root=pathlib.Path('/secrets'); files=list(root.iterdir()); assert len(files)==23; assert all(stat.S_IMODE(p.stat().st_mode)==0o400 for p in files); assert (root/'postgres-password').stat().st_uid==999; assert (root/'.initialized-v1').stat().st_uid==0; assert all(p.stat().st_uid==10001 for p in files if p.name not in {'postgres-password','.initialized-v1'}); values=[p.read_bytes() for p in files if p.name=='postgres-password' or p.name.startswith('login-')]; assert len(values)==len(set(values))==11; print('secret-file-policy: OK')"
+  "import os,pathlib,stat; root=pathlib.Path('/secrets'); root_info=root.stat(); assert stat.S_IMODE(root_info.st_mode)==0o710 and root_info.st_uid==0 and root_info.st_gid==10002; files=list(root.iterdir()); assert len(files)==23; assert all(stat.S_IMODE(p.stat().st_mode)==0o400 for p in files); assert (root/'postgres-password').stat().st_uid==999; assert (root/'.initialized-v1').stat().st_uid==0; assert all(p.stat().st_uid==10001 for p in files if p.name not in {'postgres-password','.initialized-v1'}); values=[p.read_bytes() for p in files if p.name=='postgres-password' or p.name.startswith('login-')]; assert len(values)==len(set(values))==11; print('secret-file-policy: OK')"
+if docker run --rm --network none --read-only --cap-drop ALL \
+  --user 10003:10003 --volume "${PROJECT}_local-secrets:/secrets:ro" \
+  --entrypoint python slaif-agent-site-backend:local -c \
+  "import pathlib; pathlib.Path('/secrets/postgres-password').read_bytes()" \
+  >/dev/null 2>&1
+then
+  echo "compose-smoke: unrelated uid unexpectedly read a secret" >&2
+  exit 1
+fi
 
 fingerprint() {
   docker run --rm --network none --read-only --cap-drop ALL --cap-add DAC_READ_SEARCH \
