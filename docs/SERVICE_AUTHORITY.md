@@ -18,10 +18,11 @@ or credential.
 | `media-gc` | None | Worker | Media GC | `slaif_gc` |
 | `bootstrap` | None | One-shot | Setup owner | `slaif_owner` |
 
-The role manifest, flags, schema owners, COW hardening, and independent
-privilege verifier are implemented. Online credential creation/distribution
-and pools are not; no long-running process currently opens a database
-connection. Bootstrap alone loads its separate one-shot locator.
+The role manifest, local login principals, schema owners, COW hardening,
+independent privilege verifier, container networks, and edge routing are
+implemented. Online credential distribution and pools are not; no long-running
+process currently opens a database connection. Bootstrap alone mounts its
+separate one-shot locator.
 
 ## Structural boundaries
 
@@ -43,13 +44,19 @@ connection. Bootstrap alone loads its separate one-shot locator.
 Agent-facing identity is not authority to accept, publish, mint capabilities,
 run SQL/Alembic, or select site/workspace/operation context from a request.
 
-## Enforcement still required later
+## Deployment enforcement
 
-Code descriptors do not provide security by themselves. This baseline now
-tests PostgreSQL roles and grants, but production separation still requires
-separate credentials, internal service authentication, network policy, edge
-routing, secret mounts, and deployment topology. Those mechanisms are not
-claimed by this skeleton. See [database roles](DATABASE_ROLES.md).
+Code descriptors do not provide security by themselves. Compose now separates
+edge, application, database, and browser networks; mounts local database
+secrets only into initializer/PostgreSQL/bootstrap; runs online processes
+without DSNs; and publishes only NGINX on loopback port 8080. Browser worker is
+on an internal network shared only with Agent API and has no database, edge,
+host, mount, Docker-socket, Playwright, or browser-command authority. See
+[deployment](DEPLOYMENT.md) and [database roles](DATABASE_ROLES.md).
+
+Internal service authentication, online least-privilege pools, browser sandbox
+and egress enforcement, production TLS, and product authorization remain later
+work. Network membership alone is not authority.
 
 The only current HTTP behavior is correlated, redacted, typed liveness and
 readiness. Health evidence is not product readiness or publication authority.

@@ -1,0 +1,4 @@
+services:
+  bootstrap:
+    environment:
+      SLAIF_BOOTSTRAP_EXPECTED_DATABASE: deliberately_wrong_database

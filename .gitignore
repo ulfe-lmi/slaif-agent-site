@@ -219,6 +219,11 @@ __marimo__/
 
 # Node, pnpm, TypeScript, and test output
 node_modules/
+**/.next/
+**/dist/
+.env
+.env.*
+!.env.example
 .pnpm-store/
 dist/
 coverage/

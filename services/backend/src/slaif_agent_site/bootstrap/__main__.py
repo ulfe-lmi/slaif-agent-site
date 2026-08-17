@@ -9,6 +9,7 @@ from collections.abc import Sequence
 
 from .config import BootstrapSettings
 from .service import (
+    compose_bootstrap,
     downgrade,
     provision,
     rebuild,
@@ -32,6 +33,9 @@ def _parser() -> argparse.ArgumentParser:
     commands.add_parser("provision", help="reconcile password-free privilege roles")
     commands.add_parser("upgrade", help="upgrade owner migrations to head")
     commands.add_parser("bootstrap", help="upgrade and reconcile COW privileges")
+    commands.add_parser(
+        "compose", help="provision and validate the local Compose database"
+    )
     commands.add_parser("validate", help="validate marker and effective privileges")
     commands.add_parser("current", help="show the current migration and safe state")
     for name in ("downgrade", "rebuild"):
@@ -54,6 +58,12 @@ async def _run(command: str, settings: BootstrapSettings) -> str:
             f"bootstrap: OK revision={bootstrap_status.revision} "
             f"state={bootstrap_status.state.value} "
             f"safe={str(bootstrap_status.safe).lower()}"
+        )
+    if command == "compose":
+        compose_status = await compose_bootstrap(settings)
+        return (
+            f"compose-bootstrap: OK revision={compose_status.revision} "
+            f"state={compose_status.state.value} safe=true"
         )
     if command == "validate":
         marker, validation = await validate(settings)

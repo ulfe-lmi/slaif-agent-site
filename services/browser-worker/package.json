@@ -1,0 +1,12 @@
+{
+  "name": "@slaif-agent-site/browser-worker",
+  "version": "0.0.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "type": "module",
+  "scripts": {
+    "build": "tsc --project tsconfig.json --noEmit",
+    "typecheck": "tsc --project tsconfig.json --noEmit",
+    "test": "node --test tests/*.test.mjs"
+  }
+}

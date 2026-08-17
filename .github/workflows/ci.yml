@@ -29,9 +29,11 @@ jobs:
         with:
           python-version: "3.12"
       - name: Compile policy tooling
-        run: python -m compileall -q tools tests/repository
+        run: python -m compileall -q tools tests/repository tests/packaging
       - name: Run repository policy unit tests
         run: python -m unittest discover -s tests/repository -p 'test_*.py'
+      - name: Run packaging policy unit tests
+        run: python -m unittest discover -s tests/packaging -p 'test_*.py'
       - name: Check repository policy
         run: python tools/check_repository.py
 
@@ -74,10 +76,12 @@ jobs:
           import { readFileSync } from "node:fs";
 
           const approved = new Set([
+            "0BSD", // permissive TypeScript runtime helpers
             "Apache-2.0",
             "BlueOak-1.0.0",
             "BSD-2-Clause",
             "BSD-3-Clause",
+            "CC-BY-4.0", // attribution-licensed browser compatibility data
             "ISC",
             "MIT",
           ]);
@@ -120,8 +124,8 @@ jobs:
         run: uv sync --frozen --all-groups
       - name: Lint and check formatting
         run: |
-          uv run --frozen ruff check services/backend tests/repository tools migrations
-          uv run --frozen ruff format --check services/backend tests/repository tools migrations
+          uv run --frozen ruff check services/backend tests/repository tests/packaging tools migrations
+          uv run --frozen ruff format --check services/backend tests/repository tests/packaging tools migrations
       - name: Type-check backend boundary
         run: uv run --frozen mypy
       - name: Run unit and metadata qualification
@@ -183,6 +187,20 @@ jobs:
         run: >-
           uv run --frozen pytest
           services/backend/tests/integration/test_database_bootstrap.py
+
+  compose-edge-packaging:
+    name: Compose and edge packaging
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Inspect Compose runtime
+        run: docker compose version
+      - name: Run clean deployment, topology, edge, and failure smoke
+        run: sh tools/compose/smoke.sh slaif007ci
 
   markdown:
     name: Markdown
