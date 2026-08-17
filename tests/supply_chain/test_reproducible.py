@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -46,6 +47,37 @@ class ReproducibilityHelperTests(unittest.TestCase):
         )
         first.write_bytes(b"changed")
         self.assertNotEqual(manifest, tree_manifest(self.root, ("output",)))
+
+    def test_web_manifest_includes_next_and_runtime_dependencies(self) -> None:
+        manifest_path = (
+            "apps/web/.next/standalone/apps/web/.next/prerender-manifest.json"
+        )
+        package_path = "apps/web/.next/standalone/node_modules/example/package.json"
+        self.write(package_path, b'{"name":"example"}\n')
+
+        def content(marker: str, version: int = 1) -> bytes:
+            return json.dumps(
+                {
+                    "preview": {
+                        "previewModeEncryptionKey": marker * 2,
+                        "previewModeId": marker * 3,
+                        "previewModeSigningKey": marker * 4,
+                    },
+                    "version": version,
+                }
+            ).encode()
+
+        target = ("apps/web/.next/standalone",)
+        self.write(manifest_path, content("a"))
+        first = tree_manifest(self.root, target)
+        paths = {entry["path"] for entry in first}
+        self.assertIn(manifest_path, paths)
+        self.assertIn(package_path, paths)
+
+        self.write(manifest_path, content("b"))
+        self.assertEqual(first, tree_manifest(self.root, target))
+        self.write(manifest_path, content("b", version=2))
+        self.assertNotEqual(first, tree_manifest(self.root, target))
 
     def test_generated_contracts_ignore_build_cache_but_reject_source_output(
         self,

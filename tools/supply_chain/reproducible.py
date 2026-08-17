@@ -14,6 +14,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+from tools.supply_chain.evidence import normalize_runtime_file, sha256_bytes
 from tools.supply_chain.policy import (
     POLICY_PATH,
     ROOT,
@@ -120,8 +121,6 @@ def tree_manifest(root: Path, relative_paths: tuple[str, ...]) -> list[dict[str,
         )
         for path in candidates:
             path_relative = path.relative_to(root)
-            if any(part in IGNORED_PARTS for part in path_relative.parts):
-                continue
             metadata = path.lstat()
             if stat.S_ISDIR(metadata.st_mode):
                 continue
@@ -135,7 +134,14 @@ def tree_manifest(root: Path, relative_paths: tuple[str, ...]) -> list[dict[str,
                 entry["type"] = "symlink"
                 entry["target"] = os.readlink(path)
             elif stat.S_ISREG(metadata.st_mode):
-                entry["sha256"] = sha256_file(path)
+                runtime_name = path_relative.as_posix()
+                if relative == "apps/web/.next/standalone":
+                    runtime_name = "opt/slaif/" + path.relative_to(target).as_posix()
+                content, normalized_fields = normalize_runtime_file(
+                    "web", runtime_name, path.read_bytes()
+                )
+                entry["normalized_fields"] = normalized_fields
+                entry["sha256"] = sha256_bytes(content)
             else:
                 raise PolicyError(f"unsupported build output type: {path_relative}")
             entries.append(entry)
