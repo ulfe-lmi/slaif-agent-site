@@ -18,6 +18,7 @@ from pathlib import Path
 from packaging.specifiers import SpecifierSet
 from packaging.version import Version
 from slaif_agent_site.agent_state import foundation
+from slaif_agent_site.db.migrations import migration_heads, migration_history
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[4]
 FOUNDATION_VERSION = "0.2.0"
@@ -26,6 +27,20 @@ FOUNDATION_WHEEL_SHA256 = (
 )
 FOUNDATION_SDIST_SHA256 = (
     "eae8d434d2fc03c4faa08b44b4863fc8f8efb44ee33eaad3adc22e7eb96a062c"
+)
+ALEMBIC_VERSION = "1.19.1"
+ALEMBIC_WHEEL_SHA256 = (
+    "b39018cb3d9413a19cbd54cf3c02ad33998641f0538eb77413a488a21c3e14be"
+)
+ALEMBIC_SDIST_SHA256 = (
+    "e0fca0518118c78acc493e31bcb5402f190057aaf6df8b5b95ce94c4789cf648"
+)
+SQLALCHEMY_VERSION = "2.0.52"
+SQLALCHEMY_PY3_WHEEL_SHA256 = (
+    "3b81b8363a919ce53453591cdb93702e6bd54ade6c4fa2f468fc053baee5ed89"
+)
+SQLALCHEMY_SDIST_SHA256 = (
+    "5e2d46356ac2ccb7d268ab6c2319ac6a2b42f1b8d5fd8bd3d46855cd82abee97"
 )
 EXPECTED_PUBLIC_API = {
     "CowConflict",
@@ -54,11 +69,22 @@ NEW_PACKAGE_FILES = {
     "slaif_agent_site/authority.py",
     "slaif_agent_site/bootstrap/__init__.py",
     "slaif_agent_site/bootstrap/__main__.py",
+    "slaif_agent_site/bootstrap/config.py",
+    "slaif_agent_site/bootstrap/service.py",
     "slaif_agent_site/config.py",
     "slaif_agent_site/control_api/__init__.py",
     "slaif_agent_site/control_api/__main__.py",
     "slaif_agent_site/control_api/app.py",
     "slaif_agent_site/correlation.py",
+    "slaif_agent_site/db/__init__.py",
+    "slaif_agent_site/db/alembic/env.py",
+    "slaif_agent_site/db/alembic/script.py.mako",
+    "slaif_agent_site/db/alembic/versions/006_001_postgres_bootstrap.py",
+    "slaif_agent_site/db/connections.py",
+    "slaif_agent_site/db/executor.py",
+    "slaif_agent_site/db/migrations.py",
+    "slaif_agent_site/db/privileges.py",
+    "slaif_agent_site/db/roles.py",
     "slaif_agent_site/editor_api/__init__.py",
     "slaif_agent_site/editor_api/__main__.py",
     "slaif_agent_site/editor_api/app.py",
@@ -88,6 +114,7 @@ EXPECTED_PACKAGE_FILES = NEW_PACKAGE_FILES | {
     "slaif_agent_site/agent_state/foundation.py",
 }
 EXPECTED_SDIST_FILES = {
+    "alembic.ini",
     "LICENSE",
     "NOTICE",
     "PKG-INFO",
@@ -97,6 +124,9 @@ EXPECTED_SDIST_FILES = {
     "services/backend/src/slaif_agent_site/__init__.py",
     "services/backend/src/slaif_agent_site/agent_state/__init__.py",
     "services/backend/src/slaif_agent_site/agent_state/foundation.py",
+    "migrations/alembic/README.md",
+    "migrations/alembic/__init__.py",
+    "migrations/bootstrap/README.md",
 } | {f"services/backend/src/{path}" for path in NEW_PACKAGE_FILES}
 
 
@@ -160,10 +190,12 @@ def test_python_and_package_metadata_ranges_are_coherent() -> None:
     assert project["readme"] == "README.md"
     assert project["dependencies"] == [
         "agent-cow-postgresql==0.2.0",
+        "alembic==1.19.1",
         "asyncpg==0.31.0",
         "fastapi==0.141.1",
         "pydantic==2.13.4",
         "pydantic-settings==2.15.0",
+        "sqlalchemy==2.0.52",
         "uvicorn==0.52.3",
     ]
 
@@ -211,6 +243,48 @@ def test_lock_uses_exact_verified_registry_artifacts() -> None:
     assert "'git'" not in serialized
     assert "'path'" not in serialized
     assert "'url':" not in repr(package["source"]).lower()
+
+
+def test_migration_dependencies_are_exact_registry_artifacts() -> None:
+    lock = _load_toml("uv.lock")
+    expectations = {
+        "alembic": (
+            ALEMBIC_VERSION,
+            ALEMBIC_SDIST_SHA256,
+            ALEMBIC_WHEEL_SHA256,
+        ),
+        "sqlalchemy": (
+            SQLALCHEMY_VERSION,
+            SQLALCHEMY_SDIST_SHA256,
+            SQLALCHEMY_PY3_WHEEL_SHA256,
+        ),
+    }
+    for name, (version, sdist_hash, wheel_hash) in expectations.items():
+        package = _package_record(lock, name)
+        assert package["version"] == version
+        assert package["source"] == {"registry": "https://pypi.org/simple"}
+        assert package["sdist"]["hash"] == f"sha256:{sdist_hash}"  # type: ignore[index]
+        wheels = package["wheels"]
+        assert isinstance(wheels, list)
+        assert f"sha256:{wheel_hash}" in {
+            wheel["hash"] for wheel in wheels if isinstance(wheel, dict)
+        }
+        serialized = repr(package).casefold()
+        assert not any(
+            marker in serialized for marker in ("git+", "editable", "'path'")
+        )
+
+    licenses = {
+        "alembic": ("MIT", None),
+        "SQLAlchemy": (None, "MIT"),
+        "greenlet": ("MIT AND PSF-2.0", None),
+        "Mako": ("MIT", None),
+        "MarkupSafe": ("BSD-3-Clause", None),
+    }
+    for name, (expression, legacy) in licenses.items():
+        metadata = importlib.metadata.metadata(name)
+        assert metadata.get("License-Expression") == expression
+        assert metadata.get("License") == legacy
 
 
 def test_built_distributions_have_bounded_contents_and_metadata(
@@ -282,10 +356,12 @@ def test_built_distributions_have_bounded_contents_and_metadata(
     assert SpecifierSet(metadata["Requires-Python"]) == SpecifierSet(">=3.12,<3.15")
     assert metadata.get_all("Requires-Dist") == [
         "agent-cow-postgresql==0.2.0",
+        "alembic==1.19.1",
         "asyncpg==0.31.0",
         "fastapi==0.141.1",
         "pydantic==2.13.4",
         "pydantic-settings==2.15.0",
+        "sqlalchemy==2.0.52",
         "uvicorn==0.52.3",
     ]
 
@@ -294,3 +370,71 @@ def test_locked_foundation_artifact_hash_constants_are_sha256() -> None:
     for digest in (FOUNDATION_WHEEL_SHA256, FOUNDATION_SDIST_SHA256):
         assert len(digest) == hashlib.sha256().digest_size * 2
         assert re.fullmatch(r"[0-9a-f]{64}", digest)
+
+
+def test_alembic_graph_and_offline_sql_need_no_locator_or_network() -> None:
+    assert migration_heads() == ("006_001",)
+    assert migration_history() == ("006_001",)
+    config = (REPOSITORY_ROOT / "alembic.ini").read_text(encoding="utf-8")
+    assert "sqlalchemy.url" not in config
+    assert "://" not in config
+    assert "password" not in config.casefold()
+
+    environment = {
+        "PGHOST": "unreachable.invalid",
+        "PGPORT": "1",
+        "PGDATABASE": "must_not_connect",
+    }
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "alembic",
+            "-c",
+            "alembic.ini",
+            "upgrade",
+            "head",
+            "--sql",
+        ],
+        cwd=REPOSITORY_ROOT,
+        env=environment,
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert "006_001" in completed.stdout
+    assert 'CREATE SCHEMA IF NOT EXISTS "control"' in completed.stdout
+
+
+def test_database_source_uses_public_foundation_boundary_and_no_domain_ddl() -> None:
+    package = REPOSITORY_ROOT / "services/backend/src/slaif_agent_site"
+    database_source = "\n".join(
+        path.read_text(encoding="utf-8")
+        for root in (package / "bootstrap", package / "db")
+        for path in sorted(root.rglob("*.py"))
+    )
+    assert "from agentcow" not in database_source
+    assert "import agentcow" not in database_source
+    assert "allow_unsafe_canonical_writes=False" in database_source
+    assert "allow_deferred_fks=True" in database_source
+    assert not any(
+        marker in database_source.casefold()
+        for marker in ("psycopg", "boto3", "supabase", "cloud sql")
+    )
+
+    revision = (
+        package / "db/alembic/versions/006_001_postgres_bootstrap.py"
+    ).read_text(encoding="utf-8")
+    assert revision.count("CREATE TABLE") == 1
+    assert '"control"."bootstrap_readiness"' in revision
+    forbidden_tables = (
+        "workspace",
+        "capability",
+        "content_item",
+        "page_composition",
+        "audit_event",
+        "media_asset",
+        "site_membership",
+    )
+    assert not any(f'CREATE TABLE "{name}"' in revision for name in forbidden_tables)

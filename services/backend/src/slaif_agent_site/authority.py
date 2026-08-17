@@ -1,7 +1,7 @@
-"""Static process identities and conceptual future authority boundaries.
+"""Static process identities and database privilege-role boundaries.
 
-These descriptors document intended dependency and credential classes. They do
-not contain credentials and do not replace database grants, network policy, or
+These descriptors document dependency and credential classes. They do not
+contain credentials and do not replace database grants, network policy, or
 service authentication.
 """
 
@@ -45,17 +45,18 @@ class AuthorityClass(StrEnum):
 
 
 class DatabaseAuthority(StrEnum):
-    """Conceptual future database role class, never a connection locator."""
+    """Exact non-login PostgreSQL privilege role, never a locator."""
 
-    CONTROL = "control"
-    EDITOR_COW_RUNTIME = "editor-cow-runtime"
-    AGENT_COW_RUNTIME = "agent-cow-runtime"
-    RENDER_READER = "render-reader"
-    MEDIA_METADATA = "media-metadata"
-    REVIEWER = "reviewer"
-    SCHEDULER = "scheduler"
-    MEDIA_GC = "media-gc"
-    SETUP_OWNER = "setup-owner"
+    CONTROL = "slaif_control"
+    EDITOR_COW_RUNTIME = "slaif_editor_runtime"
+    AGENT_COW_RUNTIME = "slaif_agent_runtime"
+    PUBLIC_READER = "slaif_public_reader"
+    PREVIEW_READER = "slaif_preview_reader"
+    MEDIA_METADATA = "slaif_media"
+    REVIEWER = "slaif_reviewer"
+    SCHEDULER = "slaif_scheduler"
+    MEDIA_GC = "slaif_gc"
+    SETUP_OWNER = "slaif_owner"
 
 
 class ListenerExposure(StrEnum):
@@ -80,7 +81,7 @@ class AuthorityDescriptor:
 
     process: ProcessKind
     authority_class: AuthorityClass
-    database_authority: DatabaseAuthority | None
+    database_authorities: tuple[DatabaseAuthority, ...]
     listener: ListenerExposure
     lifecycle: LifecycleKind
 
@@ -100,6 +101,10 @@ class AuthorityDescriptor:
     def reviewer(self) -> bool:
         return self.authority_class is AuthorityClass.REVIEWER
 
+    @property
+    def has_database_credential(self) -> bool:
+        return bool(self.database_authorities)
+
 
 AUTHORITY_BY_PROCESS: Final[Mapping[ProcessKind, AuthorityDescriptor]] = (
     MappingProxyType(
@@ -107,70 +112,73 @@ AUTHORITY_BY_PROCESS: Final[Mapping[ProcessKind, AuthorityDescriptor]] = (
             ProcessKind.CONTROL_API: AuthorityDescriptor(
                 ProcessKind.CONTROL_API,
                 AuthorityClass.CONTROL,
-                DatabaseAuthority.CONTROL,
+                (DatabaseAuthority.CONTROL,),
                 ListenerExposure.EDGE_ROUTED,
                 LifecycleKind.HTTP,
             ),
             ProcessKind.EDITOR_API: AuthorityDescriptor(
                 ProcessKind.EDITOR_API,
                 AuthorityClass.EDITOR_COW_RUNTIME,
-                DatabaseAuthority.EDITOR_COW_RUNTIME,
+                (DatabaseAuthority.EDITOR_COW_RUNTIME,),
                 ListenerExposure.EDGE_ROUTED,
                 LifecycleKind.HTTP,
             ),
             ProcessKind.AGENT_API: AuthorityDescriptor(
                 ProcessKind.AGENT_API,
                 AuthorityClass.AGENT_COW_RUNTIME,
-                DatabaseAuthority.AGENT_COW_RUNTIME,
+                (DatabaseAuthority.AGENT_COW_RUNTIME,),
                 ListenerExposure.EDGE_ROUTED,
                 LifecycleKind.HTTP,
             ),
             ProcessKind.RENDER_API: AuthorityDescriptor(
                 ProcessKind.RENDER_API,
                 AuthorityClass.RENDER_READER,
-                DatabaseAuthority.RENDER_READER,
+                (
+                    DatabaseAuthority.PUBLIC_READER,
+                    DatabaseAuthority.PREVIEW_READER,
+                ),
                 ListenerExposure.INTERNAL_ONLY,
                 LifecycleKind.HTTP,
             ),
             ProcessKind.MCP_ADAPTER: AuthorityDescriptor(
                 ProcessKind.MCP_ADAPTER,
                 AuthorityClass.INTERNAL_HTTP_CLIENT,
-                None,
+                (),
                 ListenerExposure.EDGE_ROUTED,
                 LifecycleKind.HTTP,
             ),
             ProcessKind.MEDIA_SERVICE: AuthorityDescriptor(
                 ProcessKind.MEDIA_SERVICE,
                 AuthorityClass.MEDIA,
-                DatabaseAuthority.MEDIA_METADATA,
+                (DatabaseAuthority.MEDIA_METADATA,),
                 ListenerExposure.EDGE_ROUTED,
                 LifecycleKind.HTTP,
             ),
             ProcessKind.REVIEW_WORKER: AuthorityDescriptor(
                 ProcessKind.REVIEW_WORKER,
                 AuthorityClass.REVIEWER,
-                DatabaseAuthority.REVIEWER,
+                (DatabaseAuthority.REVIEWER,),
                 ListenerExposure.NONE,
                 LifecycleKind.WORKER,
             ),
             ProcessKind.SCHEDULER: AuthorityDescriptor(
                 ProcessKind.SCHEDULER,
                 AuthorityClass.SCHEDULER,
-                DatabaseAuthority.SCHEDULER,
+                (DatabaseAuthority.SCHEDULER,),
                 ListenerExposure.NONE,
                 LifecycleKind.WORKER,
             ),
             ProcessKind.MEDIA_GC: AuthorityDescriptor(
                 ProcessKind.MEDIA_GC,
                 AuthorityClass.MEDIA_GC,
-                DatabaseAuthority.MEDIA_GC,
+                (DatabaseAuthority.MEDIA_GC,),
                 ListenerExposure.NONE,
                 LifecycleKind.WORKER,
             ),
             ProcessKind.BOOTSTRAP: AuthorityDescriptor(
                 ProcessKind.BOOTSTRAP,
                 AuthorityClass.SETUP_OWNER,
-                DatabaseAuthority.SETUP_OWNER,
+                (DatabaseAuthority.SETUP_OWNER,),
                 ListenerExposure.NONE,
                 LifecycleKind.ONE_SHOT,
             ),

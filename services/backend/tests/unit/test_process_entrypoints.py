@@ -115,8 +115,45 @@ async def test_http_authority_cannot_use_worker_lifecycle() -> None:
         await serve_worker(ProcessKind.AGENT_API, runner)
 
 
-def test_bootstrap_normal_mode_is_one_shot_and_non_mutating() -> None:
-    assert run_worker_process(ProcessKind.BOOTSTRAP, argv=[]) == 0
+def test_bootstrap_default_mode_requires_an_explicit_command() -> None:
+    completed = subprocess.run(
+        [sys.executable, "-m", "slaif_agent_site.bootstrap"],
+        cwd=REPOSITORY_ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert completed.returncode == 2
+    assert completed.stdout == ""
+    assert "usage:" in completed.stderr
+
+
+def test_bootstrap_failure_is_constant_and_dsn_is_not_printed() -> None:
+    fake_dsn = "postgresql://fixture:fixture-do-not-print@example.test/qualification"
+    environment = {
+        key: value for key, value in os.environ.items() if not key.startswith("SLAIF_")
+    }
+    environment.update(
+        {
+            "SLAIF_BOOTSTRAP_MODE": "production",
+            "SLAIF_BOOTSTRAP_EXPECTED_DATABASE": "qualification",
+            "SLAIF_BOOTSTRAP_OWNER_DSN": fake_dsn,
+        }
+    )
+    completed = subprocess.run(
+        [sys.executable, "-m", "slaif_agent_site.bootstrap", "current"],
+        cwd=REPOSITORY_ROOT,
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert completed.returncode == 1
+    assert completed.stdout == ""
+    assert completed.stderr == "Database bootstrap failed.\n"
+    assert fake_dsn not in completed.stderr
 
 
 def test_worker_check_does_not_call_injected_runner() -> None:
@@ -138,14 +175,13 @@ def test_worker_check_does_not_call_injected_runner() -> None:
     assert called is False
 
 
-def test_worker_packages_and_shared_lifecycle_have_no_uvicorn_or_database_use() -> None:
+def test_long_running_worker_packages_have_no_uvicorn_or_database_use() -> None:
     source_root = REPOSITORY_ROOT / "services/backend/src/slaif_agent_site"
     paths = [source_root / "worker.py"]
     for process in (
         ProcessKind.REVIEW_WORKER,
         ProcessKind.SCHEDULER,
         ProcessKind.MEDIA_GC,
-        ProcessKind.BOOTSTRAP,
     ):
         package = source_root / MODULE_BY_PROCESS[process]
         paths.extend(sorted(package.glob("*.py")))
@@ -154,3 +190,16 @@ def test_worker_packages_and_shared_lifecycle_have_no_uvicorn_or_database_use() 
     assert "uvicorn" not in source.casefold()
     assert "asyncpg" not in source.casefold()
     assert "database_url" not in source.casefold()
+
+
+def test_long_running_processes_do_not_import_bootstrap_or_owner_connections() -> None:
+    source_root = REPOSITORY_ROOT / "services/backend/src/slaif_agent_site"
+    excluded = {"bootstrap", "db"}
+    source = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in source_root.rglob("*.py")
+        if not any(part in excluded for part in path.relative_to(source_root).parts)
+    )
+    assert "BootstrapSettings" not in source
+    assert "owner_connection" not in source
+    assert "provisioner_connection" not in source

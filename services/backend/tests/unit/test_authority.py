@@ -16,6 +16,7 @@ from slaif_agent_site.authority import (
     authority_for,
 )
 from slaif_agent_site.config import ServiceSettings
+from slaif_agent_site.db.roles import DATABASE_ROLES, ROLE_NAMES
 
 EXPECTED_PROCESSES = {
     "control-api",
@@ -44,7 +45,7 @@ def test_descriptors_are_immutable_non_secret_metadata() -> None:
     assert {field.name for field in fields(descriptor)} == {
         "process",
         "authority_class",
-        "database_authority",
+        "database_authorities",
         "listener",
         "lifecycle",
     }
@@ -63,7 +64,7 @@ def test_setup_reviewer_and_agent_facing_authority_never_combine() -> None:
 
     agent = authority_for(ProcessKind.AGENT_API)
     assert agent.authority_class is AuthorityClass.AGENT_COW_RUNTIME
-    assert agent.database_authority is DatabaseAuthority.AGENT_COW_RUNTIME
+    assert agent.database_authorities == (DatabaseAuthority.AGENT_COW_RUNTIME,)
     assert not agent.setup_owner
     assert not agent.reviewer
 
@@ -76,7 +77,8 @@ def test_editor_agent_mcp_and_narrow_service_classes_are_separate() -> None:
     assert agent.authority_class is AuthorityClass.AGENT_COW_RUNTIME
     assert editor.authority_class.value != agent.authority_class.value
     assert mcp.authority_class is AuthorityClass.INTERNAL_HTTP_CLIENT
-    assert mcp.database_authority is None
+    assert mcp.database_authorities == ()
+    assert not mcp.has_database_credential
 
     expected = {
         ProcessKind.CONTROL_API: AuthorityClass.CONTROL,
@@ -88,6 +90,56 @@ def test_editor_agent_mcp_and_narrow_service_classes_are_separate() -> None:
     assert {
         process: authority_for(process).authority_class for process in expected
     } == expected
+
+
+def test_exact_database_role_mapping_and_database_free_mcp() -> None:
+    mapped = {
+        role
+        for descriptor in AUTHORITY_BY_PROCESS.values()
+        for role in descriptor.database_authorities
+    }
+    assert {role.value for role in mapped} == {
+        "slaif_owner",
+        "slaif_control",
+        "slaif_editor_runtime",
+        "slaif_agent_runtime",
+        "slaif_public_reader",
+        "slaif_preview_reader",
+        "slaif_reviewer",
+        "slaif_scheduler",
+        "slaif_media",
+        "slaif_gc",
+    }
+    assert authority_for(ProcessKind.RENDER_API).database_authorities == (
+        DatabaseAuthority.PUBLIC_READER,
+        DatabaseAuthority.PREVIEW_READER,
+    )
+    assert authority_for(ProcessKind.MCP_ADAPTER).database_authorities == ()
+
+
+def test_database_role_manifest_is_exact_password_free_and_immutable() -> None:
+    assert ROLE_NAMES == (
+        "slaif_owner",
+        "slaif_control",
+        "slaif_editor_runtime",
+        "slaif_agent_runtime",
+        "slaif_public_reader",
+        "slaif_preview_reader",
+        "slaif_reviewer",
+        "slaif_scheduler",
+        "slaif_media",
+        "slaif_gc",
+    )
+    assert tuple(role.name for role in DATABASE_ROLES) == ROLE_NAMES
+    assert [role.name for role in DATABASE_ROLES if not role.service_credential] == [
+        "slaif_owner"
+    ]
+    assert all(
+        "password" not in {field.name for field in fields(role)}
+        for role in DATABASE_ROLES
+    )
+    with pytest.raises(FrozenInstanceError):
+        DATABASE_ROLES[0].purpose = "changed"  # type: ignore[misc]
 
 
 def test_only_http_processes_have_listeners() -> None:

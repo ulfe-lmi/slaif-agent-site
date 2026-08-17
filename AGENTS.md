@@ -305,6 +305,10 @@ rewrite them, and never merge the objective PR.
   UI hides an action.
 - Make migrations deterministic and reversible where practical. Agents and
   site users never invoke physical schema migration.
+- Keep cluster role provisioning, setup-owner migration/bootstrap, and online
+  service credentials separate. The current clean `content` schema has no COW
+  table, so foundation hardening must remain visibly unsafe until an authorized
+  content migration or qualified empty-schema foundation behavior exists.
 - Treat accessibility, responsive behavior, privacy, failure behavior, and
   operations as implementation requirements, not polish.
 - Do not weaken validation, tests, authorization, network confinement, or
