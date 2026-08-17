@@ -31,8 +31,6 @@ LOGIN_AFTER_CONTAINER="${PREFIX}-login-after"
 CREDENTIAL_DIR=
 DATABASE_CONTAINER=
 STAGE=preflight
-HOST_UID=$(id -u)
-HOST_GID=$(id -g)
 
 fail() {
   echo "postgres-base-transition: FAIL stage=$STAGE reason=$1" >&2
@@ -78,24 +76,38 @@ cleanup() {
     "$LOGIN_AFTER_CONTAINER"
   do
     if docker container inspect "$container" >/dev/null 2>&1; then
-      docker container rm --force "$container" >/dev/null 2>&1 || cleanup_failed=1
+      if ! docker container rm --force "$container" >/dev/null 2>&1; then
+        echo "postgres-base-transition: cleanup resource=container result=FAIL" >&2
+        cleanup_failed=1
+      fi
     fi
   done
   if docker network inspect "$NETWORK" >/dev/null 2>&1; then
-    docker network rm "$NETWORK" >/dev/null 2>&1 || cleanup_failed=1
+    if ! docker network rm "$NETWORK" >/dev/null 2>&1; then
+      echo "postgres-base-transition: cleanup resource=network result=FAIL" >&2
+      cleanup_failed=1
+    fi
   fi
   if docker volume inspect "$DATA_VOLUME" >/dev/null 2>&1; then
-    docker volume rm "$DATA_VOLUME" >/dev/null 2>&1 || cleanup_failed=1
+    if ! docker volume rm "$DATA_VOLUME" >/dev/null 2>&1; then
+      echo "postgres-base-transition: cleanup resource=volume result=FAIL" >&2
+      cleanup_failed=1
+    fi
   fi
   if [ -n "$CREDENTIAL_DIR" ] && [ -d "$CREDENTIAL_DIR" ]; then
     docker run --rm --network none --read-only --cap-drop ALL \
-      --cap-add CHOWN --cap-add DAC_OVERRIDE --user 0:0 \
-      --env "HOST_UID=$HOST_UID" --env "HOST_GID=$HOST_GID" \
+      --cap-add DAC_OVERRIDE --user 0:0 \
       --volume "$CREDENTIAL_DIR:/credentials" \
       --entrypoint python "$BACKEND_IMAGE" -c \
-      'import os, pathlib; root = pathlib.Path("/credentials"); [item.unlink() for item in root.iterdir()]; os.chown(root, int(os.environ["HOST_UID"]), int(os.environ["HOST_GID"])); os.chmod(root, 0o700)' \
-      >/dev/null 2>&1 || cleanup_failed=1
-    rmdir "$CREDENTIAL_DIR" >/dev/null 2>&1 || cleanup_failed=1
+      'import pathlib; root = pathlib.Path("/credentials"); [item.unlink() for item in root.iterdir()]' \
+      >/dev/null 2>&1 || {
+        echo "postgres-base-transition: cleanup resource=credentials-content result=FAIL" >&2
+        cleanup_failed=1
+      }
+    if ! sudo rmdir "$CREDENTIAL_DIR" >/dev/null 2>&1; then
+      echo "postgres-base-transition: cleanup resource=credentials-directory result=FAIL" >&2
+      cleanup_failed=1
+    fi
   fi
   if [ "$cleanup_failed" -ne 0 ]; then
     echo "postgres-base-transition: cleanup FAILED exact-prefix=$PREFIX" >&2
