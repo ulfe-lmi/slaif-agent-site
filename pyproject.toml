@@ -34,10 +34,10 @@ build = [
 ]
 qualification = [
   "asyncpg>=0.29,<1",
-  "packaging>=24,<26",
+  "packaging>=24,<27",
 ]
 quality = [
-  "mypy>=1.17,<2",
+  "mypy>=1.17,<3",
   "ruff>=0.12,<1",
 ]
 test = [
