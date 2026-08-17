@@ -120,8 +120,8 @@ jobs:
         run: uv sync --frozen --all-groups
       - name: Lint and check formatting
         run: |
-          uv run --frozen ruff check services/backend tests/repository tools
-          uv run --frozen ruff format --check services/backend tests/repository tools
+          uv run --frozen ruff check services/backend tests/repository tools migrations
+          uv run --frozen ruff format --check services/backend tests/repository tools migrations
       - name: Type-check backend boundary
         run: uv run --frozen mypy
       - name: Run unit and metadata qualification
@@ -175,8 +175,14 @@ jobs:
           enable-cache: false
       - name: Sync frozen Python environment
         run: uv sync --frozen --all-groups
-      - name: Run foundation adoption gate
-        run: uv run --frozen pytest services/backend/tests/integration
+      - name: Run generic foundation adoption gate
+        run: >-
+          uv run --frozen pytest
+          services/backend/tests/integration/test_foundation_postgres.py
+      - name: Run Agent-Site database bootstrap and privilege gate
+        run: >-
+          uv run --frozen pytest
+          services/backend/tests/integration/test_database_bootstrap.py
 
   markdown:
     name: Markdown

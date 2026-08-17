@@ -8,6 +8,11 @@ from unittest.mock import patch
 
 import pytest
 from pydantic import HttpUrl, SecretStr, ValidationError
+from slaif_agent_site.bootstrap.config import (
+    BootstrapConfigurationError,
+    BootstrapMode,
+    BootstrapSettings,
+)
 from slaif_agent_site.config import (
     ConfigurationError,
     EnvironmentMode,
@@ -141,4 +146,62 @@ def test_load_error_is_constant_and_does_not_expose_secret() -> None:
         with pytest.raises(ConfigurationError) as context:
             ServiceSettings.load()
     assert str(context.value) == "Invalid SLAIF service configuration."
+    assert unsafe_value not in str(context.value)
+
+
+def test_bootstrap_settings_are_separate_masked_and_test_only_direct() -> None:
+    fake_dsn = "postgresql://fixture:fixture-only@example.test/qualification"
+    settings = BootstrapSettings(
+        mode=BootstrapMode.TEST,
+        expected_database="qualification",
+        provisioner_dsn=SecretStr(fake_dsn),
+        owner_dsn=SecretStr(fake_dsn),
+    )
+    assert settings.resolved_owner_dsn().get_secret_value() == fake_dsn
+    assert fake_dsn not in repr(settings)
+    assert fake_dsn not in settings.model_dump_json()
+    assert not ({"owner_dsn", "provisioner_dsn"} & ServiceSettings.model_fields.keys())
+
+
+def test_production_bootstrap_requires_absolute_mounted_secret_files(
+    tmp_path: Path,
+) -> None:
+    owner_file = tmp_path / "owner-dsn"
+    provisioner_file = tmp_path / "provisioner-dsn"
+    owner_file.write_text("postgresql://fixture/qualification\n", encoding="utf-8")
+    provisioner_file.write_text(
+        "postgresql://fixture-admin/qualification\n", encoding="utf-8"
+    )
+    settings = BootstrapSettings(
+        mode=BootstrapMode.PRODUCTION,
+        expected_database="qualification",
+        owner_dsn_file=owner_file,
+        provisioner_dsn_file=provisioner_file,
+    )
+    assert settings.resolved_owner_dsn().get_secret_value().endswith("/qualification")
+    with pytest.raises(ValidationError, match="require secret files"):
+        BootstrapSettings(
+            mode=BootstrapMode.PRODUCTION,
+            expected_database="qualification",
+            owner_dsn=SecretStr("postgresql://fixture/qualification"),
+        )
+    with pytest.raises(ValidationError, match="absolute"):
+        BootstrapSettings(
+            mode=BootstrapMode.TEST,
+            expected_database="qualification",
+            owner_dsn_file=Path("relative-owner-dsn"),
+        )
+
+
+def test_bootstrap_load_error_is_constant_and_redacted() -> None:
+    unsafe_value = "postgresql://fixture:do-not-expose@example.test/bad-name"
+    environment = {
+        "SLAIF_BOOTSTRAP_MODE": "production",
+        "SLAIF_BOOTSTRAP_EXPECTED_DATABASE": "bad-name",
+        "SLAIF_BOOTSTRAP_OWNER_DSN": unsafe_value,
+    }
+    with patch.dict(os.environ, environment, clear=True):
+        with pytest.raises(BootstrapConfigurationError) as context:
+            BootstrapSettings.load()
+    assert str(context.value) == "Invalid SLAIF database bootstrap configuration."
     assert unsafe_value not in str(context.value)

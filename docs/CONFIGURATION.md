@@ -1,8 +1,9 @@
 # Backend configuration contract
 
-The current Python backend is a process and health-check skeleton. It has typed
-local configuration, but it does not connect to PostgreSQL, authenticate a
-caller, expose a product API, run a job, or perform bootstrap mutations.
+The current Python backend has typed local configuration for health-only
+long-running skeletons and a separate typed configuration for explicit
+one-shot database bootstrap. No online process connects to PostgreSQL,
+authenticates a caller, exposes a product API, or runs a product job.
 
 ## Loading rules
 
@@ -75,13 +76,32 @@ ReDoc, and OpenAPI routes are disabled, although deterministic in-process tests
 can call `app.openapi()`.
 
 Review worker, scheduler, and media-GC start as cancellation-aware idle
-`NOT_IMPLEMENTED` skeletons without a listener or busy loop. Bootstrap is a
-one-shot `NOT_IMPLEMENTED` skeleton and returns without migration, COW, role,
-or setup mutation.
+`NOT_IMPLEMENTED` skeletons without a listener or busy loop. Bootstrap now
+requires an explicit database subcommand; running it without one cannot mutate
+state.
+
+## One-shot database configuration
+
+`BootstrapSettings` is defined only inside the bootstrap package. It does not
+extend or reuse the `SLAIF_` service namespace and is not imported by an online
+process. It validates the exact target database and separates a stronger
+cluster-provisioner locator from the setup-owner locator.
+
+Production accepts only absolute mounted secret files:
+
+- `SLAIF_BOOTSTRAP_MODE=production`;
+- `SLAIF_BOOTSTRAP_EXPECTED_DATABASE`;
+- `SLAIF_BOOTSTRAP_PROVISIONER_DSN_FILE` for `provision` only; and
+- `SLAIF_BOOTSTRAP_OWNER_DSN_FILE` for migration, status, COW, and validation.
+
+Direct locator fields are restricted to disposable `test` mode. There is no
+shared `SLAIF_DATABASE_URL`, default credential, implicit environment file, or
+module-import connection. See [database bootstrap](DATABASE_BOOTSTRAP.md) for
+commands and marker semantics.
 
 ## Deferred configuration
 
-Database URLs, PostgreSQL pools/roles, identity providers, browser sources,
+Online service database locators/pools, identity providers, browser sources,
 media stores, service authentication, trusted proxies, CORS, sessions, jobs,
 metrics, and product feature settings are not implemented. They must be added
 later under their process-specific authority and architecture work orders.

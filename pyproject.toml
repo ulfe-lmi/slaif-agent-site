@@ -20,10 +20,12 @@ classifiers = [
 ]
 dependencies = [
   "agent-cow-postgresql==0.2.0",
+  "alembic==1.19.1",
   "asyncpg==0.31.0",
   "fastapi==0.141.1",
   "pydantic==2.13.4",
   "pydantic-settings==2.15.0",
+  "sqlalchemy==2.0.52",
   "uvicorn==0.52.3",
 ]
 
@@ -56,6 +58,7 @@ default-groups = "all"
 [tool.uv.build-backend]
 module-name = "slaif_agent_site"
 module-root = "services/backend/src"
+source-include = ["alembic.ini", "migrations/**"]
 
 [tool.pytest.ini_options]
 addopts = ["--strict-config", "--strict-markers"]
@@ -78,6 +81,7 @@ strict = true
 files = [
   "services/backend/src",
   "services/backend/tests",
+  "migrations/alembic",
 ]
 
 [[tool.mypy.overrides]]

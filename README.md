@@ -16,22 +16,25 @@ the real responsive result, and publish only after human review.
 
 ## Current status
 
-> **Pre-alpha / process, foundation, and contract-toolchain baseline.** This repository
-> contains the normative architecture, coding-agent governance, project
-> documentation, reproducible Python package baseline, qualified
-> `agent-cow-postgresql==0.2.0` dependency, and seven private TypeScript
-> contract-package boundaries. Ten separately startable backend skeletons now
-> provide typed configuration, explicit conceptual authority descriptors, and
-> health-only HTTP or non-listening lifecycle checks. Next.js, React, Puck,
-> product contracts/routes, the runnable Agent-Site product, Compose stack,
-> product database schema/connections, authentication, browser worker, and
-> product behavior are not implemented yet.
+> **Pre-alpha / process, foundation, and database-boundary baseline.** This
+> repository contains the normative architecture, coding-agent governance,
+> reproducible Python/TypeScript toolchains, the qualified
+> `agent-cow-postgresql==0.2.0` dependency, ten backend process boundaries,
+> exact PostgreSQL privilege roles, and an owner-only Alembic/bootstrap path.
+> The database revision contains only schema/version/readiness infrastructure;
+> its clean zero-object content state is explicitly `EMPTY_SAFE` without
+> claiming foundation table hardening. Any real content object requires the
+> fully validated `HARDENED` state. Next.js, React, Puck,
+> product contracts/routes/tables, online database pools, the runnable product,
+> Compose, authentication, browser worker, and product behavior are not
+> implemented yet.
 
-The current automation checks preparation artifacts, the TypeScript boundary
-scaffold, Python packaging/foundation contracts, process/configuration/health
-contracts, and a disposable downstream PostgreSQL adoption baseline. A green
-CI or CodeQL result does not prove product readiness, validate planned product
-behavior, or certify the complete security architecture.
+The current automation also migrates/rebuilds disposable databases, verifies
+the exact role/ownership/grant matrix, exercises COW runtime/reviewer paths,
+and checks failure rollback, over-grants, cancellation, and pool cleanup on
+PostgreSQL 14–18. A green CI or CodeQL result does not prove product readiness,
+validate planned product behavior, or certify the complete security
+architecture.
 
 ## Why Agent-Site
 
@@ -154,6 +157,7 @@ acceptance target for later implementation phases.
 | Completed foundation baseline | Exact PyPI dependency and artifact hashes, public API adapter boundary, Python packaging, and downstream PostgreSQL 14–18 adoption gate. |
 | Completed contract-toolchain baseline | Reproducible Node 24/pnpm 11 workspace, strict TypeScript tooling, and seven private scaffold-only package boundaries. |
 | Completed backend process skeleton | Six health-only FastAPI apps, four non-listening process entrypoints, typed local configuration, conceptual authority mapping, safe errors/correlation/logging, and readiness probes. |
+| Completed database boundary baseline | Exact password-free roles, packaged Alembic head, three empty product schemas, constrained `PENDING`/`EMPTY_SAFE`/`HARDENED` readiness, public-API COW reconciliation, and independent privilege validation. |
 | Planned deployable skeleton | Add one-command Compose packaging, secure first-run setup, actual service credentials/grants, and edge health wiring. |
 | Planned product work | Implement identity/sites/workspaces, configurable content, normalized composition/Puck, semantic tools, browser feedback, review/promotion, reconstruction, and hardening. |
 
@@ -169,6 +173,7 @@ The current repository is intentionally small:
 ├── .github/             # CI, CodeQL, Dependabot, and PR guidance
 ├── contracts/           # contract ownership and future generation policy
 ├── docs/                # configuration/authority/foundation records and assets
+├── migrations/          # Alembic location marker and bootstrap guidance
 ├── oap/                 # versioned strategic orders, active pointer, reports
 ├── packages/            # seven private TypeScript boundary scaffolds
 ├── services/backend/    # backend skeleton, contracts, and foundation qualification
@@ -188,11 +193,13 @@ The current repository is intentionally small:
 
 The TypeScript package boundaries contain no product schemas, components,
 scopes, browser tools, API behavior, or fixture data. The Python HTTP processes
-contain only `/health/live` and `/health/ready`; worker/bootstrap processes do
-no job or setup work. See the implemented
-[configuration contract](docs/CONFIGURATION.md) and
-[service authority skeleton](docs/SERVICE_AUTHORITY.md). The planned
-application monorepo layout remains specified in
+contain only `/health/live` and `/health/ready`; long-running workers do no
+product work. Bootstrap mutations require explicit one-shot commands. See the
+[configuration contract](docs/CONFIGURATION.md),
+[database bootstrap](docs/DATABASE_BOOTSTRAP.md), and
+[database roles](docs/DATABASE_ROLES.md), with process mappings in the
+[service authority record](docs/SERVICE_AUTHORITY.md). The planned application
+monorepo layout remains specified in
 [Architecture Section 12](ARCHITECTURE.md#12-repository-architecture).
 
 ## Repository checks and CodeQL
@@ -201,8 +208,8 @@ The [CI workflow](.github/workflows/ci.yml) runs deterministic repository
 policy, isolated policy tests, Markdown lint, exact-version Mermaid rendering,
 pull-request dependency review, frozen Node 24/pnpm 11 contract checks, Python
 3.12–3.14 lint/type/unit/package gates (including process, config, health,
-error, correlation, logging, and entrypoint contracts), and the downstream
-foundation adoption test on PostgreSQL 14–18. See the
+error, correlation, logging, and entrypoint contracts), and separate foundation
+plus Agent-Site database suites on PostgreSQL 14–18. See the
 [foundation integration record](docs/FOUNDATION_INTEGRATION.md) for the exact
 registry artifacts, public surface, commands, and limitations. The transient
 diagram and package builds add no production dependency or committed output. The

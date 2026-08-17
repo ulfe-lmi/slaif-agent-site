@@ -2,8 +2,8 @@
 
 SLAIF Agent-Site adopts the non-yanked PyPI release
 `agent-cow-postgresql==0.2.0` as its generic PostgreSQL copy-on-write
-foundation. This document records the qualified dependency boundary; it does
-not describe a runnable Agent-Site service or product database schema.
+foundation. This document records the qualified dependency and bootstrap
+boundary; it does not describe a runnable Agent-Site service.
 
 ## Qualified release and artifacts
 
@@ -25,10 +25,23 @@ URL, a local path, or an editable checkout.
 | Source distribution | `agent_cow_postgresql-0.2.0.tar.gz` |
 | Source SHA-256 | `eae8d434d2fc03c4faa08b44b4863fc8f8efb44ee33eaad3adc22e7eb96a062c` |
 
+The separately qualified migration substrate is also registry-only and locked:
+
+| Distribution | Version/license | Representative wheel SHA-256 | Source SHA-256 |
+| --- | --- | --- | --- |
+| Alembic | `1.19.1` / MIT | `b39018cb3d9413a19cbd54cf3c02ad33998641f0538eb77413a488a21c3e14be` | `e0fca0518118c78acc493e31bcb5402f190057aaf6df8b5b95ce94c4789cf648` |
+| SQLAlchemy | `2.0.52` / MIT | `3b81b8363a919ce53453591cdb93702e6bd54ade6c4fa2f468fc053baee5ed89` | `5e2d46356ac2ccb7d268ab6c2319ac6a2b42f1b8d5fd8bd3d46855cd82abee97` |
+
+The locked migration closure adds Greenlet `3.5.5` (MIT AND PSF-2.0),
+Mako `1.4.1` (MIT), and MarkupSafe `3.0.3` (BSD-3-Clause). `uv.lock`
+contains the exact hashes for every available artifact.
+
 The base distribution declares no unconditional runtime dependencies. Its
 SQLAlchemy extra declares SQLAlchemy and asyncpg; Agent-Site does not select
-that extra. The qualification group declares asyncpg directly because the
-downstream adoption test exercises the documented asyncpg API.
+that extra. Agent-Site declares asyncpg directly for foundation/application
+operations. Exact Alembic `1.19.1` and SQLAlchemy `2.0.52` are separately
+approved only for metadata-free migration execution; they do not create an ORM
+or a second application driver.
 
 The package source and issue tracker are maintained at
 [jpers1/agent-cow-postgresql](https://github.com/jpers1/agent-cow-postgresql).
@@ -90,8 +103,8 @@ The reproducible local gate is:
 uv --version
 uv lock --check
 uv sync --frozen --all-groups
-uv run --frozen ruff check services/backend tests/repository tools
-uv run --frozen ruff format --check services/backend tests/repository tools
+uv run --frozen ruff check services/backend tests/repository tools migrations
+uv run --frozen ruff format --check services/backend tests/repository tools migrations
 uv run --frozen mypy
 uv run --frozen pytest services/backend/tests/unit tests/repository
 uv run --frozen pytest services/backend/tests/integration
@@ -101,13 +114,13 @@ python tools/check_repository.py
 
 The unit gate checks installed metadata, Python compatibility, public imports,
 the registry-only lock and exact hashes, adapter source, and wheel/sdist
-contents and Apache-2.0 metadata. The integration gate provisions disposable
-setup/runtime/reviewer roles and a disposable schema. It covers deploy,
-enable, harden, privilege validation, isolated runtime mutation, public
-operation review, full promotion/discard, missing-context and least-privilege
-failure, and cancellation/pool cleanup. CI repeats the integration test on
-PostgreSQL 14 through 18 and the quality/package gate on Python 3.12 through
-3.14. Exact execution evidence is preserved in the corresponding OAP report.
+contents and Apache-2.0 metadata. The generic integration gate retains its
+disposable setup/runtime/reviewer test. A separate Agent-Site suite provisions
+all exact roles and principals, migrates/rebuilds, reconciles foundation COW,
+tests effective positive/negative privileges, injects failures/over-grants,
+and proves cancellation/pool cleanup. CI runs both suites on PostgreSQL 14
+through 18 and the quality/package gate on Python 3.12 through 3.14. Exact
+execution evidence is preserved in the corresponding OAP report.
 
 An upgrade must repeat the architecture qualification gate: verify non-yanked
 PyPI metadata and license, regenerate `uv.lock` with the deliberately selected
@@ -129,9 +142,13 @@ local result.
 
 ## Current limitations
 
-This adoption gate does not implement Agent-Site services, product schemas or
-roles, capability authorization, immutable review snapshots, concurrency
-policy, publication, Compose packaging, or a public API. It does not replace
-the exhaustive privilege, conflict, cancellation, concurrency, promotion, and
-recovery objectives scheduled later. It uses only disposable fake test
+The product schema/role/bootstrap baseline now exists, but it contains no
+domain table and no online connection. The foundation cannot harden an empty
+COW schema; Agent-Site therefore publishes `EMPTY_SAFE` only after a separate
+zero-object and zero-authority proof, while explicitly leaving foundation
+hardening/validation false and not applicable. Any content object requires the
+normal public foundation hardening path and `HARDENED`; see
+[database bootstrap](DATABASE_BOOTSTRAP.md). Capability authorization,
+immutable review snapshots, product concurrency policy, publication, Compose
+packaging, and public APIs remain unimplemented. Tests use only disposable fake
 credentials and databases.

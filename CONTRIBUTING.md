@@ -1,10 +1,9 @@
 # Contributing to SLAIF Agent-Site
 
-SLAIF Agent-Site is currently a pre-alpha process, foundation, and
-contract-toolchain project. The repository contains architecture, governance,
-documentation, reproducible Python packaging, foundation qualification,
-health-only backend process skeletons, and seven private TypeScript package
-boundaries; there is no application setup or runnable product stack yet.
+SLAIF Agent-Site is currently a pre-alpha process, foundation, database
+boundary, and contract-toolchain project. It has deterministic migrations and
+password-free PostgreSQL privilege roles, but no product-domain schema, online
+database pool, application setup, or runnable product stack.
 
 ## Start with the governing documents
 
@@ -53,8 +52,8 @@ pnpm licenses list --json
 uv --version
 uv lock --check
 uv sync --frozen --all-groups
-uv run --frozen ruff check services/backend tests/repository tools
-uv run --frozen ruff format --check services/backend tests/repository tools
+uv run --frozen ruff check services/backend tests/repository tools migrations
+uv run --frozen ruff format --check services/backend tests/repository tools migrations
 uv run --frozen mypy
 uv run --frozen pytest services/backend/tests/unit tests/repository
 uv run --frozen pytest services/backend/tests/integration
@@ -83,10 +82,13 @@ python -m slaif_agent_site.bootstrap --check
 
 The six HTTP processes currently expose only `/health/live` and
 `/health/ready`; external docs/OpenAPI routes are disabled. Review worker,
-scheduler, media-GC, and bootstrap have no listener. Their authority
-descriptors are conceptual future wiring—not credentials, database grants, or
-service authentication. See [backend configuration](docs/CONFIGURATION.md)
-and [service authority](docs/SERVICE_AUTHORITY.md).
+scheduler, media-GC, and bootstrap have no listener. Their descriptors map to
+implemented password-free privilege roles but are not credentials, online
+pools, or service authentication. Bootstrap database actions require explicit
+subcommands and separate mounted locators. See
+[backend configuration](docs/CONFIGURATION.md),
+[database bootstrap](docs/DATABASE_BOOTSTRAP.md), and
+[service authority](docs/SERVICE_AUTHORITY.md).
 
 The Mermaid check transiently obtains the exact approved Mermaid CLI version
 and renders every Mermaid fence in a system temporary directory. It adds no
@@ -133,10 +135,11 @@ version with hashes in `uv.lock`; Git, direct-URL, local-path, or editable forms
 are forbidden for normal builds.
 
 The current direct runtime set is exact: `agent-cow-postgresql==0.2.0`,
-`asyncpg==0.31.0`, `fastapi==0.141.1`, `pydantic==2.13.4`,
-`pydantic-settings==2.15.0`, and `uvicorn==0.52.3`, without standard/cloud
-extras. HTTPX `0.28.1` is test-only. Adding a database dependency does not
-authorize a connection: database URL/pool/role configuration remains deferred.
+`alembic==1.19.1`, `asyncpg==0.31.0`, `fastapi==0.141.1`,
+`pydantic==2.13.4`, `pydantic-settings==2.15.0`,
+`sqlalchemy==2.0.52`, and `uvicorn==0.52.3`, without standard/cloud extras.
+HTTPX `0.28.1` is test-only. SQLAlchemy is confined to Alembic execution with
+no ORM/product repository; online connection configuration remains deferred.
 
 Use the public npm registry and commit the exact pnpm `11.22.0` lock. Node
 installs must use `pnpm install --frozen-lockfile`; Git, direct-URL, local,

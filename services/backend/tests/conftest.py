@@ -7,15 +7,20 @@ import uuid
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import quote
 
 import asyncpg
 import pytest_asyncio
+from pydantic import SecretStr
 from slaif_agent_site.agent_state.foundation import (
     deploy_cow_functions,
     enable_cow_schema,
     harden_cow_schema,
     validate_cow_schema_privileges,
 )
+from slaif_agent_site.bootstrap.config import BootstrapMode, BootstrapSettings
+from slaif_agent_site.bootstrap.service import provision
+from slaif_agent_site.db.roles import ROLE_NAMES, quote_identifier
 
 
 class AsyncpgExecutor:
@@ -48,12 +53,136 @@ class FoundationDatabase:
         return f'"{self.schema}"."{self.table}_base"'
 
 
+@dataclass(frozen=True, slots=True)
+class AgentSiteDatabase:
+    """One disposable database with exact privilege roles and fake principals."""
+
+    name: str
+    settings: BootstrapSettings
+    administrator: asyncpg.Connection[Any]
+    connection_parameters: dict[str, str | int]
+    credentials: dict[str, tuple[str, str]]
+
+    async def role_pool(self, role: str) -> asyncpg.Pool[Any]:
+        login, password = self.credentials[role]
+
+        async def activate(connection: asyncpg.Connection[Any]) -> None:
+            await connection.execute(f"SET ROLE {quote_identifier(role)}")
+
+        return await asyncpg.create_pool(
+            **{
+                key: value
+                for key, value in self.connection_parameters.items()
+                if key != "database"
+            },
+            database=self.name,
+            user=login,
+            password=password,
+            min_size=1,
+            max_size=1,
+            setup=activate,
+        )
+
+
 def _connection_parameters() -> dict[str, str | int]:
     return {
         "host": os.environ.get("PGHOST", "127.0.0.1"),
         "port": int(os.environ.get("PGPORT", "5432")),
         "database": os.environ.get("PGDATABASE", "postgres"),
     }
+
+
+def _dsn(
+    *, parameters: dict[str, str | int], database: str, user: str, password: str
+) -> str:
+    host = quote(str(parameters["host"]), safe="[]:.")
+    return (
+        f"postgresql://{quote(user, safe='')}:{quote(password, safe='')}@"
+        f"{host}:{parameters['port']}/{quote(database, safe='')}"
+    )
+
+
+@pytest_asyncio.fixture
+async def agent_site_database() -> AsyncIterator[AgentSiteDatabase]:
+    """Provision the exact product role boundary in a disposable database."""
+
+    parameters = _connection_parameters()
+    admin_user = os.environ.get("PGUSER", "postgres")
+    admin_password = os.environ.get("PGPASSWORD", "qualification-admin")
+    administrator = await asyncpg.connect(
+        **parameters,
+        user=admin_user,
+        password=admin_password,
+    )
+    suffix = uuid.uuid4().hex[:10]
+    database = f"slaif_test_{suffix}"
+    credentials: dict[str, tuple[str, str]] = {}
+    login_roles: list[str] = []
+    try:
+        await administrator.execute(f"CREATE DATABASE {quote_identifier(database)}")
+        provisioner_dsn = _dsn(
+            parameters=parameters,
+            database=database,
+            user=admin_user,
+            password=admin_password,
+        )
+        provisional = BootstrapSettings(
+            mode=BootstrapMode.TEST,
+            expected_database=database,
+            provisioner_dsn=SecretStr(provisioner_dsn),
+        )
+        await provision(provisional)
+
+        for role in ROLE_NAMES:
+            login = f"fixture_{role.removeprefix('slaif_')}_{suffix}"
+            password = f"fixture-{role.removeprefix('slaif_')}-{suffix}"
+            login_roles.append(login)
+            credentials[role] = (login, password)
+            await administrator.execute(
+                f"CREATE ROLE {quote_identifier(login)} LOGIN PASSWORD "
+                f"'{password}' NOSUPERUSER NOCREATEDB NOCREATEROLE "
+                "INHERIT NOREPLICATION NOBYPASSRLS"
+            )
+            await administrator.execute(
+                f"GRANT {quote_identifier(role)} TO {quote_identifier(login)}"
+            )
+
+        owner_login, owner_password = credentials["slaif_owner"]
+        owner_dsn = _dsn(
+            parameters=parameters,
+            database=database,
+            user=owner_login,
+            password=owner_password,
+        )
+        settings = BootstrapSettings(
+            mode=BootstrapMode.TEST,
+            expected_database=database,
+            provisioner_dsn=SecretStr(provisioner_dsn),
+            owner_dsn=SecretStr(owner_dsn),
+        )
+        yield AgentSiteDatabase(
+            database,
+            settings,
+            administrator,
+            parameters,
+            credentials,
+        )
+    finally:
+        await administrator.execute(
+            "SELECT pg_terminate_backend(pid) FROM pg_catalog.pg_stat_activity "
+            "WHERE datname = $1 AND pid <> pg_backend_pid()",
+            database,
+        )
+        await administrator.execute(
+            f"DROP DATABASE IF EXISTS {quote_identifier(database)}"
+        )
+        for login in reversed(login_roles):
+            await administrator.execute(
+                f"DROP ROLE IF EXISTS {quote_identifier(login)}"
+            )
+        for role in reversed(ROLE_NAMES):
+            await administrator.execute(f"DROP ROLE IF EXISTS {quote_identifier(role)}")
+        await administrator.close()
 
 
 @pytest_asyncio.fixture(scope="session")

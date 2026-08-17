@@ -305,6 +305,11 @@ rewrite them, and never merge the objective PR.
   UI hides an action.
 - Make migrations deterministic and reversible where practical. Agents and
   site users never invoke physical schema migration.
+- Keep cluster role provisioning, setup-owner migration/bootstrap, and online
+  service credentials separate. `EMPTY_SAFE` is valid only for an independently
+  proven zero-object/zero-authority `content` schema and must not claim
+  foundation hardening; the first trusted content table requires the fully
+  validated `HARDENED` state.
 - Treat accessibility, responsive behavior, privacy, failure behavior, and
   operations as implementation requirements, not polish.
 - Do not weaken validation, tests, authorization, network confinement, or
