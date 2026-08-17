@@ -108,6 +108,37 @@ npm CLI tree, the NGINX stage removes unused curl and its orphaned libraries,
 and the Apache reference removes unused Perl. These removals do not change the
 public edge, health, service, network, or secret topology.
 
+### PostgreSQL persistent-volume transition blocker
+
+The current Alpine PostgreSQL image is qualified for a newly initialized local
+volume only. It is **not** a compatible in-place replacement for the exact
+previously accepted image/volume pair:
+
+```text
+from postgres:18.6-trixie
+sha256:06cad38a5d9f5d24b4d83d86def30795d5e4b757fedbf5281172b576dedcd941
+
+to postgres:18.6-alpine3.23
+sha256:697c180dbf244d3ce4a8f4cbc0156cde840af055c1bf8b76aebe422a4822086f
+```
+
+The mandatory disposable transition test starts and restarts Alpine against
+the unchanged Trixie-created volume. PostgreSQL reaches read/write health and
+preserves `006_001`, `EMPTY_SAFE safe=true`, all fixed roles and logins,
+representative rows, constraints, indexes, and query digests. The Trixie
+cluster, however, records libc collation version `2.41`; Alpine cannot report
+an actual version for its stored `en_US.utf8` collation and emits:
+
+```text
+database "slaif" has no actual collation version, but a version was recorded
+```
+
+That warning and stored-versus-actual mismatch fail the compatibility contract.
+Do not point the Alpine image at a Trixie-initialized operator volume. No
+automatic initialization, repair, collation refresh, reindex, upgrade, or
+dump/restore is implemented. Preserve the old volume and exact image until a
+separate human-approved migration or rollback decision exists.
+
 The new Web registry inputs are exact and frozen with these npm integrity
 values:
 
@@ -131,6 +162,11 @@ Updates require a scoped work order, registry/version/license/platform review,
 replacement top-level digest, clean builds, the complete packaging test, and
 the normal dependency/security gates. Never refresh a digest without reviewing
 the readable tag it is meant to freeze.
+
+Before publishing any project image, release owners must also retain durable
+OS/runtime license texts, notices, and source-offer evidence appropriate to the
+image contents. The current 14-day CI inventory is review evidence, not durable
+release-notice packaging.
 
 ## Network and credential topology
 

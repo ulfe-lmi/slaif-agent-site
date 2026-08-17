@@ -29,6 +29,19 @@ IMMUTABLE_IMAGE = re.compile(
     r"^[a-z0-9][a-z0-9./_-]*:[A-Za-z0-9_.-]+@sha256:[0-9a-f]{64}$"
 )
 SIMPLE_LICENSE = re.compile(r"^[A-Za-z0-9.+-]+(?: (?:AND|OR) [A-Za-z0-9.+-]+)*$")
+POSTGRES_TRANSITION = {
+    "postgres-18.6-trixie-to-alpine3.23": {
+        "from": (
+            "docker.io/library/postgres:18.6-trixie@sha256:"
+            "06cad38a5d9f5d24b4d83d86def30795d5e4b757fedbf5281172b576dedcd941"
+        ),
+        "purpose": "persistent-volume-compatibility",
+        "to": (
+            "docker.io/library/postgres:18.6-alpine3.23@sha256:"
+            "697c180dbf244d3ce4a8f4cbc0156cde840af055c1bf8b76aebe422a4822086f"
+        ),
+    }
+}
 
 
 class PolicyError(ValueError):
@@ -96,6 +109,7 @@ def validate_policy(policy: dict[str, Any]) -> None:
         "container_license_policy",
         "evidence",
         "github_actions",
+        "historical_oci_transitions",
         "license_metadata_reviews",
         "oci_sources",
         "project",
@@ -251,6 +265,17 @@ def validate_policy(policy: dict[str, Any]) -> None:
     for name, reference in images.items():
         if not isinstance(reference, str) or not IMMUTABLE_IMAGE.fullmatch(reference):
             raise PolicyError(f"policy: OCI source {name} is not tag+digest pinned")
+
+    transitions = policy["historical_oci_transitions"]
+    if transitions != POSTGRES_TRANSITION:
+        raise PolicyError("policy: historical PostgreSQL transition pair is invalid")
+    transition = transitions["postgres-18.6-trixie-to-alpine3.23"]
+    if transition["to"] != images.get("postgres"):
+        raise PolicyError("policy: PostgreSQL transition target is not current")
+    if transition["from"] in images.values():
+        raise PolicyError(
+            "policy: historical PostgreSQL image is a current build input"
+        )
 
     overrides = policy["alpine_package_overrides"]
     if not isinstance(overrides, dict) or set(overrides) != {"images", "registry"}:

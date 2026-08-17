@@ -12,6 +12,7 @@ from pathlib import Path
 
 from tools.supply_chain.policy import (
     POLICY_PATH,
+    POSTGRES_TRANSITION,
     ROOT,
     PolicyError,
     canonical_image,
@@ -33,6 +34,27 @@ class SupplyChainPolicyTests(unittest.TestCase):
         inventory = validate_dependency_sources(ROOT, self.policy)
         self.assertEqual(len(inventory["github_actions"]), 10)
         self.assertEqual(len(inventory["oci_sources"]), 6)
+        self.assertEqual(self.policy["historical_oci_transitions"], POSTGRES_TRANSITION)
+        historical = next(iter(POSTGRES_TRANSITION.values()))["from"]
+        self.assertNotIn(historical, self.policy["oci_sources"].values())
+
+    def test_historical_postgres_transition_pair_cannot_drift(self) -> None:
+        mutations = (
+            ("from", "docker.io/library/postgres:18.6-trixie@sha256:" + "a" * 64),
+            ("to", "docker.io/library/postgres:18.6-alpine3.23@sha256:" + "b" * 64),
+            ("purpose", "current-build-input"),
+        )
+        for field, value in mutations:
+            with self.subTest(field=field):
+                changed = copy.deepcopy(self.policy)
+                transition = changed["historical_oci_transitions"][
+                    "postgres-18.6-trixie-to-alpine3.23"
+                ]
+                transition[field] = value
+                with self.assertRaisesRegex(
+                    PolicyError, "historical PostgreSQL transition pair is invalid"
+                ):
+                    validate_policy(changed)
 
     def test_image_reference_canonicalization_is_structural(self) -> None:
         cases = {
