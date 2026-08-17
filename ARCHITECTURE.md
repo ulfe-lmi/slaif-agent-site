@@ -1760,7 +1760,7 @@ sequenceDiagram
     C-->>API: trusted site ID, session UUID, scopes, state
     API->>AC: enter scope(session UUID, server operation UUID)
     AC->>C: acquire shared workspace lock
-    AC->>C: assert capability still active; consume budget
+    AC->>C: assert capability still active#59; consume budget
     API->>V: semantic SQL through view
     V-->>API: session-overlay result
     API->>J: append semantic event
@@ -1782,7 +1782,7 @@ sequenceDiagram
     participant C as content/control/audit schemas
 
     H->>CAPI: Freeze for review
-    CAPI->>C: revoke capability; mark FREEZING
+    CAPI->>C: revoke capability#59; mark FREEZING
     CAPI->>Q: enqueue FREEZE_FINALIZE
     W->>C: acquire exclusive product workspace lock
     W->>R: inspect final workspace state
@@ -1802,7 +1802,7 @@ sequenceDiagram
     R->>C: repeat conflicts and dependency checks
     W->>C: validate audit, model/items, composition/bindings, snapshot, and media
     R->>C: commit session, conflict_policy=error
-    W->>C: increment site revision; mark ACCEPTED; audit snapshot digest
+    W->>C: increment site revision#59; mark ACCEPTED#59; audit snapshot digest
     R->>R: commit transaction
     W-->>CAPI: terminal result available
 ```

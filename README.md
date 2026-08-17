@@ -177,12 +177,14 @@ application directories do not exist yet.
 ## Repository checks and CodeQL
 
 The [CI workflow](.github/workflows/ci.yml) runs deterministic repository
-policy, isolated standard-library unit tests, Markdown lint, and pull-request
-dependency review. The [advanced CodeQL workflow](.github/workflows/codeql.yml)
-detects a fixed language allowlist: GitHub Actions while workflow files exist,
-Python when Python source exists, and JavaScript/TypeScript when corresponding
-source is later added. It uses no-build analysis with the
-`security-extended` query suite.
+policy, isolated standard-library unit tests, Markdown lint, exact-version
+Mermaid rendering for every Mermaid fence, and pull-request dependency review.
+The transient renderer adds no production dependency or committed output. The
+[advanced CodeQL workflow](.github/workflows/codeql.yml) detects a fixed
+language allowlist: GitHub Actions while workflow files exist, Python when
+Python source exists, and JavaScript/TypeScript when corresponding source is
+later added. It uses no-build analysis with the `security-extended` query
+suite.
 
 All external actions are pinned to reviewed full commit SHAs. Dependabot is
 limited to GitHub Actions until application dependency manifests exist. These
