@@ -1,0 +1,246 @@
+"""Metadata, public-API, lock, and package-content qualification tests."""
+
+from __future__ import annotations
+
+import ast
+import email.parser
+import hashlib
+import importlib
+import importlib.metadata
+import re
+import subprocess
+import sys
+import tarfile
+import tomllib
+import zipfile
+from pathlib import Path
+
+from packaging.specifiers import SpecifierSet
+from packaging.version import Version
+from slaif_agent_site.agent_state import foundation
+
+REPOSITORY_ROOT = Path(__file__).resolve().parents[4]
+FOUNDATION_VERSION = "0.2.0"
+FOUNDATION_WHEEL_SHA256 = (
+    "c469d24700fabb93a58f464d3539a32e936097f93035a95f193062859546f5b1"
+)
+FOUNDATION_SDIST_SHA256 = (
+    "eae8d434d2fc03c4faa08b44b4863fc8f8efb44ee33eaad3adc22e7eb96a062c"
+)
+EXPECTED_PUBLIC_API = {
+    "CowConflict",
+    "CowConflictError",
+    "CowPostgresConfig",
+    "CowPrivilegeValidation",
+    "CowReviewer",
+    "CowSession",
+    "DiscardResult",
+    "PromotionResult",
+    "asyncpg_cow_reviewer",
+    "asyncpg_cow_session",
+    "deploy_cow_functions",
+    "enable_cow_schema",
+    "get_cow_conflicts",
+    "get_operation_dependencies",
+    "get_session_operations",
+    "harden_cow_schema",
+    "validate_cow_schema_privileges",
+}
+EXPECTED_PACKAGE_FILES = {
+    "slaif_agent_site/__init__.py",
+    "slaif_agent_site/agent_state/__init__.py",
+    "slaif_agent_site/agent_state/foundation.py",
+}
+EXPECTED_SDIST_FILES = {
+    "LICENSE",
+    "NOTICE",
+    "PKG-INFO",
+    "README.md",
+    "pyproject.toml",
+    "pyproject.toml.orig",
+    "services/backend/src/slaif_agent_site/__init__.py",
+    "services/backend/src/slaif_agent_site/agent_state/__init__.py",
+    "services/backend/src/slaif_agent_site/agent_state/foundation.py",
+}
+
+
+def _load_toml(relative: str) -> dict[str, object]:
+    with (REPOSITORY_ROOT / relative).open("rb") as handle:
+        return tomllib.load(handle)
+
+
+def _package_record(lock: dict[str, object], name: str) -> dict[str, object]:
+    packages = lock["package"]
+    assert isinstance(packages, list)
+    matches = [
+        package
+        for package in packages
+        if isinstance(package, dict) and package.get("name") == name
+    ]
+    assert len(matches) == 1
+    return matches[0]
+
+
+def test_exact_distribution_and_public_imports() -> None:
+    assert importlib.metadata.version("agent-cow-postgresql") == FOUNDATION_VERSION
+    assert importlib.import_module("agentcow")
+    public_module = importlib.import_module("agentcow.postgres")
+    assert EXPECTED_PUBLIC_API <= set(public_module.__all__)
+    assert set(foundation.QUALIFIED_PUBLIC_API) == EXPECTED_PUBLIC_API
+    assert foundation.FOUNDATION_DISTRIBUTION == "agent-cow-postgresql"
+    assert foundation.FOUNDATION_VERSION == FOUNDATION_VERSION
+    for symbol in EXPECTED_PUBLIC_API:
+        assert getattr(foundation, symbol) is getattr(public_module, symbol)
+
+
+def test_adapter_is_only_a_documented_public_import_boundary() -> None:
+    source_path = Path(foundation.__file__)
+    source = source_path.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    imports = [node for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)]
+    foundation_imports = [
+        node for node in imports if node.module == "agentcow.postgres"
+    ]
+
+    assert len(foundation_imports) == 1
+    assert {alias.name for alias in foundation_imports[0].names} == EXPECTED_PUBLIC_API
+    assert all(not alias.name.startswith("_") for alias in foundation_imports[0].names)
+    assert all(node.module in {"__future__", "agentcow.postgres"} for node in imports)
+    assert not re.search(
+        r"\b(?:SELECT|INSERT|UPDATE|DELETE|CREATE|ALTER|DROP)\b", source
+    )
+    assert "_base" not in source
+    assert "_changes" not in source
+    assert "native" not in source
+
+
+def test_python_and_package_metadata_ranges_are_coherent() -> None:
+    project = _load_toml("pyproject.toml")["project"]
+    assert isinstance(project, dict)
+    assert project["name"] == "slaif-agent-site"
+    assert project["version"] == "0.0.0"
+    assert project["requires-python"] == ">=3.12,<3.15"
+    assert project["license"] == "Apache-2.0"
+    assert project["readme"] == "README.md"
+    assert project["dependencies"] == ["agent-cow-postgresql==0.2.0"]
+
+    build_system = _load_toml("pyproject.toml")["build-system"]
+    assert isinstance(build_system, dict)
+    assert build_system == {
+        "requires": ["uv_build==0.12.5"],
+        "build-backend": "uv_build",
+    }
+
+    foundation_metadata = importlib.metadata.metadata("agent-cow-postgresql")
+    assert foundation_metadata["License-Expression"] == "MIT"
+    foundation_python = SpecifierSet(foundation_metadata["Requires-Python"])
+    product_python = SpecifierSet(str(project["requires-python"]))
+    for version in (Version("3.12"), Version("3.13"), Version("3.14")):
+        assert version in product_python
+        assert version in foundation_python
+
+    product_metadata = importlib.metadata.metadata("slaif-agent-site")
+    assert product_metadata["Version"] == "0.0.0"
+    assert SpecifierSet(product_metadata["Requires-Python"]) == product_python
+    assert product_metadata["License-Expression"] == "Apache-2.0"
+    assert product_metadata["Description-Content-Type"] == "text/markdown"
+
+
+def test_lock_uses_exact_verified_registry_artifacts() -> None:
+    lock = _load_toml("uv.lock")
+    package = _package_record(lock, "agent-cow-postgresql")
+
+    assert package["version"] == FOUNDATION_VERSION
+    assert package["source"] == {"registry": "https://pypi.org/simple"}
+    sdist = package["sdist"]
+    wheels = package["wheels"]
+    assert isinstance(sdist, dict)
+    assert isinstance(wheels, list)
+    assert sdist["hash"] == f"sha256:{FOUNDATION_SDIST_SHA256}"
+    wheel_hashes = {
+        wheel["hash"] for wheel in wheels if isinstance(wheel, dict) and "hash" in wheel
+    }
+    assert f"sha256:{FOUNDATION_WHEEL_SHA256}" in wheel_hashes
+
+    serialized = repr(package).lower()
+    assert "git+" not in serialized
+    assert "editable" not in serialized
+    assert "'git'" not in serialized
+    assert "'path'" not in serialized
+    assert "'url':" not in repr(package["source"]).lower()
+
+
+def test_built_distributions_have_bounded_contents_and_metadata(
+    tmp_path: Path,
+) -> None:
+    subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "build",
+            "--no-isolation",
+            "--outdir",
+            str(tmp_path),
+        ],
+        cwd=REPOSITORY_ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    wheel = next(tmp_path.glob("slaif_agent_site-0.0.0-*.whl"))
+    sdist = tmp_path / "slaif_agent_site-0.0.0.tar.gz"
+    assert sdist.is_file()
+
+    with zipfile.ZipFile(wheel) as archive:
+        wheel_names = set(archive.namelist())
+        package_files = {
+            name
+            for name in wheel_names
+            if name.startswith("slaif_agent_site/") and not name.endswith("/")
+        }
+        assert package_files == EXPECTED_PACKAGE_FILES
+        metadata_name = next(
+            name for name in wheel_names if name.endswith(".dist-info/METADATA")
+        )
+        metadata_bytes = archive.read(metadata_name)
+
+    with tarfile.open(sdist, mode="r:gz") as archive:
+        sdist_names = {member.name for member in archive.getmembers()}
+        sdist_files = {
+            member.name.split("/", maxsplit=1)[1]
+            for member in archive.getmembers()
+            if member.isfile()
+        }
+        assert sdist_files == EXPECTED_SDIST_FILES
+
+    all_names = wheel_names | sdist_names
+    forbidden_parts = (
+        "/.env",
+        "/.git/",
+        "/__pycache__/",
+        "/oap/",
+        "/tests/",
+        ".coverage",
+        ".pem",
+        ".pyc",
+    )
+    assert not any(part in name for name in all_names for part in forbidden_parts)
+    assert not any("secret" in name.lower() for name in all_names)
+    assert all(
+        name.startswith("slaif_agent_site-0.0.0.dist-info/")
+        for name in wheel_names
+        if not name.startswith("slaif_agent_site/")
+    )
+
+    metadata = email.parser.BytesParser().parsebytes(metadata_bytes)
+    assert metadata["Name"] == "slaif-agent-site"
+    assert metadata["Version"] == "0.0.0"
+    assert metadata["License-Expression"] == "Apache-2.0"
+    assert SpecifierSet(metadata["Requires-Python"]) == SpecifierSet(">=3.12,<3.15")
+    assert metadata.get_all("Requires-Dist") == ["agent-cow-postgresql==0.2.0"]
+
+
+def test_locked_foundation_artifact_hash_constants_are_sha256() -> None:
+    for digest in (FOUNDATION_WHEEL_SHA256, FOUNDATION_SDIST_SHA256):
+        assert len(digest) == hashlib.sha256().digest_size * 2
+        assert re.fullmatch(r"[0-9a-f]{64}", digest)
