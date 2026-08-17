@@ -16,15 +16,17 @@ the real responsive result, and publish only after human review.
 
 ## Current status
 
-> **Pre-alpha / pre-implementation.** This repository currently contains the
-> normative architecture, coding-agent governance, project documentation,
-> repository-policy checks, and CI/security-analysis workflows. The runnable
-> Agent-Site application, Compose stack, database schema, APIs, browser worker,
-> and product test suites are not implemented yet.
+> **Pre-alpha / foundation baseline.** This repository contains the normative
+> architecture, coding-agent governance, project documentation, reproducible
+> Python package baseline, and qualified `agent-cow-postgresql==0.2.0`
+> dependency. The runnable Agent-Site application, Compose stack, product
+> database schema, APIs, browser worker, and product test suites are not
+> implemented yet.
 
-The current automation checks preparation artifacts and repository policy. A
-green CI or CodeQL result does not prove product readiness, validate the
-planned runtime, or certify the security architecture.
+The current automation checks preparation artifacts, the Python package and
+foundation contract, and a disposable downstream PostgreSQL adoption baseline.
+A green CI or CodeQL result does not prove product readiness, validate the
+planned runtime, or certify the complete security architecture.
 
 ## Why Agent-Site
 
@@ -53,7 +55,7 @@ The design has three distinct layers:
 | --- | --- |
 | **SLAIF Agent-Site** | Identity, sites, configurable content models, Puck, semantic APIs/MCP, rendering, browser tools, media, administration, and operations. |
 | **SLAIF Agent-State** | Site-bound workspaces, capabilities, delegation, audit, immutable review snapshots, conflict-safe promotion/discard, expiry, and cleanup. |
-| **`agent-cow-postgresql`** | Generic PostgreSQL logical copy-on-write mechanics, planned as the PyPI dependency `agent-cow-postgresql==0.2.0`, frozen with registry artifact hashes and never installed from Git/VCS in production. |
+| **`agent-cow-postgresql`** | Generic PostgreSQL logical copy-on-write mechanics, integrated as the PyPI dependency `agent-cow-postgresql==0.2.0`, frozen with registry artifact hashes and never installed from Git/VCS in production. |
 
 ```mermaid
 flowchart LR
@@ -144,7 +146,7 @@ acceptance target for later implementation phases.
 | State | Work |
 | --- | --- |
 | Completed preparation | Normative architecture, coding governance, versioned OAP transcript, professional project guidance, deterministic repository policy, and initial CI/CodeQL configuration. |
-| Planned foundation qualification | Add the exact PyPI dependency and lockfile hashes; verify public APIs, licenses, PostgreSQL support, privileges, conflicts, concurrency, and cancellation. |
+| Completed foundation baseline | Exact PyPI dependency and artifact hashes, public API adapter boundary, Python packaging, and downstream PostgreSQL 14–18 adoption gate. |
 | Planned product skeleton | Add the monorepo, one-command Compose packaging, secure first-run setup, service roles, and health checks. |
 | Planned product work | Implement identity/sites/workspaces, configurable content, normalized composition/Puck, semantic tools, browser feedback, review/promotion, reconstruction, and hardening. |
 
@@ -158,8 +160,9 @@ The current repository is intentionally small:
 ```text
 .
 ├── .github/             # CI, CodeQL, Dependabot, and PR guidance
-├── docs/assets/         # locally vendored SLAIF brand asset and provenance
+├── docs/                # foundation record and local brand asset provenance
 ├── oap/                 # versioned strategic orders, active pointer, reports
+├── services/backend/    # minimal Python package and foundation qualification
 ├── tests/repository/    # isolated repository-policy unit tests
 ├── tools/               # standard-library repository-policy checker
 ├── AGENTS.md            # coding-agent constitution
@@ -167,6 +170,8 @@ The current repository is intentionally small:
 ├── CONTRIBUTING.md
 ├── SECURITY.md
 ├── NOTICE
+├── pyproject.toml
+├── uv.lock
 └── README.md
 ```
 
@@ -177,18 +182,22 @@ application directories do not exist yet.
 ## Repository checks and CodeQL
 
 The [CI workflow](.github/workflows/ci.yml) runs deterministic repository
-policy, isolated standard-library unit tests, Markdown lint, exact-version
-Mermaid rendering for every Mermaid fence, and pull-request dependency review.
-The transient renderer adds no production dependency or committed output. The
+policy, isolated policy tests, Markdown lint, exact-version Mermaid rendering,
+pull-request dependency review, Python 3.12–3.14 lint/type/unit/package gates,
+and the downstream foundation adoption test on PostgreSQL 14–18. See the
+[foundation integration record](docs/FOUNDATION_INTEGRATION.md) for the exact
+registry artifacts, public surface, commands, and limitations. The transient
+diagram and package builds add no production dependency or committed output. The
 [advanced CodeQL workflow](.github/workflows/codeql.yml) detects a fixed
 language allowlist: GitHub Actions while workflow files exist, Python when
 Python source exists, and JavaScript/TypeScript when corresponding source is
 later added. It uses no-build analysis with the `security-extended` query
 suite.
 
-All external actions are pinned to reviewed full commit SHAs. Dependabot is
-limited to GitHub Actions until application dependency manifests exist. These
-preparation checks will be extended—not replaced—as product code and its
+All external actions are pinned to reviewed full commit SHAs. Dependabot
+proposes grouped weekly GitHub Actions and Python dependency updates; the
+foundation version still requires explicit qualification. These checks will be
+extended—not replaced—as product code and its
 database, browser, packaging, security, recovery, and license tests arrive.
 
 ## Governance and contributing

@@ -14,11 +14,13 @@ recorded in docs/assets/README.md. Copyright or open-source license terms do
 not grant trademark rights. Use of the SLAIF identity must not imply
 unauthorized endorsement.
 
-Planned foundation attribution
+Foundation attribution
 
-The architecture plans to use the MIT-licensed agent-cow-postgresql package
-and preserve its upstream/downstream attribution when it is integrated. The
-package is not installed or vendored in this preparation-only repository state.
+This project depends on the MIT-licensed agent-cow-postgresql 0.2.0 PyPI
+distribution, maintained at https://github.com/jpers1/agent-cow-postgresql.
+That project is a PostgreSQL-focused downstream fork of Trail's MIT-licensed
+agent-cow-python project at https://github.com/trail-ml/agent-cow-python. The
+dependency is installed from PyPI and is not vendored into this repository.
 
 Funding acknowledgement
 

@@ -15,13 +15,23 @@ import argparse
 import hashlib
 import re
 import sys
+import tomllib
+import xml.etree.ElementTree as ET
 from collections import defaultdict
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
-import xml.etree.ElementTree as ET
-
 
 LOGO_SHA256 = "0760613aca18ace80d559686e98ec640f9f85caa163c5338c28e73b57b9c7a08"
+FOUNDATION_VERSION = "0.2.0"
+FOUNDATION_REGISTRY = "https://pypi.org/simple"
+FOUNDATION_WHEEL = "agent_cow_postgresql-0.2.0-py3-none-any.whl"
+FOUNDATION_WHEEL_SHA256 = (
+    "c469d24700fabb93a58f464d3539a32e936097f93035a95f193062859546f5b1"
+)
+FOUNDATION_SDIST = "agent_cow_postgresql-0.2.0.tar.gz"
+FOUNDATION_SDIST_SHA256 = (
+    "eae8d434d2fc03c4faa08b44b4863fc8f8efb44ee33eaad3adc22e7eb96a062c"
+)
 REQUIRED_FILES = (
     ".github/dependabot.yml",
     ".github/pull_request_template.md",
@@ -36,13 +46,22 @@ REQUIRED_FILES = (
     "OAP-COMMUNICATION-coding-agent.md",
     "README.md",
     "SECURITY.md",
+    "docs/FOUNDATION_INTEGRATION.md",
     "docs/assets/README.md",
     "docs/assets/slaif-logo.svg",
     "oap/active",
+    "pyproject.toml",
+    "services/backend/src/slaif_agent_site/__init__.py",
+    "services/backend/src/slaif_agent_site/agent_state/__init__.py",
+    "services/backend/src/slaif_agent_site/agent_state/foundation.py",
+    "services/backend/tests/conftest.py",
+    "services/backend/tests/integration/test_foundation_postgres.py",
+    "services/backend/tests/unit/test_foundation_contract.py",
     "tests/repository/test_mermaid.py",
     "tests/repository/test_repository_policy.py",
     "tools/check_mermaid.py",
     "tools/check_repository.py",
+    "uv.lock",
 )
 REQUIRED_README_TARGETS = (
     ".github/workflows/ci.yml",
@@ -50,6 +69,7 @@ REQUIRED_README_TARGETS = (
     "AGENTS.md",
     "ARCHITECTURE.md",
     "CONTRIBUTING.md",
+    "docs/FOUNDATION_INTEGRATION.md",
     "LICENSE",
     "NOTICE",
     "SECURITY.md",
@@ -64,6 +84,7 @@ APPROVED_ACTIONS = {
     "github/codeql-action/analyze": "ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd",
     "actions/dependency-review-action": "a1d282b36b6f3519aa1f3fc636f609c47dddb294",
     "DavidAnson/markdownlint-cli2-action": "21c1be1b93ad9ed58fa840aacc3f279cde2a72ff",
+    "astral-sh/setup-uv": "20cfd1bf945f4377ade1205e4dbc17946fc9a30d",
 }
 TEXT_NAMES = {
     "LICENSE",
@@ -202,7 +223,14 @@ class RepositoryPolicy:
             return
         if self.local_name(root.tag).lower() != "svg":
             self.error(path, "XML root element is not svg")
-        forbidden_elements = {"embed", "foreignobject", "iframe", "image", "object", "script"}
+        forbidden_elements = {
+            "embed",
+            "foreignobject",
+            "iframe",
+            "image",
+            "object",
+            "script",
+        }
         for element in root.iter():
             element_name = self.local_name(element.tag).lower()
             if element_name in forbidden_elements:
@@ -212,14 +240,24 @@ class RepositoryPolicy:
                 normalized = value.strip().lower()
                 if name.startswith("on"):
                     self.error(path, f"contains event-handler attribute {name}")
-                if name in {"href", "src"} and normalized and not normalized.startswith("#"):
+                if (
+                    name in {"href", "src"}
+                    and normalized
+                    and not normalized.startswith("#")
+                ):
                     self.error(path, f"contains external resource reference in {name}")
-                if "javascript:" in normalized or "data:" in normalized or "file:" in normalized:
+                if (
+                    "javascript:" in normalized
+                    or "data:" in normalized
+                    or "file:" in normalized
+                ):
                     self.error(path, f"contains unsafe attribute value in {name}")
         xml_text = data.decode("utf-8", errors="replace")
         if re.search(r"@import", xml_text, re.IGNORECASE):
             self.error(path, "contains a CSS @import")
-        for reference in re.findall(r"url\(\s*['\"]?([^)'\"\s]+)", xml_text, re.IGNORECASE):
+        for reference in re.findall(
+            r"url\(\s*['\"]?([^)'\"\s]+)", xml_text, re.IGNORECASE
+        ):
             if not reference.startswith("#"):
                 self.error(path, "contains an external CSS resource reference")
 
@@ -290,30 +328,45 @@ class RepositoryPolicy:
             text = self.read_utf8(active_path)
             if text is not None:
                 if not re.fullmatch(r"\d{3}-[a-z]\n?", text):
-                    self.error(active_path, "must contain one NNN-x identifier and optional final newline")
+                    self.error(
+                        active_path,
+                        "must contain one NNN-x identifier and optional final newline",
+                    )
                 else:
                     active = text.strip()
 
         orders = self.group_oap_artifacts(orders_dir, "order")
         reports = self.group_oap_artifacts(reports_dir, "report")
         if active is not None and len(orders.get(active, [])) != 1:
-            self.error(orders_dir, f"active identifier {active} must have exactly one order")
+            self.error(
+                orders_dir, f"active identifier {active} must have exactly one order"
+            )
         for identifier in sorted(orders):
             count = len(reports.get(identifier, []))
             if identifier == active:
                 if count > 1:
-                    self.error(reports_dir, f"active identifier {identifier} has more than one report")
+                    self.error(
+                        reports_dir,
+                        f"active identifier {identifier} has more than one report",
+                    )
             elif count != 1:
-                self.error(reports_dir, f"historical identifier {identifier} must have exactly one report")
+                self.error(
+                    reports_dir,
+                    f"historical identifier {identifier} must have exactly one report",
+                )
         for identifier in sorted(set(reports) - set(orders)):
-            self.error(reports_dir, f"identifier {identifier} has a report without an order")
+            self.error(
+                reports_dir, f"identifier {identifier} has a report without an order"
+            )
 
         oap_root = self.root / "oap"
         if oap_root.exists():
             temporary = re.compile(r"(?:^\.|\.tmp$|\.part$|\.new$|\.bak$|\.swp$|~$)")
             for path in sorted(oap_root.rglob("*")):
                 if path.is_file() and temporary.search(path.name):
-                    self.error(path, "temporary/publication artifact is forbidden in oap")
+                    self.error(
+                        path, "temporary/publication artifact is forbidden in oap"
+                    )
 
     def group_oap_artifacts(self, directory: Path, label: str) -> dict[str, list[Path]]:
         grouped: dict[str, list[Path]] = defaultdict(list)
@@ -328,7 +381,9 @@ class RepositoryPolicy:
             grouped[match.group(1)].append(path)
         for identifier, paths in sorted(grouped.items()):
             if len(paths) > 1:
-                self.error(directory, f"identifier {identifier} has {len(paths)} {label} files")
+                self.error(
+                    directory, f"identifier {identifier} has {len(paths)} {label} files"
+                )
         return grouped
 
     def check_workflows(self) -> None:
@@ -344,9 +399,14 @@ class RepositoryPolicy:
             if re.search(r"\bwrite-all\b", text, re.IGNORECASE):
                 self.error(path, "write-all permission is forbidden")
             for number, line in enumerate(text.splitlines(), start=1):
-                permission = re.match(r"^\s*([a-z][a-z-]*)\s*:\s*write\s*(?:#.*)?$", line)
+                permission = re.match(
+                    r"^\s*([a-z][a-z-]*)\s*:\s*write\s*(?:#.*)?$", line
+                )
                 if permission and permission.group(1) != "security-events":
-                    self.error(path, f"line {number} grants forbidden {permission.group(1)}: write")
+                    self.error(
+                        path,
+                        f"line {number} grants forbidden {permission.group(1)}: write",
+                    )
                 uses = USES_LINE.match(line)
                 if uses is None:
                     continue
@@ -358,20 +418,38 @@ class RepositoryPolicy:
                     continue
                 action, revision = reference.rsplit("@", 1)
                 if not FULL_SHA.fullmatch(revision):
-                    self.error(path, f"line {number} action revision is not a lowercase full SHA")
+                    self.error(
+                        path,
+                        f"line {number} action revision is not a lowercase full SHA",
+                    )
                     continue
                 approved = APPROVED_ACTIONS.get(action)
                 if approved != revision:
                     self.error(path, f"line {number} action revision is not approved")
-                if not release_comment or not re.fullmatch(r"v\d+(?:\.\d+){1,2}", release_comment):
-                    self.error(path, f"line {number} action needs a release-version comment")
+                if not release_comment or not re.fullmatch(
+                    r"v\d+(?:\.\d+){1,2}", release_comment
+                ):
+                    self.error(
+                        path, f"line {number} action needs a release-version comment"
+                    )
 
     def check_foundation_dependencies(self) -> None:
+        pyproject_path = self.root / "pyproject.toml"
+        lock_path = self.root / "uv.lock"
+        if pyproject_path.is_file():
+            self.check_foundation_pyproject(pyproject_path)
+        if lock_path.is_file():
+            self.check_foundation_lock(lock_path)
+
         candidates: list[Path] = []
         for path in self.root.rglob("*"):
-            if not path.is_file() or any(part in SKIP_DIRS for part in path.relative_to(self.root).parts):
+            if not path.is_file() or any(
+                part in SKIP_DIRS for part in path.relative_to(self.root).parts
+            ):
                 continue
-            if path.name in MANIFEST_NAMES or path.name.startswith("requirements"):
+            if path != pyproject_path and (
+                path.name in MANIFEST_NAMES or path.name.startswith("requirements")
+            ):
                 candidates.append(path)
         for path in sorted(candidates):
             text = self.read_utf8(path)
@@ -389,10 +467,110 @@ class RepositoryPolicy:
                     or ("http://" in lower or "https://" in lower or "file:" in lower)
                 )
                 if forbidden:
-                    self.error(path, f"line {number} uses a forbidden foundation dependency source")
+                    self.error(
+                        path,
+                        f"line {number} uses a forbidden foundation dependency source",
+                    )
                     continue
                 if "==" not in lower:
-                    self.error(path, f"line {number} foundation dependency is not exactly version-pinned")
+                    self.error(
+                        path,
+                        f"line {number} foundation dependency is not exactly "
+                        "version-pinned",
+                    )
+
+    def load_toml(self, path: Path) -> dict[str, object] | None:
+        try:
+            with path.open("rb") as handle:
+                return tomllib.load(handle)
+        except (OSError, tomllib.TOMLDecodeError) as exc:
+            self.error(path, f"cannot parse TOML ({exc})")
+        return None
+
+    def check_foundation_pyproject(self, path: Path) -> None:
+        document = self.load_toml(path)
+        if document is None:
+            return
+        project = document.get("project")
+        dependencies: object = None
+        if isinstance(project, dict):
+            dependencies = project.get("dependencies")
+        expected = f"agent-cow-postgresql=={FOUNDATION_VERSION}"
+        matches = []
+        if isinstance(dependencies, list):
+            matches = [
+                dependency
+                for dependency in dependencies
+                if isinstance(dependency, str)
+                and "agent-cow-postgresql" in dependency.lower()
+            ]
+        if matches != [expected]:
+            self.error(
+                path,
+                f"project.dependencies must contain exactly {expected!r}",
+            )
+
+        tool = document.get("tool")
+        uv_sources: object = None
+        if isinstance(tool, dict):
+            uv = tool.get("uv")
+            if isinstance(uv, dict):
+                uv_sources = uv.get("sources")
+        if isinstance(uv_sources, dict) and any(
+            str(name).lower().replace("_", "-") == "agent-cow-postgresql"
+            for name in uv_sources
+        ):
+            self.error(path, "foundation dependency source override is forbidden")
+
+    def check_foundation_lock(self, path: Path) -> None:
+        document = self.load_toml(path)
+        if document is None:
+            return
+        packages = document.get("package")
+        matches: list[dict[str, object]] = []
+        if isinstance(packages, list):
+            matches = [
+                package
+                for package in packages
+                if isinstance(package, dict)
+                and package.get("name") == "agent-cow-postgresql"
+            ]
+        if len(matches) != 1:
+            self.error(path, "must contain exactly one locked foundation package")
+            return
+        package = matches[0]
+        if package.get("version") != FOUNDATION_VERSION:
+            self.error(path, f"foundation version must be exactly {FOUNDATION_VERSION}")
+        source = package.get("source")
+        if source != {"registry": FOUNDATION_REGISTRY}:
+            self.error(
+                path,
+                "foundation source must be the approved registry "
+                f"{FOUNDATION_REGISTRY}",
+            )
+
+        sdist = package.get("sdist")
+        expected_sdist_hash = f"sha256:{FOUNDATION_SDIST_SHA256}"
+        if not isinstance(sdist, dict):
+            self.error(path, "foundation sdist artifact is missing")
+        else:
+            if not str(sdist.get("url", "")).endswith(f"/{FOUNDATION_SDIST}"):
+                self.error(path, "foundation sdist filename is not approved")
+            if sdist.get("hash") != expected_sdist_hash:
+                self.error(path, "foundation sdist SHA-256 is missing or unapproved")
+
+        wheels = package.get("wheels")
+        expected_wheel_hash = f"sha256:{FOUNDATION_WHEEL_SHA256}"
+        approved_wheel = False
+        if isinstance(wheels, list):
+            approved_wheel = any(
+                isinstance(wheel, dict)
+                and str(wheel.get("url", "")).endswith(f"/{FOUNDATION_WHEEL}")
+                and wheel.get("hash") == expected_wheel_hash
+                for wheel in wheels
+            )
+        if not approved_wheel:
+            self.error(path, "foundation wheel and approved SHA-256 are required")
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:

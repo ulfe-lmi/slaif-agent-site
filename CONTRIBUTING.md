@@ -1,8 +1,9 @@
 # Contributing to SLAIF Agent-Site
 
-SLAIF Agent-Site is currently a pre-alpha, pre-implementation project. The
-repository contains architecture, governance, documentation, and preparation
-automation; there is no application setup or runnable product stack yet.
+SLAIF Agent-Site is currently a pre-alpha foundation-baseline project. The
+repository contains architecture, governance, documentation, reproducible
+Python packaging, and foundation qualification automation; there is no
+application setup or runnable product stack yet.
 
 ## Start with the governing documents
 
@@ -39,6 +40,15 @@ support, or product tests as implemented until executable evidence exists.
 Run from the repository root:
 
 ```bash
+uv --version
+uv lock --check
+uv sync --frozen --all-groups
+uv run --frozen ruff check services/backend tests/repository tools
+uv run --frozen ruff format --check services/backend tests/repository tools
+uv run --frozen mypy
+uv run --frozen pytest services/backend/tests/unit tests/repository
+uv run --frozen pytest services/backend/tests/integration
+uv build --out-dir /tmp/slaif-agent-site-distributions
 python -m compileall -q tools tests/repository
 python -m unittest discover -s tests/repository -p 'test_*.py'
 python tools/check_repository.py
@@ -51,7 +61,11 @@ and renders every Mermaid fence in a system temporary directory. It adds no
 production dependency and commits no rendered output.
 
 GitHub CI and CodeQL on the current PR head are independently authoritative.
-Future product work extends these preparation checks with application,
+The PostgreSQL integration command requires a disposable PostgreSQL 14–18
+instance and fake test credentials as described in
+[the foundation integration record](docs/FOUNDATION_INTEGRATION.md). GitHub CI
+runs every supported PostgreSQL version. Future product work extends these
+baseline checks with application,
 database-role, concurrency, browser-network, Playwright, Compose, recovery,
 license, and SBOM coverage; it does not replace them.
 
@@ -70,12 +84,16 @@ license, and SBOM coverage; it does not replace them.
 
 ## Dependencies and licenses
 
-New production dependencies require explicit scope, rationale, lockfile
-changes, license review, and tests. The project accepts permissive dependencies
-under its architecture policy and does not add required hosted or
-account-bound services. The planned `agent-cow-postgresql` dependency must
-come from PyPI at the qualified exact version with hashes in `uv.lock`; Git,
-direct-URL, local-path, or editable forms are forbidden for normal builds.
+Use `uv 0.12.5` and commit the lock produced for the declared Python
+3.12–3.14 range. A clean environment must install with
+`uv sync --frozen --all-groups`; normal tests and builds must not resolve from
+an unlocked source. New production dependencies require explicit scope,
+rationale, lockfile changes, license review, and tests. The project accepts
+permissive dependencies under its architecture policy and does not add
+required hosted or account-bound services. The integrated
+`agent-cow-postgresql` dependency must come from PyPI at the qualified exact
+version with hashes in `uv.lock`; Git, direct-URL, local-path, or editable forms
+are forbidden for normal builds.
 
 ## OAP transcript ownership
 

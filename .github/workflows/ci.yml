@@ -35,6 +35,90 @@ jobs:
       - name: Check repository policy
         run: python tools/check_repository.py
 
+  python-quality-package:
+    name: Python ${{ matrix.python }} quality and package
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.12", "3.13", "3.14"]
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Set up uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          version: "0.12.5"
+          enable-cache: false
+      - name: Sync frozen Python environment
+        run: uv sync --frozen --all-groups
+      - name: Lint and check formatting
+        run: |
+          uv run --frozen ruff check services/backend tests/repository tools
+          uv run --frozen ruff format --check services/backend tests/repository tools
+      - name: Type-check backend boundary
+        run: uv run --frozen mypy
+      - name: Run unit and metadata qualification
+        run: uv run --frozen pytest services/backend/tests/unit tests/repository
+      - name: Build product distributions
+        run: uv build --out-dir "${RUNNER_TEMP}/distributions"
+      - name: Verify no tracked file was generated
+        run: git diff --exit-code
+
+  foundation-postgresql:
+    name: Foundation PostgreSQL ${{ matrix.postgresql }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        postgresql: ["14", "15", "16", "17", "18"]
+    services:
+      postgres:
+        image: postgres:${{ matrix.postgresql }}
+        env:
+          POSTGRES_DB: qualification
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: qualification-admin
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d qualification"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      PGHOST: 127.0.0.1
+      PGPORT: "5432"
+      PGDATABASE: qualification
+      PGUSER: postgres
+      PGPASSWORD: qualification-admin
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Set up uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          version: "0.12.5"
+          enable-cache: false
+      - name: Sync frozen Python environment
+        run: uv sync --frozen --all-groups
+      - name: Run foundation adoption gate
+        run: uv run --frozen pytest services/backend/tests/integration
+
   markdown:
     name: Markdown
     runs-on: ubuntu-24.04

@@ -135,6 +135,24 @@ Required:
 - preserve MIT and upstream/downstream attribution;
 - use public `agentcow.postgres` APIs only.
 
+Current foundation/Python baseline verification from the repository root:
+
+```bash
+uv lock --check
+uv sync --frozen --all-groups
+uv run --frozen ruff check services/backend tests/repository tools
+uv run --frozen ruff format --check services/backend tests/repository tools
+uv run --frozen mypy
+uv run --frozen pytest services/backend/tests/unit tests/repository
+uv run --frozen pytest services/backend/tests/integration
+uv build --out-dir /tmp/slaif-agent-site-distributions
+```
+
+Use exactly uv `0.12.5` for this baseline. Integration tests use only a
+disposable local PostgreSQL service and fake credentials; CI runs the same gate
+on PostgreSQL 14–18. Future product work extends these gates and does not
+replace, skip, or weaken them.
+
 Forbidden for normal development, CI, release, and deployment:
 
 - `git+https://...` foundation dependencies;
@@ -283,8 +301,8 @@ required missing, pending, failed, or cancelled GitHub check.
 
 ### Current preparation checks
 
-Run these checks from the repository root while the project remains in its
-pre-implementation preparation state:
+Run these checks from the repository root while the project remains at its
+pre-alpha foundation baseline:
 
 ```bash
 python -m compileall -q tools tests/repository
