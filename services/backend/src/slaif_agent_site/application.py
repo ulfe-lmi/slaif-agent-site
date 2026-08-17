@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import argparse
 import logging
-from collections.abc import AsyncIterator, Sequence
-from contextlib import asynccontextmanager
+from collections.abc import AsyncIterator, Callable, Sequence
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 
 import uvicorn
 from fastapi import FastAPI
@@ -25,6 +25,7 @@ from .health import (
 from .logging import configure_json_logging
 
 LOGGER = logging.getLogger(__name__)
+LifespanFactory = Callable[[FastAPI], AbstractAsyncContextManager[None]]
 
 
 def create_http_application(
@@ -32,6 +33,7 @@ def create_http_application(
     *,
     settings: ServiceSettings | None = None,
     readiness_probes: Sequence[ReadinessProbe] = (),
+    lifespan_factory: LifespanFactory | None = None,
 ) -> FastAPI:
     """Build a side-effect-free app containing only live/ready endpoints."""
 
@@ -49,7 +51,11 @@ def create_http_application(
             extra={"event_fields": {"process": process.value, "status": "SKELETON"}},
         )
         try:
-            yield
+            if lifespan_factory is None:
+                yield
+            else:
+                async with lifespan_factory(app):
+                    yield
         finally:
             app.state.started = False
             LOGGER.info(
@@ -130,4 +136,4 @@ def run_http_process(process: ProcessKind, *, argv: Sequence[str] | None = None)
     return 0
 
 
-__all__ = ["create_http_application", "run_http_process"]
+__all__ = ["LifespanFactory", "create_http_application", "run_http_process"]

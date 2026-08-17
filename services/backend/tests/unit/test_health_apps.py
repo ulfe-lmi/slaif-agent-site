@@ -30,6 +30,22 @@ HTTP_APPS: tuple[tuple[ProcessKind, AppFactory], ...] = (
 )
 
 
+class FakeControlDatabase:
+    def __init__(self, result: ProbeResult | None = None) -> None:
+        self.result = result or ProbeResult.ready()
+        self.started = 0
+        self.stopped = 0
+
+    async def start(self) -> None:
+        self.started += 1
+
+    async def stop(self) -> None:
+        self.stopped += 1
+
+    async def readiness(self) -> ProbeResult:
+        return self.result
+
+
 def _route_paths(app: FastAPI) -> set[str]:
     return {route.path for route in app.routes if isinstance(route, APIRoute)}
 
@@ -38,7 +54,11 @@ def _route_paths(app: FastAPI) -> set[str]:
 async def test_each_app_has_only_typed_health_routes(
     process: ProcessKind, factory: AppFactory
 ) -> None:
-    app = factory(settings=ServiceSettings.for_test())
+    database = FakeControlDatabase()
+    arguments: dict[str, object] = {"settings": ServiceSettings.for_test()}
+    if process is ProcessKind.CONTROL_API:
+        arguments["database"] = database
+    app = factory(**arguments)
     assert _route_paths(app) == {"/health/live", "/health/ready"}
     assert app.docs_url is None
     assert app.redoc_url is None
@@ -52,21 +72,28 @@ async def test_each_app_has_only_typed_health_routes(
     assert "ReadinessResponse" in schema["components"]["schemas"]
     assert "ErrorEnvelope" in schema["components"]["schemas"]
 
-    async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app), base_url="http://testserver"
-    ) as client:
-        live = await client.get("/health/live")
-        ready = await client.get("/health/ready")
-        assert live.status_code == 200
-        assert live.json() == {"status": "ok", "service": process.value}
-        assert ready.status_code == 200
-        assert ready.json() == {
-            "status": "ready",
-            "service": process.value,
-            "components": [],
-        }
-        for hidden in ("/docs", "/redoc", "/openapi.json"):
-            assert (await client.get(hidden)).status_code == 404
+    async with app.router.lifespan_context(app):
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://testserver"
+        ) as client:
+            live = await client.get("/health/live")
+            ready = await client.get("/health/ready")
+            assert live.status_code == 200
+            assert live.json() == {"status": "ok", "service": process.value}
+            assert ready.status_code == 200
+            assert ready.json() == {
+                "status": "ready",
+                "service": process.value,
+                "components": (
+                    [{"component": "database", "status": "ok", "reason": None}]
+                    if process is ProcessKind.CONTROL_API
+                    else []
+                ),
+            }
+            for hidden in ("/docs", "/redoc", "/openapi.json"):
+                assert (await client.get(hidden)).status_code == 404
+    if process is ProcessKind.CONTROL_API:
+        assert database.started == database.stopped == 1
 
 
 async def test_readiness_aggregates_success_failure_timeout_and_sanitizes_error() -> (
@@ -124,11 +151,39 @@ async def test_readiness_aggregates_success_failure_timeout_and_sanitizes_error(
 
 
 async def test_lifespan_has_explicit_start_and_stop_state() -> None:
-    app = create_control_app(settings=ServiceSettings.for_test())
+    database = FakeControlDatabase()
+    app = create_control_app(settings=ServiceSettings.for_test(), database=database)
     assert not hasattr(app.state, "started")
     async with app.router.lifespan_context(app):
         assert app.state.started is True
+        assert database.started == 1
     assert app.state.started is False
+    assert database.stopped == 1
+
+
+async def test_control_liveness_is_independent_of_database_readiness() -> None:
+    database = FakeControlDatabase(ProbeResult.unavailable("migration_mismatch"))
+    app = create_control_app(settings=ServiceSettings.for_test(), database=database)
+    async with app.router.lifespan_context(app):
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://testserver"
+        ) as client:
+            live = await client.get("/health/live")
+            ready = await client.get("/health/ready")
+    assert live.status_code == 200
+    assert live.json() == {"status": "ok", "service": "control-api"}
+    assert ready.status_code == 503
+    assert ready.json() == {
+        "status": "not_ready",
+        "service": "control-api",
+        "components": [
+            {
+                "component": "database",
+                "status": "unavailable",
+                "reason": "migration_mismatch",
+            }
+        ],
+    }
 
 
 def test_probe_component_and_reason_are_bounded_codes() -> None:

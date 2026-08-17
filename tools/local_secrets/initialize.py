@@ -14,11 +14,15 @@ DATABASE = "slaif"
 DATABASE_HOST = "postgres"
 POSTGRES_UID = 999
 APPLICATION_UID = 10001
+CONTROL_DIRECTORY_UID = APPLICATION_UID
+CONTROL_DIRECTORY_GID = APPLICATION_UID
 MARKER_UID = 0
 DIRECTORY_UID = 0
 SECRET_DIRECTORY_GID = 10002
 SECRET_MODE = 0o400
 DIRECTORY_MODE = 0o710
+CONTROL_DIRECTORY_MODE = 0o700
+CONTROL_DSN_FILE = "control-dsn"
 MARKER = ".initialized-v1"
 LOGINS = (
     ("bootstrap", "slaif_bootstrap_login"),
@@ -38,15 +42,30 @@ class SecretInitializationError(RuntimeError):
     """A stable, secret-free local initialization failure."""
 
 
-def _validate_directory(directory: Path) -> None:
+def _validate_directory(directory: Path, *, mode: int, uid: int, gid: int) -> None:
     info = directory.stat(follow_symlinks=False)
     if (
         not stat.S_ISDIR(info.st_mode)
-        or stat.S_IMODE(info.st_mode) != DIRECTORY_MODE
-        or info.st_uid != DIRECTORY_UID
-        or info.st_gid != SECRET_DIRECTORY_GID
+        or stat.S_IMODE(info.st_mode) != mode
+        or info.st_uid != uid
+        or info.st_gid != gid
     ):
         raise SecretInitializationError("private secret directory policy mismatch")
+
+
+def _prepare_directory(directory: Path, *, mode: int, uid: int, gid: int) -> None:
+    if not directory.exists():
+        directory.mkdir(mode=mode, parents=True)
+    directory_fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        info = os.fstat(directory_fd)
+        if stat.S_IMODE(info.st_mode) != mode:
+            os.fchmod(directory_fd, mode)
+        if info.st_uid != uid or info.st_gid != gid:
+            os.fchown(directory_fd, uid, gid)
+    finally:
+        os.close(directory_fd)
+    _validate_directory(directory, mode=mode, uid=uid, gid=gid)
 
 
 def _read_secret(path: Path, *, uid: int) -> str:
@@ -93,20 +112,25 @@ def _dsn(user: str, password: str) -> str:
     )
 
 
-def initialize(directory: Path, *, validate_only: bool = False) -> int:
+def initialize(
+    directory: Path,
+    *,
+    control_directory: Path | None = None,
+    validate_only: bool = False,
+) -> int:
     if not directory.is_absolute():
         raise SecretInitializationError("secret directory must be absolute")
+    if control_directory is not None and not control_directory.is_absolute():
+        raise SecretInitializationError("Control secret directory must be absolute")
     if not directory.exists():
         if validate_only:
             raise SecretInitializationError("secret directory is unavailable")
-        directory.mkdir(mode=DIRECTORY_MODE, parents=True)
-    directory_fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
-    try:
-        os.fchown(directory_fd, DIRECTORY_UID, SECRET_DIRECTORY_GID)
-        os.fchmod(directory_fd, DIRECTORY_MODE)
-    finally:
-        os.close(directory_fd)
-    _validate_directory(directory)
+    _prepare_directory(
+        directory,
+        mode=DIRECTORY_MODE,
+        uid=DIRECTORY_UID,
+        gid=SECRET_DIRECTORY_GID,
+    )
 
     password_files = {
         "postgres": (directory / "postgres-password", POSTGRES_UID),
@@ -141,6 +165,33 @@ def initialize(directory: Path, *, validate_only: bool = False) -> int:
     for filename in dsn_files:
         _read_secret(directory / filename, uid=APPLICATION_UID)
 
+    isolated_files = 0
+    if control_directory is not None:
+        if not control_directory.exists() and validate_only:
+            raise SecretInitializationError("Control secret directory is unavailable")
+        _prepare_directory(
+            control_directory,
+            mode=CONTROL_DIRECTORY_MODE,
+            uid=CONTROL_DIRECTORY_UID,
+            gid=CONTROL_DIRECTORY_GID,
+        )
+        control_file = control_directory / CONTROL_DSN_FILE
+        expected_control_dsn = dsn_files["service-control-dsn"]
+        if not validate_only and not control_file.exists():
+            _write_once(control_file, expected_control_dsn, uid=APPLICATION_UID)
+        actual_control_dsn = _read_secret(control_file, uid=APPLICATION_UID)
+        if not secrets.compare_digest(actual_control_dsn, expected_control_dsn):
+            raise SecretInitializationError("isolated Control locator mismatch")
+        control_fd = os.open(
+            control_directory,
+            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+        )
+        try:
+            os.fsync(control_fd)
+        finally:
+            os.close(control_fd)
+        isolated_files = 1
+
     marker = directory / MARKER
     if not validate_only and not marker.exists():
         _write_once(marker, "initialized-v1:" + ("0" * 48), uid=MARKER_UID)
@@ -150,16 +201,25 @@ def initialize(directory: Path, *, validate_only: bool = False) -> int:
         os.fsync(directory_fd)
     finally:
         os.close(directory_fd)
-    return len(password_files) + len(dsn_files) + 1
+    return len(password_files) + len(dsn_files) + 1 + isolated_files
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--directory", type=Path, default=Path("/run/slaif-secrets"))
+    parser.add_argument(
+        "--control-directory",
+        type=Path,
+        default=Path("/run/slaif-control"),
+    )
     parser.add_argument("--validate-only", action="store_true")
     arguments = parser.parse_args()
     try:
-        count = initialize(arguments.directory, validate_only=arguments.validate_only)
+        count = initialize(
+            arguments.directory,
+            control_directory=arguments.control_directory,
+            validate_only=arguments.validate_only,
+        )
     except (OSError, SecretInitializationError):
         print("local-secrets: FAILED", flush=True)
         return 1

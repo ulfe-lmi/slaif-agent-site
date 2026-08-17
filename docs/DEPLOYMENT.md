@@ -31,10 +31,10 @@ docker compose up --build --wait
 docker compose ps
 ```
 
-The first start creates three named volumes, generates private local database
-files, initializes PostgreSQL, and runs the one-shot bootstrap. A returning
-start validates and reuses the credentials and data, reruns the idempotent
-bootstrap proof, and then starts the same service graph.
+The first start creates four named volumes, generates private local database
+files, isolates the Control DSN, initializes PostgreSQL, and runs the one-shot
+bootstrap. A returning start validates and reuses the credentials and data,
+reruns the idempotent bootstrap proof, and then starts the same service graph.
 
 ### PostgreSQL baseline
 
@@ -51,7 +51,7 @@ requires a separately designed and tested logical process.
 | --- | --- | --- |
 | `/` | Web | Accessible pre-alpha deployment-status page. |
 | `/health/live`, `/health/ready` | Web | Bounded Web process health only. |
-| `/api/control/` | Control API | Prefix-stripped health routes only. |
+| `/api/control/` | Control API | Prefix-stripped health routes only; readiness includes one database component. |
 | `/api/editor/` | Editor API | Prefix-stripped health routes only. |
 | `/api/agent/` | Agent API | Prefix-stripped health routes only. |
 | `/mcp/` | MCP adapter | Prefix-stripped health routes only. |
@@ -80,10 +80,11 @@ design rather than weaken this baseline.
 
 | Services | Image | Runtime user | Networks | Persistent/private mount |
 | --- | --- | --- | --- | --- |
-| `secrets-init` | Backend | root with only `CHOWN` and `DAC_READ_SEARCH` added | none | local secrets, read/write |
+| `secrets-init` | Backend | root with only `CHOWN` and `DAC_READ_SEARCH` added | none | master local secrets and isolated Control secret, read/write |
 | `postgres` | PostgreSQL | official entrypoint drops to PostgreSQL user | database | PostgreSQL data; local secrets read-only |
 | `bootstrap` | Backend | `10001:10001` | database | local secrets read-only |
-| Six Python HTTP services | Backend | `10001:10001` | exact edge/application/database memberships | media volume on Media only |
+| `control-api` | Backend | `10001:10001` | edge, database | isolated Control secret, read-only |
+| Five other Python HTTP services | Backend | `10001:10001` | exact edge/application/database memberships | media volume on Media only |
 | Three Python workers | Backend | `10001:10001` | database | media volume on media-GC only |
 | `browser-worker` | Browser placeholder | `10001:10001` | browser only | none |
 | `web` | Next.js | `10001:10001` | edge, application | none |
@@ -149,7 +150,8 @@ network membership does not grant application authority.
 - `edge`: NGINX, Web, and the five externally routed API processes.
 - `application`: Web to Render, plus MCP internal HTTP access.
 - `database`: PostgreSQL and only processes whose architecture may later use a
-  database. No online pool or service DSN is wired yet.
+  database. Control alone currently opens an online pool; network membership
+  gives every other process no credential or database authority.
 - `browser`: only Agent API and browser worker. It is internal and has no
   PostgreSQL, edge, host, filesystem, or Docker-socket path.
 
@@ -159,7 +161,15 @@ service DSNs. Files are mode `0400`; PostgreSQL's password belongs to UID 999
 and bootstrap-readable files to UID 10001. The directory is mode `0710`, owned
 by root and dedicated group 10002; only PostgreSQL and bootstrap receive that
 supplemental traversal group. Only initializer, PostgreSQL, and bootstrap mount
-this volume. No long-running application receives a DSN.
+this volume. No long-running application mounts this master volume.
+
+The separate `control-secret` volume contains exactly one `control-dsn` file
+copied byte-for-byte from the generated fixed `slaif_control_login` locator.
+Its directory is mode `0700` and owned by `10001:10001`; its file is mode
+`0400`, owned by UID 10001. Only initializer mounts it read/write. Control API
+mounts it read-only at `/run/slaif-control`; every other long-running process
+lacks the mount, and Control cannot see the master secret directory. The DSN
+is never an environment value.
 
 Institutional deployments may replace the generator with externally managed
 files that use the same names and fixed principal model. They must preserve
@@ -186,7 +196,8 @@ Edge configuration cannot replace application authentication or authorization.
 This topology is defense in depth, not a hostile multi-tenant isolation or
 production certification. CI now creates six-image SPDX and vulnerability
 evidence under the bounded [supply-chain policy](SUPPLY_CHAIN.md), but it does
-not sign or publish release images. Service-to-service authentication, online
-database credentials, TLS automation, egress policy enforcement, backups,
-rotation, metrics, release signing, and deployment approval remain deferred.
+not sign or publish release images. Service-to-service authentication,
+non-Control online database credentials, production TLS automation, egress
+policy enforcement, backups, rotation, metrics, release signing, and deployment
+approval remain deferred.
 See [operations](OPERATIONS.md) for lifecycle and failure handling.

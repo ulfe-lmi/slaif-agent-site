@@ -53,6 +53,16 @@ def _configuration() -> dict[str, object]:
                 "SLAIF_MODE": "development",
                 "SLAIF_PUBLIC_URL": "http://localhost:8080",
             }
+        if name == "control-api":
+            service["environment"].update(
+                {
+                    "SLAIF_CONTROL_DSN_FILE": "/run/slaif-control/control-dsn",
+                    "SLAIF_CONTROL_EXPECTED_DATABASE": "slaif",
+                    "SLAIF_CONTROL_EXPECTED_LOGIN": "slaif_control_login",
+                    "SLAIF_CONTROL_EXPECTED_PRIVILEGE_ROLE": "slaif_control",
+                    "SLAIF_CONTROL_MODE": "development",
+                }
+            )
         if name in VERIFY.EXPECTED_CAP_ADD:
             service["cap_add"] = sorted(VERIFY.EXPECTED_CAP_ADD[name])
         if name in VERIFY.EXPECTED_GROUP_ADD:
@@ -67,6 +77,12 @@ def _configuration() -> dict[str, object]:
     services["nginx"]["ports"] = [
         {"host_ip": "127.0.0.1", "published": "8080", "target": 8080}
     ]
+    services["nginx"]["healthcheck"] = {
+        "test": [
+            "CMD-SHELL",
+            "wget /health/ready && wget /api/control/health/ready",
+        ]
+    }
     return {
         "networks": {
             name: ({"internal": True} if name != "edge" else {})
@@ -74,7 +90,13 @@ def _configuration() -> dict[str, object]:
         },
         "services": services,
         "volumes": {
-            name: {} for name in ("local-secrets", "media-data", "postgres-data")
+            name: {}
+            for name in (
+                "control-secret",
+                "local-secrets",
+                "media-data",
+                "postgres-data",
+            )
         },
     }
 
@@ -93,6 +115,34 @@ class ComposePolicyTests(unittest.TestCase):
         configuration = copy.deepcopy(_configuration())
         configuration["services"]["web"]["environment"] = {"OWNER_DSN": "fake"}
         with self.assertRaisesRegex(VERIFY.PolicyError, "secret environment"):
+            VERIFY.validate_config(configuration)
+
+    def test_control_secret_or_prefix_on_another_service_is_rejected(self) -> None:
+        configuration = copy.deepcopy(_configuration())
+        configuration["services"]["agent-api"]["environment"]["SLAIF_CONTROL_MODE"] = (
+            "development"
+        )
+        with self.assertRaisesRegex(VERIFY.PolicyError, "foreign Control setting"):
+            VERIFY.validate_config(configuration)
+
+    def test_master_secret_mount_on_control_is_rejected(self) -> None:
+        configuration = copy.deepcopy(_configuration())
+        configuration["services"]["control-api"]["volumes"].append(
+            {
+                "source": "local-secrets",
+                "target": "/run/slaif-secrets",
+                "read_only": True,
+            }
+        )
+        with self.assertRaisesRegex(VERIFY.PolicyError, "mount policy"):
+            VERIFY.validate_config(configuration)
+
+    def test_nginx_must_follow_control_database_readiness(self) -> None:
+        configuration = copy.deepcopy(_configuration())
+        configuration["services"]["nginx"]["healthcheck"] = {
+            "test": ["CMD", "wget", "/health/ready"]
+        }
+        with self.assertRaisesRegex(VERIFY.PolicyError, "readiness dependency"):
             VERIFY.validate_config(configuration)
 
     def test_mutable_build_metadata_is_rejected(self) -> None:

@@ -10,17 +10,17 @@ cannot overlap an operator's persistent project.
 docker compose up --build
 docker compose up --build --wait
 docker compose ps
-docker compose logs --tail 200 nginx web bootstrap postgres
+docker compose logs --tail 200 nginx web control-api bootstrap postgres
 docker compose down --remove-orphans
 ```
 
 The final command preserves named data and secrets. `docker compose stop`
-followed by `docker compose up --wait` reuses all three volumes and revalidates
+followed by `docker compose up --wait` reuses all four volumes and revalidates
 the same generated credentials. Bootstrap must print exactly a safe result
 shaped as:
 
 ```text
-compose-bootstrap: OK revision=006_001 state=EMPTY_SAFE safe=true
+compose-bootstrap: OK revision=007_001 state=EMPTY_SAFE safe=true
 ```
 
 Do not publish or archive complete logs without reviewing them. The
@@ -29,10 +29,11 @@ still deployment-private operational data.
 
 ## Volumes, backup, and cleanup
 
-The default named volumes are `postgres-data`, `media-data`, and
-`local-secrets`, prefixed by the Compose project name. PostgreSQL data and local
-secrets must be backed up and restored together. The media volume is only a
-placeholder in this slice; no media behavior exists.
+The default named volumes are `postgres-data`, `media-data`, `local-secrets`,
+and `control-secret`, prefixed by the Compose project name. PostgreSQL data,
+master local secrets, and the derived Control secret must be backed up and
+restored together. The media volume is only a placeholder in this slice; no
+media behavior exists.
 
 There is no automated credential rotation yet. Replacing only password or DSN
 files can desynchronize PostgreSQL principals and make bootstrap fail closed.
@@ -79,8 +80,20 @@ disposable diagnosis; do not weaken a grant or marker to bypass the failure.
 ### Upstream health
 
 Use `docker compose ps` to identify an unhealthy process, then inspect that
-service's bounded log. Current long services have health-only behavior and no
-database pool. A failed required upstream keeps NGINX from becoming healthy.
+service's bounded log. Control alone has a database pool. Its liveness remains
+200 while readiness returns a bounded `database` reason such as
+`configuration_invalid`, `connection_unavailable`, `identity_mismatch`,
+`role_mismatch`, `migration_mismatch`, `unsafe_marker`,
+`foundation_mismatch`, `timeout`, or `shutdown`. It never returns driver text
+or a locator. NGINX health checks Control readiness as a dependency. Every
+other long-running service remains database-free.
+
+An unreadable Control file, wrong login/role, stopped PostgreSQL, stale
+migration, or unsafe marker is not repaired by the online process. Restore the
+correct file/role/database state or run the separately authorized one-shot
+bootstrap operation, then recreate Control if its startup did not establish a
+pool. Do not copy a locator into an environment variable or grant marker-table
+`SELECT` as a workaround.
 
 ### Port conflict
 
@@ -98,8 +111,10 @@ sudo tools/compose/smoke.sh slaif007localtest
 
 On a runner whose user can access the test Docker daemon, omit `sudo`. The
 script verifies clean startup, routes and 404s, development-mode inventory,
-runtime hardening, network and mount topology, empty-safe marker, exact login
-authority, restart idempotence, fail-closed bootstrap, Apache syntax, single
+runtime hardening, network and mount topology, the isolated Control mount and
+read-denial boundary, empty-safe marker, exact login authority, Control
+wrong-login/role/secret/marker/migration/database failure behavior, restart
+idempotence, fail-closed bootstrap, Apache syntax, single
 request-ID and CSP headers on page/API/404 responses, secret absence in
 configuration/history/logs, and exact-project cleanup. It does not test product
 workflows because they do not exist.
@@ -135,7 +150,7 @@ and limitations.
 ## Production boundary
 
 This pre-alpha stack has no authentication, setup administrator, service
-authentication, production TLS, online application database use, backup
+authentication, production TLS automation, database-backed product use, backup
 automation, automated rotation, browser sandbox/egress implementation, or
 publication path. Passing health and packaging checks proves only the stated
 deployment skeleton. It is not a production readiness, security certification,

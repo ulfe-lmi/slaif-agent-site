@@ -30,6 +30,8 @@ ALLOWED_CLEAN_RELATIONS = {
     ("control", "bootstrap_readiness"),
 }
 FOUNDATION_SCHEMA = "agentcow"
+CONTROL_READINESS_FUNCTION = "slaif_control_readiness"
+CONTROL_ROLE = "slaif_control"
 
 
 @dataclass(frozen=True, slots=True)
@@ -315,6 +317,15 @@ async def apply_product_privileges(
                     f"GRANT SELECT ON {relation} TO {quote_identifier(role)}"
                 )
 
+    await connection.execute(
+        f'GRANT USAGE ON SCHEMA "control" TO {quote_identifier(CONTROL_ROLE)}'
+    )
+    await connection.execute(
+        "GRANT EXECUTE ON FUNCTION "
+        f'"control"."{CONTROL_READINESS_FUNCTION}"() '
+        f"TO {quote_identifier(CONTROL_ROLE)}"
+    )
+
 
 async def _role_violations(connection: asyncpg.Connection[Any]) -> list[str]:
     violations: list[str] = []
@@ -414,12 +425,15 @@ async def _schema_violations(
             )
             if can_create:
                 violations.append(f"schema/{schema}/{role}/create")
-            expected_usage = readiness_state is ReadinessState.HARDENED and (
-                (
-                    schema == "content"
-                    and role in (*RUNTIME_ROLES, *REVIEWER_ROLES, *READ_ROLES)
+            expected_usage = (schema == "control" and role == CONTROL_ROLE) or (
+                readiness_state is ReadinessState.HARDENED
+                and (
+                    (
+                        schema == "content"
+                        and role in (*RUNTIME_ROLES, *REVIEWER_ROLES, *READ_ROLES)
+                    )
+                    or (schema == FOUNDATION_SCHEMA and role in REVIEWER_ROLES)
                 )
-                or (schema == FOUNDATION_SCHEMA and role in REVIEWER_ROLES)
             )
             if bool(can_use) != expected_usage:
                 usage_state = "missing-usage" if expected_usage else "usage"
@@ -544,7 +558,8 @@ async def _function_violations(
 ) -> list[str]:
     violations: list[str] = []
     functions = await connection.fetch(
-        "SELECT namespace_.nspname::text, proc.proname::text, proc.oid::bigint, "
+        "SELECT namespace_.nspname::text, proc.proname::text, "
+        "pg_catalog.pg_get_function_identity_arguments(proc.oid), proc.oid::bigint, "
         "owner.rolname::text, proc.prosecdef, "
         "COALESCE(array_to_string(proc.proconfig, ','), ''), "
         "EXISTS (SELECT 1 FROM aclexplode(COALESCE(proc.proacl, "
@@ -559,10 +574,29 @@ async def _function_violations(
     )
     reviewer_exec = 0
     foundation_functions = 0
-    for schema, name, oid, owner, security_definer, config, public_exec in functions:
+    control_readiness_functions = 0
+    for (
+        schema,
+        name,
+        arguments,
+        oid,
+        owner,
+        security_definer,
+        config,
+        public_exec,
+    ) in functions:
+        is_control_readiness = (
+            schema == "control"
+            and name == CONTROL_READINESS_FUNCTION
+            and arguments == ""
+        )
         if schema == FOUNDATION_SCHEMA:
             foundation_functions += 1
-        elif readiness_state is ReadinessState.EMPTY_SAFE:
+        elif is_control_readiness:
+            control_readiness_functions += 1
+            if not security_definer or "search_path=pg_catalog" not in config:
+                violations.append(f"function/{schema}.{name}/unsafe-security-definer")
+        elif readiness_state is ReadinessState.EMPTY_SAFE and not is_control_readiness:
             violations.append(f"function/{schema}.{name}/unexpected-clean-object")
         if owner != OWNER_ROLE:
             violations.append(f"function/{schema}.{name}/owner:{owner}")
@@ -576,19 +610,25 @@ async def _function_violations(
                 role,
                 oid,
             )
-            allowed = (
+            allowed = (is_control_readiness and role == CONTROL_ROLE) or (
                 readiness_state is ReadinessState.HARDENED
                 and schema == FOUNDATION_SCHEMA
                 and role in REVIEWER_ROLES
             )
             if can_execute and not allowed:
                 violations.append(f"function/{schema}.{name}/{role}/execute")
-            if can_execute and allowed:
+            if is_control_readiness and role == CONTROL_ROLE and not can_execute:
+                violations.append(f"function/{schema}.{name}/{role}/missing-execute")
+            if can_execute and allowed and schema == FOUNDATION_SCHEMA:
                 reviewer_exec += 1
-                if not security_definer or "search_path=pg_catalog" not in config:
-                    violations.append(
-                        f"function/{schema}.{name}/{role}/unsafe-security-definer"
-                    )
+            if (
+                can_execute
+                and allowed
+                and (not security_definer or "search_path=pg_catalog" not in config)
+            ):
+                violations.append(
+                    f"function/{schema}.{name}/{role}/unsafe-security-definer"
+                )
     content_views = await connection.fetchval(
         "SELECT count(*) FROM pg_catalog.pg_class class_ "
         "JOIN pg_catalog.pg_namespace namespace_ "
@@ -597,6 +637,8 @@ async def _function_violations(
     )
     if foundation_functions == 0:
         violations.append("foundation/agentcow/functions/missing")
+    if control_readiness_functions != 1:
+        violations.append("function/control/slaif-control-readiness/count")
     if (
         readiness_state is ReadinessState.HARDENED
         and content_views
@@ -637,6 +679,7 @@ async def verify_database_privileges(
 
 __all__ = [
     "ALLOWED_CLEAN_RELATIONS",
+    "CONTROL_READINESS_FUNCTION",
     "ContentObject",
     "PrivilegeValidation",
     "apply_product_privileges",

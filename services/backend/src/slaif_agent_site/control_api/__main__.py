@@ -1,11 +1,10 @@
-"""Start the Control API process."""
+"""Start the Control API process through its package-local database lifespan."""
 
-from ..application import run_http_process
-from ..authority import ProcessKind
+from .app import run_control_process
 
 
 def main() -> int:
-    return run_http_process(ProcessKind.CONTROL_API)
+    return run_control_process()
 
 
 if __name__ == "__main__":

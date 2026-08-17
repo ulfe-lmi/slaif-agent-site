@@ -3,7 +3,8 @@
 The implemented database path is an explicit one-shot maintenance boundary.
 The default Compose stack invokes it before application health can become
 ready. It does not add an online pool, product route, authentication, or
-product-domain table.
+product-domain table. Control's separate online pool consumes only the narrow
+readiness function created by the latest migration.
 
 ## Dependencies and migration graph
 
@@ -17,15 +18,18 @@ credential.
 There is one head:
 
 ```text
-006_001 (head)
+006_001
+  |
+007_001 (head)
 ```
 
-It creates `control`, `content`, and `audit`, owned by `slaif_owner`.
+The baseline creates `control`, `content`, and `audit`, owned by `slaif_owner`.
 Alembic state is `control.alembic_version`. The only product table is
-`control.bootstrap_readiness`; `content` and `audit` are empty. Unsafe default
-schema, table, sequence, and function privileges are revoked. The foundation
-creates its public `agentcow` objects only when reconciliation is explicitly
-requested.
+`control.bootstrap_readiness`; `007_001` adds only
+`control.slaif_control_readiness()`. `content` and `audit` are empty. Unsafe
+default schema, table, sequence, and function privileges are revoked. The
+foundation creates its public `agentcow` objects only when reconciliation is
+explicitly requested.
 
 ## Configuration
 
@@ -120,7 +124,7 @@ grants, validation, and final marker publication share a transaction, so an
 injected failure rolls them back. A repeat repairs safely and a successful
 repeat does not add objects or change migration head.
 
-The marker records revision `006_001`, distribution
+The marker records revision `007_001`, distribution
 `agent-cow-postgresql`, version `0.2.0`, state-specific evidence flags, generic
 content/foundation object counts and SHA-256 fingerprints, overall safety, and
 update time. Database constraints admit exactly these combinations:
@@ -148,8 +152,11 @@ changes the stored generic fingerprint and makes `validate` fail closed. An
 explicit repeat reconcile may advance only `updated_at`; the migration head,
 object inventory, grants, and state do not drift.
 
-The owner alone can read or update the marker in this baseline; it is not yet
-an online readiness probe.
+The owner alone can read or update the marker directly. The zero-argument
+`SECURITY DEFINER` function reads only the marker and Alembic version, has
+`search_path=pg_catalog`, is owned by `slaif_owner`, revokes `PUBLIC`, and grants
+execution only to `slaif_control`. It returns bounded revision/state/safety and
+foundation version facts; it accepts no caller context and cannot mutate.
 
 ## Future migration rule
 

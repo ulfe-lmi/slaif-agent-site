@@ -1,0 +1,468 @@
+#!/usr/bin/env python3
+"""Run the bounded Control credential/pool/readiness Compose fixture."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import subprocess
+import time
+from pathlib import Path
+from typing import Any
+
+REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
+BACKEND_IMAGE = "slaif-agent-site-backend:local"
+CONTROL_FILE = "/secrets/control-dsn"
+CONNECTION_UNAVAILABLE = "connection_unavailable"
+CONFIGURATION_INVALID = "configuration_invalid"
+MIGRATION_MISMATCH = "migration_mismatch"
+ROLE_MISMATCH = "role_mismatch"
+UNSAFE_MARKER = "unsafe_marker"
+
+
+class FixtureError(RuntimeError):
+    """A stable fixture failure that carries no process output."""
+
+
+def _run(
+    command: list[str],
+    *,
+    check: bool = True,
+    timeout: float = 120.0,
+) -> subprocess.CompletedProcess[str]:
+    try:
+        result = subprocess.run(
+            command,
+            cwd=REPOSITORY_ROOT,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except (OSError, subprocess.SubprocessError):
+        raise FixtureError("Control readiness fixture command failed") from None
+    if check and result.returncode != 0:
+        raise FixtureError("Control readiness fixture command failed")
+    return result
+
+
+class ControlReadinessFixture:
+    def __init__(self, project: str, *, existing: bool) -> None:
+        if not re.fullmatch(r"slaif(?:007|009)[a-z0-9]+", project):
+            raise FixtureError("unsafe Compose project name")
+        self.project = project
+        self.existing = existing
+
+    def compose(
+        self, *arguments: str, check: bool = True, timeout: float = 120.0
+    ) -> subprocess.CompletedProcess[str]:
+        return _run(
+            ["docker", "compose", "-p", self.project, *arguments],
+            check=check,
+            timeout=timeout,
+        )
+
+    def container(self, service: str) -> str:
+        identifier = self.compose("ps", "-q", service).stdout.strip()
+        if not identifier:
+            raise FixtureError("expected fixture container is unavailable")
+        return identifier
+
+    def inspect(self, service: str) -> dict[str, Any]:
+        result = _run(["docker", "inspect", self.container(service)])
+        document = json.loads(result.stdout)
+        if not isinstance(document, list) or len(document) != 1:
+            raise FixtureError("container inspection is malformed")
+        inspected = document[0]
+        if not isinstance(inspected, dict):
+            raise FixtureError("container inspection is malformed")
+        return inspected
+
+    def _health_document(self, path: str) -> tuple[int, dict[str, Any]]:
+        source = (
+            "import json,urllib.error,urllib.request;"
+            "url='http://127.0.0.1:8000/" + path + "';"
+            "status=0;document={};"
+            "\ntry:\n response=urllib.request.urlopen(url,timeout=2)"
+            "\nexcept urllib.error.HTTPError as error:\n response=error"
+            "\nwith response:\n status=response.status;"
+            "document=json.loads(response.read())"
+            "\nprint(json.dumps({'status':status,'document':document},sort_keys=True))"
+        )
+        result = _run(
+            [
+                "docker",
+                "exec",
+                self.container("control-api"),
+                "python",
+                "-c",
+                source,
+            ],
+            check=False,
+            timeout=5,
+        )
+        if result.returncode != 0:
+            raise FixtureError("Control health request failed")
+        try:
+            payload = json.loads(result.stdout)
+            return int(payload["status"]), payload["document"]
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+            raise FixtureError("Control health response is malformed") from None
+
+    def _wait_readiness(self, reason: str | None, *, timeout: float = 30.0) -> None:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            try:
+                status, document = self._health_document("health/ready")
+                components = document.get("components", [])
+                database = next(
+                    item for item in components if item.get("component") == "database"
+                )
+                if reason is None:
+                    if (
+                        status == 200
+                        and document.get("status") == "ready"
+                        and database
+                        == {
+                            "component": "database",
+                            "status": "ok",
+                            "reason": None,
+                        }
+                    ):
+                        return
+                elif (
+                    status == 503
+                    and document.get("status") == "not_ready"
+                    and database.get("status") == "unavailable"
+                    and database.get("reason") == reason
+                ):
+                    return
+            except (FixtureError, StopIteration):
+                pass
+            time.sleep(1)
+        raise FixtureError("Control readiness state did not converge")
+
+    def _assert_liveness(self) -> None:
+        status, document = self._health_document("health/live")
+        if status != 200 or document != {"service": "control-api", "status": "ok"}:
+            raise FixtureError("Control liveness contract failed")
+
+    def _wait_container_health(self, service: str, *, timeout: float = 30.0) -> None:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            try:
+                health = self.inspect(service).get("State", {}).get("Health", {})
+                if health.get("Status") == "healthy":
+                    return
+            except FixtureError:
+                pass
+            time.sleep(1)
+        raise FixtureError("fixture container did not become healthy")
+
+    def _assert_nginx_dependency(self, *, ready: bool) -> None:
+        if not self.existing:
+            return
+        result = _run(
+            [
+                "docker",
+                "exec",
+                self.container("nginx"),
+                "wget",
+                "--quiet",
+                "--spider",
+                "http://127.0.0.1:8080/api/control/health/ready",
+            ],
+            check=False,
+            timeout=5,
+        )
+        if (result.returncode == 0) is not ready:
+            raise FixtureError("NGINX Control dependency state mismatch")
+
+    def _psql(self, statement: str) -> None:
+        _run(
+            [
+                "docker",
+                "exec",
+                self.container("postgres"),
+                "psql",
+                "-v",
+                "ON_ERROR_STOP=1",
+                "-U",
+                "postgres",
+                "-d",
+                "slaif",
+                "-c",
+                statement,
+            ]
+        )
+
+    def _recreate_control(self) -> None:
+        self.compose("up", "-d", "--force-recreate", "control-api")
+
+    def _replace_control_file(self, source_name: str) -> None:
+        master_volume = f"{self.project}_local-secrets"
+        control_volume = f"{self.project}_control-secret"
+        program = (
+            "import pathlib;"
+            f"source=pathlib.Path('/master/{source_name}');"
+            f"target=pathlib.Path('{CONTROL_FILE}');"
+            "value=source.read_bytes();target.chmod(0o600);"
+            "target.write_bytes(value);"
+            "target.chmod(0o400)"
+        )
+        _run(
+            [
+                "docker",
+                "run",
+                "--rm",
+                "--network",
+                "none",
+                "--read-only",
+                "--cap-drop",
+                "ALL",
+                "--cap-add",
+                "DAC_OVERRIDE",
+                "--cap-add",
+                "DAC_READ_SEARCH",
+                "--cap-add",
+                "FOWNER",
+                "--user",
+                "0:0",
+                "--volume",
+                f"{master_volume}:/master:ro",
+                "--volume",
+                f"{control_volume}:/secrets",
+                "--entrypoint",
+                "python",
+                BACKEND_IMAGE,
+                "-c",
+                program,
+            ]
+        )
+
+    def _set_control_mode(self, mode: int) -> None:
+        control_volume = f"{self.project}_control-secret"
+        program = f"import pathlib;pathlib.Path('{CONTROL_FILE}').chmod({mode:#o})"
+        _run(
+            [
+                "docker",
+                "run",
+                "--rm",
+                "--network",
+                "none",
+                "--read-only",
+                "--cap-drop",
+                "ALL",
+                "--cap-add",
+                "FOWNER",
+                "--user",
+                "0:0",
+                "--volume",
+                f"{control_volume}:/secrets",
+                "--entrypoint",
+                "python",
+                BACKEND_IMAGE,
+                "-c",
+                program,
+            ]
+        )
+
+    def _assert_mount_boundary(self) -> None:
+        control = self.inspect("control-api")
+        mounts = control.get("Mounts", [])
+        volume_mounts = {
+            (mount.get("Name"), mount.get("Destination"), mount.get("RW"))
+            for mount in mounts
+            if mount.get("Type") == "volume"
+        }
+        if volume_mounts != {
+            (f"{self.project}_control-secret", "/run/slaif-control", False)
+        }:
+            raise FixtureError("Control runtime mount boundary mismatch")
+        if any(mount.get("Type") == "bind" for mount in mounts):
+            raise FixtureError("Control has a host bind mount")
+        environment = control.get("Config", {}).get("Env", [])
+        if any("postgresql://" in item for item in environment):
+            raise FixtureError("Control environment contains a locator")
+
+        control_id = self.container("control-api")
+        check = (
+            "import pathlib,stat;root=pathlib.Path('/run/slaif-control');"
+            "info=root.stat();assert stat.S_IMODE(info.st_mode)==0o700;"
+            "assert info.st_uid==info.st_gid==10001;"
+            "path=root/'control-dsn';file_info=path.stat();"
+            "assert stat.S_IMODE(file_info.st_mode)==0o400;"
+            "assert file_info.st_uid==10001;value=path.read_bytes();"
+            "assert value.startswith(b'postgresql://slaif_control_login:');"
+            "assert not pathlib.Path('/run/slaif-secrets').exists()"
+        )
+        _run(["docker", "exec", control_id, "python", "-c", check])
+
+        unrelated = _run(
+            [
+                "docker",
+                "run",
+                "--rm",
+                "--network",
+                "none",
+                "--read-only",
+                "--cap-drop",
+                "ALL",
+                "--user",
+                "10003:10003",
+                "--volume",
+                f"{self.project}_control-secret:/secrets:ro",
+                "--entrypoint",
+                "python",
+                BACKEND_IMAGE,
+                "-c",
+                "import pathlib;pathlib.Path('/secrets/control-dsn').read_bytes()",
+            ],
+            check=False,
+        )
+        if unrelated.returncode == 0:
+            raise FixtureError("unrelated uid read the Control locator")
+
+    def _restore(self) -> None:
+        self.compose("start", "postgres", check=False)
+        self._wait_container_health("postgres")
+        self._replace_control_file("service-control-dsn")
+        self._psql(
+            'REVOKE "slaif_reviewer" FROM "slaif_control_login"; '
+            'GRANT "slaif_control" TO "slaif_control_login";'
+        )
+        self.compose("run", "--rm", "bootstrap", check=False, timeout=120)
+        self._recreate_control()
+        self._wait_readiness(None)
+
+    def run(self) -> None:
+        if not self.existing:
+            self.compose("down", "--volumes", "--remove-orphans", check=False)
+            self.compose("build", "secrets-init", timeout=300)
+            self.compose(
+                "up",
+                "--wait",
+                "postgres",
+                "bootstrap",
+                "control-api",
+                timeout=180,
+            )
+        print("control-readiness-stage: baseline", flush=True)
+        self._wait_readiness(None)
+        self._assert_liveness()
+        self._assert_nginx_dependency(ready=True)
+        self._assert_mount_boundary()
+
+        print("control-readiness-stage: wrong-login", flush=True)
+        self.compose("stop", "control-api")
+        self._replace_control_file("service-reviewer-dsn")
+        self._recreate_control()
+        self._wait_readiness(CONFIGURATION_INVALID)
+        self._assert_liveness()
+        self._assert_nginx_dependency(ready=False)
+        self.compose("stop", "control-api")
+        self._replace_control_file("service-control-dsn")
+        self._recreate_control()
+        self._wait_readiness(None)
+
+        print("control-readiness-stage: wrong-role", flush=True)
+        self._psql(
+            'REVOKE "slaif_control" FROM "slaif_control_login"; '
+            'GRANT "slaif_reviewer" TO "slaif_control_login"; '
+            "SELECT pg_catalog.pg_terminate_backend(pid) "
+            "FROM pg_catalog.pg_stat_activity "
+            "WHERE usename = 'slaif_control_login' AND pid <> pg_backend_pid();"
+        )
+        self._wait_readiness(ROLE_MISMATCH)
+        self._assert_liveness()
+        self._assert_nginx_dependency(ready=False)
+        self._psql(
+            'REVOKE "slaif_reviewer" FROM "slaif_control_login"; '
+            'GRANT "slaif_control" TO "slaif_control_login";'
+        )
+        self._wait_readiness(None)
+
+        print("control-readiness-stage: unreadable-secret", flush=True)
+        self.compose("stop", "control-api")
+        self._set_control_mode(0o000)
+        self._recreate_control()
+        self._wait_readiness(CONFIGURATION_INVALID)
+        self._assert_liveness()
+        self._assert_nginx_dependency(ready=False)
+        self.compose("stop", "control-api")
+        self._set_control_mode(0o400)
+        self._recreate_control()
+        self._wait_readiness(None)
+
+        print("control-readiness-stage: unsafe-marker", flush=True)
+        self._psql(
+            "UPDATE control.bootstrap_readiness SET "
+            "readiness_state = 'PENDING', content_object_count = 0, "
+            "content_object_fingerprint = NULL, foundation_object_count = 0, "
+            "foundation_object_fingerprint = NULL, foundation_hardened = FALSE, "
+            "foundation_privileges_validated = FALSE, "
+            "product_privileges_validated = FALSE, safe = FALSE WHERE singleton;"
+        )
+        self._wait_readiness(UNSAFE_MARKER)
+        self._assert_liveness()
+        self._assert_nginx_dependency(ready=False)
+        self.compose("run", "--rm", "bootstrap", timeout=120)
+        self._wait_readiness(None)
+
+        print("control-readiness-stage: migration-mismatch", flush=True)
+        self._psql(
+            "UPDATE control.bootstrap_readiness "
+            "SET migration_revision = '006_001' WHERE singleton;"
+        )
+        self._wait_readiness(MIGRATION_MISMATCH)
+        self._assert_liveness()
+        self._assert_nginx_dependency(ready=False)
+        self._psql(
+            "UPDATE control.bootstrap_readiness "
+            "SET migration_revision = '007_001' WHERE singleton;"
+        )
+        self._wait_readiness(None)
+
+        print("control-readiness-stage: stopped-postgres", flush=True)
+        self.compose("stop", "postgres")
+        self._wait_readiness(CONNECTION_UNAVAILABLE)
+        self._assert_liveness()
+        self._assert_nginx_dependency(ready=False)
+        self.compose("start", "postgres")
+        self._wait_container_health("postgres")
+        self._wait_readiness(None)
+        self._assert_nginx_dependency(ready=True)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("project")
+    parser.add_argument("--existing", action="store_true")
+    arguments = parser.parse_args()
+    fixture = ControlReadinessFixture(arguments.project, existing=arguments.existing)
+    try:
+        fixture.run()
+    except FixtureError:
+        print("control-readiness-fixture: FAILED", flush=True)
+        return 1
+    finally:
+        if arguments.existing:
+            try:
+                fixture._restore()
+            except FixtureError:
+                pass
+        else:
+            fixture.compose(
+                "down", "--volumes", "--remove-orphans", check=False, timeout=120
+            )
+    print(
+        "control-readiness-fixture: OK "
+        "mount=isolated identity=exact failures=6 recovery=clean",
+        flush=True,
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

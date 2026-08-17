@@ -159,6 +159,8 @@ then
   exit 1
 fi
 
+python tools/compose/control_readiness.py "$PROJECT" --existing
+
 fingerprint() {
   docker run --rm --network none --read-only --cap-drop ALL --cap-add DAC_READ_SEARCH \
     --user 0:0 --volume "${PROJECT}_local-secrets:/secrets:ro" \
