@@ -66,7 +66,8 @@ class RepositoryPolicyTestCase(unittest.TestCase):
         self.write(
             "pnpm-workspace.yaml",
             "packages:\n  - packages/*\n\nallowBuilds:\n  esbuild: false\n\n"
-            "autoInstallPeers: false\n\noverrides:\n  vite: 7.3.1\n",
+            "autoInstallPeers: false\n\noverrides:\n  esbuild: 0.28.1\n"
+            "  vite: 7.3.6\n",
         )
         self.write_json(
             "tsconfig.base.json",

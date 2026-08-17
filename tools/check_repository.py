@@ -635,7 +635,8 @@ class RepositoryPolicy:
             workspace_text = self.read_utf8(workspace_path)
             if workspace_text is not None and workspace_text != (
                 "packages:\n  - packages/*\n\nallowBuilds:\n  esbuild: false\n\n"
-                "autoInstallPeers: false\n\noverrides:\n  vite: 7.3.1\n"
+                "autoInstallPeers: false\n\noverrides:\n  esbuild: 0.28.1\n"
+                "  vite: 7.3.6\n"
             ):
                 self.error(
                     workspace_path,
