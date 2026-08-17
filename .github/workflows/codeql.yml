@@ -1,0 +1,96 @@
+name: CodeQL
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  schedule:
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  detect-languages:
+    name: Detect supported languages
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      matrix: ${{ steps.detect.outputs.matrix }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build fixed-allowlist matrix
+        id: detect
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          excluded = {
+              ".git",
+              ".venv",
+              "__pycache__",
+              "build",
+              "dist",
+              "generated",
+              "node_modules",
+              "vendor",
+          }
+          source_files = [
+              path
+              for path in Path(".").rglob("*")
+              if path.is_file() and not any(part in excluded for part in path.parts)
+          ]
+          languages = []
+          if any(Path(".github/workflows").glob("*.y*ml")):
+              languages.append("actions")
+          if any(path.suffix.lower() == ".py" for path in source_files):
+              languages.append("python")
+          javascript_typescript = {".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".mts", ".cts"}
+          if any(path.suffix.lower() in javascript_typescript for path in source_files):
+              languages.append("javascript-typescript")
+          matrix = json.dumps({"language": languages}, separators=(",", ":"))
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"matrix={matrix}\n")
+          print(matrix)
+          PY
+
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    needs: detect-languages
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      actions: read
+      contents: read
+      packages: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.detect-languages.outputs.matrix) }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4.37.7
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: none
+          queries: security-extended
+      - name: Analyze
+        uses: github/codeql-action/analyze@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4.37.7
+        with:
+          category: "/language:${{ matrix.language }}"

@@ -281,6 +281,23 @@ the complete claimed set actually ran and passed.
 GitHub CI is independently authoritative. Local success does not satisfy a
 required missing, pending, failed, or cancelled GitHub check.
 
+### Current preparation checks
+
+Run these checks from the repository root while the project remains in its
+pre-implementation preparation state:
+
+```bash
+python -m compileall -q tools tests/repository
+python -m unittest discover -s tests/repository -p 'test_*.py'
+python tools/check_repository.py
+npx --yes markdownlint-cli2@0.23.2 "**/*.md"
+```
+
+GitHub CI and CodeQL on the current PR head are authoritative. Future product
+work extends rather than replaces these checks with the application,
+database-role, browser, packaging, recovery, license, and SBOM verification
+required by the architecture and its activated work orders.
+
 ## Documentation contract
 
 When behavior, architecture, API contracts, setup, security, operations,
