@@ -17,11 +17,12 @@ Please use a
 for suspected vulnerabilities. Include a concise description, affected files
 or planned boundary, reproduction information where safe, and potential impact.
 
-If the advisory form cannot be used, email
-[`janez.pers@fe.uni-lj.si`](mailto:janez.pers@fe.uni-lj.si) only as a fallback
-for material that is already public. Do not send secrets, exploit payloads,
-personal data, production data, unpublished credentials, or other sensitive
-material through ordinary email or a public issue.
+If the advisory form cannot be used, send a minimal notification to
+[`janez.pers@fe.uni-lj.si`](mailto:janez.pers@fe.uni-lj.si) without exploit
+details, credentials, personal data, production data, or other sensitive
+material. Use that message only to arrange an appropriate channel for further
+details; do not send sensitive vulnerability information through ordinary
+email or a public issue.
 
 The project does not promise a response or remediation SLA at this stage.
 Reports will be evaluated according to available project capacity and the
