@@ -32,9 +32,13 @@ Report publication commit: SELF
 ```
 
 `SELF` avoids impossible Git commit self-reference. Reviewers resolve it to
-the GitHub commit containing the exact report and verify that commit is the PR
-head, changes only the new report file, and has the recorded implementation
-head as its first parent.
+the GitHub commit containing the exact report. When that round sends FIFO
+`OK`, the commit must be the current PR head, must change only the new report
+file, and must have the recorded implementation head as its first parent. A
+later activated continuation adds commits to the same PR, so the earlier
+`SELF` will no longer be the current head; it remains immutable and reachable
+in PR/Git history. Historical verification checks that containing commit and
+its first parent, not whether the old commit is still the latest PR head.
 
 OAP artifacts must never contain secrets, credentials, capability tokens,
 session cookies, database URLs, private keys, or private artifact URLs.

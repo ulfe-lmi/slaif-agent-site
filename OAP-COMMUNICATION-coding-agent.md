@@ -633,7 +633,14 @@ Treat the atomically renamed report as final. Once its `SELF` commit is pushed,
 do not modify that report or add another commit for the execution round. Sending
 `OK` confirms the remote immutable transcript is complete.
 
-If further work is required, the strategic model will activate the next letter and you will publish a new report.
+At the instant a round sends FIFO `OK`, its `SELF` report commit must be the
+current remote PR head. If further work is required, the strategic model
+activates the next letter and the coding agent adds commits to the same PR, so
+the earlier report commit necessarily stops being the current head. That
+earlier `SELF` remains immutable and reachable in the PR/Git history.
+Historical verification resolves the commit containing that report and checks
+its first parent against the recorded implementation head; it does not require
+an earlier round's report commit to remain the latest PR head.
 
 This preserves an append-only OAP execution history while GitHub preserves the authoritative software history.
 

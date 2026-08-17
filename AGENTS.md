@@ -311,9 +311,9 @@ Use the full immutable report format in
 - identifier and work-order file;
 - `CREATED_NEW_PR` or `AMENDED_EXISTING_PR`;
 - status: `COMPLETE`, `PARTIAL`, `BLOCKED`, or `FAILED`;
-- repository, PR number/URL/state, base/head branches, starting and final remote
-  SHAs, and commits pushed;
-- literal implementation head SHA and `Report publication commit: SELF`;
+- repository, PR number/URL/state, base/head branches, starting remote SHA,
+  literal implementation head SHA, `Report publication commit: SELF`, and
+  commits pushed;
 - exact changes and files;
 - evidence for every acceptance criterion;
 - exact local tests and results;
