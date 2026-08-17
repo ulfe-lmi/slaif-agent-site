@@ -10,6 +10,7 @@ from pathlib import Path
 
 from tools.check_repository import (
     APPROVED_ACTIONS,
+    BACKEND_PROCESS_VALUES,
     FOUNDATION_REGISTRY,
     FOUNDATION_SDIST,
     FOUNDATION_SDIST_SHA256,
@@ -19,6 +20,9 @@ from tools.check_repository import (
     NODE_SCRIPTS,
     PACKAGE_MANAGER,
     PACKAGE_SCRIPTS,
+    PYTHON_DEPENDENCY_GROUPS,
+    PYTHON_DIRECT_VERSIONS,
+    PYTHON_RUNTIME_DEPENDENCIES,
     ROOT_NODE_DEV_DEPENDENCIES,
     WORKSPACE_PACKAGES,
     RepositoryPolicy,
@@ -280,6 +284,8 @@ class RepositoryPolicyTestCase(unittest.TestCase):
             "ARCHITECTURE.md",
             "CONTRIBUTING.md",
             "docs/FOUNDATION_INTEGRATION.md",
+            "docs/CONFIGURATION.md",
+            "docs/SERVICE_AUTHORITY.md",
             "LICENSE",
             "NOTICE",
             "SECURITY.md",
@@ -297,6 +303,8 @@ class RepositoryPolicyTestCase(unittest.TestCase):
                 "ARCHITECTURE.md",
                 "CONTRIBUTING.md",
                 "docs/FOUNDATION_INTEGRATION.md",
+                "docs/CONFIGURATION.md",
+                "docs/SERVICE_AUTHORITY.md",
                 "LICENSE",
                 "NOTICE",
                 "SECURITY.md",
@@ -503,6 +511,141 @@ class RepositoryPolicyTestCase(unittest.TestCase):
         errors = self.errors_from("check_python_quality_configuration")
 
         self.assertTrue(any("tools/check_mermaid.py" in error for error in errors))
+
+    def write_python_boundary(self) -> None:
+        groups = "\n".join(
+            f"{name} = {json.dumps(requirements)}"
+            for name, requirements in PYTHON_DEPENDENCY_GROUPS.items()
+        )
+        self.write(
+            "pyproject.toml",
+            "[project]\n"
+            'name = "fixture"\n'
+            'version = "0.0.0"\n'
+            f"dependencies = {json.dumps(PYTHON_RUNTIME_DEPENDENCIES)}\n\n"
+            "[dependency-groups]\n"
+            f"{groups}\n",
+        )
+        packages = []
+        for name, version in PYTHON_DIRECT_VERSIONS.items():
+            packages.append(
+                "[[package]]\n"
+                f'name = "{name}"\n'
+                f'version = "{version}"\n'
+                f'source = {{ registry = "{FOUNDATION_REGISTRY}" }}\n'
+                'sdist = { url = "https://files.pythonhosted.org/example.tar.gz", '
+                f'hash = "sha256:{"1" * 64}" }}\n'
+                "wheels = [\n"
+                '  { url = "https://files.pythonhosted.org/example.whl", '
+                f'hash = "sha256:{"2" * 64}" }},\n'
+                "]\n"
+            )
+        self.write(
+            "uv.lock",
+            'version = 1\nrevision = 1\nrequires-python = ">=3.12,<3.15"\n\n'
+            + "\n".join(packages),
+        )
+
+    def test_python_dependency_boundary_accepts_exact_runtime_and_test_sets(
+        self,
+    ) -> None:
+        self.write_python_boundary()
+
+        self.assertEqual(self.errors_from("check_python_dependencies"), [])
+
+    def test_python_dependency_boundary_rejects_extra_duplicate_and_bad_lock(
+        self,
+    ) -> None:
+        self.write_python_boundary()
+        project_path = self.root / "pyproject.toml"
+        project = project_path.read_text(encoding="utf-8")
+        project_path.write_text(
+            project.replace(
+                f"dependencies = {json.dumps(PYTHON_RUNTIME_DEPENDENCIES)}",
+                "dependencies = "
+                + json.dumps(PYTHON_RUNTIME_DEPENDENCIES + ["boto3==1.0.0"]),
+            ).replace(
+                'qualification = ["packaging>=24,<26"]',
+                'qualification = ["packaging>=24,<26", "asyncpg==0.31.0"]',
+            ),
+            encoding="utf-8",
+        )
+        lock_path = self.root / "uv.lock"
+        lock = lock_path.read_text(encoding="utf-8")
+        lock_path.write_text(
+            lock.replace(
+                f'source = {{ registry = "{FOUNDATION_REGISTRY}" }}',
+                'source = { git = "https://example.test/repository" }',
+                1,
+            ).replace(f"sha256:{'2' * 64}", "sha256:bad", 1),
+            encoding="utf-8",
+        )
+
+        errors = self.errors_from("check_python_dependencies")
+
+        self.assertTrue(any("runtime set" in error for error in errors))
+        self.assertTrue(any("build/quality/test set" in error for error in errors))
+        self.assertTrue(any("approved PyPI registry" in error for error in errors))
+        self.assertTrue(any("wheel lacks a SHA-256" in error for error in errors))
+
+    def write_backend_skeleton(self) -> None:
+        assignments = "\n".join(
+            f'    {value.upper().replace("-", "_")} = "{value}"'
+            for value in sorted(BACKEND_PROCESS_VALUES)
+        )
+        self.write(
+            "services/backend/src/slaif_agent_site/authority.py",
+            f"from enum import StrEnum\n\nclass ProcessKind(StrEnum):\n{assignments}\n",
+        )
+        self.write(
+            "services/backend/src/slaif_agent_site/application.py",
+            'LIVE = "/health/live"\nREADY = "/health/ready"\n',
+        )
+        self.write(
+            "services/backend/src/slaif_agent_site/config.py",
+            'ENV_PREFIX = "SLAIF_"\n',
+        )
+        for package in ("bootstrap", "media_gc", "review_worker", "scheduler"):
+            self.write(
+                f"services/backend/src/slaif_agent_site/{package}/__main__.py",
+                "from ..worker import run_worker_process\n",
+            )
+
+    def test_backend_static_boundary_accepts_exact_inventory_and_health_routes(
+        self,
+    ) -> None:
+        self.write_backend_skeleton()
+
+        self.assertEqual(self.errors_from("check_backend_skeleton"), [])
+
+    def test_backend_static_boundary_rejects_process_route_db_and_listener_drift(
+        self,
+    ) -> None:
+        self.write_backend_skeleton()
+        authority = self.root / "services/backend/src/slaif_agent_site/authority.py"
+        authority.write_text(
+            authority.read_text(encoding="utf-8") + '    EXTRA = "extra"\n',
+            encoding="utf-8",
+        )
+        self.write(
+            "services/backend/src/slaif_agent_site/application.py",
+            'LIVE = "/health/live"\nREADY = "/health/ready"\nAPI = "/api/v1/drift"\n',
+        )
+        self.write(
+            "services/backend/src/slaif_agent_site/config.py",
+            "database_url: str\n",
+        )
+        self.write(
+            "services/backend/src/slaif_agent_site/scheduler/__main__.py",
+            "import uvicorn\n",
+        )
+
+        errors = self.errors_from("check_backend_skeleton")
+
+        self.assertTrue(any("approved ten processes" in error for error in errors))
+        self.assertTrue(any("only live/ready routes" in error for error in errors))
+        self.assertTrue(any("database connection" in error for error in errors))
+        self.assertTrue(any("listener/database" in error for error in errors))
 
     def test_node_workspace_exact_scaffold_is_allowed(self) -> None:
         self.write_node_workspace()

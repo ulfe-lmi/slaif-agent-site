@@ -16,19 +16,22 @@ the real responsive result, and publish only after human review.
 
 ## Current status
 
-> **Pre-alpha / foundation and contract-toolchain baseline.** This repository
+> **Pre-alpha / process, foundation, and contract-toolchain baseline.** This repository
 > contains the normative architecture, coding-agent governance, project
 > documentation, reproducible Python package baseline, qualified
 > `agent-cow-postgresql==0.2.0` dependency, and seven private TypeScript
-> contract-package boundaries. Next.js, React, Puck, product contracts, the
-> runnable Agent-Site application, Compose stack, product database schema,
-> APIs, browser worker, and product test suites are not implemented yet.
+> contract-package boundaries. Ten separately startable backend skeletons now
+> provide typed configuration, explicit conceptual authority descriptors, and
+> health-only HTTP or non-listening lifecycle checks. Next.js, React, Puck,
+> product contracts/routes, the runnable Agent-Site product, Compose stack,
+> product database schema/connections, authentication, browser worker, and
+> product behavior are not implemented yet.
 
 The current automation checks preparation artifacts, the TypeScript boundary
-scaffold, the Python package and foundation contract, and a disposable
-downstream PostgreSQL adoption baseline. A green CI or CodeQL result does not
-prove product readiness, validate the planned runtime, or certify the complete
-security architecture.
+scaffold, Python packaging/foundation contracts, process/configuration/health
+contracts, and a disposable downstream PostgreSQL adoption baseline. A green
+CI or CodeQL result does not prove product readiness, validate planned product
+behavior, or certify the complete security architecture.
 
 ## Why Agent-Site
 
@@ -150,7 +153,8 @@ acceptance target for later implementation phases.
 | Completed preparation | Normative architecture, coding governance, versioned OAP transcript, professional project guidance, deterministic repository policy, and initial CI/CodeQL configuration. |
 | Completed foundation baseline | Exact PyPI dependency and artifact hashes, public API adapter boundary, Python packaging, and downstream PostgreSQL 14–18 adoption gate. |
 | Completed contract-toolchain baseline | Reproducible Node 24/pnpm 11 workspace, strict TypeScript tooling, and seven private scaffold-only package boundaries. |
-| Planned product skeleton | Add the monorepo, one-command Compose packaging, secure first-run setup, service roles, and health checks. |
+| Completed backend process skeleton | Six health-only FastAPI apps, four non-listening process entrypoints, typed local configuration, conceptual authority mapping, safe errors/correlation/logging, and readiness probes. |
+| Planned deployable skeleton | Add one-command Compose packaging, secure first-run setup, actual service credentials/grants, and edge health wiring. |
 | Planned product work | Implement identity/sites/workspaces, configurable content, normalized composition/Puck, semantic tools, browser feedback, review/promotion, reconstruction, and hardening. |
 
 See [Architecture Section 50](ARCHITECTURE.md#50-implementation-phases) for
@@ -164,11 +168,11 @@ The current repository is intentionally small:
 .
 ├── .github/             # CI, CodeQL, Dependabot, and PR guidance
 ├── contracts/           # contract ownership and future generation policy
-├── docs/                # foundation record and local brand asset provenance
+├── docs/                # configuration/authority/foundation records and assets
 ├── oap/                 # versioned strategic orders, active pointer, reports
 ├── packages/            # seven private TypeScript boundary scaffolds
-├── services/backend/    # minimal Python package and foundation qualification
-├── tests/               # contract smoke and repository-policy tests
+├── services/backend/    # backend skeleton, contracts, and foundation qualification
+├── tests/               # Node contract and repository-policy tests
 ├── tools/               # standard-library repository-policy checker
 ├── AGENTS.md            # coding-agent constitution
 ├── ARCHITECTURE.md      # normative Revision 2.1 architecture
@@ -182,19 +186,23 @@ The current repository is intentionally small:
 └── README.md
 ```
 
-The package boundaries now exist, but they contain no product schemas,
-components, scopes, browser tools, API behavior, or fixture data. The planned
-application monorepo layout is specified in
-[Architecture Section 12](ARCHITECTURE.md#12-repository-architecture); its web,
-worker, runtime, and generated-contract directories do not exist yet.
+The TypeScript package boundaries contain no product schemas, components,
+scopes, browser tools, API behavior, or fixture data. The Python HTTP processes
+contain only `/health/live` and `/health/ready`; worker/bootstrap processes do
+no job or setup work. See the implemented
+[configuration contract](docs/CONFIGURATION.md) and
+[service authority skeleton](docs/SERVICE_AUTHORITY.md). The planned
+application monorepo layout remains specified in
+[Architecture Section 12](ARCHITECTURE.md#12-repository-architecture).
 
 ## Repository checks and CodeQL
 
 The [CI workflow](.github/workflows/ci.yml) runs deterministic repository
 policy, isolated policy tests, Markdown lint, exact-version Mermaid rendering,
 pull-request dependency review, frozen Node 24/pnpm 11 contract checks, Python
-3.12–3.14 lint/type/unit/package gates, and the downstream foundation adoption
-test on PostgreSQL 14–18. See the
+3.12–3.14 lint/type/unit/package gates (including process, config, health,
+error, correlation, logging, and entrypoint contracts), and the downstream
+foundation adoption test on PostgreSQL 14–18. See the
 [foundation integration record](docs/FOUNDATION_INTEGRATION.md) for the exact
 registry artifacts, public surface, commands, and limitations. The transient
 diagram and package builds add no production dependency or committed output. The

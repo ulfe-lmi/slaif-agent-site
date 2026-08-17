@@ -1,0 +1,145 @@
+"""Health-only application and readiness contracts for all HTTP processes."""
+
+from __future__ import annotations
+
+import asyncio
+from collections.abc import Callable
+
+import httpx
+import pytest
+from fastapi import FastAPI
+from fastapi.routing import APIRoute
+from slaif_agent_site.agent_api import create_app as create_agent_app
+from slaif_agent_site.authority import ProcessKind, authority_for
+from slaif_agent_site.config import ServiceSettings
+from slaif_agent_site.control_api import create_app as create_control_app
+from slaif_agent_site.editor_api import create_app as create_editor_app
+from slaif_agent_site.health import ComponentStatus, ProbeResult, ReadinessProbe
+from slaif_agent_site.mcp_adapter import create_app as create_mcp_app
+from slaif_agent_site.media_service import create_app as create_media_app
+from slaif_agent_site.render_api import create_app as create_render_app
+
+AppFactory = Callable[..., FastAPI]
+HTTP_APPS: tuple[tuple[ProcessKind, AppFactory], ...] = (
+    (ProcessKind.CONTROL_API, create_control_app),
+    (ProcessKind.EDITOR_API, create_editor_app),
+    (ProcessKind.AGENT_API, create_agent_app),
+    (ProcessKind.RENDER_API, create_render_app),
+    (ProcessKind.MCP_ADAPTER, create_mcp_app),
+    (ProcessKind.MEDIA_SERVICE, create_media_app),
+)
+
+
+def _route_paths(app: FastAPI) -> set[str]:
+    return {route.path for route in app.routes if isinstance(route, APIRoute)}
+
+
+@pytest.mark.parametrize(("process", "factory"), HTTP_APPS)
+async def test_each_app_has_only_typed_health_routes(
+    process: ProcessKind, factory: AppFactory
+) -> None:
+    app = factory(settings=ServiceSettings.for_test())
+    assert _route_paths(app) == {"/health/live", "/health/ready"}
+    assert app.docs_url is None
+    assert app.redoc_url is None
+    assert app.openapi_url is None
+    assert app.state.process_kind is process
+    assert app.state.authority is authority_for(process)
+
+    schema = app.openapi()
+    assert set(schema["paths"]) == {"/health/live", "/health/ready"}
+    assert "LivenessResponse" in schema["components"]["schemas"]
+    assert "ReadinessResponse" in schema["components"]["schemas"]
+    assert "ErrorEnvelope" in schema["components"]["schemas"]
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://testserver"
+    ) as client:
+        live = await client.get("/health/live")
+        ready = await client.get("/health/ready")
+        assert live.status_code == 200
+        assert live.json() == {"status": "ok", "service": process.value}
+        assert ready.status_code == 200
+        assert ready.json() == {
+            "status": "ready",
+            "service": process.value,
+            "components": [],
+        }
+        for hidden in ("/docs", "/redoc", "/openapi.json"):
+            assert (await client.get(hidden)).status_code == 404
+
+
+async def test_readiness_aggregates_success_failure_timeout_and_sanitizes_error() -> (
+    None
+):
+    async def healthy() -> ProbeResult:
+        return ProbeResult.ready()
+
+    async def unavailable() -> ProbeResult:
+        return ProbeResult.unavailable("dependency_unavailable")
+
+    async def slow() -> ProbeResult:
+        await asyncio.sleep(0.2)
+        return ProbeResult.ready()
+
+    async def raises_internal_error() -> ProbeResult:
+        raise RuntimeError("password=local-fixture-must-not-escape")
+
+    settings = ServiceSettings.for_test().model_copy(
+        update={"readiness_timeout_seconds": 0.05}
+    )
+    app = create_agent_app(
+        settings=settings,
+        readiness_probes=(
+            ReadinessProbe("healthy", healthy),
+            ReadinessProbe("unavailable", unavailable),
+            ReadinessProbe("slow", slow),
+            ReadinessProbe("error", raises_internal_error),
+        ),
+    )
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://testserver"
+    ) as client:
+        response = await client.get("/health/ready")
+    assert response.status_code == 503
+    assert response.json() == {
+        "status": "not_ready",
+        "service": "agent-api",
+        "components": [
+            {"component": "healthy", "status": "ok", "reason": None},
+            {
+                "component": "unavailable",
+                "status": "unavailable",
+                "reason": "dependency_unavailable",
+            },
+            {"component": "slow", "status": "unavailable", "reason": "timeout"},
+            {
+                "component": "error",
+                "status": "unavailable",
+                "reason": "probe_error",
+            },
+        ],
+    }
+    assert "local-fixture" not in response.text
+
+
+async def test_lifespan_has_explicit_start_and_stop_state() -> None:
+    app = create_control_app(settings=ServiceSettings.for_test())
+    assert not hasattr(app.state, "started")
+    async with app.router.lifespan_context(app):
+        assert app.state.started is True
+    assert app.state.started is False
+
+
+def test_probe_component_and_reason_are_bounded_codes() -> None:
+    async def healthy() -> ProbeResult:
+        return ProbeResult.ready()
+
+    with pytest.raises(ValueError):
+        ReadinessProbe("INVALID COMPONENT", healthy)
+    with pytest.raises(ValueError):
+        ProbeResult.unavailable("contains internal details")
+    with pytest.raises(ValueError):
+        ProbeResult(status=ComponentStatus.OK, reason="unexpected_reason")
+    with pytest.raises(ValueError):
+        ProbeResult(status=ComponentStatus.UNAVAILABLE)

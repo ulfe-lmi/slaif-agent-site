@@ -135,7 +135,7 @@ Required:
 - preserve MIT and upstream/downstream attribution;
 - use public `agentcow.postgres` APIs only.
 
-Current foundation/Python baseline verification from the repository root:
+Current backend/foundation Python verification from the repository root:
 
 ```bash
 uv lock --check
@@ -152,6 +152,34 @@ Use exactly uv `0.12.5` for this baseline. Integration tests use only a
 disposable local PostgreSQL service and fake credentials; CI runs the same gate
 on PostgreSQL 14–18. Future product work extends these gates and does not
 replace, skip, or weaken them.
+
+The current exact direct runtime dependencies are the foundation package,
+`asyncpg==0.31.0`, `fastapi==0.141.1`, `pydantic==2.13.4`,
+`pydantic-settings==2.15.0`, and `uvicorn==0.52.3`; HTTPX `0.28.1` is
+test-only. No standard/cloud extras or database locator/pool are implemented.
+
+Current process smoke checks are:
+
+```bash
+python -m slaif_agent_site.control_api --check
+python -m slaif_agent_site.editor_api --check
+python -m slaif_agent_site.agent_api --check
+python -m slaif_agent_site.render_api --check
+python -m slaif_agent_site.mcp_adapter --check
+python -m slaif_agent_site.media_service --check
+python -m slaif_agent_site.review_worker --check
+python -m slaif_agent_site.scheduler --check
+python -m slaif_agent_site.media_gc --check
+python -m slaif_agent_site.bootstrap --check
+```
+
+The first six packages are health-only HTTP skeletons. Render is internal-only;
+MCP has no database class; Agent has no reviewer/setup/canonical authority.
+Review worker, scheduler, media-GC, and bootstrap have no listener or Uvicorn
+entrypoint. Their immutable authority descriptors document conceptual future
+wiring and never substitute for database grants, separate credentials, network
+policy, or service authentication. Check mode binds no port and performs no
+database, job, or bootstrap mutation.
 
 Current Node/TypeScript contract-boundary verification from the repository
 root:

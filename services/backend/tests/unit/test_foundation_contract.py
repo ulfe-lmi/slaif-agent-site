@@ -46,7 +46,43 @@ EXPECTED_PUBLIC_API = {
     "harden_cow_schema",
     "validate_cow_schema_privileges",
 }
-EXPECTED_PACKAGE_FILES = {
+NEW_PACKAGE_FILES = {
+    "slaif_agent_site/agent_api/__init__.py",
+    "slaif_agent_site/agent_api/__main__.py",
+    "slaif_agent_site/agent_api/app.py",
+    "slaif_agent_site/application.py",
+    "slaif_agent_site/authority.py",
+    "slaif_agent_site/bootstrap/__init__.py",
+    "slaif_agent_site/bootstrap/__main__.py",
+    "slaif_agent_site/config.py",
+    "slaif_agent_site/control_api/__init__.py",
+    "slaif_agent_site/control_api/__main__.py",
+    "slaif_agent_site/control_api/app.py",
+    "slaif_agent_site/correlation.py",
+    "slaif_agent_site/editor_api/__init__.py",
+    "slaif_agent_site/editor_api/__main__.py",
+    "slaif_agent_site/editor_api/app.py",
+    "slaif_agent_site/errors.py",
+    "slaif_agent_site/health.py",
+    "slaif_agent_site/logging.py",
+    "slaif_agent_site/mcp_adapter/__init__.py",
+    "slaif_agent_site/mcp_adapter/__main__.py",
+    "slaif_agent_site/mcp_adapter/app.py",
+    "slaif_agent_site/media_gc/__init__.py",
+    "slaif_agent_site/media_gc/__main__.py",
+    "slaif_agent_site/media_service/__init__.py",
+    "slaif_agent_site/media_service/__main__.py",
+    "slaif_agent_site/media_service/app.py",
+    "slaif_agent_site/render_api/__init__.py",
+    "slaif_agent_site/render_api/__main__.py",
+    "slaif_agent_site/render_api/app.py",
+    "slaif_agent_site/review_worker/__init__.py",
+    "slaif_agent_site/review_worker/__main__.py",
+    "slaif_agent_site/scheduler/__init__.py",
+    "slaif_agent_site/scheduler/__main__.py",
+    "slaif_agent_site/worker.py",
+}
+EXPECTED_PACKAGE_FILES = NEW_PACKAGE_FILES | {
     "slaif_agent_site/__init__.py",
     "slaif_agent_site/agent_state/__init__.py",
     "slaif_agent_site/agent_state/foundation.py",
@@ -61,7 +97,7 @@ EXPECTED_SDIST_FILES = {
     "services/backend/src/slaif_agent_site/__init__.py",
     "services/backend/src/slaif_agent_site/agent_state/__init__.py",
     "services/backend/src/slaif_agent_site/agent_state/foundation.py",
-}
+} | {f"services/backend/src/{path}" for path in NEW_PACKAGE_FILES}
 
 
 def _load_toml(relative: str) -> dict[str, object]:
@@ -122,7 +158,14 @@ def test_python_and_package_metadata_ranges_are_coherent() -> None:
     assert project["requires-python"] == ">=3.12,<3.15"
     assert project["license"] == "Apache-2.0"
     assert project["readme"] == "README.md"
-    assert project["dependencies"] == ["agent-cow-postgresql==0.2.0"]
+    assert project["dependencies"] == [
+        "agent-cow-postgresql==0.2.0",
+        "asyncpg==0.31.0",
+        "fastapi==0.141.1",
+        "pydantic==2.13.4",
+        "pydantic-settings==2.15.0",
+        "uvicorn==0.52.3",
+    ]
 
     build_system = _load_toml("pyproject.toml")["build-system"]
     assert isinstance(build_system, dict)
@@ -237,7 +280,14 @@ def test_built_distributions_have_bounded_contents_and_metadata(
     assert metadata["Version"] == "0.0.0"
     assert metadata["License-Expression"] == "Apache-2.0"
     assert SpecifierSet(metadata["Requires-Python"]) == SpecifierSet(">=3.12,<3.15")
-    assert metadata.get_all("Requires-Dist") == ["agent-cow-postgresql==0.2.0"]
+    assert metadata.get_all("Requires-Dist") == [
+        "agent-cow-postgresql==0.2.0",
+        "asyncpg==0.31.0",
+        "fastapi==0.141.1",
+        "pydantic==2.13.4",
+        "pydantic-settings==2.15.0",
+        "uvicorn==0.52.3",
+    ]
 
 
 def test_locked_foundation_artifact_hash_constants_are_sha256() -> None:

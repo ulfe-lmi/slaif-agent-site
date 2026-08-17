@@ -12,6 +12,7 @@ Markdown parser, or legal analyzer.
 from __future__ import annotations
 
 import argparse
+import ast
 import hashlib
 import json
 import re
@@ -32,6 +33,46 @@ FOUNDATION_WHEEL_SHA256 = (
 FOUNDATION_SDIST = "agent_cow_postgresql-0.2.0.tar.gz"
 FOUNDATION_SDIST_SHA256 = (
     "eae8d434d2fc03c4faa08b44b4863fc8f8efb44ee33eaad3adc22e7eb96a062c"
+)
+PYTHON_RUNTIME_DEPENDENCIES = [
+    "agent-cow-postgresql==0.2.0",
+    "asyncpg==0.31.0",
+    "fastapi==0.141.1",
+    "pydantic==2.13.4",
+    "pydantic-settings==2.15.0",
+    "uvicorn==0.52.3",
+]
+PYTHON_DIRECT_VERSIONS = {
+    "agent-cow-postgresql": "0.2.0",
+    "asyncpg": "0.31.0",
+    "fastapi": "0.141.1",
+    "httpx": "0.28.1",
+    "pydantic": "2.13.4",
+    "pydantic-settings": "2.15.0",
+    "uvicorn": "0.52.3",
+}
+PYTHON_DEPENDENCY_GROUPS = {
+    "build": ["build>=1.3,<2", "uv-build==0.12.5"],
+    "qualification": ["packaging>=24,<26"],
+    "quality": ["mypy>=1.17,<2", "ruff>=0.12,<1"],
+    "test": ["httpx==0.28.1", "pytest>=8.4,<10", "pytest-asyncio>=1.1,<2"],
+}
+HTTP_PROCESS_PACKAGES = {
+    "agent_api": "agent-api",
+    "control_api": "control-api",
+    "editor_api": "editor-api",
+    "mcp_adapter": "mcp-adapter",
+    "media_service": "media-service",
+    "render_api": "render-api",
+}
+WORKER_PROCESS_PACKAGES = {
+    "bootstrap": "bootstrap",
+    "media_gc": "media-gc",
+    "review_worker": "review-worker",
+    "scheduler": "scheduler",
+}
+BACKEND_PROCESS_VALUES = set(HTTP_PROCESS_PACKAGES.values()) | set(
+    WORKER_PROCESS_PACKAGES.values()
 )
 PNPM_VERSION = "11.22.0"
 PNPM_INTEGRITY_HEX = (
@@ -124,36 +165,65 @@ NODE_REQUIRED_FILES = (
     )
 )
 REQUIRED_FILES = (
-    ".github/dependabot.yml",
-    ".github/pull_request_template.md",
-    ".github/workflows/ci.yml",
-    ".github/workflows/codeql.yml",
-    ".markdownlint-cli2.yaml",
-    "AGENTS.md",
-    "ARCHITECTURE.md",
-    "CONTRIBUTING.md",
-    "LICENSE",
-    "NOTICE",
-    "OAP-COMMUNICATION-coding-agent.md",
-    "README.md",
-    "SECURITY.md",
-    "docs/FOUNDATION_INTEGRATION.md",
-    "docs/assets/README.md",
-    "docs/assets/slaif-logo.svg",
-    "oap/active",
-    "pyproject.toml",
-    "services/backend/src/slaif_agent_site/__init__.py",
-    "services/backend/src/slaif_agent_site/agent_state/__init__.py",
-    "services/backend/src/slaif_agent_site/agent_state/foundation.py",
-    "services/backend/tests/conftest.py",
-    "services/backend/tests/integration/test_foundation_postgres.py",
-    "services/backend/tests/unit/test_foundation_contract.py",
-    "tests/repository/test_mermaid.py",
-    "tests/repository/test_repository_policy.py",
-    "tools/check_mermaid.py",
-    "tools/check_repository.py",
-    "uv.lock",
-) + NODE_REQUIRED_FILES
+    (
+        ".github/dependabot.yml",
+        ".github/pull_request_template.md",
+        ".github/workflows/ci.yml",
+        ".github/workflows/codeql.yml",
+        ".markdownlint-cli2.yaml",
+        "AGENTS.md",
+        "ARCHITECTURE.md",
+        "CONTRIBUTING.md",
+        "LICENSE",
+        "NOTICE",
+        "OAP-COMMUNICATION-coding-agent.md",
+        "README.md",
+        "SECURITY.md",
+        "docs/FOUNDATION_INTEGRATION.md",
+        "docs/CONFIGURATION.md",
+        "docs/SERVICE_AUTHORITY.md",
+        "docs/assets/README.md",
+        "docs/assets/slaif-logo.svg",
+        "oap/active",
+        "pyproject.toml",
+        "services/backend/src/slaif_agent_site/__init__.py",
+        "services/backend/src/slaif_agent_site/agent_state/__init__.py",
+        "services/backend/src/slaif_agent_site/agent_state/foundation.py",
+        "services/backend/src/slaif_agent_site/application.py",
+        "services/backend/src/slaif_agent_site/authority.py",
+        "services/backend/src/slaif_agent_site/config.py",
+        "services/backend/src/slaif_agent_site/correlation.py",
+        "services/backend/src/slaif_agent_site/errors.py",
+        "services/backend/src/slaif_agent_site/health.py",
+        "services/backend/src/slaif_agent_site/logging.py",
+        "services/backend/src/slaif_agent_site/worker.py",
+        "services/backend/tests/conftest.py",
+        "services/backend/tests/integration/test_foundation_postgres.py",
+        "services/backend/tests/unit/test_foundation_contract.py",
+        "services/backend/tests/unit/test_authority.py",
+        "services/backend/tests/unit/test_config.py",
+        "services/backend/tests/unit/test_correlation_logging.py",
+        "services/backend/tests/unit/test_errors.py",
+        "services/backend/tests/unit/test_health_apps.py",
+        "services/backend/tests/unit/test_process_entrypoints.py",
+        "tests/repository/test_mermaid.py",
+        "tests/repository/test_repository_policy.py",
+        "tools/check_mermaid.py",
+        "tools/check_repository.py",
+        "uv.lock",
+    )
+    + tuple(
+        f"services/backend/src/slaif_agent_site/{package}/{filename}"
+        for package in HTTP_PROCESS_PACKAGES
+        for filename in ("__init__.py", "__main__.py", "app.py")
+    )
+    + tuple(
+        f"services/backend/src/slaif_agent_site/{package}/{filename}"
+        for package in WORKER_PROCESS_PACKAGES
+        for filename in ("__init__.py", "__main__.py")
+    )
+    + NODE_REQUIRED_FILES
+)
 REQUIRED_README_TARGETS = (
     ".github/workflows/ci.yml",
     ".github/workflows/codeql.yml",
@@ -161,6 +231,8 @@ REQUIRED_README_TARGETS = (
     "ARCHITECTURE.md",
     "CONTRIBUTING.md",
     "docs/FOUNDATION_INTEGRATION.md",
+    "docs/CONFIGURATION.md",
+    "docs/SERVICE_AUTHORITY.md",
     "LICENSE",
     "NOTICE",
     "SECURITY.md",
@@ -256,6 +328,8 @@ class RepositoryPolicy:
         self.check_workflows()
         self.check_python_quality_configuration()
         self.check_foundation_dependencies()
+        self.check_python_dependencies()
+        self.check_backend_skeleton()
         self.check_node_workspace()
         return sorted(set(self.errors))
 
@@ -572,6 +646,180 @@ class RepositoryPolicy:
                         f"line {number} foundation dependency is not exactly "
                         "version-pinned",
                     )
+
+    def check_python_dependencies(self) -> None:
+        """Require the exact minimal direct Python dependency boundary."""
+
+        pyproject_path = self.root / "pyproject.toml"
+        lock_path = self.root / "uv.lock"
+        if pyproject_path.is_file():
+            document = self.load_toml(pyproject_path)
+            if document is not None:
+                project = document.get("project")
+                dependencies: object = None
+                if isinstance(project, dict):
+                    dependencies = project.get("dependencies")
+                if dependencies != PYTHON_RUNTIME_DEPENDENCIES:
+                    self.error(
+                        pyproject_path,
+                        "project.dependencies must match the approved exact "
+                        "runtime set",
+                    )
+
+                groups = document.get("dependency-groups")
+                if groups != PYTHON_DEPENDENCY_GROUPS:
+                    self.error(
+                        pyproject_path,
+                        "dependency-groups must match the approved "
+                        "build/quality/test set",
+                    )
+
+                tool = document.get("tool")
+                sources: object = None
+                if isinstance(tool, dict):
+                    uv = tool.get("uv")
+                    if isinstance(uv, dict):
+                        sources = uv.get("sources")
+                if isinstance(sources, dict):
+                    direct_names = {
+                        name.replace("-", "_") for name in PYTHON_DIRECT_VERSIONS
+                    }
+                    overridden = {
+                        str(name)
+                        for name in sources
+                        if str(name).lower().replace("-", "_") in direct_names
+                    }
+                    if overridden:
+                        self.error(
+                            pyproject_path,
+                            "direct Python dependency source overrides are forbidden",
+                        )
+
+        if not lock_path.is_file():
+            return
+        lock = self.load_toml(lock_path)
+        if lock is None:
+            return
+        packages = lock.get("package")
+        if not isinstance(packages, list):
+            self.error(lock_path, "lock package inventory is missing")
+            return
+        for name, version in PYTHON_DIRECT_VERSIONS.items():
+            matches = [
+                package
+                for package in packages
+                if isinstance(package, dict) and package.get("name") == name
+            ]
+            if len(matches) != 1:
+                self.error(lock_path, f"must contain exactly one locked {name} package")
+                continue
+            package = matches[0]
+            if package.get("version") != version:
+                self.error(lock_path, f"{name} must be locked at exactly {version}")
+            if package.get("source") != {"registry": FOUNDATION_REGISTRY}:
+                self.error(lock_path, f"{name} must use the approved PyPI registry")
+
+            sdist = package.get("sdist")
+            if not isinstance(sdist, dict) or not re.fullmatch(
+                r"sha256:[0-9a-f]{64}", str(sdist.get("hash", ""))
+            ):
+                self.error(lock_path, f"{name} sdist lacks a SHA-256 hash")
+            wheels = package.get("wheels")
+            if not isinstance(wheels, list) or not wheels:
+                self.error(lock_path, f"{name} wheel inventory is missing")
+            elif any(
+                not isinstance(wheel, dict)
+                or not re.fullmatch(r"sha256:[0-9a-f]{64}", str(wheel.get("hash", "")))
+                for wheel in wheels
+            ):
+                self.error(lock_path, f"{name} wheel lacks a SHA-256 hash")
+
+    def check_backend_skeleton(self) -> None:
+        """Apply bounded static checks to process/config/route separation."""
+
+        package_root = self.root / "services/backend/src/slaif_agent_site"
+        authority_path = package_root / "authority.py"
+        if authority_path.is_file():
+            source = self.read_utf8(authority_path)
+            if source is not None:
+                try:
+                    tree = ast.parse(source)
+                except SyntaxError as exc:
+                    self.error(authority_path, f"cannot parse Python ({exc})")
+                else:
+                    values: set[str] = set()
+                    for node in tree.body:
+                        if (
+                            not isinstance(node, ast.ClassDef)
+                            or node.name != "ProcessKind"
+                        ):
+                            continue
+                        for statement in node.body:
+                            if (
+                                isinstance(statement, ast.Assign)
+                                and isinstance(statement.value, ast.Constant)
+                                and isinstance(statement.value.value, str)
+                            ):
+                                values.add(statement.value.value)
+                    if values != BACKEND_PROCESS_VALUES:
+                        self.error(
+                            authority_path,
+                            "ProcessKind must contain exactly the approved ten "
+                            "processes",
+                        )
+                for forbidden in (
+                    "all_authority",
+                    "all-authority",
+                    "credential_value",
+                    "password",
+                    "connection_string",
+                ):
+                    if forbidden in source.casefold():
+                        self.error(
+                            authority_path,
+                            f"authority descriptors contain forbidden {forbidden!r}",
+                        )
+
+        config_path = package_root / "config.py"
+        if config_path.is_file():
+            source = self.read_utf8(config_path)
+            if source is not None and re.search(
+                r"\b(?:database_url|postgres_url|postgres_dsn|db_dsn)\b",
+                source,
+                re.IGNORECASE,
+            ):
+                self.error(config_path, "database connection configuration is deferred")
+
+        application_path = package_root / "application.py"
+        if application_path.is_file():
+            source = self.read_utf8(application_path)
+            if source is not None:
+                route_literals = set(
+                    re.findall(r"[\"'](/(?:health|api|internal)[^\"']*)[\"']", source)
+                )
+                if route_literals != {"/health/live", "/health/ready"}:
+                    self.error(
+                        application_path,
+                        "shared HTTP skeleton may expose only live/ready routes",
+                    )
+                if "CORSMiddleware" in source or "allow_origins" in source:
+                    self.error(
+                        application_path, "CORS is not approved for this skeleton"
+                    )
+
+        for package in WORKER_PROCESS_PACKAGES:
+            main_path = package_root / package / "__main__.py"
+            if not main_path.is_file():
+                continue
+            source = self.read_utf8(main_path)
+            if source is not None and any(
+                forbidden in source.casefold()
+                for forbidden in ("uvicorn", "fastapi", "asyncpg", "database_url")
+            ):
+                self.error(
+                    main_path,
+                    "non-listening entrypoint contains a listener/database dependency",
+                )
 
     def check_python_quality_configuration(self) -> None:
         path = self.root / "pyproject.toml"
