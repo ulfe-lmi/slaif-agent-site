@@ -53,17 +53,21 @@ pnpm licenses list --json
 uv --version
 uv lock --check
 uv sync --frozen --all-groups
-uv run --frozen ruff check services/backend tests/repository tests/packaging tools migrations
-uv run --frozen ruff format --check services/backend tests/repository tests/packaging tools migrations
+uv run --frozen ruff check services/backend tests/repository tests/packaging tests/supply_chain tools migrations
+uv run --frozen ruff format --check services/backend tests/repository tests/packaging tests/supply_chain tools migrations
 uv run --frozen mypy
 uv run --frozen pytest services/backend/tests/unit tests/repository
 uv run --frozen pytest services/backend/tests/integration
 uv build --out-dir /tmp/slaif-agent-site-distributions
-python -m compileall -q tools tests/repository tests/packaging
+python -m compileall -q tools tests/repository tests/packaging tests/supply_chain
 python -m unittest discover -s tests/repository -p 'test_*.py'
 python -m unittest discover -s tests/packaging -p 'test_*.py'
+python -m unittest discover -s tests/supply_chain -p 'test_*.py'
 python tools/check_repository.py
 python tools/check_mermaid.py
+uv run --frozen python -m tools.supply_chain.policy validate
+uv run --frozen python -m tools.supply_chain.policy notices --check
+tools/supply_chain/run.sh /tmp/slaif-supply-chain-evidence
 npx --yes markdownlint-cli2@0.23.2 "**/*.md"
 docker compose config --quiet
 sudo tools/compose/smoke.sh slaif007localtest
@@ -154,6 +158,15 @@ sources are forbidden. Root tooling versions are exact. The seven contract
 packages and browser placeholder remain private and dependency-free. The Web
 workspace has only the qualified exact Next/React set. Package lifecycle and
 publish scripts are not permitted.
+
+The source-controlled [license policy](docs/LICENSE_POLICY.md) separates the
+strict application gate from attribution-bearing data and container OS/runtime
+review. [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) is deterministic and
+must be regenerated only from frozen local inputs. The complete
+[supply-chain gate](docs/SUPPLY_CHAIN.md) uses exact Syft and Grype images,
+requires a fresh public vulnerability database, fails every unexcepted
+Critical finding, preserves High findings as review evidence, and retains a
+checksummed secret-free CI bundle for 14 days.
 
 ## OAP transcript ownership
 

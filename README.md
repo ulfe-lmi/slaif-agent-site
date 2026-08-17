@@ -21,7 +21,10 @@ the real responsive result, and publish only after human review.
 > reproducible Python/TypeScript toolchains, the qualified
 > `agent-cow-postgresql==0.2.0` dependency, ten backend process boundaries,
 > exact PostgreSQL roles/local login principals, and an owner-only
-> Alembic/bootstrap path. The default Compose stack builds non-root OCI images,
+> Alembic/bootstrap path. It also enforces frozen dependency/license/source
+> policy, deterministic notices and application artifacts, exact OCI
+> provenance, and retained six-image SBOM/vulnerability evidence. The default
+> Compose stack builds non-root OCI images,
 > generates file-backed local credentials, reaches `EMPTY_SAFE safe=true`, and
 > exposes an honest Next.js status surface and health routes only through NGINX
 > on <http://localhost:8080/>.
@@ -165,6 +168,7 @@ first-run administrator or website-management product. See the
 | Completed backend process skeleton | Six health-only FastAPI apps, four non-listening process entrypoints, typed local configuration, conceptual authority mapping, safe errors/correlation/logging, and readiness probes. |
 | Completed database boundary baseline | Exact password-free roles, packaged Alembic head, three empty product schemas, constrained `PENDING`/`EMPTY_SAFE`/`HARDENED` readiness, public-API COW reconciliation, and independent privilege validation. |
 | Completed deployable skeleton | One-command Compose, generated local database principals, safe-empty bootstrap, digest-pinned OCI images, isolated browser placeholder, Next status page, NGINX edge, and Apache reference. |
+| Completed supply-chain baseline | Reproducible Python/Web artifacts, exact source/action/base/scanner policy, deterministic notices, six-image SPDX SBOMs, fresh Grype scans, and checksummed retained CI evidence. |
 | Planned setup/product work | Implement secure first-user setup, identity/sites/workspaces, configurable content, normalized composition/Puck, semantic tools, browser feedback, review/promotion, reconstruction, and hardening. |
 
 See [Architecture Section 50](ARCHITECTURE.md#50-implementation-phases) for
@@ -185,8 +189,9 @@ The current repository is intentionally small:
 ├── oap/                 # versioned strategic orders, active pointer, reports
 ├── packages/            # seven private TypeScript boundary scaffolds
 ├── services/            # backend and isolated browser-worker placeholder
+├── supply-chain/        # machine policy, scanner contract, empty exceptions
 ├── tests/               # contract, packaging, and repository-policy tests
-├── tools/               # repository, Compose, and local-secret tooling
+├── tools/               # repository, Compose, supply-chain, secret tooling
 ├── AGENTS.md            # coding-agent constitution
 ├── ARCHITECTURE.md      # normative Revision 2.1 architecture
 ├── compose.yaml         # local one-command deployment topology
@@ -221,9 +226,14 @@ pull-request dependency review, frozen Node 24/pnpm 11 contract checks, Python
 3.12–3.14 lint/type/unit/package gates (including process, config, health,
 error, correlation, logging, and entrypoint contracts), and separate foundation
 plus Agent-Site database suites on PostgreSQL 14–18, and a clean Compose/edge
-packaging smoke. See the
+packaging smoke. A separate bounded job builds reproducible artifacts, creates
+and validates six SPDX SBOMs, scans symbol-aware SBOMs with a fresh database,
+fails on every unexcepted Critical, retains High findings, secret-scans and
+checksums the result, and uploads it for 14 days. See the
+[supply-chain guide](docs/SUPPLY_CHAIN.md),
+[license policy](docs/LICENSE_POLICY.md), and
 [foundation integration record](docs/FOUNDATION_INTEGRATION.md) for the exact
-registry artifacts, public surface, commands, and limitations. The transient
+contracts, commands, and limitations. The transient
 diagram and package builds add no production dependency or committed output. The
 [advanced CodeQL workflow](.github/workflows/codeql.yml) detects a fixed
 language allowlist and now analyzes GitHub Actions, Python, and
@@ -254,8 +264,10 @@ honest about implemented versus planned behavior. See
 ## License, privacy, and acknowledgement
 
 SLAIF Agent-Site is licensed under the [Apache License 2.0](LICENSE). See
-[NOTICE](NOTICE) and the [logo provenance record](docs/assets/README.md) for
-attribution and the conservative trademark boundary.
+[NOTICE](NOTICE), the generated
+[third-party inventory](THIRD_PARTY_NOTICES.md), and the
+[logo provenance record](docs/assets/README.md) for attribution and the
+conservative trademark boundary.
 
 The planned default stack is fully self-hosted, makes no outbound telemetry
 call by default, and treats agent capabilities, unpublished content, browser

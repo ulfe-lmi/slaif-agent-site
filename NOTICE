@@ -22,6 +22,13 @@ That project is a PostgreSQL-focused downstream fork of Trail's MIT-licensed
 agent-cow-python project at https://github.com/trail-ml/agent-cow-python. The
 dependency is installed from PyPI and is not vendored into this repository.
 
+Third-party dependency inventory
+
+The deterministic THIRD_PARTY_NOTICES.md file records the frozen Python and
+npm dependency inventory, license expressions or review status, source links,
+and attribution notes. Container operating-system and runtime packages are
+inventoried separately in the retained CI SBOM evidence.
+
 Funding acknowledgement
 
 This work is associated with the Slovenian AI Factory (SLAIF) and acknowledges

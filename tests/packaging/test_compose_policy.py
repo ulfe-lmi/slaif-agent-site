@@ -58,7 +58,10 @@ def _configuration() -> dict[str, object]:
         if name in VERIFY.EXPECTED_GROUP_ADD:
             service["group_add"] = sorted(VERIFY.EXPECTED_GROUP_ADD[name])
         if name in VERIFY.EXPECTED_BUILD_FILES:
-            service["build"] = {"dockerfile": VERIFY.EXPECTED_BUILD_FILES[name]}
+            service["build"] = {
+                "args": VERIFY.EXPECTED_BUILD_ARGS.copy(),
+                "dockerfile": VERIFY.EXPECTED_BUILD_FILES[name],
+            }
         services[name] = service
     services["secrets-init"]["network_mode"] = "none"
     services["nginx"]["ports"] = [
@@ -90,6 +93,12 @@ class ComposePolicyTests(unittest.TestCase):
         configuration = copy.deepcopy(_configuration())
         configuration["services"]["web"]["environment"] = {"OWNER_DSN": "fake"}
         with self.assertRaisesRegex(VERIFY.PolicyError, "secret environment"):
+            VERIFY.validate_config(configuration)
+
+    def test_mutable_build_metadata_is_rejected(self) -> None:
+        configuration = copy.deepcopy(_configuration())
+        configuration["services"]["web"]["build"]["args"]["SOURCE_DATE_EPOCH"] = "now"
+        with self.assertRaisesRegex(VERIFY.PolicyError, "build arguments"):
             VERIFY.validate_config(configuration)
 
     def test_test_or_false_production_backend_mode_is_rejected(self) -> None:
