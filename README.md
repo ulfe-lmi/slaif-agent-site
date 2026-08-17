@@ -22,8 +22,9 @@ the real responsive result, and publish only after human review.
 > `agent-cow-postgresql==0.2.0` dependency, ten backend process boundaries,
 > exact PostgreSQL privilege roles, and an owner-only Alembic/bootstrap path.
 > The database revision contains only schema/version/readiness infrastructure;
-> its clean empty-content marker deliberately remains unsafe because the
-> qualified foundation cannot harden zero COW tables. Next.js, React, Puck,
+> its clean zero-object content state is explicitly `EMPTY_SAFE` without
+> claiming foundation table hardening. Any real content object requires the
+> fully validated `HARDENED` state. Next.js, React, Puck,
 > product contracts/routes/tables, online database pools, the runnable product,
 > Compose, authentication, browser worker, and product behavior are not
 > implemented yet.
@@ -156,7 +157,7 @@ acceptance target for later implementation phases.
 | Completed foundation baseline | Exact PyPI dependency and artifact hashes, public API adapter boundary, Python packaging, and downstream PostgreSQL 14–18 adoption gate. |
 | Completed contract-toolchain baseline | Reproducible Node 24/pnpm 11 workspace, strict TypeScript tooling, and seven private scaffold-only package boundaries. |
 | Completed backend process skeleton | Six health-only FastAPI apps, four non-listening process entrypoints, typed local configuration, conceptual authority mapping, safe errors/correlation/logging, and readiness probes. |
-| Completed database boundary baseline | Exact password-free roles, packaged Alembic head, three empty product schemas, owner-only readiness marker, public-API COW reconciliation, and independent privilege validation. Clean zero-table COW hardening remains unresolved and fails closed. |
+| Completed database boundary baseline | Exact password-free roles, packaged Alembic head, three empty product schemas, constrained `PENDING`/`EMPTY_SAFE`/`HARDENED` readiness, public-API COW reconciliation, and independent privilege validation. |
 | Planned deployable skeleton | Add one-command Compose packaging, secure first-run setup, actual service credentials/grants, and edge health wiring. |
 | Planned product work | Implement identity/sites/workspaces, configurable content, normalized composition/Puck, semantic tools, browser feedback, review/promotion, reconstruction, and hardening. |
 

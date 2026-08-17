@@ -52,17 +52,22 @@ async def _run(command: str, settings: BootstrapSettings) -> str:
         bootstrap_status = await reconcile(settings)
         return (
             f"bootstrap: OK revision={bootstrap_status.revision} "
+            f"state={bootstrap_status.state.value} "
             f"safe={str(bootstrap_status.safe).lower()}"
         )
     if command == "validate":
         marker, validation = await validate(settings)
         if not validation.safe:
             raise RuntimeError("database privilege validation failed")
-        return f"validate: OK revision={marker.revision} safe=true"
+        return (
+            f"validate: OK revision={marker.revision} "
+            f"state={marker.state.value} safe=true"
+        )
     if command == "current":
         current_status = await status(settings)
         return (
             f"current: revision={current_status.revision} "
+            f"state={current_status.state.value} "
             f"safe={str(current_status.safe).lower()}"
         )
     if command == "downgrade":

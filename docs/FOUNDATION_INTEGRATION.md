@@ -144,7 +144,10 @@ local result.
 
 The product schema/role/bootstrap baseline now exists, but it contains no
 domain table and no online connection. The foundation cannot harden an empty
-COW schema, so the clean marker remains deliberately unsafe; see
+COW schema; Agent-Site therefore publishes `EMPTY_SAFE` only after a separate
+zero-object and zero-authority proof, while explicitly leaving foundation
+hardening/validation false and not applicable. Any content object requires the
+normal public foundation hardening path and `HARDENED`; see
 [database bootstrap](DATABASE_BOOTSTRAP.md). Capability authorization,
 immutable review snapshots, product concurrency policy, publication, Compose
 packaging, and public APIs remain unimplemented. Tests use only disposable fake

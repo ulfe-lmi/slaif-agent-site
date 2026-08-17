@@ -213,6 +213,7 @@ REQUIRED_FILES = (
         "services/backend/src/slaif_agent_site/db/executor.py",
         "services/backend/src/slaif_agent_site/db/migrations.py",
         "services/backend/src/slaif_agent_site/db/privileges.py",
+        "services/backend/src/slaif_agent_site/db/readiness.py",
         "services/backend/src/slaif_agent_site/db/roles.py",
         "services/backend/src/slaif_agent_site/errors.py",
         "services/backend/src/slaif_agent_site/health.py",

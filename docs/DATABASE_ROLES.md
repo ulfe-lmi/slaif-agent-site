@@ -26,8 +26,10 @@ MCP adapter, Web, and browser worker have no database privilege role. Render
 will eventually use separate canonical and preview credentials rather than a
 combined writer. No generic all-authority role exists.
 
-The clean revision has no `content` view, so it grants no runtime or reader
-relation access. Grants are applied only to objects that actually exist.
+The clean revision has no `content` object. In `EMPTY_SAFE`, every non-owner
+role also lacks content schema `USAGE`/`CREATE`, and Reviewer has no foundation
+schema/function surface. Grants are applied only after real objects exist and
+the state reaches `HARDENED`.
 
 ## Login-principal design
 
@@ -67,9 +69,12 @@ and `has_*_privilege` functions. It checks:
 - `PUBLIC` and non-owner schema creation;
 - effective relation DML, including inherited grants;
 - effective function execution and locked-down reviewer functions;
-- clean-baseline object inventory.
+- exact empty-schema inventory and generic content/foundation object
+  fingerprints;
+- state-specific schema usage and Reviewer foundation authority.
 
 Diagnostics identify a role, object, and privilege category, but never include
 a password, locator, unrelated database metadata, or query result. Foundation
-validation remains a separate required check; the product verifier supplements
-it and does not reinterpret private foundation objects.
+validation remains a separate required check in `HARDENED`; it is explicitly
+not applicable and not claimed in `EMPTY_SAFE`. The product verifier never
+reinterprets private foundation objects.

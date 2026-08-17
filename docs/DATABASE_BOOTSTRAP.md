@@ -46,7 +46,8 @@ provided.
 
 Pydantic secret values are masked. Configuration/connection/action failures
 from the CLI print only `Database bootstrap failed.` and exit nonzero. The
-readiness marker stores versions and booleans, never a locator or credential.
+readiness marker stores versions, a constrained state, evidence flags, and
+generic object fingerprints, never a locator or credential.
 
 ## Commands
 
@@ -68,9 +69,11 @@ python -m slaif_agent_site.bootstrap validate
 
 Running the module without a command prints usage and performs no mutation.
 `provision` is the only cluster-role command. `upgrade` reaches the one Alembic
-head. `bootstrap` repeats `upgrade`, deploys/reconciles COW, applies product
-grants, runs both validators, and publishes the safe marker last. `current` is
-read-only. `validate` fails if database truth and the marker disagree.
+head. `bootstrap` repeats `upgrade`, deploys/reconciles COW, applies the
+state-specific grants and validation, and publishes the safe marker last.
+`current` is read-only and includes `state=PENDING`, `state=EMPTY_SAFE`, or
+`state=HARDENED`. `validate` independently reproduces the applicable proof and
+fails if database truth, object fingerprints, and the marker disagree.
 
 Downgrade and rebuild are disposable verification operations, not a production
 rollback promise:
@@ -80,9 +83,9 @@ python -m slaif_agent_site.bootstrap downgrade --confirm-disposable
 python -m slaif_agent_site.bootstrap rebuild --confirm-disposable
 ```
 
-They are tested before foundation/content objects are added. Production uses
-forward maintenance migrations and restores from a validated backup when the
-release plan requires recovery.
+They are tested on disposable empty databases, including an idempotently
+deployed foundation schema. Production uses forward maintenance migrations and
+restores from a validated backup when the release plan requires recovery.
 
 ## Reconciliation and marker semantics
 
@@ -93,12 +96,13 @@ The ordered path is:
 3. call public `deploy_cow_functions(...)` in a transaction;
 4. call public `enable_cow_schema(...)` for `content` with deferred FKs enabled
    and unsafe canonical writes disabled;
-5. call public `harden_cow_schema(...)` with only Editor/Agent runtime and
-   Reviewer roles in an explicit transaction;
-6. apply grants only to current product objects;
-7. call public `validate_cow_schema_privileges(...)` and the independent
-   product verifier;
-8. update `control.bootstrap_readiness.safe` as the last transaction action.
+5. inventory `content` through generic PostgreSQL catalogs;
+6. when the inventory is empty, revoke all non-owner content and foundation
+   service authority and run only the independent safe-empty verifier;
+7. otherwise call public `harden_cow_schema(...)`, apply grants, and run public
+   `validate_cow_schema_privileges(...)` plus the independent verifier;
+8. fingerprint the generic content and foundation object inventories and
+   update `control.bootstrap_readiness` as the last transaction action.
 
 Before every attempt, the marker is made unsafe. Deployment may remain
 idempotently installed after a later step fails. Enablement, hardening, product
@@ -107,32 +111,43 @@ injected failure rolls them back. A repeat repairs safely and a successful
 repeat does not add objects or change migration head.
 
 The marker records revision `006_001`, distribution
-`agent-cow-postgresql`, version `0.2.0`, deployment/hardening/validation flags,
-and update time. Its constraint forbids `safe=true` unless every state flag is
-true. The owner alone can read or update it in this baseline; it is not yet an
-online readiness probe.
+`agent-cow-postgresql`, version `0.2.0`, state-specific evidence flags, generic
+content/foundation object counts and SHA-256 fingerprints, overall safety, and
+update time. Database constraints admit exactly these combinations:
 
-## Empty-content limitation
+| State | Content evidence | Foundation table evidence | Product evidence | Safe |
+| --- | --- | --- | --- | --- |
+| `PENDING` | No published inventory | Hardening and foundation validation false | Validation false | false |
+| `EMPTY_SAFE` | Exactly zero schema-scoped objects | Hardening and foundation table validation false/not applicable | Safe-empty privileges validated | true |
+| `HARDENED` | Nonzero fingerprinted inventory | Hardening and foundation validation true | Product privileges validated | true |
 
-The qualified foundation `harden_cow_schema(...)` rejects a schema with zero
-COW-enabled tables. This revision is also prohibited from adding a production
-`content` table. Consequently, `upgrade` succeeds on the clean baseline, but
-the current clean `bootstrap` command deliberately stops after safe foundation
-deployment with `cow_deployed=true`, all later flags false, and `safe=false`.
-It emits the constant failure and never fabricates hardening evidence.
+`PENDING` permits only the foundation-deployed flag to reflect an idempotent
+partial step. It can never be safe. `EMPTY_SAFE` is not a waiver and does not
+claim that foundation table privileges were validated: there is no content
+table, view, sequence, routine, type, operator, collation, statistics object,
+or text-search object to harden. All non-owner roles lack content schema usage
+and creation, and Reviewer has no foundation function surface. The deployed
+foundation inventory is fingerprinted and protected from `PUBLIC` and service
+roles.
 
-The integration gate proves the complete sequence using a disposable
-qualification-only table, then removes the database. That table is absent from
-the migration and distributions. Resolving clean-baseline safe readiness needs
-a strategic choice: add the first authorized content migration, qualify a
-foundation API that supports empty-schema hardening, or explicitly redefine
-empty hardening as not applicable. This PR does none of those silently.
+The qualified foundation still rejects direct hardening of zero COW tables,
+so the empty branch deliberately does not call hardening or foundation table
+validation. Any content object makes that branch inapplicable and forces the
+public hardening path. Adding, removing, or renaming an object after reconcile
+changes the stored generic fingerprint and makes `validate` fail closed. An
+explicit repeat reconcile may advance only `updated_at`; the migration head,
+object inventory, grants, and state do not drift.
+
+The owner alone can read or update the marker in this baseline; it is not yet
+an online readiness probe.
 
 ## Future migration rule
 
-A future physical `content` migration must run in maintenance mode, create only
-trusted platform tables, call public enablement with deferred FKs and unsafe
-canonical writes disabled, rerun hardening and both validators, and grant each
-new view/function explicitly. It must not rely on broad default privileges or
-accept DDL from a human/agent/site request. Configurable content types and
-fields remain data, not migrations.
+A future physical `content` migration must first make readiness `PENDING`, run
+in maintenance mode, create only trusted platform tables, call public
+enablement with deferred FKs and unsafe canonical writes disabled, rerun
+hardening and both validators, and publish `HARDENED` with new fingerprints.
+The database must not remain or return `EMPTY_SAFE` while any object exists. A
+migration must not rely on broad default privileges or accept DDL from a
+human/agent/site request. Configurable content types and fields remain data,
+not migrations.

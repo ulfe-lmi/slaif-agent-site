@@ -29,12 +29,58 @@ from slaif_agent_site.bootstrap.service import (
 )
 from slaif_agent_site.db.connections import owner_connection
 from slaif_agent_site.db.executor import AsyncpgExecutor
-from slaif_agent_site.db.privileges import verify_database_privileges
+from slaif_agent_site.db.privileges import (
+    content_object_inventory,
+    verify_database_privileges,
+)
+from slaif_agent_site.db.readiness import ReadinessState
 from slaif_agent_site.db.roles import ROLE_NAMES, quote_identifier
 
 QUALIFICATION_TABLE = '"content"."qualification_item"'
 QUALIFICATION_BASE = '"content"."qualification_item_base"'
 QUALIFICATION_CHANGES = '"content"."qualification_item_changes"'
+
+
+def _assert_pending(marker: Any, *, deployed: bool) -> None:
+    assert marker.state is ReadinessState.PENDING
+    assert marker.content_object_count == 0
+    assert marker.content_object_fingerprint is None
+    assert marker.foundation_object_count == 0
+    assert marker.foundation_object_fingerprint is None
+    assert marker.foundation_deployed is deployed
+    assert not marker.foundation_hardened
+    assert not marker.foundation_privileges_validated
+    assert not marker.product_privileges_validated
+    assert not marker.safe
+
+
+def _assert_empty_safe(marker: Any) -> None:
+    assert marker.state is ReadinessState.EMPTY_SAFE
+    assert marker.content_object_count == 0
+    assert marker.content_object_fingerprint is None
+    assert marker.foundation_object_count > 0
+    assert marker.foundation_object_fingerprint is not None
+    assert len(marker.foundation_object_fingerprint) == 64
+    assert marker.foundation_deployed
+    assert not marker.foundation_hardened
+    assert not marker.foundation_privileges_validated
+    assert marker.product_privileges_validated
+    assert marker.safe
+
+
+def _assert_hardened(marker: Any) -> None:
+    assert marker.state is ReadinessState.HARDENED
+    assert marker.content_object_count > 0
+    assert marker.content_object_fingerprint is not None
+    assert len(marker.content_object_fingerprint) == 64
+    assert marker.foundation_object_count > 0
+    assert marker.foundation_object_fingerprint is not None
+    assert len(marker.foundation_object_fingerprint) == 64
+    assert marker.foundation_deployed
+    assert marker.foundation_hardened
+    assert marker.foundation_privileges_validated
+    assert marker.product_privileges_validated
+    assert marker.safe
 
 
 async def _create_qualification_table(database: AgentSiteDatabase) -> None:
@@ -54,7 +100,7 @@ async def _prepare_hardened_database(database: AgentSiteDatabase) -> None:
     await upgrade(database.settings)
     await _create_qualification_table(database)
     result = await reconcile(database.settings)
-    assert result.safe
+    _assert_hardened(result)
 
 
 async def test_clean_migration_current_repeat_downgrade_and_rebuild(
@@ -64,7 +110,7 @@ async def test_clean_migration_current_repeat_downgrade_and_rebuild(
     await upgrade(database.settings)
     first = await status(database.settings)
     assert first.revision == "006_001"
-    assert not first.safe
+    _assert_pending(first, deployed=False)
 
     async with owner_connection(
         database.settings.resolved_owner_dsn(), expected_database=database.name
@@ -104,6 +150,65 @@ async def test_clean_migration_current_repeat_downgrade_and_rebuild(
             == initial_time
         )
 
+    empty = await reconcile(database.settings)
+    _assert_empty_safe(empty)
+    validated_marker, validated = await validate(database.settings)
+    _assert_empty_safe(validated_marker)
+    assert validated.safe, validated.violations
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as connection:
+        empty_objects = await content_object_inventory(connection)
+        ready_time = await connection.fetchval(
+            "SELECT updated_at FROM control.bootstrap_readiness WHERE singleton"
+        )
+        foundation_inventory = tuple(
+            await connection.fetchrow(
+                "SELECT "
+                "(SELECT count(*) FROM pg_catalog.pg_class class_ "
+                "JOIN pg_catalog.pg_namespace namespace_ "
+                "ON namespace_.oid = class_.relnamespace "
+                "WHERE namespace_.nspname = 'agentcow'), "
+                "(SELECT count(*) FROM pg_catalog.pg_proc proc "
+                "JOIN pg_catalog.pg_namespace namespace_ "
+                "ON namespace_.oid = proc.pronamespace "
+                "WHERE namespace_.nspname = 'agentcow')"
+            )
+        )
+    assert empty_objects == ()
+    assert foundation_inventory[0] > 0
+    assert foundation_inventory[1] > 0
+
+    repeated = await reconcile(database.settings)
+    _assert_empty_safe(repeated)
+    repeated_marker, repeated_validation = await validate(database.settings)
+    _assert_empty_safe(repeated_marker)
+    assert repeated_validation.safe, repeated_validation.violations
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as connection:
+        assert await content_object_inventory(connection) == ()
+        assert (
+            await connection.fetchval(
+                "SELECT updated_at FROM control.bootstrap_readiness WHERE singleton"
+            )
+            >= ready_time
+        )
+        repeated_foundation_inventory = tuple(
+            await connection.fetchrow(
+                "SELECT "
+                "(SELECT count(*) FROM pg_catalog.pg_class class_ "
+                "JOIN pg_catalog.pg_namespace namespace_ "
+                "ON namespace_.oid = class_.relnamespace "
+                "WHERE namespace_.nspname = 'agentcow'), "
+                "(SELECT count(*) FROM pg_catalog.pg_proc proc "
+                "JOIN pg_catalog.pg_namespace namespace_ "
+                "ON namespace_.oid = proc.pronamespace "
+                "WHERE namespace_.nspname = 'agentcow')"
+            )
+        )
+    assert repeated_foundation_inventory == foundation_inventory
+
     await downgrade(database.settings)
     async with owner_connection(
         database.settings.resolved_owner_dsn(), expected_database=database.name
@@ -123,7 +228,9 @@ async def test_clean_migration_current_repeat_downgrade_and_rebuild(
     await upgrade(database.settings)
     rebuilt = await status(database.settings)
     assert rebuilt.revision == "006_001"
-    assert not rebuilt.safe
+    _assert_pending(rebuilt, deployed=False)
+    rebuilt_empty = await reconcile(database.settings)
+    _assert_empty_safe(rebuilt_empty)
 
 
 async def test_role_manifest_attributes_membership_and_identity_separation(
@@ -159,39 +266,286 @@ async def test_role_manifest_attributes_membership_and_identity_separation(
     assert login_memberships == len(ROLE_NAMES)
 
 
-async def test_empty_baseline_fails_closed_without_truthful_hardening_marker(
+async def test_empty_baseline_is_safe_without_false_foundation_evidence(
     agent_site_database: AgentSiteDatabase,
 ) -> None:
     database = agent_site_database
     await upgrade(database.settings)
-    with pytest.raises(BootstrapStateError, match="no COW-enabled table"):
-        await reconcile(database.settings)
-    marker = await status(database.settings)
-    assert marker.cow_deployed
-    assert not marker.cow_hardened
-    assert not marker.privileges_validated
-    assert not marker.safe
+    marker = await reconcile(database.settings)
+    _assert_empty_safe(marker)
+    validated_marker, product = await validate(database.settings)
+    _assert_empty_safe(validated_marker)
+    assert product.safe, product.violations
 
     async with owner_connection(
         database.settings.resolved_owner_dsn(), expected_database=database.name
     ) as connection:
+        assert await content_object_inventory(connection) == ()
         assert await connection.fetchval(
             "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_namespace "
             "WHERE nspname = 'agentcow')"
         )
-        assert (
-            await connection.fetchval(
-                "SELECT count(*) FROM pg_catalog.pg_class class_ "
-                "JOIN pg_catalog.pg_namespace namespace_ "
-                "ON namespace_.oid = class_.relnamespace "
-                "WHERE namespace_.nspname = 'content' "
-                "AND class_.relkind IN ('r', 'p', 'v', 'm', 'S')"
+        marker_row = tuple(
+            await connection.fetchrow(
+                "SELECT readiness_state, content_object_count, "
+                "content_object_fingerprint, foundation_deployed, "
+                "foundation_hardened, foundation_privileges_validated, "
+                "product_privileges_validated, safe "
+                "FROM control.bootstrap_readiness WHERE singleton"
             )
-            == 0
+        )
+        assert marker_row == (
+            "EMPTY_SAFE",
+            0,
+            None,
+            True,
+            False,
+            False,
+            True,
+            True,
         )
 
+        for role in ROLE_NAMES[1:]:
+            assert not await connection.fetchval(
+                "SELECT has_schema_privilege($1, 'content', 'USAGE') "
+                "OR has_schema_privilege($1, 'content', 'CREATE')",
+                role,
+            )
+        reviewer_execution = await connection.fetchval(
+            "SELECT count(*) FROM pg_catalog.pg_proc proc "
+            "JOIN pg_catalog.pg_namespace namespace_ "
+            "ON namespace_.oid = proc.pronamespace "
+            "WHERE namespace_.nspname = 'agentcow' "
+            "AND has_function_privilege('slaif_reviewer', proc.oid, 'EXECUTE')"
+        )
+        assert reviewer_execution == 0
 
-async def test_cli_secret_file_upgrade_current_and_constant_failure(
+        with pytest.raises(asyncpg.CheckViolationError):
+            await connection.execute(
+                "UPDATE control.bootstrap_readiness "
+                "SET foundation_hardened = TRUE WHERE singleton"
+            )
+        with pytest.raises(asyncpg.CheckViolationError):
+            await connection.execute(
+                "UPDATE control.bootstrap_readiness "
+                "SET readiness_state = 'PENDING' WHERE singleton"
+            )
+        with pytest.raises(asyncpg.CheckViolationError):
+            await connection.execute(
+                "UPDATE control.bootstrap_readiness "
+                "SET readiness_state = 'UNKNOWN' WHERE singleton"
+            )
+
+        await connection.execute(
+            "UPDATE control.bootstrap_readiness "
+            "SET foundation_version = '0.0.0' WHERE singleton"
+        )
+
+    stale_marker, stale_validation = await validate(database.settings)
+    _assert_empty_safe(stale_marker)
+    assert not stale_validation.safe
+    assert "marker/version-metadata/state-mismatch" in stale_validation.violations
+
+
+@pytest.mark.parametrize(
+    ("ddl", "expected_category"),
+    (
+        (
+            "CREATE TABLE content.unexpected_table (id integer PRIMARY KEY)",
+            "relation:r",
+        ),
+        ("CREATE VIEW content.unexpected_view AS SELECT 1 AS id", "relation:v"),
+        ("CREATE SEQUENCE content.unexpected_sequence", "relation:S"),
+        (
+            "CREATE FUNCTION content.unexpected_function() RETURNS integer "
+            "LANGUAGE sql IMMUTABLE AS 'SELECT 1'",
+            "routine:f",
+        ),
+    ),
+)
+async def test_any_content_object_invalidates_empty_safe_validation(
+    agent_site_database: AgentSiteDatabase,
+    ddl: str,
+    expected_category: str,
+) -> None:
+    database = agent_site_database
+    await upgrade(database.settings)
+    _assert_empty_safe(await reconcile(database.settings))
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as connection:
+        await connection.execute(ddl)
+        inventory = await content_object_inventory(connection)
+        assert any(item.category == expected_category for item in inventory)
+
+    marker, validation = await validate(database.settings)
+    _assert_empty_safe(marker)
+    assert not validation.safe
+    assert any("unexpected-empty-object" in item for item in validation.violations)
+
+
+async def test_non_table_content_object_requires_hardening_and_stays_pending(
+    agent_site_database: AgentSiteDatabase,
+) -> None:
+    database = agent_site_database
+    await upgrade(database.settings)
+    _assert_empty_safe(await reconcile(database.settings))
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as connection:
+        await connection.execute(
+            "CREATE VIEW content.requires_hardening AS SELECT 1 AS id"
+        )
+
+    with pytest.raises(BootstrapStateError, match="rejected non-empty content"):
+        await reconcile(database.settings)
+    _assert_pending(await status(database.settings), deployed=True)
+
+
+async def test_empty_safe_transitions_to_first_and_repeated_hardened_table(
+    agent_site_database: AgentSiteDatabase,
+) -> None:
+    database = agent_site_database
+    await upgrade(database.settings)
+    _assert_empty_safe(await reconcile(database.settings))
+    await _create_qualification_table(database)
+
+    stale_marker, stale_validation = await validate(database.settings)
+    _assert_empty_safe(stale_marker)
+    assert not stale_validation.safe
+
+    first = await reconcile(database.settings)
+    _assert_hardened(first)
+    first_marker, first_validation = await validate(database.settings)
+    _assert_hardened(first_marker)
+    assert first_validation.safe, first_validation.violations
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as connection:
+        with pytest.raises(asyncpg.CheckViolationError):
+            await connection.execute(
+                "UPDATE control.bootstrap_readiness "
+                "SET foundation_privileges_validated = FALSE WHERE singleton"
+            )
+
+    repeated = await reconcile(database.settings)
+    _assert_hardened(repeated)
+    repeated_marker, repeated_validation = await validate(database.settings)
+    _assert_hardened(repeated_marker)
+    assert repeated_validation.safe, repeated_validation.violations
+
+
+@pytest.mark.parametrize(
+    "statement",
+    (
+        "ALTER VIEW content.qualification_item RENAME TO qualification_item_renamed",
+        "DROP VIEW content.qualification_item",
+    ),
+)
+async def test_hardened_inventory_remove_or_rename_fails_validation(
+    agent_site_database: AgentSiteDatabase,
+    statement: str,
+) -> None:
+    database = agent_site_database
+    await _prepare_hardened_database(database)
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as connection:
+        await connection.execute(statement)
+
+    marker, validation = await validate(database.settings)
+    _assert_hardened(marker)
+    assert not validation.safe
+    assert "marker/content-object-inventory/state-mismatch" in validation.violations
+
+
+async def test_empty_foundation_inventory_rename_fails_validation(
+    agent_site_database: AgentSiteDatabase,
+) -> None:
+    database = agent_site_database
+    await upgrade(database.settings)
+    _assert_empty_safe(await reconcile(database.settings))
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as connection:
+        function_reference = await connection.fetchval(
+            "SELECT format('%I.%I(%s)', namespace_.nspname, proc.proname, "
+            "pg_catalog.pg_get_function_identity_arguments(proc.oid)) "
+            "FROM pg_catalog.pg_proc proc "
+            "JOIN pg_catalog.pg_namespace namespace_ "
+            "ON namespace_.oid = proc.pronamespace "
+            "WHERE namespace_.nspname = 'agentcow' ORDER BY proc.oid LIMIT 1"
+        )
+        assert function_reference is not None
+        await connection.execute(
+            f"ALTER FUNCTION {function_reference} RENAME TO evidence_renamed"
+        )
+
+    marker, validation = await validate(database.settings)
+    _assert_empty_safe(marker)
+    assert not validation.safe
+    assert "marker/foundation-object-inventory/state-mismatch" in validation.violations
+
+
+async def test_empty_failure_stays_pending_then_retries_safely(
+    agent_site_database: AgentSiteDatabase,
+) -> None:
+    database = agent_site_database
+    await upgrade(database.settings)
+    with pytest.raises(BootstrapStateError, match="injected failure"):
+        await reconcile(database.settings, failure_point="before-marker")
+    _assert_pending(await status(database.settings), deployed=True)
+    pending_marker, pending_validation = await validate(database.settings)
+    _assert_pending(pending_marker, deployed=True)
+    assert not pending_validation.safe
+
+    repaired = await reconcile(database.settings)
+    _assert_empty_safe(repaired)
+    marker, validation = await validate(database.settings)
+    _assert_empty_safe(marker)
+    assert validation.safe, validation.violations
+
+
+async def test_empty_reviewer_role_and_public_overgrants_are_repaired(
+    agent_site_database: AgentSiteDatabase,
+) -> None:
+    database = agent_site_database
+    await upgrade(database.settings)
+    _assert_empty_safe(await reconcile(database.settings))
+
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as connection:
+        function_reference = await connection.fetchval(
+            "SELECT format('%I.%I(%s)', namespace_.nspname, proc.proname, "
+            "pg_catalog.pg_get_function_identity_arguments(proc.oid)) "
+            "FROM pg_catalog.pg_proc proc "
+            "JOIN pg_catalog.pg_namespace namespace_ "
+            "ON namespace_.oid = proc.pronamespace "
+            "WHERE namespace_.nspname = 'agentcow' ORDER BY proc.oid LIMIT 1"
+        )
+        assert function_reference is not None
+        await connection.execute(
+            f"GRANT EXECUTE ON FUNCTION {function_reference} TO slaif_reviewer"
+        )
+        await connection.execute("GRANT USAGE ON SCHEMA content TO PUBLIC")
+        await connection.execute("GRANT CREATE ON SCHEMA content TO slaif_control")
+
+    marker, validation = await validate(database.settings)
+    _assert_empty_safe(marker)
+    assert not validation.safe
+    assert any("slaif_reviewer/execute" in item for item in validation.violations)
+    assert "schema/content/public-authority" in validation.violations
+    assert "schema/content/slaif_control/create" in validation.violations
+
+    repaired = await reconcile(database.settings)
+    _assert_empty_safe(repaired)
+    marker, validation = await validate(database.settings)
+    _assert_empty_safe(marker)
+    assert validation.safe, validation.violations
+
+
+async def test_cli_secret_file_empty_bootstrap_current_and_validate(
     agent_site_database: AgentSiteDatabase, tmp_path: Path
 ) -> None:
     database = agent_site_database
@@ -226,16 +580,28 @@ async def test_cli_secret_file_upgrade_current_and_constant_failure(
     assert upgraded.stdout == "upgrade: OK\n"
     current = invoke("current")
     assert current.returncode == 0
-    assert current.stdout == "current: revision=006_001 safe=false\n"
-    failed = invoke("bootstrap")
-    assert failed.returncode == 1
-    assert failed.stdout == ""
-    assert failed.stderr == "Database bootstrap failed.\n"
-    assert locator not in upgraded.stdout + current.stdout + failed.stderr
+    assert current.stdout == ("current: revision=006_001 state=PENDING safe=false\n")
+    bootstrapped = invoke("bootstrap")
+    assert bootstrapped.returncode == 0
+    assert bootstrapped.stdout == (
+        "bootstrap: OK revision=006_001 state=EMPTY_SAFE safe=true\n"
+    )
+    validated = invoke("validate")
+    assert validated.returncode == 0
+    assert validated.stdout == (
+        "validate: OK revision=006_001 state=EMPTY_SAFE safe=true\n"
+    )
+    ready = invoke("current")
+    assert ready.returncode == 0
+    assert ready.stdout == ("current: revision=006_001 state=EMPTY_SAFE safe=true\n")
+    output = "".join(
+        process.stdout + process.stderr
+        for process in (upgraded, current, bootstrapped, validated, ready)
+    )
+    assert locator not in output
 
     marker = await status(database.settings)
-    assert marker.cow_deployed
-    assert not marker.safe
+    _assert_empty_safe(marker)
 
 
 async def test_full_runtime_reader_reviewer_and_service_privilege_matrix(
@@ -244,7 +610,7 @@ async def test_full_runtime_reader_reviewer_and_service_privilege_matrix(
     database = agent_site_database
     await _prepare_hardened_database(database)
     marker, product = await validate(database.settings)
-    assert marker.safe
+    _assert_hardened(marker)
     assert product.safe, product.violations
 
     agent_pool = await database.role_pool("slaif_agent_runtime")
@@ -351,9 +717,7 @@ async def test_hardening_failure_rolls_back_and_retry_is_idempotent(
         await reconcile(database.settings, failure_point=failure_point)
 
     marker = await status(database.settings)
-    assert marker.cow_deployed
-    assert not marker.cow_hardened
-    assert not marker.safe
+    _assert_pending(marker, deployed=True)
     async with owner_connection(
         database.settings.resolved_owner_dsn(), expected_database=database.name
     ) as connection:
@@ -368,10 +732,14 @@ async def test_hardening_failure_rolls_back_and_retry_is_idempotent(
         assert state[2] is None
 
     repaired = await reconcile(database.settings)
-    assert repaired.safe
+    _assert_hardened(repaired)
     repeated = await reconcile(database.settings)
-    assert repeated.safe
+    _assert_hardened(repeated)
     assert repeated.revision == repaired.revision
+
+    marker, product = await validate(database.settings)
+    _assert_hardened(marker)
+    assert product.safe, product.violations
 
 
 async def test_direct_and_inherited_overgrants_are_detected(
@@ -385,7 +753,9 @@ async def test_direct_and_inherited_overgrants_are_detected(
         await connection.execute(
             f"GRANT SELECT ON {QUALIFICATION_BASE} TO slaif_agent_runtime"
         )
-        direct = await verify_database_privileges(connection)
+        direct = await verify_database_privileges(
+            connection, readiness_state=ReadinessState.HARDENED
+        )
         assert not direct.safe
         assert any(
             "qualification_item_base/slaif_agent_runtime/effective-dml" in violation
@@ -414,7 +784,9 @@ async def test_direct_and_inherited_overgrants_are_detected(
         async with owner_connection(
             database.settings.resolved_owner_dsn(), expected_database=database.name
         ) as connection:
-            inherited = await verify_database_privileges(connection)
+            inherited = await verify_database_privileges(
+                connection, readiness_state=ReadinessState.HARDENED
+            )
             assert not inherited.safe
             assert (
                 f"membership/slaif_agent_runtime/can-set-role:{excess_role}"
@@ -455,7 +827,9 @@ async def test_combined_login_and_foundation_relation_overgrants_are_detected(
             database.settings.resolved_owner_dsn(),
             expected_database=database.name,
         ) as connection:
-            combined = await verify_database_privileges(connection)
+            combined = await verify_database_privileges(
+                connection, readiness_state=ReadinessState.HARDENED
+            )
             assert not combined.safe
             assert any(
                 violation.startswith(f"membership/{agent_login}/combined-roles:")
@@ -474,7 +848,9 @@ async def test_combined_login_and_foundation_relation_overgrants_are_detected(
             await connection.execute(
                 f"GRANT SELECT ON {foundation_relation} TO slaif_public_reader"
             )
-            relation = await verify_database_privileges(connection)
+            relation = await verify_database_privileges(
+                connection, readiness_state=ReadinessState.HARDENED
+            )
             assert not relation.safe
             assert any(
                 "relation/agentcow." in violation

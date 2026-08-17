@@ -84,6 +84,7 @@ NEW_PACKAGE_FILES = {
     "slaif_agent_site/db/executor.py",
     "slaif_agent_site/db/migrations.py",
     "slaif_agent_site/db/privileges.py",
+    "slaif_agent_site/db/readiness.py",
     "slaif_agent_site/db/roles.py",
     "slaif_agent_site/editor_api/__init__.py",
     "slaif_agent_site/editor_api/__main__.py",
@@ -418,6 +419,9 @@ def test_database_source_uses_public_foundation_boundary_and_no_domain_ddl() -> 
     assert "import agentcow" not in database_source
     assert "allow_unsafe_canonical_writes=False" in database_source
     assert "allow_deferred_fks=True" in database_source
+    assert "Schema 'content' has no COW-enabled tables" not in database_source
+    assert "EMPTY_SAFE" in database_source
+    assert "HARDENED" in database_source
     assert not any(
         marker in database_source.casefold()
         for marker in ("psycopg", "boto3", "supabase", "cloud sql")
@@ -428,6 +432,10 @@ def test_database_source_uses_public_foundation_boundary_and_no_domain_ddl() -> 
     ).read_text(encoding="utf-8")
     assert revision.count("CREATE TABLE") == 1
     assert '"control"."bootstrap_readiness"' in revision
+    assert '"readiness_state" text' in revision
+    assert "'PENDING'" in revision
+    assert "'EMPTY_SAFE'" in revision
+    assert "'HARDENED'" in revision
     forbidden_tables = (
         "workspace",
         "capability",
