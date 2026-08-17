@@ -14,6 +14,7 @@ from tools.supply_chain.policy import (
     POLICY_PATH,
     ROOT,
     PolicyError,
+    canonical_image,
     load_json,
     notice_text,
     validate_application_licenses,
@@ -32,6 +33,28 @@ class SupplyChainPolicyTests(unittest.TestCase):
         inventory = validate_dependency_sources(ROOT, self.policy)
         self.assertEqual(len(inventory["github_actions"]), 10)
         self.assertEqual(len(inventory["oci_sources"]), 6)
+
+    def test_image_reference_canonicalization_is_structural(self) -> None:
+        cases = {
+            "ghcr.io/astral-sh/uv:0.12.5@sha256:" + "a" * 64: (
+                "ghcr.io/astral-sh/uv:0.12.5@sha256:" + "a" * 64
+            ),
+            "docker.io/library/nginx:1.29.7@sha256:" + "b" * 64: (
+                "docker.io/library/nginx:1.29.7@sha256:" + "b" * 64
+            ),
+            "registry.example/nginx:1.29.7@sha256:" + "c" * 64: (
+                "registry.example/nginx:1.29.7@sha256:" + "c" * 64
+            ),
+            "nginx:1.29.7@sha256:" + "d" * 64: (
+                "docker.io/library/nginx:1.29.7@sha256:" + "d" * 64
+            ),
+            "anchore/syft:v1.51.0@sha256:" + "e" * 64: (
+                "docker.io/anchore/syft:v1.51.0@sha256:" + "e" * 64
+            ),
+        }
+        for reference, expected in cases.items():
+            with self.subTest(reference=reference):
+                self.assertEqual(canonical_image(reference), expected)
 
     def test_policy_rejects_mutable_scanner_and_prohibited_allowance(self) -> None:
         mutable = copy.deepcopy(self.policy)

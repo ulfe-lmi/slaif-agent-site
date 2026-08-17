@@ -479,14 +479,14 @@ def validate_exceptions(
 
 
 def canonical_image(reference: str) -> str:
-    if reference.startswith("ghcr.io/") or reference.startswith("docker.io/"):
+    registry, separator, remainder = reference.partition("/")
+    if separator and registry in {"ghcr.io", "docker.io"}:
         return reference
-    first = reference.split("/", 1)[0]
-    if "/" in reference and ("." in first or ":" in first or first == "localhost"):
+    if separator and ("." in registry or ":" in registry or registry == "localhost"):
         return reference
-    if "/" not in reference:
+    if not separator:
         return f"docker.io/library/{reference}"
-    return f"docker.io/{reference}"
+    return f"docker.io/{registry}/{remainder}"
 
 
 def dependency_name(requirement: str) -> str:
