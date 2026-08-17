@@ -1,0 +1,28 @@
+SLAIF Agent-Site
+Copyright and attribution notices
+
+This project is distributed under the Apache License, Version 2.0. See the
+LICENSE file for the complete license text.
+
+SLAIF branding
+
+The locally vendored SLAIF logo is sourced from
+https://slaif.si/img/logos/SLAIF_logo_ANG_barve.svg and from the byte-identical
+copy in the Apache-2.0-licensed ulfe-lmi/slaif-api-gateway repository at
+app/slaif_gateway/web/static/img/slaif-logo.svg. Its provenance and digest are
+recorded in docs/assets/README.md. Copyright or open-source license terms do
+not grant trademark rights. Use of the SLAIF identity must not imply
+unauthorized endorsement.
+
+Planned foundation attribution
+
+The architecture plans to use the MIT-licensed agent-cow-postgresql package
+and preserve its upstream/downstream attribution when it is integrated. The
+package is not installed or vendored in this preparation-only repository state.
+
+Funding acknowledgement
+
+This work is associated with the Slovenian AI Factory (SLAIF) and acknowledges
+support from the European Commission/EuroHPC Joint Undertaking and the
+Slovenian Ministry of Higher Education, Science and Innovation for SLAIF grant
+101254461.
