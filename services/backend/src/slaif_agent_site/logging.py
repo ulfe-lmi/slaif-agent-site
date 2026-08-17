@@ -34,7 +34,7 @@ _BEARER = re.compile(r"(?i)\bbearer\s+[^\s,;]+")
 _DATABASE_URL = re.compile(
     r"(?i)\b(?:postgres(?:ql)?|mysql|mariadb|mongodb|redis)://[^\s,;]+"
 )
-_CAPABILITY = re.compile(r"\bsas2_[A-Za-z0-9_-]+(?:_[A-Za-z0-9_-]+)+\b")
+_CAPABILITY = re.compile(r"\bsas2_[A-Za-z0-9_-]{10,512}\b")
 
 
 def sanitize_log_text(value: str) -> str:

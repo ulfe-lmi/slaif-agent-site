@@ -121,6 +121,13 @@ def test_every_sensitive_log_key_family_is_redacted() -> None:
     assert serialized.count("[REDACTED]") == len(keys)
 
 
+def test_capability_shaped_value_is_redacted_without_complex_matching() -> None:
+    shaped_value = "sas2_public-fixture_secret-fixture-value"
+    serialized = json.dumps(redact_log_value({"safe_key": shaped_value}))
+    assert shaped_value not in serialized
+    assert "[REDACTED_CAPABILITY]" in serialized
+
+
 def test_json_formatter_excludes_exception_and_payload_details() -> None:
     secret = "local-fixture-sensitive-value"
     formatter = JsonLogFormatter("agent-api")
