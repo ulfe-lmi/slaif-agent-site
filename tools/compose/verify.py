@@ -117,6 +117,11 @@ LONG_RUNNING_APPLICATIONS = REQUIRED_SERVICES - {
     "postgres",
     "secrets-init",
 }
+LONG_RUNNING_BACKENDS = {
+    name
+    for name in LONG_RUNNING_APPLICATIONS
+    if EXPECTED_IMAGES[name] == "slaif-agent-site-backend:local"
+}
 
 
 class PolicyError(RuntimeError):
@@ -212,6 +217,15 @@ def validate_config(config: dict[str, Any]) -> None:
             _fail(
                 "password" not in serialized and "dsn" not in serialized,
                 f"{name}: database secret environment present",
+            )
+        if name in LONG_RUNNING_BACKENDS:
+            _fail(
+                environment.get("SLAIF_MODE") == "development",
+                f"{name}: default mode must be development",
+            )
+            _fail(
+                environment.get("SLAIF_PUBLIC_URL") == "http://localhost:8080",
+                f"{name}: default public URL mismatch",
             )
     _fail(len(published) == 1 and published[0][0] == "nginx", "only nginx may publish")
     port = published[0][1]
@@ -311,6 +325,14 @@ def validate_running(root: Path, project: str) -> None:
             _fail(
                 inspected["Config"]["User"] == expected_user,
                 f"{name}: runtime user mismatch",
+            )
+        if name in LONG_RUNNING_BACKENDS:
+            environment = set(inspected["Config"].get("Env") or [])
+            _fail(
+                "SLAIF_MODE=development" in environment
+                and "SLAIF_MODE=test" not in environment
+                and "SLAIF_MODE=production" not in environment,
+                f"{name}: runtime mode mismatch",
             )
         _fail(
             not any(mount["Type"] == "bind" for mount in inspected["Mounts"]),

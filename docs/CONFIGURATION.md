@@ -98,9 +98,11 @@ Production accepts only absolute mounted secret files:
   ten-login password manifest.
 
 The local stack uses bootstrap `production` mode because both database locators
-are mounted files. Its health-only long services use `test` mode with the local
-HTTP URL because authentication, application secrets, secure cookies, and TLS
-are deliberately absent. This is not a production configuration claim.
+are mounted files. Its health-only long-running services use `development` mode
+with the loopback HTTP URL. `test` remains restricted to automated tests and
+explicit test overlays; the pre-alpha stack does not falsely claim production
+configuration while authentication, application secrets, secure cookies, and
+TLS are deliberately absent.
 
 Direct locator fields are restricted to disposable `test` mode. There is no
 shared `SLAIF_DATABASE_URL`, default credential, implicit environment file, or

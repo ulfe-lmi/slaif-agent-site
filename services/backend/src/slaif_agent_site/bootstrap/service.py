@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Literal
 
+import asyncpg
+
 from slaif_agent_site.agent_state.foundation import (
     FOUNDATION_DISTRIBUTION,
     FOUNDATION_VERSION,
@@ -27,6 +29,7 @@ from slaif_agent_site.db.privileges import (
 )
 from slaif_agent_site.db.readiness import ReadinessState
 from slaif_agent_site.db.roles import (
+    DATABASE_LOGINS,
     REVIEWER_ROLES,
     RUNTIME_ROLES,
     local_login_violations,
@@ -84,15 +87,51 @@ async def compose_bootstrap(settings: BootstrapSettings) -> BootstrapStatus:
         expected_database=settings.expected_database,
     ) as connection:
         login_violations = await local_login_violations(connection)
+    authenticated_logins = await _authenticate_local_logins(settings)
     if (
         marker != checked_marker
         or marker.state is not ReadinessState.EMPTY_SAFE
         or not marker.safe
         or not validation.safe
         or login_violations
+        or authenticated_logins != tuple(login.name for login in DATABASE_LOGINS)
     ):
         raise BootstrapStateError("local Compose bootstrap validation failed")
     return marker
+
+
+async def _authenticate_local_logins(
+    settings: BootstrapSettings,
+) -> tuple[str, ...]:
+    """Prove each fixed credential authenticates without exposing its value."""
+
+    passwords = settings.resolved_local_login_passwords()
+    if passwords is None:
+        raise BootstrapStateError("local login password manifest is required")
+    locator = settings.resolved_provisioner_dsn().get_secret_value()
+    authenticated: list[str] = []
+    for login in DATABASE_LOGINS:
+        connection = await asyncpg.connect(
+            locator,
+            database=settings.expected_database,
+            user=login.name,
+            password=passwords[login.name],
+        )
+        try:
+            identity = await connection.fetchrow(
+                "SELECT current_database()::text, current_user::text, "
+                "session_user::text"
+            )
+            if identity is None or tuple(identity) != (
+                settings.expected_database,
+                login.name,
+                login.name,
+            ):
+                raise BootstrapStateError("local login authentication mismatch")
+            authenticated.append(login.name)
+        finally:
+            await connection.close()
+    return tuple(authenticated)
 
 
 async def upgrade(settings: BootstrapSettings) -> None:

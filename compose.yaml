@@ -17,7 +17,7 @@ x-backend-service: &backend-service
     SLAIF_BIND_PORT: "8000"
     SLAIF_LOG_FORMAT: json
     SLAIF_LOG_LEVEL: INFO
-    SLAIF_MODE: test
+    SLAIF_MODE: development
     SLAIF_PUBLIC_URL: http://localhost:8080
   expose:
     - "8000"
@@ -47,7 +47,7 @@ x-worker-service: &worker-service
   environment:
     SLAIF_LOG_FORMAT: json
     SLAIF_LOG_LEVEL: INFO
-    SLAIF_MODE: test
+    SLAIF_MODE: development
     SLAIF_PUBLIC_URL: http://localhost:8080
   tmpfs:
     - /tmp:mode=1777,nosuid,nodev,noexec,size=16m

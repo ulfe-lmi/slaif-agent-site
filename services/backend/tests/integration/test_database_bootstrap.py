@@ -36,6 +36,7 @@ from slaif_agent_site.db.privileges import (
 from slaif_agent_site.db.readiness import ReadinessState
 from slaif_agent_site.db.roles import (
     DATABASE_LOGINS,
+    LOCAL_LOGIN_CONNECTION_LIMIT,
     ROLE_NAMES,
     local_login_violations,
     provision_database_roles,
@@ -68,12 +69,33 @@ async def test_fixed_local_login_provisioning_is_exact_and_idempotent(
     quoted_login = DATABASE_LOGINS[1]
     passwords[quoted_login.name] = "fake-'quoted\\password-;--" + uuid.uuid4().hex
     delegated_member = f"slaif_test_member_{uuid.uuid4().hex}"
+    unrelated_login = f"slaif_unrelated_{uuid.uuid4().hex}"
+    unrelated_password = f"fake-unrelated-{uuid.uuid4().hex}"
     try:
+        await upgrade(agent_site_database.settings)
+        _assert_empty_safe(await reconcile(agent_site_database.settings))
         await provision_database_roles(
             connection,
             expected_database=agent_site_database.name,
             login_passwords=passwords,
         )
+        await connection.execute("SET ROLE slaif_owner")
+        await connection.execute(
+            "CREATE TABLE audit.login_acl_table (id integer PRIMARY KEY)"
+        )
+        await connection.execute(
+            "CREATE VIEW audit.login_acl_view AS SELECT id FROM audit.login_acl_table"
+        )
+        await connection.execute("CREATE SEQUENCE audit.login_acl_sequence")
+        await connection.execute(
+            "CREATE FUNCTION audit.login_acl_function() RETURNS integer "
+            "LANGUAGE sql IMMUTABLE AS 'SELECT 1'"
+        )
+        await connection.execute(
+            "CREATE PROCEDURE audit.login_acl_procedure() LANGUAGE sql AS 'SELECT 1'"
+        )
+        await connection.execute("RESET ROLE")
+
         await connection.execute(f"CREATE ROLE {quote_identifier(delegated_member)}")
         await connection.execute(
             f"GRANT {quote_identifier(quoted_login.name)} "
@@ -83,28 +105,270 @@ async def test_fixed_local_login_provisioning_is_exact_and_idempotent(
             f"GRANT {quote_identifier(DATABASE_LOGINS[-1].privilege_role)} "
             f"TO {quote_identifier(quoted_login.name)} WITH ADMIN OPTION"
         )
+        await connection.execute(
+            f"GRANT TEMPORARY ON DATABASE {quote_identifier(agent_site_database.name)} "
+            f"TO {quote_identifier(quoted_login.name)}"
+        )
+        await connection.execute(
+            f"GRANT USAGE ON SCHEMA audit TO {quote_identifier(quoted_login.name)}"
+        )
+        await connection.execute(
+            "GRANT SELECT ON audit.login_acl_table, audit.login_acl_view TO "
+            f"{quote_identifier(quoted_login.name)}"
+        )
+        await connection.execute(
+            "GRANT UPDATE (id) ON audit.login_acl_table TO "
+            f"{quote_identifier(quoted_login.name)}"
+        )
+        await connection.execute(
+            "GRANT USAGE ON SEQUENCE audit.login_acl_sequence TO "
+            f"{quote_identifier(quoted_login.name)}"
+        )
+        await connection.execute(
+            "GRANT EXECUTE ON FUNCTION audit.login_acl_function() TO "
+            f"{quote_identifier(quoted_login.name)}"
+        )
+        await connection.execute(
+            "GRANT EXECUTE ON PROCEDURE audit.login_acl_procedure() TO "
+            f"{quote_identifier(quoted_login.name)}"
+        )
+        await connection.execute(
+            "ALTER DEFAULT PRIVILEGES FOR ROLE slaif_owner IN SCHEMA audit "
+            f"GRANT SELECT ON TABLES TO {quote_identifier(quoted_login.name)}"
+        )
+        await connection.execute(
+            "ALTER DEFAULT PRIVILEGES FOR ROLE slaif_owner IN SCHEMA audit "
+            f"GRANT USAGE ON SEQUENCES TO {quote_identifier(quoted_login.name)}"
+        )
+        await connection.execute(
+            "ALTER DEFAULT PRIVILEGES FOR ROLE slaif_owner IN SCHEMA audit "
+            f"GRANT EXECUTE ON FUNCTIONS TO {quote_identifier(quoted_login.name)}"
+        )
+        await connection.execute(
+            f"ALTER ROLE {quote_identifier(quoted_login.name)} "
+            "SET search_path TO public"
+        )
+        await connection.execute(
+            f"ALTER ROLE {quote_identifier(quoted_login.name)} "
+            "CONNECTION LIMIT 2 VALID UNTIL '2000-01-01'"
+        )
+
+        violations = await local_login_violations(connection)
+        assert f"login/{quoted_login.name}/attributes" in violations
+        assert f"login/{quoted_login.name}/memberships" in violations
+        assert f"login/{quoted_login.name}/members" in violations
+        for category in (
+            "direct-database",
+            "direct-schema",
+            "direct-relation",
+            "direct-column",
+            "direct-sequence",
+            "direct-routine",
+            "default-acl",
+        ):
+            assert any(
+                item.startswith(f"login/{quoted_login.name}/{category}")
+                for item in violations
+            ), violations
+        assert any(
+            f"login/{quoted_login.name}/direct-relation:audit.login_acl_table:" in item
+            for item in violations
+        )
+        assert any(
+            f"login/{quoted_login.name}/direct-relation:audit.login_acl_view:" in item
+            for item in violations
+        )
+        assert any(
+            f"login/{quoted_login.name}/direct-column:audit.login_acl_table.id:update"
+            == item
+            for item in violations
+        )
+        for routine in ("login_acl_function", "login_acl_procedure"):
+            assert any(
+                f"login/{quoted_login.name}/direct-routine:audit.{routine}():" in item
+                for item in violations
+            )
+        assert {
+            item.rsplit(":", 1)[-1]
+            for item in violations
+            if item.startswith(f"login/{quoted_login.name}/default-acl:")
+        } == {"S", "f", "r"}
+        assert any(
+            item.startswith(
+                f"login/{quoted_login.name}/effective-database:"
+                f"{agent_site_database.name}:temporary"
+            )
+            for item in violations
+        )
+        assert any(
+            item.startswith(
+                f"login/{quoted_login.name}/effective-column:"
+                "audit.login_acl_table.id:update"
+            )
+            for item in violations
+        )
+
         await provision_database_roles(
             connection,
             expected_database=agent_site_database.name,
             login_passwords=passwords,
         )
         assert await local_login_violations(connection) == ()
-        login_connection = await asyncpg.connect(
+        settings_rows = await connection.fetch(
+            "SELECT rolname::text, rolconnlimit, "
+            "rolvaliduntil = 'infinity'::timestamptz, rolconfig "
+            "FROM pg_catalog.pg_roles WHERE rolname = ANY($1::text[]) "
+            "ORDER BY rolname",
+            [login.name for login in DATABASE_LOGINS],
+        )
+        assert all(
+            row[1] == LOCAL_LOGIN_CONNECTION_LIMIT and row[2] and row[3] is None
+            for row in settings_rows
+        )
+
+        authenticated = []
+        for login in DATABASE_LOGINS:
+            login_connection = await asyncpg.connect(
+                **parameters,
+                database=agent_site_database.name,
+                user=login.name,
+                password=passwords[login.name],
+            )
+            try:
+                authenticated.append(
+                    await login_connection.fetchval("SELECT current_user::text")
+                )
+            finally:
+                await login_connection.close()
+        assert authenticated == [login.name for login in DATABASE_LOGINS]
+
+        unrelated_password_literal = await connection.fetchval(
+            "SELECT pg_catalog.quote_literal($1::text)", unrelated_password
+        )
+        assert isinstance(unrelated_password_literal, str)
+        await connection.execute(
+            f"CREATE ROLE {quote_identifier(unrelated_login)} LOGIN PASSWORD "
+            f"{unrelated_password_literal}"
+        )
+        unrelated_control = await asyncpg.connect(
+            **parameters,
+            database=str(agent_site_database.connection_parameters["database"]),
+            user=unrelated_login,
+            password=unrelated_password,
+        )
+        await unrelated_control.close()
+        await connection.execute(
+            f"GRANT CONNECT ON DATABASE {quote_identifier(agent_site_database.name)} "
+            f"TO {quote_identifier(unrelated_login)}"
+        )
+        assert "database/unexpected-principal-acl" in (
+            await local_login_violations(connection)
+        )
+        unrelated_product = await asyncpg.connect(
             **parameters,
             database=agent_site_database.name,
-            user=quoted_login.name,
-            password=passwords[quoted_login.name],
+            user=unrelated_login,
+            password=unrelated_password,
         )
-        try:
-            assert await login_connection.fetchval("SELECT current_user::text") == (
-                quoted_login.name
+        await unrelated_product.close()
+        await connection.execute(
+            f"REVOKE CONNECT ON DATABASE {quote_identifier(agent_site_database.name)} "
+            f"FROM {quote_identifier(unrelated_login)}"
+        )
+        assert await local_login_violations(connection) == ()
+        with pytest.raises(asyncpg.PostgresError):
+            await asyncpg.connect(
+                **parameters,
+                database=agent_site_database.name,
+                user=unrelated_login,
+                password=unrelated_password,
             )
-        finally:
-            await login_connection.close()
     finally:
+        await connection.execute(
+            f"DROP ROLE IF EXISTS {quote_identifier(unrelated_login)}"
+        )
         await connection.execute(
             f"DROP ROLE IF EXISTS {quote_identifier(delegated_member)}"
         )
+        for login in reversed(DATABASE_LOGINS):
+            await connection.execute(
+                f"DROP ROLE IF EXISTS {quote_identifier(login.name)}"
+            )
+        await connection.close()
+
+
+async def test_local_login_product_ownership_fails_closed_without_reassignment(
+    agent_site_database: AgentSiteDatabase,
+) -> None:
+    parameters = {
+        key: value
+        for key, value in agent_site_database.connection_parameters.items()
+        if key != "database"
+    }
+    connection = await asyncpg.connect(
+        **parameters,
+        database=agent_site_database.name,
+        user=os.environ.get("PGUSER", "postgres"),
+        password=os.environ.get("PGPASSWORD", "qualification-admin"),
+    )
+    passwords = {
+        login.name: f"fake-only-{login.secret_file_stem}-{uuid.uuid4().hex}"
+        for login in DATABASE_LOGINS
+    }
+    owner_login = DATABASE_LOGINS[2]
+    try:
+        await upgrade(agent_site_database.settings)
+        await provision_database_roles(
+            connection,
+            expected_database=agent_site_database.name,
+            login_passwords=passwords,
+        )
+        await connection.execute("SET ROLE slaif_owner")
+        await connection.execute(
+            "CREATE TABLE audit.login_owned_fixture (id integer PRIMARY KEY)"
+        )
+        await connection.execute("RESET ROLE")
+        await connection.execute(
+            "ALTER TABLE audit.login_owned_fixture OWNER TO "
+            f"{quote_identifier(owner_login.name)}"
+        )
+
+        violations = await local_login_violations(connection)
+        assert (
+            f"login/{owner_login.name}/owner:relation:audit.login_owned_fixture"
+            in violations
+        )
+        with pytest.raises(
+            RuntimeError, match="local login owns protected database object"
+        ):
+            async with connection.transaction():
+                await provision_database_roles(
+                    connection,
+                    expected_database=agent_site_database.name,
+                    login_passwords=passwords,
+                )
+        assert (
+            await connection.fetchval(
+                "SELECT pg_catalog.pg_get_userbyid(class_.relowner) "
+                "FROM pg_catalog.pg_class class_ "
+                "JOIN pg_catalog.pg_namespace namespace_ "
+                "ON namespace_.oid = class_.relnamespace "
+                "WHERE namespace_.nspname = 'audit' "
+                "AND class_.relname = 'login_owned_fixture'"
+            )
+            == owner_login.name
+        )
+
+        await connection.execute(
+            "ALTER TABLE audit.login_owned_fixture OWNER TO slaif_owner"
+        )
+        await provision_database_roles(
+            connection,
+            expected_database=agent_site_database.name,
+            login_passwords=passwords,
+        )
+        assert await local_login_violations(connection) == ()
+    finally:
         for login in reversed(DATABASE_LOGINS):
             await connection.execute(
                 f"DROP ROLE IF EXISTS {quote_identifier(login.name)}"

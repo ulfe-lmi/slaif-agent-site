@@ -97,11 +97,12 @@ sudo tools/compose/smoke.sh slaif007localtest
 ```
 
 On a runner whose user can access the test Docker daemon, omit `sudo`. The
-script verifies clean startup, routes and 404s, runtime hardening, network and
-mount topology, empty-safe marker, exact login count, restart idempotence,
-fail-closed bootstrap, Apache syntax, secret absence in configuration/history/
-logs, and exact-project cleanup. It does not test product workflows because
-they do not exist.
+script verifies clean startup, routes and 404s, development-mode inventory,
+runtime hardening, network and mount topology, empty-safe marker, exact login
+authority, restart idempotence, fail-closed bootstrap, Apache syntax, single
+request-ID and CSP headers on page/API/404 responses, secret absence in
+configuration/history/logs, and exact-project cleanup. It does not test product
+workflows because they do not exist.
 
 ## Production boundary
 

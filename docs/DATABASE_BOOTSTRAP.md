@@ -78,9 +78,12 @@ state-specific grants and validation, and publishes the safe marker last.
 `state=HARDENED`. `validate` independently reproduces the applicable proof and
 fails if database truth, object fingerprints, and the marker disagree.
 `compose` is the local all-or-nothing sequence: fixed role/login provisioning,
-upgrade, COW reconciliation, independent marker/privilege validation, and
-exact login-attribute/membership validation. It succeeds only at
-`EMPTY_SAFE safe=true` and is used by the one-shot container.
+upgrade, COW reconciliation, independent marker/privilege validation, exact
+login ACL/ownership/settings/membership/effective-authority validation, and an
+independent authentication attempt for each fixed login. It succeeds only at
+`EMPTY_SAFE safe=true` and is used by the one-shot container. The dedicated
+database revokes `PUBLIC` connection and temporary-table authority; an
+unrelated valid cluster login cannot connect.
 
 Downgrade and rebuild are disposable verification operations, not a production
 rollback promise:

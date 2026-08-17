@@ -48,6 +48,11 @@ def _configuration() -> dict[str, object]:
         }
         if name != "secrets-init":
             service["tmpfs"] = ["/tmp:size=16m"]
+        if name in VERIFY.LONG_RUNNING_BACKENDS:
+            service["environment"] = {
+                "SLAIF_MODE": "development",
+                "SLAIF_PUBLIC_URL": "http://localhost:8080",
+            }
         if name in VERIFY.EXPECTED_CAP_ADD:
             service["cap_add"] = sorted(VERIFY.EXPECTED_CAP_ADD[name])
         if name in VERIFY.EXPECTED_GROUP_ADD:
@@ -86,6 +91,18 @@ class ComposePolicyTests(unittest.TestCase):
         configuration["services"]["web"]["environment"] = {"OWNER_DSN": "fake"}
         with self.assertRaisesRegex(VERIFY.PolicyError, "secret environment"):
             VERIFY.validate_config(configuration)
+
+    def test_test_or_false_production_backend_mode_is_rejected(self) -> None:
+        for mode in ("test", "production"):
+            with self.subTest(mode=mode):
+                configuration = copy.deepcopy(_configuration())
+                configuration["services"]["agent-api"]["environment"]["SLAIF_MODE"] = (
+                    mode
+                )
+                with self.assertRaisesRegex(
+                    VERIFY.PolicyError, "default mode must be development"
+                ):
+                    VERIFY.validate_config(configuration)
 
 
 if __name__ == "__main__":

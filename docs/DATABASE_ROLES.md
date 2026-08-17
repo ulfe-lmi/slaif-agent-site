@@ -57,6 +57,16 @@ the trusted fixed-identifier statement is executed.
 Render has two principals because canonical and preview access differ. The
 setup-owner login is one-shot and is never mounted into an online process.
 
+The default local login contract additionally fixes every principal at ten
+connections, password validity `infinity`, and no per-role PostgreSQL settings.
+Provisioning resets configuration drift rather than permitting a login to
+inject `search_path` or another GUC. It removes direct database, product or
+foundation schema, relation, relation-column, sequence, routine, and applicable
+default ACLs; all access must be inherited through the sole non-admin
+membership. A login that owns the product database or an object in `control`,
+`content`, `audit`, or `agentcow` makes provisioning fail closed because
+ownership is not silently reassigned.
+
 The disposable integration suite creates fake login principals with exactly
 one membership each. Product privilege roles may not be members of any other
 role; the verifier rejects direct or transitive authority paths. External
@@ -68,13 +78,14 @@ exist.
 
 Role creation is a cluster-level operation. The explicit `provision` command
 requires a principal with `CREATEROLE` or superuser authority, validates the
-target database, creates/reconciles the password-free roles, removes any role
-inherited by a product privilege role, grants database `CONNECT`/`CREATE` only
-to `slaif_owner`, and revokes default `PUBLIC` schema access. When and only when
-the local secret directory is configured, it also creates/reconciles the fixed
+target database, creates/reconciles the password-free roles, and removes any
+role inherited by a product privilege role. It revokes database authority from
+`PUBLIC`, grants `CONNECT` to the ten exact privilege roles, grants `CREATE`
+only to `slaif_owner`, and grants `TEMPORARY` to none. When and only when the
+local secret directory is configured, it also creates/reconciles the fixed
 login manifest, rotates those local passwords to mounted values, removes other
-memberships, and grants each exact sole role. Institutional provisioning may
-omit this local extension.
+memberships and direct ACLs, and grants each exact sole role. Institutional
+provisioning may omit this local extension.
 
 An institution may perform equivalent provisioning itself, then omit the
 provisioner locator. Migration and COW operations use a separate connection
@@ -83,8 +94,8 @@ loads either locator.
 
 ## Effective privilege verification
 
-The product verifier reads PostgreSQL's effective truth through `pg_catalog`
-and `has_*_privilege` functions. It checks:
+The product and local-login verifiers read PostgreSQL's effective truth through
+`pg_catalog`, raw ACL grantees, and `has_*_privilege` functions. They check:
 
 - role flags and membership edges;
 - schema and relation ownership;
@@ -93,7 +104,11 @@ and `has_*_privilege` functions. It checks:
 - effective function execution and locked-down reviewer functions;
 - exact empty-schema inventory and generic content/foundation object
   fingerprints;
-- state-specific schema usage and Reviewer foundation authority.
+- state-specific schema usage and Reviewer foundation authority;
+- exact database ACLs, login ownership, defaults, settings, validity, and
+  connection limits;
+- effective database/schema/table/view/column/sequence/routine privilege
+  equality between every fixed login and its sole privilege role.
 
 Diagnostics identify a role, object, and privilege category, but never include
 a password, locator, unrelated database metadata, or query result. Foundation

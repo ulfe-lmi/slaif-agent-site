@@ -1,6 +1,11 @@
 """Fixed local login-principal manifest contract."""
 
-from slaif_agent_site.db.roles import DATABASE_LOGINS, LOGIN_NAMES, ROLE_NAMES
+from slaif_agent_site.db.roles import (
+    DATABASE_LOGINS,
+    LOCAL_LOGIN_CONNECTION_LIMIT,
+    LOGIN_NAMES,
+    ROLE_NAMES,
+)
 
 
 def test_local_login_manifest_is_exact_and_one_to_one() -> None:
@@ -21,3 +26,4 @@ def test_local_login_manifest_is_exact_and_one_to_one() -> None:
     )
     assert len(set(LOGIN_NAMES)) == len(LOGIN_NAMES)
     assert {login.privilege_role for login in DATABASE_LOGINS} == set(ROLE_NAMES)
+    assert LOCAL_LOGIN_CONNECTION_LIMIT == 10

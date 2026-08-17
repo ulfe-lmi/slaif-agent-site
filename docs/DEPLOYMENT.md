@@ -52,6 +52,21 @@ Unknown product and API paths return 404. Render, PostgreSQL, bootstrap,
 workers, and browser worker are not routed. Health is process evidence, not
 product readiness or publication authority.
 
+NGINX replaces any caller request ID with one bounded 32-character lowercase
+hexadecimal ID, passes that value upstream, hides an upstream response field,
+and returns exactly one authoritative `X-Request-ID`. The Apache reference uses
+the same replace/hide/single-response contract with `mod_unique_id`'s bounded
+safe identifier. Both edges set one self-hosted baseline CSP for page, API, and
+404 responses: scripts, styles, fonts, connections, and ordinary resources are
+limited to self; images additionally permit `data:`; base URIs, objects, and
+framing are denied; forms are limited to self. There is no wildcard, external
+origin, unsafe inline/eval allowance, reporting endpoint, or telemetry.
+
+The current page is server-rendered and has no interactive client behavior.
+The strict `script-src 'self'` deliberately does not authorize Next.js inline
+hydration data; a future interactive UI must adopt a reviewed nonce or hash
+design rather than weaken this baseline.
+
 ## Service and image inventory
 
 | Services | Image | Runtime user | Networks | Persistent/private mount |
@@ -70,6 +85,11 @@ capabilities, and enable `no-new-privileges`. Narrow tmpfs mounts support
 runtime scratch paths. PostgreSQL and the initializer add only the capabilities
 needed for initialization and file ownership. There is no source bind mount,
 Docker socket, host network, or privileged container.
+
+The long-running Python processes use truthful `development` mode and the
+loopback public URL. `test` is not the shipped default, and the stack does not
+claim production mode without its fail-closed HTTPS, cookie, and secret
+requirements.
 
 The reviewed OCI inputs are:
 
@@ -139,7 +159,9 @@ request/forwarded headers, response headers, compression, limits, and timeout
 shape. It requires `mod_headers`, `mod_proxy`, `mod_proxy_http`,
 `mod_unique_id`, and `mod_deflate` in addition to the official default modules.
 
-The reference listens on 8080 and is not part of Compose. For production,
+The reference listens on 8080 and is not part of Compose. Its CSP and
+request-ID replacement/removal behavior is syntax- and contract-tested against
+the NGINX policy. For production,
 define a separately reviewed TLS virtual host, do not ship keys in an image,
 and trust incoming forwarded headers only from explicitly configured proxies.
 Edge configuration cannot replace application authentication or authorization.
