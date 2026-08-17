@@ -42,8 +42,13 @@ Run from the repository root:
 python -m compileall -q tools tests/repository
 python -m unittest discover -s tests/repository -p 'test_*.py'
 python tools/check_repository.py
+python tools/check_mermaid.py
 npx --yes markdownlint-cli2@0.23.2 "**/*.md"
 ```
+
+The Mermaid check transiently obtains the exact approved Mermaid CLI version
+and renders every Mermaid fence in a system temporary directory. It adds no
+production dependency and commits no rendered output.
 
 GitHub CI and CodeQL on the current PR head are independently authoritative.
 Future product work extends these preparation checks with application,
