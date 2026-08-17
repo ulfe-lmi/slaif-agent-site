@@ -7,6 +7,7 @@ import importlib.util
 import unittest
 from pathlib import Path
 from types import ModuleType
+from unittest.mock import patch
 
 
 def _load_verifier() -> ModuleType:
@@ -18,7 +19,17 @@ def _load_verifier() -> ModuleType:
     return module
 
 
+def _load_control_fixture() -> ModuleType:
+    path = Path(__file__).parents[2] / "tools/compose/control_readiness.py"
+    spec = importlib.util.spec_from_file_location("control_readiness_fixture", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 VERIFY = _load_verifier()
+CONTROL_FIXTURE = _load_control_fixture()
 
 
 def _configuration() -> dict[str, object]:
@@ -102,6 +113,53 @@ def _configuration() -> dict[str, object]:
 
 
 class ComposePolicyTests(unittest.TestCase):
+    def test_control_fixture_diagnostics_are_allowlisted_and_secret_free(self) -> None:
+        self.assertEqual(
+            CONTROL_FIXTURE.failure_diagnostic(
+                "wrong-login", "replace-file", "command-failed"
+            ),
+            "control-readiness-fixture: FAILED stage=wrong-login "
+            "operation=replace-file reason=command-failed",
+        )
+        unsafe = "postgresql://fixed-login:never-print@example.test/slaif"
+        self.assertEqual(
+            CONTROL_FIXTURE.failure_diagnostic(unsafe, unsafe, unsafe),
+            "control-readiness-fixture: FAILED stage=setup "
+            "operation=initialize reason=state-mismatch",
+        )
+        self.assertNotIn(
+            unsafe,
+            CONTROL_FIXTURE.failure_diagnostic(unsafe, unsafe, unsafe),
+        )
+        self.assertEqual(
+            CONTROL_FIXTURE.FixtureError(unsafe).reason,
+            "state-mismatch",
+        )
+        self.assertEqual(
+            CONTROL_FIXTURE.DIAGNOSTIC_REASONS,
+            {
+                "command-failed",
+                "timeout",
+                "malformed-response",
+                "state-mismatch",
+            },
+        )
+        source = (
+            Path(__file__).parents[2] / "tools/compose/control_readiness.py"
+        ).read_text(encoding="utf-8")
+        self.assertNotIn("print(result.stdout", source)
+        self.assertNotIn("print(result.stderr", source)
+
+    def test_control_fixture_recreates_only_the_target_process(self) -> None:
+        fixture = CONTROL_FIXTURE.ControlReadinessFixture(
+            "slaif009fixture", existing=True
+        )
+        with patch.object(fixture, "compose") as compose:
+            fixture._recreate_control()
+        compose.assert_called_once_with(
+            "up", "-d", "--force-recreate", "--no-deps", "control-api"
+        )
+
     def test_exact_topology_is_accepted(self) -> None:
         VERIFY.validate_config(_configuration())
 

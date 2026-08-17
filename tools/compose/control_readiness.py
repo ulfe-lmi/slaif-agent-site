@@ -19,10 +19,66 @@ CONFIGURATION_INVALID = "configuration_invalid"
 MIGRATION_MISMATCH = "migration_mismatch"
 ROLE_MISMATCH = "role_mismatch"
 UNSAFE_MARKER = "unsafe_marker"
+DIAGNOSTIC_STAGES = frozenset(
+    {
+        "setup",
+        "baseline",
+        "wrong-login",
+        "wrong-role",
+        "unreadable-secret",
+        "unsafe-marker",
+        "migration-mismatch",
+        "stopped-postgres",
+        "recovery",
+        "cleanup",
+    }
+)
+DIAGNOSTIC_OPERATIONS = frozenset(
+    {
+        "initialize",
+        "build-images",
+        "start-fixture",
+        "await-readiness",
+        "await-container",
+        "assert-liveness",
+        "assert-nginx",
+        "assert-mount",
+        "stop-control",
+        "replace-file",
+        "recreate-control",
+        "change-role",
+        "set-file-mode",
+        "change-marker",
+        "stop-postgres",
+        "start-postgres",
+        "restore",
+        "cleanup",
+    }
+)
+DIAGNOSTIC_REASONS = frozenset(
+    {"command-failed", "timeout", "malformed-response", "state-mismatch"}
+)
 
 
 class FixtureError(RuntimeError):
-    """A stable fixture failure that carries no process output."""
+    """A stable allowlisted fixture failure that carries no child output."""
+
+    def __init__(self, reason: str) -> None:
+        safe_reason = reason if reason in DIAGNOSTIC_REASONS else "state-mismatch"
+        super().__init__(safe_reason)
+        self.reason = safe_reason
+
+
+def failure_diagnostic(stage: str, operation: str, reason: str) -> str:
+    """Return one allowlisted diagnostic without interpolating unsafe input."""
+
+    safe_stage = stage if stage in DIAGNOSTIC_STAGES else "setup"
+    safe_operation = operation if operation in DIAGNOSTIC_OPERATIONS else "initialize"
+    safe_reason = reason if reason in DIAGNOSTIC_REASONS else "state-mismatch"
+    return (
+        "control-readiness-fixture: FAILED "
+        f"stage={safe_stage} operation={safe_operation} reason={safe_reason}"
+    )
 
 
 def _run(
@@ -41,18 +97,26 @@ def _run(
             timeout=timeout,
         )
     except (OSError, subprocess.SubprocessError):
-        raise FixtureError("Control readiness fixture command failed") from None
+        raise FixtureError("command-failed") from None
     if check and result.returncode != 0:
-        raise FixtureError("Control readiness fixture command failed")
+        raise FixtureError("command-failed")
     return result
 
 
 class ControlReadinessFixture:
     def __init__(self, project: str, *, existing: bool) -> None:
         if not re.fullmatch(r"slaif(?:007|009)[a-z0-9]+", project):
-            raise FixtureError("unsafe Compose project name")
+            raise FixtureError("state-mismatch")
         self.project = project
         self.existing = existing
+        self.diagnostic_stage = "setup"
+        self.diagnostic_operation = "initialize"
+
+    def mark(self, stage: str, operation: str) -> None:
+        if stage not in DIAGNOSTIC_STAGES or operation not in DIAGNOSTIC_OPERATIONS:
+            raise FixtureError("state-mismatch")
+        self.diagnostic_stage = stage
+        self.diagnostic_operation = operation
 
     def compose(
         self, *arguments: str, check: bool = True, timeout: float = 120.0
@@ -66,17 +130,20 @@ class ControlReadinessFixture:
     def container(self, service: str) -> str:
         identifier = self.compose("ps", "-q", service).stdout.strip()
         if not identifier:
-            raise FixtureError("expected fixture container is unavailable")
+            raise FixtureError("state-mismatch")
         return identifier
 
     def inspect(self, service: str) -> dict[str, Any]:
         result = _run(["docker", "inspect", self.container(service)])
-        document = json.loads(result.stdout)
+        try:
+            document = json.loads(result.stdout)
+        except json.JSONDecodeError:
+            raise FixtureError("malformed-response") from None
         if not isinstance(document, list) or len(document) != 1:
-            raise FixtureError("container inspection is malformed")
+            raise FixtureError("malformed-response")
         inspected = document[0]
         if not isinstance(inspected, dict):
-            raise FixtureError("container inspection is malformed")
+            raise FixtureError("malformed-response")
         return inspected
 
     def _health_document(self, path: str) -> tuple[int, dict[str, Any]]:
@@ -103,12 +170,12 @@ class ControlReadinessFixture:
             timeout=5,
         )
         if result.returncode != 0:
-            raise FixtureError("Control health request failed")
+            raise FixtureError("command-failed")
         try:
             payload = json.loads(result.stdout)
             return int(payload["status"]), payload["document"]
         except (KeyError, TypeError, ValueError, json.JSONDecodeError):
-            raise FixtureError("Control health response is malformed") from None
+            raise FixtureError("malformed-response") from None
 
     def _wait_readiness(self, reason: str | None, *, timeout: float = 30.0) -> None:
         deadline = time.monotonic() + timeout
@@ -141,12 +208,12 @@ class ControlReadinessFixture:
             except (FixtureError, StopIteration):
                 pass
             time.sleep(1)
-        raise FixtureError("Control readiness state did not converge")
+        raise FixtureError("timeout")
 
     def _assert_liveness(self) -> None:
         status, document = self._health_document("health/live")
         if status != 200 or document != {"service": "control-api", "status": "ok"}:
-            raise FixtureError("Control liveness contract failed")
+            raise FixtureError("state-mismatch")
 
     def _wait_container_health(self, service: str, *, timeout: float = 30.0) -> None:
         deadline = time.monotonic() + timeout
@@ -158,11 +225,9 @@ class ControlReadinessFixture:
             except FixtureError:
                 pass
             time.sleep(1)
-        raise FixtureError("fixture container did not become healthy")
+        raise FixtureError("timeout")
 
     def _assert_nginx_dependency(self, *, ready: bool) -> None:
-        if not self.existing:
-            return
         result = _run(
             [
                 "docker",
@@ -177,7 +242,7 @@ class ControlReadinessFixture:
             timeout=5,
         )
         if (result.returncode == 0) is not ready:
-            raise FixtureError("NGINX Control dependency state mismatch")
+            raise FixtureError("state-mismatch")
 
     def _psql(self, statement: str) -> None:
         _run(
@@ -198,7 +263,9 @@ class ControlReadinessFixture:
         )
 
     def _recreate_control(self) -> None:
-        self.compose("up", "-d", "--force-recreate", "control-api")
+        # Deliberately unhealthy Control states must not cause Compose to
+        # re-evaluate or recreate the one-shot bootstrap dependency graph.
+        self.compose("up", "-d", "--force-recreate", "--no-deps", "control-api")
 
     def _replace_control_file(self, source_name: str) -> None:
         master_volume = f"{self.project}_local-secrets"
@@ -279,12 +346,12 @@ class ControlReadinessFixture:
         if volume_mounts != {
             (f"{self.project}_control-secret", "/run/slaif-control", False)
         }:
-            raise FixtureError("Control runtime mount boundary mismatch")
+            raise FixtureError("state-mismatch")
         if any(mount.get("Type") == "bind" for mount in mounts):
-            raise FixtureError("Control has a host bind mount")
+            raise FixtureError("state-mismatch")
         environment = control.get("Config", {}).get("Env", [])
         if any("postgresql://" in item for item in environment):
-            raise FixtureError("Control environment contains a locator")
+            raise FixtureError("state-mismatch")
 
         control_id = self.container("control-api")
         check = (
@@ -322,7 +389,7 @@ class ControlReadinessFixture:
             check=False,
         )
         if unrelated.returncode == 0:
-            raise FixtureError("unrelated uid read the Control locator")
+            raise FixtureError("state-mismatch")
 
     def _restore(self) -> None:
         self.compose("start", "postgres", check=False)
@@ -338,35 +405,46 @@ class ControlReadinessFixture:
 
     def run(self) -> None:
         if not self.existing:
+            self.mark("setup", "cleanup")
             self.compose("down", "--volumes", "--remove-orphans", check=False)
-            self.compose("build", "secrets-init", timeout=300)
-            self.compose(
-                "up",
-                "--wait",
-                "postgres",
-                "bootstrap",
-                "control-api",
-                timeout=180,
-            )
+            self.mark("setup", "build-images")
+            self.compose("build", timeout=300)
+            self.mark("setup", "start-fixture")
+            self.compose("up", "--wait", timeout=240)
         print("control-readiness-stage: baseline", flush=True)
+        self.mark("baseline", "await-readiness")
         self._wait_readiness(None)
+        self.mark("baseline", "assert-liveness")
         self._assert_liveness()
+        self.mark("baseline", "assert-nginx")
         self._assert_nginx_dependency(ready=True)
+        self.mark("baseline", "assert-mount")
         self._assert_mount_boundary()
 
         print("control-readiness-stage: wrong-login", flush=True)
+        self.mark("wrong-login", "stop-control")
         self.compose("stop", "control-api")
+        self.mark("wrong-login", "replace-file")
         self._replace_control_file("service-reviewer-dsn")
+        self.mark("wrong-login", "recreate-control")
         self._recreate_control()
+        self.mark("wrong-login", "await-readiness")
         self._wait_readiness(CONFIGURATION_INVALID)
+        self.mark("wrong-login", "assert-liveness")
         self._assert_liveness()
+        self.mark("wrong-login", "assert-nginx")
         self._assert_nginx_dependency(ready=False)
+        self.mark("wrong-login", "stop-control")
         self.compose("stop", "control-api")
+        self.mark("wrong-login", "replace-file")
         self._replace_control_file("service-control-dsn")
+        self.mark("wrong-login", "recreate-control")
         self._recreate_control()
+        self.mark("wrong-login", "await-readiness")
         self._wait_readiness(None)
 
         print("control-readiness-stage: wrong-role", flush=True)
+        self.mark("wrong-role", "change-role")
         self._psql(
             'REVOKE "slaif_control" FROM "slaif_control_login"; '
             'GRANT "slaif_reviewer" TO "slaif_control_login"; '
@@ -374,28 +452,44 @@ class ControlReadinessFixture:
             "FROM pg_catalog.pg_stat_activity "
             "WHERE usename = 'slaif_control_login' AND pid <> pg_backend_pid();"
         )
+        self.mark("wrong-role", "await-readiness")
         self._wait_readiness(ROLE_MISMATCH)
+        self.mark("wrong-role", "assert-liveness")
         self._assert_liveness()
+        self.mark("wrong-role", "assert-nginx")
         self._assert_nginx_dependency(ready=False)
+        self.mark("wrong-role", "change-role")
         self._psql(
             'REVOKE "slaif_reviewer" FROM "slaif_control_login"; '
             'GRANT "slaif_control" TO "slaif_control_login";'
         )
+        self.mark("wrong-role", "await-readiness")
         self._wait_readiness(None)
 
         print("control-readiness-stage: unreadable-secret", flush=True)
+        self.mark("unreadable-secret", "stop-control")
         self.compose("stop", "control-api")
+        self.mark("unreadable-secret", "set-file-mode")
         self._set_control_mode(0o000)
+        self.mark("unreadable-secret", "recreate-control")
         self._recreate_control()
+        self.mark("unreadable-secret", "await-readiness")
         self._wait_readiness(CONFIGURATION_INVALID)
+        self.mark("unreadable-secret", "assert-liveness")
         self._assert_liveness()
+        self.mark("unreadable-secret", "assert-nginx")
         self._assert_nginx_dependency(ready=False)
+        self.mark("unreadable-secret", "stop-control")
         self.compose("stop", "control-api")
+        self.mark("unreadable-secret", "set-file-mode")
         self._set_control_mode(0o400)
+        self.mark("unreadable-secret", "recreate-control")
         self._recreate_control()
+        self.mark("unreadable-secret", "await-readiness")
         self._wait_readiness(None)
 
         print("control-readiness-stage: unsafe-marker", flush=True)
+        self.mark("unsafe-marker", "change-marker")
         self._psql(
             "UPDATE control.bootstrap_readiness SET "
             "readiness_state = 'PENDING', content_object_count = 0, "
@@ -404,34 +498,57 @@ class ControlReadinessFixture:
             "foundation_privileges_validated = FALSE, "
             "product_privileges_validated = FALSE, safe = FALSE WHERE singleton;"
         )
+        self.mark("unsafe-marker", "await-readiness")
         self._wait_readiness(UNSAFE_MARKER)
+        self.mark("unsafe-marker", "assert-liveness")
         self._assert_liveness()
+        self.mark("unsafe-marker", "assert-nginx")
         self._assert_nginx_dependency(ready=False)
+        self.mark("unsafe-marker", "restore")
         self.compose("run", "--rm", "bootstrap", timeout=120)
+        self.mark("unsafe-marker", "await-readiness")
         self._wait_readiness(None)
 
         print("control-readiness-stage: migration-mismatch", flush=True)
+        self.mark("migration-mismatch", "change-marker")
         self._psql(
             "UPDATE control.bootstrap_readiness "
             "SET migration_revision = '006_001' WHERE singleton;"
         )
+        self.mark("migration-mismatch", "await-readiness")
         self._wait_readiness(MIGRATION_MISMATCH)
+        self.mark("migration-mismatch", "assert-liveness")
         self._assert_liveness()
+        self.mark("migration-mismatch", "assert-nginx")
         self._assert_nginx_dependency(ready=False)
+        self.mark("migration-mismatch", "change-marker")
         self._psql(
             "UPDATE control.bootstrap_readiness "
             "SET migration_revision = '007_001' WHERE singleton;"
         )
+        self.mark("migration-mismatch", "await-readiness")
         self._wait_readiness(None)
 
         print("control-readiness-stage: stopped-postgres", flush=True)
+        self.mark("stopped-postgres", "stop-postgres")
         self.compose("stop", "postgres")
+        self.mark("stopped-postgres", "await-readiness")
         self._wait_readiness(CONNECTION_UNAVAILABLE)
+        self.mark("stopped-postgres", "assert-liveness")
         self._assert_liveness()
+        self.mark("stopped-postgres", "assert-nginx")
         self._assert_nginx_dependency(ready=False)
+
+        print("control-readiness-stage: recovery", flush=True)
+        self.mark("recovery", "start-postgres")
         self.compose("start", "postgres")
+        self.mark("recovery", "await-container")
         self._wait_container_health("postgres")
+        self.mark("recovery", "await-readiness")
         self._wait_readiness(None)
+        self.mark("recovery", "assert-liveness")
+        self._assert_liveness()
+        self.mark("recovery", "assert-nginx")
         self._assert_nginx_dependency(ready=True)
 
 
@@ -440,22 +557,56 @@ def main() -> int:
     parser.add_argument("project")
     parser.add_argument("--existing", action="store_true")
     arguments = parser.parse_args()
-    fixture = ControlReadinessFixture(arguments.project, existing=arguments.existing)
+    try:
+        fixture = ControlReadinessFixture(
+            arguments.project, existing=arguments.existing
+        )
+    except FixtureError as error:
+        print(
+            failure_diagnostic("setup", "initialize", error.reason),
+            flush=True,
+        )
+        return 1
+    failures: list[tuple[str, str, str]] = []
     try:
         fixture.run()
-    except FixtureError:
-        print("control-readiness-fixture: FAILED", flush=True)
-        return 1
+    except FixtureError as error:
+        failures.append(
+            (
+                fixture.diagnostic_stage,
+                fixture.diagnostic_operation,
+                error.reason,
+            )
+        )
     finally:
         if arguments.existing:
+            fixture.mark("recovery", "restore")
             try:
                 fixture._restore()
-            except FixtureError:
-                pass
+            except FixtureError as error:
+                failures.append(
+                    (
+                        fixture.diagnostic_stage,
+                        fixture.diagnostic_operation,
+                        error.reason,
+                    )
+                )
         else:
-            fixture.compose(
-                "down", "--volumes", "--remove-orphans", check=False, timeout=120
-            )
+            fixture.mark("cleanup", "cleanup")
+            try:
+                fixture.compose("down", "--volumes", "--remove-orphans", timeout=120)
+            except FixtureError as error:
+                failures.append(
+                    (
+                        fixture.diagnostic_stage,
+                        fixture.diagnostic_operation,
+                        error.reason,
+                    )
+                )
+    if failures:
+        for stage, operation, reason in failures:
+            print(failure_diagnostic(stage, operation, reason), flush=True)
+        return 1
     print(
         "control-readiness-fixture: OK "
         "mount=isolated identity=exact failures=6 recovery=clean",
