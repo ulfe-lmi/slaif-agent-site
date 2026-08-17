@@ -1,10 +1,15 @@
 packages:
+  - apps/*
   - packages/*
+  - services/browser-worker
 
 allowBuilds:
   esbuild: false
 
 autoInstallPeers: false
+
+ignoredOptionalDependencies:
+  - sharp
 
 overrides:
   esbuild: 0.28.1

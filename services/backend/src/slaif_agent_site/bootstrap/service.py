@@ -29,6 +29,7 @@ from slaif_agent_site.db.readiness import ReadinessState
 from slaif_agent_site.db.roles import (
     REVIEWER_ROLES,
     RUNTIME_ROLES,
+    local_login_violations,
     provision_database_roles,
 )
 
@@ -63,8 +64,35 @@ async def provision(settings: BootstrapSettings) -> None:
     ) as connection:
         async with connection.transaction():
             await provision_database_roles(
-                connection, expected_database=settings.expected_database
+                connection,
+                expected_database=settings.expected_database,
+                login_passwords=settings.resolved_local_login_passwords(),
             )
+
+
+async def compose_bootstrap(settings: BootstrapSettings) -> BootstrapStatus:
+    """Run the complete fail-closed local Compose bootstrap sequence."""
+
+    if settings.local_secrets_dir is None:
+        raise BootstrapStateError("local secret directory is required")
+    await provision(settings)
+    await upgrade(settings)
+    marker = await reconcile(settings)
+    checked_marker, validation = await validate(settings)
+    async with provisioner_connection(
+        settings.resolved_provisioner_dsn(),
+        expected_database=settings.expected_database,
+    ) as connection:
+        login_violations = await local_login_violations(connection)
+    if (
+        marker != checked_marker
+        or marker.state is not ReadinessState.EMPTY_SAFE
+        or not marker.safe
+        or not validation.safe
+        or login_violations
+    ):
+        raise BootstrapStateError("local Compose bootstrap validation failed")
+    return marker
 
 
 async def upgrade(settings: BootstrapSettings) -> None:
@@ -415,6 +443,7 @@ async def status_on_connection(connection: Any) -> BootstrapStatus:
 __all__ = [
     "BootstrapStateError",
     "BootstrapStatus",
+    "compose_bootstrap",
     "downgrade",
     "provision",
     "rebuild",

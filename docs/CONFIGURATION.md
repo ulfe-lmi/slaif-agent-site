@@ -1,9 +1,10 @@
 # Backend configuration contract
 
-The current Python backend has typed local configuration for health-only
-long-running skeletons and a separate typed configuration for explicit
-one-shot database bootstrap. No online process connects to PostgreSQL,
-authenticates a caller, exposes a product API, or runs a product job.
+The current Python backend has typed configuration for health-only long-running
+skeletons and separate typed configuration for explicit one-shot database
+bootstrap. Compose wires only non-secret process settings into long-running
+containers. No online process connects to PostgreSQL, authenticates a caller,
+exposes a product API, or runs a product job.
 
 ## Loading rules
 
@@ -93,6 +94,13 @@ Production accepts only absolute mounted secret files:
 - `SLAIF_BOOTSTRAP_EXPECTED_DATABASE`;
 - `SLAIF_BOOTSTRAP_PROVISIONER_DSN_FILE` for `provision` only; and
 - `SLAIF_BOOTSTRAP_OWNER_DSN_FILE` for migration, status, COW, and validation.
+- `SLAIF_BOOTSTRAP_LOCAL_SECRETS_DIR` for the local Compose command's fixed
+  ten-login password manifest.
+
+The local stack uses bootstrap `production` mode because both database locators
+are mounted files. Its health-only long services use `test` mode with the local
+HTTP URL because authentication, application secrets, secure cookies, and TLS
+are deliberately absent. This is not a production configuration claim.
 
 Direct locator fields are restricted to disposable `test` mode. There is no
 shared `SLAIF_DATABASE_URL`, default credential, implicit environment file, or
@@ -101,7 +109,9 @@ commands and marker semantics.
 
 ## Deferred configuration
 
-Online service database locators/pools, identity providers, browser sources,
+The default initializer generates future service DSN files but long-running
+containers do not mount them. Online service database locators/pools, identity
+providers, browser sources,
 media stores, service authentication, trusted proxies, CORS, sessions, jobs,
 metrics, and product feature settings are not implemented. They must be added
 later under their process-specific authority and architecture work orders.

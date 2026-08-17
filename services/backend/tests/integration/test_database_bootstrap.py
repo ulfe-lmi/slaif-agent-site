@@ -34,11 +34,82 @@ from slaif_agent_site.db.privileges import (
     verify_database_privileges,
 )
 from slaif_agent_site.db.readiness import ReadinessState
-from slaif_agent_site.db.roles import ROLE_NAMES, quote_identifier
+from slaif_agent_site.db.roles import (
+    DATABASE_LOGINS,
+    ROLE_NAMES,
+    local_login_violations,
+    provision_database_roles,
+    quote_identifier,
+)
 
 QUALIFICATION_TABLE = '"content"."qualification_item"'
 QUALIFICATION_BASE = '"content"."qualification_item_base"'
 QUALIFICATION_CHANGES = '"content"."qualification_item_changes"'
+
+
+async def test_fixed_local_login_provisioning_is_exact_and_idempotent(
+    agent_site_database: AgentSiteDatabase,
+) -> None:
+    parameters = {
+        key: value
+        for key, value in agent_site_database.connection_parameters.items()
+        if key != "database"
+    }
+    connection = await asyncpg.connect(
+        **parameters,
+        database=agent_site_database.name,
+        user=os.environ.get("PGUSER", "postgres"),
+        password=os.environ.get("PGPASSWORD", "qualification-admin"),
+    )
+    passwords = {
+        login.name: f"fake-only-{login.secret_file_stem}-{uuid.uuid4().hex}"
+        for login in DATABASE_LOGINS
+    }
+    quoted_login = DATABASE_LOGINS[1]
+    passwords[quoted_login.name] = "fake-'quoted\\password-;--" + uuid.uuid4().hex
+    delegated_member = f"slaif_test_member_{uuid.uuid4().hex}"
+    try:
+        await provision_database_roles(
+            connection,
+            expected_database=agent_site_database.name,
+            login_passwords=passwords,
+        )
+        await connection.execute(f"CREATE ROLE {quote_identifier(delegated_member)}")
+        await connection.execute(
+            f"GRANT {quote_identifier(quoted_login.name)} "
+            f"TO {quote_identifier(delegated_member)}"
+        )
+        await connection.execute(
+            f"GRANT {quote_identifier(DATABASE_LOGINS[-1].privilege_role)} "
+            f"TO {quote_identifier(quoted_login.name)} WITH ADMIN OPTION"
+        )
+        await provision_database_roles(
+            connection,
+            expected_database=agent_site_database.name,
+            login_passwords=passwords,
+        )
+        assert await local_login_violations(connection) == ()
+        login_connection = await asyncpg.connect(
+            **parameters,
+            database=agent_site_database.name,
+            user=quoted_login.name,
+            password=passwords[quoted_login.name],
+        )
+        try:
+            assert await login_connection.fetchval("SELECT current_user::text") == (
+                quoted_login.name
+            )
+        finally:
+            await login_connection.close()
+    finally:
+        await connection.execute(
+            f"DROP ROLE IF EXISTS {quote_identifier(delegated_member)}"
+        )
+        for login in reversed(DATABASE_LOGINS):
+            await connection.execute(
+                f"DROP ROLE IF EXISTS {quote_identifier(login.name)}"
+            )
+        await connection.close()
 
 
 def _assert_pending(marker: Any, *, deployed: bool) -> None:

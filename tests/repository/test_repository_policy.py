@@ -69,8 +69,10 @@ class RepositoryPolicyTestCase(unittest.TestCase):
         )
         self.write(
             "pnpm-workspace.yaml",
-            "packages:\n  - packages/*\n\nallowBuilds:\n  esbuild: false\n\n"
-            "autoInstallPeers: false\n\noverrides:\n  esbuild: 0.28.1\n"
+            "packages:\n  - apps/*\n  - packages/*\n"
+            "  - services/browser-worker\n\nallowBuilds:\n  esbuild: false\n\n"
+            "autoInstallPeers: false\n\nignoredOptionalDependencies:\n"
+            "  - sharp\n\noverrides:\n  esbuild: 0.28.1\n"
             "  vite: 7.3.6\n",
         )
         self.write_json(
@@ -86,6 +88,47 @@ class RepositoryPolicyTestCase(unittest.TestCase):
                     "declarationMap": True,
                     "sourceMap": True,
                 }
+            },
+        )
+        self.write_json(
+            "apps/web/package.json",
+            {
+                "name": "@slaif-agent-site/web",
+                "version": "0.0.0",
+                "private": True,
+                "license": "Apache-2.0",
+                "scripts": {
+                    "build": "NEXT_TELEMETRY_DISABLED=1 next build",
+                    "lint": "eslint --config eslint.config.mjs . --max-warnings 0",
+                    "typecheck": "tsc --noEmit",
+                    "test": "node --test tests/*.test.mjs",
+                },
+                "dependencies": {
+                    "next": "16.3.1",
+                    "react": "19.2.8",
+                    "react-dom": "19.2.8",
+                },
+                "devDependencies": {
+                    "@types/node": "24.13.3",
+                    "@types/react": "19.2.18",
+                    "@types/react-dom": "19.2.4",
+                    "typescript": "6.0.3",
+                },
+            },
+        )
+        self.write_json(
+            "services/browser-worker/package.json",
+            {
+                "name": "@slaif-agent-site/browser-worker",
+                "version": "0.0.0",
+                "private": True,
+                "license": "Apache-2.0",
+                "type": "module",
+                "scripts": {
+                    "build": "tsc --project tsconfig.json --noEmit",
+                    "typecheck": "tsc --project tsconfig.json --noEmit",
+                    "test": "node --test tests/*.test.mjs",
+                },
             },
         )
         for slug, package_name in WORKSPACE_PACKAGES.items():
@@ -137,8 +180,11 @@ class RepositoryPolicyTestCase(unittest.TestCase):
             f"        version: link:packages/{slug}"
             for slug, package_name in WORKSPACE_PACKAGES.items()
         )
-        importers = f"  .:\n    devDependencies:\n{workspace_links}\n\n" + "\n".join(
-            f"  packages/{slug}: {{}}" for slug in WORKSPACE_PACKAGES
+        importers = (
+            f"  .:\n    devDependencies:\n{workspace_links}\n\n"
+            "  apps/web: {}\n\n"
+            "  services/browser-worker: {}\n\n"
+            + "\n".join(f"  packages/{slug}: {{}}" for slug in WORKSPACE_PACKAGES)
         )
         self.write(
             "pnpm-lock.yaml",
@@ -225,6 +271,11 @@ class RepositoryPolicyTestCase(unittest.TestCase):
                 )
                 path.unlink()
 
+    def test_generated_next_directory_is_ignored(self) -> None:
+        self.write("apps/web/.next/generated.js", "generated output  \t\n")
+
+        self.assertEqual(self.errors_from("check_text_files"), [])
+
     def test_workflow_accepts_approved_full_sha_and_local_action(self) -> None:
         checkout = APPROVED_ACTIONS["actions/checkout"]
         self.write(
@@ -287,6 +338,8 @@ class RepositoryPolicyTestCase(unittest.TestCase):
             "docs/CONFIGURATION.md",
             "docs/DATABASE_BOOTSTRAP.md",
             "docs/DATABASE_ROLES.md",
+            "docs/DEPLOYMENT.md",
+            "docs/OPERATIONS.md",
             "docs/SERVICE_AUTHORITY.md",
             "LICENSE",
             "NOTICE",
@@ -308,6 +361,8 @@ class RepositoryPolicyTestCase(unittest.TestCase):
                 "docs/CONFIGURATION.md",
                 "docs/DATABASE_BOOTSTRAP.md",
                 "docs/DATABASE_ROLES.md",
+                "docs/DEPLOYMENT.md",
+                "docs/OPERATIONS.md",
                 "docs/SERVICE_AUTHORITY.md",
                 "LICENSE",
                 "NOTICE",

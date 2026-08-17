@@ -94,15 +94,22 @@ NODE_DEV_DEPENDENCIES = {
     "vitest": "4.1.10",
 }
 NODE_SCRIPTS = {
-    "lint": "eslint . --max-warnings 0",
+    "lint": (
+        "eslint . --max-warnings 0 --ignore-pattern '**/.next/**' && "
+        "pnpm --filter @slaif-agent-site/web lint"
+    ),
     "format:check": (
         "prettier --check package.json pnpm-workspace.yaml tsconfig.base.json "
         "tsconfig.json eslint.config.mjs prettier.config.mjs "
+        '"apps/web/**/*.{json,mjs,ts,tsx,css}" '
         '"packages/*/package.json" "packages/*/src/**/*.ts" '
-        '"packages/*/tsconfig.json" "tests/contracts/**/*.ts"'
+        '"packages/*/tsconfig.json" "services/browser-worker/**/*.{json,mjs,ts}" '
+        '"tests/contracts/**/*.ts"'
     ),
-    "typecheck": "pnpm build && tsc --project tsconfig.json --noEmit",
-    "test": "pnpm build && vitest run",
+    "typecheck": (
+        "pnpm --recursive run typecheck && tsc --project tsconfig.json --noEmit"
+    ),
+    "test": "pnpm build && pnpm --recursive run test && vitest run tests/contracts",
     "build": "pnpm --recursive run build",
     "licenses": "pnpm licenses list --json",
     "inventory": "pnpm list --recursive --depth Infinity",
@@ -150,6 +157,15 @@ FORBIDDEN_HOSTED_DEPENDENCY_PREFIXES = (
     "newrelic",
 )
 NODE_REQUIRED_FILES = (
+    "apps/web/Dockerfile",
+    "apps/web/app/health/live/route.ts",
+    "apps/web/app/health/ready/route.ts",
+    "apps/web/app/layout.tsx",
+    "apps/web/app/page.tsx",
+    "apps/web/app/styles.css",
+    "apps/web/next.config.mjs",
+    "apps/web/package.json",
+    "apps/web/tsconfig.json",
     "contracts/README.md",
     "eslint.config.mjs",
     "package.json",
@@ -157,6 +173,10 @@ NODE_REQUIRED_FILES = (
     "pnpm-workspace.yaml",
     "prettier.config.mjs",
     "tests/contracts/workspace-contracts.test.ts",
+    "services/browser-worker/Dockerfile",
+    "services/browser-worker/package.json",
+    "services/browser-worker/src/server.ts",
+    "services/browser-worker/tsconfig.json",
     "tsconfig.base.json",
     "tsconfig.json",
 ) + tuple(
@@ -187,10 +207,18 @@ REQUIRED_FILES = (
         "docs/CONFIGURATION.md",
         "docs/DATABASE_BOOTSTRAP.md",
         "docs/DATABASE_ROLES.md",
+        "docs/DEPLOYMENT.md",
+        "docs/OPERATIONS.md",
         "docs/SERVICE_AUTHORITY.md",
         "docs/assets/README.md",
         "docs/assets/slaif-logo.svg",
         "oap/active",
+        "compose.yaml",
+        ".dockerignore",
+        "infra/apache/Dockerfile",
+        "infra/apache/slaif-agent-site.conf",
+        "infra/nginx/Dockerfile",
+        "infra/nginx/nginx.conf",
         "migrations/alembic/README.md",
         "migrations/alembic/__init__.py",
         "migrations/bootstrap/README.md",
@@ -215,6 +243,7 @@ REQUIRED_FILES = (
         "services/backend/src/slaif_agent_site/db/privileges.py",
         "services/backend/src/slaif_agent_site/db/readiness.py",
         "services/backend/src/slaif_agent_site/db/roles.py",
+        "services/backend/Dockerfile",
         "services/backend/src/slaif_agent_site/errors.py",
         "services/backend/src/slaif_agent_site/health.py",
         "services/backend/src/slaif_agent_site/logging.py",
@@ -227,11 +256,19 @@ REQUIRED_FILES = (
         "services/backend/tests/unit/test_correlation_logging.py",
         "services/backend/tests/unit/test_errors.py",
         "services/backend/tests/unit/test_health_apps.py",
+        "services/backend/tests/unit/test_local_roles.py",
         "services/backend/tests/unit/test_process_entrypoints.py",
+        "tests/packaging/test_compose_policy.py",
+        "tests/packaging/test_edge_contract.py",
+        "tests/packaging/test_local_secrets.py",
+        "tests/packaging/test_oci_contract.py",
         "tests/repository/test_mermaid.py",
         "tests/repository/test_repository_policy.py",
         "tools/check_mermaid.py",
         "tools/check_repository.py",
+        "tools/compose/smoke.sh",
+        "tools/compose/verify.py",
+        "tools/local_secrets/initialize.py",
         "uv.lock",
     )
     + tuple(
@@ -256,6 +293,8 @@ REQUIRED_README_TARGETS = (
     "docs/CONFIGURATION.md",
     "docs/DATABASE_BOOTSTRAP.md",
     "docs/DATABASE_ROLES.md",
+    "docs/DEPLOYMENT.md",
+    "docs/OPERATIONS.md",
     "docs/SERVICE_AUTHORITY.md",
     "LICENSE",
     "NOTICE",
@@ -298,6 +337,7 @@ TEXT_SUFFIXES = {
 }
 SKIP_DIRS = {
     ".git",
+    ".next",
     ".mypy_cache",
     ".pytest_cache",
     ".ruff_cache",
@@ -906,13 +946,15 @@ class RepositoryPolicy:
         if workspace_path.is_file():
             workspace_text = self.read_utf8(workspace_path)
             if workspace_text is not None and workspace_text != (
-                "packages:\n  - packages/*\n\nallowBuilds:\n  esbuild: false\n\n"
-                "autoInstallPeers: false\n\noverrides:\n  esbuild: 0.28.1\n"
+                "packages:\n  - apps/*\n  - packages/*\n"
+                "  - services/browser-worker\n\nallowBuilds:\n  esbuild: false\n\n"
+                "autoInstallPeers: false\n\nignoredOptionalDependencies:\n"
+                "  - sharp\n\noverrides:\n  esbuild: 0.28.1\n"
                 "  vite: 7.3.6\n"
             ):
                 self.error(
                     workspace_path,
-                    "workspace must contain only packages/* and approved settings",
+                    "workspace must contain only approved application/package settings",
                 )
 
         packages_root = self.root / "packages"
@@ -931,6 +973,51 @@ class RepositoryPolicy:
 
         for slug, expected_name in WORKSPACE_PACKAGES.items():
             self.check_workspace_package(slug, expected_name)
+
+        deployment_manifests = {
+            "apps/web/package.json": {
+                "name": "@slaif-agent-site/web",
+                "version": "0.0.0",
+                "private": True,
+                "license": "Apache-2.0",
+                "scripts": {
+                    "build": "NEXT_TELEMETRY_DISABLED=1 next build",
+                    "lint": "eslint --config eslint.config.mjs . --max-warnings 0",
+                    "typecheck": "tsc --noEmit",
+                    "test": "node --test tests/*.test.mjs",
+                },
+                "dependencies": {
+                    "next": "16.3.1",
+                    "react": "19.2.8",
+                    "react-dom": "19.2.8",
+                },
+                "devDependencies": {
+                    "@types/node": "24.13.3",
+                    "@types/react": "19.2.18",
+                    "@types/react-dom": "19.2.4",
+                    "typescript": "6.0.3",
+                },
+            },
+            "services/browser-worker/package.json": {
+                "name": "@slaif-agent-site/browser-worker",
+                "version": "0.0.0",
+                "private": True,
+                "license": "Apache-2.0",
+                "type": "module",
+                "scripts": {
+                    "build": "tsc --project tsconfig.json --noEmit",
+                    "typecheck": "tsc --project tsconfig.json --noEmit",
+                    "test": "node --test tests/*.test.mjs",
+                },
+            },
+        }
+        for relative, expected in deployment_manifests.items():
+            manifest_path = self.root / relative
+            manifest = self.load_json(manifest_path)
+            if manifest is not None:
+                if manifest != expected:
+                    self.error(manifest_path, "deployment workspace manifest drift")
+                self.check_node_manifest_safety(manifest_path, manifest)
 
         if lock_path.is_file():
             self.check_pnpm_lock(lock_path)
@@ -1138,7 +1225,11 @@ class RepositoryPolicy:
                 re.MULTILINE,
             )
         )
-        expected_importers = {"."} | {f"packages/{slug}" for slug in WORKSPACE_PACKAGES}
+        expected_importers = {
+            ".",
+            "apps/web",
+            "services/browser-worker",
+        } | {f"packages/{slug}" for slug in WORKSPACE_PACKAGES}
         if importers != expected_importers:
             self.error(path, "lock importer set does not match the exact workspace")
 

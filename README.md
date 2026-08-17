@@ -16,18 +16,22 @@ the real responsive result, and publish only after human review.
 
 ## Current status
 
-> **Pre-alpha / process, foundation, and database-boundary baseline.** This
+> **Pre-alpha / deployable skeleton.** This
 > repository contains the normative architecture, coding-agent governance,
 > reproducible Python/TypeScript toolchains, the qualified
 > `agent-cow-postgresql==0.2.0` dependency, ten backend process boundaries,
-> exact PostgreSQL privilege roles, and an owner-only Alembic/bootstrap path.
+> exact PostgreSQL roles/local login principals, and an owner-only
+> Alembic/bootstrap path. The default Compose stack builds non-root OCI images,
+> generates file-backed local credentials, reaches `EMPTY_SAFE safe=true`, and
+> exposes an honest Next.js status surface and health routes only through NGINX
+> on <http://localhost:8080/>.
 > The database revision contains only schema/version/readiness infrastructure;
 > its clean zero-object content state is explicitly `EMPTY_SAFE` without
 > claiming foundation table hardening. Any real content object requires the
-> fully validated `HARDENED` state. Next.js, React, Puck,
-> product contracts/routes/tables, online database pools, the runnable product,
-> Compose, authentication, browser worker, and product behavior are not
-> implemented yet.
+> fully validated `HARDENED` state. Authentication, first-user setup, sites,
+> workspaces, editing/Puck, product routes/tables, online database pools,
+> Playwright/browser commands, review, publication, and product behavior are
+> not implemented yet.
 
 The current automation also migrates/rebuilds disposable databases, verifies
 the exact role/ownership/grant matrix, exercises COW runtime/reviewer paths,
@@ -135,9 +139,9 @@ object store, identity provider, cloud API key, subscription, or proprietary
 control plane. Telemetry will not leave the deployment by default. Production
 dependencies must remain permissively licensed and reproducibly locked.
 
-## Target startup contract — not implemented yet
+## Run the deployment skeleton
 
-The architecture defines this future clean-host contract:
+With Docker Engine and Compose v2 on Linux:
 
 ```bash
 git clone https://github.com/ulfe-lmi/slaif-agent-site.git
@@ -145,9 +149,11 @@ cd slaif-agent-site
 docker compose up --build
 ```
 
-The repository does **not** currently contain `compose.yaml`, application
-images, or a working product runtime, so this is not a quickstart. It is an
-acceptance target for later implementation phases.
+No `.env`, manual package install, cloud account, API key, or secret-generation
+step is required. Wait for health, then open <http://localhost:8080/>. Only
+loopback port 8080 is published. This is a deployment/status skeleton, not the
+first-run administrator or website-management product. See the
+[deployment guide](docs/DEPLOYMENT.md) and [operations guide](docs/OPERATIONS.md).
 
 ## Delivery sequence
 
@@ -158,8 +164,8 @@ acceptance target for later implementation phases.
 | Completed contract-toolchain baseline | Reproducible Node 24/pnpm 11 workspace, strict TypeScript tooling, and seven private scaffold-only package boundaries. |
 | Completed backend process skeleton | Six health-only FastAPI apps, four non-listening process entrypoints, typed local configuration, conceptual authority mapping, safe errors/correlation/logging, and readiness probes. |
 | Completed database boundary baseline | Exact password-free roles, packaged Alembic head, three empty product schemas, constrained `PENDING`/`EMPTY_SAFE`/`HARDENED` readiness, public-API COW reconciliation, and independent privilege validation. |
-| Planned deployable skeleton | Add one-command Compose packaging, secure first-run setup, actual service credentials/grants, and edge health wiring. |
-| Planned product work | Implement identity/sites/workspaces, configurable content, normalized composition/Puck, semantic tools, browser feedback, review/promotion, reconstruction, and hardening. |
+| Completed deployable skeleton | One-command Compose, generated local database principals, safe-empty bootstrap, digest-pinned OCI images, isolated browser placeholder, Next status page, NGINX edge, and Apache reference. |
+| Planned setup/product work | Implement secure first-user setup, identity/sites/workspaces, configurable content, normalized composition/Puck, semantic tools, browser feedback, review/promotion, reconstruction, and hardening. |
 
 See [Architecture Section 50](ARCHITECTURE.md#50-implementation-phases) for
 the normative phase plan.
@@ -171,16 +177,19 @@ The current repository is intentionally small:
 ```text
 .
 ├── .github/             # CI, CodeQL, Dependabot, and PR guidance
+├── apps/web/            # minimal Next.js pre-alpha status surface
 ├── contracts/           # contract ownership and future generation policy
-├── docs/                # configuration/authority/foundation records and assets
+├── docs/                # deployment, operations, contracts, and assets
+├── infra/               # NGINX default and Apache reference edge adapters
 ├── migrations/          # Alembic location marker and bootstrap guidance
 ├── oap/                 # versioned strategic orders, active pointer, reports
 ├── packages/            # seven private TypeScript boundary scaffolds
-├── services/backend/    # backend skeleton, contracts, and foundation qualification
-├── tests/               # Node contract and repository-policy tests
-├── tools/               # standard-library repository-policy checker
+├── services/            # backend and isolated browser-worker placeholder
+├── tests/               # contract, packaging, and repository-policy tests
+├── tools/               # repository, Compose, and local-secret tooling
 ├── AGENTS.md            # coding-agent constitution
 ├── ARCHITECTURE.md      # normative Revision 2.1 architecture
+├── compose.yaml         # local one-command deployment topology
 ├── CONTRIBUTING.md
 ├── SECURITY.md
 ├── NOTICE
@@ -198,7 +207,9 @@ product work. Bootstrap mutations require explicit one-shot commands. See the
 [configuration contract](docs/CONFIGURATION.md),
 [database bootstrap](docs/DATABASE_BOOTSTRAP.md), and
 [database roles](docs/DATABASE_ROLES.md), with process mappings in the
-[service authority record](docs/SERVICE_AUTHORITY.md). The planned application
+[service authority record](docs/SERVICE_AUTHORITY.md), deployment in the
+[deployment guide](docs/DEPLOYMENT.md), and lifecycle commands in
+[operations](docs/OPERATIONS.md). The planned application
 monorepo layout remains specified in
 [Architecture Section 12](ARCHITECTURE.md#12-repository-architecture).
 
@@ -209,7 +220,8 @@ policy, isolated policy tests, Markdown lint, exact-version Mermaid rendering,
 pull-request dependency review, frozen Node 24/pnpm 11 contract checks, Python
 3.12–3.14 lint/type/unit/package gates (including process, config, health,
 error, correlation, logging, and entrypoint contracts), and separate foundation
-plus Agent-Site database suites on PostgreSQL 14–18. See the
+plus Agent-Site database suites on PostgreSQL 14–18, and a clean Compose/edge
+packaging smoke. See the
 [foundation integration record](docs/FOUNDATION_INTEGRATION.md) for the exact
 registry artifacts, public surface, commands, and limitations. The transient
 diagram and package builds add no production dependency or committed output. The

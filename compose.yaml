@@ -1,0 +1,298 @@
+name: slaif-agent-site
+
+x-common-security: &common-security
+  read_only: true
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+
+x-backend-service: &backend-service
+  <<: *common-security
+  image: slaif-agent-site-backend:local
+  restart: unless-stopped
+  init: true
+  environment:
+    SLAIF_BIND_HOST: 0.0.0.0
+    SLAIF_BIND_PORT: "8000"
+    SLAIF_LOG_FORMAT: json
+    SLAIF_LOG_LEVEL: INFO
+    SLAIF_MODE: test
+    SLAIF_PUBLIC_URL: http://localhost:8080
+  expose:
+    - "8000"
+  tmpfs:
+    - /tmp:mode=1777,nosuid,nodev,noexec,size=16m
+  depends_on:
+    bootstrap:
+      condition: service_completed_successfully
+  healthcheck:
+    test:
+      - CMD
+      - python
+      - -c
+      - >-
+        import urllib.request;
+        urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=2).read()
+    interval: 5s
+    timeout: 3s
+    retries: 12
+    start_period: 5s
+
+x-worker-service: &worker-service
+  <<: *common-security
+  image: slaif-agent-site-backend:local
+  restart: unless-stopped
+  init: true
+  environment:
+    SLAIF_LOG_FORMAT: json
+    SLAIF_LOG_LEVEL: INFO
+    SLAIF_MODE: test
+    SLAIF_PUBLIC_URL: http://localhost:8080
+  tmpfs:
+    - /tmp:mode=1777,nosuid,nodev,noexec,size=16m
+  depends_on:
+    bootstrap:
+      condition: service_completed_successfully
+  healthcheck:
+    test: ["CMD", "python", "-c", "import os; os.kill(1, 0)"]
+    interval: 10s
+    timeout: 3s
+    retries: 6
+    start_period: 5s
+
+services:
+  secrets-init:
+    <<: *common-security
+    image: slaif-agent-site-backend:local
+    build:
+      context: .
+      dockerfile: services/backend/Dockerfile
+    user: "0:0"
+    cap_add:
+      - CHOWN
+      - DAC_READ_SEARCH
+    command:
+      - python
+      - /opt/slaif/bin/initialize-local-secrets.py
+      - --directory
+      - /run/slaif-secrets
+    restart: "no"
+    network_mode: none
+    volumes:
+      - local-secrets:/run/slaif-secrets
+
+  postgres:
+    <<: *common-security
+    # PostgreSQL 18.6; PostgreSQL license; official multi-platform image.
+    image: postgres:18.6-trixie@sha256:06cad38a5d9f5d24b4d83d86def30795d5e4b757fedbf5281172b576dedcd941
+    restart: unless-stopped
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETGID
+      - SETUID
+    environment:
+      PGDATA: /var/lib/postgresql/data
+      POSTGRES_DB: slaif
+      POSTGRES_PASSWORD_FILE: /run/slaif-secrets/postgres-password
+      POSTGRES_USER: postgres
+    expose:
+      - "5432"
+    tmpfs:
+      - /tmp:mode=1777,nosuid,nodev,noexec,size=16m
+      - /var/run/postgresql:uid=999,gid=999,mode=3775,nosuid,nodev,noexec,size=16m
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - local-secrets:/run/slaif-secrets:ro
+    networks:
+      - database
+    depends_on:
+      secrets-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready --quiet --username postgres --dbname slaif"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+
+  bootstrap:
+    <<: *common-security
+    image: slaif-agent-site-backend:local
+    command: ["python", "-m", "slaif_agent_site.bootstrap", "compose"]
+    restart: "no"
+    environment:
+      SLAIF_BOOTSTRAP_EXPECTED_DATABASE: slaif
+      SLAIF_BOOTSTRAP_LOCAL_SECRETS_DIR: /run/slaif-secrets
+      SLAIF_BOOTSTRAP_MODE: production
+      SLAIF_BOOTSTRAP_OWNER_DSN_FILE: /run/slaif-secrets/owner-dsn
+      SLAIF_BOOTSTRAP_PROVISIONER_DSN_FILE: /run/slaif-secrets/provisioner-dsn
+    tmpfs:
+      - /tmp:mode=1777,nosuid,nodev,noexec,size=16m
+    volumes:
+      - local-secrets:/run/slaif-secrets:ro
+    networks:
+      - database
+    depends_on:
+      secrets-init:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+
+  control-api:
+    <<: *backend-service
+    command: ["python", "-m", "slaif_agent_site.control_api"]
+    networks: [edge, database]
+
+  editor-api:
+    <<: *backend-service
+    command: ["python", "-m", "slaif_agent_site.editor_api"]
+    networks: [edge, database]
+
+  agent-api:
+    <<: *backend-service
+    command: ["python", "-m", "slaif_agent_site.agent_api"]
+    networks: [edge, database, browser]
+
+  render-api:
+    <<: *backend-service
+    command: ["python", "-m", "slaif_agent_site.render_api"]
+    networks: [application, database]
+
+  mcp-adapter:
+    <<: *backend-service
+    command: ["python", "-m", "slaif_agent_site.mcp_adapter"]
+    networks: [edge, application]
+
+  media-service:
+    <<: *backend-service
+    command: ["python", "-m", "slaif_agent_site.media_service"]
+    volumes:
+      - media-data:/var/lib/slaif/media
+    networks: [edge, database]
+
+  review-worker:
+    <<: *worker-service
+    command: ["python", "-m", "slaif_agent_site.review_worker"]
+    networks: [database]
+
+  scheduler:
+    <<: *worker-service
+    command: ["python", "-m", "slaif_agent_site.scheduler"]
+    networks: [database]
+
+  media-gc:
+    <<: *worker-service
+    command: ["python", "-m", "slaif_agent_site.media_gc"]
+    volumes:
+      - media-data:/var/lib/slaif/media
+    networks: [database]
+
+  browser-worker:
+    <<: *common-security
+    image: slaif-agent-site-browser-worker:local
+    build:
+      context: .
+      dockerfile: services/browser-worker/Dockerfile
+    restart: unless-stopped
+    init: true
+    expose:
+      - "3100"
+    tmpfs:
+      - /tmp:mode=1777,nosuid,nodev,noexec,size=16m
+    networks: [browser]
+    depends_on:
+      bootstrap:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - >-
+          fetch('http://127.0.0.1:3100/health/ready').then(r => {
+          if (!r.ok) process.exit(1)}).catch(() => process.exit(1))
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+
+  web:
+    <<: *common-security
+    image: slaif-agent-site-web:local
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    restart: unless-stopped
+    init: true
+    expose:
+      - "3000"
+    tmpfs:
+      - /tmp:mode=1777,nosuid,nodev,noexec,size=16m
+    networks: [edge, application]
+    depends_on:
+      bootstrap:
+        condition: service_completed_successfully
+      render-api:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - >-
+          fetch('http://127.0.0.1:3000/health/ready').then(r => {
+          if (!r.ok) process.exit(1)}).catch(() => process.exit(1))
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+
+  nginx:
+    <<: *common-security
+    image: slaif-agent-site-nginx:local
+    build:
+      context: .
+      dockerfile: infra/nginx/Dockerfile
+    restart: unless-stopped
+    init: true
+    ports:
+      - "127.0.0.1:8080:8080"
+    tmpfs:
+      - /tmp:uid=101,gid=101,mode=700,nosuid,nodev,noexec,size=16m
+    networks: [edge]
+    depends_on:
+      agent-api:
+        condition: service_healthy
+      control-api:
+        condition: service_healthy
+      editor-api:
+        condition: service_healthy
+      mcp-adapter:
+        condition: service_healthy
+      media-service:
+        condition: service_healthy
+      web:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--spider", "http://127.0.0.1:8080/health/ready"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+
+networks:
+  edge: {}
+  application:
+    internal: true
+  database:
+    internal: true
+  browser:
+    internal: true
+
+volumes:
+  local-secrets: {}
+  media-data: {}
+  postgres-data: {}

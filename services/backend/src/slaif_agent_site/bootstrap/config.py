@@ -10,6 +10,8 @@ from typing import Self
 from pydantic import SecretStr, ValidationError, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from slaif_agent_site.db.roles import DATABASE_LOGINS
+
 
 class BootstrapMode(StrEnum):
     TEST = "test"
@@ -38,6 +40,7 @@ class BootstrapSettings(BaseSettings):
     provisioner_dsn_file: Path | None = None
     owner_dsn: SecretStr | None = None
     owner_dsn_file: Path | None = None
+    local_secrets_dir: Path | None = None
 
     @field_validator("expected_database")
     @classmethod
@@ -46,7 +49,7 @@ class BootstrapSettings(BaseSettings):
             raise ValueError("expected database name is invalid")
         return value
 
-    @field_validator("provisioner_dsn_file", "owner_dsn_file")
+    @field_validator("provisioner_dsn_file", "owner_dsn_file", "local_secrets_dir")
     @classmethod
     def validate_absolute_secret_file(cls, value: Path | None) -> Path | None:
         if value is not None and not value.is_absolute():
@@ -92,6 +95,17 @@ class BootstrapSettings(BaseSettings):
         if source is None:
             raise ValueError("setup-owner locator is required")
         return source
+
+    def resolved_local_login_passwords(self) -> dict[str, str] | None:
+        if self.local_secrets_dir is None:
+            return None
+        values: dict[str, str] = {}
+        for login in DATABASE_LOGINS:
+            secret = self._read_secret_file(
+                self.local_secrets_dir / f"login-{login.secret_file_stem}-password"
+            )
+            values[login.name] = secret.get_secret_value()
+        return values
 
     @classmethod
     def load(cls) -> Self:

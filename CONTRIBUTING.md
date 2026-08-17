@@ -1,9 +1,10 @@
 # Contributing to SLAIF Agent-Site
 
-SLAIF Agent-Site is currently a pre-alpha process, foundation, database
-boundary, and contract-toolchain project. It has deterministic migrations and
-password-free PostgreSQL privilege roles, but no product-domain schema, online
-database pool, application setup, or runnable product stack.
+SLAIF Agent-Site is currently a pre-alpha deployable skeleton. It has
+deterministic migrations, password-free PostgreSQL privilege roles, generated
+local login principals, and a runnable health/status Compose stack, but no
+product-domain schema, online database pool, administrator setup, or product
+workflow.
 
 ## Start with the governing documents
 
@@ -52,17 +53,20 @@ pnpm licenses list --json
 uv --version
 uv lock --check
 uv sync --frozen --all-groups
-uv run --frozen ruff check services/backend tests/repository tools migrations
-uv run --frozen ruff format --check services/backend tests/repository tools migrations
+uv run --frozen ruff check services/backend tests/repository tests/packaging tools migrations
+uv run --frozen ruff format --check services/backend tests/repository tests/packaging tools migrations
 uv run --frozen mypy
 uv run --frozen pytest services/backend/tests/unit tests/repository
 uv run --frozen pytest services/backend/tests/integration
 uv build --out-dir /tmp/slaif-agent-site-distributions
-python -m compileall -q tools tests/repository
+python -m compileall -q tools tests/repository tests/packaging
 python -m unittest discover -s tests/repository -p 'test_*.py'
+python -m unittest discover -s tests/packaging -p 'test_*.py'
 python tools/check_repository.py
 python tools/check_mermaid.py
 npx --yes markdownlint-cli2@0.23.2 "**/*.md"
+docker compose config --quiet
+sudo tools/compose/smoke.sh slaif007localtest
 ```
 
 All ten backend entrypoints also have a non-binding startup check:
@@ -88,7 +92,9 @@ pools, or service authentication. Bootstrap database actions require explicit
 subcommands and separate mounted locators. See
 [backend configuration](docs/CONFIGURATION.md),
 [database bootstrap](docs/DATABASE_BOOTSTRAP.md), and
-[service authority](docs/SERVICE_AUTHORITY.md).
+[service authority](docs/SERVICE_AUTHORITY.md). The full local lifecycle and
+bounded destructive cleanup are in [deployment](docs/DEPLOYMENT.md) and
+[operations](docs/OPERATIONS.md).
 
 The Mermaid check transiently obtains the exact approved Mermaid CLI version
 and renders every Mermaid fence in a system temporary directory. It adds no
@@ -103,10 +109,10 @@ GitHub CI and CodeQL on the current PR head are independently authoritative.
 The PostgreSQL integration command requires a disposable PostgreSQL 14–18
 instance and fake test credentials as described in
 [the foundation integration record](docs/FOUNDATION_INTEGRATION.md). GitHub CI
-runs every supported PostgreSQL version. Future product work extends these
-baseline checks with application, database-role, concurrency, browser-network,
-Playwright, Compose, recovery, license, and SBOM coverage; it does not replace
-them.
+runs every supported PostgreSQL version. Compose packaging now covers the
+container/network/edge/browser-placeholder boundary. Future product work
+extends these baseline checks with application, concurrency, Playwright,
+recovery, and full release/SBOM coverage; it does not replace them.
 
 ## Security, privacy, and production boundaries
 
@@ -144,9 +150,10 @@ no ORM/product repository; online connection configuration remains deferred.
 Use the public npm registry and commit the exact pnpm `11.22.0` lock. Node
 installs must use `pnpm install --frozen-lockfile`; Git, direct-URL, local,
 linked, patched, workspace-escape, unhashed, or unapproved-registry external
-sources are forbidden. Root tooling versions are exact, workspace packages
-remain private and dependency-free, and package lifecycle/publish scripts are
-not permitted.
+sources are forbidden. Root tooling versions are exact. The seven contract
+packages and browser placeholder remain private and dependency-free. The Web
+workspace has only the qualified exact Next/React set. Package lifecycle and
+publish scripts are not permitted.
 
 ## OAP transcript ownership
 

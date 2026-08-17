@@ -19,6 +19,7 @@ from slaif_agent_site.config import (
     LogLevel,
     ServiceSettings,
 )
+from slaif_agent_site.db.roles import DATABASE_LOGINS
 
 STRONG_TEST_SECRET = "local-fixture-value-with-32-plus-unique-chars"
 
@@ -191,6 +192,22 @@ def test_production_bootstrap_requires_absolute_mounted_secret_files(
             expected_database="qualification",
             owner_dsn_file=Path("relative-owner-dsn"),
         )
+
+
+def test_local_login_password_files_follow_the_fixed_manifest(tmp_path: Path) -> None:
+    for login in DATABASE_LOGINS:
+        (tmp_path / f"login-{login.secret_file_stem}-password").write_text(
+            f"fake-{login.secret_file_stem}-password", encoding="utf-8"
+        )
+    settings = BootstrapSettings(
+        mode=BootstrapMode.TEST,
+        expected_database="qualification",
+        local_secrets_dir=tmp_path,
+    )
+    passwords = settings.resolved_local_login_passwords()
+    assert passwords is not None
+    assert set(passwords) == {login.name for login in DATABASE_LOGINS}
+    assert all(value.startswith("fake-") for value in passwords.values())
 
 
 def test_bootstrap_load_error_is_constant_and_redacted() -> None:

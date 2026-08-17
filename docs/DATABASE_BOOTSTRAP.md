@@ -1,8 +1,9 @@
 # Database bootstrap and migration baseline
 
-The implemented database path is an explicit one-shot maintenance boundary. It
-does not add an online pool, product route, authentication, product-domain
-table, deployment stack, or runnable site.
+The implemented database path is an explicit one-shot maintenance boundary.
+The default Compose stack invokes it before application health can become
+ready. It does not add an online pool, product route, authentication, or
+product-domain table.
 
 ## Dependencies and migration graph
 
@@ -37,6 +38,7 @@ Bootstrap configuration is separate from `ServiceSettings` and uses only the
 | `SLAIF_BOOTSTRAP_EXPECTED_DATABASE` | Every database command | Exact validated database name checked after connection. |
 | `SLAIF_BOOTSTRAP_PROVISIONER_DSN_FILE` | `provision` | Absolute mounted secret file for cluster-provisioner access. |
 | `SLAIF_BOOTSTRAP_OWNER_DSN_FILE` | Owner commands | Absolute mounted secret file for the one-shot owner principal. |
+| `SLAIF_BOOTSTRAP_LOCAL_SECRETS_DIR` | Local `compose` | Absolute directory containing the fixed login password files. |
 
 Direct `SLAIF_BOOTSTRAP_PROVISIONER_DSN` and
 `SLAIF_BOOTSTRAP_OWNER_DSN` inputs exist only for generated disposable tests;
@@ -65,6 +67,7 @@ python -m slaif_agent_site.bootstrap upgrade
 python -m slaif_agent_site.bootstrap current
 python -m slaif_agent_site.bootstrap bootstrap
 python -m slaif_agent_site.bootstrap validate
+python -m slaif_agent_site.bootstrap compose
 ```
 
 Running the module without a command prints usage and performs no mutation.
@@ -74,6 +77,10 @@ state-specific grants and validation, and publishes the safe marker last.
 `current` is read-only and includes `state=PENDING`, `state=EMPTY_SAFE`, or
 `state=HARDENED`. `validate` independently reproduces the applicable proof and
 fails if database truth, object fingerprints, and the marker disagree.
+`compose` is the local all-or-nothing sequence: fixed role/login provisioning,
+upgrade, COW reconciliation, independent marker/privilege validation, and
+exact login-attribute/membership validation. It succeeds only at
+`EMPTY_SAFE safe=true` and is used by the one-shot container.
 
 Downgrade and rebuild are disposable verification operations, not a production
 rollback promise:

@@ -1,0 +1,12 @@
+.git
+.github
+.mypy_cache
+**/.next
+.pytest_cache
+.ruff_cache
+.venv
+**/__pycache__
+**/coverage
+**/dist
+**/node_modules
+oap
