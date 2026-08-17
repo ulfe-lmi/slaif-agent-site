@@ -1,10 +1,10 @@
 # Contributing to SLAIF Agent-Site
 
-SLAIF Agent-Site is currently a pre-alpha foundation and contract-toolchain
-project. The repository contains architecture, governance, documentation,
-reproducible Python packaging, foundation qualification automation, and seven
-private TypeScript package boundaries; there is no application setup or
-runnable product stack yet.
+SLAIF Agent-Site is currently a pre-alpha process, foundation, and
+contract-toolchain project. The repository contains architecture, governance,
+documentation, reproducible Python packaging, foundation qualification,
+health-only backend process skeletons, and seven private TypeScript package
+boundaries; there is no application setup or runnable product stack yet.
 
 ## Start with the governing documents
 
@@ -66,6 +66,28 @@ python tools/check_mermaid.py
 npx --yes markdownlint-cli2@0.23.2 "**/*.md"
 ```
 
+All ten backend entrypoints also have a non-binding startup check:
+
+```bash
+python -m slaif_agent_site.control_api --check
+python -m slaif_agent_site.editor_api --check
+python -m slaif_agent_site.agent_api --check
+python -m slaif_agent_site.render_api --check
+python -m slaif_agent_site.mcp_adapter --check
+python -m slaif_agent_site.media_service --check
+python -m slaif_agent_site.review_worker --check
+python -m slaif_agent_site.scheduler --check
+python -m slaif_agent_site.media_gc --check
+python -m slaif_agent_site.bootstrap --check
+```
+
+The six HTTP processes currently expose only `/health/live` and
+`/health/ready`; external docs/OpenAPI routes are disabled. Review worker,
+scheduler, media-GC, and bootstrap have no listener. Their authority
+descriptors are conceptual future wiring—not credentials, database grants, or
+service authentication. See [backend configuration](docs/CONFIGURATION.md)
+and [service authority](docs/SERVICE_AUTHORITY.md).
+
 The Mermaid check transiently obtains the exact approved Mermaid CLI version
 and renders every Mermaid fence in a system temporary directory. It adds no
 production dependency and commits no rendered output.
@@ -109,6 +131,12 @@ required hosted or account-bound services. The integrated
 `agent-cow-postgresql` dependency must come from PyPI at the qualified exact
 version with hashes in `uv.lock`; Git, direct-URL, local-path, or editable forms
 are forbidden for normal builds.
+
+The current direct runtime set is exact: `agent-cow-postgresql==0.2.0`,
+`asyncpg==0.31.0`, `fastapi==0.141.1`, `pydantic==2.13.4`,
+`pydantic-settings==2.15.0`, and `uvicorn==0.52.3`, without standard/cloud
+extras. HTTPX `0.28.1` is test-only. Adding a database dependency does not
+authorize a connection: database URL/pool/role configuration remains deferred.
 
 Use the public npm registry and commit the exact pnpm `11.22.0` lock. Node
 installs must use `pnpm install --frozen-lockfile`; Git, direct-URL, local,
