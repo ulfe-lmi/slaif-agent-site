@@ -160,6 +160,38 @@ class ComposePolicyTests(unittest.TestCase):
             "up", "-d", "--force-recreate", "--no-deps", "control-api"
         )
 
+    def test_control_fixture_mode_helper_is_exactly_confined(self) -> None:
+        fixture = CONTROL_FIXTURE.ControlReadinessFixture(
+            "slaif009fixture", existing=True
+        )
+        with patch.object(CONTROL_FIXTURE, "_run") as run:
+            fixture._set_control_mode(0o000)
+        run.assert_called_once_with(
+            [
+                "docker",
+                "run",
+                "--rm",
+                "--network",
+                "none",
+                "--read-only",
+                "--cap-drop",
+                "ALL",
+                "--cap-add",
+                "DAC_READ_SEARCH",
+                "--cap-add",
+                "FOWNER",
+                "--user",
+                "0:0",
+                "--volume",
+                "slaif009fixture_control-secret:/secrets",
+                "--entrypoint",
+                "python",
+                CONTROL_FIXTURE.BACKEND_IMAGE,
+                "-c",
+                "import pathlib;pathlib.Path('/secrets/control-dsn').chmod(0o0)",
+            ]
+        )
+
     def test_exact_topology_is_accepted(self) -> None:
         VERIFY.validate_config(_configuration())
 

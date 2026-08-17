@@ -322,6 +322,8 @@ class ControlReadinessFixture:
                 "--cap-drop",
                 "ALL",
                 "--cap-add",
+                "DAC_READ_SEARCH",
+                "--cap-add",
                 "FOWNER",
                 "--user",
                 "0:0",
