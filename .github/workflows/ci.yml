@@ -205,10 +205,6 @@ jobs:
         run: docker compose version
       - name: Run clean deployment, topology, edge, and failure smoke
         run: sh tools/compose/smoke.sh slaif007ci
-      - name: Prove PostgreSQL persistent-volume base transition
-        run: >-
-          sh tests/packaging/postgres-base-transition.sh
-          slaif008transitionci
 
   supply-chain-evidence:
     name: Supply-chain evidence

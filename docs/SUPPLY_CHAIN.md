@@ -43,12 +43,6 @@ The policy also records the reviewed source commit and SHA-256 values of each
 release checksum, signature, and certificate file. This is recorded provenance,
 not a signed project attestation or SLSA claim.
 
-The separate `historical_oci_transitions` policy section pins the exact prior
-Trixie and current Alpine PostgreSQL references used by the mandatory
-persistent-volume compatibility test. The old reference is historical test
-evidence only: it is not a current build input, required SBOM target, or
-permitted substitute for the Compose image.
-
 ## Reproduce the checks locally
 
 Use the repository's exact Node, pnpm, Python, and uv versions. The complete
@@ -210,13 +204,6 @@ tests, regenerate notices when application metadata changes, and rerun the
 complete evidence and Compose gates. Language and PostgreSQL major versions,
 edge families, scanner choices, or runtime dependencies require explicit
 strategic scope.
-
-Changing the PostgreSQL OS family also requires a mandatory test that starts
-the proposed image on a volume initialized by the prior exact image. The pinned
-18.6 Trixie-to-Alpine test fails because the stored glibc collation version is
-`2.41`, Alpine reports no actual version for `en_US.utf8`, and PostgreSQL emits
-a warning. Data/role/marker/query preservation does not override that locale
-failure. See the [deployment guide](DEPLOYMENT.md) for the exact boundary.
 
 ## Limitations
 

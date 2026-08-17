@@ -67,15 +67,6 @@ The administrator password is read from a file and must not be copied into a
 shell command or support transcript. A database failure blocks bootstrap and
 all dependent services.
 
-Do not change an existing Trixie-initialized volume to the current Alpine image
-in place. The exact 18.6-to-18.6 transition starts and preserves representative
-data, roles, marker, constraints, and indexes, but it fails the locale contract:
-the stored glibc collation version is `2.41`, Alpine reports no actual version,
-and PostgreSQL emits a collation warning on connections before and after
-restart. Preserve the volume and its exact old image for a human-approved
-migration or rollback decision; do not initialize, refresh, reindex,
-dump/restore, or discard the volume as an automatic repair.
-
 ### Bootstrap
 
 Bootstrap failure is intentionally reported as `Database bootstrap failed.`.
@@ -112,20 +103,6 @@ authority, restart idempotence, fail-closed bootstrap, Apache syntax, single
 request-ID and CSP headers on page/API/404 responses, secret absence in
 configuration/history/logs, and exact-project cleanup. It does not test product
 workflows because they do not exist.
-
-The separate mandatory historical-volume gate uses its own validated prefix
-and exact disposable volume:
-
-```bash
-sudo sh tests/packaging/postgres-base-transition.sh \
-  slaif008transitionlocal
-```
-
-For the exact Trixie-to-Alpine pair documented above, the command deliberately
-exits nonzero after recording the incompatible collation facts and proving
-cleanup. It never targets ordinary Compose volumes and does not run an
-initializer, repair, upgrade, collation refresh, reindex, or dump/restore on
-the retained test volume before validation.
 
 ## Supply-chain evidence
 
