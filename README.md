@@ -16,17 +16,19 @@ the real responsive result, and publish only after human review.
 
 ## Current status
 
-> **Pre-alpha / foundation baseline.** This repository contains the normative
-> architecture, coding-agent governance, project documentation, reproducible
-> Python package baseline, and qualified `agent-cow-postgresql==0.2.0`
-> dependency. The runnable Agent-Site application, Compose stack, product
-> database schema, APIs, browser worker, and product test suites are not
-> implemented yet.
+> **Pre-alpha / foundation and contract-toolchain baseline.** This repository
+> contains the normative architecture, coding-agent governance, project
+> documentation, reproducible Python package baseline, qualified
+> `agent-cow-postgresql==0.2.0` dependency, and seven private TypeScript
+> contract-package boundaries. Next.js, React, Puck, product contracts, the
+> runnable Agent-Site application, Compose stack, product database schema,
+> APIs, browser worker, and product test suites are not implemented yet.
 
-The current automation checks preparation artifacts, the Python package and
-foundation contract, and a disposable downstream PostgreSQL adoption baseline.
-A green CI or CodeQL result does not prove product readiness, validate the
-planned runtime, or certify the complete security architecture.
+The current automation checks preparation artifacts, the TypeScript boundary
+scaffold, the Python package and foundation contract, and a disposable
+downstream PostgreSQL adoption baseline. A green CI or CodeQL result does not
+prove product readiness, validate the planned runtime, or certify the complete
+security architecture.
 
 ## Why Agent-Site
 
@@ -147,6 +149,7 @@ acceptance target for later implementation phases.
 | --- | --- |
 | Completed preparation | Normative architecture, coding governance, versioned OAP transcript, professional project guidance, deterministic repository policy, and initial CI/CodeQL configuration. |
 | Completed foundation baseline | Exact PyPI dependency and artifact hashes, public API adapter boundary, Python packaging, and downstream PostgreSQL 14–18 adoption gate. |
+| Completed contract-toolchain baseline | Reproducible Node 24/pnpm 11 workspace, strict TypeScript tooling, and seven private scaffold-only package boundaries. |
 | Planned product skeleton | Add the monorepo, one-command Compose packaging, secure first-run setup, service roles, and health checks. |
 | Planned product work | Implement identity/sites/workspaces, configurable content, normalized composition/Puck, semantic tools, browser feedback, review/promotion, reconstruction, and hardening. |
 
@@ -160,44 +163,50 @@ The current repository is intentionally small:
 ```text
 .
 ├── .github/             # CI, CodeQL, Dependabot, and PR guidance
+├── contracts/           # contract ownership and future generation policy
 ├── docs/                # foundation record and local brand asset provenance
 ├── oap/                 # versioned strategic orders, active pointer, reports
+├── packages/            # seven private TypeScript boundary scaffolds
 ├── services/backend/    # minimal Python package and foundation qualification
-├── tests/repository/    # isolated repository-policy unit tests
+├── tests/               # contract smoke and repository-policy tests
 ├── tools/               # standard-library repository-policy checker
 ├── AGENTS.md            # coding-agent constitution
 ├── ARCHITECTURE.md      # normative Revision 2.1 architecture
 ├── CONTRIBUTING.md
 ├── SECURITY.md
 ├── NOTICE
+├── package.json
+├── pnpm-lock.yaml
 ├── pyproject.toml
 ├── uv.lock
 └── README.md
 ```
 
-The planned application monorepo layout is specified in
-[Architecture Section 12](ARCHITECTURE.md#12-repository-architecture); those
-application directories do not exist yet.
+The package boundaries now exist, but they contain no product schemas,
+components, scopes, browser tools, API behavior, or fixture data. The planned
+application monorepo layout is specified in
+[Architecture Section 12](ARCHITECTURE.md#12-repository-architecture); its web,
+worker, runtime, and generated-contract directories do not exist yet.
 
 ## Repository checks and CodeQL
 
 The [CI workflow](.github/workflows/ci.yml) runs deterministic repository
 policy, isolated policy tests, Markdown lint, exact-version Mermaid rendering,
-pull-request dependency review, Python 3.12–3.14 lint/type/unit/package gates,
-and the downstream foundation adoption test on PostgreSQL 14–18. See the
+pull-request dependency review, frozen Node 24/pnpm 11 contract checks, Python
+3.12–3.14 lint/type/unit/package gates, and the downstream foundation adoption
+test on PostgreSQL 14–18. See the
 [foundation integration record](docs/FOUNDATION_INTEGRATION.md) for the exact
 registry artifacts, public surface, commands, and limitations. The transient
 diagram and package builds add no production dependency or committed output. The
 [advanced CodeQL workflow](.github/workflows/codeql.yml) detects a fixed
-language allowlist: GitHub Actions while workflow files exist, Python when
-Python source exists, and JavaScript/TypeScript when corresponding source is
-later added. It uses no-build analysis with the `security-extended` query
-suite.
+language allowlist and now analyzes GitHub Actions, Python, and
+JavaScript/TypeScript from the tracked sources. It uses no-build analysis with
+the `security-extended` query suite.
 
 All external actions are pinned to reviewed full commit SHAs. Dependabot
-proposes grouped weekly GitHub Actions and Python dependency updates; the
-foundation version still requires explicit qualification. These checks will be
-extended—not replaced—as product code and its
+proposes grouped weekly GitHub Actions, npm, and Python dependency updates; the
+foundation version and Node toolchain changes still require explicit
+qualification. These checks will be extended—not replaced—as product code and its
 database, browser, packaging, security, recovery, and license tests arrive.
 
 ## Governance and contributing

@@ -1,9 +1,10 @@
 # Contributing to SLAIF Agent-Site
 
-SLAIF Agent-Site is currently a pre-alpha foundation-baseline project. The
-repository contains architecture, governance, documentation, reproducible
-Python packaging, and foundation qualification automation; there is no
-application setup or runnable product stack yet.
+SLAIF Agent-Site is currently a pre-alpha foundation and contract-toolchain
+project. The repository contains architecture, governance, documentation,
+reproducible Python packaging, foundation qualification automation, and seven
+private TypeScript package boundaries; there is no application setup or
+runnable product stack yet.
 
 ## Start with the governing documents
 
@@ -40,6 +41,15 @@ support, or product tests as implemented until executable evidence exists.
 Run from the repository root:
 
 ```bash
+node --version
+pnpm --version
+pnpm install --frozen-lockfile
+pnpm lint
+pnpm format:check
+pnpm typecheck
+pnpm test
+pnpm build
+pnpm licenses list --json
 uv --version
 uv lock --check
 uv sync --frozen --all-groups
@@ -60,14 +70,19 @@ The Mermaid check transiently obtains the exact approved Mermaid CLI version
 and renders every Mermaid fence in a system temporary directory. It adds no
 production dependency and commits no rendered output.
 
+Use Node 24.x and exactly pnpm `11.22.0`. TypeScript is pinned to `6.0.3`
+because the qualified typescript-eslint `8.67.0` peer range is
+`>=4.8.4 <6.1.0`; do not substitute TypeScript 7 or suppress peer checks. The
+seven private packages currently export scaffold identity metadata only.
+
 GitHub CI and CodeQL on the current PR head are independently authoritative.
 The PostgreSQL integration command requires a disposable PostgreSQL 14–18
 instance and fake test credentials as described in
 [the foundation integration record](docs/FOUNDATION_INTEGRATION.md). GitHub CI
 runs every supported PostgreSQL version. Future product work extends these
-baseline checks with application,
-database-role, concurrency, browser-network, Playwright, Compose, recovery,
-license, and SBOM coverage; it does not replace them.
+baseline checks with application, database-role, concurrency, browser-network,
+Playwright, Compose, recovery, license, and SBOM coverage; it does not replace
+them.
 
 ## Security, privacy, and production boundaries
 
@@ -94,6 +109,13 @@ required hosted or account-bound services. The integrated
 `agent-cow-postgresql` dependency must come from PyPI at the qualified exact
 version with hashes in `uv.lock`; Git, direct-URL, local-path, or editable forms
 are forbidden for normal builds.
+
+Use the public npm registry and commit the exact pnpm `11.22.0` lock. Node
+installs must use `pnpm install --frozen-lockfile`; Git, direct-URL, local,
+linked, patched, workspace-escape, unhashed, or unapproved-registry external
+sources are forbidden. Root tooling versions are exact, workspace packages
+remain private and dependency-free, and package lifecycle/publish scripts are
+not permitted.
 
 ## OAP transcript ownership
 

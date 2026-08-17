@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -15,6 +16,11 @@ from tools.check_repository import (
     FOUNDATION_VERSION,
     FOUNDATION_WHEEL,
     FOUNDATION_WHEEL_SHA256,
+    NODE_SCRIPTS,
+    PACKAGE_MANAGER,
+    PACKAGE_SCRIPTS,
+    ROOT_NODE_DEV_DEPENDENCIES,
+    WORKSPACE_PACKAGES,
     RepositoryPolicy,
 )
 
@@ -38,6 +44,109 @@ class RepositoryPolicyTestCase(unittest.TestCase):
         policy = RepositoryPolicy(self.root)
         getattr(policy, method)(*args)
         return policy.errors
+
+    def write_json(self, relative: str, document: object) -> Path:
+        return self.write(relative, json.dumps(document, indent=2) + "\n")
+
+    def write_node_workspace(self) -> None:
+        self.write_json(
+            "package.json",
+            {
+                "name": "slaif-agent-site",
+                "version": "0.0.0",
+                "private": True,
+                "license": "Apache-2.0",
+                "type": "module",
+                "engines": {"node": ">=24 <25"},
+                "packageManager": PACKAGE_MANAGER,
+                "scripts": NODE_SCRIPTS,
+                "devDependencies": ROOT_NODE_DEV_DEPENDENCIES,
+            },
+        )
+        self.write(
+            "pnpm-workspace.yaml",
+            "packages:\n  - packages/*\n\nallowBuilds:\n  esbuild: false\n\n"
+            "autoInstallPeers: false\n\noverrides:\n  esbuild: 0.28.1\n"
+            "  vite: 7.3.6\n",
+        )
+        self.write_json(
+            "tsconfig.base.json",
+            {
+                "compilerOptions": {
+                    "paths": {"@slaif-agent-site/*": ["./packages/*/src/index.ts"]},
+                    "strict": True,
+                    "noUncheckedIndexedAccess": True,
+                    "exactOptionalPropertyTypes": True,
+                    "verbatimModuleSyntax": True,
+                    "declaration": True,
+                    "declarationMap": True,
+                    "sourceMap": True,
+                }
+            },
+        )
+        for slug, package_name in WORKSPACE_PACKAGES.items():
+            self.write_json(
+                f"packages/{slug}/package.json",
+                {
+                    "name": package_name,
+                    "version": "0.0.0",
+                    "private": True,
+                    "description": "Unimplemented scaffold boundary.",
+                    "license": "Apache-2.0",
+                    "type": "module",
+                    "files": ["dist"],
+                    "exports": {
+                        ".": {
+                            "types": "./dist/index.d.ts",
+                            "import": "./dist/index.js",
+                        }
+                    },
+                    "types": "./dist/index.d.ts",
+                    "scripts": PACKAGE_SCRIPTS,
+                },
+            )
+            self.write(
+                f"packages/{slug}/src/index.ts",
+                "/** Unimplemented scaffold boundary identity only. */\n"
+                "export const packageMetadata = Object.freeze({\n"
+                f'  name: "{package_name}",\n'
+                '  status: "pre-alpha-scaffold",\n'
+                '  version: "0.0.0",\n'
+                "} as const);\n",
+            )
+            self.write_json(
+                f"packages/{slug}/tsconfig.json",
+                {
+                    "extends": "../../tsconfig.base.json",
+                    "compilerOptions": {
+                        "rootDir": "src",
+                        "outDir": "dist",
+                        "tsBuildInfoFile": "dist/.tsbuildinfo",
+                    },
+                    "include": ["src/**/*.ts"],
+                },
+            )
+
+        workspace_links = "\n".join(
+            f"      '{package_name}':\n"
+            "        specifier: workspace:0.0.0\n"
+            f"        version: link:packages/{slug}"
+            for slug, package_name in WORKSPACE_PACKAGES.items()
+        )
+        importers = f"  .:\n    devDependencies:\n{workspace_links}\n\n" + "\n".join(
+            f"  packages/{slug}: {{}}" for slug in WORKSPACE_PACKAGES
+        )
+        self.write(
+            "pnpm-lock.yaml",
+            "lockfileVersion: '9.0'\n\n"
+            "importers:\n\n"
+            f"{importers}\n\n"
+            "packages:\n\n"
+            "  example@1.0.0:\n"
+            "    resolution: {integrity: sha512-YWJjZA==}\n\n"
+            "snapshots:\n\n"
+            "  example@1.0.0: {}\n",
+        )
 
     def test_oap_accepts_active_without_report_and_complete_history(self) -> None:
         self.write("oap/active", "001-a\n")
@@ -394,6 +503,111 @@ class RepositoryPolicyTestCase(unittest.TestCase):
         errors = self.errors_from("check_python_quality_configuration")
 
         self.assertTrue(any("tools/check_mermaid.py" in error for error in errors))
+
+    def test_node_workspace_exact_scaffold_is_allowed(self) -> None:
+        self.write_node_workspace()
+
+        self.assertEqual(self.errors_from("check_node_workspace"), [])
+
+    def test_node_workspace_rejects_tool_version_and_public_package(self) -> None:
+        self.write_node_workspace()
+        root_manifest_path = self.root / "package.json"
+        root_manifest = json.loads(root_manifest_path.read_text(encoding="utf-8"))
+        root_manifest["devDependencies"]["typescript"] = "7.0.2"
+        self.write_json("package.json", root_manifest)
+        package_path = self.root / "packages/api-client/package.json"
+        package_manifest = json.loads(package_path.read_text(encoding="utf-8"))
+        package_manifest["private"] = False
+        self.write_json("packages/api-client/package.json", package_manifest)
+
+        errors = self.errors_from("check_node_workspace")
+
+        self.assertTrue(any("approved private toolchain" in error for error in errors))
+        self.assertTrue(
+            any("identity/export/build contract" in error for error in errors)
+        )
+
+    def test_node_workspace_rejects_lifecycle_and_hosted_sdk(self) -> None:
+        self.write_node_workspace()
+        manifest_path = self.root / "package.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["scripts"]["postinstall"] = "node setup.js"
+        manifest["devDependencies"]["@sentry/node"] = "10.0.0"
+        self.write_json("package.json", manifest)
+
+        errors = self.errors_from("check_node_workspace")
+
+        self.assertTrue(
+            any("lifecycle scripts are forbidden" in error for error in errors)
+        )
+        self.assertTrue(any("forbidden hosted SDK" in error for error in errors))
+
+    def test_node_workspace_rejects_wrong_package_set(self) -> None:
+        self.write_node_workspace()
+        (self.root / "packages/test-fixtures/package.json").unlink()
+        self.write_json(
+            "packages/unapproved/package.json",
+            {"name": "@slaif-agent-site/unapproved", "private": True},
+        )
+
+        errors = self.errors_from("check_node_workspace")
+
+        self.assertTrue(any("workspace package set" in error for error in errors))
+
+    def test_pnpm_lock_rejects_forbidden_sources_and_missing_integrity(self) -> None:
+        sources = (
+            ("git", "git+https://github.com/example/project.git"),
+            ("github-tarball", "https://github.com/example/project/archive/main.tgz"),
+            (
+                "direct-url",
+                "https://registry.npmjs.org/example/-/example-1.0.0.tgz",
+            ),
+            ("unapproved-registry", "https://packages.example.test/example.tgz"),
+            ("file", "file:../example"),
+            ("link", "link:../example"),
+            ("path", "path:../example"),
+            ("patch", "patch:example@1.0.0#fixture.patch"),
+            ("workspace", "workspace:../example"),
+        )
+        for label, source in sources:
+            with self.subTest(label=label):
+                self.write_node_workspace()
+                lock_path = self.root / "pnpm-lock.yaml"
+                lock = lock_path.read_text(encoding="utf-8")
+                lock_path.write_text(
+                    lock.replace(
+                        "resolution: {integrity: sha512-YWJjZA==}",
+                        f"resolution: {{tarball: {source}, "
+                        "integrity: sha512-YWJjZA==}",
+                    ),
+                    encoding="utf-8",
+                )
+                self.assertNotEqual(self.errors_from("check_pnpm_lock", lock_path), [])
+
+        self.write_node_workspace()
+        lock_path = self.root / "pnpm-lock.yaml"
+        lock = lock_path.read_text(encoding="utf-8")
+        lock_path.write_text(
+            lock.replace(
+                "resolution: {integrity: sha512-YWJjZA==}",
+                "resolution: {}",
+            ),
+            encoding="utf-8",
+        )
+        errors = self.errors_from("check_pnpm_lock", lock_path)
+        self.assertTrue(any("lacks sha512 integrity" in error for error in errors))
+
+    def test_workflow_accepts_exact_pnpm_action_pin(self) -> None:
+        setup_pnpm = APPROVED_ACTIONS["pnpm/action-setup"]
+        self.write(
+            ".github/workflows/node.yml",
+            "jobs:\n"
+            "  check:\n"
+            "    steps:\n"
+            f"      - uses: pnpm/action-setup@{setup_pnpm} # v6.0.10\n",
+        )
+
+        self.assertEqual(self.errors_from("check_workflows"), [])
 
 
 if __name__ == "__main__":

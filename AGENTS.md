@@ -153,6 +153,27 @@ disposable local PostgreSQL service and fake credentials; CI runs the same gate
 on PostgreSQL 14–18. Future product work extends these gates and does not
 replace, skip, or weaken them.
 
+Current Node/TypeScript contract-boundary verification from the repository
+root:
+
+```bash
+node --version
+pnpm --version
+pnpm install --frozen-lockfile
+pnpm lint
+pnpm format:check
+pnpm typecheck
+pnpm test
+pnpm build
+pnpm licenses list --json
+```
+
+Use Node 24.x and exactly pnpm `11.22.0`. The workspace deliberately uses
+TypeScript `6.0.3`: the qualified typescript-eslint `8.67.0` peer range is
+`>=4.8.4 <6.1.0`, so TypeScript 7 is not a compatible substitution. These
+private packages are scaffolding boundaries, not implemented product
+contracts or publishable packages.
+
 Forbidden for normal development, CI, release, and deployment:
 
 - `git+https://...` foundation dependencies;
@@ -302,7 +323,7 @@ required missing, pending, failed, or cancelled GitHub check.
 ### Current preparation checks
 
 Run these checks from the repository root while the project remains at its
-pre-alpha foundation baseline:
+pre-alpha foundation and contract-toolchain baseline:
 
 ```bash
 python -m compileall -q tools tests/repository
@@ -311,6 +332,10 @@ python tools/check_repository.py
 python tools/check_mermaid.py
 npx --yes markdownlint-cli2@0.23.2 "**/*.md"
 ```
+
+Run the frozen Node/TypeScript commands listed in the foundation dependency
+policy as part of the same baseline. Do not omit the frozen install, lint,
+format, typecheck, test, build, or license inspection steps.
 
 The Mermaid check transiently obtains the exact approved Mermaid CLI version
 and renders every Mermaid fence in a system temporary directory. It adds no

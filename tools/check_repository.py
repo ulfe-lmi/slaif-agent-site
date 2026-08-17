@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 import re
 import sys
 import tomllib
@@ -31,6 +32,96 @@ FOUNDATION_WHEEL_SHA256 = (
 FOUNDATION_SDIST = "agent_cow_postgresql-0.2.0.tar.gz"
 FOUNDATION_SDIST_SHA256 = (
     "eae8d434d2fc03c4faa08b44b4863fc8f8efb44ee33eaad3adc22e7eb96a062c"
+)
+PNPM_VERSION = "11.22.0"
+PNPM_INTEGRITY_HEX = (
+    "1ff870c4c6133dfd88fb2afc46dd13d47f09c9794b438c6fdb47ca98caf3bc16"
+    "381ee0be93a091b8e3824cf01f889f46d7d9e20910fb0be1ab0fb5baa80dd621"
+)
+PACKAGE_MANAGER = f"pnpm@{PNPM_VERSION}+sha512.{PNPM_INTEGRITY_HEX}"
+NODE_DEV_DEPENDENCIES = {
+    "@eslint/js": "10.0.1",
+    "@types/node": "24.13.3",
+    "eslint": "10.8.1",
+    "prettier": "3.9.6",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.67.0",
+    "vitest": "4.1.10",
+}
+NODE_SCRIPTS = {
+    "lint": "eslint . --max-warnings 0",
+    "format:check": (
+        "prettier --check package.json pnpm-workspace.yaml tsconfig.base.json "
+        "tsconfig.json eslint.config.mjs prettier.config.mjs "
+        '"packages/*/package.json" "packages/*/src/**/*.ts" '
+        '"packages/*/tsconfig.json" "tests/contracts/**/*.ts"'
+    ),
+    "typecheck": "pnpm build && tsc --project tsconfig.json --noEmit",
+    "test": "pnpm build && vitest run",
+    "build": "pnpm --recursive run build",
+    "licenses": "pnpm licenses list --json",
+    "inventory": "pnpm list --recursive --depth Infinity",
+    "check": (
+        "pnpm lint && pnpm format:check && pnpm typecheck && pnpm test && pnpm build"
+    ),
+}
+WORKSPACE_PACKAGES = {
+    "api-client": "@slaif-agent-site/api-client",
+    "browser-tool-contracts": "@slaif-agent-site/browser-tool-contracts",
+    "component-catalog": "@slaif-agent-site/component-catalog",
+    "composition-schema": "@slaif-agent-site/composition-schema",
+    "content-model-schema": "@slaif-agent-site/content-model-schema",
+    "scope-catalog": "@slaif-agent-site/scope-catalog",
+    "test-fixtures": "@slaif-agent-site/test-fixtures",
+}
+ROOT_NODE_DEV_DEPENDENCIES = NODE_DEV_DEPENDENCIES | {
+    name: "workspace:0.0.0" for name in WORKSPACE_PACKAGES.values()
+}
+PACKAGE_SCRIPTS = {
+    "build": "tsc --project tsconfig.json",
+    "typecheck": "tsc --project tsconfig.json --noEmit",
+}
+LIFECYCLE_SCRIPTS = {
+    "install",
+    "postinstall",
+    "postpack",
+    "preinstall",
+    "prepack",
+    "prepare",
+    "prepublish",
+    "prepublishOnly",
+}
+FORBIDDEN_HOSTED_DEPENDENCY_PREFIXES = (
+    "@aws-sdk/",
+    "@azure/",
+    "@datadog/",
+    "@google-cloud/",
+    "@sentry/",
+    "@supabase/",
+    "@vercel/",
+    "auth0",
+    "cloudinary",
+    "firebase",
+    "newrelic",
+)
+NODE_REQUIRED_FILES = (
+    "contracts/README.md",
+    "eslint.config.mjs",
+    "package.json",
+    "pnpm-lock.yaml",
+    "pnpm-workspace.yaml",
+    "prettier.config.mjs",
+    "tests/contracts/workspace-contracts.test.ts",
+    "tsconfig.base.json",
+    "tsconfig.json",
+) + tuple(
+    path
+    for slug in WORKSPACE_PACKAGES
+    for path in (
+        f"packages/{slug}/package.json",
+        f"packages/{slug}/src/index.ts",
+        f"packages/{slug}/tsconfig.json",
+    )
 )
 REQUIRED_FILES = (
     ".github/dependabot.yml",
@@ -62,7 +153,7 @@ REQUIRED_FILES = (
     "tools/check_mermaid.py",
     "tools/check_repository.py",
     "uv.lock",
-)
+) + NODE_REQUIRED_FILES
 REQUIRED_README_TARGETS = (
     ".github/workflows/ci.yml",
     ".github/workflows/codeql.yml",
@@ -85,6 +176,7 @@ APPROVED_ACTIONS = {
     "actions/dependency-review-action": "a1d282b36b6f3519aa1f3fc636f609c47dddb294",
     "DavidAnson/markdownlint-cli2-action": "21c1be1b93ad9ed58fa840aacc3f279cde2a72ff",
     "astral-sh/setup-uv": "20cfd1bf945f4377ade1205e4dbc17946fc9a30d",
+    "pnpm/action-setup": "0977fd99725f1db4007ccb2928dbb4e90d06cc86",
 }
 TEXT_NAMES = {
     "LICENSE",
@@ -164,6 +256,7 @@ class RepositoryPolicy:
         self.check_workflows()
         self.check_python_quality_configuration()
         self.check_foundation_dependencies()
+        self.check_node_workspace()
         return sorted(set(self.errors))
 
     def check_required_files(self) -> None:
@@ -512,6 +605,312 @@ class RepositoryPolicy:
                     path,
                     f"Ruff configuration may not ignore required file {required}",
                 )
+
+    def check_node_workspace(self) -> None:
+        root_manifest_path = self.root / "package.json"
+        workspace_path = self.root / "pnpm-workspace.yaml"
+        lock_path = self.root / "pnpm-lock.yaml"
+
+        root_manifest = self.load_json(root_manifest_path)
+        if root_manifest is not None:
+            expected_root = {
+                "name": "slaif-agent-site",
+                "version": "0.0.0",
+                "private": True,
+                "license": "Apache-2.0",
+                "type": "module",
+                "engines": {"node": ">=24 <25"},
+                "packageManager": PACKAGE_MANAGER,
+                "scripts": NODE_SCRIPTS,
+                "devDependencies": ROOT_NODE_DEV_DEPENDENCIES,
+            }
+            if root_manifest != expected_root:
+                self.error(
+                    root_manifest_path,
+                    "root Node manifest must match the approved private toolchain",
+                )
+            self.check_node_manifest_safety(root_manifest_path, root_manifest)
+
+        if workspace_path.is_file():
+            workspace_text = self.read_utf8(workspace_path)
+            if workspace_text is not None and workspace_text != (
+                "packages:\n  - packages/*\n\nallowBuilds:\n  esbuild: false\n\n"
+                "autoInstallPeers: false\n\noverrides:\n  esbuild: 0.28.1\n"
+                "  vite: 7.3.6\n"
+            ):
+                self.error(
+                    workspace_path,
+                    "workspace must contain only packages/* and approved settings",
+                )
+
+        packages_root = self.root / "packages"
+        discovered = {
+            path.parent.name
+            for path in packages_root.glob("*/package.json")
+            if path.is_file()
+        }
+        expected_slugs = set(WORKSPACE_PACKAGES)
+        if discovered != expected_slugs:
+            self.error(
+                packages_root,
+                "workspace package set must be exactly "
+                + ", ".join(sorted(expected_slugs)),
+            )
+
+        for slug, expected_name in WORKSPACE_PACKAGES.items():
+            self.check_workspace_package(slug, expected_name)
+
+        if lock_path.is_file():
+            self.check_pnpm_lock(lock_path)
+
+        base_config_path = self.root / "tsconfig.base.json"
+        base_config = self.load_json(base_config_path)
+        if base_config is not None:
+            compiler_options = base_config.get("compilerOptions")
+            required_options = {
+                "paths": {"@slaif-agent-site/*": ["./packages/*/src/index.ts"]},
+                "strict": True,
+                "noUncheckedIndexedAccess": True,
+                "exactOptionalPropertyTypes": True,
+                "verbatimModuleSyntax": True,
+                "declaration": True,
+                "declarationMap": True,
+                "sourceMap": True,
+            }
+            if not isinstance(compiler_options, dict) or any(
+                compiler_options.get(key) != value
+                for key, value in required_options.items()
+            ):
+                self.error(
+                    base_config_path,
+                    "base TypeScript config is missing required strict/build options",
+                )
+
+    def check_node_manifest_safety(
+        self, path: Path, document: dict[str, object]
+    ) -> None:
+        scripts = document.get("scripts")
+        if isinstance(scripts, dict):
+            lifecycle = sorted(set(scripts) & LIFECYCLE_SCRIPTS)
+            if lifecycle:
+                self.error(
+                    path,
+                    "lifecycle scripts are forbidden: " + ", ".join(lifecycle),
+                )
+        if "publishConfig" in document:
+            self.error(path, "publish configuration is forbidden")
+
+        for field in (
+            "dependencies",
+            "devDependencies",
+            "optionalDependencies",
+            "peerDependencies",
+        ):
+            dependencies = document.get(field)
+            if not isinstance(dependencies, dict):
+                continue
+            for dependency in dependencies:
+                lowered = str(dependency).lower()
+                if lowered.startswith(FORBIDDEN_HOSTED_DEPENDENCY_PREFIXES):
+                    self.error(
+                        path,
+                        f"{field} contains forbidden hosted SDK {dependency}",
+                    )
+
+    def check_workspace_package(self, slug: str, expected_name: str) -> None:
+        package_root = self.root / "packages" / slug
+        manifest_path = package_root / "package.json"
+        source_path = package_root / "src" / "index.ts"
+        config_path = package_root / "tsconfig.json"
+
+        manifest = self.load_json(manifest_path)
+        if manifest is not None:
+            expected_keys = {
+                "description",
+                "exports",
+                "files",
+                "license",
+                "name",
+                "private",
+                "scripts",
+                "type",
+                "types",
+                "version",
+            }
+            if set(manifest) != expected_keys:
+                self.error(
+                    manifest_path,
+                    "package manifest contains an unapproved field set",
+                )
+            expected_values = {
+                "name": expected_name,
+                "version": "0.0.0",
+                "private": True,
+                "license": "Apache-2.0",
+                "type": "module",
+                "files": ["dist"],
+                "exports": {
+                    ".": {
+                        "types": "./dist/index.d.ts",
+                        "import": "./dist/index.js",
+                    }
+                },
+                "types": "./dist/index.d.ts",
+                "scripts": PACKAGE_SCRIPTS,
+            }
+            if any(
+                manifest.get(key) != value for key, value in expected_values.items()
+            ):
+                self.error(
+                    manifest_path,
+                    "package identity/export/build contract is not approved",
+                )
+            description = manifest.get("description")
+            if not isinstance(description, str) or not {
+                "scaffold",
+                "unimplemented",
+            }.issubset(description.lower().split()):
+                self.error(
+                    manifest_path,
+                    "description must identify an unimplemented scaffold",
+                )
+            self.check_node_manifest_safety(manifest_path, manifest)
+
+        source = self.read_utf8(source_path) if source_path.is_file() else None
+        if source is not None:
+            exported_names = re.findall(
+                r"^export\s+(?:const|type|interface|class|function)\s+(\w+)",
+                source,
+                re.MULTILINE,
+            )
+            required_literals = (expected_name, "pre-alpha-scaffold", '"0.0.0"')
+            if exported_names != ["packageMetadata"] or any(
+                literal not in source for literal in required_literals
+            ):
+                self.error(
+                    source_path,
+                    "source must export only exact scaffold packageMetadata",
+                )
+            if re.search(r"\bany\b", source):
+                self.error(source_path, "unsafe any export is forbidden")
+
+        config = self.load_json(config_path)
+        if config is not None:
+            expected_config = {
+                "extends": "../../tsconfig.base.json",
+                "compilerOptions": {
+                    "rootDir": "src",
+                    "outDir": "dist",
+                    "tsBuildInfoFile": "dist/.tsbuildinfo",
+                },
+                "include": ["src/**/*.ts"],
+            }
+            if config != expected_config:
+                self.error(
+                    config_path, "package TypeScript build boundary is not exact"
+                )
+
+    def check_pnpm_lock(self, path: Path) -> None:
+        text = self.read_utf8(path)
+        if text is None:
+            return
+        if not text.startswith("lockfileVersion: '9.0'\n"):
+            self.error(path, "lockfile version must be the pnpm 11 format")
+
+        audited_text = text
+        for slug, package_name in WORKSPACE_PACKAGES.items():
+            expected_link = re.compile(
+                rf"^      '{re.escape(package_name)}':\n"
+                rf"        specifier: workspace:0\.0\.0\n"
+                rf"        version: link:packages/{re.escape(slug)}$",
+                re.MULTILINE,
+            )
+            if not expected_link.search(text):
+                self.error(
+                    path,
+                    f"workspace package {package_name} lacks its exact internal link",
+                )
+            audited_text = audited_text.replace(
+                "specifier: workspace:0.0.0", "specifier: internal-workspace"
+            )
+            audited_text = audited_text.replace(
+                f"version: link:packages/{slug}", "version: internal-workspace"
+            )
+
+        forbidden_source = re.search(
+            r"(?:^|[\s'\"{[(,])(?:git\+https?|git|github|gitlab|bitbucket|file|"
+            r"link|patch|workspace|path|directory):",
+            audited_text,
+            re.IGNORECASE,
+        )
+        if forbidden_source:
+            self.error(
+                path,
+                f"forbidden lock source form {forbidden_source.group(0).strip()}",
+            )
+        if "../" in audited_text:
+            self.error(path, "workspace/path escape is forbidden in pnpm lock")
+
+        urls = re.findall(r"https?://[^\s,}\]]+", audited_text, re.IGNORECASE)
+        for url in urls:
+            if not url.startswith("https://registry.npmjs.org/"):
+                self.error(path, f"unapproved package registry or direct URL {url}")
+            else:
+                self.error(path, "direct URL lock sources are forbidden")
+
+        importer_section = self.lock_section(text, "importers")
+        importers = set(
+            re.findall(
+                r"^  ([^\s].*?):(?:\s+\{\})?\s*$",
+                importer_section,
+                re.MULTILINE,
+            )
+        )
+        expected_importers = {"."} | {f"packages/{slug}" for slug in WORKSPACE_PACKAGES}
+        if importers != expected_importers:
+            self.error(path, "lock importer set does not match the exact workspace")
+
+        packages_section = self.lock_section(text, "packages")
+        package_entries = list(
+            re.finditer(r"^  ([^\s].*):\s*$", packages_section, re.MULTILINE)
+        )
+        if not package_entries:
+            self.error(path, "lock contains no external package entries")
+            return
+        for index, match in enumerate(package_entries):
+            end = (
+                package_entries[index + 1].start()
+                if index + 1 < len(package_entries)
+                else len(packages_section)
+            )
+            block = packages_section[match.end() : end]
+            if not re.search(r"\bintegrity:\s*sha512-[A-Za-z0-9+/]+={0,2}", block):
+                self.error(
+                    path,
+                    f"external package {match.group(1)} lacks sha512 integrity",
+                )
+
+    @staticmethod
+    def lock_section(text: str, name: str) -> str:
+        match = re.search(
+            rf"^{re.escape(name)}:\s*$\n(.*?)(?=^\S[^\n]*:\s*$|\Z)",
+            text,
+            re.MULTILINE | re.DOTALL,
+        )
+        return match.group(1) if match else ""
+
+    def load_json(self, path: Path) -> dict[str, object] | None:
+        if not path.is_file():
+            return None
+        try:
+            document: object = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            self.error(path, f"cannot parse JSON ({exc})")
+            return None
+        if not isinstance(document, dict):
+            self.error(path, "JSON root must be an object")
+            return None
+        return document
 
     def load_toml(self, path: Path) -> dict[str, object] | None:
         try:
