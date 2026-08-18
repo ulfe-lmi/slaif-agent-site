@@ -199,13 +199,18 @@ class RepositoryPolicyTestCase(unittest.TestCase):
             "  example@1.0.0: {}\n",
         )
 
-    def test_installation_setup_foundation_is_required_repository_surface(self) -> None:
+    def test_local_identity_setup_is_required_repository_surface(self) -> None:
         assert {
             "docs/INSTALLATION_SETUP.md",
+            "docs/LOCAL_AUTHENTICATION.md",
             "services/backend/src/slaif_agent_site/bootstrap/setup_token.py",
             "services/backend/src/slaif_agent_site/db/alembic/versions/008_001_installation_state.py",
+            "services/backend/src/slaif_agent_site/db/alembic/versions/009_001_local_identity.py",
+            "services/backend/src/slaif_agent_site/identity/passwords.py",
             "services/backend/tests/integration/test_installation_setup.py",
+            "services/backend/tests/integration/test_local_identity.py",
             "services/backend/tests/unit/test_bootstrap_setup_token.py",
+            "services/backend/tests/unit/test_identity_password.py",
         } <= set(REQUIRED_FILES)
 
     def test_oap_accepts_active_without_report_and_complete_history(self) -> None:
@@ -723,6 +728,23 @@ class RepositoryPolicyTestCase(unittest.TestCase):
         self.assertTrue(any("only live/ready routes" in error for error in errors))
         self.assertTrue(any("database connection" in error for error in errors))
         self.assertTrue(any("listener/database" in error for error in errors))
+
+    def test_backend_static_boundary_rejects_identity_authority_in_other_process(
+        self,
+    ) -> None:
+        self.write_backend_skeleton()
+        self.write(
+            "services/backend/src/slaif_agent_site/scheduler/consumer.py",
+            "from slaif_agent_site.identity.passwords import PasswordService\n"
+            "operation = 'create_initial_local_administrator'\n",
+        )
+
+        errors = self.errors_from("check_backend_skeleton")
+
+        self.assertTrue(any("identity password authority" in error for error in errors))
+        self.assertTrue(
+            any("initial-administrator consumer" in error for error in errors)
+        )
 
     def test_node_workspace_exact_scaffold_is_allowed(self) -> None:
         self.write_node_workspace()

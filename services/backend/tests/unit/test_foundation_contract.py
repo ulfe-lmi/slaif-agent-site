@@ -85,12 +85,16 @@ NEW_PACKAGE_FILES = {
     "slaif_agent_site/db/alembic/versions/006_001_postgres_bootstrap.py",
     "slaif_agent_site/db/alembic/versions/007_001_control_readiness.py",
     "slaif_agent_site/db/alembic/versions/008_001_installation_state.py",
+    "slaif_agent_site/db/alembic/versions/009_001_local_identity.py",
     "slaif_agent_site/db/connections.py",
     "slaif_agent_site/db/executor.py",
     "slaif_agent_site/db/migrations.py",
     "slaif_agent_site/db/privileges.py",
     "slaif_agent_site/db/readiness.py",
     "slaif_agent_site/db/roles.py",
+    "slaif_agent_site/identity/__init__.py",
+    "slaif_agent_site/identity/models.py",
+    "slaif_agent_site/identity/passwords.py",
     "slaif_agent_site/editor_api/__init__.py",
     "slaif_agent_site/editor_api/__main__.py",
     "slaif_agent_site/editor_api/app.py",
@@ -197,6 +201,7 @@ def test_python_and_package_metadata_ranges_are_coherent() -> None:
     assert project["dependencies"] == [
         "agent-cow-postgresql==0.2.0",
         "alembic==1.19.1",
+        "argon2-cffi==25.1.0",
         "asyncpg==0.31.0",
         "fastapi==0.141.1",
         "pydantic==2.13.4",
@@ -363,6 +368,7 @@ def test_built_distributions_have_bounded_contents_and_metadata(
     assert metadata.get_all("Requires-Dist") == [
         "agent-cow-postgresql==0.2.0",
         "alembic==1.19.1",
+        "argon2-cffi==25.1.0",
         "asyncpg==0.31.0",
         "fastapi==0.141.1",
         "pydantic==2.13.4",
@@ -379,8 +385,8 @@ def test_locked_foundation_artifact_hash_constants_are_sha256() -> None:
 
 
 def test_alembic_graph_and_offline_sql_need_no_locator_or_network() -> None:
-    assert migration_heads() == ("008_001",)
-    assert migration_history() == ("008_001", "007_001", "006_001")
+    assert migration_heads() == ("009_001",)
+    assert migration_history() == ("009_001", "008_001", "007_001", "006_001")
     config = (REPOSITORY_ROOT / "alembic.ini").read_text(encoding="utf-8")
     assert "sqlalchemy.url" not in config
     assert "://" not in config
@@ -412,8 +418,11 @@ def test_alembic_graph_and_offline_sql_need_no_locator_or_network() -> None:
     assert "006_001" in completed.stdout
     assert "007_001" in completed.stdout
     assert "008_001" in completed.stdout
+    assert "009_001" in completed.stdout
     assert 'CREATE SCHEMA IF NOT EXISTS "control"' in completed.stdout
     assert 'CREATE FUNCTION "control"."slaif_control_readiness"()' in completed.stdout
+    assert 'CREATE TABLE "control"."user_account"' in completed.stdout
+    assert 'CREATE TABLE "control"."platform_administrator"' in completed.stdout
 
 
 def test_database_source_uses_public_foundation_boundary_and_no_domain_ddl() -> None:
@@ -476,3 +485,14 @@ def test_database_source_uses_public_foundation_boundary_and_no_domain_ddl() -> 
     assert not any(
         f'CREATE TABLE "{name}"' in installation_revision for name in forbidden_tables
     )
+
+    identity_revision = (
+        package / "db/alembic/versions/009_001_local_identity.py"
+    ).read_text(encoding="utf-8")
+    assert identity_revision.count("CREATE TABLE") == 2
+    assert identity_revision.count("CREATE FUNCTION") == 2
+    assert '"control"."user_account"' in identity_revision
+    assert '"control"."platform_administrator"' in identity_revision
+    assert "SECURITY DEFINER" in identity_revision
+    assert "SET search_path = pg_catalog" in identity_revision
+    assert 'TO "slaif_control"' in identity_revision

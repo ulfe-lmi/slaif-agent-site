@@ -154,7 +154,7 @@ on PostgreSQL 14–18. Future product work extends these gates and does not
 replace, skip, or weaken them.
 
 The current exact direct runtime dependencies are the foundation package,
-`asyncpg==0.31.0`, `fastapi==0.141.1`, `pydantic==2.13.4`,
+`argon2-cffi==25.1.0`, `asyncpg==0.31.0`, `fastapi==0.141.1`, `pydantic==2.13.4`,
 `pydantic-settings==2.15.0`, and `uvicorn==0.52.3`; HTTPX `0.28.1` is
 test-only. No standard/cloud extras or database locator/pool are implemented.
 

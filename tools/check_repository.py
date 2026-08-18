@@ -37,6 +37,7 @@ FOUNDATION_SDIST_SHA256 = (
 PYTHON_RUNTIME_DEPENDENCIES = [
     "agent-cow-postgresql==0.2.0",
     "alembic==1.19.1",
+    "argon2-cffi==25.1.0",
     "asyncpg==0.31.0",
     "fastapi==0.141.1",
     "pydantic==2.13.4",
@@ -47,6 +48,7 @@ PYTHON_RUNTIME_DEPENDENCIES = [
 PYTHON_DIRECT_VERSIONS = {
     "agent-cow-postgresql": "0.2.0",
     "alembic": "1.19.1",
+    "argon2-cffi": "25.1.0",
     "asyncpg": "0.31.0",
     "fastapi": "0.141.1",
     "httpx": "0.28.1",
@@ -208,6 +210,7 @@ REQUIRED_FILES = (
         "docs/CONFIGURATION.md",
         "docs/DATABASE_BOOTSTRAP.md",
         "docs/INSTALLATION_SETUP.md",
+        "docs/LOCAL_AUTHENTICATION.md",
         "docs/DATABASE_CONNECTIONS.md",
         "docs/DATABASE_ROLES.md",
         "docs/DEPLOYMENT.md",
@@ -247,12 +250,16 @@ REQUIRED_FILES = (
         "services/backend/src/slaif_agent_site/db/alembic/versions/006_001_postgres_bootstrap.py",
         "services/backend/src/slaif_agent_site/db/alembic/versions/007_001_control_readiness.py",
         "services/backend/src/slaif_agent_site/db/alembic/versions/008_001_installation_state.py",
+        "services/backend/src/slaif_agent_site/db/alembic/versions/009_001_local_identity.py",
         "services/backend/src/slaif_agent_site/db/connections.py",
         "services/backend/src/slaif_agent_site/db/executor.py",
         "services/backend/src/slaif_agent_site/db/migrations.py",
         "services/backend/src/slaif_agent_site/db/privileges.py",
         "services/backend/src/slaif_agent_site/db/readiness.py",
         "services/backend/src/slaif_agent_site/db/roles.py",
+        "services/backend/src/slaif_agent_site/identity/__init__.py",
+        "services/backend/src/slaif_agent_site/identity/models.py",
+        "services/backend/src/slaif_agent_site/identity/passwords.py",
         "services/backend/Dockerfile",
         "services/backend/src/slaif_agent_site/errors.py",
         "services/backend/src/slaif_agent_site/health.py",
@@ -261,6 +268,7 @@ REQUIRED_FILES = (
         "services/backend/tests/conftest.py",
         "services/backend/tests/integration/test_control_database_integration.py",
         "services/backend/tests/integration/test_installation_setup.py",
+        "services/backend/tests/integration/test_local_identity.py",
         "services/backend/tests/integration/test_foundation_postgres.py",
         "services/backend/tests/unit/test_foundation_contract.py",
         "services/backend/tests/unit/test_authority.py",
@@ -270,6 +278,7 @@ REQUIRED_FILES = (
         "services/backend/tests/unit/test_correlation_logging.py",
         "services/backend/tests/unit/test_errors.py",
         "services/backend/tests/unit/test_health_apps.py",
+        "services/backend/tests/unit/test_identity_password.py",
         "services/backend/tests/unit/test_local_roles.py",
         "services/backend/tests/unit/test_process_entrypoints.py",
         "services/backend/tests/unit/test_bootstrap_setup_token.py",
@@ -903,6 +912,26 @@ class RepositoryPolicy:
                     self.error(
                         application_path, "CORS is not approved for this skeleton"
                     )
+
+        for path in sorted(package_root.rglob("*.py")):
+            relative = path.relative_to(package_root)
+            if relative.parts[0] == "identity" or relative == Path(
+                "control_api/database.py"
+            ):
+                continue
+            source = self.read_utf8(path)
+            if source is None:
+                continue
+            if "identity.passwords" in source or "PasswordService" in source:
+                self.error(
+                    path,
+                    "identity password authority belongs only to Control database",
+                )
+            if "create_initial_local_administrator" in source:
+                self.error(
+                    path,
+                    "initial-administrator consumer belongs only to Control database",
+                )
 
         for package in WORKER_PROCESS_PACKAGES:
             main_path = package_root / package / "__main__.py"

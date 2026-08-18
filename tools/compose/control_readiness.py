@@ -556,7 +556,7 @@ class ControlReadinessFixture:
         self.mark("migration-mismatch", "change-marker")
         self._psql(
             "UPDATE control.bootstrap_readiness "
-            "SET migration_revision = '008_001' WHERE singleton;"
+            "SET migration_revision = '009_001' WHERE singleton;"
         )
         self.mark("migration-mismatch", "await-readiness")
         self._wait_readiness(None)

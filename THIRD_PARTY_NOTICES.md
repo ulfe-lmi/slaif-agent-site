@@ -158,9 +158,12 @@ CI SBOM evidence bundle.
 | `annotated-doc` | `0.0.5` | PyPI / production | `MIT` | <https://github.com/fastapi/annotated-doc> | — |
 | `annotated-types` | `0.8.0` | PyPI / production | `MIT` | <https://github.com/annotated-types/annotated-types> | — |
 | `anyio` | `4.14.2` | PyPI / production | `MIT` | <https://github.com/agronholm/anyio> | — |
+| `argon2-cffi` | `25.1.0` | PyPI / production | `MIT` | <https://github.com/hynek/argon2-cffi> | — |
+| `argon2-cffi-bindings` | `25.1.0` | PyPI / production | `MIT` | <https://github.com/hynek/argon2-cffi-bindings> | — |
 | `asyncpg` | `0.31.0` | PyPI / production | `Apache-2.0` | <https://github.com/MagicStack/asyncpg> | — |
 | `build` | `1.5.0` | PyPI / build | `MIT` | <https://github.com/pypa/build> | — |
 | `certifi` | `2026.7.22` | PyPI / development | `MPL-2.0` | <https://github.com/certifi/python-certifi> | — |
+| `cffi` | `2.1.1` | PyPI / production | `MIT-0` | <https://github.com/python-cffi/cffi> | — |
 | `click` | `8.4.2` | PyPI / production | `BSD-3-Clause` | <https://github.com/pallets/click/> | — |
 | `colorama` | `0.4.6` | PyPI / production | `BSD-3-Clause` | <https://github.com/tartley/colorama> | — |
 | `fastapi` | `0.141.1` | PyPI / production | `MIT` | <https://github.com/fastapi/fastapi> | — |
@@ -178,6 +181,7 @@ CI SBOM evidence bundle.
 | `packaging` | `25.0` | PyPI / qualification | `Apache-2.0 OR BSD-2-Clause` | <https://github.com/pypa/packaging> | — |
 | `pathspec` | `1.1.1` | PyPI / development | `MPL-2.0` | <https://github.com/cpburnz/python-pathspec> | — |
 | `pluggy` | `1.6.0` | PyPI / development | `MIT` | <https://pypi.org/project/pluggy/1.6.0/> | — |
+| `pycparser` | `3.0` | PyPI / production | `BSD-3-Clause` | <https://github.com/eliben/pycparser> | — |
 | `pydantic` | `2.13.4` | PyPI / production | `MIT` | <https://github.com/pydantic/pydantic> | — |
 | `pydantic-core` | `2.46.4` | PyPI / production | `MIT` | <https://github.com/pydantic/pydantic/tree/main/pydantic-core> | — |
 | `pydantic-settings` | `2.15.0` | PyPI / production | `MIT` | <https://github.com/pydantic/pydantic-settings> | — |

@@ -15,6 +15,10 @@ from slaif_agent_site.config import ServiceSettings
 from slaif_agent_site.control_api import create_app as create_control_app
 from slaif_agent_site.editor_api import create_app as create_editor_app
 from slaif_agent_site.health import ComponentStatus, ProbeResult, ReadinessProbe
+from slaif_agent_site.identity.models import (
+    InitialLocalAdministratorRequest,
+    InitialLocalAdministratorResult,
+)
 from slaif_agent_site.mcp_adapter import create_app as create_mcp_app
 from slaif_agent_site.media_service import create_app as create_media_app
 from slaif_agent_site.render_api import create_app as create_render_app
@@ -44,6 +48,11 @@ class FakeControlDatabase:
 
     async def readiness(self) -> ProbeResult:
         return self.result
+
+    async def create_initial_local_administrator(
+        self, _request: InitialLocalAdministratorRequest
+    ) -> InitialLocalAdministratorResult:
+        raise AssertionError("health-only app cannot invoke initial setup")
 
 
 def _route_paths(app: FastAPI) -> set[str]:

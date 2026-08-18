@@ -100,8 +100,8 @@ async def test_readiness_function_owner_security_grants_and_denial_matrix(
                 "SELECT * FROM control.slaif_control_readiness()"
             )
             assert tuple(row) == (
-                "008_001",
-                "008_001",
+                "009_001",
+                "009_001",
                 "EMPTY_SAFE",
                 True,
                 "agent-cow-postgresql",
@@ -155,7 +155,7 @@ async def test_control_pool_reports_exact_marker_migration_and_foundation_state(
         ) as connection:
             await connection.execute(
                 "UPDATE control.bootstrap_readiness "
-                "SET migration_revision = '008_001', "
+                "SET migration_revision = '009_001', "
                 "foundation_version = '0.0.0' WHERE singleton"
             )
         assert (await adapter.readiness()).reason == (

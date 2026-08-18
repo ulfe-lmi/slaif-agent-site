@@ -7,6 +7,7 @@ from collections.abc import Awaitable, Callable
 from contextlib import suppress
 from enum import StrEnum
 from typing import Any, Protocol
+from uuid import UUID, uuid4
 
 import asyncpg
 
@@ -14,9 +15,18 @@ from slaif_agent_site.agent_state.foundation import (
     FOUNDATION_DISTRIBUTION,
     FOUNDATION_VERSION,
 )
+from slaif_agent_site.bootstrap.setup_token import (
+    digest_setup_token,
+    setup_token_matches,
+)
 from slaif_agent_site.db.migrations import migration_heads
 from slaif_agent_site.db.roles import ROLE_NAMES
 from slaif_agent_site.health import ProbeResult
+from slaif_agent_site.identity.models import (
+    InitialLocalAdministratorRequest,
+    InitialLocalAdministratorResult,
+)
+from slaif_agent_site.identity.passwords import PasswordService
 
 from .config import ControlDatabaseConfigurationError, ControlDatabaseSettings
 
@@ -24,6 +34,15 @@ READINESS_SQL = (
     "SELECT schema_revision, marker_revision, readiness_state, safe, "
     "foundation_distribution, foundation_version "
     'FROM "control"."slaif_control_readiness"()'
+)
+INITIAL_SETUP_LOCK_SQL = (
+    "SELECT initialized, setup_token_expires_at, setup_token_generation, "
+    "setup_token_digest FROM control.slaif_initial_setup_lock()"
+)
+INITIAL_SETUP_COMPLETE_SQL = (
+    "SELECT user_account_id, local_username, display_name, email, status, "
+    "created_at FROM control.slaif_complete_initial_local_administrator("
+    "$1, $2, $3, $4, $5, $6, $7, $8)"
 )
 
 
@@ -47,6 +66,13 @@ class ControlDatabaseError(RuntimeError):
         self.reason = reason
 
 
+class InitialSetupError(RuntimeError):
+    """The one constant external-safe initial-setup failure."""
+
+    def __init__(self) -> None:
+        super().__init__("Initial setup failed.")
+
+
 class ControlDatabaseAdapter(Protocol):
     async def start(self) -> None: ...
 
@@ -54,8 +80,14 @@ class ControlDatabaseAdapter(Protocol):
 
     async def readiness(self) -> ProbeResult: ...
 
+    async def create_initial_local_administrator(
+        self, request: InitialLocalAdministratorRequest
+    ) -> InitialLocalAdministratorResult: ...
+
 
 PoolFactory = Callable[..., Awaitable[Any]]
+AfterSetupLock = Callable[[], Awaitable[None]]
+UuidFactory = Callable[[], UUID]
 
 
 class ControlDatabase:
@@ -66,9 +98,15 @@ class ControlDatabase:
         settings: ControlDatabaseSettings,
         *,
         pool_factory: PoolFactory = asyncpg.create_pool,
+        password_service: PasswordService | None = None,
+        uuid_factory: UuidFactory = uuid4,
+        after_setup_lock: AfterSetupLock | None = None,
     ) -> None:
         self._settings = settings
         self._pool_factory = pool_factory
+        self._password_service = password_service or PasswordService()
+        self._uuid_factory = uuid_factory
+        self._after_setup_lock = after_setup_lock
         self._pool: asyncpg.Pool[Any] | None = None
         self._failure_reason: ControlDatabaseReason | None = None
         self._stopped = False
@@ -219,11 +257,74 @@ class ControlDatabase:
                 ControlDatabaseReason.CONNECTION_UNAVAILABLE.value
             )
 
+    async def create_initial_local_administrator(
+        self, request: InitialLocalAdministratorRequest
+    ) -> InitialLocalAdministratorResult:
+        """Consume setup proof and create the first administrator atomically."""
+
+        pool = self._pool
+        if pool is None:
+            raise InitialSetupError()
+        try:
+            presented_digest = digest_setup_token(request.setup_token)
+            password_hash = self._password_service.hash_password(
+                request.password,
+                normalized_username=request.normalized_username,
+            )
+            user_account_id = self._uuid_factory()
+            async with pool.acquire(
+                timeout=self._settings.acquire_timeout_seconds
+            ) as connection:
+                async with connection.transaction():
+                    installation = await connection.fetchrow(INITIAL_SETUP_LOCK_SQL)
+                    if (
+                        installation is None
+                        or installation[0] is not False
+                        or installation[2] < 1
+                        or installation[3] is None
+                        or not setup_token_matches(
+                            request.setup_token, bytes(installation[3])
+                        )
+                    ):
+                        raise InitialSetupError()
+                    if self._after_setup_lock is not None:
+                        await self._after_setup_lock()
+                    row = await connection.fetchrow(
+                        INITIAL_SETUP_COMPLETE_SQL,
+                        int(installation[2]),
+                        presented_digest,
+                        user_account_id,
+                        request.username,
+                        request.normalized_username,
+                        password_hash.get_secret_value(),
+                        request.display_name,
+                        request.email,
+                    )
+                    if row is None:
+                        raise InitialSetupError()
+                    return InitialLocalAdministratorResult(
+                        user_account_id=row[0],
+                        username=row[1],
+                        display_name=row[2],
+                        email=row[3],
+                        status=row[4],
+                        created_at=row[5],
+                    )
+        except asyncio.CancelledError:
+            raise
+        except InitialSetupError:
+            raise
+        except Exception:
+            raise InitialSetupError() from None
+
 
 __all__ = [
+    "INITIAL_SETUP_COMPLETE_SQL",
+    "INITIAL_SETUP_LOCK_SQL",
     "READINESS_SQL",
     "ControlDatabase",
     "ControlDatabaseAdapter",
     "ControlDatabaseError",
     "ControlDatabaseReason",
+    "InitialSetupError",
 ]

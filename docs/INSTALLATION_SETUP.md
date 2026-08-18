@@ -1,17 +1,18 @@
-# Installation setup-token foundation
+# Installation setup-token and atomic consumer
 
-Revision `008_001` provides only the owner-controlled foundation for a future
-first-user setup flow. It creates one constrained
-`control.installation_state` row and adds an explicit one-shot bootstrap
-command. It does **not** create a user, password, browser session, setup route,
-administrator, site, or online authentication behavior. The configured
-`/setup` URL is not served by this revision; that operator experience remains
-planned work.
+Revision `008_001` provides the owner-controlled token foundation. Revision
+`009_001` adds a semantic Control adapter operation that can atomically consume
+a current token in code/tests to create exactly one local Platform
+Administrator. It still does **not** add a setup or login HTTP route, browser
+session, cookie, CSRF, recent-auth, UI, site, or other online product behavior.
+The configured `/setup` URL is not served; the operator experience remains
+planned for 010-d.
 
 ## Security boundary
 
-- Only the one-shot `slaif_owner` connection reads or changes installation
-  state. Control and every other runtime/reviewer role have no table access.
+- Only `slaif_owner` has direct table access. Control receives execute on two
+  narrow owner-created functions for the atomic consumer; every other runtime
+  and reviewer role has neither table nor function authority.
 - A setup token has the public prefix `slaif_setup_v1_` followed by 256 bits of
   cryptographic randomness encoded without padding.
 - PostgreSQL stores only a 32-byte SHA-256 digest plus database-clock issuance
@@ -21,8 +22,10 @@ planned work.
   printed only when issue or rotation succeeds. It is never put in the setup
   URL, configuration, database, log field, exception, or status output.
 - Issuance, rotation, and revoke each lock the singleton row in one database
-  transaction. An initialized installation fails closed, although no command
-  in this revision can mark it initialized.
+  transaction. The semantic consumer locks and rechecks that row, creates the
+  user/assignment, initializes once, and clears all token fields in the same
+  transaction. Invalid, expired, revoked, replayed, or conflicting attempts
+  fail through one constant result and do not partially consume the token.
 
 ## Configuration
 
@@ -71,6 +74,8 @@ python -m slaif_agent_site.bootstrap --check
 ```
 
 Do not place command output in a URL, shell history argument, ticket, log,
-screenshot, trace, or repository. No current endpoint consumes the token; the
-future atomic first-user creation boundary will own verification and
-initialization.
+screenshot, trace, or repository. No endpoint consumes the token. Only the
+typed Control adapter consumes it today, and that behavior is available in
+code/tests rather than an operator-facing browser flow. See
+[local authentication](LOCAL_AUTHENTICATION.md) for identity, password, and
+transaction details.

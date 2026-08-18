@@ -3,8 +3,9 @@
 The current Python backend has shared typed configuration for health-only
 long-running skeletons, a separate Control-only online database model, and
 separate typed configuration for explicit one-shot database bootstrap. Control
-API is the only online process that connects to PostgreSQL. No process
-authenticates a caller, exposes a product API, or runs a product job.
+API is the only online process that connects to PostgreSQL. Its initial-local-
+administrator operation exists only as a semantic code/test boundary; no
+process authenticates a caller, exposes a product API, or runs a product job.
 
 ## Loading rules
 
@@ -41,6 +42,9 @@ masked in representations and JSON serialization.
 
 The setting is named `APP_SECRET` only as a future application/service-secret
 slot. No current route consumes it, and no test value is a production secret.
+There is no password-policy, Argon2-cost, initial-username, or administrator
+configuration input; the validated policy and production hash profile are
+fixed in trusted code.
 
 ## Process checks and starts
 
@@ -151,8 +155,10 @@ module-import connection. See [database bootstrap](DATABASE_BOOTSTRAP.md) for
 commands and marker semantics.
 
 Setup-token configuration belongs only to the one-shot bootstrap package. It
-does not put a token in an environment variable or URL, grant table access to
-Control, or enable an online setup endpoint. See
+does not put a token in an environment variable or URL, grant direct table
+access to Control, or enable an online setup endpoint. The code/test-only
+consumer uses the already-isolated Control credential and two narrow
+functions. See
 [installation setup](INSTALLATION_SETUP.md).
 
 ## Deferred configuration
@@ -163,3 +169,5 @@ database locators/pools, identity providers, browser sources,
 media stores, service authentication, trusted proxies, CORS, sessions, jobs,
 metrics, and product feature settings are not implemented. They must be added
 later under their process-specific authority and architecture work orders.
+Server-side sessions, cookies, CSRF, expiry, and recent-auth remain deferred to
+010-c; setup/login UI and NGINX/Compose flow remain deferred to 010-d.
