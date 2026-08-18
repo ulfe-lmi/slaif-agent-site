@@ -496,3 +496,19 @@ def test_database_source_uses_public_foundation_boundary_and_no_domain_ddl() -> 
     assert "SECURITY DEFINER" in identity_revision
     assert "SET search_path = pg_catalog" in identity_revision
     assert 'TO "slaif_control"' in identity_revision
+    assert "p_expected_generation IS NULL" in identity_revision
+    assert "p_presented_digest IS NULL" in identity_revision
+    assert (
+        "pg_catalog.octet_length(p_presented_digest)\n"
+        "                    IS DISTINCT FROM 32"
+    ) in identity_revision
+    assert (
+        "installation.setup_token_generation\n"
+        "                    IS DISTINCT FROM p_expected_generation"
+    ) in identity_revision
+    assert (
+        "installation.setup_token_digest\n"
+        "                    IS DISTINCT FROM p_presented_digest"
+    ) in identity_revision
+    assert "setup_token_generation <> p_expected_generation" not in identity_revision
+    assert "setup_token_digest <> p_presented_digest" not in identity_revision

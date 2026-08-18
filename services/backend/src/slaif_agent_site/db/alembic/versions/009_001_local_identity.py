@@ -174,8 +174,14 @@ def upgrade() -> None:
             IF installation.initialized_at IS NOT NULL
                OR installation.setup_token_digest IS NULL
                OR installation.setup_token_expires_at <= CURRENT_TIMESTAMP
-               OR installation.setup_token_generation <> p_expected_generation
-               OR installation.setup_token_digest <> p_presented_digest THEN
+               OR p_expected_generation IS NULL
+               OR p_presented_digest IS NULL
+               OR pg_catalog.octet_length(p_presented_digest)
+                    IS DISTINCT FROM 32
+               OR installation.setup_token_generation
+                    IS DISTINCT FROM p_expected_generation
+               OR installation.setup_token_digest
+                    IS DISTINCT FROM p_presented_digest THEN
                 RAISE EXCEPTION USING
                     ERRCODE = 'P0001', MESSAGE = 'initial setup failed';
             END IF;

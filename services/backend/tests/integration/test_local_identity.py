@@ -20,7 +20,10 @@ from slaif_agent_site.bootstrap.service import (
     upgrade,
     validate,
 )
-from slaif_agent_site.bootstrap.setup_token import generate_setup_token
+from slaif_agent_site.bootstrap.setup_token import (
+    digest_setup_token,
+    generate_setup_token,
+)
 from slaif_agent_site.control_api.config import (
     ControlDatabaseMode,
     ControlDatabaseSettings,
@@ -304,6 +307,75 @@ async def test_valid_setup_creates_one_local_platform_administrator_atomically(
     assert state[0] is not None
     assert tuple(state[1:4]) == (None, None, None)
     assert state[4] == 1
+
+
+async def test_completion_function_rejects_null_malformed_wrong_and_stale_proof(
+    agent_site_database: AgentSiteDatabase,
+) -> None:
+    database = agent_site_database
+    await upgrade(database.settings)
+    await reconcile(database.settings)
+    issued = await ensure_setup_token(
+        database.settings, token_factory=lambda: _token(39)
+    )
+    assert issued.setup_token is not None
+    correct_digest = digest_setup_token(issued.setup_token)
+    original = await _installation_snapshot(database)
+    generation = original[4]
+    assert isinstance(generation, int) and generation == 1
+    assert original[0] is None and original[1] == correct_digest
+    assert original[5:] == (0, 0)
+
+    password_hash = PasswordService().hash_password(
+        _password("direct-proof"), normalized_username="proof.admin"
+    )
+    completion_sql = (
+        "SELECT * FROM control.slaif_complete_initial_local_administrator("
+        "$1::bigint, $2::bytea, $3::uuid, $4::text, $5::text, $6::text, "
+        "$7::text, $8::text)"
+    )
+    adversarial_proofs: tuple[tuple[int | None, bytes | None], ...] = (
+        (None, correct_digest),
+        (generation, None),
+        (generation, b"x" * 31),
+        (generation, b"x" * 33),
+        (generation, b"x" * 32),
+        (generation - 1, correct_digest),
+    )
+
+    control_pool = await database.role_pool("slaif_control")
+    try:
+        async with control_pool.acquire() as control:
+            for expected_generation, presented_digest in adversarial_proofs:
+                with pytest.raises(asyncpg.PostgresError) as context:
+                    await control.fetchrow(
+                        completion_sql,
+                        expected_generation,
+                        presented_digest,
+                        uuid4(),
+                        "Proof.Admin",
+                        "proof.admin",
+                        password_hash.get_secret_value(),
+                        "Proof Administrator",
+                        "proof-admin@example.test",
+                    )
+                assert context.value.sqlstate == "P0001"
+                assert await _installation_snapshot(database) == original
+    finally:
+        await control_pool.close()
+
+    adapter = await _adapter(database)
+    try:
+        result = await adapter.create_initial_local_administrator(
+            _request(issued.setup_token, username="Proof.Admin")
+        )
+    finally:
+        await adapter.stop()
+    assert result.username == "Proof.Admin"
+    completed = await _installation_snapshot(database)
+    assert completed[0] is not None
+    assert completed[1:4] == (None, None, None)
+    assert completed[4:] == (generation, 1, 1)
 
 
 async def test_invalid_expired_revoked_and_replayed_tokens_share_one_failure(
