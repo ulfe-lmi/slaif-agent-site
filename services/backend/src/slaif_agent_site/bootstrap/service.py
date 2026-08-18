@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime
+from enum import StrEnum
 from typing import Any, Literal
 
 import asyncpg
+from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
 from slaif_agent_site.agent_state.foundation import (
     FOUNDATION_DISTRIBUTION,
@@ -37,6 +41,7 @@ from slaif_agent_site.db.roles import (
 )
 
 from .config import BootstrapSettings
+from .setup_token import digest_setup_token, generate_setup_token
 
 FailurePoint = Literal["after-harden", "before-marker"]
 
@@ -58,6 +63,188 @@ class BootstrapStatus:
     foundation_privileges_validated: bool
     product_privileges_validated: bool
     safe: bool
+
+
+class SetupTokenAction(StrEnum):
+    ISSUED = "issued"
+    EXISTING = "existing"
+    ROTATED = "rotated"
+    REVOKED = "revoked"
+
+
+class SetupTokenStatus(BaseModel):
+    """Bounded installation facts that cannot contain token material."""
+
+    model_config = ConfigDict(frozen=True)
+
+    initialized: bool
+    token_present: bool
+    token_expired: bool
+    expires_at: datetime | None
+    generation: int
+
+
+class SetupTokenResult(BaseModel):
+    """One-shot lifecycle result with plaintext excluded from serialization."""
+
+    model_config = ConfigDict(frozen=True)
+
+    action: SetupTokenAction
+    status: SetupTokenStatus
+    setup_token: SecretStr | None = Field(default=None, exclude=True, repr=False)
+
+
+_INSTALLATION_STATE_SELECT = (
+    "SELECT initialized_at, setup_token_digest, setup_token_expires_at, "
+    "setup_token_generation, CURRENT_TIMESTAMP AS database_now "
+    "FROM control.installation_state WHERE singleton"
+)
+
+
+def _setup_token_status(row: Any) -> SetupTokenStatus:
+    token_present = row["setup_token_digest"] is not None
+    expires_at = row["setup_token_expires_at"]
+    return SetupTokenStatus(
+        initialized=row["initialized_at"] is not None,
+        token_present=token_present,
+        token_expired=(
+            token_present
+            and expires_at is not None
+            and expires_at <= row["database_now"]
+        ),
+        expires_at=expires_at,
+        generation=int(row["setup_token_generation"]),
+    )
+
+
+async def _locked_installation_state(connection: Any) -> Any:
+    row = await connection.fetchrow(f"{_INSTALLATION_STATE_SELECT} FOR UPDATE")
+    if row is None:
+        raise BootstrapStateError("installation state is missing")
+    return row
+
+
+async def _store_setup_token(
+    connection: Any,
+    *,
+    settings: BootstrapSettings,
+    action: SetupTokenAction,
+    token_factory: Callable[[], SecretStr],
+) -> SetupTokenResult:
+    token = token_factory()
+    digest = digest_setup_token(token)
+    row = await connection.fetchrow(
+        "UPDATE control.installation_state SET "
+        "setup_token_digest = $1, "
+        "setup_token_issued_at = CURRENT_TIMESTAMP, "
+        "setup_token_expires_at = CURRENT_TIMESTAMP "
+        "+ make_interval(mins => $2::integer), "
+        "setup_token_generation = setup_token_generation + 1, "
+        "updated_at = CURRENT_TIMESTAMP WHERE singleton "
+        "RETURNING initialized_at, setup_token_digest, "
+        "setup_token_expires_at, setup_token_generation, "
+        "CURRENT_TIMESTAMP AS database_now",
+        digest,
+        settings.setup_token_ttl_minutes,
+    )
+    if row is None:
+        raise BootstrapStateError("installation state is missing")
+    return SetupTokenResult(
+        action=action,
+        status=_setup_token_status(row),
+        setup_token=token,
+    )
+
+
+async def ensure_setup_token(
+    settings: BootstrapSettings,
+    *,
+    token_factory: Callable[[], SecretStr] = generate_setup_token,
+) -> SetupTokenResult:
+    """Issue once when no unexpired setup token exists."""
+
+    async with owner_connection(
+        settings.resolved_owner_dsn(), expected_database=settings.expected_database
+    ) as connection:
+        async with connection.transaction():
+            row = await _locked_installation_state(connection)
+            current = _setup_token_status(row)
+            if current.initialized:
+                raise BootstrapStateError("installation is already initialized")
+            if current.token_present and not current.token_expired:
+                return SetupTokenResult(
+                    action=SetupTokenAction.EXISTING,
+                    status=current,
+                )
+            return await _store_setup_token(
+                connection,
+                settings=settings,
+                action=SetupTokenAction.ISSUED,
+                token_factory=token_factory,
+            )
+
+
+async def rotate_setup_token(
+    settings: BootstrapSettings,
+    *,
+    token_factory: Callable[[], SecretStr] = generate_setup_token,
+) -> SetupTokenResult:
+    """Atomically replace any setup token while uninitialized."""
+
+    async with owner_connection(
+        settings.resolved_owner_dsn(), expected_database=settings.expected_database
+    ) as connection:
+        async with connection.transaction():
+            row = await _locked_installation_state(connection)
+            if _setup_token_status(row).initialized:
+                raise BootstrapStateError("installation is already initialized")
+            return await _store_setup_token(
+                connection,
+                settings=settings,
+                action=SetupTokenAction.ROTATED,
+                token_factory=token_factory,
+            )
+
+
+async def revoke_setup_token(settings: BootstrapSettings) -> SetupTokenResult:
+    """Idempotently clear setup-token material without initializing."""
+
+    async with owner_connection(
+        settings.resolved_owner_dsn(), expected_database=settings.expected_database
+    ) as connection:
+        async with connection.transaction():
+            row = await _locked_installation_state(connection)
+            current = _setup_token_status(row)
+            if current.initialized:
+                raise BootstrapStateError("installation is already initialized")
+            if current.token_present:
+                row = await connection.fetchrow(
+                    "UPDATE control.installation_state SET "
+                    "setup_token_digest = NULL, setup_token_issued_at = NULL, "
+                    "setup_token_expires_at = NULL, updated_at = CURRENT_TIMESTAMP "
+                    "WHERE singleton RETURNING initialized_at, setup_token_digest, "
+                    "setup_token_expires_at, setup_token_generation, "
+                    "CURRENT_TIMESTAMP AS database_now"
+                )
+                if row is None:
+                    raise BootstrapStateError("installation state is missing")
+                current = _setup_token_status(row)
+            return SetupTokenResult(
+                action=SetupTokenAction.REVOKED,
+                status=current,
+            )
+
+
+async def setup_token_status(settings: BootstrapSettings) -> SetupTokenStatus:
+    """Read bounded installation facts with one-shot owner authority."""
+
+    async with owner_connection(
+        settings.resolved_owner_dsn(), expected_database=settings.expected_database
+    ) as connection:
+        row = await connection.fetchrow(_INSTALLATION_STATE_SELECT)
+        if row is None:
+            raise BootstrapStateError("installation state is missing")
+        return _setup_token_status(row)
 
 
 async def provision(settings: BootstrapSettings) -> None:
@@ -482,11 +669,18 @@ async def status_on_connection(connection: Any) -> BootstrapStatus:
 __all__ = [
     "BootstrapStateError",
     "BootstrapStatus",
+    "SetupTokenAction",
+    "SetupTokenResult",
+    "SetupTokenStatus",
     "compose_bootstrap",
     "downgrade",
+    "ensure_setup_token",
     "provision",
     "rebuild",
     "reconcile",
+    "revoke_setup_token",
+    "rotate_setup_token",
+    "setup_token_status",
     "status",
     "upgrade",
     "validate",

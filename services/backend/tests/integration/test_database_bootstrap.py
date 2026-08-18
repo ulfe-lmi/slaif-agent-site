@@ -444,7 +444,7 @@ async def test_clean_migration_current_repeat_downgrade_and_rebuild(
     database = agent_site_database
     await upgrade(database.settings)
     first = await status(database.settings)
-    assert first.revision == "007_001"
+    assert first.revision == "008_001"
     _assert_pending(first, deployed=False)
 
     async with owner_connection(
@@ -472,6 +472,7 @@ async def test_clean_migration_current_repeat_downgrade_and_rebuild(
         assert [tuple(row) for row in relations] == [
             ("control", "alembic_version"),
             ("control", "bootstrap_readiness"),
+            ("control", "installation_state"),
         ]
 
     await upgrade(database.settings)
@@ -562,10 +563,13 @@ async def test_clean_migration_current_repeat_downgrade_and_rebuild(
         assert not await connection.fetchval(
             "SELECT to_regprocedure('control.slaif_control_readiness()') IS NOT NULL"
         )
+        assert not await connection.fetchval(
+            "SELECT to_regclass('control.installation_state') IS NOT NULL"
+        )
 
     await upgrade(database.settings)
     rebuilt = await status(database.settings)
-    assert rebuilt.revision == "007_001"
+    assert rebuilt.revision == "008_001"
     _assert_pending(rebuilt, deployed=False)
     rebuilt_empty = await reconcile(database.settings)
     _assert_empty_safe(rebuilt_empty)
@@ -918,20 +922,20 @@ async def test_cli_secret_file_empty_bootstrap_current_and_validate(
     assert upgraded.stdout == "upgrade: OK\n"
     current = invoke("current")
     assert current.returncode == 0
-    assert current.stdout == ("current: revision=007_001 state=PENDING safe=false\n")
+    assert current.stdout == ("current: revision=008_001 state=PENDING safe=false\n")
     bootstrapped = invoke("bootstrap")
     assert bootstrapped.returncode == 0
     assert bootstrapped.stdout == (
-        "bootstrap: OK revision=007_001 state=EMPTY_SAFE safe=true\n"
+        "bootstrap: OK revision=008_001 state=EMPTY_SAFE safe=true\n"
     )
     validated = invoke("validate")
     assert validated.returncode == 0
     assert validated.stdout == (
-        "validate: OK revision=007_001 state=EMPTY_SAFE safe=true\n"
+        "validate: OK revision=008_001 state=EMPTY_SAFE safe=true\n"
     )
     ready = invoke("current")
     assert ready.returncode == 0
-    assert ready.stdout == ("current: revision=007_001 state=EMPTY_SAFE safe=true\n")
+    assert ready.stdout == ("current: revision=008_001 state=EMPTY_SAFE safe=true\n")
     output = "".join(
         process.stdout + process.stderr
         for process in (upgraded, current, bootstrapped, validated, ready)

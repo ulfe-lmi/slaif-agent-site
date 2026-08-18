@@ -132,6 +132,11 @@ Production accepts only absolute mounted secret files:
 - `SLAIF_BOOTSTRAP_OWNER_DSN_FILE` for migration, status, COW, and validation.
 - `SLAIF_BOOTSTRAP_LOCAL_SECRETS_DIR` for the local Compose command's fixed
   ten-login password manifest.
+- `SLAIF_BOOTSTRAP_SETUP_TOKEN_TTL_MINUTES` optionally sets a 5–60 minute
+  lifetime for explicit setup-token issuance; the default is 30.
+- `SLAIF_BOOTSTRAP_SETUP_URL` optionally sets the absolute HTTP(S) `/setup`
+  URL printed separately from a newly issued token; it cannot carry
+  credentials, a query, or a fragment.
 
 The local stack uses bootstrap `production` mode because both database locators
 are mounted files. Its health-only long-running services use `development` mode
@@ -144,6 +149,11 @@ Direct locator fields are restricted to disposable `test` mode. There is no
 shared `SLAIF_DATABASE_URL`, default credential, implicit environment file, or
 module-import connection. See [database bootstrap](DATABASE_BOOTSTRAP.md) for
 commands and marker semantics.
+
+Setup-token configuration belongs only to the one-shot bootstrap package. It
+does not put a token in an environment variable or URL, grant table access to
+Control, or enable an online setup endpoint. See
+[installation setup](INSTALLATION_SETUP.md).
 
 ## Deferred configuration
 

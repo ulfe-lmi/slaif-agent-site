@@ -23,6 +23,7 @@ from tools.check_repository import (
     PYTHON_DEPENDENCY_GROUPS,
     PYTHON_DIRECT_VERSIONS,
     PYTHON_RUNTIME_DEPENDENCIES,
+    REQUIRED_FILES,
     ROOT_NODE_DEV_DEPENDENCIES,
     WORKSPACE_PACKAGES,
     RepositoryPolicy,
@@ -197,6 +198,15 @@ class RepositoryPolicyTestCase(unittest.TestCase):
             "snapshots:\n\n"
             "  example@1.0.0: {}\n",
         )
+
+    def test_installation_setup_foundation_is_required_repository_surface(self) -> None:
+        assert {
+            "docs/INSTALLATION_SETUP.md",
+            "services/backend/src/slaif_agent_site/bootstrap/setup_token.py",
+            "services/backend/src/slaif_agent_site/db/alembic/versions/008_001_installation_state.py",
+            "services/backend/tests/integration/test_installation_setup.py",
+            "services/backend/tests/unit/test_bootstrap_setup_token.py",
+        } <= set(REQUIRED_FILES)
 
     def test_oap_accepts_active_without_report_and_complete_history(self) -> None:
         self.write("oap/active", "001-a\n")

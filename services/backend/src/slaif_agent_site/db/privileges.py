@@ -28,6 +28,7 @@ NO_CONTENT_ROLES = (
 ALLOWED_CLEAN_RELATIONS = {
     ("control", "alembic_version"),
     ("control", "bootstrap_readiness"),
+    ("control", "installation_state"),
 }
 FOUNDATION_SCHEMA = "agentcow"
 CONTROL_READINESS_FUNCTION = "slaif_control_readiness"

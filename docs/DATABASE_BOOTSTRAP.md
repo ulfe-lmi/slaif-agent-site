@@ -20,16 +20,19 @@ There is one head:
 ```text
 006_001
   |
-007_001 (head)
+007_001
+  |
+008_001 (head)
 ```
 
 The baseline creates `control`, `content`, and `audit`, owned by `slaif_owner`.
-Alembic state is `control.alembic_version`. The only product table is
-`control.bootstrap_readiness`; `007_001` adds only
-`control.slaif_control_readiness()`. `content` and `audit` are empty. Unsafe
-default schema, table, sequence, and function privileges are revoked. The
-foundation creates its public `agentcow` objects only when reconciliation is
-explicitly requested.
+Alembic state is `control.alembic_version`. The two product-owned Control
+tables are `control.bootstrap_readiness` and the constrained singleton
+`control.installation_state`; `007_001` adds only
+`control.slaif_control_readiness()`, and `008_001` adds only the installation
+state. `content` and `audit` are empty. Unsafe default schema, table, sequence,
+and function privileges are revoked. The foundation creates its public
+`agentcow` objects only when reconciliation is explicitly requested.
 
 ## Configuration
 
@@ -43,6 +46,8 @@ Bootstrap configuration is separate from `ServiceSettings` and uses only the
 | `SLAIF_BOOTSTRAP_PROVISIONER_DSN_FILE` | `provision` | Absolute mounted secret file for cluster-provisioner access. |
 | `SLAIF_BOOTSTRAP_OWNER_DSN_FILE` | Owner commands | Absolute mounted secret file for the one-shot owner principal. |
 | `SLAIF_BOOTSTRAP_LOCAL_SECRETS_DIR` | Local `compose` | Absolute directory containing the fixed login password files. |
+| `SLAIF_BOOTSTRAP_SETUP_TOKEN_TTL_MINUTES` | `setup-token` | Setup-token lifetime from 5 through 60 minutes; default 30. |
+| `SLAIF_BOOTSTRAP_SETUP_URL` | `setup-token` output | Absolute HTTP(S) `/setup` URL without credentials, query, or fragment. |
 
 Direct `SLAIF_BOOTSTRAP_PROVISIONER_DSN` and
 `SLAIF_BOOTSTRAP_OWNER_DSN` inputs exist only for generated disposable tests;
@@ -72,6 +77,7 @@ python -m slaif_agent_site.bootstrap current
 python -m slaif_agent_site.bootstrap bootstrap
 python -m slaif_agent_site.bootstrap validate
 python -m slaif_agent_site.bootstrap compose
+python -m slaif_agent_site.bootstrap setup-token --status
 ```
 
 Running the module without a command prints usage and performs no mutation.
@@ -88,6 +94,10 @@ independent authentication attempt for each fixed login. It succeeds only at
 `EMPTY_SAFE safe=true` and is used by the one-shot container. The dedicated
 database revokes `PUBLIC` connection and temporary-table authority; an
 unrelated valid cluster login cannot connect.
+
+`setup-token` is a separate, explicit owner command and is never part of
+`compose` or service startup. See [installation setup](INSTALLATION_SETUP.md)
+for its issue, rotation, revoke, output, and not-yet-served route contract.
 
 Downgrade and rebuild are disposable verification operations, not a production
 rollback promise:
@@ -124,7 +134,7 @@ grants, validation, and final marker publication share a transaction, so an
 injected failure rolls them back. A repeat repairs safely and a successful
 repeat does not add objects or change migration head.
 
-The marker records revision `007_001`, distribution
+The marker records revision `008_001`, distribution
 `agent-cow-postgresql`, version `0.2.0`, state-specific evidence flags, generic
 content/foundation object counts and SHA-256 fingerprints, overall safety, and
 update time. Database constraints admit exactly these combinations:

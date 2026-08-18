@@ -20,12 +20,33 @@ the same generated credentials. Bootstrap must print exactly a safe result
 shaped as:
 
 ```text
-compose-bootstrap: OK revision=007_001 state=EMPTY_SAFE safe=true
+compose-bootstrap: OK revision=008_001 state=EMPTY_SAFE safe=true
 ```
 
 Do not publish or archive complete logs without reviewing them. The
 implementation suppresses database locators and password values, but logs are
 still deployment-private operational data.
+
+## Installation setup-token foundation
+
+After an owner migration, an operator may explicitly issue the one-shot setup
+token foundation with mounted owner credentials:
+
+```bash
+python -m slaif_agent_site.bootstrap setup-token
+python -m slaif_agent_site.bootstrap setup-token --status
+python -m slaif_agent_site.bootstrap setup-token --rotate
+python -m slaif_agent_site.bootstrap setup-token --revoke
+```
+
+This command is deliberately not wired into Compose startup. A freshly issued
+or rotated plaintext is shown once on its own stdout line; the setup URL is a
+separate line and never carries the token. Repeated default issuance returns
+only expiry/generation facts and directs the operator to explicit rotation.
+Until the planned consumer and `/setup` route are implemented, the token
+cannot create a user or initialize an installation. Store real output only in
+an operator-approved secret channel and see
+[installation setup](INSTALLATION_SETUP.md) for the exact boundary.
 
 ## Volumes, backup, and cleanup
 

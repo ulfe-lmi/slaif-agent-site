@@ -7,7 +7,14 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Self
 
-from pydantic import SecretStr, ValidationError, field_validator, model_validator
+from pydantic import (
+    Field,
+    HttpUrl,
+    SecretStr,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from slaif_agent_site.db.roles import DATABASE_LOGINS
@@ -41,6 +48,8 @@ class BootstrapSettings(BaseSettings):
     owner_dsn: SecretStr | None = None
     owner_dsn_file: Path | None = None
     local_secrets_dir: Path | None = None
+    setup_token_ttl_minutes: int = Field(default=30, ge=5, le=60)
+    setup_url: HttpUrl = HttpUrl("http://localhost:8080/setup")
 
     @field_validator("expected_database")
     @classmethod
@@ -54,6 +63,19 @@ class BootstrapSettings(BaseSettings):
     def validate_absolute_secret_file(cls, value: Path | None) -> Path | None:
         if value is not None and not value.is_absolute():
             raise ValueError("secret-file references must be absolute")
+        return value
+
+    @field_validator("setup_url")
+    @classmethod
+    def validate_setup_url(cls, value: HttpUrl) -> HttpUrl:
+        if (
+            value.path != "/setup"
+            or value.query is not None
+            or value.fragment is not None
+            or value.username is not None
+            or value.password is not None
+        ):
+            raise ValueError("setup URL must be an HTTP(S) /setup URL without secrets")
         return value
 
     @model_validator(mode="after")
