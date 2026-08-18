@@ -20,9 +20,10 @@ or credential.
 
 The role manifest, local login principals, schema owners, COW hardening,
 independent privilege verifier, container networks, and edge routing are
-implemented. Online credential distribution and pools are not; no long-running
-process currently opens a database connection. Bootstrap alone mounts its
-separate one-shot locator.
+implemented. Control API alone now receives `slaif_control_login`, opens a
+bounded lifespan-owned pool, and can execute one read-only owner function for
+readiness. Bootstrap alone mounts the stronger one-shot locators. Every other
+long-running process remains database-credential-free.
 
 ## Structural boundaries
 
@@ -35,8 +36,8 @@ separate one-shot locator.
 - MCP adapter has an internal HTTP/client class and no database class. It must
   delegate semantic authorization to the Agent API when that behavior exists.
 - Render API is internal-only and its two future database roles are read-only.
-- Control, scheduler, media-GC, and media service retain only their narrow
-  future classes.
+- Control has only readiness-function authority. Scheduler, media-GC, and
+  media service retain only their narrow future classes.
 - Worker/bootstrap processes cannot be passed to the shared HTTP application
   factory. HTTP processes cannot be passed to the worker lifecycle.
 - There is no generic all-authority descriptor or dependency locator.
@@ -47,16 +48,21 @@ run SQL/Alembic, or select site/workspace/operation context from a request.
 ## Deployment enforcement
 
 Code descriptors do not provide security by themselves. Compose now separates
-edge, application, database, and browser networks; mounts local database
-secrets only into initializer/PostgreSQL/bootstrap; runs online processes
-without DSNs; and publishes only NGINX on loopback port 8080. Browser worker is
-on an internal network shared only with Agent API and has no database, edge,
-host, mount, Docker-socket, Playwright, or browser-command authority. See
-[deployment](DEPLOYMENT.md) and [database roles](DATABASE_ROLES.md).
+edge, application, database, and browser networks. Initializer/PostgreSQL/
+bootstrap use the private master secret volume; initializer copies only the
+Control DSN into a separate volume mounted read-only only by Control. No other
+online process receives a DSN. Only NGINX publishes loopback port 8080. Browser
+worker is on an internal network shared only with Agent API and has no
+database, edge, host, mount, Docker-socket, Playwright, or browser-command
+authority. See [deployment](DEPLOYMENT.md),
+[database connections](DATABASE_CONNECTIONS.md), and
+[database roles](DATABASE_ROLES.md).
 
-Internal service authentication, online least-privilege pools, browser sandbox
-and egress enforcement, production TLS, and product authorization remain later
-work. Network membership alone is not authority.
+Internal service authentication, pools for every non-Control process, browser
+sandbox and egress enforcement, production TLS automation, and product
+authorization remain later work. Network membership alone is not authority.
 
 The only current HTTP behavior is correlated, redacted, typed liveness and
-readiness. Health evidence is not product readiness or publication authority.
+readiness. Control readiness includes its database boundary; Control liveness
+remains process-only. Health evidence is not product readiness or publication
+authority.

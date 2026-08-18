@@ -75,11 +75,14 @@ NEW_PACKAGE_FILES = {
     "slaif_agent_site/control_api/__init__.py",
     "slaif_agent_site/control_api/__main__.py",
     "slaif_agent_site/control_api/app.py",
+    "slaif_agent_site/control_api/config.py",
+    "slaif_agent_site/control_api/database.py",
     "slaif_agent_site/correlation.py",
     "slaif_agent_site/db/__init__.py",
     "slaif_agent_site/db/alembic/env.py",
     "slaif_agent_site/db/alembic/script.py.mako",
     "slaif_agent_site/db/alembic/versions/006_001_postgres_bootstrap.py",
+    "slaif_agent_site/db/alembic/versions/007_001_control_readiness.py",
     "slaif_agent_site/db/connections.py",
     "slaif_agent_site/db/executor.py",
     "slaif_agent_site/db/migrations.py",
@@ -374,8 +377,8 @@ def test_locked_foundation_artifact_hash_constants_are_sha256() -> None:
 
 
 def test_alembic_graph_and_offline_sql_need_no_locator_or_network() -> None:
-    assert migration_heads() == ("006_001",)
-    assert migration_history() == ("006_001",)
+    assert migration_heads() == ("007_001",)
+    assert migration_history() == ("007_001", "006_001")
     config = (REPOSITORY_ROOT / "alembic.ini").read_text(encoding="utf-8")
     assert "sqlalchemy.url" not in config
     assert "://" not in config
@@ -405,7 +408,9 @@ def test_alembic_graph_and_offline_sql_need_no_locator_or_network() -> None:
         timeout=10,
     )
     assert "006_001" in completed.stdout
+    assert "007_001" in completed.stdout
     assert 'CREATE SCHEMA IF NOT EXISTS "control"' in completed.stdout
+    assert 'CREATE FUNCTION "control"."slaif_control_readiness"()' in completed.stdout
 
 
 def test_database_source_uses_public_foundation_boundary_and_no_domain_ddl() -> None:
@@ -446,3 +451,13 @@ def test_database_source_uses_public_foundation_boundary_and_no_domain_ddl() -> 
         "site_membership",
     )
     assert not any(f'CREATE TABLE "{name}"' in revision for name in forbidden_tables)
+
+    control_revision = (
+        package / "db/alembic/versions/007_001_control_readiness.py"
+    ).read_text(encoding="utf-8")
+    assert "CREATE TABLE" not in control_revision
+    assert control_revision.count("CREATE FUNCTION") == 1
+    assert "SECURITY DEFINER" in control_revision
+    assert "SET search_path = pg_catalog" in control_revision
+    assert "REVOKE ALL ON FUNCTION" in control_revision
+    assert 'TO "slaif_control"' in control_revision

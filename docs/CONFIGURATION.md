@@ -1,10 +1,10 @@
 # Backend configuration contract
 
-The current Python backend has typed configuration for health-only long-running
-skeletons and separate typed configuration for explicit one-shot database
-bootstrap. Compose wires only non-secret process settings into long-running
-containers. No online process connects to PostgreSQL, authenticates a caller,
-exposes a product API, or runs a product job.
+The current Python backend has shared typed configuration for health-only
+long-running skeletons, a separate Control-only online database model, and
+separate typed configuration for explicit one-shot database bootstrap. Control
+API is the only online process that connects to PostgreSQL. No process
+authenticates a caller, exposes a product API, or runs a product job.
 
 ## Loading rules
 
@@ -60,8 +60,9 @@ python -m slaif_agent_site.bootstrap --check
 ```
 
 Check mode does not bind a port, connect to a database, run a job, or mutate
-state. Without `--check`, the six HTTP modules start Uvicorn using an app object
-and the configured bind values:
+state. Control check mode validates the typed locator reference but does not
+read that file. Without `--check`, the six HTTP modules start Uvicorn using an
+app object and the configured bind values:
 
 ```bash
 python -m slaif_agent_site.control_api
@@ -80,6 +81,41 @@ Review worker, scheduler, and media-GC start as cancellation-aware idle
 `NOT_IMPLEMENTED` skeletons without a listener or busy loop. Bootstrap now
 requires an explicit database subcommand; running it without one cannot mutate
 state.
+
+## Control database configuration
+
+`ControlDatabaseSettings` exists only in `control_api`, uses the
+`SLAIF_CONTROL_` prefix, and is frozen. It does not extend `ServiceSettings` or
+provide a generic database locator. Compose supplies:
+
+| Variable | Local value/default | Contract |
+| --- | --- | --- |
+| `SLAIF_CONTROL_MODE` | `development` | `development`, `test`, or `production`; direct locators are test-only. |
+| `SLAIF_CONTROL_DSN_FILE` | `/run/slaif-control/control-dsn` | Absolute mode-`0400`, Control-owned regular file. Required outside tests. |
+| `SLAIF_CONTROL_EXPECTED_DATABASE` | `slaif` | Validated target database. |
+| `SLAIF_CONTROL_EXPECTED_LOGIN` | `slaif_control_login` | Fixed outside explicit test mode. |
+| `SLAIF_CONTROL_EXPECTED_PRIVILEGE_ROLE` | `slaif_control` | Fixed in every mode. |
+| `SLAIF_CONTROL_POOL_MIN_SIZE` / `MAX_SIZE` | `1` / `4` | Minimum 1, maximum 16, and minimum cannot exceed maximum. |
+| `SLAIF_CONTROL_ACQUIRE_TIMEOUT_SECONDS` | `1.5` | Bounded pool-acquire timeout. |
+| `SLAIF_CONTROL_COMMAND_TIMEOUT_SECONDS` | `2.0` | Bounded asyncpg command timeout. |
+| `SLAIF_CONTROL_CONNECT_TIMEOUT_SECONDS` | `3.0` | Bounded connection establishment timeout. |
+| `SLAIF_CONTROL_SHUTDOWN_TIMEOUT_SECONDS` | `5.0` | Bounded pool-drain timeout before termination. |
+| `SLAIF_CONTROL_MAX_INACTIVE_CONNECTION_LIFETIME_SECONDS` | `60.0` | Bounded idle connection lifetime. |
+| `SLAIF_CONTROL_STATEMENT_TIMEOUT_MS` | `2000` | Server-side statement timeout. |
+| `SLAIF_CONTROL_LOCK_TIMEOUT_MS` | `500` | Server-side lock timeout. |
+| `SLAIF_CONTROL_IDLE_TRANSACTION_TIMEOUT_MS` | `2000` | Server-side idle-transaction timeout. |
+| `SLAIF_CONTROL_APPLICATION_NAME` | `slaif-control-api` | Bounded trusted session label. |
+
+Production locator files must use PostgreSQL `sslmode=verify-full`, provide an
+absolute `sslrootcert`, and require `target_session_attrs=read-write`. The
+documented local demo alone permits the internal `postgres` host with TLS
+disabled. Query options that can inject session SQL, override search paths,
+weaken target selection, or replace the trusted application name are rejected.
+Explicit test mode permits only local or `.test` fake direct locators.
+
+The locator uses `SecretStr`, is never emitted through repr/JSON/errors/health,
+and is resolved only inside Control lifespan startup. See
+[database connections](DATABASE_CONNECTIONS.md) for pool and failure semantics.
 
 ## One-shot database configuration
 
@@ -111,9 +147,9 @@ commands and marker semantics.
 
 ## Deferred configuration
 
-The default initializer generates future service DSN files but long-running
-containers do not mount them. Online service database locators/pools, identity
-providers, browser sources,
+The default initializer generates future service DSN files, but only the exact
+Control DSN is copied into a separate mounted volume. All other online service
+database locators/pools, identity providers, browser sources,
 media stores, service authentication, trusted proxies, CORS, sessions, jobs,
 metrics, and product feature settings are not implemented. They must be added
 later under their process-specific authority and architecture work orders.

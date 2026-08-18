@@ -27,6 +27,8 @@ class LocalSecretTests(unittest.TestCase):
     def test_generation_is_distinct_restrictive_and_idempotent(self) -> None:
         INITIALIZER.POSTGRES_UID = os.getuid()
         INITIALIZER.APPLICATION_UID = os.getuid()
+        INITIALIZER.CONTROL_DIRECTORY_UID = os.getuid()
+        INITIALIZER.CONTROL_DIRECTORY_GID = os.getgid()
         INITIALIZER.MARKER_UID = os.getuid()
         INITIALIZER.DIRECTORY_UID = os.getuid()
         INITIALIZER.SECRET_DIRECTORY_GID = os.getgid()
@@ -53,9 +55,52 @@ class LocalSecretTests(unittest.TestCase):
             for path in directory.iterdir():
                 self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o400)
 
+    def test_control_locator_is_isolated_exact_and_idempotent(self) -> None:
+        INITIALIZER.POSTGRES_UID = os.getuid()
+        INITIALIZER.APPLICATION_UID = os.getuid()
+        INITIALIZER.CONTROL_DIRECTORY_UID = os.getuid()
+        INITIALIZER.CONTROL_DIRECTORY_GID = os.getgid()
+        INITIALIZER.MARKER_UID = os.getuid()
+        INITIALIZER.DIRECTORY_UID = os.getuid()
+        INITIALIZER.SECRET_DIRECTORY_GID = os.getgid()
+        with tempfile.TemporaryDirectory() as parent:
+            directory = Path(parent) / "secrets"
+            control_directory = Path(parent) / "control"
+            control_directory.mkdir(mode=0o755)
+            count = INITIALIZER.initialize(
+                directory, control_directory=control_directory
+            )
+            self.assertEqual(count, 24)
+            control_file = control_directory / "control-dsn"
+            first = control_file.read_bytes()
+            self.assertEqual(first, (directory / "service-control-dsn").read_bytes())
+            self.assertEqual(
+                INITIALIZER.initialize(directory, control_directory=control_directory),
+                count,
+            )
+            self.assertEqual(control_file.read_bytes(), first)
+            control_info = control_directory.stat()
+            self.assertEqual(stat.S_IMODE(control_info.st_mode), 0o700)
+            self.assertEqual(control_info.st_uid, os.getuid())
+            self.assertEqual(control_info.st_gid, os.getgid())
+            file_info = control_file.stat()
+            self.assertEqual(stat.S_IMODE(file_info.st_mode), 0o400)
+            self.assertEqual(file_info.st_uid, os.getuid())
+
+            control_file.chmod(0o600)
+            control_file.write_text("x" * len(first), encoding="ascii")
+            control_file.chmod(0o400)
+            with self.assertRaisesRegex(
+                INITIALIZER.SecretInitializationError,
+                "isolated Control locator mismatch",
+            ):
+                INITIALIZER.initialize(directory, control_directory=control_directory)
+
     def test_incomplete_secret_is_rejected_without_replacement(self) -> None:
         INITIALIZER.POSTGRES_UID = os.getuid()
         INITIALIZER.APPLICATION_UID = os.getuid()
+        INITIALIZER.CONTROL_DIRECTORY_UID = os.getuid()
+        INITIALIZER.CONTROL_DIRECTORY_GID = os.getgid()
         INITIALIZER.MARKER_UID = os.getuid()
         INITIALIZER.DIRECTORY_UID = os.getuid()
         INITIALIZER.SECRET_DIRECTORY_GID = os.getgid()

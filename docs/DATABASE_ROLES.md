@@ -12,7 +12,7 @@ NOREPLICATION NOBYPASSRLS`.
 | Privilege role | Credential consumer | Implemented baseline authority |
 | --- | --- | --- |
 | `slaif_owner` | One-shot bootstrap only | Own `control`, `content`, `audit`, their objects, and the `agentcow` deployment; run migrations and hardening. |
-| `slaif_control` | Future Control API principal | No object grant yet; content DML and setup remain denied. |
+| `slaif_control` | Control API readiness principal | `USAGE` on `control` plus execute on the single owner-defined readiness function; marker-table access, content DML, and setup remain denied. |
 | `slaif_editor_runtime` | Future Editor API principal | COW-view `SELECT`, `INSERT`, `UPDATE`, and `DELETE` after a table is enabled/hardened; no base/change, reviewer, or setup authority. |
 | `slaif_agent_runtime` | Future Agent API principal | Same COW-view DML boundary as Editor under a distinct role; no base/change, reviewer, or setup authority. |
 | `slaif_public_reader` | Future canonical render principal | `SELECT` on present COW views after product grant reconciliation; no DML or internal tables. |
@@ -71,8 +71,9 @@ The disposable integration suite creates fake login principals with exactly
 one membership each. Product privilege roles may not be members of any other
 role; the verifier rejects direct or transitive authority paths. External
 login principals being members of one product role are expected. Future
-service DSNs are generated but deliberately not distributed until online pools
-exist.
+service DSNs are generated but deliberately not distributed. Control's one
+fixed DSN is the sole exception: the initializer copies it into a separate
+Control-only volume for the implemented online pool.
 
 ## Operator and owner separation
 
@@ -90,7 +91,7 @@ provisioning may omit this local extension.
 An institution may perform equivalent provisioning itself, then omit the
 provisioner locator. Migration and COW operations use a separate connection
 that must be or must be able to `SET ROLE slaif_owner`. No long-running process
-loads either locator.
+loads either stronger locator; Control loads only its own fixed login locator.
 
 ## Effective privilege verification
 

@@ -32,9 +32,11 @@ the real responsive result, and publish only after human review.
 > its clean zero-object content state is explicitly `EMPTY_SAFE` without
 > claiming foundation table hardening. Any real content object requires the
 > fully validated `HARDENED` state. Authentication, first-user setup, sites,
-> workspaces, editing/Puck, product routes/tables, online database pools,
+> workspaces, editing/Puck, product routes/tables, database-backed product APIs,
 > Playwright/browser commands, review, publication, and product behavior are
-> not implemented yet.
+> not implemented yet. Control API alone now owns one isolated file-backed
+> login, bounded asyncpg pool, and read-only database readiness component; no
+> other online process receives a database credential.
 
 The current automation also migrates/rebuilds disposable databases, verifies
 the exact role/ownership/grant matrix, exercises COW runtime/reviewer paths,
@@ -169,6 +171,7 @@ first-run administrator or website-management product. See the
 | Completed database boundary baseline | Exact password-free roles, packaged Alembic head, three empty product schemas, constrained `PENDING`/`EMPTY_SAFE`/`HARDENED` readiness, public-API COW reconciliation, and independent privilege validation. |
 | Completed deployable skeleton | One-command Compose, generated local database principals, safe-empty bootstrap, digest-pinned OCI images, isolated browser placeholder, Next status page, NGINX edge, and Apache reference. |
 | Completed supply-chain baseline | Reproducible Python/Web artifacts, exact source/action/base/scanner policy, deterministic notices, six-image SPDX SBOMs, fresh Grype scans, and checksummed retained CI evidence. |
+| Completed Control readiness boundary | Isolated `slaif_control_login` mount, bounded identity-verified Control pool, one owner-defined read-only readiness function, and fail-closed Control/NGINX health dependency. |
 | Planned setup/product work | Implement secure first-user setup, identity/sites/workspaces, configurable content, normalized composition/Puck, semantic tools, browser feedback, review/promotion, reconstruction, and hardening. |
 
 See [Architecture Section 50](ARCHITECTURE.md#50-implementation-phases) for
@@ -208,10 +211,14 @@ The current repository is intentionally small:
 The TypeScript package boundaries contain no product schemas, components,
 scopes, browser tools, API behavior, or fixture data. The Python HTTP processes
 contain only `/health/live` and `/health/ready`; long-running workers do no
-product work. Bootstrap mutations require explicit one-shot commands. See the
+product work. Control readiness has one injected database component, while
+its liveness remains process-only. Bootstrap mutations require explicit
+one-shot commands. See the
 [configuration contract](docs/CONFIGURATION.md),
-[database bootstrap](docs/DATABASE_BOOTSTRAP.md), and
-[database roles](docs/DATABASE_ROLES.md), with process mappings in the
+[database bootstrap](docs/DATABASE_BOOTSTRAP.md),
+[database roles](docs/DATABASE_ROLES.md), and
+[database connection boundary](docs/DATABASE_CONNECTIONS.md), with process
+mappings in the
 [service authority record](docs/SERVICE_AUTHORITY.md), deployment in the
 [deployment guide](docs/DEPLOYMENT.md), and lifecycle commands in
 [operations](docs/OPERATIONS.md). The planned application

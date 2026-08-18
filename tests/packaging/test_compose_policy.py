@@ -7,6 +7,7 @@ import importlib.util
 import unittest
 from pathlib import Path
 from types import ModuleType
+from unittest.mock import patch
 
 
 def _load_verifier() -> ModuleType:
@@ -18,7 +19,17 @@ def _load_verifier() -> ModuleType:
     return module
 
 
+def _load_control_fixture() -> ModuleType:
+    path = Path(__file__).parents[2] / "tools/compose/control_readiness.py"
+    spec = importlib.util.spec_from_file_location("control_readiness_fixture", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 VERIFY = _load_verifier()
+CONTROL_FIXTURE = _load_control_fixture()
 
 
 def _configuration() -> dict[str, object]:
@@ -53,6 +64,16 @@ def _configuration() -> dict[str, object]:
                 "SLAIF_MODE": "development",
                 "SLAIF_PUBLIC_URL": "http://localhost:8080",
             }
+        if name == "control-api":
+            service["environment"].update(
+                {
+                    "SLAIF_CONTROL_DSN_FILE": "/run/slaif-control/control-dsn",
+                    "SLAIF_CONTROL_EXPECTED_DATABASE": "slaif",
+                    "SLAIF_CONTROL_EXPECTED_LOGIN": "slaif_control_login",
+                    "SLAIF_CONTROL_EXPECTED_PRIVILEGE_ROLE": "slaif_control",
+                    "SLAIF_CONTROL_MODE": "development",
+                }
+            )
         if name in VERIFY.EXPECTED_CAP_ADD:
             service["cap_add"] = sorted(VERIFY.EXPECTED_CAP_ADD[name])
         if name in VERIFY.EXPECTED_GROUP_ADD:
@@ -67,6 +88,12 @@ def _configuration() -> dict[str, object]:
     services["nginx"]["ports"] = [
         {"host_ip": "127.0.0.1", "published": "8080", "target": 8080}
     ]
+    services["nginx"]["healthcheck"] = {
+        "test": [
+            "CMD-SHELL",
+            "wget /health/ready && wget /api/control/health/ready",
+        ]
+    }
     return {
         "networks": {
             name: ({"internal": True} if name != "edge" else {})
@@ -74,12 +101,162 @@ def _configuration() -> dict[str, object]:
         },
         "services": services,
         "volumes": {
-            name: {} for name in ("local-secrets", "media-data", "postgres-data")
+            name: {}
+            for name in (
+                "control-secret",
+                "local-secrets",
+                "media-data",
+                "postgres-data",
+            )
         },
     }
 
 
 class ComposePolicyTests(unittest.TestCase):
+    @staticmethod
+    def _database_readiness_document(reason: object) -> dict[str, object]:
+        return {
+            "status": "not_ready",
+            "components": [
+                {
+                    "component": "database",
+                    "status": "unavailable",
+                    "reason": reason,
+                }
+            ],
+        }
+
+    def test_control_fixture_database_outage_predicate_is_exact(self) -> None:
+        self.assertEqual(
+            CONTROL_FIXTURE.DATABASE_OUTAGE_REASONS,
+            frozenset({"connection_unavailable", "timeout"}),
+        )
+        for reason in ("connection_unavailable", "timeout"):
+            with self.subTest(reason=reason):
+                self.assertTrue(
+                    CONTROL_FIXTURE.readiness_matches(
+                        503,
+                        self._database_readiness_document(reason),
+                        CONTROL_FIXTURE.DATABASE_OUTAGE_REASONS,
+                    )
+                )
+        for reason in ("probe_error", "shutdown", "unknown", None):
+            with self.subTest(reason=reason):
+                self.assertFalse(
+                    CONTROL_FIXTURE.readiness_matches(
+                        503,
+                        self._database_readiness_document(reason),
+                        CONTROL_FIXTURE.DATABASE_OUTAGE_REASONS,
+                    )
+                )
+        self.assertFalse(
+            CONTROL_FIXTURE.readiness_matches(
+                200,
+                self._database_readiness_document("timeout"),
+                CONTROL_FIXTURE.DATABASE_OUTAGE_REASONS,
+            )
+        )
+        self.assertFalse(
+            CONTROL_FIXTURE.readiness_matches(
+                503,
+                {"status": "not_ready", "components": []},
+                CONTROL_FIXTURE.DATABASE_OUTAGE_REASONS,
+            )
+        )
+        self.assertFalse(
+            CONTROL_FIXTURE.readiness_matches(
+                503,
+                ["malformed"],
+                CONTROL_FIXTURE.DATABASE_OUTAGE_REASONS,
+            )
+        )
+        self.assertFalse(
+            CONTROL_FIXTURE.readiness_matches(
+                503,
+                self._database_readiness_document("timeout"),
+                CONTROL_FIXTURE.CONNECTION_UNAVAILABLE,
+            )
+        )
+
+    def test_control_fixture_diagnostics_are_allowlisted_and_secret_free(self) -> None:
+        self.assertEqual(
+            CONTROL_FIXTURE.failure_diagnostic(
+                "wrong-login", "replace-file", "command-failed"
+            ),
+            "control-readiness-fixture: FAILED stage=wrong-login "
+            "operation=replace-file reason=command-failed",
+        )
+        unsafe = "postgresql://fixed-login:never-print@example.test/slaif"
+        self.assertEqual(
+            CONTROL_FIXTURE.failure_diagnostic(unsafe, unsafe, unsafe),
+            "control-readiness-fixture: FAILED stage=setup "
+            "operation=initialize reason=state-mismatch",
+        )
+        self.assertNotIn(
+            unsafe,
+            CONTROL_FIXTURE.failure_diagnostic(unsafe, unsafe, unsafe),
+        )
+        self.assertEqual(
+            CONTROL_FIXTURE.FixtureError(unsafe).reason,
+            "state-mismatch",
+        )
+        self.assertEqual(
+            CONTROL_FIXTURE.DIAGNOSTIC_REASONS,
+            {
+                "command-failed",
+                "timeout",
+                "malformed-response",
+                "state-mismatch",
+            },
+        )
+        source = (
+            Path(__file__).parents[2] / "tools/compose/control_readiness.py"
+        ).read_text(encoding="utf-8")
+        self.assertNotIn("print(result.stdout", source)
+        self.assertNotIn("print(result.stderr", source)
+
+    def test_control_fixture_recreates_only_the_target_process(self) -> None:
+        fixture = CONTROL_FIXTURE.ControlReadinessFixture(
+            "slaif009fixture", existing=True
+        )
+        with patch.object(fixture, "compose") as compose:
+            fixture._recreate_control()
+        compose.assert_called_once_with(
+            "up", "-d", "--force-recreate", "--no-deps", "control-api"
+        )
+
+    def test_control_fixture_mode_helper_is_exactly_confined(self) -> None:
+        fixture = CONTROL_FIXTURE.ControlReadinessFixture(
+            "slaif009fixture", existing=True
+        )
+        with patch.object(CONTROL_FIXTURE, "_run") as run:
+            fixture._set_control_mode(0o000)
+        run.assert_called_once_with(
+            [
+                "docker",
+                "run",
+                "--rm",
+                "--network",
+                "none",
+                "--read-only",
+                "--cap-drop",
+                "ALL",
+                "--cap-add",
+                "DAC_READ_SEARCH",
+                "--cap-add",
+                "FOWNER",
+                "--user",
+                "0:0",
+                "--volume",
+                "slaif009fixture_control-secret:/secrets",
+                "--entrypoint",
+                "python",
+                CONTROL_FIXTURE.BACKEND_IMAGE,
+                "-c",
+                "import pathlib;pathlib.Path('/secrets/control-dsn').chmod(0o0)",
+            ]
+        )
+
     def test_exact_topology_is_accepted(self) -> None:
         VERIFY.validate_config(_configuration())
 
@@ -93,6 +270,34 @@ class ComposePolicyTests(unittest.TestCase):
         configuration = copy.deepcopy(_configuration())
         configuration["services"]["web"]["environment"] = {"OWNER_DSN": "fake"}
         with self.assertRaisesRegex(VERIFY.PolicyError, "secret environment"):
+            VERIFY.validate_config(configuration)
+
+    def test_control_secret_or_prefix_on_another_service_is_rejected(self) -> None:
+        configuration = copy.deepcopy(_configuration())
+        configuration["services"]["agent-api"]["environment"]["SLAIF_CONTROL_MODE"] = (
+            "development"
+        )
+        with self.assertRaisesRegex(VERIFY.PolicyError, "foreign Control setting"):
+            VERIFY.validate_config(configuration)
+
+    def test_master_secret_mount_on_control_is_rejected(self) -> None:
+        configuration = copy.deepcopy(_configuration())
+        configuration["services"]["control-api"]["volumes"].append(
+            {
+                "source": "local-secrets",
+                "target": "/run/slaif-secrets",
+                "read_only": True,
+            }
+        )
+        with self.assertRaisesRegex(VERIFY.PolicyError, "mount policy"):
+            VERIFY.validate_config(configuration)
+
+    def test_nginx_must_follow_control_database_readiness(self) -> None:
+        configuration = copy.deepcopy(_configuration())
+        configuration["services"]["nginx"]["healthcheck"] = {
+            "test": ["CMD", "wget", "/health/ready"]
+        }
+        with self.assertRaisesRegex(VERIFY.PolicyError, "readiness dependency"):
             VERIFY.validate_config(configuration)
 
     def test_mutable_build_metadata_is_rejected(self) -> None:

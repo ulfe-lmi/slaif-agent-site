@@ -86,6 +86,8 @@ EXPECTED_COMMANDS = {
         "/opt/slaif/bin/initialize-local-secrets.py",
         "--directory",
         "/run/slaif-secrets",
+        "--control-directory",
+        "/run/slaif-control",
     ],
 }
 EXPECTED_BUILD_FILES = {
@@ -103,13 +105,17 @@ EXPECTED_BUILD_ARGS = {
 EXPECTED_MOUNTS = {
     **{name: set() for name in REQUIRED_SERVICES},
     "bootstrap": {("local-secrets", "/run/slaif-secrets", True)},
+    "control-api": {("control-secret", "/run/slaif-control", True)},
     "media-gc": {("media-data", "/var/lib/slaif/media", False)},
     "media-service": {("media-data", "/var/lib/slaif/media", False)},
     "postgres": {
         ("local-secrets", "/run/slaif-secrets", True),
         ("postgres-data", "/var/lib/postgresql/data", False),
     },
-    "secrets-init": {("local-secrets", "/run/slaif-secrets", False)},
+    "secrets-init": {
+        ("control-secret", "/run/slaif-control", False),
+        ("local-secrets", "/run/slaif-secrets", False),
+    },
 }
 EXPECTED_CAP_ADD = {
     "postgres": {"CHOWN", "DAC_OVERRIDE", "FOWNER", "SETGID", "SETUID"},
@@ -120,6 +126,7 @@ EXPECTED_GROUP_ADD = {
     "postgres": {"10002"},
 }
 SECRET_MOUNT_SERVICES = {"bootstrap", "postgres", "secrets-init"}
+CONTROL_SECRET_MOUNT_SERVICES = {"control-api", "secrets-init"}
 LONG_RUNNING_APPLICATIONS = REQUIRED_SERVICES - {
     "bootstrap",
     "postgres",
@@ -168,7 +175,7 @@ def validate_config(config: dict[str, Any]) -> None:
     )
     _fail(
         set(config.get("volumes", {}))
-        == {"local-secrets", "media-data", "postgres-data"},
+        == {"control-secret", "local-secrets", "media-data", "postgres-data"},
         "volume inventory mismatch",
     )
     networks = config["networks"]
@@ -241,12 +248,59 @@ def validate_config(config: dict[str, Any]) -> None:
             has_secrets == (name in SECRET_MOUNT_SERVICES),
             f"{name}: secret mount policy mismatch",
         )
+        has_control_secret = any(
+            mount.get("source") == "control-secret" for mount in mounts
+        )
+        _fail(
+            has_control_secret == (name in CONTROL_SECRET_MOUNT_SERVICES),
+            f"{name}: Control secret mount policy mismatch",
+        )
         environment = service.get("environment", {})
         if name in LONG_RUNNING_APPLICATIONS:
-            serialized = json.dumps(environment).casefold()
+            safe_environment = {
+                key: value
+                for key, value in environment.items()
+                if key == "SLAIF_CONTROL_DSN_FILE" and name == "control-api"
+            }
+            serialized = json.dumps(
+                {
+                    key: value
+                    for key, value in environment.items()
+                    if key not in safe_environment
+                }
+            ).casefold()
             _fail(
                 "password" not in serialized and "dsn" not in serialized,
                 f"{name}: database secret environment present",
+            )
+            _fail(
+                not any(
+                    key.startswith("SLAIF_CONTROL_")
+                    for key in environment
+                    if name != "control-api"
+                ),
+                f"{name}: foreign Control setting present",
+            )
+        if name == "control-api":
+            _fail(
+                {
+                    key: environment.get(key)
+                    for key in (
+                        "SLAIF_CONTROL_DSN_FILE",
+                        "SLAIF_CONTROL_EXPECTED_DATABASE",
+                        "SLAIF_CONTROL_EXPECTED_LOGIN",
+                        "SLAIF_CONTROL_EXPECTED_PRIVILEGE_ROLE",
+                        "SLAIF_CONTROL_MODE",
+                    )
+                }
+                == {
+                    "SLAIF_CONTROL_DSN_FILE": "/run/slaif-control/control-dsn",
+                    "SLAIF_CONTROL_EXPECTED_DATABASE": "slaif",
+                    "SLAIF_CONTROL_EXPECTED_LOGIN": "slaif_control_login",
+                    "SLAIF_CONTROL_EXPECTED_PRIVILEGE_ROLE": "slaif_control",
+                    "SLAIF_CONTROL_MODE": "development",
+                },
+                "control-api: database configuration mismatch",
             )
         if name in LONG_RUNNING_BACKENDS:
             _fail(
@@ -284,6 +338,11 @@ def validate_config(config: dict[str, Any]) -> None:
     _fail(
         "ports" not in services["browser-worker"],
         "browser worker is externally published",
+    )
+    nginx_health = " ".join(services["nginx"]["healthcheck"]["test"])
+    _fail(
+        "/health/ready" in nginx_health and "/api/control/health/ready" in nginx_health,
+        "nginx: Control database readiness dependency missing",
     )
 
 

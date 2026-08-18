@@ -14,6 +14,7 @@ import pytest
 from fastapi import FastAPI
 from slaif_agent_site.application import run_http_process
 from slaif_agent_site.authority import LifecycleKind, ProcessKind, authority_for
+from slaif_agent_site.control_api.app import run_control_process
 from slaif_agent_site.worker import run_worker_process, serve_worker
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[4]
@@ -82,6 +83,23 @@ def test_http_check_does_not_call_uvicorn_and_normal_run_passes_app_object() -> 
         assert isinstance(uvicorn_run.call_args.args[0], FastAPI)
         assert uvicorn_run.call_args.kwargs["host"] == "127.0.0.1"
         assert uvicorn_run.call_args.kwargs["port"] == 8000
+
+
+def test_control_check_uses_package_app_without_reading_or_connecting() -> None:
+    environment = {
+        key: value for key, value in os.environ.items() if not key.startswith("SLAIF_")
+    }
+    environment.update(
+        {
+            "SLAIF_MODE": "test",
+            "SLAIF_CONTROL_MODE": "development",
+            "SLAIF_CONTROL_DSN_FILE": "/definitely/not/read/in/check-mode",
+        }
+    )
+    with patch.dict(os.environ, environment, clear=True):
+        with patch("slaif_agent_site.control_api.app.uvicorn.run") as uvicorn_run:
+            assert run_control_process(argv=["--check"]) == 0
+            uvicorn_run.assert_not_called()
 
 
 @pytest.mark.parametrize(
@@ -203,3 +221,22 @@ def test_long_running_processes_do_not_import_bootstrap_or_owner_connections() -
     assert "BootstrapSettings" not in source
     assert "owner_connection" not in source
     assert "provisioner_connection" not in source
+
+
+def test_only_control_package_imports_control_database_authority() -> None:
+    source_root = REPOSITORY_ROOT / "services/backend/src/slaif_agent_site"
+    sources: list[str] = []
+    for package in MODULE_BY_PROCESS.values():
+        if package in {"bootstrap", "control_api"}:
+            continue
+        package_root = source_root / package
+        if package_root.is_dir():
+            sources.extend(
+                path.read_text(encoding="utf-8")
+                for path in sorted(package_root.glob("*.py"))
+            )
+    combined = "\n".join(sources)
+    assert "ControlDatabaseSettings" not in combined
+    assert "ControlDatabase" not in combined
+    assert "SLAIF_CONTROL_" not in combined
+    assert "asyncpg" not in combined
