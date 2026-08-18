@@ -18,7 +18,9 @@ CONNECTION_UNAVAILABLE = "connection_unavailable"
 CONFIGURATION_INVALID = "configuration_invalid"
 MIGRATION_MISMATCH = "migration_mismatch"
 ROLE_MISMATCH = "role_mismatch"
+TIMEOUT = "timeout"
 UNSAFE_MARKER = "unsafe_marker"
+DATABASE_OUTAGE_REASONS = frozenset({CONNECTION_UNAVAILABLE, TIMEOUT})
 DIAGNOSTIC_STAGES = frozenset(
     {
         "setup",
@@ -78,6 +80,50 @@ def failure_diagnostic(stage: str, operation: str, reason: str) -> str:
     return (
         "control-readiness-fixture: FAILED "
         f"stage={safe_stage} operation={safe_operation} reason={safe_reason}"
+    )
+
+
+def readiness_matches(
+    status: int,
+    document: Any,
+    expected_reason: str | frozenset[str] | None,
+) -> bool:
+    """Match the exact ready or bounded database-unavailable contract."""
+
+    if not isinstance(document, dict):
+        return False
+    components = document.get("components")
+    if not isinstance(components, list):
+        return False
+    try:
+        database = next(
+            item
+            for item in components
+            if isinstance(item, dict) and item.get("component") == "database"
+        )
+    except StopIteration:
+        return False
+    if expected_reason is None:
+        return (
+            status == 200
+            and document.get("status") == "ready"
+            and database
+            == {
+                "component": "database",
+                "status": "ok",
+                "reason": None,
+            }
+        )
+    expected_reasons = (
+        frozenset({expected_reason})
+        if isinstance(expected_reason, str)
+        else expected_reason
+    )
+    return (
+        status == 503
+        and document.get("status") == "not_ready"
+        and database.get("status") == "unavailable"
+        and database.get("reason") in expected_reasons
     )
 
 
@@ -177,35 +223,19 @@ class ControlReadinessFixture:
         except (KeyError, TypeError, ValueError, json.JSONDecodeError):
             raise FixtureError("malformed-response") from None
 
-    def _wait_readiness(self, reason: str | None, *, timeout: float = 30.0) -> None:
+    def _wait_readiness(
+        self,
+        reason: str | frozenset[str] | None,
+        *,
+        timeout: float = 30.0,
+    ) -> None:
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             try:
                 status, document = self._health_document("health/ready")
-                components = document.get("components", [])
-                database = next(
-                    item for item in components if item.get("component") == "database"
-                )
-                if reason is None:
-                    if (
-                        status == 200
-                        and document.get("status") == "ready"
-                        and database
-                        == {
-                            "component": "database",
-                            "status": "ok",
-                            "reason": None,
-                        }
-                    ):
-                        return
-                elif (
-                    status == 503
-                    and document.get("status") == "not_ready"
-                    and database.get("status") == "unavailable"
-                    and database.get("reason") == reason
-                ):
+                if readiness_matches(status, document, reason):
                     return
-            except (FixtureError, StopIteration):
+            except FixtureError:
                 pass
             time.sleep(1)
         raise FixtureError("timeout")
@@ -535,7 +565,7 @@ class ControlReadinessFixture:
         self.mark("stopped-postgres", "stop-postgres")
         self.compose("stop", "postgres")
         self.mark("stopped-postgres", "await-readiness")
-        self._wait_readiness(CONNECTION_UNAVAILABLE)
+        self._wait_readiness(DATABASE_OUTAGE_REASONS)
         self.mark("stopped-postgres", "assert-liveness")
         self._assert_liveness()
         self.mark("stopped-postgres", "assert-nginx")

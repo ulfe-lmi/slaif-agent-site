@@ -113,6 +113,71 @@ def _configuration() -> dict[str, object]:
 
 
 class ComposePolicyTests(unittest.TestCase):
+    @staticmethod
+    def _database_readiness_document(reason: object) -> dict[str, object]:
+        return {
+            "status": "not_ready",
+            "components": [
+                {
+                    "component": "database",
+                    "status": "unavailable",
+                    "reason": reason,
+                }
+            ],
+        }
+
+    def test_control_fixture_database_outage_predicate_is_exact(self) -> None:
+        self.assertEqual(
+            CONTROL_FIXTURE.DATABASE_OUTAGE_REASONS,
+            frozenset({"connection_unavailable", "timeout"}),
+        )
+        for reason in ("connection_unavailable", "timeout"):
+            with self.subTest(reason=reason):
+                self.assertTrue(
+                    CONTROL_FIXTURE.readiness_matches(
+                        503,
+                        self._database_readiness_document(reason),
+                        CONTROL_FIXTURE.DATABASE_OUTAGE_REASONS,
+                    )
+                )
+        for reason in ("probe_error", "shutdown", "unknown", None):
+            with self.subTest(reason=reason):
+                self.assertFalse(
+                    CONTROL_FIXTURE.readiness_matches(
+                        503,
+                        self._database_readiness_document(reason),
+                        CONTROL_FIXTURE.DATABASE_OUTAGE_REASONS,
+                    )
+                )
+        self.assertFalse(
+            CONTROL_FIXTURE.readiness_matches(
+                200,
+                self._database_readiness_document("timeout"),
+                CONTROL_FIXTURE.DATABASE_OUTAGE_REASONS,
+            )
+        )
+        self.assertFalse(
+            CONTROL_FIXTURE.readiness_matches(
+                503,
+                {"status": "not_ready", "components": []},
+                CONTROL_FIXTURE.DATABASE_OUTAGE_REASONS,
+            )
+        )
+        self.assertFalse(
+            CONTROL_FIXTURE.readiness_matches(
+                503,
+                ["malformed"],
+                CONTROL_FIXTURE.DATABASE_OUTAGE_REASONS,
+            )
+        )
+        self.assertFalse(
+            CONTROL_FIXTURE.readiness_matches(
+                503,
+                self._database_readiness_document("timeout"),
+                CONTROL_FIXTURE.CONNECTION_UNAVAILABLE,
+            )
+        )
+
     def test_control_fixture_diagnostics_are_allowlisted_and_secret_free(self) -> None:
         self.assertEqual(
             CONTROL_FIXTURE.failure_diagnostic(
