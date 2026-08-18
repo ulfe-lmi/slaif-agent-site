@@ -198,13 +198,12 @@ async def test_issue_repeat_rotate_expire_revoke_and_initialized_lifecycle(
             "initialized_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP "
             "WHERE singleton"
         )
-    for operation in (
-        lambda: ensure_setup_token(database.settings),
-        lambda: rotate_setup_token(database.settings),
-        lambda: revoke_setup_token(database.settings),
-    ):
-        with pytest.raises(BootstrapStateError):
-            await operation()
+    with pytest.raises(BootstrapStateError):
+        await ensure_setup_token(database.settings)
+    with pytest.raises(BootstrapStateError):
+        await rotate_setup_token(database.settings)
+    with pytest.raises(BootstrapStateError):
+        await revoke_setup_token(database.settings)
     initialized = await setup_token_status(database.settings)
     assert initialized.initialized and not initialized.token_present
 
