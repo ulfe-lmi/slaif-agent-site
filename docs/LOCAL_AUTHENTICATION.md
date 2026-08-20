@@ -78,22 +78,29 @@ and lookup. No plaintext session or CSRF value, recoverable token, cookie, or
 browser storage value enters PostgreSQL.
 
 The owner-created functions `slaif_create_human_session`,
-`slaif_resolve_human_session`, and `slaif_revoke_human_session` are fully
+`slaif_authenticate_human_session`, `slaif_resolve_human_session`, and
+`slaif_revoke_human_session` are fully
 qualified `SECURITY DEFINER` functions with fixed `search_path=pg_catalog`.
 They revoke `PUBLIC` and grant execution only to `slaif_control`; every other
 Control/runtime/reviewer role has no direct relation or function authority.
 Creation requires an already-authenticated active user and sets issuance times
-from the database clock. Resolve checks active-user state, both digests,
-revocation, idle expiry, and absolute expiry while locking the row; it touches
-`last_seen_at` only after the configured interval and never refreshes
-`recent_auth_at`. Revoke is idempotent.
+from the database clock. Safe authentication checks the session digest without
+requiring CSRF. State-changing authentication checks both digests, active-user
+state, revocation, idle expiry, and absolute expiry while locking the row; it
+touches `last_seen_at` only after the configured interval and never refreshes
+`recent_auth_at`. Revoke requires the bound CSRF proof and is externally
+idempotent. The typed service keeps the row lock in one transaction while
+`secrets.compare_digest` checks the stored fixed-size defense digests before
+returning authority; PostgreSQL rechecks the digests in the same boundary.
 
 The typed service uses versioned boundary formats
 `sas2_session_<32-hex-id>_<base64url-secret>` and
 `sas2_csrf_<base64url-secret>`. Each secret is 256 bits from `secrets`; only
 SHA-256 digests cross the database boundary and malformed, unknown, wrong,
 expired, disabled, revoked, and cross-session credentials return the same
-`HumanSessionError`. `secrets.compare_digest` is used by the secret helper.
+`HumanSessionError`. Safe reads use `authenticate`; state-changing calls use
+`authenticate_state_changing` and require the session-bound CSRF credential;
+`revoke` requires it as well.
 Issued values are masked `SecretStr` fields and are never part of repr,
 serialization, exceptions, logs, URLs, or audit data.
 

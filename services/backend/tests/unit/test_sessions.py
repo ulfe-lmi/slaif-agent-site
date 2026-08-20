@@ -8,8 +8,10 @@ from uuid import UUID, uuid4
 import pytest
 from pydantic import SecretStr, ValidationError
 from slaif_agent_site.identity.sessions import (
+    HumanSessionContext,
     HumanSessionError,
     HumanSessionPolicy,
+    HumanSessionService,
     SessionCookiePolicy,
     SessionCredentialError,
     constant_time_digest_equal,
@@ -20,6 +22,44 @@ from slaif_agent_site.identity.sessions import (
     parse_session_token,
     session_cookie_policy,
 )
+
+
+class _Transaction:
+    async def __aenter__(self) -> _Transaction:
+        return self
+
+    async def __aexit__(self, *_args: object) -> None:
+        return None
+
+
+class _Connection:
+    def __init__(self, rows: list[tuple[object, ...]]) -> None:
+        self.rows = iter(rows)
+
+    def transaction(self) -> _Transaction:
+        return _Transaction()
+
+    async def fetchrow(self, *_args: object) -> tuple[object, ...]:
+        return next(self.rows)
+
+
+class _Acquire:
+    def __init__(self, connection: _Connection) -> None:
+        self.connection = connection
+
+    async def __aenter__(self) -> _Connection:
+        return self.connection
+
+    async def __aexit__(self, *_args: object) -> None:
+        return None
+
+
+class _Pool:
+    def __init__(self, connection: _Connection) -> None:
+        self.connection = connection
+
+    def acquire(self) -> _Acquire:
+        return _Acquire(self.connection)
 
 
 def test_versioned_credentials_round_trip_and_masked_repr() -> None:
@@ -125,3 +165,68 @@ def test_context_shape_has_no_credential_fields() -> None:
     assert isinstance(context.session_id, UUID)
     assert isinstance(SecretStr("fake").get_secret_value(), str)
     assert HumanSessionError.__name__ == "HumanSessionError"
+
+
+@pytest.mark.asyncio
+async def test_real_service_paths_call_constant_time_digest_comparison(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    now = datetime.now(UTC)
+    user_id = uuid4()
+    session_id = uuid4()
+    secret = b"s" * 32
+    csrf = b"c" * 32
+    calls: list[tuple[bytes, bytes]] = []
+
+    def spy(left: bytes, right: bytes) -> bool:
+        calls.append((left, right))
+        return left == right
+
+    monkeypatch.setattr(
+        "slaif_agent_site.identity.sessions.constant_time_digest_equal", spy
+    )
+    service = HumanSessionService(
+        _Pool(
+            _Connection(
+                [
+                    (
+                        session_id,
+                        user_id,
+                        "sas2_" + "a" * 32,
+                        True,
+                        now,
+                        now,
+                        digest_secret(secret),
+                    ),
+                    (
+                        session_id,
+                        user_id,
+                        "sas2_" + "a" * 32,
+                        True,
+                        now,
+                        now,
+                        digest_secret(secret),
+                        digest_secret(csrf),
+                    ),
+                    (True, digest_secret(secret), digest_secret(csrf)),
+                ]
+            )
+        ),
+        random_bytes=lambda size: b"x" * size,
+    )
+    token = format_session_token("sas2_" + "a" * 32, secret)
+    csrf_token = format_csrf_token(csrf)
+    assert isinstance(await service.authenticate(token), HumanSessionContext)
+    assert isinstance(
+        await service.authenticate_state_changing(token, csrf_token),
+        HumanSessionContext,
+    )
+    await service.revoke(token, csrf_token)
+    expected = [
+        (digest_secret(secret), digest_secret(secret)),
+        (digest_secret(secret), digest_secret(secret)),
+        (digest_secret(csrf), digest_secret(csrf)),
+        (digest_secret(secret), digest_secret(secret)),
+        (digest_secret(csrf), digest_secret(csrf)),
+    ]
+    assert calls == expected

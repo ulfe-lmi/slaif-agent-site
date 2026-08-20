@@ -32,8 +32,9 @@ schema/function surface. Grants are applied only after real objects exist and
 the state reaches `HARDENED`.
 
 Revision `010_001` adds the non-COW `control.user_session` relation. Control
-receives only the three owner-created lifecycle functions for create,
-resolve/touch/CSRF validation, and idempotent revoke. Session and CSRF digests
+receives only the four owner-created lifecycle functions for create, safe
+authentication, state-changing resolve/touch/CSRF validation, and idempotent
+CSRF-bound revoke. Session and CSRF digests
 are exactly 32 bytes; plaintext credentials never reach the database. Every
 runtime, reviewer, reader, scheduler, media, and GC role has no relation or
 function authority for these objects.

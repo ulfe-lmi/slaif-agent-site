@@ -122,6 +122,90 @@ def upgrade() -> None:
     )
     op.execute(
         """
+        CREATE FUNCTION "control"."slaif_authenticate_human_session"(
+            "p_public_id" text,
+            "p_secret_digest" bytea,
+            "p_idle_seconds" integer,
+            "p_touch_interval_seconds" integer,
+            "p_recent_auth_seconds" integer
+        )
+        RETURNS TABLE (
+            "session_id" uuid,
+            "user_account_id" uuid,
+            "public_id" text,
+            "recent_auth" boolean,
+            "last_seen_at" timestamp with time zone,
+            "absolute_expires_at" timestamp with time zone,
+            "stored_secret_digest" bytea
+        )
+        LANGUAGE plpgsql
+        VOLATILE
+        SECURITY DEFINER
+        PARALLEL UNSAFE
+        SET search_path = pg_catalog
+        ROWS 1
+        AS $function$
+        DECLARE
+            "candidate" "control"."user_session"%ROWTYPE;
+            "account_status" text;
+            "now_at" timestamp with time zone;
+            "next_seen" timestamp with time zone;
+        BEGIN
+            IF "p_public_id" IS NULL
+               OR "p_secret_digest" IS NULL
+               OR pg_catalog.octet_length("p_secret_digest") IS DISTINCT FROM 32
+               OR "p_idle_seconds" <= 0
+               OR "p_touch_interval_seconds" <= 0
+               OR "p_recent_auth_seconds" <= 0
+               OR "p_public_id" !~ '^sas2_[0-9a-f]{32}$' THEN
+                RETURN;
+            END IF;
+
+            SELECT * INTO "candidate"
+            FROM "control"."user_session" AS "session"
+            WHERE "session"."public_id" = "p_public_id"
+              AND "session"."secret_digest" = "p_secret_digest"
+            FOR UPDATE;
+            IF NOT FOUND THEN
+                RETURN;
+            END IF;
+
+            SELECT "status" INTO "account_status"
+            FROM "control"."user_account"
+            WHERE "id" = "candidate"."user_account_id";
+            "now_at" := current_timestamp;
+            IF "account_status" IS DISTINCT FROM 'ACTIVE'
+               OR "candidate"."revoked_at" IS NOT NULL
+               OR "candidate"."absolute_expires_at" <= "now_at"
+               OR "candidate"."last_seen_at" +
+                    ("p_idle_seconds" * interval '1 second') <= "now_at" THEN
+                RETURN;
+            END IF;
+
+            "next_seen" := "candidate"."last_seen_at";
+            IF "candidate"."last_seen_at" +
+                    ("p_touch_interval_seconds" * interval '1 second') <= "now_at"
+               AND "now_at" < "candidate"."absolute_expires_at" THEN
+                "next_seen" := "now_at";
+                UPDATE "control"."user_session"
+                SET "last_seen_at" = "now_at"
+                WHERE "id" = "candidate"."id"
+                  AND "revoked_at" IS NULL
+                  AND "absolute_expires_at" > "now_at";
+            END IF;
+
+            RETURN QUERY SELECT "candidate"."id",
+                "candidate"."user_account_id", "candidate"."public_id",
+                "candidate"."recent_auth_at" >=
+                    ("now_at" - ("p_recent_auth_seconds" * interval '1 second')),
+                "next_seen", "candidate"."absolute_expires_at",
+                "candidate"."secret_digest";
+        END
+        $function$
+        """
+    )
+    op.execute(
+        """
         CREATE FUNCTION "control"."slaif_resolve_human_session"(
             "p_public_id" text,
             "p_secret_digest" bytea,
@@ -136,7 +220,9 @@ def upgrade() -> None:
             "public_id" text,
             "recent_auth" boolean,
             "last_seen_at" timestamp with time zone,
-            "absolute_expires_at" timestamp with time zone
+            "absolute_expires_at" timestamp with time zone,
+            "stored_secret_digest" bytea,
+            "stored_csrf_secret_digest" bytea
         )
         LANGUAGE plpgsql
         VOLATILE
@@ -202,7 +288,8 @@ def upgrade() -> None:
                 "candidate"."user_account_id", "candidate"."public_id",
                 "candidate"."recent_auth_at" >=
                     ("now_at" - ("p_recent_auth_seconds" * interval '1 second')),
-                "next_seen", "candidate"."absolute_expires_at";
+                "next_seen", "candidate"."absolute_expires_at",
+                "candidate"."secret_digest", "candidate"."csrf_secret_digest";
         END
         $function$
         """
@@ -211,30 +298,59 @@ def upgrade() -> None:
         """
         CREATE FUNCTION "control"."slaif_revoke_human_session"(
             "p_public_id" text,
-            "p_secret_digest" bytea
+            "p_secret_digest" bytea,
+            "p_csrf_secret_digest" bytea
         )
-        RETURNS boolean
-        LANGUAGE sql
+        RETURNS TABLE (
+            "revoked" boolean,
+            "stored_secret_digest" bytea,
+            "stored_csrf_secret_digest" bytea
+        )
+        LANGUAGE plpgsql
         VOLATILE
         SECURITY DEFINER
         PARALLEL UNSAFE
         SET search_path = pg_catalog
         AS $function$
-            UPDATE "control"."user_session"
-            SET "revoked_at" = COALESCE("revoked_at", current_timestamp)
-            WHERE "public_id" = "p_public_id"
-              AND "secret_digest" = "p_secret_digest"
-              AND "revoked_at" IS NULL
-            RETURNING true
+        DECLARE
+            "candidate" "control"."user_session"%ROWTYPE;
+        BEGIN
+            SELECT * INTO "candidate"
+            FROM "control"."user_session" AS "session"
+            WHERE "session"."public_id" = "p_public_id"
+            FOR UPDATE;
+            IF NOT FOUND THEN
+                RETURN;
+            END IF;
+            IF "candidate"."secret_digest" IS DISTINCT FROM "p_secret_digest"
+               OR "candidate"."csrf_secret_digest" IS DISTINCT FROM
+                    "p_csrf_secret_digest" THEN
+                RETURN QUERY SELECT false, "candidate"."secret_digest",
+                    "candidate"."csrf_secret_digest";
+                RETURN;
+            END IF;
+            IF "candidate"."revoked_at" IS NULL THEN
+                UPDATE "control"."user_session"
+                SET "revoked_at" = current_timestamp
+                WHERE "id" = "candidate"."id";
+                RETURN QUERY SELECT true, "candidate"."secret_digest",
+                    "candidate"."csrf_secret_digest";
+            ELSE
+                RETURN QUERY SELECT false, "candidate"."secret_digest",
+                    "candidate"."csrf_secret_digest";
+            END IF;
+        END
         $function$
         """
     )
     for function in (
+        '"control"."slaif_authenticate_human_session"('
+        "text, bytea, integer, integer, integer)",
         '"control"."slaif_create_human_session"('
         "uuid, text, bytea, bytea, uuid, integer, integer, integer)",
         '"control"."slaif_resolve_human_session"('
         "text, bytea, bytea, integer, integer, integer)",
-        '"control"."slaif_revoke_human_session"(text, bytea)',
+        '"control"."slaif_revoke_human_session"(text, bytea, bytea)',
     ):
         op.execute(f'ALTER FUNCTION {function} OWNER TO "slaif_owner"')
         op.execute(f"REVOKE ALL ON FUNCTION {function} FROM PUBLIC")
@@ -242,7 +358,13 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.execute('DROP FUNCTION "control"."slaif_revoke_human_session"(text, bytea)')
+    op.execute(
+        'DROP FUNCTION "control"."slaif_authenticate_human_session"('
+        "text, bytea, integer, integer, integer)"
+    )
+    op.execute(
+        'DROP FUNCTION "control"."slaif_revoke_human_session"(text, bytea, bytea)'
+    )
     op.execute(
         'DROP FUNCTION "control"."slaif_resolve_human_session"('
         "text, bytea, bytea, integer, integer, integer)"

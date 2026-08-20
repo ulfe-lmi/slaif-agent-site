@@ -526,7 +526,9 @@ def test_database_source_uses_public_foundation_boundary_and_no_domain_ddl() -> 
         package / "db/alembic/versions/010_001_human_session.py"
     ).read_text(encoding="utf-8")
     assert session_revision.count("CREATE TABLE") == 1
-    assert session_revision.count("CREATE FUNCTION") == 3
+    assert session_revision.count("CREATE FUNCTION") == 4
+    assert '"control"."slaif_authenticate_human_session"' in session_revision
+    assert '"control"."slaif_revoke_human_session"' in session_revision
     assert '"control"."user_session"' in session_revision
     assert '"secret_digest" bytea NOT NULL' in session_revision
     assert '"csrf_secret_digest" bytea NOT NULL' in session_revision

@@ -47,6 +47,11 @@ CONTROL_FUNCTIONS = {
         "p_display_name text, p_email text",
     ): "bigint, bytea, uuid, text, text, text, text, text",
     (
+        "slaif_authenticate_human_session",
+        "p_public_id text, p_secret_digest bytea, p_idle_seconds integer, "
+        "p_touch_interval_seconds integer, p_recent_auth_seconds integer",
+    ): "text, bytea, integer, integer, integer",
+    (
         "slaif_create_human_session",
         "p_session_id uuid, p_public_id text, p_secret_digest bytea, "
         "p_csrf_secret_digest bytea, p_user_account_id uuid, "
@@ -61,8 +66,8 @@ CONTROL_FUNCTIONS = {
     ): "text, bytea, bytea, integer, integer, integer",
     (
         "slaif_revoke_human_session",
-        "p_public_id text, p_secret_digest bytea",
-    ): "text, bytea",
+        "p_public_id text, p_secret_digest bytea, p_csrf_secret_digest bytea",
+    ): "text, bytea, bytea",
 }
 
 

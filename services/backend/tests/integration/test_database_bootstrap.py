@@ -475,6 +475,7 @@ async def test_clean_migration_current_repeat_downgrade_and_rebuild(
             ("control", "installation_state"),
             ("control", "platform_administrator"),
             ("control", "user_account"),
+            ("control", "user_session"),
         ]
 
     await upgrade(database.settings)

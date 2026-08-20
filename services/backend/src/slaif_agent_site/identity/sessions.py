@@ -272,33 +272,35 @@ class HumanSessionService:
             recent_auth_at=row[5],
         )
 
-    async def resolve(
-        self, token: SecretStr | str, csrf_token: SecretStr | str
-    ) -> HumanSessionContext:
-        """Resolve both credentials and return only minimal trusted context."""
+    async def authenticate(self, token: SecretStr | str) -> HumanSessionContext:
+        """Authenticate a session for safe/read requests; no CSRF is accepted."""
 
         try:
             public_id, secret = parse_session_token(token)
-            csrf_secret = parse_csrf_token(csrf_token)
+            presented_digest = digest_secret(secret)
             async with self._pool.acquire() as connection:
-                row = await connection.fetchrow(
-                    'SELECT * FROM "control"."slaif_resolve_human_session"('
-                    "$1, $2, $3, $4, $5, $6)",
-                    public_id,
-                    digest_secret(secret),
-                    digest_secret(csrf_secret),
-                    self._policy.idle_timeout_seconds,
-                    self._policy.touch_interval_seconds,
-                    self._policy.recent_auth_window_seconds,
-                )
+                async with connection.transaction():
+                    row = await connection.fetchrow(
+                        'SELECT * FROM "control"."slaif_authenticate_human_session"('
+                        "$1, $2, $3, $4, $5)",
+                        public_id,
+                        presented_digest,
+                        self._policy.idle_timeout_seconds,
+                        self._policy.touch_interval_seconds,
+                        self._policy.recent_auth_window_seconds,
+                    )
+                    if row is None or not constant_time_digest_equal(
+                        bytes(row[6]), presented_digest
+                    ):
+                        raise HumanSessionError()
         except (SessionCredentialError, ValidationError):
             raise HumanSessionError() from None
         except asyncio.CancelledError:
             raise
+        except HumanSessionError:
+            raise
         except Exception:
             raise HumanSessionError() from None
-        if row is None:
-            raise HumanSessionError()
         return HumanSessionContext(
             session_id=row[0],
             user_account_id=row[1],
@@ -308,20 +310,81 @@ class HumanSessionService:
             absolute_expires_at=row[5],
         )
 
-    async def revoke(self, token: SecretStr | str) -> None:
-        """Revoke idempotently; malformed/unknown credentials fail closed."""
+    async def authenticate_state_changing(
+        self, token: SecretStr | str, csrf_token: SecretStr | str
+    ) -> HumanSessionContext:
+        """Authenticate a state-changing request with its bound CSRF proof."""
 
         try:
             public_id, secret = parse_session_token(token)
+            csrf_secret = parse_csrf_token(csrf_token)
+            presented_digest = digest_secret(secret)
+            presented_csrf_digest = digest_secret(csrf_secret)
             async with self._pool.acquire() as connection:
-                await connection.fetchval(
-                    'SELECT "control"."slaif_revoke_human_session"($1, $2)',
-                    public_id,
-                    digest_secret(secret),
-                )
-        except SessionCredentialError:
+                async with connection.transaction():
+                    row = await connection.fetchrow(
+                        'SELECT * FROM "control"."slaif_resolve_human_session"('
+                        "$1, $2, $3, $4, $5, $6)",
+                        public_id,
+                        presented_digest,
+                        presented_csrf_digest,
+                        self._policy.idle_timeout_seconds,
+                        self._policy.touch_interval_seconds,
+                        self._policy.recent_auth_window_seconds,
+                    )
+                    if row is None or not (
+                        constant_time_digest_equal(bytes(row[6]), presented_digest)
+                        and constant_time_digest_equal(
+                            bytes(row[7]), presented_csrf_digest
+                        )
+                    ):
+                        raise HumanSessionError()
+        except (SessionCredentialError, ValidationError):
             raise HumanSessionError() from None
         except asyncio.CancelledError:
+            raise
+        except HumanSessionError:
+            raise
+        except Exception:
+            raise HumanSessionError() from None
+        return HumanSessionContext(
+            session_id=row[0],
+            user_account_id=row[1],
+            public_id=row[2],
+            recent_auth=bool(row[3]),
+            last_seen_at=row[4],
+            absolute_expires_at=row[5],
+        )
+
+    async def revoke(self, token: SecretStr | str, csrf_token: SecretStr | str) -> None:
+        """Revoke idempotently with the bound state-changing CSRF proof."""
+
+        try:
+            public_id, secret = parse_session_token(token)
+            csrf_secret = parse_csrf_token(csrf_token)
+            presented_digest = digest_secret(secret)
+            presented_csrf_digest = digest_secret(csrf_secret)
+            async with self._pool.acquire() as connection:
+                async with connection.transaction():
+                    row = await connection.fetchrow(
+                        'SELECT * FROM "control"."slaif_revoke_human_session"('
+                        "$1, $2, $3)",
+                        public_id,
+                        presented_digest,
+                        presented_csrf_digest,
+                    )
+                    if row is not None and not (
+                        constant_time_digest_equal(bytes(row[1]), presented_digest)
+                        and constant_time_digest_equal(
+                            bytes(row[2]), presented_csrf_digest
+                        )
+                    ):
+                        raise HumanSessionError()
+        except (SessionCredentialError, ValidationError):
+            raise HumanSessionError() from None
+        except asyncio.CancelledError:
+            raise
+        except HumanSessionError:
             raise
         except Exception:
             raise HumanSessionError() from None
