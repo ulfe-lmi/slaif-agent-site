@@ -221,11 +221,11 @@ def upgrade() -> None:
                     ("p_touch_interval_seconds" * interval '1 second') <= "now_at"
                AND "now_at" < "candidate"."absolute_expires_at" THEN
                 "next_seen" := "now_at";
-                UPDATE "control"."user_session"
+                UPDATE "control"."user_session" AS "session"
                 SET "last_seen_at" = "now_at"
-                WHERE "id" = "candidate"."id"
-                  AND "revoked_at" IS NULL
-                  AND "absolute_expires_at" > "now_at";
+                WHERE "session"."id" = "candidate"."id"
+                  AND "session"."revoked_at" IS NULL
+                  AND "session"."absolute_expires_at" > "now_at";
             END IF;
 
             RETURN QUERY SELECT "candidate"."id",
@@ -308,11 +308,11 @@ def upgrade() -> None:
                     ("p_touch_interval_seconds" * interval '1 second') <= "now_at"
                AND "now_at" < "candidate"."absolute_expires_at" THEN
                 "next_seen" := "now_at";
-                UPDATE "control"."user_session"
+                UPDATE "control"."user_session" AS "session"
                 SET "last_seen_at" = "now_at"
-                WHERE "id" = "candidate"."id"
-                  AND "revoked_at" IS NULL
-                  AND "absolute_expires_at" > "now_at";
+                WHERE "session"."id" = "candidate"."id"
+                  AND "session"."revoked_at" IS NULL
+                  AND "session"."absolute_expires_at" > "now_at";
             END IF;
 
             RETURN QUERY SELECT "candidate"."id",

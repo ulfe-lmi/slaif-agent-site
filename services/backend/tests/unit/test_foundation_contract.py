@@ -552,3 +552,7 @@ def test_database_source_uses_public_foundation_boundary_and_no_domain_ddl() -> 
         '"control"."slaif_revoke_human_session"',
     ):
         assert f"DROP FUNCTION {function_name}" in downgrade
+    assert session_revision.count('UPDATE "control"."user_session" AS "session"') == 3
+    assert 'WHERE "id" = "candidate"."id"' not in session_revision
+    assert 'AND "revoked_at" IS NULL' not in session_revision
+    assert 'AND "absolute_expires_at" > "now_at"' not in session_revision
