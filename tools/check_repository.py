@@ -197,6 +197,7 @@ REQUIRED_FILES = (
         ".markdownlint-cli2.yaml",
         "AGENTS.md",
         "ARCHITECTURE.md",
+        "ARCHITECTURE-for-agents.md",
         "CONTRIBUTING.md",
         "LICENSE",
         "NOTICE",
@@ -329,6 +330,28 @@ REQUIRED_README_TARGETS = (
     "docs/assets/README.md",
     "oap/",
 )
+AGENT_ARCHITECTURE_FILE = "ARCHITECTURE-for-agents.md"
+FULL_ARCHITECTURE_FILE = "ARCHITECTURE.md"
+AGENT_FACING_ARCHITECTURE_REFERENCES = (
+    "AGENTS.md",
+    "CONTRIBUTING.md",
+    ".github/pull_request_template.md",
+    "oap/strategic-instructions/AGENTS.md",
+    "oap/strategic-instructions/AGENTS-coding-agent.md",
+)
+FULL_ARCHITECTURE_AUTHORITY_PATTERNS = (
+    r"only\s+a\s+direct\s+human/user\s+instruction\s+authorizes",
+    r"only\s+a\s+direct\s+instruction\s+from\s+the\s+human/user\s+authorizes",
+    r"unless\s+the\s+human/user\s+directly\s+instructed",
+)
+FORBIDDEN_AGENT_ARCHITECTURE_DEFAULTS = (
+    "root `ARCHITECTURE.md`",
+    "read `AGENTS.md`, `ARCHITECTURE.md`",
+    "follows `ARCHITECTURE.md`",
+    "`ARCHITECTURE.md` invariant",
+    "`ARCHITECTURE.md` is complete normative law",
+    "[ARCHITECTURE.md](ARCHITECTURE.md) for the normative product architecture",
+)
 APPROVED_ACTIONS = {
     "actions/checkout": "3d3c42e5aac5ba805825da76410c181273ba90b1",
     "actions/setup-python": "5fda3b95a4ea91299a34e894583c3862153e4b97",
@@ -414,6 +437,7 @@ class RepositoryPolicy:
     def run(self) -> list[str]:
         self.check_required_files()
         self.check_text_files()
+        self.check_agent_architecture_policy()
         self.check_logo()
         self.check_readme()
         self.check_oap()
@@ -429,6 +453,65 @@ class RepositoryPolicy:
         for relative in REQUIRED_FILES:
             if not (self.root / relative).is_file():
                 self.error(relative, "required preparation file is missing")
+
+    def check_agent_architecture_policy(self) -> None:
+        compact_path = self.root / AGENT_ARCHITECTURE_FILE
+        full_path = self.root / FULL_ARCHITECTURE_FILE
+        compact_text: str | None = None
+        if compact_path.is_file():
+            compact_text = self.read_utf8(compact_path)
+        if compact_text is not None:
+            digest_match = re.search(
+                r"\*\*Source SHA-256:\*\* `([0-9a-f]{64})`",
+                compact_text,
+            )
+            if digest_match is None:
+                self.error(compact_path, "must record the full source SHA-256")
+            elif full_path.is_file():
+                try:
+                    full_digest = hashlib.sha256(full_path.read_bytes()).hexdigest()
+                except OSError as exc:
+                    self.error(full_path, f"cannot be read ({exc})")
+                else:
+                    if digest_match.group(1) != full_digest:
+                        self.error(
+                            compact_path,
+                            "recorded source SHA-256 does not match ARCHITECTURE.md",
+                        )
+            if not any(
+                re.search(pattern, compact_text, re.IGNORECASE)
+                for pattern in FULL_ARCHITECTURE_AUTHORITY_PATTERNS
+            ):
+                self.error(
+                    compact_path,
+                    "must reserve full ARCHITECTURE.md loading for direct "
+                    "human/user instruction",
+                )
+
+        for relative in AGENT_FACING_ARCHITECTURE_REFERENCES:
+            path = self.root / relative
+            if not path.is_file():
+                continue
+            text = self.read_utf8(path)
+            if text is None:
+                continue
+            if AGENT_ARCHITECTURE_FILE not in text:
+                self.error(path, "must use ARCHITECTURE-for-agents.md by default")
+            if FULL_ARCHITECTURE_FILE not in text or not any(
+                re.search(pattern, text, re.IGNORECASE)
+                for pattern in FULL_ARCHITECTURE_AUTHORITY_PATTERNS
+            ):
+                self.error(
+                    path,
+                    "must reserve full ARCHITECTURE.md loading for direct "
+                    "human/user instruction",
+                )
+            for forbidden in FORBIDDEN_AGENT_ARCHITECTURE_DEFAULTS:
+                if forbidden in text:
+                    self.error(
+                        path,
+                        f"contains legacy full-architecture default: {forbidden}",
+                    )
 
     def iter_text_files(self) -> list[Path]:
         paths: list[Path] = []

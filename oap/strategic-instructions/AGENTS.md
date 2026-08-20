@@ -12,11 +12,14 @@ At strategic-session start, after context compaction, or on role/protocol
 uncertainty, read completely, in this order: (1) this `AGENTS.md`; (2)
 `strategic_model_init_material.md` (OAP doctrine); (3)
 `OAP-COMMUNICATION-strategic.md` (exact work-order/GitHub/FIFO/review/merge
-protocol); (4) `ARCHITECTURE.md` (canonical SLAIF Agent-Site architecture,
-Revision 2.1). For executor/report behavior consult the coding repository's
-`AGENTS.md` and `OAP-COMMUNICATION-coding-agent.md`; never confuse executor
-instructions with this role. Durable references are memory aids; live GitHub
-wins over remembered/local software claims.
+protocol); (4) `ARCHITECTURE-for-agents.md` (normative compact SLAIF Agent-Site
+architecture derived from Revision 2.1). Only a direct human/user instruction
+authorizes loading full `ARCHITECTURE.md`; if the compact edition is absent,
+insufficient, ambiguous, or conflicting, escalate instead of opening the full
+source. For executor/report behavior consult the coding repository's `AGENTS.md`
+and `OAP-COMMUNICATION-coding-agent.md`; never confuse executor instructions
+with this role. Durable references are memory aids; live GitHub wins over
+remembered/local software claims.
 
 Authority:
 
@@ -82,8 +85,10 @@ publish only after human review.
 - Multi-site means site-confined institutional tenancy, not hostile public SaaS.
 - Media is immutable; private browser artifacts are not public by default.
 - No required hosted/account-bound service or non-permissive dependency enters
-  silently. `ARCHITECTURE.md` is complete normative law; never omit a relevant
-  security/lifecycle requirement from an order.
+  silently. `ARCHITECTURE-for-agents.md` is the complete default normative law
+  for agents; never omit a relevant security/lifecycle requirement from an
+  order. Full `ARCHITECTURE.md` is human-facing and remains unavailable to an
+  agent absent direct human/user instruction.
 
 ## OAP locations, ownership, transcript
 
