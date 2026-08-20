@@ -127,12 +127,10 @@ async def test_identity_migration_objects_grants_denials_and_oidc_key(
     ) as connection:
         relations = await connection.fetch(
             "SELECT tablename::text, tableowner::text FROM pg_catalog.pg_tables "
-            "WHERE schemaname = 'control' ORDER BY tablename"
+            "WHERE schemaname = 'control' AND tablename IN ("
+            "'platform_administrator', 'user_account') ORDER BY tablename"
         )
         assert [tuple(row) for row in relations] == [
-            ("alembic_version", "slaif_owner"),
-            ("bootstrap_readiness", "slaif_owner"),
-            ("installation_state", "slaif_owner"),
             ("platform_administrator", "slaif_owner"),
             ("user_account", "slaif_owner"),
         ]

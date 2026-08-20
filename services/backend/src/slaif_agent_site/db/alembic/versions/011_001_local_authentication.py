@@ -12,8 +12,8 @@ branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 _HASH_SHAPE = (
-    r"^\\$argon2id\\$v=19\\$m=65536,t=3,p=4\\$"
-    r"[A-Za-z0-9+/]{22}\\$[A-Za-z0-9+/]{43}$"
+    r"^\$argon2id\$v=19\$m=65536,t=3,p=4\$"
+    r"[A-Za-z0-9+/]{22}\$[A-Za-z0-9+/]{43}$"
 )
 
 
@@ -60,17 +60,20 @@ def upgrade() -> None:
         PARALLEL UNSAFE
         SET search_path = pg_catalog
         AS $function$
-            UPDATE "control"."user_account" AS account
-            SET "password_hash" = p_new_password_hash,
-                "updated_at" = CURRENT_TIMESTAMP
-            WHERE p_user_account_id IS NOT NULL
-              AND p_expected_password_hash ~ '{_HASH_SHAPE}'
-              AND p_new_password_hash ~ '{_HASH_SHAPE}'
-              AND account.id = p_user_account_id
-              AND account.identity_kind = 'LOCAL'
-              AND account.status = 'ACTIVE'
-              AND account.password_hash = p_expected_password_hash
-            RETURNING TRUE
+            WITH changed AS (
+                UPDATE "control"."user_account" AS account
+                SET "password_hash" = p_new_password_hash,
+                    "updated_at" = CURRENT_TIMESTAMP
+                WHERE p_user_account_id IS NOT NULL
+                  AND p_expected_password_hash ~ '{_HASH_SHAPE}'
+                  AND p_new_password_hash ~ '{_HASH_SHAPE}'
+                  AND account.id = p_user_account_id
+                  AND account.identity_kind = 'LOCAL'
+                  AND account.status = 'ACTIVE'
+                  AND account.password_hash = p_expected_password_hash
+                RETURNING TRUE AS changed
+            )
+            SELECT COALESCE((SELECT changed FROM changed), FALSE)
         $function$
         """
     )

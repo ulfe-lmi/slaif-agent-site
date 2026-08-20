@@ -121,3 +121,79 @@ async def test_local_authentication_function_is_control_only(
     finally:
         for pool in pools.values():
             await pool.close()
+
+
+@pytest.mark.asyncio
+async def test_local_authentication_disabled_oidc_and_cas_race_leave_sessions_unchanged(
+    agent_site_database: AgentSiteDatabase,
+) -> None:
+    database = agent_site_database
+    await upgrade(database.settings)
+    await reconcile(database.settings)
+    password = SecretStr("fixture-authentication-password-456")
+    encoded = (
+        PasswordService()
+        .hash_password(password, normalized_username="active.user")
+        .get_secret_value()
+    )
+    disabled_id, active_id, oidc_id = uuid4(), uuid4(), uuid4()
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as connection:
+        await connection.execute(
+            "INSERT INTO control.user_account ("
+            "id, identity_kind, local_username, local_username_normalized, "
+            "password_hash, oidc_issuer, oidc_subject, display_name, status) VALUES "
+            "($1, 'LOCAL', 'Disabled.User', 'disabled.user', $2, NULL, NULL, "
+            "'Disabled', 'DISABLED'), "
+            "($3, 'LOCAL', 'Active.User', 'active.user', $2, NULL, NULL, "
+            "'Active', 'ACTIVE'), "
+            "($4, 'OIDC', NULL, NULL, NULL, 'https://issuer.example.test', "
+            "'subject', 'OIDC', 'ACTIVE')",
+            disabled_id,
+            encoded,
+            active_id,
+            oidc_id,
+        )
+        before = await connection.fetchval("SELECT count(*) FROM control.user_session")
+
+    adapter = ControlDatabase(_settings(database))
+    await adapter.start()
+    try:
+        for username in ("disabled.user", "oidc"):
+            with pytest.raises(
+                LocalAuthenticationError, match="^Local login failed\\.$"
+            ):
+                await adapter.authenticate_local_login(
+                    LocalLoginRequest(username=username, password=password)
+                )
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as connection:
+            replacement = encoded
+            changed = await connection.fetchval(
+                'SELECT "control"."slaif_compare_and_set_local_password_hash"('
+                "$1, $2, $3)",
+                active_id,
+                encoded,
+                replacement,
+            )
+            stale = await connection.fetchval(
+                'SELECT "control"."slaif_compare_and_set_local_password_hash"('
+                "$1, $2, $3)",
+                active_id,
+                "stale-old-hash",
+                replacement,
+            )
+        assert changed is True
+        assert stale is False
+    finally:
+        await adapter.stop()
+
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as connection:
+        assert (
+            await connection.fetchval("SELECT count(*) FROM control.user_session")
+            == before
+        )

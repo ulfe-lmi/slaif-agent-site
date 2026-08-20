@@ -7,7 +7,7 @@ import re
 from typing import Any, Protocol
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, SecretStr, field_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
 
 from .models import IdentityInputError, normalize_local_username
 from .passwords import PasswordService
@@ -33,7 +33,7 @@ class LocalLoginRequest(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     username: str
-    password: SecretStr
+    password: SecretStr = Field(exclude=True, repr=False)
 
     @field_validator("username")
     @classmethod
