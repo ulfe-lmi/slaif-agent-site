@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
+from typing import Any
 
 import httpx
 import pytest
@@ -49,6 +50,15 @@ class FakeControlDatabase:
     async def readiness(self) -> ProbeResult:
         return self.result
 
+    async def setup_status(self) -> tuple[bool, bool]:
+        raise AssertionError("health-only app cannot invoke setup status")
+
+    def human_session_service(self) -> Any:
+        raise AssertionError("health-only app cannot invoke sessions")
+
+    async def authenticate_local_login(self, _request: Any) -> Any:
+        raise AssertionError("health-only app cannot invoke login")
+
     async def create_initial_local_administrator(
         self, _request: InitialLocalAdministratorRequest
     ) -> InitialLocalAdministratorResult:
@@ -56,7 +66,14 @@ class FakeControlDatabase:
 
 
 def _route_paths(app: FastAPI) -> set[str]:
-    return {route.path for route in app.routes if isinstance(route, APIRoute)}
+    paths = {route.path for route in app.routes if isinstance(route, APIRoute)}
+    for route in app.routes:
+        original = getattr(route, "original_router", None)
+        if original is not None:
+            paths.update(
+                child.path for child in original.routes if isinstance(child, APIRoute)
+            )
+    return paths
 
 
 @pytest.mark.parametrize(("process", "factory"), HTTP_APPS)
@@ -68,7 +85,16 @@ async def test_each_app_has_only_typed_health_routes(
     if process is ProcessKind.CONTROL_API:
         arguments["database"] = database
     app = factory(**arguments)
-    assert _route_paths(app) == {"/health/live", "/health/ready"}
+    expected_routes = {"/health/live", "/health/ready"}
+    if process is ProcessKind.CONTROL_API:
+        expected_routes |= {
+            "/api/control/v1/setup/status",
+            "/api/control/v1/setup",
+            "/api/control/v1/login",
+            "/api/control/v1/session",
+            "/api/control/v1/logout",
+        }
+    assert _route_paths(app) == expected_routes
     assert app.docs_url is None
     assert app.redoc_url is None
     assert app.openapi_url is None
@@ -76,7 +102,7 @@ async def test_each_app_has_only_typed_health_routes(
     assert app.state.authority is authority_for(process)
 
     schema = app.openapi()
-    assert set(schema["paths"]) == {"/health/live", "/health/ready"}
+    assert set(schema["paths"]) == expected_routes
     assert "LivenessResponse" in schema["components"]["schemas"]
     assert "ReadinessResponse" in schema["components"]["schemas"]
     assert "ErrorEnvelope" in schema["components"]["schemas"]

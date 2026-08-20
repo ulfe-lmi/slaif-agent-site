@@ -137,10 +137,10 @@ HTTP response and adds no route or browser storage.
 
 ## Deliberately deferred
 
-There is no `/setup`, `/login`, `/logout`, user-management, or other product
-HTTP route. The server-side session/CSRF foundation is now present, but HTTP
-authentication, cookie emission, setup/login UI, NGINX, default Compose
-operator flow, OIDC, MFA, and security-event audit remain future work.
+The Control service exposes only the bounded `/api/control/v1/setup/status`,
+`/setup`, `/login`, `/session`, and `/logout` routes. User management, OIDC,
+MFA, UI, NGINX, default Compose operator flow, rate limiting, and security-event
+audit remain future work.
 Credential verification is an internal boundary only: no session issuance,
 rate limiting, login audit, or UI is implemented. Setup-token issuance is still
 explicit and is never part of default startup.

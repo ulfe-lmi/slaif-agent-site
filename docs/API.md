@@ -1,0 +1,15 @@
+# Control HTTP API
+
+The Control service exposes a bounded local-authentication boundary under
+`/api/control/v1`. Public OpenAPI and documentation URLs remain disabled.
+
+- `GET /setup/status` returns only `initialized` and `setup_available`.
+- `POST /setup` consumes the one-time setup token and creates the first local administrator.
+- `POST /login` authenticates a local administrator.
+- `GET /session` returns bounded identity, recent-auth, and expiry information.
+- `POST /logout` requires the session cookie, CSRF cookie, and matching `X-CSRF-Token` header.
+
+Successful setup and login set bounded-lifetime session and CSRF cookies. Production uses
+`__Host-slaif_session` and `__Host-slaif_csrf` with `Secure`, `Path=/`, no `Domain`, and
+`SameSite=Lax`; development uses the equivalent non-secure names. Credentials, setup tokens,
+and cookie values are never returned in response bodies or errors.

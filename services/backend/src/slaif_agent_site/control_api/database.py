@@ -46,6 +46,9 @@ READINESS_SQL = (
     "foundation_distribution, foundation_version "
     'FROM "control"."slaif_control_readiness"()'
 )
+SETUP_STATUS_SQL = (
+    'SELECT initialized, setup_available FROM "control"."slaif_setup_status"()'
+)
 INITIAL_SETUP_LOCK_SQL = (
     "SELECT initialized, setup_token_expires_at, setup_token_generation, "
     "setup_token_digest FROM control.slaif_initial_setup_lock()"
@@ -91,9 +94,17 @@ class ControlDatabaseAdapter(Protocol):
 
     async def readiness(self) -> ProbeResult: ...
 
+    async def setup_status(self) -> tuple[bool, bool]: ...
+
     async def create_initial_local_administrator(
         self, request: InitialLocalAdministratorRequest
     ) -> InitialLocalAdministratorResult: ...
+
+    def human_session_service(self) -> HumanSessionService: ...
+
+    async def authenticate_local_login(
+        self, request: LocalLoginRequest
+    ) -> LocalAuthenticationResult: ...
 
 
 PoolFactory = Callable[..., Awaitable[Any]]
@@ -267,6 +278,33 @@ class ControlDatabase:
             return ProbeResult.unavailable(
                 ControlDatabaseReason.CONNECTION_UNAVAILABLE.value
             )
+
+    async def setup_status(self) -> tuple[bool, bool]:
+        pool = self._pool
+        if pool is None:
+            raise ControlDatabaseError(
+                self._failure_reason or ControlDatabaseReason.CONNECTION_UNAVAILABLE
+            )
+        try:
+            async with pool.acquire(
+                timeout=self._settings.acquire_timeout_seconds
+            ) as connection:
+                row = await connection.fetchrow(SETUP_STATUS_SQL)
+            if row is None:
+                raise ControlDatabaseError(ControlDatabaseReason.UNSAFE_MARKER)
+            return bool(row[0]), bool(row[1])
+        except asyncio.CancelledError:
+            raise
+        except ControlDatabaseError:
+            raise
+        except (TimeoutError, asyncpg.PostgresError, OSError):
+            raise ControlDatabaseError(
+                ControlDatabaseReason.CONNECTION_UNAVAILABLE
+            ) from None
+        except Exception:
+            raise ControlDatabaseError(
+                ControlDatabaseReason.CONNECTION_UNAVAILABLE
+            ) from None
 
     async def create_initial_local_administrator(
         self, request: InitialLocalAdministratorRequest

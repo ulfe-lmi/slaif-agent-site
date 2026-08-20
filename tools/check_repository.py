@@ -212,6 +212,7 @@ REQUIRED_FILES = (
         "docs/DATABASE_BOOTSTRAP.md",
         "docs/INSTALLATION_SETUP.md",
         "docs/LOCAL_AUTHENTICATION.md",
+        "docs/API.md",
         "docs/DATABASE_CONNECTIONS.md",
         "docs/DATABASE_ROLES.md",
         "docs/DEPLOYMENT.md",
@@ -240,6 +241,7 @@ REQUIRED_FILES = (
         "services/backend/src/slaif_agent_site/bootstrap/service.py",
         "services/backend/src/slaif_agent_site/bootstrap/setup_token.py",
         "services/backend/src/slaif_agent_site/control_api/config.py",
+        "services/backend/src/slaif_agent_site/control_api/auth_http.py",
         "services/backend/src/slaif_agent_site/control_api/database.py",
         "services/backend/src/slaif_agent_site/application.py",
         "services/backend/src/slaif_agent_site/authority.py",
@@ -254,6 +256,7 @@ REQUIRED_FILES = (
         "services/backend/src/slaif_agent_site/db/alembic/versions/009_001_local_identity.py",
         "services/backend/src/slaif_agent_site/db/alembic/versions/010_001_human_session.py",
         "services/backend/src/slaif_agent_site/db/alembic/versions/011_001_local_authentication.py",
+        "services/backend/src/slaif_agent_site/db/alembic/versions/012_001_control_auth_http.py",
         "services/backend/src/slaif_agent_site/db/connections.py",
         "services/backend/src/slaif_agent_site/db/executor.py",
         "services/backend/src/slaif_agent_site/db/migrations.py",
@@ -1025,9 +1028,10 @@ class RepositoryPolicy:
 
         for path in sorted(package_root.rglob("*.py")):
             relative = path.relative_to(package_root)
-            if relative.parts[0] == "identity" or relative == Path(
-                "control_api/database.py"
-            ):
+            if relative.parts[0] == "identity" or relative in {
+                Path("control_api/database.py"),
+                Path("control_api/auth_http.py"),
+            }:
                 continue
             source = self.read_utf8(path)
             if source is None:

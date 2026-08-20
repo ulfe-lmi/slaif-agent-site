@@ -14,6 +14,7 @@ from ..authority import ProcessKind
 from ..config import ConfigurationError, ServiceSettings
 from ..health import ReadinessProbe
 from ..logging import configure_json_logging
+from .auth_http import install_control_auth_routes
 from .config import ControlDatabaseConfigurationError, ControlDatabaseSettings
 from .database import ControlDatabase, ControlDatabaseAdapter
 
@@ -47,6 +48,7 @@ def create_app(
         lifespan_factory=database_lifespan,
     )
     app.state.control_database = selected_database
+    install_control_auth_routes(app, selected_database, app.state.settings)
     return app
 
 

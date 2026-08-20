@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from uuid import uuid4
 
 import pytest
@@ -78,6 +79,16 @@ class Pool:
 
     def acquire(self, *, timeout: float) -> Acquire:
         return Acquire(self.connection)
+
+
+@pytest.mark.asyncio
+async def test_lookup_cancellation_is_not_converted_to_login_denial() -> None:
+    connection = Connection(None, error=asyncio.CancelledError())
+    service = LocalAuthenticationService(Pool(connection))
+    with pytest.raises(asyncio.CancelledError):
+        await service.authenticate(
+            LocalLoginRequest(username="local.user", password=SecretStr("password"))
+        )
 
 
 @pytest.mark.asyncio

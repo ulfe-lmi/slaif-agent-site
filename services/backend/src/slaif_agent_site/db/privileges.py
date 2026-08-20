@@ -35,9 +35,11 @@ ALLOWED_CLEAN_RELATIONS = {
 }
 FOUNDATION_SCHEMA = "agentcow"
 CONTROL_READINESS_FUNCTION = "slaif_control_readiness"
+CONTROL_SETUP_STATUS_FUNCTION = "slaif_setup_status"
 CONTROL_ROLE = "slaif_control"
 CONTROL_FUNCTIONS = {
     (CONTROL_READINESS_FUNCTION, ""): "",
+    (CONTROL_SETUP_STATUS_FUNCTION, ""): "",
     ("slaif_initial_setup_lock", ""): "",
     (
         "slaif_complete_initial_local_administrator",

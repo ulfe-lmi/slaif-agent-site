@@ -5,8 +5,8 @@ Revision `008_001` provides the owner-controlled token foundation. Revision
 a current token in code/tests to create exactly one local Platform
 Administrator. It still does **not** add a setup or login HTTP route, browser
 session, cookie, CSRF, recent-auth, UI, site, or other online product behavior.
-The configured `/setup` URL is not served; the operator experience remains
-planned for 010-d.
+The configured setup URL is served only by the internal Control boundary;
+browser UI and public edge wiring remain out of scope.
 
 ## Security boundary
 
