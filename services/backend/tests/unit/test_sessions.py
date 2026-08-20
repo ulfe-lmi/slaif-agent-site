@@ -79,6 +79,48 @@ def test_versioned_credentials_round_trip_and_masked_repr() -> None:
 
 
 @pytest.mark.parametrize(
+    "secret_hex",
+    (
+        "fe1e004b2f1cd6bade61f13fc301ff4f8c5aea1b7b19fe9075a0be3b5706655c",
+        "22d592a0490f32ff825dd9c615b55dfdf58dcc6da586cfeb791498b3fc1fa94c",
+        "d28e93e6f630cf8d2730b21c573e6e3fa1efe8594f2f901553f151cfa7cca7fa",
+        "6c02cf2083469e72758a38be0b7c6eabe9bc58580774daf6b2cf4b6ea1469722",
+        "0f6bffa9661cb5dd2f3f7b2929f33061f58a7ba7fdd689530b1a306f8ed8f3ec",
+        "ff" * 32,
+    ),
+)
+def test_url_safe_secret_alphabet_round_trips(secret_hex: str) -> None:
+    secret = bytes.fromhex(secret_hex)
+    public_id = "sas2_" + ("a" * 32)
+    session_token = format_session_token(public_id, secret)
+    csrf_token = format_csrf_token(secret)
+    assert parse_session_token(session_token) == (public_id, secret)
+    assert parse_csrf_token(csrf_token) == secret
+
+
+@pytest.mark.parametrize(
+    "value",
+    (
+        "sas2_session_extra_" + "a" * 32 + "_" + "A" * 43,
+        "sas2_session_" + "a" * 31 + "_" + "A" * 43,
+        "sas2_session_" + "a" * 32 + "_" + "A" * 43 + "_tail",
+        "sas2_session_" + "a" * 32 + "_" + "A" * 42 + "=",
+        "sas2_session_" + "a" * 32 + "_" + "A" * 42 + " ",
+        "sas2_csrf_extra_" + "A" * 43,
+        "sas2_csrf_" + "A" * 43 + "_tail",
+        "sas2_csrf_" + "A" * 42 + "=",
+        "sas2_csrf_" + "A" * 42 + " ",
+    ),
+)
+def test_separator_padding_whitespace_and_trailing_data_fail(value: str) -> None:
+    parser = (
+        parse_session_token if value.startswith("sas2_session") else parse_csrf_token
+    )
+    with pytest.raises(SessionCredentialError, match="^Invalid session credential\\.$"):
+        parser(value)
+
+
+@pytest.mark.parametrize(
     "value",
     (
         "",

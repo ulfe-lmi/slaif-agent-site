@@ -151,7 +151,7 @@ def format_session_token(public_id: str, secret: bytes) -> SecretStr:
 
 def parse_session_token(token: SecretStr | str) -> tuple[str, bytes]:
     value = token.get_secret_value() if isinstance(token, SecretStr) else token
-    parts = value.split("_")
+    parts = value.split("_", 3)
     if len(parts) != 4 or parts[0] != SESSION_VERSION or parts[1] != "session":
         raise SessionCredentialError()
     public_id = f"{SESSION_VERSION}_{parts[2]}"
@@ -168,7 +168,7 @@ def format_csrf_token(secret: bytes) -> SecretStr:
 
 def parse_csrf_token(token: SecretStr | str) -> bytes:
     value = token.get_secret_value() if isinstance(token, SecretStr) else token
-    parts = value.split("_")
+    parts = value.split("_", 2)
     if len(parts) != 3 or parts[:2] != [SESSION_VERSION, "csrf"]:
         raise SessionCredentialError()
     return _decode_secret(parts[2])
@@ -400,13 +400,17 @@ class HumanSessionService:
                         bytes(inspection[9]), presented_csrf_digest
                     ):
                         raise HumanSessionError()
-                    await connection.fetchrow(
+                    revoked = await connection.fetchrow(
                         'SELECT * FROM "control"."slaif_revoke_human_session"('
                         "$1, $2, $3)",
                         public_id,
                         presented_digest,
                         presented_csrf_digest,
                     )
+                    if inspection[7] is None and (
+                        revoked is None or revoked[0] is not True
+                    ):
+                        raise HumanSessionError()
         except (SessionCredentialError, ValidationError):
             raise HumanSessionError() from None
         except asyncio.CancelledError:

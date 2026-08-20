@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import secrets
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
 from enum import StrEnum
@@ -110,6 +111,7 @@ class ControlDatabaseAdapter(Protocol):
 PoolFactory = Callable[..., Awaitable[Any]]
 AfterSetupLock = Callable[[], Awaitable[None]]
 UuidFactory = Callable[[], UUID]
+RandomBytes = Callable[[int], bytes]
 
 
 class ControlDatabase:
@@ -122,12 +124,14 @@ class ControlDatabase:
         pool_factory: PoolFactory = asyncpg.create_pool,
         password_service: PasswordService | None = None,
         uuid_factory: UuidFactory = uuid4,
+        session_random_bytes: RandomBytes | None = None,
         after_setup_lock: AfterSetupLock | None = None,
     ) -> None:
         self._settings = settings
         self._pool_factory = pool_factory
         self._password_service = password_service or PasswordService()
         self._uuid_factory = uuid_factory
+        self._session_random_bytes = session_random_bytes
         self._after_setup_lock = after_setup_lock
         self._pool: asyncpg.Pool[Any] | None = None
         self._failure_reason: ControlDatabaseReason | None = None
@@ -373,7 +377,11 @@ class ControlDatabase:
 
         if self._pool is None:
             raise HumanSessionError()
-        return HumanSessionService(self._pool, policy=policy)
+        return HumanSessionService(
+            self._pool,
+            policy=policy,
+            random_bytes=self._session_random_bytes or secrets.token_bytes,
+        )
 
     async def authenticate_local_login(
         self, request: LocalLoginRequest
