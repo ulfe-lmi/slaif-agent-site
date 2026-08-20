@@ -191,11 +191,16 @@ jobs:
         run: >-
           uv run --frozen pytest
           services/backend/tests/integration/test_database_bootstrap.py
+          services/backend/tests/integration/test_local_identity.py
+          services/backend/tests/integration/test_human_session.py
+          services/backend/tests/integration/test_local_authentication.py
+          services/backend/tests/integration/test_control_database_integration.py
+          services/backend/tests/integration/test_control_auth_http_integration.py
 
   compose-edge-packaging:
     name: Compose and edge packaging
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -203,6 +208,21 @@ jobs:
           persist-credentials: false
       - name: Inspect Compose runtime
         run: docker compose version
+      - name: Set up pnpm
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+        with:
+          version: "11.22.0"
+          run_install: false
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - name: Install frozen browser test workspace
+        run: pnpm install --frozen-lockfile
+      - name: Install exact Playwright browsers
+        run: pnpm exec playwright install --with-deps chromium firefox webkit
       - name: Run clean deployment, topology, edge, and failure smoke
         run: sh tools/compose/smoke.sh slaif007ci
 

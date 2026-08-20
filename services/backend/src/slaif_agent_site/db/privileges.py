@@ -28,10 +28,62 @@ NO_CONTENT_ROLES = (
 ALLOWED_CLEAN_RELATIONS = {
     ("control", "alembic_version"),
     ("control", "bootstrap_readiness"),
+    ("control", "installation_state"),
+    ("control", "platform_administrator"),
+    ("control", "user_account"),
+    ("control", "user_session"),
 }
 FOUNDATION_SCHEMA = "agentcow"
 CONTROL_READINESS_FUNCTION = "slaif_control_readiness"
+CONTROL_SETUP_STATUS_FUNCTION = "slaif_setup_status"
 CONTROL_ROLE = "slaif_control"
+CONTROL_FUNCTIONS = {
+    (CONTROL_READINESS_FUNCTION, ""): "",
+    (CONTROL_SETUP_STATUS_FUNCTION, ""): "",
+    ("slaif_initial_setup_lock", ""): "",
+    (
+        "slaif_complete_initial_local_administrator",
+        "p_expected_generation bigint, p_presented_digest bytea, "
+        "p_user_account_id uuid, p_local_username text, "
+        "p_local_username_normalized text, p_password_hash text, "
+        "p_display_name text, p_email text",
+    ): "bigint, bytea, uuid, text, text, text, text, text",
+    (
+        "slaif_inspect_human_session",
+        "p_public_id text",
+    ): "text",
+    (
+        "slaif_finalize_human_session",
+        "p_public_id text, p_secret_digest bytea, p_idle_seconds integer, "
+        "p_touch_interval_seconds integer, p_recent_auth_seconds integer",
+    ): "text, bytea, integer, integer, integer",
+    (
+        "slaif_create_human_session",
+        "p_session_id uuid, p_public_id text, p_secret_digest bytea, "
+        "p_csrf_secret_digest bytea, p_user_account_id uuid, "
+        "p_idle_seconds integer, p_absolute_seconds integer, "
+        "p_recent_auth_seconds integer",
+    ): "uuid, text, bytea, bytea, uuid, integer, integer, integer",
+    (
+        "slaif_finalize_state_changing_human_session",
+        "p_public_id text, p_secret_digest bytea, "
+        "p_csrf_secret_digest bytea, p_idle_seconds integer, "
+        "p_touch_interval_seconds integer, p_recent_auth_seconds integer",
+    ): "text, bytea, bytea, integer, integer, integer",
+    (
+        "slaif_revoke_human_session",
+        "p_public_id text, p_secret_digest bytea, p_csrf_secret_digest bytea",
+    ): "text, bytea, bytea",
+    (
+        "slaif_lookup_local_login",
+        "p_local_username_normalized text",
+    ): "text",
+    (
+        "slaif_compare_and_set_local_password_hash",
+        "p_user_account_id uuid, p_expected_password_hash text, "
+        "p_new_password_hash text",
+    ): "uuid, text, text",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -320,11 +372,12 @@ async def apply_product_privileges(
     await connection.execute(
         f'GRANT USAGE ON SCHEMA "control" TO {quote_identifier(CONTROL_ROLE)}'
     )
-    await connection.execute(
-        "GRANT EXECUTE ON FUNCTION "
-        f'"control"."{CONTROL_READINESS_FUNCTION}"() '
-        f"TO {quote_identifier(CONTROL_ROLE)}"
-    )
+    for (name, _identity), signature in CONTROL_FUNCTIONS.items():
+        await connection.execute(
+            "GRANT EXECUTE ON FUNCTION "
+            f'"control".{quote_identifier(name)}({signature}) '
+            f"TO {quote_identifier(CONTROL_ROLE)}"
+        )
 
 
 async def _role_violations(connection: asyncpg.Connection[Any]) -> list[str]:
@@ -574,7 +627,7 @@ async def _function_violations(
     )
     reviewer_exec = 0
     foundation_functions = 0
-    control_readiness_functions = 0
+    control_function_counts = {identity: 0 for identity in CONTROL_FUNCTIONS}
     for (
         schema,
         name,
@@ -585,18 +638,17 @@ async def _function_violations(
         config,
         public_exec,
     ) in functions:
-        is_control_readiness = (
-            schema == "control"
-            and name == CONTROL_READINESS_FUNCTION
-            and arguments == ""
+        control_identity = (name, arguments)
+        is_control_function = (
+            schema == "control" and control_identity in CONTROL_FUNCTIONS
         )
         if schema == FOUNDATION_SCHEMA:
             foundation_functions += 1
-        elif is_control_readiness:
-            control_readiness_functions += 1
+        elif is_control_function:
+            control_function_counts[control_identity] += 1
             if not security_definer or "search_path=pg_catalog" not in config:
                 violations.append(f"function/{schema}.{name}/unsafe-security-definer")
-        elif readiness_state is ReadinessState.EMPTY_SAFE and not is_control_readiness:
+        elif readiness_state is ReadinessState.EMPTY_SAFE:
             violations.append(f"function/{schema}.{name}/unexpected-clean-object")
         if owner != OWNER_ROLE:
             violations.append(f"function/{schema}.{name}/owner:{owner}")
@@ -610,14 +662,14 @@ async def _function_violations(
                 role,
                 oid,
             )
-            allowed = (is_control_readiness and role == CONTROL_ROLE) or (
+            allowed = (is_control_function and role == CONTROL_ROLE) or (
                 readiness_state is ReadinessState.HARDENED
                 and schema == FOUNDATION_SCHEMA
                 and role in REVIEWER_ROLES
             )
             if can_execute and not allowed:
                 violations.append(f"function/{schema}.{name}/{role}/execute")
-            if is_control_readiness and role == CONTROL_ROLE and not can_execute:
+            if is_control_function and role == CONTROL_ROLE and not can_execute:
                 violations.append(f"function/{schema}.{name}/{role}/missing-execute")
             if can_execute and allowed and schema == FOUNDATION_SCHEMA:
                 reviewer_exec += 1
@@ -637,8 +689,9 @@ async def _function_violations(
     )
     if foundation_functions == 0:
         violations.append("foundation/agentcow/functions/missing")
-    if control_readiness_functions != 1:
-        violations.append("function/control/slaif-control-readiness/count")
+    for (name, arguments), count in control_function_counts.items():
+        if count != 1:
+            violations.append(f"function/control/{name}({arguments})/count:{count}")
     if (
         readiness_state is ReadinessState.HARDENED
         and content_views
@@ -679,6 +732,7 @@ async def verify_database_privileges(
 
 __all__ = [
     "ALLOWED_CLEAN_RELATIONS",
+    "CONTROL_FUNCTIONS",
     "CONTROL_READINESS_FUNCTION",
     "ContentObject",
     "PrivilegeValidation",

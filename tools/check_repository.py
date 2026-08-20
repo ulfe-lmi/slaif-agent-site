@@ -37,6 +37,7 @@ FOUNDATION_SDIST_SHA256 = (
 PYTHON_RUNTIME_DEPENDENCIES = [
     "agent-cow-postgresql==0.2.0",
     "alembic==1.19.1",
+    "argon2-cffi==25.1.0",
     "asyncpg==0.31.0",
     "fastapi==0.141.1",
     "pydantic==2.13.4",
@@ -47,6 +48,7 @@ PYTHON_RUNTIME_DEPENDENCIES = [
 PYTHON_DIRECT_VERSIONS = {
     "agent-cow-postgresql": "0.2.0",
     "alembic": "1.19.1",
+    "argon2-cffi": "25.1.0",
     "asyncpg": "0.31.0",
     "fastapi": "0.141.1",
     "httpx": "0.28.1",
@@ -95,19 +97,21 @@ NODE_DEV_DEPENDENCIES = {
 }
 NODE_SCRIPTS = {
     "lint": (
-        "eslint . --max-warnings 0 --ignore-pattern '**/.next/**' && "
+        "eslint . --max-warnings 0 --ignore-pattern '**/.next/**' "
+        "--ignore-pattern 'playwright.config.ts' && "
         "pnpm --filter @slaif-agent-site/web lint"
     ),
     "format:check": (
         "prettier --check package.json pnpm-workspace.yaml tsconfig.base.json "
-        "tsconfig.json eslint.config.mjs prettier.config.mjs "
+        "tsconfig.json eslint.config.mjs prettier.config.mjs playwright.config.ts "
         '"apps/web/**/*.{json,mjs,ts,tsx,css}" '
         '"packages/*/package.json" "packages/*/src/**/*.ts" '
         '"packages/*/tsconfig.json" "services/browser-worker/**/*.{json,mjs,ts}" '
-        '"tests/contracts/**/*.ts"'
+        '"tests/contracts/**/*.ts" "tests/e2e/**/*.{mjs,ts}"'
     ),
     "typecheck": (
-        "pnpm --recursive run typecheck && tsc --project tsconfig.json --noEmit"
+        "pnpm --recursive run typecheck && tsc --project tsconfig.json --noEmit "
+        "&& tsc --project tests/e2e/tsconfig.json --noEmit"
     ),
     "test": "pnpm build && pnpm --recursive run test && vitest run tests/contracts",
     "build": "pnpm --recursive run build",
@@ -116,6 +120,7 @@ NODE_SCRIPTS = {
     "check": (
         "pnpm lint && pnpm format:check && pnpm typecheck && pnpm test && pnpm build"
     ),
+    "test:e2e": "playwright test",
 }
 WORKSPACE_PACKAGES = {
     "api-client": "@slaif-agent-site/api-client",
@@ -126,9 +131,11 @@ WORKSPACE_PACKAGES = {
     "scope-catalog": "@slaif-agent-site/scope-catalog",
     "test-fixtures": "@slaif-agent-site/test-fixtures",
 }
-ROOT_NODE_DEV_DEPENDENCIES = NODE_DEV_DEPENDENCIES | {
-    name: "workspace:0.0.0" for name in WORKSPACE_PACKAGES.values()
-}
+ROOT_NODE_DEV_DEPENDENCIES = (
+    NODE_DEV_DEPENDENCIES
+    | {name: "workspace:0.0.0" for name in WORKSPACE_PACKAGES.values()}
+    | {"@playwright/test": "1.62.1"}
+)
 PACKAGE_SCRIPTS = {
     "build": "tsc --project tsconfig.json",
     "typecheck": "tsc --project tsconfig.json --noEmit",
@@ -208,6 +215,9 @@ REQUIRED_FILES = (
         "docs/FOUNDATION_INTEGRATION.md",
         "docs/CONFIGURATION.md",
         "docs/DATABASE_BOOTSTRAP.md",
+        "docs/INSTALLATION_SETUP.md",
+        "docs/LOCAL_AUTHENTICATION.md",
+        "docs/API.md",
         "docs/DATABASE_CONNECTIONS.md",
         "docs/DATABASE_ROLES.md",
         "docs/DEPLOYMENT.md",
@@ -234,7 +244,9 @@ REQUIRED_FILES = (
         "services/backend/src/slaif_agent_site/agent_state/foundation.py",
         "services/backend/src/slaif_agent_site/bootstrap/config.py",
         "services/backend/src/slaif_agent_site/bootstrap/service.py",
+        "services/backend/src/slaif_agent_site/bootstrap/setup_token.py",
         "services/backend/src/slaif_agent_site/control_api/config.py",
+        "services/backend/src/slaif_agent_site/control_api/auth_http.py",
         "services/backend/src/slaif_agent_site/control_api/database.py",
         "services/backend/src/slaif_agent_site/application.py",
         "services/backend/src/slaif_agent_site/authority.py",
@@ -245,12 +257,22 @@ REQUIRED_FILES = (
         "services/backend/src/slaif_agent_site/db/alembic/script.py.mako",
         "services/backend/src/slaif_agent_site/db/alembic/versions/006_001_postgres_bootstrap.py",
         "services/backend/src/slaif_agent_site/db/alembic/versions/007_001_control_readiness.py",
+        "services/backend/src/slaif_agent_site/db/alembic/versions/008_001_installation_state.py",
+        "services/backend/src/slaif_agent_site/db/alembic/versions/009_001_local_identity.py",
+        "services/backend/src/slaif_agent_site/db/alembic/versions/010_001_human_session.py",
+        "services/backend/src/slaif_agent_site/db/alembic/versions/011_001_local_authentication.py",
+        "services/backend/src/slaif_agent_site/db/alembic/versions/012_001_control_auth_http.py",
         "services/backend/src/slaif_agent_site/db/connections.py",
         "services/backend/src/slaif_agent_site/db/executor.py",
         "services/backend/src/slaif_agent_site/db/migrations.py",
         "services/backend/src/slaif_agent_site/db/privileges.py",
         "services/backend/src/slaif_agent_site/db/readiness.py",
         "services/backend/src/slaif_agent_site/db/roles.py",
+        "services/backend/src/slaif_agent_site/identity/__init__.py",
+        "services/backend/src/slaif_agent_site/identity/models.py",
+        "services/backend/src/slaif_agent_site/identity/passwords.py",
+        "services/backend/src/slaif_agent_site/identity/authentication.py",
+        "services/backend/src/slaif_agent_site/identity/sessions.py",
         "services/backend/Dockerfile",
         "services/backend/src/slaif_agent_site/errors.py",
         "services/backend/src/slaif_agent_site/health.py",
@@ -258,7 +280,12 @@ REQUIRED_FILES = (
         "services/backend/src/slaif_agent_site/worker.py",
         "services/backend/tests/conftest.py",
         "services/backend/tests/integration/test_control_database_integration.py",
+        "services/backend/tests/integration/test_installation_setup.py",
+        "services/backend/tests/integration/test_local_identity.py",
+        "services/backend/tests/integration/test_local_authentication.py",
+        "services/backend/tests/integration/test_human_session.py",
         "services/backend/tests/integration/test_foundation_postgres.py",
+        "services/backend/tests/unit/test_sessions.py",
         "services/backend/tests/unit/test_foundation_contract.py",
         "services/backend/tests/unit/test_authority.py",
         "services/backend/tests/unit/test_config.py",
@@ -267,8 +294,10 @@ REQUIRED_FILES = (
         "services/backend/tests/unit/test_correlation_logging.py",
         "services/backend/tests/unit/test_errors.py",
         "services/backend/tests/unit/test_health_apps.py",
+        "services/backend/tests/unit/test_identity_password.py",
         "services/backend/tests/unit/test_local_roles.py",
         "services/backend/tests/unit/test_process_entrypoints.py",
+        "services/backend/tests/unit/test_bootstrap_setup_token.py",
         "tests/packaging/test_compose_policy.py",
         "tests/packaging/test_edge_contract.py",
         "tests/packaging/test_local_secrets.py",
@@ -440,6 +469,7 @@ class RepositoryPolicy:
         self.check_agent_architecture_policy()
         self.check_logo()
         self.check_readme()
+        self.check_markdown_configuration()
         self.check_oap()
         self.check_workflows()
         self.check_python_quality_configuration()
@@ -616,13 +646,16 @@ class RepositoryPolicy:
         if text is None:
             return
         logo_block = re.search(
+            r"<div\s+style=['\"]text-align:\s*center;['\"]>\s*"
             r"<a\s+href=['\"]https://www\.slaif\.si['\"][^>]*>\s*"
-            r"<img\s+([^>]+)>\s*</a>",
+            r"<img\s+([^>]+)>\s*</a>\s*</div>",
             text,
             re.IGNORECASE,
         )
         if logo_block is None:
-            self.error(path, "must link the local logo to https://www.slaif.si")
+            self.error(
+                path, "must use a centered local logo linked to https://www.slaif.si"
+            )
         else:
             attributes = {
                 key.lower(): value
@@ -634,10 +667,11 @@ class RepositoryPolicy:
                 self.error(path, "logo src must be docs/assets/slaif-logo.svg")
             if len(attributes.get("alt", "").strip()) < 5:
                 self.error(path, "logo must have meaningful alt text")
-            if not re.fullmatch(r"\d+", attributes.get("width", "")):
-                self.error(path, "logo must specify a numeric width")
-            if "height" in attributes:
-                self.error(path, "logo must use width only, without height")
+            if attributes.get("width") != "400" or attributes.get("height") != "400":
+                self.error(path, "logo must specify width and height 400")
+            first_heading = re.search(r"^#\s+", text, re.MULTILINE)
+            if first_heading is None or logo_block.start() > first_heading.start():
+                self.error(path, "logo block must precede the first H1")
 
         destinations = [match.group(1) for match in MARKDOWN_LINK.finditer(text)]
         destinations.extend(match.group(1) for match in HTML_LINK.finditer(text))
@@ -661,6 +695,21 @@ class RepositoryPolicy:
         for required in REQUIRED_README_TARGETS:
             if required not in local_targets:
                 self.error(path, f"required internal link is absent: {required}")
+
+    def check_markdown_configuration(self) -> None:
+        path = self.root / ".markdownlint-cli2.yaml"
+        if not path.is_file():
+            return
+        text = self.read_utf8(path)
+        if text is None:
+            return
+        exact = '  - "oap/reports/010-i-qualify-session-finalizer-update.md"'
+        lines = set(text.splitlines())
+        if exact not in lines:
+            self.error(path, "missing exact immutable-report ignore")
+        for line in lines:
+            if line.startswith("  - ") and "oap/reports" in line and line != exact:
+                self.error(path, "must not broadly ignore OAP reports")
 
     def check_oap(self) -> None:
         active_path = self.root / "oap/active"
@@ -981,6 +1030,27 @@ class RepositoryPolicy:
                     self.error(
                         application_path, "CORS is not approved for this skeleton"
                     )
+
+        for path in sorted(package_root.rglob("*.py")):
+            relative = path.relative_to(package_root)
+            if relative.parts[0] == "identity" or relative in {
+                Path("control_api/database.py"),
+                Path("control_api/auth_http.py"),
+            }:
+                continue
+            source = self.read_utf8(path)
+            if source is None:
+                continue
+            if "identity.passwords" in source or "PasswordService" in source:
+                self.error(
+                    path,
+                    "identity password authority belongs only to Control database",
+                )
+            if "create_initial_local_administrator" in source:
+                self.error(
+                    path,
+                    "initial-administrator consumer belongs only to Control database",
+                )
 
         for package in WORKER_PROCESS_PACKAGES:
             main_path = package_root / package / "__main__.py"

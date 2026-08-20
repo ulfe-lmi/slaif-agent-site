@@ -7,19 +7,12 @@ from pathlib import Path
 
 ROOT = Path(__file__).parents[2]
 ROUTES = {
-    "/api/control/": "control-api:8000",
     "/api/editor/": "editor-api:8000",
     "/api/agent/": "agent-api:8000",
     "/mcp/": "mcp-adapter:8000",
     "/media/": "media-service:8000",
     "/": "web:3000",
 }
-CSP = (
-    "default-src 'self'; base-uri 'none'; object-src 'none'; "
-    "frame-ancestors 'none'; form-action 'self'; script-src 'self'; "
-    "style-src 'self'; img-src 'self' data:; font-src 'self'; "
-    "connect-src 'self'"
-)
 
 
 class EdgeContractTests(unittest.TestCase):
@@ -32,6 +25,24 @@ class EdgeContractTests(unittest.TestCase):
             self.assertIn(f"location {prefix}", nginx)
             self.assertIn(f"http://{upstream}", nginx)
             self.assertIn(f"ProxyPass        {prefix} http://{upstream}/", apache)
+
+    def test_control_health_is_adapted_and_v1_path_is_preserved(self) -> None:
+        nginx = (ROOT / "infra/nginx/nginx.conf").read_text(encoding="utf-8")
+        apache = (ROOT / "infra/apache/slaif-agent-site.conf").read_text(
+            encoding="utf-8"
+        )
+        for leaf in ("live", "ready"):
+            self.assertIn(f"location = /api/control/health/{leaf}", nginx)
+            self.assertIn(f"control-api:8000/health/{leaf}", nginx)
+            self.assertIn(f"/api/control/health/{leaf}", apache)
+        self.assertIn("proxy_pass http://control-api:8000;", nginx)
+        self.assertIn("location /api/control/v1/", nginx)
+        self.assertIn(
+            "ProxyPass        /api/control/v1/ http://control-api:8000/api/control/v1/",
+            apache,
+        )
+        self.assertNotIn("location /api/control/ {\n            proxy_pass", nginx)
+        self.assertIn("ProxyPass        /api/control/ !", apache)
 
     def test_browser_and_render_are_not_edge_upstreams(self) -> None:
         for path in (
@@ -47,13 +58,19 @@ class EdgeContractTests(unittest.TestCase):
         apache = (ROOT / "infra/apache/slaif-agent-site.conf").read_text(
             encoding="utf-8"
         )
-        self.assertEqual(nginx.count(f'Content-Security-Policy "{CSP}"'), 1)
-        self.assertEqual(apache.count(f'Content-Security-Policy "{CSP}"'), 1)
+        self.assertEqual(nginx.count("set $slaif_csp"), 1)
+        self.assertEqual(nginx.count("'nonce-$request_id'"), 1)
+        self.assertEqual(apache.count("'nonce-%{UNIQUE_ID}e'"), 2)
         self.assertEqual(nginx.count("add_header Content-Security-Policy"), 1)
+        self.assertEqual(nginx.count("proxy_set_header Content-Security-Policy"), 1)
+        self.assertEqual(apache.count("RequestHeader set Content-Security-Policy"), 1)
         self.assertEqual(nginx.count("proxy_hide_header Content-Security-Policy;"), 1)
         self.assertEqual(apache.count("Header always set Content-Security-Policy"), 1)
         self.assertEqual(apache.count("unset Content-Security-Policy"), 2)
         for content in (nginx, apache):
+            csp_lines = "\n".join(
+                line for line in content.splitlines() if "default-src" in line
+            )
             for directive in (
                 "default-src 'self'",
                 "base-uri 'none'",
@@ -65,7 +82,7 @@ class EdgeContractTests(unittest.TestCase):
                 "img-src 'self' data:",
                 "connect-src 'self'",
             ):
-                self.assertIn(directive, content)
+                self.assertIn(directive, csp_lines)
             for forbidden in (
                 "unsafe-inline",
                 "unsafe-eval",
@@ -76,7 +93,7 @@ class EdgeContractTests(unittest.TestCase):
                 "wss:",
                 "*",
             ):
-                self.assertNotIn(forbidden, CSP)
+                self.assertNotIn(forbidden, csp_lines)
 
     def test_one_edge_owned_request_id_replaces_upstream_and_caller_values(
         self,

@@ -71,6 +71,7 @@ NEW_PACKAGE_FILES = {
     "slaif_agent_site/bootstrap/__main__.py",
     "slaif_agent_site/bootstrap/config.py",
     "slaif_agent_site/bootstrap/service.py",
+    "slaif_agent_site/bootstrap/setup_token.py",
     "slaif_agent_site/config.py",
     "slaif_agent_site/control_api/__init__.py",
     "slaif_agent_site/control_api/__main__.py",
@@ -83,12 +84,19 @@ NEW_PACKAGE_FILES = {
     "slaif_agent_site/db/alembic/script.py.mako",
     "slaif_agent_site/db/alembic/versions/006_001_postgres_bootstrap.py",
     "slaif_agent_site/db/alembic/versions/007_001_control_readiness.py",
+    "slaif_agent_site/db/alembic/versions/008_001_installation_state.py",
+    "slaif_agent_site/db/alembic/versions/009_001_local_identity.py",
     "slaif_agent_site/db/connections.py",
     "slaif_agent_site/db/executor.py",
     "slaif_agent_site/db/migrations.py",
     "slaif_agent_site/db/privileges.py",
     "slaif_agent_site/db/readiness.py",
     "slaif_agent_site/db/roles.py",
+    "slaif_agent_site/identity/__init__.py",
+    "slaif_agent_site/identity/models.py",
+    "slaif_agent_site/identity/authentication.py",
+    "slaif_agent_site/identity/passwords.py",
+    "slaif_agent_site/identity/sessions.py",
     "slaif_agent_site/editor_api/__init__.py",
     "slaif_agent_site/editor_api/__main__.py",
     "slaif_agent_site/editor_api/app.py",
@@ -116,6 +124,10 @@ EXPECTED_PACKAGE_FILES = NEW_PACKAGE_FILES | {
     "slaif_agent_site/__init__.py",
     "slaif_agent_site/agent_state/__init__.py",
     "slaif_agent_site/agent_state/foundation.py",
+    "slaif_agent_site/db/alembic/versions/010_001_human_session.py",
+    "slaif_agent_site/db/alembic/versions/011_001_local_authentication.py",
+    "slaif_agent_site/db/alembic/versions/012_001_control_auth_http.py",
+    "slaif_agent_site/control_api/auth_http.py",
 }
 EXPECTED_SDIST_FILES = {
     "alembic.ini",
@@ -131,6 +143,10 @@ EXPECTED_SDIST_FILES = {
     "migrations/alembic/README.md",
     "migrations/alembic/__init__.py",
     "migrations/bootstrap/README.md",
+    "services/backend/src/slaif_agent_site/db/alembic/versions/010_001_human_session.py",
+    "services/backend/src/slaif_agent_site/db/alembic/versions/011_001_local_authentication.py",
+    "services/backend/src/slaif_agent_site/db/alembic/versions/012_001_control_auth_http.py",
+    "services/backend/src/slaif_agent_site/control_api/auth_http.py",
 } | {f"services/backend/src/{path}" for path in NEW_PACKAGE_FILES}
 
 
@@ -195,6 +211,7 @@ def test_python_and_package_metadata_ranges_are_coherent() -> None:
     assert project["dependencies"] == [
         "agent-cow-postgresql==0.2.0",
         "alembic==1.19.1",
+        "argon2-cffi==25.1.0",
         "asyncpg==0.31.0",
         "fastapi==0.141.1",
         "pydantic==2.13.4",
@@ -361,6 +378,7 @@ def test_built_distributions_have_bounded_contents_and_metadata(
     assert metadata.get_all("Requires-Dist") == [
         "agent-cow-postgresql==0.2.0",
         "alembic==1.19.1",
+        "argon2-cffi==25.1.0",
         "asyncpg==0.31.0",
         "fastapi==0.141.1",
         "pydantic==2.13.4",
@@ -377,8 +395,16 @@ def test_locked_foundation_artifact_hash_constants_are_sha256() -> None:
 
 
 def test_alembic_graph_and_offline_sql_need_no_locator_or_network() -> None:
-    assert migration_heads() == ("007_001",)
-    assert migration_history() == ("007_001", "006_001")
+    assert migration_heads() == ("012_001",)
+    assert migration_history() == (
+        "012_001",
+        "011_001",
+        "010_001",
+        "009_001",
+        "008_001",
+        "007_001",
+        "006_001",
+    )
     config = (REPOSITORY_ROOT / "alembic.ini").read_text(encoding="utf-8")
     assert "sqlalchemy.url" not in config
     assert "://" not in config
@@ -409,8 +435,12 @@ def test_alembic_graph_and_offline_sql_need_no_locator_or_network() -> None:
     )
     assert "006_001" in completed.stdout
     assert "007_001" in completed.stdout
+    assert "008_001" in completed.stdout
+    assert "010_001" in completed.stdout
     assert 'CREATE SCHEMA IF NOT EXISTS "control"' in completed.stdout
     assert 'CREATE FUNCTION "control"."slaif_control_readiness"()' in completed.stdout
+    assert 'CREATE TABLE "control"."user_account"' in completed.stdout
+    assert 'CREATE TABLE "control"."platform_administrator"' in completed.stdout
 
 
 def test_database_source_uses_public_foundation_boundary_and_no_domain_ddl() -> None:
@@ -449,6 +479,8 @@ def test_database_source_uses_public_foundation_boundary_and_no_domain_ddl() -> 
         "audit_event",
         "media_asset",
         "site_membership",
+        "user_account",
+        "user_session",
     )
     assert not any(f'CREATE TABLE "{name}"' in revision for name in forbidden_tables)
 
@@ -461,3 +493,87 @@ def test_database_source_uses_public_foundation_boundary_and_no_domain_ddl() -> 
     assert "SET search_path = pg_catalog" in control_revision
     assert "REVOKE ALL ON FUNCTION" in control_revision
     assert 'TO "slaif_control"' in control_revision
+
+    installation_revision = (
+        package / "db/alembic/versions/008_001_installation_state.py"
+    ).read_text(encoding="utf-8")
+    assert installation_revision.count("CREATE TABLE") == 1
+    assert '"control"."installation_state"' in installation_revision
+    assert "CREATE FUNCTION" not in installation_revision
+    assert not any(
+        f'CREATE TABLE "{name}"' in installation_revision for name in forbidden_tables
+    )
+
+    identity_revision = (
+        package / "db/alembic/versions/009_001_local_identity.py"
+    ).read_text(encoding="utf-8")
+    assert identity_revision.count("CREATE TABLE") == 2
+    assert identity_revision.count("CREATE FUNCTION") == 2
+    assert '"control"."user_account"' in identity_revision
+    assert '"control"."platform_administrator"' in identity_revision
+    assert "SECURITY DEFINER" in identity_revision
+    assert "SET search_path = pg_catalog" in identity_revision
+    assert 'TO "slaif_control"' in identity_revision
+    assert "p_expected_generation IS NULL" in identity_revision
+    assert "p_presented_digest IS NULL" in identity_revision
+    assert (
+        "pg_catalog.octet_length(p_presented_digest)\n"
+        "                    IS DISTINCT FROM 32"
+    ) in identity_revision
+    assert (
+        "installation.setup_token_generation\n"
+        "                    IS DISTINCT FROM p_expected_generation"
+    ) in identity_revision
+    assert (
+        "installation.setup_token_digest\n"
+        "                    IS DISTINCT FROM p_presented_digest"
+    ) in identity_revision
+    assert "setup_token_generation <> p_expected_generation" not in identity_revision
+    assert "setup_token_digest <> p_presented_digest" not in identity_revision
+
+    session_revision = (
+        package / "db/alembic/versions/010_001_human_session.py"
+    ).read_text(encoding="utf-8")
+    assert session_revision.count("CREATE TABLE") == 1
+    assert session_revision.count("CREATE FUNCTION") == 5
+    assert '"control"."slaif_inspect_human_session"' in session_revision
+    assert '"control"."slaif_finalize_human_session"' in session_revision
+    assert '"control"."slaif_finalize_state_changing_human_session"' in session_revision
+    assert '"control"."slaif_revoke_human_session"' in session_revision
+    assert '"control"."user_session"' in session_revision
+    assert '"secret_digest" bytea NOT NULL' in session_revision
+    assert '"csrf_secret_digest" bytea NOT NULL' in session_revision
+    assert 'octet_length("secret_digest") = 32' in session_revision
+    assert 'octet_length("csrf_secret_digest") = 32' in session_revision
+    assert "SECURITY DEFINER" in session_revision
+    assert "SET search_path = pg_catalog" in session_revision
+    assert (
+        'REVOKE ALL ON TABLE "control"."user_session" FROM PUBLIC' in session_revision
+    )
+    assert session_revision.count("GRANT EXECUTE ON FUNCTION") == 1
+    assert session_revision.count('TO "slaif_control"') == 1
+    downgrade = session_revision.split("def downgrade()", maxsplit=1)[1]
+    for function_name in (
+        '"control"."slaif_inspect_human_session"',
+        '"control"."slaif_finalize_human_session"',
+        '"control"."slaif_finalize_state_changing_human_session"',
+        '"control"."slaif_create_human_session"',
+        '"control"."slaif_revoke_human_session"',
+    ):
+        assert f"DROP FUNCTION {function_name}" in downgrade
+    assert session_revision.count('UPDATE "control"."user_session" AS "session"') == 3
+    assert 'WHERE "id" = "candidate"."id"' not in session_revision
+    assert 'AND "revoked_at" IS NULL' not in session_revision
+    assert 'AND "absolute_expires_at" > "now_at"' not in session_revision
+
+    authentication_revision = (
+        package / "db/alembic/versions/011_001_local_authentication.py"
+    ).read_text(encoding="utf-8")
+    assert authentication_revision.count("CREATE FUNCTION") == 2
+    assert authentication_revision.count("GRANT EXECUTE ON FUNCTION") == 1
+    assert '"control"."user_account"' in authentication_revision
+    assert "SECURITY DEFINER" in authentication_revision
+    assert "SET search_path = pg_catalog" in authentication_revision
+    assert "p_expected_password_hash" in authentication_revision
+    assert "p_new_password_hash" in authentication_revision
+    assert "REVOKE ALL ON FUNCTION" in authentication_revision

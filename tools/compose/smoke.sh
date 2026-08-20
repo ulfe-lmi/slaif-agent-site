@@ -2,17 +2,29 @@
 set -eu
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
-PROJECT=${1:-slaif007smoke}
+PROJECT=${1-slaif007smoke}
 NEGATIVE_PROJECT="${PROJECT}negative"
-HEADER_FILE=$(mktemp)
 
-case "$PROJECT" in
-  slaif007[a-z0-9]*) ;;
-  *) echo "compose-smoke: unsafe project name" >&2; exit 2 ;;
-esac
+validate_project() {
+  case "$1" in
+    slaif007[a-z0-9]*|slaif009[a-z0-9]*|slaif010[a-z0-9]*) return 0 ;;
+    *) echo "compose-smoke: unsafe project name" >&2; return 2 ;;
+  esac
+}
+validate_project "$PROJECT"
+if test "${2:-}" = --validate-project
+then
+  exit 0
+fi
+
+HEADER_FILE=
+TOKEN_FILE=
+E2E_SECRET_FILE=
 
 cleanup() {
-  rm -f "$HEADER_FILE"
+  test -z "$HEADER_FILE" || rm -f "$HEADER_FILE"
+  test -z "$TOKEN_FILE" || rm -f "$TOKEN_FILE"
+  test -z "$E2E_SECRET_FILE" || rm -f "$E2E_SECRET_FILE"
   docker compose -p "$NEGATIVE_PROJECT" -f "$ROOT/compose.yaml" \
     -f "$ROOT/tests/packaging/compose.broken-bootstrap.yaml" \
     down --volumes --remove-orphans >/dev/null 2>&1 || true
@@ -21,6 +33,11 @@ cleanup() {
 }
 trap cleanup EXIT HUP INT TERM
 cleanup
+
+HEADER_FILE=$(mktemp)
+TOKEN_FILE=$(mktemp)
+E2E_SECRET_FILE=$(mktemp)
+chmod 600 "$TOKEN_FILE" "$E2E_SECRET_FILE"
 
 cd "$ROOT"
 docker compose config --quiet
@@ -40,7 +57,11 @@ done
 test "$mode_count" = 9
 echo "compose-mode-policy: OK long-running-backends=9 mode=development"
 
-curl --fail --show-error --silent http://localhost:8080/ | grep -q "Pre-alpha deployment skeleton"
+curl --fail --show-error --silent http://localhost:8080/ | grep -q "Self-hosted human control"
+docker compose -p "$PROJECT" logs --no-color bootstrap 2>/dev/null \
+  | sed -n 's/^.*setup-token-secret: //p' >"$TOKEN_FILE"
+test "$(wc -l <"$TOKEN_FILE" | tr -d ' ')" = 1
+tools/compose/e2e.sh "$TOKEN_FILE" "$E2E_SECRET_FILE"
 for path in \
   /health/live \
   /health/ready \
@@ -52,7 +73,7 @@ for path in \
 do
   curl --fail --show-error --silent "http://localhost:8080$path" >/dev/null
 done
-for path in /api/control/sites /api/editor/workspaces /api/agent/tools /mcp/tools /media/files /admin /preview
+for path in /api/control/sites /api/editor/workspaces /api/agent/tools /mcp/tools /media/files /preview
 do
   status=$(curl --silent --output /dev/null --write-out '%{http_code}' "http://localhost:8080$path")
   test "$status" = 404
@@ -172,6 +193,7 @@ docker compose -p "$PROJECT" stop
 docker compose -p "$PROJECT" up --wait
 after=$(fingerprint)
 test "$before" = "$after"
+test "$(docker compose -p "$PROJECT" logs --no-color bootstrap 2>/dev/null | grep -c 'setup-token-secret:')" = 1
 
 if docker compose -p "$NEGATIVE_PROJECT" -f compose.yaml \
   -f tests/packaging/compose.broken-bootstrap.yaml up --wait

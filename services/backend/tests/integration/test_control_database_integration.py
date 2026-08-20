@@ -5,10 +5,13 @@ from __future__ import annotations
 from urllib.parse import quote
 
 import asyncpg
+import httpx
 import pytest
 from conftest import AgentSiteDatabase
 from pydantic import SecretStr
 from slaif_agent_site.bootstrap.service import reconcile, upgrade
+from slaif_agent_site.config import ServiceSettings
+from slaif_agent_site.control_api.app import create_app
 from slaif_agent_site.control_api.config import (
     ControlDatabaseMode,
     ControlDatabaseSettings,
@@ -100,8 +103,8 @@ async def test_readiness_function_owner_security_grants_and_denial_matrix(
                 "SELECT * FROM control.slaif_control_readiness()"
             )
             assert tuple(row) == (
-                "007_001",
-                "007_001",
+                "012_001",
+                "012_001",
                 "EMPTY_SAFE",
                 True,
                 "agent-cow-postgresql",
@@ -155,7 +158,7 @@ async def test_control_pool_reports_exact_marker_migration_and_foundation_state(
         ) as connection:
             await connection.execute(
                 "UPDATE control.bootstrap_readiness "
-                "SET migration_revision = '007_001', "
+                "SET migration_revision = '012_001', "
                 "foundation_version = '0.0.0' WHERE singleton"
             )
         assert (await adapter.readiness()).reason == (
@@ -224,3 +227,23 @@ async def test_pool_rejects_wrong_and_combined_authorities(
         await database.administrator.execute(
             f'REVOKE "slaif_reviewer" FROM "{control_login}"'
         )
+
+
+@pytest.mark.asyncio
+async def test_control_setup_status_http_boundary(
+    agent_site_database: AgentSiteDatabase,
+) -> None:
+    await upgrade(agent_site_database.settings)
+    await reconcile(agent_site_database.settings)
+    adapter = ControlDatabase(_control_settings(agent_site_database))
+    await adapter.start()
+    try:
+        app = create_app(settings=ServiceSettings.for_test(), database=adapter)
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://testserver"
+        ) as client:
+            response = await client.get("/api/control/v1/setup/status")
+        assert response.status_code == 200
+        assert response.json() == {"initialized": False, "setup_available": False}
+    finally:
+        await adapter.stop()

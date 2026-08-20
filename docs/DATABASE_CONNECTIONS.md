@@ -1,10 +1,11 @@
 # Online database connection boundary
 
-The only implemented online PostgreSQL connection belongs to Control API and
-exists only to report bootstrap/database readiness. It does not implement a
-setup flow, user/password login, session, CSRF, OIDC, membership, site,
-workspace, capability, content, audit, job, media, review, promotion,
-publication, or other product route.
+The only implemented online PostgreSQL connection belongs to Control API. It
+reports bootstrap/database readiness and owns one typed, atomic initial-local-
+administrator operation used only in code/tests. It does not expose that
+operation through a route and does not implement login, session, CSRF, OIDC,
+membership, site, workspace, capability, content, audit, job, media, review,
+promotion, or publication behavior.
 
 ## Authority map
 
@@ -22,12 +23,13 @@ control-api as UID 10001
   | authenticates as slaif_control_login
   | exact sole membership: slaif_control
   v
-control.slaif_control_readiness()
+three narrow control functions
   |
   | SECURITY DEFINER, owner slaif_owner
-  | fixed search_path=pg_catalog, no arguments, read-only
+  | fixed search_path=pg_catalog
+  | readiness is read-only; setup pair owns one atomic mutation
   v
-Alembic version + owner bootstrap marker
+bounded readiness or atomic initial identity result
 ```
 
 The master `local-secrets` volume still contains PostgreSQL administrator,
@@ -105,8 +107,10 @@ per-new-connection initializer checks:
 A wrong or combined credential is never admitted. The pool drains on normal
 shutdown and lifespan exceptions. Cancellation is propagated after bounded
 cleanup; an over-time close terminates the pool. The adapter exposes only
-start, stop, and its typed readiness probe—no raw/native pool or arbitrary
-execute/fetch method.
+start, stop, its typed readiness probe, and the typed initial-local-
+administrator operation—no raw/native pool or arbitrary execute/fetch method.
+Password hashing completes before the setup transaction takes the singleton
+lock.
 
 ## Readiness function and health semantics
 
@@ -116,12 +120,23 @@ parallel-restricted, `SECURITY DEFINER`, and fixed to
 `search_path=pg_catalog`. All table references are fully qualified. `PUBLIC`
 execute is revoked; schema usage and function execute are granted only to
 `slaif_control`. No service role receives direct `SELECT` or mutation authority
-on `control.bootstrap_readiness` or `control.alembic_version`.
+on `control.bootstrap_readiness`, `control.alembic_version`,
+`control.installation_state`, `control.user_account`, or
+`control.platform_administrator`.
 
 The function returns one bounded row containing the actual Alembic revision,
 marker revision, readiness state, safe flag, foundation distribution, and
 foundation version. It accepts no site, workspace, session, operation, request,
 or caller-controlled value and performs no write.
+
+Revision `009_001` adds `control.slaif_initial_setup_lock()` and
+`control.slaif_complete_initial_local_administrator(...)`. They share the same
+owner, fixed search path, full qualification, `PUBLIC` revoke, and Control-only
+execute rules. The first locks and returns bounded installation proof state;
+the second locks again, rechecks expiry/generation/digest, inserts the identity
+and administrator assignment, initializes, and clears token material. Neither
+grants direct relation access. See
+[local authentication](LOCAL_AUTHENTICATION.md).
 
 `/health/live` remains process-only. `/health/ready` includes exactly one
 Control component named `database` and returns 200 only when:

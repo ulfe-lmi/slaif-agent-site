@@ -15,7 +15,7 @@ config:
   # The root README uses only these elements for the centered local logo.
   MD033:
     allowed_elements:
-      - p
+      - div
       - a
       - img
   # Preserve the canonical architecture's adjacent title/subtitle pair.
@@ -30,3 +30,5 @@ ignores:
   - ".git/**"
   # Strategic instruction snapshots are machine-consumed source artifacts.
   - "oap/strategic-instructions/**"
+  # Immutable 010-i report predates the mandatory pre-publication lint gate.
+  - "oap/reports/010-i-qualify-session-finalizer-update.md"

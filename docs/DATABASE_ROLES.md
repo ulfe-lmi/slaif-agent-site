@@ -12,7 +12,7 @@ NOREPLICATION NOBYPASSRLS`.
 | Privilege role | Credential consumer | Implemented baseline authority |
 | --- | --- | --- |
 | `slaif_owner` | One-shot bootstrap only | Own `control`, `content`, `audit`, their objects, and the `agentcow` deployment; run migrations and hardening. |
-| `slaif_control` | Control API readiness principal | `USAGE` on `control` plus execute on the single owner-defined readiness function; marker-table access, content DML, and setup remain denied. |
+| `slaif_control` | Control API and human-session principal | `USAGE` on `control` plus execute on owner-defined readiness, setup, opaque-session, and local-credential lookup/compare-and-set functions; direct relation access, content DML, and reviewer/setup-owner authority remain denied. |
 | `slaif_editor_runtime` | Future Editor API principal | COW-view `SELECT`, `INSERT`, `UPDATE`, and `DELETE` after a table is enabled/hardened; no base/change, reviewer, or setup authority. |
 | `slaif_agent_runtime` | Future Agent API principal | Same COW-view DML boundary as Editor under a distinct role; no base/change, reviewer, or setup authority. |
 | `slaif_public_reader` | Future canonical render principal | `SELECT` on present COW views after product grant reconciliation; no DML or internal tables. |
@@ -30,6 +30,18 @@ The clean revision has no `content` object. In `EMPTY_SAFE`, every non-owner
 role also lacks content schema `USAGE`/`CREATE`, and Reviewer has no foundation
 schema/function surface. Grants are applied only after real objects exist and
 the state reaches `HARDENED`.
+
+Revision `010_001` adds the non-COW `control.user_session` relation. Control
+receives only the five owner-created lifecycle functions for create, locked
+inspection, safe finalization, state-changing finalization/CSRF validation,
+and idempotent CSRF-bound revoke. Session and CSRF digests
+are exactly 32 bytes; plaintext credentials never reach the database. Every
+runtime, reviewer, reader, scheduler, media, and GC role has no relation or
+function authority for these objects.
+
+Revision `011_001` adds only `slaif_control` execution on local-login lookup
+and password-hash compare-and-set functions. No role receives direct
+`user_account` relation access; plaintext passwords never reach PostgreSQL.
 
 ## Login-principal design
 

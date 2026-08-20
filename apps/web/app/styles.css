@@ -17,6 +17,36 @@ body {
   min-height: 100%;
 }
 
+button,
+input {
+  font: inherit;
+}
+
+button,
+.button-link {
+  display: inline-flex;
+  min-height: 2.75rem;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--green);
+  border-radius: 0.5rem;
+  background: var(--green);
+  color: #081317;
+  cursor: pointer;
+  font-weight: 750;
+  padding: 0.7rem 1rem;
+  text-decoration: none;
+}
+
+.button-link.secondary {
+  background: transparent;
+  color: var(--ink);
+}
+button:disabled {
+  cursor: wait;
+  opacity: 0.62;
+}
+
 body {
   margin: 0;
   background:
@@ -153,6 +183,79 @@ a {
 a:focus-visible {
   outline: 3px solid var(--green);
   outline-offset: 0.3rem;
+}
+
+button:focus-visible,
+input:focus-visible {
+  outline: 3px solid var(--green);
+  outline-offset: 0.2rem;
+}
+
+.compact-header,
+.auth-card {
+  width: min(100%, 38rem);
+  margin-inline: auto;
+}
+.compact-header img {
+  width: 9rem;
+  height: auto;
+}
+.auth-card {
+  overflow-wrap: anywhere;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 0.9rem;
+  background: var(--panel);
+  padding: clamp(1.25rem, 5vw, 2.5rem);
+}
+.auth-card h1 {
+  max-width: none;
+  margin-top: 0;
+  font-size: clamp(2rem, 8vw, 3.5rem);
+}
+.auth-card form,
+.auth-card label {
+  display: grid;
+  gap: 0.55rem;
+}
+.auth-card form {
+  gap: 1.1rem;
+  margin-block: 1.5rem;
+}
+.auth-card label {
+  color: var(--muted);
+  font-weight: 650;
+}
+.auth-card input {
+  width: 100%;
+  min-height: 2.75rem;
+  border: 1px solid #829197;
+  border-radius: 0.4rem;
+  background: #071014;
+  color: var(--ink);
+  padding: 0.65rem 0.75rem;
+}
+.auth-card dl div {
+  display: grid;
+  grid-template-columns: minmax(8rem, 0.7fr) minmax(0, 1.3fr);
+  gap: 1rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+  padding-block: 0.8rem;
+}
+.auth-card dt {
+  color: var(--muted);
+}
+.auth-card dd {
+  margin: 0;
+}
+
+@media (max-width: 360px) {
+  main {
+    width: min(100% - 1rem, 1160px);
+  }
+  .auth-card dl div {
+    grid-template-columns: 1fr;
+    gap: 0.25rem;
+  }
 }
 
 @media (max-width: 720px) {

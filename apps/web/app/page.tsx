@@ -1,5 +1,3 @@
-const repository = "https://github.com/ulfe-lmi/slaif-agent-site";
-
 export default function Home() {
   return (
     <main>
@@ -15,51 +13,49 @@ export default function Home() {
           <p className="eyebrow">SLAIF Agent-Site</p>
         </div>
         <div className="message">
-          <span className="badge">Pre-alpha deployment skeleton</span>
-          <h1 id="page-title">The runtime boundary is online.</h1>
+          <span className="badge">Self-hosted human control</span>
+          <h1 id="page-title">Set up or sign in locally.</h1>
           <p className="lead">
-            This page proves the self-hosted container, edge, health, and empty database
-            foundation can start together. It is not a website editor yet.
+            Create the first administrator with the one-time token shown by the
+            bootstrap container, then manage the authenticated session through the
+            same-origin Control API.
           </p>
-          <div className="status" role="status">
-            <span aria-hidden="true" className="status-dot" />
-            Skeleton web service ready
-          </div>
+          <nav aria-label="Authentication">
+            <a className="button-link" href="/setup">
+              First-time setup
+            </a>
+            <a className="button-link secondary" href="/login">
+              Administrator sign in
+            </a>
+          </nav>
         </div>
       </section>
-
-      <section className="grid" aria-label="Implementation status">
+      <section className="grid" aria-label="Product status">
         <article>
           <p className="number">01</p>
           <h2>Implemented now</h2>
           <p>
-            Isolated process containers, generated local database credentials,
-            safe-empty bootstrap, internal health checks, and NGINX routing.
+            Local first-administrator setup, login, session inspection, logout, isolated
+            services, and human-controlled foundations.
           </p>
         </article>
         <article>
           <p className="number">02</p>
-          <h2>Deliberately deferred</h2>
+          <h2>Still deliberately absent</h2>
           <p>
-            Authentication, administrators, sites, workspaces, editing, browser
-            automation, review, publication, and production TLS.
+            OIDC, MFA, rate limiting, durable authentication audit, sites, workspaces,
+            editing, review, and publication.
           </p>
         </article>
         <article>
           <p className="number">03</p>
-          <h2>Human-governed direction</h2>
+          <h2>Human governed</h2>
           <p>
-            Agents will work in isolated reviewable workspaces; publication will remain
-            a human-controlled action.
+            Backend authorization remains authoritative. This interface never publishes
+            or grants agent capabilities.
           </p>
         </article>
       </section>
-
-      <nav aria-label="Project documentation">
-        <a href={`${repository}#readme`}>Project overview</a>
-        <a href={`${repository}/blob/main/docs/DEPLOYMENT.md`}>Deployment guide</a>
-        <a href={`${repository}/blob/main/ARCHITECTURE.md`}>Architecture</a>
-      </nav>
     </main>
   );
 }

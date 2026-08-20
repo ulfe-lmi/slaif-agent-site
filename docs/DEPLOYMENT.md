@@ -3,7 +3,7 @@
 The implemented default deployment is a pre-alpha status and authority
 skeleton. It starts every planned process identity, establishes the empty-safe
 database foundation, and exposes health-only services through NGINX. It does
-not implement setup, authentication, sites, workspaces, editing, browser
+implements local setup/authentication but not sites, workspaces, editing, browser
 automation, review, or publication.
 
 ## Prerequisites and startup
@@ -12,6 +12,11 @@ Use a Linux host with Docker Engine and the Compose v2 plugin. The validated
 development environment used Docker Engine `29.1.3` and Compose `2.40.3`; the
 files use standard Compose Specification features including long-form
 `depends_on` health conditions.
+
+On first startup, bootstrap prints the credential-free `/setup` URL and the
+one-time setup token once. Open the URL, enter the token in the setup form,
+create the local administrator, and then use `/login`; never place the token in
+a URL, shell argument, log, screenshot, or trace.
 
 From a clean clone, run:
 
@@ -134,8 +139,9 @@ data under CC-BY-4.0 and `tslib` under 0BSD. Their attribution-bearing package
 metadata remains in the frozen install. The unused `sharp` image-optimization
 optional dependency is denied by pnpm policy, and the status surface sets
 unoptimized local images, so its LGPL libvips bundle is neither locked nor
-installed. Optional Playwright peer metadata does not install Playwright or a
-browser binary.
+installed in product images. `@playwright/test==1.62.1` is an Apache-2.0
+development-only dependency; CI/local verification installs its matching
+Chromium, Firefox, and WebKit builds outside every product image.
 
 Updates require a scoped work order, registry/version/license/platform review,
 replacement top-level digest, clean builds, the complete packaging test, and

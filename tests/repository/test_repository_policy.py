@@ -25,6 +25,7 @@ from tools.check_repository import (
     PYTHON_DEPENDENCY_GROUPS,
     PYTHON_DIRECT_VERSIONS,
     PYTHON_RUNTIME_DEPENDENCIES,
+    REQUIRED_FILES,
     ROOT_NODE_DEV_DEPENDENCIES,
     WORKSPACE_PACKAGES,
     RepositoryPolicy,
@@ -199,6 +200,30 @@ class RepositoryPolicyTestCase(unittest.TestCase):
             "snapshots:\n\n"
             "  example@1.0.0: {}\n",
         )
+
+    def test_local_identity_setup_is_required_repository_surface(self) -> None:
+        assert {
+            "docs/INSTALLATION_SETUP.md",
+            "docs/LOCAL_AUTHENTICATION.md",
+            "docs/API.md",
+            "services/backend/src/slaif_agent_site/bootstrap/setup_token.py",
+            "services/backend/src/slaif_agent_site/db/alembic/versions/008_001_installation_state.py",
+            "services/backend/src/slaif_agent_site/db/alembic/versions/009_001_local_identity.py",
+            "services/backend/src/slaif_agent_site/db/alembic/versions/010_001_human_session.py",
+            "services/backend/src/slaif_agent_site/db/alembic/versions/011_001_local_authentication.py",
+            "services/backend/src/slaif_agent_site/db/alembic/versions/012_001_control_auth_http.py",
+            "services/backend/src/slaif_agent_site/control_api/auth_http.py",
+            "services/backend/src/slaif_agent_site/identity/passwords.py",
+            "services/backend/src/slaif_agent_site/identity/authentication.py",
+            "services/backend/src/slaif_agent_site/identity/sessions.py",
+            "services/backend/tests/integration/test_installation_setup.py",
+            "services/backend/tests/integration/test_local_identity.py",
+            "services/backend/tests/integration/test_local_authentication.py",
+            "services/backend/tests/unit/test_bootstrap_setup_token.py",
+            "services/backend/tests/unit/test_identity_password.py",
+            "services/backend/tests/unit/test_sessions.py",
+            "services/backend/tests/integration/test_human_session.py",
+        } <= set(REQUIRED_FILES)
 
     def test_oap_accepts_active_without_report_and_complete_history(self) -> None:
         self.write("oap/active", "001-a\n")
@@ -428,9 +453,12 @@ class RepositoryPolicyTestCase(unittest.TestCase):
         )
         self.write(
             "README.md",
-            '<a href="https://www.slaif.si">\n'
-            '  <img src="docs/assets/slaif-logo.svg" alt="SLAIF logo" width="240">\n'
-            "</a>\n"
+            '<div style="text-align: center;">\n'
+            '  <a href="https://www.slaif.si">\n'
+            '    <img src="docs/assets/slaif-logo.svg" alt="SLAIF logo" '
+            'width="400" height="400">\n'
+            "  </a>\n"
+            "</div>\n\n# Fixture\n"
             f"{links}\n",
         )
 
@@ -447,6 +475,34 @@ class RepositoryPolicyTestCase(unittest.TestCase):
 
         self.assertTrue(
             any("does not resolve: SECURITY.md" in error for error in errors)
+        )
+
+    def test_readme_requires_centered_400_square_logo_before_h1(self) -> None:
+        self.make_linked_readme()
+        readme = self.root / "README.md"
+        readme.write_text(
+            "# Fixture\n" + readme.read_text(encoding="utf-8"), encoding="utf-8"
+        )
+
+        errors = self.errors_from("check_readme")
+
+        self.assertTrue(any("precede the first H1" in error for error in errors))
+
+    def test_markdown_configuration_requires_single_historical_report_exception(
+        self,
+    ) -> None:
+        self.write(
+            ".markdownlint-cli2.yaml",
+            'ignores:\n  - "oap/reports/**"\n',
+        )
+
+        errors = self.errors_from("check_markdown_configuration")
+
+        self.assertTrue(
+            any("missing exact immutable-report ignore" in error for error in errors)
+        )
+        self.assertTrue(
+            any("must not broadly ignore OAP reports" in error for error in errors)
         )
 
     def test_foundation_exact_registry_requirement_is_allowed(self) -> None:
@@ -760,6 +816,23 @@ class RepositoryPolicyTestCase(unittest.TestCase):
         self.assertTrue(any("only live/ready routes" in error for error in errors))
         self.assertTrue(any("database connection" in error for error in errors))
         self.assertTrue(any("listener/database" in error for error in errors))
+
+    def test_backend_static_boundary_rejects_identity_authority_in_other_process(
+        self,
+    ) -> None:
+        self.write_backend_skeleton()
+        self.write(
+            "services/backend/src/slaif_agent_site/scheduler/consumer.py",
+            "from slaif_agent_site.identity.passwords import PasswordService\n"
+            "operation = 'create_initial_local_administrator'\n",
+        )
+
+        errors = self.errors_from("check_backend_skeleton")
+
+        self.assertTrue(any("identity password authority" in error for error in errors))
+        self.assertTrue(
+            any("initial-administrator consumer" in error for error in errors)
+        )
 
     def test_node_workspace_exact_scaffold_is_allowed(self) -> None:
         self.write_node_workspace()

@@ -26,6 +26,7 @@ CI SBOM evidence bundle.
 | `@napi-rs/lzma-linux-x64-gnu` | `1.5.1` | npm / development | `MIT` | <https://github.com/Brooooooklyn/lzma#readme> | — |
 | `@next/env` | `16.3.1` | npm / production | `MIT` | <https://github.com/vercel/next.js#readme> | — |
 | `@next/swc-linux-x64-gnu` | `16.3.1` | npm / production | `MIT` | <https://github.com/vercel/next.js#readme> | — |
+| `@playwright/test` | `1.62.1` | npm / production | `Apache-2.0` | <https://playwright.dev> | Apache-2.0 test-only browser automation; matching browser builds remain outside product images. |
 | `@rollup/rollup-linux-x64-gnu` | `4.62.4` | npm / development | `MIT` | <https://rollupjs.org/> | — |
 | `@standard-schema/spec` | `1.1.0` | npm / development | `MIT` | <https://standardschema.dev> | — |
 | `@swc/helpers` | `0.5.23` | npm / production | `Apache-2.0` | <https://swc.rs> | — |
@@ -119,6 +120,8 @@ CI SBOM evidence bundle.
 | `pathe` | `2.0.3` | npm / development | `MIT` | <https://github.com/unjs/pathe#readme> | — |
 | `picocolors` | `1.1.1` | npm / production | `ISC` | <https://github.com/alexeyraspopov/picocolors#readme> | — |
 | `picomatch` | `4.0.5` | npm / development | `MIT` | <https://github.com/micromatch/picomatch> | — |
+| `playwright` | `1.62.1` | npm / production | `Apache-2.0` | <https://playwright.dev> | — |
+| `playwright-core` | `1.62.1` | npm / production | `Apache-2.0` | <https://playwright.dev> | — |
 | `postcss` | `8.5.23` | npm / production | `MIT` | <https://postcss.org/> | — |
 | `postcss` | `8.5.26` | npm / development | `MIT` | <https://postcss.org/> | — |
 | `prelude-ls` | `1.2.1` | npm / development | `MIT` | <http://preludels.com> | — |
@@ -158,9 +161,12 @@ CI SBOM evidence bundle.
 | `annotated-doc` | `0.0.5` | PyPI / production | `MIT` | <https://github.com/fastapi/annotated-doc> | — |
 | `annotated-types` | `0.8.0` | PyPI / production | `MIT` | <https://github.com/annotated-types/annotated-types> | — |
 | `anyio` | `4.14.2` | PyPI / production | `MIT` | <https://github.com/agronholm/anyio> | — |
+| `argon2-cffi` | `25.1.0` | PyPI / production | `MIT` | <https://github.com/hynek/argon2-cffi> | — |
+| `argon2-cffi-bindings` | `25.1.0` | PyPI / production | `MIT` | <https://github.com/hynek/argon2-cffi-bindings> | — |
 | `asyncpg` | `0.31.0` | PyPI / production | `Apache-2.0` | <https://github.com/MagicStack/asyncpg> | — |
 | `build` | `1.5.0` | PyPI / build | `MIT` | <https://github.com/pypa/build> | — |
 | `certifi` | `2026.7.22` | PyPI / development | `MPL-2.0` | <https://github.com/certifi/python-certifi> | — |
+| `cffi` | `2.1.1` | PyPI / production | `MIT-0` | <https://github.com/python-cffi/cffi> | — |
 | `click` | `8.4.2` | PyPI / production | `BSD-3-Clause` | <https://github.com/pallets/click/> | — |
 | `colorama` | `0.4.6` | PyPI / production | `BSD-3-Clause` | <https://github.com/tartley/colorama> | — |
 | `fastapi` | `0.141.1` | PyPI / production | `MIT` | <https://github.com/fastapi/fastapi> | — |
@@ -178,6 +184,7 @@ CI SBOM evidence bundle.
 | `packaging` | `25.0` | PyPI / qualification | `Apache-2.0 OR BSD-2-Clause` | <https://github.com/pypa/packaging> | — |
 | `pathspec` | `1.1.1` | PyPI / development | `MPL-2.0` | <https://github.com/cpburnz/python-pathspec> | — |
 | `pluggy` | `1.6.0` | PyPI / development | `MIT` | <https://pypi.org/project/pluggy/1.6.0/> | — |
+| `pycparser` | `3.0` | PyPI / production | `BSD-3-Clause` | <https://github.com/eliben/pycparser> | — |
 | `pydantic` | `2.13.4` | PyPI / production | `MIT` | <https://github.com/pydantic/pydantic> | — |
 | `pydantic-core` | `2.46.4` | PyPI / production | `MIT` | <https://github.com/pydantic/pydantic/tree/main/pydantic-core> | — |
 | `pydantic-settings` | `2.15.0` | PyPI / production | `MIT` | <https://github.com/pydantic/pydantic-settings> | — |

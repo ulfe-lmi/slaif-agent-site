@@ -3,8 +3,9 @@
 The current Python backend has shared typed configuration for health-only
 long-running skeletons, a separate Control-only online database model, and
 separate typed configuration for explicit one-shot database bootstrap. Control
-API is the only online process that connects to PostgreSQL. No process
-authenticates a caller, exposes a product API, or runs a product job.
+API is the only online process that connects to PostgreSQL. Its initial-local-
+administrator operation exists only as a semantic code/test boundary; no
+process authenticates a caller, exposes a product API, or runs a product job.
 
 ## Loading rules
 
@@ -39,8 +40,18 @@ field is invalid. The emitted configuration error is constant and does not
 contain the rejected value. Secret values use Pydantic `SecretStr` and remain
 masked in representations and JSON serialization.
 
-The setting is named `APP_SECRET` only as a future application/service-secret
-slot. No current route consumes it, and no test value is a production secret.
+The setting is named `APP_SECRET` as the future application/service-secret
+slot. Session credentials currently use independently generated 256-bit values
+and SHA-256 digests; the app secret is not used to recover or store plaintext.
+There is no password-policy, Argon2-cost, initial-username, or administrator
+configuration input; the validated policy and production hash profile are
+fixed in trusted code.
+
+Local credential verification uses the fixed RFC 9106 LOW_MEMORY Argon2id
+profile and a source-reviewed equal-cost dummy hash. Argon2 cost is not an
+environment setting; changing it requires trusted code and migration/testing
+work. There is no rate-limit, login-audit, OIDC, MFA, or HTTP-login setting in
+this baseline.
 
 ## Process checks and starts
 
@@ -132,6 +143,11 @@ Production accepts only absolute mounted secret files:
 - `SLAIF_BOOTSTRAP_OWNER_DSN_FILE` for migration, status, COW, and validation.
 - `SLAIF_BOOTSTRAP_LOCAL_SECRETS_DIR` for the local Compose command's fixed
   ten-login password manifest.
+- `SLAIF_BOOTSTRAP_SETUP_TOKEN_TTL_MINUTES` optionally sets a 5–60 minute
+  lifetime for explicit setup-token issuance; the default is 30.
+- `SLAIF_BOOTSTRAP_SETUP_URL` optionally sets the absolute HTTP(S) `/setup`
+  URL printed separately from a newly issued token; it cannot carry
+  credentials, a query, or a fragment.
 
 The local stack uses bootstrap `production` mode because both database locators
 are mounted files. Its health-only long-running services use `development` mode
@@ -145,6 +161,13 @@ shared `SLAIF_DATABASE_URL`, default credential, implicit environment file, or
 module-import connection. See [database bootstrap](DATABASE_BOOTSTRAP.md) for
 commands and marker semantics.
 
+Setup-token configuration belongs only to the one-shot bootstrap package. It
+does not put a token in an environment variable or URL, grant direct table
+access to Control, or enable an online setup endpoint. The code/test-only
+consumer uses the already-isolated Control credential and two narrow
+functions. See
+[installation setup](INSTALLATION_SETUP.md).
+
 ## Deferred configuration
 
 The default initializer generates future service DSN files, but only the exact
@@ -153,3 +176,24 @@ database locators/pools, identity providers, browser sources,
 media stores, service authentication, trusted proxies, CORS, sessions, jobs,
 metrics, and product feature settings are not implemented. They must be added
 later under their process-specific authority and architecture work orders.
+Server-side session persistence, expiry, recent-auth, CSRF credential policy,
+and cookie value objects are implemented in 010-e. HTTP authentication routes,
+OIDC, MFA, rate limiting, durable auth audit, and runtime agent browser tooling
+remain deferred. Authentication E2E uses the fixed localhost deployment URL
+and a mode-0600 temporary secret file; it adds no product runtime setting.
+
+## Human-session policy
+
+The server-side foundation uses `HumanSessionPolicy` in trusted code, not
+environment-selected caller input. Defaults are a 300-second touch interval,
+1,800-second idle timeout, 28,800-second absolute lifetime, and 900-second
+recent-auth window. Validation requires `0 < touch < idle < absolute` and
+`0 < recent-auth <= absolute`. PostgreSQL database time decides expiry and
+recent-auth; application wall-clock injection is not used for authorization.
+
+The future HTTP layer must use the value-object contract: HTTP-only,
+`SameSite=Lax`, `Path=/`, no Domain, and Max-Age no greater than absolute
+lifetime. Production uses `Secure` and `__Host-slaif_session`; development
+local uses non-Secure `slaif_session`. CSRF is a separate `sas2_csrf_...`
+credential and is required for every future state-changing cookie-authenticated
+Control call. No cookie or route is emitted by this round.

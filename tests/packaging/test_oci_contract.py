@@ -94,7 +94,10 @@ class OciContractTests(unittest.TestCase):
         self.assertIn("ignoredOptionalDependencies:\n  - sharp", workspace)
         lock = (ROOT / "pnpm-lock.yaml").read_text(encoding="utf-8")
         self.assertNotIn("\n  sharp@", lock)
-        self.assertNotIn("\n  '@playwright/test@", lock)
+        web_importer = lock.split("  apps/web:\n", maxsplit=1)[1].split(
+            "\n  packages/", maxsplit=1
+        )[0]
+        self.assertNotIn("      '@playwright/test':", web_importer)
 
     def test_browser_placeholder_has_no_package_or_browser_install(self) -> None:
         content = (ROOT / "services/browser-worker/Dockerfile").read_text(
