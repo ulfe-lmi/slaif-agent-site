@@ -95,10 +95,6 @@ class ControlDatabaseAdapter(Protocol):
         self, request: InitialLocalAdministratorRequest
     ) -> InitialLocalAdministratorResult: ...
 
-    async def authenticate_local_login(
-        self, request: LocalLoginRequest
-    ) -> LocalAuthenticationResult: ...
-
 
 PoolFactory = Callable[..., Awaitable[Any]]
 AfterSetupLock = Callable[[], Awaitable[None]]
