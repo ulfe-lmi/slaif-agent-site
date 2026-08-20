@@ -458,6 +458,7 @@ class RepositoryPolicy:
         self.check_agent_architecture_policy()
         self.check_logo()
         self.check_readme()
+        self.check_markdown_configuration()
         self.check_oap()
         self.check_workflows()
         self.check_python_quality_configuration()
@@ -634,13 +635,16 @@ class RepositoryPolicy:
         if text is None:
             return
         logo_block = re.search(
+            r"<div\s+style=['\"]text-align:\s*center;['\"]>\s*"
             r"<a\s+href=['\"]https://www\.slaif\.si['\"][^>]*>\s*"
-            r"<img\s+([^>]+)>\s*</a>",
+            r"<img\s+([^>]+)>\s*</a>\s*</div>",
             text,
             re.IGNORECASE,
         )
         if logo_block is None:
-            self.error(path, "must link the local logo to https://www.slaif.si")
+            self.error(
+                path, "must use a centered local logo linked to https://www.slaif.si"
+            )
         else:
             attributes = {
                 key.lower(): value
@@ -652,10 +656,11 @@ class RepositoryPolicy:
                 self.error(path, "logo src must be docs/assets/slaif-logo.svg")
             if len(attributes.get("alt", "").strip()) < 5:
                 self.error(path, "logo must have meaningful alt text")
-            if not re.fullmatch(r"\d+", attributes.get("width", "")):
-                self.error(path, "logo must specify a numeric width")
-            if "height" in attributes:
-                self.error(path, "logo must use width only, without height")
+            if attributes.get("width") != "400" or attributes.get("height") != "400":
+                self.error(path, "logo must specify width and height 400")
+            first_heading = re.search(r"^#\s+", text, re.MULTILINE)
+            if first_heading is None or logo_block.start() > first_heading.start():
+                self.error(path, "logo block must precede the first H1")
 
         destinations = [match.group(1) for match in MARKDOWN_LINK.finditer(text)]
         destinations.extend(match.group(1) for match in HTML_LINK.finditer(text))
@@ -679,6 +684,21 @@ class RepositoryPolicy:
         for required in REQUIRED_README_TARGETS:
             if required not in local_targets:
                 self.error(path, f"required internal link is absent: {required}")
+
+    def check_markdown_configuration(self) -> None:
+        path = self.root / ".markdownlint-cli2.yaml"
+        if not path.is_file():
+            return
+        text = self.read_utf8(path)
+        if text is None:
+            return
+        exact = '  - "oap/reports/010-i-qualify-session-finalizer-update.md"'
+        lines = set(text.splitlines())
+        if exact not in lines:
+            self.error(path, "missing exact immutable-report ignore")
+        for line in lines:
+            if line.startswith("  - ") and "oap/reports" in line and line != exact:
+                self.error(path, "must not broadly ignore OAP reports")
 
     def check_oap(self) -> None:
         active_path = self.root / "oap/active"

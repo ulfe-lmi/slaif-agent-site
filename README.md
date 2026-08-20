@@ -1,10 +1,11 @@
-# SLAIF Agent-Site
-
-<p align="center">
+<!-- markdownlint-disable MD041 -->
+<div style="text-align: center;">
   <a href="https://www.slaif.si">
-    <img src="docs/assets/slaif-logo.svg" alt="SLAIF — Slovenian AI Factory" width="240">
+    <img src="docs/assets/slaif-logo.svg" alt="SLAIF — Slovenian AI Factory" width="400" height="400">
   </a>
-</p>
+</div>
+
+# SLAIF Agent-Site
 
 [![CI](https://github.com/ulfe-lmi/slaif-agent-site/actions/workflows/ci.yml/badge.svg)](https://github.com/ulfe-lmi/slaif-agent-site/actions/workflows/ci.yml)
 [![CodeQL](https://github.com/ulfe-lmi/slaif-agent-site/actions/workflows/codeql.yml/badge.svg)](https://github.com/ulfe-lmi/slaif-agent-site/actions/workflows/codeql.yml)

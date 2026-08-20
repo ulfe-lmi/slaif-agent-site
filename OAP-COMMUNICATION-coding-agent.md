@@ -202,9 +202,12 @@ Report publication commit: SELF
 `SELF` is the GitHub commit containing that exact report; its first parent must
 equal the literal implementation SHA. Strategy derives its literal SHA.
 
-Atomically publish under `oap/reports`: same-filesystem temp; full write; close;
-fsync when practical; rename; stage only new report; verify staged diff has no
-other path; commit; push; verify remote PR head/parent/path/exact file; signal.
+Before atomic publication, finish complete report content in a same-filesystem
+temporary file; run Markdownlint `--no-globs` on that exact temporary/final-
+content path; correct every finding before atomic rename. Only then publish,
+commit, push, and signal. Publish under `oap/reports`: close and fsync when
+practical; rename; stage only the new report; verify staged diff has no other
+path; commit; push; verify remote PR head/parent/path/exact file; signal.
 No repo mutation/push follows report commit in that round.
 
 Before publication, detect an existing final report for ID. Never overwrite;

@@ -447,9 +447,12 @@ class RepositoryPolicyTestCase(unittest.TestCase):
         )
         self.write(
             "README.md",
-            '<a href="https://www.slaif.si">\n'
-            '  <img src="docs/assets/slaif-logo.svg" alt="SLAIF logo" width="240">\n'
-            "</a>\n"
+            '<div style="text-align: center;">\n'
+            '  <a href="https://www.slaif.si">\n'
+            '    <img src="docs/assets/slaif-logo.svg" alt="SLAIF logo" '
+            'width="400" height="400">\n'
+            "  </a>\n"
+            "</div>\n\n# Fixture\n"
             f"{links}\n",
         )
 
@@ -466,6 +469,34 @@ class RepositoryPolicyTestCase(unittest.TestCase):
 
         self.assertTrue(
             any("does not resolve: SECURITY.md" in error for error in errors)
+        )
+
+    def test_readme_requires_centered_400_square_logo_before_h1(self) -> None:
+        self.make_linked_readme()
+        readme = self.root / "README.md"
+        readme.write_text(
+            "# Fixture\n" + readme.read_text(encoding="utf-8"), encoding="utf-8"
+        )
+
+        errors = self.errors_from("check_readme")
+
+        self.assertTrue(any("precede the first H1" in error for error in errors))
+
+    def test_markdown_configuration_requires_single_historical_report_exception(
+        self,
+    ) -> None:
+        self.write(
+            ".markdownlint-cli2.yaml",
+            'ignores:\n  - "oap/reports/**"\n',
+        )
+
+        errors = self.errors_from("check_markdown_configuration")
+
+        self.assertTrue(
+            any("missing exact immutable-report ignore" in error for error in errors)
+        )
+        self.assertTrue(
+            any("must not broadly ignore OAP reports" in error for error in errors)
         )
 
     def test_foundation_exact_registry_requirement_is_allowed(self) -> None:
