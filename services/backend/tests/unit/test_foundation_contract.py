@@ -94,6 +94,7 @@ NEW_PACKAGE_FILES = {
     "slaif_agent_site/db/roles.py",
     "slaif_agent_site/identity/__init__.py",
     "slaif_agent_site/identity/models.py",
+    "slaif_agent_site/identity/authentication.py",
     "slaif_agent_site/identity/passwords.py",
     "slaif_agent_site/identity/sessions.py",
     "slaif_agent_site/editor_api/__init__.py",
@@ -124,6 +125,7 @@ EXPECTED_PACKAGE_FILES = NEW_PACKAGE_FILES | {
     "slaif_agent_site/agent_state/__init__.py",
     "slaif_agent_site/agent_state/foundation.py",
     "slaif_agent_site/db/alembic/versions/010_001_human_session.py",
+    "slaif_agent_site/db/alembic/versions/011_001_local_authentication.py",
 }
 EXPECTED_SDIST_FILES = {
     "alembic.ini",
@@ -140,6 +142,7 @@ EXPECTED_SDIST_FILES = {
     "migrations/alembic/__init__.py",
     "migrations/bootstrap/README.md",
     "services/backend/src/slaif_agent_site/db/alembic/versions/010_001_human_session.py",
+    "services/backend/src/slaif_agent_site/db/alembic/versions/011_001_local_authentication.py",
 } | {f"services/backend/src/{path}" for path in NEW_PACKAGE_FILES}
 
 
@@ -388,8 +391,9 @@ def test_locked_foundation_artifact_hash_constants_are_sha256() -> None:
 
 
 def test_alembic_graph_and_offline_sql_need_no_locator_or_network() -> None:
-    assert migration_heads() == ("010_001",)
+    assert migration_heads() == ("011_001",)
     assert migration_history() == (
+        "011_001",
         "010_001",
         "009_001",
         "008_001",
@@ -556,3 +560,15 @@ def test_database_source_uses_public_foundation_boundary_and_no_domain_ddl() -> 
     assert 'WHERE "id" = "candidate"."id"' not in session_revision
     assert 'AND "revoked_at" IS NULL' not in session_revision
     assert 'AND "absolute_expires_at" > "now_at"' not in session_revision
+
+    authentication_revision = (
+        package / "db/alembic/versions/011_001_local_authentication.py"
+    ).read_text(encoding="utf-8")
+    assert authentication_revision.count("CREATE FUNCTION") == 2
+    assert authentication_revision.count("GRANT EXECUTE ON FUNCTION") == 1
+    assert '"control"."user_account"' in authentication_revision
+    assert "SECURITY DEFINER" in authentication_revision
+    assert "SET search_path = pg_catalog" in authentication_revision
+    assert "p_expected_password_hash" in authentication_revision
+    assert "p_new_password_hash" in authentication_revision
+    assert 'REVOKE ALL ON FUNCTION' in authentication_revision

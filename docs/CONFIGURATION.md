@@ -47,6 +47,12 @@ There is no password-policy, Argon2-cost, initial-username, or administrator
 configuration input; the validated policy and production hash profile are
 fixed in trusted code.
 
+Local credential verification uses the fixed RFC 9106 LOW_MEMORY Argon2id
+profile and a source-reviewed equal-cost dummy hash. Argon2 cost is not an
+environment setting; changing it requires trusted code and migration/testing
+work. There is no rate-limit, login-audit, OIDC, MFA, or HTTP-login setting in
+this baseline.
+
 ## Process checks and starts
 
 Every process supports a safe configuration/authority check:

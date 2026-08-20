@@ -1,7 +1,8 @@
 # Local identity and password boundary
 
-Revision `009_001` establishes local identity and revision `010_001` adds the
-server-side human-session persistence and semantic service. These boundaries
+Revision `009_001` establishes local identity, revision `010_001` adds the
+server-side human-session persistence, and revision `011_001` adds the
+Control-only local credential lookup/rehash boundary. These boundaries
 are callable in application code and covered by unit and disposable-
 PostgreSQL tests. They are not exposed by an HTTP route, so local
 authentication is not yet usable from a browser.
@@ -43,6 +44,23 @@ database parameter. Verification returns a stable boolean, and
 representations, and serialized request/results omit plaintext. Python strings
 are immutable, so this implementation makes no claim that plaintext can be
 securely wiped from process memory.
+
+## Local credential authentication
+
+`LocalAuthenticationService` accepts a bounded username and masked `SecretStr`
+password. Control calls an owner-defined lookup function returning only the
+active local account UUID, normalized username, Argon2id hash, and status.
+Active candidates take the real Argon2 verifier; absent, disabled, OIDC, and
+malformed candidates take the same fixed production-profile dummy verifier.
+Every denial raises the constant `Local login failed.` error and never exposes
+account status, hash, or database details.
+
+When a valid hash needs the current profile, the service hashes the already
+verified password without reapplying account-creation policy, then uses a
+Control-only compare-and-set guarded by user ID, LOCAL identity, ACTIVE status,
+and the exact old hash. A failed race is a denial. The memory-hard verifier
+runs outside database transactions; cancellation propagates and no session is
+issued. Perfect network timing equality is not claimed.
 
 ## Atomic first-administrator operation
 
@@ -122,5 +140,7 @@ HTTP response and adds no route or browser storage.
 There is no `/setup`, `/login`, `/logout`, user-management, or other product
 HTTP route. The server-side session/CSRF foundation is now present, but HTTP
 authentication, cookie emission, setup/login UI, NGINX, default Compose
-operator flow, OIDC, MFA, and security-event audit remain future work. Setup-
-token issuance is still explicit and is never part of default startup.
+operator flow, OIDC, MFA, and security-event audit remain future work.
+Credential verification is an internal boundary only: no session issuance,
+rate limiting, login audit, or UI is implemented. Setup-token issuance is still
+explicit and is never part of default startup.

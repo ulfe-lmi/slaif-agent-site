@@ -81,6 +81,14 @@ class PasswordService:
         except Exception:
             return True
 
+    def hash_for_rehash(self, password: SecretStr) -> SecretStr:
+        """Hash an already-authenticated password without account policy checks."""
+
+        try:
+            return SecretStr(self._hasher.hash(password.get_secret_value()))
+        except Exception:
+            raise PasswordServiceError("Local password operation failed.") from None
+
 
 __all__ = [
     "PASSWORD_MAX_CHARACTERS",

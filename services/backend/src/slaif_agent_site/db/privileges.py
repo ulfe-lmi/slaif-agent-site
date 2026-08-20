@@ -72,6 +72,15 @@ CONTROL_FUNCTIONS = {
         "slaif_revoke_human_session",
         "p_public_id text, p_secret_digest bytea, p_csrf_secret_digest bytea",
     ): "text, bytea, bytea",
+    (
+        "slaif_lookup_local_login",
+        "p_local_username_normalized text",
+    ): "text",
+    (
+        "slaif_compare_and_set_local_password_hash",
+        "p_user_account_id uuid, p_expected_password_hash text, "
+        "p_new_password_hash text",
+    ): "uuid, text, text",
 }
 
 

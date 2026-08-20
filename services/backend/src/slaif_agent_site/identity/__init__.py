@@ -27,3 +27,16 @@ __all__ = [
     "IssuedHumanSession",
     "SessionCookiePolicy",
 ]
+from .authentication import (
+    LocalAuthenticationError,
+    LocalAuthenticationResult,
+    LocalAuthenticationService,
+    LocalLoginRequest,
+)
+
+__all__ = [
+    "LocalAuthenticationError",
+    "LocalAuthenticationResult",
+    "LocalAuthenticationService",
+    "LocalLoginRequest",
+]

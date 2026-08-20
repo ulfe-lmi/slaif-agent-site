@@ -192,6 +192,7 @@ jobs:
           uv run --frozen pytest
           services/backend/tests/integration/test_database_bootstrap.py
           services/backend/tests/integration/test_human_session.py
+          services/backend/tests/integration/test_local_authentication.py
 
   compose-edge-packaging:
     name: Compose and edge packaging

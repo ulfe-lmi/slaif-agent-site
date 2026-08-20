@@ -12,7 +12,7 @@ NOREPLICATION NOBYPASSRLS`.
 | Privilege role | Credential consumer | Implemented baseline authority |
 | --- | --- | --- |
 | `slaif_owner` | One-shot bootstrap only | Own `control`, `content`, `audit`, their objects, and the `agentcow` deployment; run migrations and hardening. |
-| `slaif_control` | Control API and human-session principal | `USAGE` on `control` plus execute on owner-defined readiness, setup, and opaque-session functions; direct relation access, content DML, and reviewer/setup-owner authority remain denied. |
+| `slaif_control` | Control API and human-session principal | `USAGE` on `control` plus execute on owner-defined readiness, setup, opaque-session, and local-credential lookup/compare-and-set functions; direct relation access, content DML, and reviewer/setup-owner authority remain denied. |
 | `slaif_editor_runtime` | Future Editor API principal | COW-view `SELECT`, `INSERT`, `UPDATE`, and `DELETE` after a table is enabled/hardened; no base/change, reviewer, or setup authority. |
 | `slaif_agent_runtime` | Future Agent API principal | Same COW-view DML boundary as Editor under a distinct role; no base/change, reviewer, or setup authority. |
 | `slaif_public_reader` | Future canonical render principal | `SELECT` on present COW views after product grant reconciliation; no DML or internal tables. |
@@ -38,6 +38,10 @@ and idempotent CSRF-bound revoke. Session and CSRF digests
 are exactly 32 bytes; plaintext credentials never reach the database. Every
 runtime, reviewer, reader, scheduler, media, and GC role has no relation or
 function authority for these objects.
+
+Revision `011_001` adds only `slaif_control` execution on local-login lookup
+and password-hash compare-and-set functions. No role receives direct
+`user_account` relation access; plaintext passwords never reach PostgreSQL.
 
 ## Login-principal design
 

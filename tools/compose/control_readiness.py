@@ -11,12 +11,18 @@ import time
 from pathlib import Path
 from typing import Any
 
+from slaif_agent_site.db.migrations import migration_heads
+
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 BACKEND_IMAGE = "slaif-agent-site-backend:local"
 CONTROL_FILE = "/secrets/control-dsn"
 CONNECTION_UNAVAILABLE = "connection_unavailable"
 CONFIGURATION_INVALID = "configuration_invalid"
 MIGRATION_MISMATCH = "migration_mismatch"
+PACKAGED_MIGRATION_HEADS = migration_heads()
+if len(PACKAGED_MIGRATION_HEADS) != 1:
+    raise RuntimeError("expected one packaged migration head")
+PACKAGED_MIGRATION_HEAD = PACKAGED_MIGRATION_HEADS[0]
 ROLE_MISMATCH = "role_mismatch"
 TIMEOUT = "timeout"
 UNSAFE_MARKER = "unsafe_marker"
@@ -556,7 +562,7 @@ class ControlReadinessFixture:
         self.mark("migration-mismatch", "change-marker")
         self._psql(
             "UPDATE control.bootstrap_readiness "
-            "SET migration_revision = '010_001' WHERE singleton;"
+            f"SET migration_revision = '{PACKAGED_MIGRATION_HEAD}' WHERE singleton;"
         )
         self.mark("migration-mismatch", "await-readiness")
         self._wait_readiness(None)

@@ -1,5 +1,11 @@
 # Local skeleton operations
 
+The Control process is the only online authority for local credential lookup
+and compare-and-set password rehash. It uses fixed-cost Argon2id and an
+equal-cost dummy verification path for unknown or disabled identities. Budget
+roughly 64 MiB per concurrent Argon2 operation. HTTP login, session issuance,
+rate limiting, login audit, OIDC, MFA, and UI remain deliberately absent.
+
 These commands operate the default Compose project in a local, non-production
 environment. Use an explicit `-p NAME` for disposable tests so cleanup targets
 cannot overlap an operator's persistent project.
@@ -20,7 +26,7 @@ the same generated credentials. Bootstrap must print exactly a safe result
 shaped as:
 
 ```text
-compose-bootstrap: OK revision=010_001 state=EMPTY_SAFE safe=true
+compose-bootstrap: OK revision=011_001 state=EMPTY_SAFE safe=true
 ```
 
 Do not publish or archive complete logs without reviewing them. The

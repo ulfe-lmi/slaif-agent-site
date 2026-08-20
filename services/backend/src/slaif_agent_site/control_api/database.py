@@ -22,6 +22,12 @@ from slaif_agent_site.bootstrap.setup_token import (
 from slaif_agent_site.db.migrations import migration_heads
 from slaif_agent_site.db.roles import ROLE_NAMES
 from slaif_agent_site.health import ProbeResult
+from slaif_agent_site.identity.authentication import (
+    LocalAuthenticationError,
+    LocalAuthenticationResult,
+    LocalAuthenticationService,
+    LocalLoginRequest,
+)
 from slaif_agent_site.identity.models import (
     InitialLocalAdministratorRequest,
     InitialLocalAdministratorResult,
@@ -88,6 +94,10 @@ class ControlDatabaseAdapter(Protocol):
     async def create_initial_local_administrator(
         self, request: InitialLocalAdministratorRequest
     ) -> InitialLocalAdministratorResult: ...
+
+    async def authenticate_local_login(
+        self, request: LocalLoginRequest
+    ) -> LocalAuthenticationResult: ...
 
 
 PoolFactory = Callable[..., Awaitable[Any]]
@@ -331,6 +341,19 @@ class ControlDatabase:
             raise HumanSessionError()
         return HumanSessionService(self._pool, policy=policy)
 
+    async def authenticate_local_login(
+        self, request: LocalLoginRequest
+    ) -> LocalAuthenticationResult:
+        """Verify one local credential through the Control-only boundary."""
+
+        if self._pool is None:
+            raise LocalAuthenticationError()
+        return await LocalAuthenticationService(
+            self._pool,
+            acquire_timeout=self._settings.acquire_timeout_seconds,
+            password_service=self._password_service,
+        ).authenticate(request)
+
 
 __all__ = [
     "INITIAL_SETUP_COMPLETE_SQL",
@@ -341,4 +364,7 @@ __all__ = [
     "ControlDatabaseError",
     "ControlDatabaseReason",
     "InitialSetupError",
+    "LocalAuthenticationError",
+    "LocalAuthenticationResult",
+    "LocalLoginRequest",
 ]
