@@ -4,6 +4,15 @@ set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 TOKEN_FILE=$1
 SECRET_FILE=$2
+OUTPUT_DIR=$(mktemp -d)
+
+cleanup() {
+  rm -f "$SECRET_FILE"
+  case "$OUTPUT_DIR" in
+    /tmp/*) rm -rf -- "$OUTPUT_DIR" ;;
+  esac
+}
+trap cleanup EXIT HUP INT TERM
 
 fail() {
   echo "compose-e2e: FAILED stage=$1 reason=$2" >&2
@@ -23,9 +32,10 @@ printf '{"setupToken":"%s","username":"Compose.Admin","loginUsername":"compose.a
   "$token" >"$SECRET_FILE"
 unset token
 
-if ! SLAIF_E2E_SECRET_FILE="$SECRET_FILE" pnpm exec playwright test
+if ! SLAIF_E2E_SECRET_FILE="$SECRET_FILE" \
+  SLAIF_E2E_OUTPUT_DIR="$OUTPUT_DIR" \
+  pnpm exec playwright test
 then
   fail browser contract
 fi
-rm -f "$SECRET_FILE"
 echo "compose-e2e: OK projects=6 setup-viewports=2 artifacts=disabled"

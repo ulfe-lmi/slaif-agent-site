@@ -10,7 +10,7 @@ export default defineConfig({
   workers: 1,
   retries: 0,
   reporter: [["./tests/e2e/reporter.mjs"]],
-  outputDir: "/tmp/slaif-playwright-output",
+  outputDir: process.env.SLAIF_E2E_OUTPUT_DIR ?? "/tmp/slaif-playwright-output",
   use: {
     baseURL,
     screenshot: "off",
