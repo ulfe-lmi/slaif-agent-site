@@ -387,6 +387,9 @@ def downgrade() -> None:
         'DROP FUNCTION "control"."slaif_create_human_session"('
         "uuid, text, bytea, bytea, uuid, integer, integer, integer)"
     )
+    op.execute(
+        'DROP FUNCTION "control"."slaif_revoke_human_session"(text, bytea, bytea)'
+    )
     op.execute('DROP INDEX "control"."user_session_expiry_idx"')
     op.execute('DROP INDEX "control"."user_session_user_account_idx"')
     op.execute('DROP TABLE "control"."user_session"')

@@ -543,3 +543,12 @@ def test_database_source_uses_public_foundation_boundary_and_no_domain_ddl() -> 
     )
     assert session_revision.count("GRANT EXECUTE ON FUNCTION") == 1
     assert session_revision.count('TO "slaif_control"') == 1
+    downgrade = session_revision.split("def downgrade()", maxsplit=1)[1]
+    for function_name in (
+        '"control"."slaif_inspect_human_session"',
+        '"control"."slaif_finalize_human_session"',
+        '"control"."slaif_finalize_state_changing_human_session"',
+        '"control"."slaif_create_human_session"',
+        '"control"."slaif_revoke_human_session"',
+    ):
+        assert f"DROP FUNCTION {function_name}" in downgrade

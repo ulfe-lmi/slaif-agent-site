@@ -75,9 +75,9 @@ async def test_human_session_lifecycle_security_and_concurrency(
     control_pool = await database.role_pool("slaif_control")
     policy = HumanSessionPolicy(
         touch_interval_seconds=1,
-        idle_timeout_seconds=2,
-        absolute_lifetime_seconds=8,
-        recent_auth_window_seconds=4,
+        idle_timeout_seconds=5,
+        absolute_lifetime_seconds=60,
+        recent_auth_window_seconds=10,
     )
     values = iter(bytes([index]) * 32 for index in range(1, 80))
     service = HumanSessionService(
@@ -164,6 +164,20 @@ async def test_human_session_lifecycle_security_and_concurrency(
         assert touched.absolute_expires_at == after_touch[3]
         assert after_touch[4] == before_touch[4]
 
+        idle_expired = await service.create(user_id)
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            await owner.execute(
+                "UPDATE control.user_session SET created_at = current_timestamp - "
+                "interval '10 seconds', last_seen_at = current_timestamp - "
+                "interval '10 seconds', recent_auth_at = current_timestamp - "
+                "interval '10 seconds' WHERE id = $1",
+                idle_expired.session_id,
+            )
+        with pytest.raises(HumanSessionError):
+            await service.authenticate(idle_expired.token)
+
         async with owner_connection(
             database.settings.resolved_owner_dsn(), expected_database=database.name
         ) as owner:
@@ -174,8 +188,9 @@ async def test_human_session_lifecycle_security_and_concurrency(
             )
             await owner.execute(
                 "UPDATE control.user_session SET absolute_expires_at = "
-                "current_timestamp "
-                "- interval '1 second' WHERE id = $1",
+                "current_timestamp - interval '1 second', "
+                "recent_auth_at = current_timestamp - interval '3 seconds' "
+                "WHERE id = $1",
                 second.session_id,
             )
         with pytest.raises(HumanSessionError):
