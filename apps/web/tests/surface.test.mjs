@@ -27,7 +27,8 @@ test("forms preserve accessibility, password manager, and pending contracts", as
     assert.match(forms, new RegExp(`autoComplete="${value}"`));
   assert.match(forms, /role="status"/);
   assert.match(forms, /aria-live="polite"/);
-  assert.match(forms, /if \(pending\) return/);
+  assert.match(forms, /submitting\.current/);
+  assert.match(forms, /disabled=\{!available \|\| pending\}/);
   assert.match(forms, /type="password"/);
   assert.match(forms, /window\.location\.protocol === "https:"/);
   assert.doesNotMatch(forms, /localStorage|sessionStorage|public_id/);

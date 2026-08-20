@@ -97,19 +97,21 @@ NODE_DEV_DEPENDENCIES = {
 }
 NODE_SCRIPTS = {
     "lint": (
-        "eslint . --max-warnings 0 --ignore-pattern '**/.next/**' && "
+        "eslint . --max-warnings 0 --ignore-pattern '**/.next/**' "
+        "--ignore-pattern 'playwright.config.ts' && "
         "pnpm --filter @slaif-agent-site/web lint"
     ),
     "format:check": (
         "prettier --check package.json pnpm-workspace.yaml tsconfig.base.json "
-        "tsconfig.json eslint.config.mjs prettier.config.mjs "
+        "tsconfig.json eslint.config.mjs prettier.config.mjs playwright.config.ts "
         '"apps/web/**/*.{json,mjs,ts,tsx,css}" '
         '"packages/*/package.json" "packages/*/src/**/*.ts" '
         '"packages/*/tsconfig.json" "services/browser-worker/**/*.{json,mjs,ts}" '
-        '"tests/contracts/**/*.ts"'
+        '"tests/contracts/**/*.ts" "tests/e2e/**/*.{mjs,ts}"'
     ),
     "typecheck": (
-        "pnpm --recursive run typecheck && tsc --project tsconfig.json --noEmit"
+        "pnpm --recursive run typecheck && tsc --project tsconfig.json --noEmit "
+        "&& tsc --project tests/e2e/tsconfig.json --noEmit"
     ),
     "test": "pnpm build && pnpm --recursive run test && vitest run tests/contracts",
     "build": "pnpm --recursive run build",
@@ -118,6 +120,7 @@ NODE_SCRIPTS = {
     "check": (
         "pnpm lint && pnpm format:check && pnpm typecheck && pnpm test && pnpm build"
     ),
+    "test:e2e": "playwright test",
 }
 WORKSPACE_PACKAGES = {
     "api-client": "@slaif-agent-site/api-client",
@@ -128,9 +131,11 @@ WORKSPACE_PACKAGES = {
     "scope-catalog": "@slaif-agent-site/scope-catalog",
     "test-fixtures": "@slaif-agent-site/test-fixtures",
 }
-ROOT_NODE_DEV_DEPENDENCIES = NODE_DEV_DEPENDENCIES | {
-    name: "workspace:0.0.0" for name in WORKSPACE_PACKAGES.values()
-}
+ROOT_NODE_DEV_DEPENDENCIES = (
+    NODE_DEV_DEPENDENCIES
+    | {name: "workspace:0.0.0" for name in WORKSPACE_PACKAGES.values()}
+    | {"@playwright/test": "1.62.1"}
+)
 PACKAGE_SCRIPTS = {
     "build": "tsc --project tsconfig.json",
     "typecheck": "tsc --project tsconfig.json --noEmit",

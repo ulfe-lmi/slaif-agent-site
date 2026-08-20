@@ -124,9 +124,11 @@ source revision. A second normalized Syft JSON document under `scan-sboms/`
 retains Go standard-library symbol evidence needed for accurate Grype matches.
 Grype scans that checksummed document; the index links both forms.
 
-The browser-worker validation requires an empty Chromium, Firefox, WebKit, and
-Playwright inventory today. A later browser implementation must deliberately
-change that contract rather than inheriting an unexamined binary.
+The runtime browser-worker validation requires an empty Chromium, Firefox,
+WebKit, and Playwright inventory. The separate test-only Playwright 1.62.1
+runner installs browser builds on the CI/local host and never enters a product
+image. A later runtime browser implementation must deliberately change that
+contract rather than inheriting an unexamined binary.
 
 ## Vulnerability gate and database freshness
 

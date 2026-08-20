@@ -2,19 +2,29 @@
 set -eu
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
-PROJECT=${1:-slaif007smoke}
+PROJECT=${1-slaif007smoke}
 NEGATIVE_PROJECT="${PROJECT}negative"
-HEADER_FILE=$(mktemp)
-TOKEN_FILE=$(mktemp)
-chmod 600 "$TOKEN_FILE"
 
-case "$PROJECT" in
-  slaif009[a-z0-9]*|slaif010[a-z0-9]*) ;;
-  *) echo "compose-smoke: unsafe project name" >&2; exit 2 ;;
-esac
+validate_project() {
+  case "$1" in
+    slaif007[a-z0-9]*|slaif009[a-z0-9]*|slaif010[a-z0-9]*) return 0 ;;
+    *) echo "compose-smoke: unsafe project name" >&2; return 2 ;;
+  esac
+}
+validate_project "$PROJECT"
+if test "${2:-}" = --validate-project
+then
+  exit 0
+fi
+
+HEADER_FILE=
+TOKEN_FILE=
+E2E_SECRET_FILE=
 
 cleanup() {
-  rm -f "$HEADER_FILE" "$TOKEN_FILE"
+  test -z "$HEADER_FILE" || rm -f "$HEADER_FILE"
+  test -z "$TOKEN_FILE" || rm -f "$TOKEN_FILE"
+  test -z "$E2E_SECRET_FILE" || rm -f "$E2E_SECRET_FILE"
   docker compose -p "$NEGATIVE_PROJECT" -f "$ROOT/compose.yaml" \
     -f "$ROOT/tests/packaging/compose.broken-bootstrap.yaml" \
     down --volumes --remove-orphans >/dev/null 2>&1 || true
@@ -23,6 +33,11 @@ cleanup() {
 }
 trap cleanup EXIT HUP INT TERM
 cleanup
+
+HEADER_FILE=$(mktemp)
+TOKEN_FILE=$(mktemp)
+E2E_SECRET_FILE=$(mktemp)
+chmod 600 "$TOKEN_FILE" "$E2E_SECRET_FILE"
 
 cd "$ROOT"
 docker compose config --quiet
@@ -46,7 +61,7 @@ curl --fail --show-error --silent http://localhost:8080/ | grep -q "Self-hosted 
 docker compose -p "$PROJECT" logs --no-color bootstrap 2>/dev/null \
   | sed -n 's/^.*setup-token-secret: //p' >"$TOKEN_FILE"
 test "$(wc -l <"$TOKEN_FILE" | tr -d ' ')" = 1
-python tools/compose/auth_smoke.py --token-file "$TOKEN_FILE"
+tools/compose/e2e.sh "$TOKEN_FILE" "$E2E_SECRET_FILE"
 for path in \
   /health/live \
   /health/ready \

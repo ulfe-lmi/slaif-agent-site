@@ -47,6 +47,7 @@
     "legal_advice": false
   },
   "attribution_notes": {
+    "pkg:npm/%40playwright/test@1.62.1": "Apache-2.0 test-only browser automation; matching browser builds remain outside product images.",
     "pkg:npm/caniuse-lite@1.0.30001809": "CC-BY-4.0 browser compatibility data; retain attribution and source link.",
     "pkg:pypi/agent-cow-postgresql@0.2.0": "MIT foundation derived from agent-cow-python; retain upstream and downstream attribution."
   },

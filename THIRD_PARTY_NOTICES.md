@@ -26,6 +26,7 @@ CI SBOM evidence bundle.
 | `@napi-rs/lzma-linux-x64-gnu` | `1.5.1` | npm / development | `MIT` | <https://github.com/Brooooooklyn/lzma#readme> | — |
 | `@next/env` | `16.3.1` | npm / production | `MIT` | <https://github.com/vercel/next.js#readme> | — |
 | `@next/swc-linux-x64-gnu` | `16.3.1` | npm / production | `MIT` | <https://github.com/vercel/next.js#readme> | — |
+| `@playwright/test` | `1.62.1` | npm / production | `Apache-2.0` | <https://playwright.dev> | Apache-2.0 test-only browser automation; matching browser builds remain outside product images. |
 | `@rollup/rollup-linux-x64-gnu` | `4.62.4` | npm / development | `MIT` | <https://rollupjs.org/> | — |
 | `@standard-schema/spec` | `1.1.0` | npm / development | `MIT` | <https://standardschema.dev> | — |
 | `@swc/helpers` | `0.5.23` | npm / production | `Apache-2.0` | <https://swc.rs> | — |
@@ -119,6 +120,8 @@ CI SBOM evidence bundle.
 | `pathe` | `2.0.3` | npm / development | `MIT` | <https://github.com/unjs/pathe#readme> | — |
 | `picocolors` | `1.1.1` | npm / production | `ISC` | <https://github.com/alexeyraspopov/picocolors#readme> | — |
 | `picomatch` | `4.0.5` | npm / development | `MIT` | <https://github.com/micromatch/picomatch> | — |
+| `playwright` | `1.62.1` | npm / production | `Apache-2.0` | <https://playwright.dev> | — |
+| `playwright-core` | `1.62.1` | npm / production | `Apache-2.0` | <https://playwright.dev> | — |
 | `postcss` | `8.5.23` | npm / production | `MIT` | <https://postcss.org/> | — |
 | `postcss` | `8.5.26` | npm / development | `MIT` | <https://postcss.org/> | — |
 | `prelude-ls` | `1.2.1` | npm / development | `MIT` | <http://preludels.com> | — |

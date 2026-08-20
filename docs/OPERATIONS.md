@@ -5,11 +5,28 @@ and compare-and-set password rehash. It uses fixed-cost Argon2id and an
 equal-cost dummy verification path for unknown or disabled identities. Budget
 roughly 64 MiB per concurrent Argon2 operation. Backend HTTP login and session
 issuance and the local setup/login/admin UI exist; rate limiting, durable login
-audit, OIDC, MFA, and Playwright browser/device proof remain absent.
+audit, OIDC, MFA, and runtime agent browser tooling remain absent. Local
+authentication is qualified by six Playwright browser/device projects.
 
 These commands operate the default Compose project in a local, non-production
 environment. Use an explicit `-p NAME` for disposable tests so cleanup targets
 cannot overlap an operator's persistent project.
+
+## Authentication browser qualification
+
+Install the exact test dependency and matching local browser builds, then run
+the combined disposable deployment gate:
+
+```bash
+pnpm install --frozen-lockfile
+pnpm exec playwright install --with-deps chromium firefox webkit
+sudo tools/compose/smoke.sh slaif009auth
+```
+
+The smoke runs setup at desktop and 320-pixel phone viewports, followed by
+login/admin/logout on `desktop-chromium`, `desktop-firefox`, `desktop-webkit`,
+`tablet`, `mobile-chromium`, and `mobile-webkit`. It retains no trace,
+screenshot, video, HTML report, storage state, or credential file.
 
 ## Lifecycle commands
 
@@ -46,13 +63,13 @@ python -m slaif_agent_site.bootstrap setup-token --rotate
 python -m slaif_agent_site.bootstrap setup-token --revoke
 ```
 
-This command is deliberately not wired into Compose startup. A freshly issued
-or rotated plaintext is shown once on its own stdout line; the setup URL is a
+Compose bootstrap automatically ensures this token on first start. A freshly
+issued or rotated plaintext is shown once on its own stdout line; the setup URL is a
 separate line and never carries the token. Repeated default issuance returns
 only expiry/generation facts and directs the operator to explicit rotation.
 The atomic consumer is exposed through the bounded Control backend and existing
-default edge route. The operator UI and Compose HTTP smoke are implemented;
-there is no Playwright browser/device E2E yet. Store real
+default edge route. The operator UI and Compose smoke include the six-project
+Playwright browser/device E2E. Store real
 output only in an operator-approved secret channel and see
 [installation setup](INSTALLATION_SETUP.md) for the exact boundary.
 
@@ -178,8 +195,8 @@ and limitations.
 
 ## Production boundary
 
-This pre-alpha stack has backend login/setup routes and cookie emission, but no
-setup UI, clean browser journey, service authentication, production TLS automation,
+This pre-alpha stack has backend login/setup routes, cookie emission, a setup
+UI, and a clean local browser journey, but no service authentication, production TLS automation,
 database-backed product use, backup automation, automated rotation, browser
 sandbox/egress implementation, or publication path. The identity and
 opaque-session schemas plus semantic consumers do not make local authentication

@@ -6,8 +6,8 @@ a current token in code/tests to create exactly one local Platform
 Administrator. Revision `012_001` and the Control application add bounded
 setup/status, login, session, and logout HTTP routes. Existing NGINX routing
 makes these backend routes externally reachable. The setup/login UI and
-secret-safe Compose HTTP smoke are implemented, but no Playwright browser proof,
-clean Compose authentication journey, or browser E2E is implemented.
+secret-safe Compose journey are browser-proven at desktop and phone setup
+viewports, followed by login/admin/logout on six exact Playwright projects.
 
 ## Security boundary
 
@@ -76,7 +76,7 @@ python -m slaif_agent_site.bootstrap --check
 ```
 
 Do not place command output in a URL, shell history argument, ticket, log,
-screenshot, trace, or repository. The typed Control HTTP endpoint consumes it,
-but there is no operator-facing browser flow. See
+screenshot, trace, or repository. The operator-facing `/setup` form consumes
+it only in the typed Control request body. See
 [local authentication](LOCAL_AUTHENTICATION.md) for identity, password, and
 transaction details.

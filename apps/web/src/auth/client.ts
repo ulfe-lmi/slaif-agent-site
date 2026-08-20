@@ -1,7 +1,6 @@
 export const CONTROL = "/api/control/v1" as const;
 
 export type SessionSummary = {
-  user_account_id: string;
   recent_auth: boolean;
   absolute_expires_at: string;
 };
@@ -45,14 +44,12 @@ export async function session(): Promise<SessionSummary> {
   if (!response.ok) throw new Error("unauthenticated");
   const value = (await response.json()) as Record<string, unknown>;
   if (
-    typeof value.user_account_id !== "string" ||
     typeof value.recent_auth !== "boolean" ||
     typeof value.absolute_expires_at !== "string"
   ) {
     throw new Error("invalid-response");
   }
   return {
-    user_account_id: value.user_account_id,
     recent_auth: value.recent_auth,
     absolute_expires_at: value.absolute_expires_at,
   };

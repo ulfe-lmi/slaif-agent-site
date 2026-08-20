@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import {
   csrfCookie,
@@ -21,23 +21,32 @@ function formString(data: FormData, name: string): string {
 
 export function SetupForm() {
   const [message, setMessage] = useState("Checking setup status…");
+  const [available, setAvailable] = useState(false);
   const [pending, setPending] = useState(false);
+  const submitting = useRef(false);
+  const status = useRef<HTMLParagraphElement>(null);
   useEffect(() => {
     void setupStatus().then(
-      (value) =>
+      (value) => {
+        setAvailable(!value.initialized && value.setup_available);
         setMessage(
           value.initialized
             ? "Setup is closed. Sign in instead."
             : value.setup_available
               ? "Setup token ready."
               : "Ask the operator to issue a setup token.",
-        ),
-      () => setMessage(failure),
+        );
+      },
+      () => {
+        setAvailable(false);
+        setMessage(failure);
+      },
     );
   }, []);
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (pending) return;
+    if (submitting.current || !available) return;
+    submitting.current = true;
     setPending(true);
     setMessage("Creating administrator…");
     const data = new FormData(event.currentTarget);
@@ -54,33 +63,52 @@ export function SetupForm() {
     } catch {
       setMessage(failure);
       setPending(false);
+      submitting.current = false;
+      status.current?.focus();
     }
   }
   return (
-    <AuthLayout title="Create the first administrator" message={message}>
+    <AuthLayout
+      title="Create the first administrator"
+      message={message}
+      statusRef={status}
+    >
       <form onSubmit={(event) => void submit(event)} aria-describedby="form-status">
         <Field
           label="Setup token"
           name="setup_token"
           type="password"
           autoComplete="off"
+          disabled={!available || pending}
         />
-        <Field label="Username" name="username" autoComplete="username" />
-        <Field label="Display name" name="display_name" autoComplete="name" />
+        <Field
+          label="Username"
+          name="username"
+          autoComplete="username"
+          disabled={!available || pending}
+        />
+        <Field
+          label="Display name"
+          name="display_name"
+          autoComplete="name"
+          disabled={!available || pending}
+        />
         <Field
           label="Email (optional)"
           name="email"
           type="email"
           autoComplete="email"
           required={false}
+          disabled={!available || pending}
         />
         <Field
           label="Password"
           name="password"
           type="password"
           autoComplete="new-password"
+          disabled={!available || pending}
         />
-        <button disabled={pending} type="submit">
+        <button disabled={!available || pending} type="submit">
           {pending ? "Creating…" : "Create administrator"}
         </button>
       </form>
@@ -91,9 +119,12 @@ export function SetupForm() {
 export function LoginForm() {
   const [message, setMessage] = useState("Use your local administrator credentials.");
   const [pending, setPending] = useState(false);
+  const submitting = useRef(false);
+  const status = useRef<HTMLParagraphElement>(null);
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (pending) return;
+    if (submitting.current) return;
+    submitting.current = true;
     setPending(true);
     setMessage("Signing in…");
     const data = new FormData(event.currentTarget);
@@ -107,17 +138,25 @@ export function LoginForm() {
     } catch {
       setMessage(failure);
       setPending(false);
+      submitting.current = false;
+      status.current?.focus();
     }
   }
   return (
-    <AuthLayout title="Sign in" message={message}>
+    <AuthLayout title="Sign in" message={message} statusRef={status}>
       <form onSubmit={(event) => void submit(event)} aria-describedby="form-status">
-        <Field label="Username" name="username" autoComplete="username" />
+        <Field
+          label="Username"
+          name="username"
+          autoComplete="username"
+          disabled={pending}
+        />
         <Field
           label="Password"
           name="password"
           type="password"
           autoComplete="current-password"
+          disabled={pending}
         />
         <button disabled={pending} type="submit">
           {pending ? "Signing in…" : "Sign in"}
@@ -163,7 +202,7 @@ export function AdminSession() {
         <dl>
           <div>
             <dt>Account</dt>
-            <dd>{value.user_account_id}</dd>
+            <dd>Local administrator</dd>
           </div>
           <div>
             <dt>Recent authentication</dt>
@@ -188,17 +227,25 @@ function Field({
   type = "text",
   autoComplete,
   required = true,
+  disabled = false,
 }: {
   label: string;
   name: string;
   type?: string;
   autoComplete: string;
   required?: boolean;
+  disabled?: boolean;
 }) {
   return (
     <label>
       {label}
-      <input name={name} type={type} autoComplete={autoComplete} required={required} />
+      <input
+        name={name}
+        type={type}
+        autoComplete={autoComplete}
+        required={required}
+        disabled={disabled}
+      />
     </label>
   );
 }
@@ -206,10 +253,12 @@ function Field({
 function AuthLayout({
   title,
   message,
+  statusRef,
   children,
 }: {
   title: string;
   message: string;
+  statusRef?: React.RefObject<HTMLParagraphElement | null>;
   children: React.ReactNode;
 }) {
   return (
@@ -226,7 +275,13 @@ function AuthLayout({
       </header>
       <section className="auth-card" aria-labelledby="page-title">
         <h1 id="page-title">{title}</h1>
-        <p id="form-status" role="status" aria-live="polite">
+        <p
+          id="form-status"
+          role="status"
+          aria-live="polite"
+          ref={statusRef}
+          tabIndex={-1}
+        >
           {message}
         </p>
         {children}

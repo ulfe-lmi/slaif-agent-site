@@ -4,8 +4,8 @@ Revision `009_001` establishes local identity, revision `010_001` adds the
 server-side human-session persistence, and revision `011_001` adds the
 Control-only local credential lookup/rehash boundary. These boundaries
 are callable in application code and covered by unit and disposable-
-PostgreSQL tests. They are not exposed by an HTTP route, so local
-authentication is not yet usable from a browser.
+PostgreSQL tests. The bounded Control routes and setup/login/admin UI make local
+authentication usable through the browser.
 
 ## Local identity contract
 
@@ -138,8 +138,9 @@ cookies but never places them in JavaScript-controlled browser storage.
 ## Deliberately deferred
 
 The Control service exposes only the bounded `/api/control/v1/setup/status`,
-`/setup`, `/login`, `/session`, and `/logout` routes. User management, OIDC,
-MFA, Playwright browser/device proof, rate limiting, and
+`/setup`, `/login`, `/session`, and `/logout` routes. The six-project
+Playwright gate proves these routes through the real NGINX/Compose deployment
+without retaining authentication artifacts. User management, OIDC, MFA, rate limiting, and
 security-event audit remain future work. Existing NGINX configuration already
-routes `/api/control/` to this backend. Setup-token issuance is still explicit
-and is never part of default startup.
+routes `/api/control/` to this backend. Compose bootstrap issues the initial
+token once; later rotation/revocation remains an explicit trusted operation.

@@ -178,8 +178,9 @@ metrics, and product feature settings are not implemented. They must be added
 later under their process-specific authority and architecture work orders.
 Server-side session persistence, expiry, recent-auth, CSRF credential policy,
 and cookie value objects are implemented in 010-e. HTTP authentication routes,
-OIDC, MFA, rate limiting, durable auth audit, and browser E2E remain
-deferred to later explicitly activated rounds.
+OIDC, MFA, rate limiting, durable auth audit, and runtime agent browser tooling
+remain deferred. Authentication E2E uses the fixed localhost deployment URL
+and a mode-0600 temporary secret file; it adds no product runtime setting.
 
 ## Human-session policy
 
