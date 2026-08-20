@@ -44,8 +44,7 @@ class EdgeContractTests(unittest.TestCase):
         self.assertIn("proxy_pass http://control-api:8000;", nginx)
         self.assertIn("location /api/control/v1/", nginx)
         self.assertIn(
-            "ProxyPass        /api/control/v1/ "
-            "http://control-api:8000/api/control/v1/",
+            "ProxyPass        /api/control/v1/ http://control-api:8000/api/control/v1/",
             apache,
         )
         self.assertNotIn("location /api/control/ {\n            proxy_pass", nginx)
