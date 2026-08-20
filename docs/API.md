@@ -16,6 +16,7 @@ Successful setup and login set bounded-lifetime session and CSRF cookies. Produc
 `SameSite=Lax`; development uses the equivalent non-secure names. Credentials, setup tokens,
 and cookie values are never returned in response bodies or errors.
 
-There is no Next.js setup/login UI, proven clean-Compose authentication journey,
+The Next.js setup/login/admin UI and clean Compose HTTP authentication journey
+use these same-origin routes. There is no Playwright browser/device proof,
 or browser E2E yet. Rate limiting, durable authentication audit, OIDC, MFA,
 sites, and membership management also remain absent.

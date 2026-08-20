@@ -33,10 +33,11 @@ the real responsive result, and publish only after human review.
 > The database revision contains only schema/version/readiness infrastructure;
 > its clean zero-object content state is explicitly `EMPTY_SAFE` without
 > claiming foundation table hardening. Any real content object requires the
-> fully validated `HARDENED` state. A human authentication/setup UI, sites,
+> fully validated `HARDENED` state. A local human authentication/setup UI is
+> implemented; sites,
 > workspaces, editing/Puck, product routes/tables, database-backed product APIs,
 > Playwright/browser commands, review, publication, and product behavior are
-> not implemented yet. Control API alone now owns one isolated file-backed
+> not implemented yet. Control API alone owns one isolated file-backed
 > login, bounded asyncpg pool, and read-only database readiness component; no
 > other online process receives a database credential.
 
@@ -174,7 +175,7 @@ first-run administrator or website-management product. See the
 | Completed deployable skeleton | One-command Compose, generated local database principals, safe-empty bootstrap, digest-pinned OCI images, isolated browser placeholder, Next status page, NGINX edge, and Apache reference. |
 | Completed supply-chain baseline | Reproducible Python/Web artifacts, exact source/action/base/scanner policy, deterministic notices, six-image SPDX SBOMs, fresh Grype scans, and checksummed retained CI evidence. |
 | Completed Control readiness boundary | Isolated `slaif_control_login` mount, bounded identity-verified Control pool, one owner-defined read-only readiness function, and fail-closed Control/NGINX health dependency. |
-| Planned setup/product work | Add the human setup/login UI and clean Compose/browser journey, then identity/sites/workspaces, configurable content, normalized composition/Puck, semantic tools, browser feedback, review/promotion, reconstruction, and hardening. |
+| Planned product work | Add browser/device E2E evidence, then sites/workspaces, configurable content, normalized composition/Puck, semantic tools, browser feedback, review/promotion, reconstruction, and hardening. |
 
 See [Architecture Section 50](ARCHITECTURE.md#50-implementation-phases) for
 the normative phase plan.

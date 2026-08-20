@@ -88,10 +88,28 @@ async def _run(
         )
     if command == "compose":
         compose_status = await compose_bootstrap(settings)
-        return (
+        lines = [
             f"compose-bootstrap: OK revision={compose_status.revision} "
-            f"state={compose_status.state.value} safe=true",
-        )
+            f"state={compose_status.state.value} safe=true"
+        ]
+        token_status = await setup_token_status(settings)
+        if token_status.initialized:
+            lines.append("compose-setup: closed; installation is initialized")
+            return tuple(lines)
+        result = await ensure_setup_token(settings)
+        if result.setup_token is not None:
+            lines.extend(
+                (
+                    f"setup-url: {settings.setup_url}",
+                    "setup-token-secret: " + result.setup_token.get_secret_value(),
+                )
+            )
+        else:
+            lines.append(
+                "compose-setup: token already available; use setup-token --rotate "
+                "only for explicit recovery"
+            )
+        return tuple(lines)
     if command == "validate":
         marker, validation = await validate(settings)
         if not validation.safe:

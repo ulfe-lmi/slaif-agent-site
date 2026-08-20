@@ -3,7 +3,7 @@
 The implemented default deployment is a pre-alpha status and authority
 skeleton. It starts every planned process identity, establishes the empty-safe
 database foundation, and exposes health-only services through NGINX. It does
-not implement setup, authentication, sites, workspaces, editing, browser
+implements local setup/authentication but not sites, workspaces, editing, browser
 automation, review, or publication.
 
 ## Prerequisites and startup

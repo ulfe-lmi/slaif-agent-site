@@ -139,7 +139,7 @@ cookies but never places them in JavaScript-controlled browser storage.
 
 The Control service exposes only the bounded `/api/control/v1/setup/status`,
 `/setup`, `/login`, `/session`, and `/logout` routes. User management, OIDC,
-MFA, UI, clean Compose/browser authentication proof, rate limiting, and
+MFA, Playwright browser/device proof, rate limiting, and
 security-event audit remain future work. Existing NGINX configuration already
 routes `/api/control/` to this backend. Setup-token issuance is still explicit
 and is never part of default startup.

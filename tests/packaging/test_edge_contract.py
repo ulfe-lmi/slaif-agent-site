@@ -7,7 +7,6 @@ from pathlib import Path
 
 ROOT = Path(__file__).parents[2]
 ROUTES = {
-    "/api/control/": "control-api:8000",
     "/api/editor/": "editor-api:8000",
     "/api/agent/": "agent-api:8000",
     "/mcp/": "mcp-adapter:8000",
@@ -32,6 +31,25 @@ class EdgeContractTests(unittest.TestCase):
             self.assertIn(f"location {prefix}", nginx)
             self.assertIn(f"http://{upstream}", nginx)
             self.assertIn(f"ProxyPass        {prefix} http://{upstream}/", apache)
+
+    def test_control_health_is_adapted_and_v1_path_is_preserved(self) -> None:
+        nginx = (ROOT / "infra/nginx/nginx.conf").read_text(encoding="utf-8")
+        apache = (ROOT / "infra/apache/slaif-agent-site.conf").read_text(
+            encoding="utf-8"
+        )
+        for leaf in ("live", "ready"):
+            self.assertIn(f"location = /api/control/health/{leaf}", nginx)
+            self.assertIn(f"control-api:8000/health/{leaf}", nginx)
+            self.assertIn(f"/api/control/health/{leaf}", apache)
+        self.assertIn("proxy_pass http://control-api:8000;", nginx)
+        self.assertIn("location /api/control/v1/", nginx)
+        self.assertIn(
+            "ProxyPass        /api/control/v1/ "
+            "http://control-api:8000/api/control/v1/",
+            apache,
+        )
+        self.assertNotIn("location /api/control/ {\n            proxy_pass", nginx)
+        self.assertIn("ProxyPass        /api/control/ !", apache)
 
     def test_browser_and_render_are_not_edge_upstreams(self) -> None:
         for path in (

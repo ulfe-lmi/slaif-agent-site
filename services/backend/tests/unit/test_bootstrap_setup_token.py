@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -196,3 +197,47 @@ async def test_cli_unwraps_a_fresh_secret_once_on_its_own_line() -> None:
 def test_cli_setup_actions_are_mutually_exclusive() -> None:
     with pytest.raises(SystemExit):
         bootstrap_cli._parser().parse_args(["setup-token", "--rotate", "--revoke"])
+
+
+@pytest.mark.parametrize("initialized", (False, True))
+async def test_compose_bootstrap_issues_once_or_closes(initialized: bool) -> None:
+    token = _token()
+    status = _status(token_present=False).model_copy(
+        update={"initialized": initialized}
+    )
+    result = SetupTokenResult(
+        action=SetupTokenAction.ISSUED, status=_status(), setup_token=token
+    )
+    compose = SimpleNamespace(revision="head", state=SimpleNamespace(value="HARDENED"))
+    with (
+        patch.object(bootstrap_cli, "compose_bootstrap", return_value=compose),
+        patch.object(bootstrap_cli, "setup_token_status", return_value=status),
+        patch.object(
+            bootstrap_cli, "ensure_setup_token", return_value=result
+        ) as ensure,
+    ):
+        output = await bootstrap_cli._run("compose", _settings(), argparse.Namespace())
+    joined = "\n".join(output)
+    if initialized:
+        ensure.assert_not_called()
+        assert "installation is initialized" in joined
+        assert token.get_secret_value() not in joined
+    else:
+        ensure.assert_awaited_once()
+        assert joined.count(token.get_secret_value()) == 1
+        assert "setup-url:" in joined
+
+
+async def test_compose_bootstrap_preserves_existing_token_without_plaintext() -> None:
+    existing = SetupTokenResult(action=SetupTokenAction.EXISTING, status=_status())
+    compose = SimpleNamespace(revision="head", state=SimpleNamespace(value="HARDENED"))
+    with (
+        patch.object(bootstrap_cli, "compose_bootstrap", return_value=compose),
+        patch.object(bootstrap_cli, "setup_token_status", return_value=_status()),
+        patch.object(bootstrap_cli, "ensure_setup_token", return_value=existing),
+    ):
+        output = await bootstrap_cli._run("compose", _settings(), argparse.Namespace())
+    joined = "\n".join(output)
+    assert "token already available" in joined
+    assert "--rotate" in joined
+    assert "setup-token-secret" not in joined

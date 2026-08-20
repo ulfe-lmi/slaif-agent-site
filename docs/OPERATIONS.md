@@ -4,7 +4,8 @@ The Control process is the only online authority for local credential lookup
 and compare-and-set password rehash. It uses fixed-cost Argon2id and an
 equal-cost dummy verification path for unknown or disabled identities. Budget
 roughly 64 MiB per concurrent Argon2 operation. Backend HTTP login and session
-issuance exist; rate limiting, login audit, OIDC, MFA, and UI remain absent.
+issuance and the local setup/login/admin UI exist; rate limiting, durable login
+audit, OIDC, MFA, and Playwright browser/device proof remain absent.
 
 These commands operate the default Compose project in a local, non-production
 environment. Use an explicit `-p NAME` for disposable tests so cleanup targets
@@ -50,7 +51,8 @@ or rotated plaintext is shown once on its own stdout line; the setup URL is a
 separate line and never carries the token. Repeated default issuance returns
 only expiry/generation facts and directs the operator to explicit rotation.
 The atomic consumer is exposed through the bounded Control backend and existing
-default edge route. There is no operator UI or clean browser E2E yet. Store real
+default edge route. The operator UI and Compose HTTP smoke are implemented;
+there is no Playwright browser/device E2E yet. Store real
 output only in an operator-approved secret channel and see
 [installation setup](INSTALLATION_SETUP.md) for the exact boundary.
 

@@ -5,7 +5,8 @@ Revision `008_001` provides the owner-controlled token foundation. Revision
 a current token in code/tests to create exactly one local Platform
 Administrator. Revision `012_001` and the Control application add bounded
 setup/status, login, session, and logout HTTP routes. Existing NGINX routing
-makes these backend routes externally reachable, but no browser setup/login UI,
+makes these backend routes externally reachable. The setup/login UI and
+secret-safe Compose HTTP smoke are implemented, but no Playwright browser proof,
 clean Compose authentication journey, or browser E2E is implemented.
 
 ## Security boundary
@@ -44,11 +45,12 @@ The token itself has no configuration variable or file input.
 Default ensure issues a token only when no unexpired token exists:
 
 ```bash
-python -m slaif_agent_site.bootstrap setup-token
+docker compose up --build
 ```
 
 Fresh issuance prints bounded status, `setup-url: ...`, and exactly one
-`setup-token-secret: ...` line. Capture that stdout only through an
+After safe bootstrap, the container prints the setup URL and one
+`setup-token-secret: ...` line. Capture that output only through an
 operator-approved secret channel. If an unexpired token already exists, ensure
 does not rotate or reveal it; output contains only facts and guidance to use an
 explicit rotation if the original plaintext was lost.

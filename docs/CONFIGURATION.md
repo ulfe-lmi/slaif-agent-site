@@ -178,7 +178,7 @@ metrics, and product feature settings are not implemented. They must be added
 later under their process-specific authority and architecture work orders.
 Server-side session persistence, expiry, recent-auth, CSRF credential policy,
 and cookie value objects are implemented in 010-e. HTTP authentication routes,
-cookie emission, setup/login UI, OIDC, MFA, and NGINX/Compose flow remain
+OIDC, MFA, rate limiting, durable auth audit, and browser E2E remain
 deferred to later explicitly activated rounds.
 
 ## Human-session policy
