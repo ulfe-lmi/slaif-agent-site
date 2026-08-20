@@ -571,4 +571,4 @@ def test_database_source_uses_public_foundation_boundary_and_no_domain_ddl() -> 
     assert "SET search_path = pg_catalog" in authentication_revision
     assert "p_expected_password_hash" in authentication_revision
     assert "p_new_password_hash" in authentication_revision
-    assert 'REVOKE ALL ON FUNCTION' in authentication_revision
+    assert "REVOKE ALL ON FUNCTION" in authentication_revision

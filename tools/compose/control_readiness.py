@@ -11,18 +11,24 @@ import time
 from pathlib import Path
 from typing import Any
 
-from slaif_agent_site.db.migrations import migration_heads
-
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
+MIGRATION_VERSIONS = (
+    REPOSITORY_ROOT / "services/backend/src/slaif_agent_site/db/alembic/versions"
+)
 BACKEND_IMAGE = "slaif-agent-site-backend:local"
 CONTROL_FILE = "/secrets/control-dsn"
 CONNECTION_UNAVAILABLE = "connection_unavailable"
 CONFIGURATION_INVALID = "configuration_invalid"
 MIGRATION_MISMATCH = "migration_mismatch"
-PACKAGED_MIGRATION_HEADS = migration_heads()
-if len(PACKAGED_MIGRATION_HEADS) != 1:
-    raise RuntimeError("expected one packaged migration head")
-PACKAGED_MIGRATION_HEAD = PACKAGED_MIGRATION_HEADS[0]
+PACKAGED_MIGRATION_REVISIONS = tuple(
+    sorted(
+        path.name.split("_", 2)[0] + "_" + path.name.split("_", 2)[1]
+        for path in MIGRATION_VERSIONS.glob("[0-9][0-9][0-9]_[0-9][0-9][0-9]_*.py")
+    )
+)
+if not PACKAGED_MIGRATION_REVISIONS:
+    raise RuntimeError("no packaged migrations found")
+PACKAGED_MIGRATION_HEAD = PACKAGED_MIGRATION_REVISIONS[-1]
 ROLE_MISMATCH = "role_mismatch"
 TIMEOUT = "timeout"
 UNSAFE_MARKER = "unsafe_marker"
