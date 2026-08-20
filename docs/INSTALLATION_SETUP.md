@@ -3,10 +3,10 @@
 Revision `008_001` provides the owner-controlled token foundation. Revision
 `009_001` adds a semantic Control adapter operation that can atomically consume
 a current token in code/tests to create exactly one local Platform
-Administrator. It still does **not** add a setup or login HTTP route, browser
-session, cookie, CSRF, recent-auth, UI, site, or other online product behavior.
-The configured setup URL is served only by the internal Control boundary;
-browser UI and public edge wiring remain out of scope.
+Administrator. Revision `012_001` and the Control application add bounded
+setup/status, login, session, and logout HTTP routes. Existing NGINX routing
+makes these backend routes externally reachable, but no browser setup/login UI,
+clean Compose authentication journey, or browser E2E is implemented.
 
 ## Security boundary
 
@@ -74,8 +74,7 @@ python -m slaif_agent_site.bootstrap --check
 ```
 
 Do not place command output in a URL, shell history argument, ticket, log,
-screenshot, trace, or repository. No endpoint consumes the token. Only the
-typed Control adapter consumes it today, and that behavior is available in
-code/tests rather than an operator-facing browser flow. See
+screenshot, trace, or repository. The typed Control HTTP endpoint consumes it,
+but there is no operator-facing browser flow. See
 [local authentication](LOCAL_AUTHENTICATION.md) for identity, password, and
 transaction details.

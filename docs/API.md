@@ -1,7 +1,9 @@
 # Control HTTP API
 
 The Control service exposes a bounded local-authentication boundary under
-`/api/control/v1`. Public OpenAPI and documentation URLs remain disabled.
+`/api/control/v1`. Existing NGINX routing makes these backend endpoints
+externally reachable in the default topology. Public OpenAPI and documentation
+URLs remain disabled.
 
 - `GET /setup/status` returns only `initialized` and `setup_available`.
 - `POST /setup` consumes the one-time setup token and creates the first local administrator.
@@ -13,3 +15,7 @@ Successful setup and login set bounded-lifetime session and CSRF cookies. Produc
 `__Host-slaif_session` and `__Host-slaif_csrf` with `Secure`, `Path=/`, no `Domain`, and
 `SameSite=Lax`; development uses the equivalent non-secure names. Credentials, setup tokens,
 and cookie values are never returned in response bodies or errors.
+
+There is no Next.js setup/login UI, proven clean-Compose authentication journey,
+or browser E2E yet. Rate limiting, durable authentication audit, OIDC, MFA,
+sites, and membership management also remain absent.

@@ -128,19 +128,18 @@ serialization, exceptions, logs, URLs, or audit data.
 `HumanSessionPolicy` enforces `0 < touch < idle < absolute` and
 `0 < recent-auth <= absolute`, with bounded defaults of 300 seconds, 1,800
 seconds, 28,800 seconds, and 900 seconds respectively. `SessionCookiePolicy`
-defines future handlers' HTTP-only, `SameSite=Lax`, `Path=/`, no-Domain cookie;
+defines the HTTP-only, `SameSite=Lax`, `Path=/`, no-Domain session cookie;
 production uses `Secure` and `__Host-slaif_session`, while local development
 uses a non-Secure `slaif_session` variant. `Max-Age` never exceeds absolute
 session lifetime. CSRF is a separately presented credential required for
-future state-changing cookie-authenticated Control calls. This round emits no
-HTTP response and adds no route or browser storage.
+state-changing cookie-authenticated Control calls. The backend emits these
+cookies but never places them in JavaScript-controlled browser storage.
 
 ## Deliberately deferred
 
 The Control service exposes only the bounded `/api/control/v1/setup/status`,
 `/setup`, `/login`, `/session`, and `/logout` routes. User management, OIDC,
-MFA, UI, NGINX, default Compose operator flow, rate limiting, and security-event
-audit remain future work.
-Credential verification is an internal boundary only: no session issuance,
-rate limiting, login audit, or UI is implemented. Setup-token issuance is still
-explicit and is never part of default startup.
+MFA, UI, clean Compose/browser authentication proof, rate limiting, and
+security-event audit remain future work. Existing NGINX configuration already
+routes `/api/control/` to this backend. Setup-token issuance is still explicit
+and is never part of default startup.

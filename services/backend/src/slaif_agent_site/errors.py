@@ -13,6 +13,14 @@ from starlette.responses import JSONResponse
 from .correlation import current_request_id
 from .logging import JSONValue, redact_log_value
 
+_CONTROL_AUTH_PATHS = {
+    "/api/control/v1/setup/status",
+    "/api/control/v1/setup",
+    "/api/control/v1/login",
+    "/api/control/v1/session",
+    "/api/control/v1/logout",
+}
+
 
 class ErrorBody(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -128,9 +136,14 @@ def _response(
             details=details,
         )
     )
-    return JSONResponse(
+    response = JSONResponse(
         status_code=status_code, content=envelope.model_dump(mode="json")
     )
+    if request.url.path in _CONTROL_AUTH_PATHS:
+        response.headers["Cache-Control"] = "private, no-store"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["X-Robots-Tag"] = "noindex, nofollow, noarchive"
+    return response
 
 
 async def _app_error_handler(request: Request, exc: Exception) -> JSONResponse:

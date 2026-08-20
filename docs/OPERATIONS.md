@@ -3,8 +3,8 @@
 The Control process is the only online authority for local credential lookup
 and compare-and-set password rehash. It uses fixed-cost Argon2id and an
 equal-cost dummy verification path for unknown or disabled identities. Budget
-roughly 64 MiB per concurrent Argon2 operation. HTTP login, session issuance,
-rate limiting, login audit, OIDC, MFA, and UI remain deliberately absent.
+roughly 64 MiB per concurrent Argon2 operation. Backend HTTP login and session
+issuance exist; rate limiting, login audit, OIDC, MFA, and UI remain absent.
 
 These commands operate the default Compose project in a local, non-production
 environment. Use an explicit `-p NAME` for disposable tests so cleanup targets
@@ -49,9 +49,8 @@ This command is deliberately not wired into Compose startup. A freshly issued
 or rotated plaintext is shown once on its own stdout line; the setup URL is a
 separate line and never carries the token. Repeated default issuance returns
 only expiry/generation facts and directs the operator to explicit rotation.
-The atomic consumer now exists only as a typed Control operation exercised in
-code/tests; no command or HTTP endpoint invokes it for an operator. Therefore
-the token still cannot be used from the default stack or a browser. Store real
+The atomic consumer is exposed through the bounded Control backend and existing
+default edge route. There is no operator UI or clean browser E2E yet. Store real
 output only in an operator-approved secret channel and see
 [installation setup](INSTALLATION_SETUP.md) for the exact boundary.
 
@@ -177,12 +176,12 @@ and limitations.
 
 ## Production boundary
 
-This pre-alpha stack has no usable login or setup route, cookie emission, setup
-UI, service authentication, production TLS automation,
+This pre-alpha stack has backend login/setup routes and cookie emission, but no
+setup UI, clean browser journey, service authentication, production TLS automation,
 database-backed product use, backup automation, automated rotation, browser
 sandbox/egress implementation, or publication path. The identity and
 opaque-session schemas plus semantic consumers do not make local authentication
-browser-usable; no HTTP route consumes them yet.
+a proven human-facing journey.
 Passing health and packaging checks proves only the stated deployment
 skeleton. It is not a production readiness, security certification, or
 feature-completeness claim.
