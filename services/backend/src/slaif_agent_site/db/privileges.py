@@ -31,6 +31,7 @@ ALLOWED_CLEAN_RELATIONS = {
     ("control", "installation_state"),
     ("control", "platform_administrator"),
     ("control", "user_account"),
+    ("control", "user_session"),
 }
 FOUNDATION_SCHEMA = "agentcow"
 CONTROL_READINESS_FUNCTION = "slaif_control_readiness"
@@ -45,6 +46,23 @@ CONTROL_FUNCTIONS = {
         "p_local_username_normalized text, p_password_hash text, "
         "p_display_name text, p_email text",
     ): "bigint, bytea, uuid, text, text, text, text, text",
+    (
+        "slaif_create_human_session",
+        "p_session_id uuid, p_public_id text, p_secret_digest bytea, "
+        "p_csrf_secret_digest bytea, p_user_account_id uuid, "
+        "p_idle_seconds integer, p_absolute_seconds integer, "
+        "p_recent_auth_seconds integer",
+    ): "uuid, text, bytea, bytea, uuid, integer, integer, integer",
+    (
+        "slaif_resolve_human_session",
+        "p_public_id text, p_secret_digest bytea, "
+        "p_csrf_secret_digest bytea, p_idle_seconds integer, "
+        "p_touch_interval_seconds integer, p_recent_auth_seconds integer",
+    ): "text, bytea, bytea, integer, integer, integer",
+    (
+        "slaif_revoke_human_session",
+        "p_public_id text, p_secret_digest bytea",
+    ): "text, bytea",
 }
 
 

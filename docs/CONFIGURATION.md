@@ -40,8 +40,9 @@ field is invalid. The emitted configuration error is constant and does not
 contain the rejected value. Secret values use Pydantic `SecretStr` and remain
 masked in representations and JSON serialization.
 
-The setting is named `APP_SECRET` only as a future application/service-secret
-slot. No current route consumes it, and no test value is a production secret.
+The setting is named `APP_SECRET` as the future application/service-secret
+slot. Session credentials currently use independently generated 256-bit values
+and SHA-256 digests; the app secret is not used to recover or store plaintext.
 There is no password-policy, Argon2-cost, initial-username, or administrator
 configuration input; the validated policy and production hash profile are
 fixed in trusted code.
@@ -169,5 +170,23 @@ database locators/pools, identity providers, browser sources,
 media stores, service authentication, trusted proxies, CORS, sessions, jobs,
 metrics, and product feature settings are not implemented. They must be added
 later under their process-specific authority and architecture work orders.
-Server-side sessions, cookies, CSRF, expiry, and recent-auth remain deferred to
-010-c; setup/login UI and NGINX/Compose flow remain deferred to 010-d.
+Server-side session persistence, expiry, recent-auth, CSRF credential policy,
+and cookie value objects are implemented in 010-e. HTTP authentication routes,
+cookie emission, setup/login UI, OIDC, MFA, and NGINX/Compose flow remain
+deferred to later explicitly activated rounds.
+
+## Human-session policy
+
+The server-side foundation uses `HumanSessionPolicy` in trusted code, not
+environment-selected caller input. Defaults are a 300-second touch interval,
+1,800-second idle timeout, 28,800-second absolute lifetime, and 900-second
+recent-auth window. Validation requires `0 < touch < idle < absolute` and
+`0 < recent-auth <= absolute`. PostgreSQL database time decides expiry and
+recent-auth; application wall-clock injection is not used for authorization.
+
+The future HTTP layer must use the value-object contract: HTTP-only,
+`SameSite=Lax`, `Path=/`, no Domain, and Max-Age no greater than absolute
+lifetime. Production uses `Secure` and `__Host-slaif_session`; development
+local uses non-Secure `slaif_session`. CSRF is a separate `sas2_csrf_...`
+credential and is required for every future state-changing cookie-authenticated
+Control call. No cookie or route is emitted by this round.

@@ -6,10 +6,24 @@ from .models import (
     InitialLocalAdministratorResult,
     normalize_local_username,
 )
+from .sessions import (
+    HumanSessionContext,
+    HumanSessionError,
+    HumanSessionPolicy,
+    HumanSessionService,
+    IssuedHumanSession,
+    SessionCookiePolicy,
+)
 
 __all__ = [
     "IdentityInputError",
     "InitialLocalAdministratorRequest",
     "InitialLocalAdministratorResult",
     "normalize_local_username",
+    "HumanSessionContext",
+    "HumanSessionError",
+    "HumanSessionPolicy",
+    "HumanSessionService",
+    "IssuedHumanSession",
+    "SessionCookiePolicy",
 ]

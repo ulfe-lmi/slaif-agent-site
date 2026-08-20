@@ -95,6 +95,7 @@ NEW_PACKAGE_FILES = {
     "slaif_agent_site/identity/__init__.py",
     "slaif_agent_site/identity/models.py",
     "slaif_agent_site/identity/passwords.py",
+    "slaif_agent_site/identity/sessions.py",
     "slaif_agent_site/editor_api/__init__.py",
     "slaif_agent_site/editor_api/__main__.py",
     "slaif_agent_site/editor_api/app.py",
@@ -122,6 +123,7 @@ EXPECTED_PACKAGE_FILES = NEW_PACKAGE_FILES | {
     "slaif_agent_site/__init__.py",
     "slaif_agent_site/agent_state/__init__.py",
     "slaif_agent_site/agent_state/foundation.py",
+    "slaif_agent_site/db/alembic/versions/010_001_human_session.py",
 }
 EXPECTED_SDIST_FILES = {
     "alembic.ini",
@@ -137,6 +139,7 @@ EXPECTED_SDIST_FILES = {
     "migrations/alembic/README.md",
     "migrations/alembic/__init__.py",
     "migrations/bootstrap/README.md",
+    "services/backend/src/slaif_agent_site/db/alembic/versions/010_001_human_session.py",
 } | {f"services/backend/src/{path}" for path in NEW_PACKAGE_FILES}
 
 
@@ -385,8 +388,14 @@ def test_locked_foundation_artifact_hash_constants_are_sha256() -> None:
 
 
 def test_alembic_graph_and_offline_sql_need_no_locator_or_network() -> None:
-    assert migration_heads() == ("009_001",)
-    assert migration_history() == ("009_001", "008_001", "007_001", "006_001")
+    assert migration_heads() == ("010_001",)
+    assert migration_history() == (
+        "010_001",
+        "009_001",
+        "008_001",
+        "007_001",
+        "006_001",
+    )
     config = (REPOSITORY_ROOT / "alembic.ini").read_text(encoding="utf-8")
     assert "sqlalchemy.url" not in config
     assert "://" not in config
@@ -418,7 +427,7 @@ def test_alembic_graph_and_offline_sql_need_no_locator_or_network() -> None:
     assert "006_001" in completed.stdout
     assert "007_001" in completed.stdout
     assert "008_001" in completed.stdout
-    assert "009_001" in completed.stdout
+    assert "010_001" in completed.stdout
     assert 'CREATE SCHEMA IF NOT EXISTS "control"' in completed.stdout
     assert 'CREATE FUNCTION "control"."slaif_control_readiness"()' in completed.stdout
     assert 'CREATE TABLE "control"."user_account"' in completed.stdout
@@ -512,3 +521,21 @@ def test_database_source_uses_public_foundation_boundary_and_no_domain_ddl() -> 
     ) in identity_revision
     assert "setup_token_generation <> p_expected_generation" not in identity_revision
     assert "setup_token_digest <> p_presented_digest" not in identity_revision
+
+    session_revision = (
+        package / "db/alembic/versions/010_001_human_session.py"
+    ).read_text(encoding="utf-8")
+    assert session_revision.count("CREATE TABLE") == 1
+    assert session_revision.count("CREATE FUNCTION") == 3
+    assert '"control"."user_session"' in session_revision
+    assert '"secret_digest" bytea NOT NULL' in session_revision
+    assert '"csrf_secret_digest" bytea NOT NULL' in session_revision
+    assert 'octet_length("secret_digest") = 32' in session_revision
+    assert 'octet_length("csrf_secret_digest") = 32' in session_revision
+    assert "SECURITY DEFINER" in session_revision
+    assert "SET search_path = pg_catalog" in session_revision
+    assert (
+        'REVOKE ALL ON TABLE "control"."user_session" FROM PUBLIC' in session_revision
+    )
+    assert session_revision.count("GRANT EXECUTE ON FUNCTION") == 1
+    assert session_revision.count('TO "slaif_control"') == 1

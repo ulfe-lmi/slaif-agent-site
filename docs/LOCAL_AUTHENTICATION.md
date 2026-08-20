@@ -1,10 +1,10 @@
 # Local identity and password boundary
 
-Revision `009_001` establishes the persistence and semantic service needed to
-create the first local Platform Administrator. This boundary is callable in
-application code and covered by unit and disposable-PostgreSQL tests. It is
-not exposed by an HTTP route, so local authentication is not yet usable from a
-browser.
+Revision `009_001` establishes local identity and revision `010_001` adds the
+server-side human-session persistence and semantic service. These boundaries
+are callable in application code and covered by unit and disposable-
+PostgreSQL tests. They are not exposed by an HTTP route, so local
+authentication is not yet usable from a browser.
 
 ## Local identity contract
 
@@ -67,10 +67,50 @@ tables. Malformed, invalid, expired, revoked, replayed, initialized, and
 constraint-conflicting attempts share one public-safe failure. Cancellation or
 any database error rolls the complete transaction back.
 
+## Human sessions and CSRF foundation
+
+Revision `010_001` creates the non-COW `control.user_session` relation. It
+stores only a `sas2_` public lookup ID, 32-byte SHA-256 session and CSRF
+digests, the active user UUID, database-clock creation/last-seen/absolute-
+expiry/recent-auth timestamps, and nullable revocation time. The user foreign
+key is `ON DELETE RESTRICT`; expiry and user indexes support bounded cleanup
+and lookup. No plaintext session or CSRF value, recoverable token, cookie, or
+browser storage value enters PostgreSQL.
+
+The owner-created functions `slaif_create_human_session`,
+`slaif_resolve_human_session`, and `slaif_revoke_human_session` are fully
+qualified `SECURITY DEFINER` functions with fixed `search_path=pg_catalog`.
+They revoke `PUBLIC` and grant execution only to `slaif_control`; every other
+Control/runtime/reviewer role has no direct relation or function authority.
+Creation requires an already-authenticated active user and sets issuance times
+from the database clock. Resolve checks active-user state, both digests,
+revocation, idle expiry, and absolute expiry while locking the row; it touches
+`last_seen_at` only after the configured interval and never refreshes
+`recent_auth_at`. Revoke is idempotent.
+
+The typed service uses versioned boundary formats
+`sas2_session_<32-hex-id>_<base64url-secret>` and
+`sas2_csrf_<base64url-secret>`. Each secret is 256 bits from `secrets`; only
+SHA-256 digests cross the database boundary and malformed, unknown, wrong,
+expired, disabled, revoked, and cross-session credentials return the same
+`HumanSessionError`. `secrets.compare_digest` is used by the secret helper.
+Issued values are masked `SecretStr` fields and are never part of repr,
+serialization, exceptions, logs, URLs, or audit data.
+
+`HumanSessionPolicy` enforces `0 < touch < idle < absolute` and
+`0 < recent-auth <= absolute`, with bounded defaults of 300 seconds, 1,800
+seconds, 28,800 seconds, and 900 seconds respectively. `SessionCookiePolicy`
+defines future handlers' HTTP-only, `SameSite=Lax`, `Path=/`, no-Domain cookie;
+production uses `Secure` and `__Host-slaif_session`, while local development
+uses a non-Secure `slaif_session` variant. `Max-Age` never exceeds absolute
+session lifetime. CSRF is a separately presented credential required for
+future state-changing cookie-authenticated Control calls. This round emits no
+HTTP response and adds no route or browser storage.
+
 ## Deliberately deferred
 
 There is no `/setup`, `/login`, `/logout`, user-management, or other product
-HTTP route. Server-side sessions, cookies, CSRF protection, expiry, and
-recent-auth remain for 010-c. The setup/login UI plus NGINX and default Compose
-operator flow remain for 010-d. Setup-token issuance is still explicit and is
-never part of default startup.
+HTTP route. The server-side session/CSRF foundation is now present, but HTTP
+authentication, cookie emission, setup/login UI, NGINX, default Compose
+operator flow, OIDC, MFA, and security-event audit remain future work. Setup-
+token issuance is still explicit and is never part of default startup.

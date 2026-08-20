@@ -208,11 +208,15 @@ class RepositoryPolicyTestCase(unittest.TestCase):
             "services/backend/src/slaif_agent_site/bootstrap/setup_token.py",
             "services/backend/src/slaif_agent_site/db/alembic/versions/008_001_installation_state.py",
             "services/backend/src/slaif_agent_site/db/alembic/versions/009_001_local_identity.py",
+            "services/backend/src/slaif_agent_site/db/alembic/versions/010_001_human_session.py",
             "services/backend/src/slaif_agent_site/identity/passwords.py",
+            "services/backend/src/slaif_agent_site/identity/sessions.py",
             "services/backend/tests/integration/test_installation_setup.py",
             "services/backend/tests/integration/test_local_identity.py",
             "services/backend/tests/unit/test_bootstrap_setup_token.py",
             "services/backend/tests/unit/test_identity_password.py",
+            "services/backend/tests/unit/test_sessions.py",
+            "services/backend/tests/integration/test_human_session.py",
         } <= set(REQUIRED_FILES)
 
     def test_oap_accepts_active_without_report_and_complete_history(self) -> None:

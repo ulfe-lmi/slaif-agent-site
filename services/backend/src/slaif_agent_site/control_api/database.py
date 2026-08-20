@@ -27,6 +27,11 @@ from slaif_agent_site.identity.models import (
     InitialLocalAdministratorResult,
 )
 from slaif_agent_site.identity.passwords import PasswordService
+from slaif_agent_site.identity.sessions import (
+    HumanSessionError,
+    HumanSessionPolicy,
+    HumanSessionService,
+)
 
 from .config import ControlDatabaseConfigurationError, ControlDatabaseSettings
 
@@ -316,6 +321,15 @@ class ControlDatabase:
             raise
         except Exception:
             raise InitialSetupError() from None
+
+    def human_session_service(
+        self, policy: HumanSessionPolicy | None = None
+    ) -> HumanSessionService:
+        """Return the Control-only session adapter for this owned pool."""
+
+        if self._pool is None:
+            raise HumanSessionError()
+        return HumanSessionService(self._pool, policy=policy)
 
 
 __all__ = [

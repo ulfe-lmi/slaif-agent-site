@@ -13,6 +13,12 @@ from urllib.parse import parse_qsl, unquote, urlsplit
 from pydantic import Field, SecretStr, ValidationError, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from slaif_agent_site.identity.sessions import (
+    HumanSessionPolicy,
+    SessionCookiePolicy,
+    session_cookie_policy,
+)
+
 CONTROL_LOGIN = "slaif_control_login"
 CONTROL_PRIVILEGE_ROLE = "slaif_control"
 CONTROL_DSN_FILE = Path("/run/slaif-control/control-dsn")
@@ -214,4 +220,7 @@ __all__ = [
     "ControlDatabaseConfigurationError",
     "ControlDatabaseMode",
     "ControlDatabaseSettings",
+    "HumanSessionPolicy",
+    "SessionCookiePolicy",
+    "session_cookie_policy",
 ]

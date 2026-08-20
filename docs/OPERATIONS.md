@@ -20,7 +20,7 @@ the same generated credentials. Bootstrap must print exactly a safe result
 shaped as:
 
 ```text
-compose-bootstrap: OK revision=009_001 state=EMPTY_SAFE safe=true
+compose-bootstrap: OK revision=010_001 state=EMPTY_SAFE safe=true
 ```
 
 Do not publish or archive complete logs without reviewing them. The
@@ -171,11 +171,12 @@ and limitations.
 
 ## Production boundary
 
-This pre-alpha stack has no usable login or setup route, browser session,
-CSRF/recent-auth, setup UI, service authentication, production TLS automation,
+This pre-alpha stack has no usable login or setup route, cookie emission, setup
+UI, service authentication, production TLS automation,
 database-backed product use, backup automation, automated rotation, browser
-sandbox/egress implementation, or publication path. The identity schema and
-atomic semantic consumer do not make local authentication browser-usable.
+sandbox/egress implementation, or publication path. The identity and
+opaque-session schemas plus semantic consumers do not make local authentication
+browser-usable; no HTTP route consumes them yet.
 Passing health and packaging checks proves only the stated deployment
 skeleton. It is not a production readiness, security certification, or
 feature-completeness claim.
