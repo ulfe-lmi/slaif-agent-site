@@ -35,11 +35,13 @@ class _Transaction:
 class _Connection:
     def __init__(self, rows: list[tuple[object, ...]]) -> None:
         self.rows = iter(rows)
+        self.queries: list[str] = []
 
     def transaction(self) -> _Transaction:
         return _Transaction()
 
     async def fetchrow(self, *_args: object) -> tuple[object, ...]:
+        self.queries.append(str(_args[0]))
         return next(self.rows)
 
 
@@ -193,22 +195,41 @@ async def test_real_service_paths_call_constant_time_digest_comparison(
                         session_id,
                         user_id,
                         "sas2_" + "a" * 32,
-                        True,
                         now,
                         now,
+                        now,
+                        now,
+                        None,
                         digest_secret(secret),
+                        digest_secret(csrf),
                     ),
+                    (session_id, user_id, "sas2_" + "a" * 32, True, now, now),
                     (
                         session_id,
                         user_id,
                         "sas2_" + "a" * 32,
-                        True,
                         now,
                         now,
+                        now,
+                        now,
+                        None,
                         digest_secret(secret),
                         digest_secret(csrf),
                     ),
-                    (True, digest_secret(secret), digest_secret(csrf)),
+                    (session_id, user_id, "sas2_" + "a" * 32, True, now, now),
+                    (
+                        session_id,
+                        user_id,
+                        "sas2_" + "a" * 32,
+                        now,
+                        now,
+                        now,
+                        now,
+                        None,
+                        digest_secret(secret),
+                        digest_secret(csrf),
+                    ),
+                    (True,),
                 ]
             )
         ),
@@ -230,3 +251,31 @@ async def test_real_service_paths_call_constant_time_digest_comparison(
         (digest_secret(csrf), digest_secret(csrf)),
     ]
     assert calls == expected
+
+
+@pytest.mark.asyncio
+async def test_failed_or_unknown_comparison_never_finalizes() -> None:
+    now = datetime.now(UTC)
+    secret = b"s" * 32
+    connection = _Connection(
+        [
+            (
+                uuid4(),
+                uuid4(),
+                "sas2_" + "a" * 32,
+                now,
+                now,
+                now,
+                now,
+                None,
+                digest_secret(secret),
+                digest_secret(b"c" * 32),
+            )
+        ]
+    )
+    service = HumanSessionService(_Pool(connection))
+    wrong = format_session_token("sas2_" + "a" * 32, b"w" * 32)
+    with pytest.raises(HumanSessionError):
+        await service.authenticate(wrong)
+    assert len(connection.queries) == 1
+    assert "inspect_human_session" in connection.queries[0]

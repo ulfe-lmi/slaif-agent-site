@@ -133,15 +133,15 @@ async def test_human_session_lifecycle_security_and_concurrency(
         with pytest.raises(HumanSessionError):
             await service.authenticate_state_changing(issued.token, second.csrf_token)
 
-            async with owner_connection(
-                database.settings.resolved_owner_dsn(), expected_database=database.name
-            ) as owner:
-                await owner.execute(
-                    "UPDATE control.user_session SET created_at = current_timestamp - "
-                    "interval '10 seconds', recent_auth_at = current_timestamp - "
-                    "interval '10 seconds' WHERE id = $1",
-                    issued.session_id,
-                )
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            await owner.execute(
+                "UPDATE control.user_session SET created_at = current_timestamp - "
+                "interval '10 seconds', recent_auth_at = current_timestamp - "
+                "interval '10 seconds' WHERE id = $1",
+                issued.session_id,
+            )
         assert (await service.authenticate(issued.token)).recent_auth is False
 
         before_touch = await session_snapshot(second.session_id)
@@ -152,8 +152,9 @@ async def test_human_session_lifecycle_security_and_concurrency(
             database.settings.resolved_owner_dsn(), expected_database=database.name
         ) as owner:
             await owner.execute(
-                "UPDATE control.user_session SET last_seen_at = current_timestamp - "
-                "interval '2 seconds' WHERE id = $1",
+                "UPDATE control.user_session SET created_at = current_timestamp - "
+                "interval '3 seconds', last_seen_at = current_timestamp - "
+                "interval '1.5 seconds' WHERE id = $1",
                 second.session_id,
             )
         before_touch = await session_snapshot(second.session_id)
@@ -240,11 +241,15 @@ async def test_human_session_lifecycle_security_and_concurrency(
                         await connection.fetch("SELECT * FROM control.user_session")
                     with pytest.raises(asyncpg.InsufficientPrivilegeError):
                         await connection.fetch(
-                            "SELECT * FROM control.slaif_resolve_human_session("
-                            "$1, $2, $3, 2, 1, 4)",
+                            "SELECT * FROM control.slaif_inspect_human_session($1)",
+                            issued.public_id,
+                        )
+                    with pytest.raises(asyncpg.InsufficientPrivilegeError):
+                        await connection.fetch(
+                            "SELECT * FROM control.slaif_finalize_human_session("
+                            "$1, $2, 2, 1, 4)",
                             issued.public_id,
                             b"x" * 32,
-                            b"y" * 32,
                         )
                     with pytest.raises(asyncpg.InsufficientPrivilegeError):
                         await connection.fetch(

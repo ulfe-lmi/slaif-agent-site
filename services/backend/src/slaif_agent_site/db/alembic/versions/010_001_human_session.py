@@ -122,7 +122,42 @@ def upgrade() -> None:
     )
     op.execute(
         """
-        CREATE FUNCTION "control"."slaif_authenticate_human_session"(
+        CREATE FUNCTION "control"."slaif_inspect_human_session"(
+            "p_public_id" text
+        )
+        RETURNS TABLE (
+            "session_id" uuid,
+            "user_account_id" uuid,
+            "public_id" text,
+            "created_at" timestamp with time zone,
+            "last_seen_at" timestamp with time zone,
+            "absolute_expires_at" timestamp with time zone,
+            "recent_auth_at" timestamp with time zone,
+            "revoked_at" timestamp with time zone,
+            "stored_secret_digest" bytea,
+            "stored_csrf_secret_digest" bytea
+        )
+        LANGUAGE sql
+        VOLATILE
+        SECURITY DEFINER
+        PARALLEL UNSAFE
+        SET search_path = pg_catalog
+        ROWS 1
+        AS $function$
+            SELECT "session"."id", "session"."user_account_id",
+                "session"."public_id", "session"."created_at",
+                "session"."last_seen_at", "session"."absolute_expires_at",
+                "session"."recent_auth_at", "session"."revoked_at",
+                "session"."secret_digest", "session"."csrf_secret_digest"
+            FROM "control"."user_session" AS "session"
+            WHERE "session"."public_id" = "p_public_id"
+            FOR UPDATE
+        $function$
+        """
+    )
+    op.execute(
+        """
+        CREATE FUNCTION "control"."slaif_finalize_human_session"(
             "p_public_id" text,
             "p_secret_digest" bytea,
             "p_idle_seconds" integer,
@@ -135,8 +170,7 @@ def upgrade() -> None:
             "public_id" text,
             "recent_auth" boolean,
             "last_seen_at" timestamp with time zone,
-            "absolute_expires_at" timestamp with time zone,
-            "stored_secret_digest" bytea
+            "absolute_expires_at" timestamp with time zone
         )
         LANGUAGE plpgsql
         VOLATILE
@@ -198,15 +232,14 @@ def upgrade() -> None:
                 "candidate"."user_account_id", "candidate"."public_id",
                 "candidate"."recent_auth_at" >=
                     ("now_at" - ("p_recent_auth_seconds" * interval '1 second')),
-                "next_seen", "candidate"."absolute_expires_at",
-                "candidate"."secret_digest";
+                "next_seen", "candidate"."absolute_expires_at";
         END
         $function$
         """
     )
     op.execute(
         """
-        CREATE FUNCTION "control"."slaif_resolve_human_session"(
+        CREATE FUNCTION "control"."slaif_finalize_state_changing_human_session"(
             "p_public_id" text,
             "p_secret_digest" bytea,
             "p_csrf_secret_digest" bytea,
@@ -220,9 +253,7 @@ def upgrade() -> None:
             "public_id" text,
             "recent_auth" boolean,
             "last_seen_at" timestamp with time zone,
-            "absolute_expires_at" timestamp with time zone,
-            "stored_secret_digest" bytea,
-            "stored_csrf_secret_digest" bytea
+            "absolute_expires_at" timestamp with time zone
         )
         LANGUAGE plpgsql
         VOLATILE
@@ -288,8 +319,7 @@ def upgrade() -> None:
                 "candidate"."user_account_id", "candidate"."public_id",
                 "candidate"."recent_auth_at" >=
                     ("now_at" - ("p_recent_auth_seconds" * interval '1 second')),
-                "next_seen", "candidate"."absolute_expires_at",
-                "candidate"."secret_digest", "candidate"."csrf_secret_digest";
+                "next_seen", "candidate"."absolute_expires_at";
         END
         $function$
         """
@@ -302,9 +332,7 @@ def upgrade() -> None:
             "p_csrf_secret_digest" bytea
         )
         RETURNS TABLE (
-            "revoked" boolean,
-            "stored_secret_digest" bytea,
-            "stored_csrf_secret_digest" bytea
+            "revoked" boolean
         )
         LANGUAGE plpgsql
         VOLATILE
@@ -312,44 +340,32 @@ def upgrade() -> None:
         PARALLEL UNSAFE
         SET search_path = pg_catalog
         AS $function$
-        DECLARE
-            "candidate" "control"."user_session"%ROWTYPE;
         BEGIN
-            SELECT * INTO "candidate"
-            FROM "control"."user_session" AS "session"
+            UPDATE "control"."user_session" AS "session"
+            SET "revoked_at" = current_timestamp
             WHERE "session"."public_id" = "p_public_id"
-            FOR UPDATE;
-            IF NOT FOUND THEN
-                RETURN;
-            END IF;
-            IF "candidate"."secret_digest" IS DISTINCT FROM "p_secret_digest"
-               OR "candidate"."csrf_secret_digest" IS DISTINCT FROM
-                    "p_csrf_secret_digest" THEN
-                RETURN QUERY SELECT false, "candidate"."secret_digest",
-                    "candidate"."csrf_secret_digest";
-                RETURN;
-            END IF;
-            IF "candidate"."revoked_at" IS NULL THEN
-                UPDATE "control"."user_session"
-                SET "revoked_at" = current_timestamp
-                WHERE "id" = "candidate"."id";
-                RETURN QUERY SELECT true, "candidate"."secret_digest",
-                    "candidate"."csrf_secret_digest";
-            ELSE
-                RETURN QUERY SELECT false, "candidate"."secret_digest",
-                    "candidate"."csrf_secret_digest";
-            END IF;
+              AND "session"."secret_digest" = "p_secret_digest"
+              AND "session"."csrf_secret_digest" = "p_csrf_secret_digest"
+              AND "session"."revoked_at" IS NULL
+              AND "session"."absolute_expires_at" > current_timestamp
+              AND EXISTS (
+                  SELECT 1 FROM "control"."user_account" AS "account"
+                  WHERE "account"."id" = "session"."user_account_id"
+                    AND "account"."status" = 'ACTIVE'
+              );
+            RETURN QUERY SELECT FOUND;
         END
         $function$
         """
     )
     for function in (
-        '"control"."slaif_authenticate_human_session"('
+        '"control"."slaif_inspect_human_session"(text)',
+        '"control"."slaif_finalize_human_session"('
         "text, bytea, integer, integer, integer)",
+        '"control"."slaif_finalize_state_changing_human_session"('
+        "text, bytea, bytea, integer, integer, integer)",
         '"control"."slaif_create_human_session"('
         "uuid, text, bytea, bytea, uuid, integer, integer, integer)",
-        '"control"."slaif_resolve_human_session"('
-        "text, bytea, bytea, integer, integer, integer)",
         '"control"."slaif_revoke_human_session"(text, bytea, bytea)',
     ):
         op.execute(f'ALTER FUNCTION {function} OWNER TO "slaif_owner"')
@@ -358,16 +374,14 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    op.execute('DROP FUNCTION "control"."slaif_inspect_human_session"(text)')
     op.execute(
-        'DROP FUNCTION "control"."slaif_authenticate_human_session"('
-        "text, bytea, integer, integer, integer)"
-    )
-    op.execute(
-        'DROP FUNCTION "control"."slaif_revoke_human_session"(text, bytea, bytea)'
-    )
-    op.execute(
-        'DROP FUNCTION "control"."slaif_resolve_human_session"('
+        'DROP FUNCTION "control"."slaif_finalize_state_changing_human_session"('
         "text, bytea, bytea, integer, integer, integer)"
+    )
+    op.execute(
+        'DROP FUNCTION "control"."slaif_finalize_human_session"('
+        "text, bytea, integer, integer, integer)"
     )
     op.execute(
         'DROP FUNCTION "control"."slaif_create_human_session"('

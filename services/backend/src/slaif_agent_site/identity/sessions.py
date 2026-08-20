@@ -20,6 +20,7 @@ SESSION_VERSION = "sas2"
 SESSION_PUBLIC_ID_PATTERN = re.compile(r"^sas2_[0-9a-f]{32}$")
 _SESSION_SECRET_BYTES = 32
 _CSRF_SECRET_BYTES = 32
+_DUMMY_DIGEST = b"\x00" * 32
 _B64_PATTERN = re.compile(r"^[A-Za-z0-9_-]{43}$")
 
 
@@ -280,8 +281,19 @@ class HumanSessionService:
             presented_digest = digest_secret(secret)
             async with self._pool.acquire() as connection:
                 async with connection.transaction():
+                    inspection = await connection.fetchrow(
+                        'SELECT * FROM "control"."slaif_inspect_human_session"($1)',
+                        public_id,
+                    )
+                    if inspection is None:
+                        constant_time_digest_equal(_DUMMY_DIGEST, presented_digest)
+                        raise HumanSessionError()
+                    if not constant_time_digest_equal(
+                        bytes(inspection[8]), presented_digest
+                    ):
+                        raise HumanSessionError()
                     row = await connection.fetchrow(
-                        'SELECT * FROM "control"."slaif_authenticate_human_session"('
+                        'SELECT * FROM "control"."slaif_finalize_human_session"('
                         "$1, $2, $3, $4, $5)",
                         public_id,
                         presented_digest,
@@ -289,9 +301,7 @@ class HumanSessionService:
                         self._policy.touch_interval_seconds,
                         self._policy.recent_auth_window_seconds,
                     )
-                    if row is None or not constant_time_digest_equal(
-                        bytes(row[6]), presented_digest
-                    ):
+                    if row is None:
                         raise HumanSessionError()
         except (SessionCredentialError, ValidationError):
             raise HumanSessionError() from None
@@ -322,8 +332,23 @@ class HumanSessionService:
             presented_csrf_digest = digest_secret(csrf_secret)
             async with self._pool.acquire() as connection:
                 async with connection.transaction():
+                    inspection = await connection.fetchrow(
+                        'SELECT * FROM "control"."slaif_inspect_human_session"($1)',
+                        public_id,
+                    )
+                    if inspection is None:
+                        constant_time_digest_equal(_DUMMY_DIGEST, presented_digest)
+                        constant_time_digest_equal(_DUMMY_DIGEST, presented_csrf_digest)
+                        raise HumanSessionError()
+                    if not constant_time_digest_equal(
+                        bytes(inspection[8]), presented_digest
+                    ) or not constant_time_digest_equal(
+                        bytes(inspection[9]), presented_csrf_digest
+                    ):
+                        raise HumanSessionError()
                     row = await connection.fetchrow(
-                        'SELECT * FROM "control"."slaif_resolve_human_session"('
+                        "SELECT * FROM "
+                        '"control"."slaif_finalize_state_changing_human_session"('
                         "$1, $2, $3, $4, $5, $6)",
                         public_id,
                         presented_digest,
@@ -332,12 +357,7 @@ class HumanSessionService:
                         self._policy.touch_interval_seconds,
                         self._policy.recent_auth_window_seconds,
                     )
-                    if row is None or not (
-                        constant_time_digest_equal(bytes(row[6]), presented_digest)
-                        and constant_time_digest_equal(
-                            bytes(row[7]), presented_csrf_digest
-                        )
-                    ):
+                    if row is None:
                         raise HumanSessionError()
         except (SessionCredentialError, ValidationError):
             raise HumanSessionError() from None
@@ -366,20 +386,27 @@ class HumanSessionService:
             presented_csrf_digest = digest_secret(csrf_secret)
             async with self._pool.acquire() as connection:
                 async with connection.transaction():
-                    row = await connection.fetchrow(
+                    inspection = await connection.fetchrow(
+                        'SELECT * FROM "control"."slaif_inspect_human_session"($1)',
+                        public_id,
+                    )
+                    if inspection is None:
+                        constant_time_digest_equal(_DUMMY_DIGEST, presented_digest)
+                        constant_time_digest_equal(_DUMMY_DIGEST, presented_csrf_digest)
+                        raise HumanSessionError()
+                    if not constant_time_digest_equal(
+                        bytes(inspection[8]), presented_digest
+                    ) or not constant_time_digest_equal(
+                        bytes(inspection[9]), presented_csrf_digest
+                    ):
+                        raise HumanSessionError()
+                    await connection.fetchrow(
                         'SELECT * FROM "control"."slaif_revoke_human_session"('
                         "$1, $2, $3)",
                         public_id,
                         presented_digest,
                         presented_csrf_digest,
                     )
-                    if row is not None and not (
-                        constant_time_digest_equal(bytes(row[1]), presented_digest)
-                        and constant_time_digest_equal(
-                            bytes(row[2]), presented_csrf_digest
-                        )
-                    ):
-                        raise HumanSessionError()
         except (SessionCredentialError, ValidationError):
             raise HumanSessionError() from None
         except asyncio.CancelledError:

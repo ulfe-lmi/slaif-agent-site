@@ -78,20 +78,23 @@ and lookup. No plaintext session or CSRF value, recoverable token, cookie, or
 browser storage value enters PostgreSQL.
 
 The owner-created functions `slaif_create_human_session`,
-`slaif_authenticate_human_session`, `slaif_resolve_human_session`, and
+`slaif_inspect_human_session`, `slaif_finalize_human_session`,
+`slaif_finalize_state_changing_human_session`, and
 `slaif_revoke_human_session` are fully
 qualified `SECURITY DEFINER` functions with fixed `search_path=pg_catalog`.
 They revoke `PUBLIC` and grant execution only to `slaif_control`; every other
 Control/runtime/reviewer role has no direct relation or function authority.
 Creation requires an already-authenticated active user and sets issuance times
-from the database clock. Safe authentication checks the session digest without
-requiring CSRF. State-changing authentication checks both digests, active-user
-state, revocation, idle expiry, and absolute expiry while locking the row; it
-touches `last_seen_at` only after the configured interval and never refreshes
-`recent_auth_at`. Revoke requires the bound CSRF proof and is externally
-idempotent. The typed service keeps the row lock in one transaction while
-`secrets.compare_digest` checks the stored fixed-size defense digests before
-returning authority; PostgreSQL rechecks the digests in the same boundary.
+from the database clock. Inspection locks only the public-ID row and returns
+defense digests to the Control service without authority or mutation. Safe and
+state-changing finalizers recheck all database conditions after application
+comparison; the latter checks both digests, active-user state, revocation, idle
+expiry, and absolute expiry while locking the row. They touch `last_seen_at`
+only after the configured interval and never refresh `recent_auth_at`. Revoke
+rechecks both digests and is externally idempotent. The typed service keeps
+the row lock in one transaction while `secrets.compare_digest` checks stored
+fixed-size defense digests before any touch/revoke or authority; PostgreSQL
+rechecks the digests in the finalizer.
 
 The typed service uses versioned boundary formats
 `sas2_session_<32-hex-id>_<base64url-secret>` and
