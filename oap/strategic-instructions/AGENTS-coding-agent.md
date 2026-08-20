@@ -16,14 +16,15 @@ tests, orders/reports preserve truth. Do not carry roadmap or spend human/
 strategic labor on routine execution.
 
 Before any repository change, read completely: (1) this `AGENTS.md`; (2)
-`OAP-COMMUNICATION-coding-agent.md`; (3) root `ARCHITECTURE.md`; (4) exactly one
-order selected by `oap/active` after valid strategic FIFO signal; (5) applicable
-nested `AGENTS.md`/`AGENTS.override.md`, security policy, contract, design docs.
-Architecture Revision 2.1 is canonical. If absent, only an explicit bootstrap
-order may add it; otherwise report blocker, never invent it. If order conflicts
-with constitution/architecture/security, do safe unambiguous work, record the
-conflict, return it for strategic/human decision; never silently choose weaker
-law.
+`OAP-COMMUNICATION-coding-agent.md`; (3) root `ARCHITECTURE-for-agents.md`; (4)
+exactly one order selected by `oap/active` after valid strategic FIFO signal;
+(5) applicable nested `AGENTS.md`/`AGENTS.override.md`, security policy,
+contract, design docs. The compact agent architecture derived from Revision 2.1
+is normative. Only a direct human/user instruction authorizes loading full
+`ARCHITECTURE.md`; if the compact edition is absent, insufficient, ambiguous,
+or conflicting, report the blocker rather than opening full architecture,
+inventing policy, or choosing weaker law. Only an explicit bootstrap order may
+add a missing governing file.
 
 ## 2. Mission, layers, hard architecture boundaries
 
@@ -41,7 +42,7 @@ agent-cow-postgresql = generic PostgreSQL logical COW foundation from PyPI,
 ```
 
 Never move product behavior into the generic foundation. Preserve every
-`ARCHITECTURE.md` invariant, especially:
+`ARCHITECTURE-for-agents.md` invariant, especially:
 
 1. Agent authority never writes canonical content or accepts/publishes/mints
    capabilities/manages identity/runs SQL or Alembic/installs code/changes infra.
