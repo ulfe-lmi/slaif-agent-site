@@ -8,7 +8,9 @@
 
 ## Architecture and security impact
 
-- [ ] The change follows `ARCHITECTURE.md` and applicable governance.
+- [ ] The change follows `ARCHITECTURE-for-agents.md` and applicable governance.
+- [ ] Full `ARCHITECTURE.md` was not loaded by an AI agent unless the human/user
+      directly instructed it.
 - [ ] Trust boundaries, authorization, privacy, and failure behavior were
       reviewed where relevant.
 - [ ] Planned behavior is not presented as implemented.

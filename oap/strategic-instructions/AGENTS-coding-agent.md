@@ -108,8 +108,7 @@ uv build --out-dir /tmp/slaif-agent-site-distributions
 
 Use exactly uv `0.12.5`; integration uses disposable local PostgreSQL+fake
 credentials; CI matrix PostgreSQL 14–18. Extend, never skip/weaken/replace.
-Current exact direct runtime deps: foundation, `argon2-cffi==25.1.0`,
-`asyncpg==0.31.0`,
+Current exact direct runtime deps: foundation, `asyncpg==0.31.0`,
 `fastapi==0.141.1`, `pydantic==2.13.4`, `pydantic-settings==2.15.0`,
 `uvicorn==0.52.3`; HTTPX `0.28.1` test-only. No standard/cloud extras or DB
 locator/pool implemented.

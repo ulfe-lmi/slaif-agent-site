@@ -11,9 +11,14 @@ workflow.
 Before changing the repository, read:
 
 1. [AGENTS.md](AGENTS.md) for coding/execution rules;
-2. [ARCHITECTURE.md](ARCHITECTURE.md) for the normative product architecture;
+2. [ARCHITECTURE-for-agents.md](ARCHITECTURE-for-agents.md) for the normative
+   agent-oriented product architecture;
 3. [SECURITY.md](SECURITY.md) for private vulnerability reporting; and
 4. any narrower instructions or active OAP work order that applies.
+
+The full [ARCHITECTURE.md](ARCHITECTURE.md) remains the human-facing source.
+Only a direct human/user instruction authorizes an AI agent to load it; an agent
+must escalate if the compact edition is insufficient, ambiguous, or conflicting.
 
 Architecture and security boundaries take precedence over convenient
 implementation shortcuts. Do not silently change the normative architecture,

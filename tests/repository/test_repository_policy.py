@@ -9,6 +9,8 @@ import unittest
 from pathlib import Path
 
 from tools.check_repository import (
+    AGENT_ARCHITECTURE_FILE,
+    AGENT_FACING_ARCHITECTURE_REFERENCES,
     APPROVED_ACTIONS,
     BACKEND_PROCESS_VALUES,
     FOUNDATION_REGISTRY,
@@ -290,6 +292,51 @@ class RepositoryPolicyTestCase(unittest.TestCase):
         self.write("apps/web/.next/generated.js", "generated output  \t\n")
 
         self.assertEqual(self.errors_from("check_text_files"), [])
+
+    def write_agent_architecture_policy_fixture(self) -> None:
+        full = b"# Full human architecture\n"
+        self.write("ARCHITECTURE.md", full)
+        digest = hashlib.sha256(full).hexdigest()
+        self.write(
+            AGENT_ARCHITECTURE_FILE,
+            "# Compact agent architecture\n\n"
+            f"**Source SHA-256:** `{digest}`\n\n"
+            "Only a direct human/user instruction authorizes loading full "
+            "`ARCHITECTURE.md`.\n",
+        )
+        policy = (
+            "Use `ARCHITECTURE-for-agents.md` by default. Only a direct "
+            "human/user instruction authorizes loading full `ARCHITECTURE.md`.\n"
+        )
+        for relative in AGENT_FACING_ARCHITECTURE_REFERENCES:
+            self.write(relative, policy)
+
+    def test_agent_architecture_policy_accepts_compact_default(self) -> None:
+        self.write_agent_architecture_policy_fixture()
+
+        self.assertEqual(self.errors_from("check_agent_architecture_policy"), [])
+
+    def test_agent_architecture_policy_rejects_source_drift(self) -> None:
+        self.write_agent_architecture_policy_fixture()
+        self.write("ARCHITECTURE.md", "# Changed full human architecture\n")
+
+        errors = self.errors_from("check_agent_architecture_policy")
+
+        self.assertTrue(any("source SHA-256" in error for error in errors))
+
+    def test_agent_architecture_policy_rejects_legacy_full_default(self) -> None:
+        self.write_agent_architecture_policy_fixture()
+        self.write(
+            "AGENTS.md",
+            "Read root `ARCHITECTURE.md` and preserve every "
+            "`ARCHITECTURE.md` invariant.\n",
+        )
+
+        errors = self.errors_from("check_agent_architecture_policy")
+
+        self.assertTrue(any("by default" in error for error in errors))
+        self.assertTrue(any("human/user" in error for error in errors))
+        self.assertTrue(any("legacy full-architecture" in error for error in errors))
 
     def test_workflow_accepts_approved_full_sha_and_local_action(self) -> None:
         checkout = APPROVED_ACTIONS["actions/checkout"]

@@ -28,3 +28,5 @@ globs:
   - "**/*.md"
 ignores:
   - ".git/**"
+  # Strategic instruction snapshots are machine-consumed source artifacts.
+  - "oap/strategic-instructions/**"
