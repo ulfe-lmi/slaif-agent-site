@@ -10,19 +10,32 @@ export type Secrets = {
   fixtureUserTwo: string;
 };
 
+type ExpectedConsoleFailure = {
+  source: RegExp;
+  text: RegExp;
+};
+
 export function secrets(): Secrets {
   const path = process.env.SLAIF_E2E_SECRET_FILE;
   if (!path) throw new Error("missing bounded secret channel");
   return JSON.parse(readFileSync(path, "utf8")) as Secrets;
 }
 
-export function observe(page: Page, expectedFailures: RegExp[] = []) {
+export function observe(
+  page: Page,
+  expectedFailures: RegExp[] = [],
+  expectedConsoleFailures: ExpectedConsoleFailure[] = [],
+) {
   const failures: string[] = [];
   page.on("console", (message) => {
     const source = message.location().url;
     if (
       message.type() === "error" &&
-      !expectedFailures.some((pattern) => pattern.test(source))
+      !expectedFailures.some((pattern) => pattern.test(source)) &&
+      !expectedConsoleFailures.some(
+        (expected) =>
+          expected.source.test(source) && expected.text.test(message.text()),
+      )
     ) {
       failures.push("console");
     }

@@ -44,11 +44,21 @@ test("governance-visible-workflows-negatives-and-privacy", async ({ page }) => {
   const credential = secrets();
   const requestedUrls: string[] = [];
   page.on("request", (request) => requestedUrls.push(request.url()));
-  const assertClean = observe(page, [
-    /\/api\/control\/v1\/sites\/[^/]+\/memberships/,
-    /\/api\/control\/v1\/sites\/[^/]+$/,
-    /\/s\/governance/,
-  ]);
+  const assertClean = observe(
+    page,
+    [
+      /\/api\/control\/v1\/sites\/[^/]+\/memberships/,
+      /\/api\/control\/v1\/sites\/[^/]+$/,
+      /\/api\/control\/v1\/sites\/12000000-0000-4000-8000-000000000099\/my-authority$/,
+      /\/s\/governance/,
+    ],
+    [
+      {
+        source: /\/admin\/sites\/12000000-0000-4000-8000-000000000099$/,
+        text: /^Failed to load resource: the server responded with a status of 404 \(Not Found\)$/,
+      },
+    ],
+  );
 
   stage("dashboard-and-switcher");
   await login(page, credential);
