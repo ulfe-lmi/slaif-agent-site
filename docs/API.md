@@ -22,6 +22,11 @@ prove setup, login, authenticated admin, and logout through NGINX. Rate
 limiting, durable authentication audit, OIDC, MFA,
 and membership management remain absent.
 
+The human membership/RBAC foundation exposes no HTTP endpoint in this round.
+Control code can use only its typed semantic service backed by fixed named
+database functions. Membership HTTP and route-policy declarations are planned
+for later objective-012 rounds.
+
 ## Platform Administrator site API
 
 Every route below requires a current server-side human session whose active

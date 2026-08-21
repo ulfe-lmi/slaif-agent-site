@@ -57,8 +57,8 @@ class FakeConnection:
         login: str = "slaif_control_login",
         roles: tuple[str, ...] = ("slaif_control",),
         readiness_row: tuple[object, ...] | None = (
-            "013_001",
-            "013_001",
+            "014_001",
+            "014_001",
             "EMPTY_SAFE",
             True,
             "agent-cow-postgresql",
@@ -343,23 +343,23 @@ async def test_new_connection_identity_and_exact_role_are_fail_closed(
     (
         (None, ControlDatabaseReason.UNSAFE_MARKER),
         (
-            ("006_001", "013_001", "EMPTY_SAFE", True, "agent-cow-postgresql", "0.2.0"),
+            ("006_001", "014_001", "EMPTY_SAFE", True, "agent-cow-postgresql", "0.2.0"),
             ControlDatabaseReason.MIGRATION_MISMATCH,
         ),
         (
-            ("013_001", "006_001", "EMPTY_SAFE", True, "agent-cow-postgresql", "0.2.0"),
+            ("014_001", "006_001", "EMPTY_SAFE", True, "agent-cow-postgresql", "0.2.0"),
             ControlDatabaseReason.MIGRATION_MISMATCH,
         ),
         (
-            ("013_001", "013_001", "PENDING", False, "agent-cow-postgresql", "0.2.0"),
+            ("014_001", "014_001", "PENDING", False, "agent-cow-postgresql", "0.2.0"),
             ControlDatabaseReason.UNSAFE_MARKER,
         ),
         (
-            ("013_001", "013_001", "EMPTY_SAFE", True, "other", "0.2.0"),
+            ("014_001", "014_001", "EMPTY_SAFE", True, "other", "0.2.0"),
             ControlDatabaseReason.FOUNDATION_MISMATCH,
         ),
         (
-            ("013_001", "013_001", "HARDENED", True, "agent-cow-postgresql", "0.1.0"),
+            ("014_001", "014_001", "HARDENED", True, "agent-cow-postgresql", "0.1.0"),
             ControlDatabaseReason.FOUNDATION_MISMATCH,
         ),
     ),
@@ -424,6 +424,7 @@ def test_adapter_exposes_no_native_pool_or_sql_locator() -> None:
         "authenticate_local_login",
         "authorize_platform_administrator",
         "human_session_service",
+        "human_authorization_service",
         "site_service",
         "setup_status",
         "readiness",

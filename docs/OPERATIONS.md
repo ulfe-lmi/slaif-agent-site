@@ -22,6 +22,11 @@ issuance and the local setup/login/admin UI exist; rate limiting, durable login
 audit, OIDC, MFA, and runtime agent browser tooling remain absent. Local
 authentication is qualified by six Playwright browser/device projects.
 
+Revision `014_001` upgrades and downgrades deterministically with its complete
+built-in authorization catalogs. Catalog defaults change only through
+migrations. Membership rows are deactivated, not hard-deleted; optimistic
+versions and explicit overrides remain inspectable history.
+
 These commands operate the default Compose project in a local, non-production
 environment. Use an explicit `-p NAME` for disposable tests so cleanup targets
 cannot overlap an operator's persistent project.

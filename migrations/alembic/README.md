@@ -18,6 +18,10 @@ the non-COW Control-owned site/domain foundation, the installation site quota,
 and exact Control-only semantic functions for site lifecycle and trusted
 resolution. It does not create content/workspace objects or public site HTTP
 routes.
+Revision `014_001` adds owner-controlled human permission/role catalogs,
+site membership and overrides, and fixed Control authorization/mutation
+functions. These objects are non-COW and grant runtime roles no direct relation
+access.
 Application services never invoke
 Alembic; only the one-shot
 bootstrap authority supplies the owner connection used by migration commands

@@ -1,5 +1,12 @@
 # Render resolution security boundary
 
+Human authorization rechecks active user, active site, active membership,
+exact site association, current membership version, and permission inside the
+database boundary. Cross-site substitution, self-escalation, stale versions,
+nonassignable permissions, and beyond-actor ceilings fail closed. Publication
+is independent and never follows from editing or delegation level. See [Human
+site authorization](AUTHORIZATION.md).
+
 The internal Render API owns one `slaif_public_login` connection pool with the
 sole `slaif_public_reader` membership. Pool initialization verifies database,
 login/current-user, and exact membership before readiness succeeds. Locator and

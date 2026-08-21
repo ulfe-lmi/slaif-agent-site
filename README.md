@@ -17,6 +17,11 @@ the real responsive result, and publish only after human review.
 
 ## Current status
 
+The backend includes a non-HTTP foundation for site-scoped human memberships,
+seven built-in roles, exact permissions, bounded delegation, and explicit
+overrides. Membership HTTP/UI, custom roles, workspaces/capabilities, content
+editing, review, and publication execution remain unimplemented.
+
 > **Pre-alpha / deployable skeleton.** This
 > repository contains the normative architecture, coding-agent governance,
 > reproducible Python/TypeScript toolchains, the qualified

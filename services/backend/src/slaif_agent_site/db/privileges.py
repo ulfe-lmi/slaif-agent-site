@@ -35,6 +35,11 @@ ALLOWED_CLEAN_RELATIONS = {
     ("control", "site"),
     ("control", "site_domain"),
     ("control", "site_policy"),
+    ("control", "permission"),
+    ("control", "human_role"),
+    ("control", "human_role_permission"),
+    ("control", "site_membership"),
+    ("control", "site_membership_permission_override"),
 }
 FOUNDATION_SCHEMA = "agentcow"
 CONTROL_READINESS_FUNCTION = "slaif_control_readiness"
@@ -122,6 +127,27 @@ CONTROL_FUNCTIONS = {
         "p_hostname text, p_path text",
     ): "text, text",
     ("slaif_site_resolve_local", "p_site_key text"): "text",
+    (
+        "slaif_effective_human_membership",
+        "p_user_account_id uuid, p_site_id uuid",
+    ): "uuid, uuid",
+    (
+        "slaif_human_authorize",
+        "p_user_account_id uuid, p_site_id uuid, p_permission_key text, "
+        "p_expected_membership_version bigint",
+    ): "uuid, uuid, text, bigint",
+    ("slaif_human_rbac_catalog", ""): "",
+    (
+        "slaif_membership_get",
+        "p_site_id uuid, p_user_account_id uuid",
+    ): "uuid, uuid",
+    ("slaif_membership_list", "p_site_id uuid"): "uuid",
+    (
+        "slaif_membership_put",
+        "p_actor_user_id uuid, p_site_id uuid, p_target_user_id uuid, "
+        "p_role_key text, p_delegation_ceiling smallint, p_status text, "
+        "p_expected_version bigint, p_overrides text[]",
+    ): "uuid, uuid, uuid, text, smallint, text, bigint, text[]",
 }
 
 

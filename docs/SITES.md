@@ -5,6 +5,11 @@ their request-domain mappings. The data lives in `control.site` and
 `control.site_domain`; it is installation control data, not editorial content
 and not an Agent-State workspace.
 
+Human authority is site-scoped through active versioned memberships; one user
+may hold different roles, ceilings, and overrides on different sites. Global
+account status alone grants no site authority. See [Human site
+authorization](AUTHORIZATION.md).
+
 ## Authority boundary
 
 Only the owner role has direct relation access. The Control role can execute a
