@@ -96,6 +96,32 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.execute('DROP TABLE IF EXISTS "content"."content_item" CASCADE')
-    op.execute('DROP TABLE IF EXISTS "content"."field_definition" CASCADE')
-    op.execute('DROP TABLE IF EXISTS "content"."content_type" CASCADE')
+    # Drop all COW objects (functions, sequences, tables, views) then canonical tables.
+    op.execute(
+        """
+        DO $$
+        DECLARE obj record; fn record;
+        BEGIN
+          FOR obj IN
+            SELECT c.relname, c.relkind FROM pg_catalog.pg_class c
+            JOIN pg_catalog.pg_namespace ns ON ns.oid = c.relnamespace
+            WHERE ns.nspname = 'content' AND c.relkind IN ('r','v','S')
+          LOOP
+            IF obj.relkind = 'v' THEN
+              EXECUTE format('DROP VIEW IF EXISTS content.%I CASCADE', obj.relname);
+            ELSIF obj.relkind = 'S' THEN
+              EXECUTE format('DROP SEQUENCE IF EXISTS content.%I CASCADE', obj.relname);
+            ELSE
+              EXECUTE format('DROP TABLE IF EXISTS content.%I CASCADE', obj.relname);
+            END IF;
+          END LOOP;
+          FOR fn IN
+            SELECT proname FROM pg_catalog.pg_proc proc
+            JOIN pg_catalog.pg_namespace ns ON ns.oid = proc.pronamespace
+            WHERE ns.nspname = 'content'
+          LOOP
+            EXECUTE format('DROP FUNCTION IF EXISTS content.%I CASCADE', fn.proname);
+          END LOOP;
+        END $$;
+        """
+    )
