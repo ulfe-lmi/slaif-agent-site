@@ -34,3 +34,6 @@ ignores:
   - "oap/reports/010-i-qualify-session-finalizer-update.md"
   # Immutable strategic prose contains a literal line beginning `#23,`.
   - "oap/orders/011-b-platform-admin-site-http.md"
+  # Vendored dependency files are not project-authored prose.
+  - "**/node_modules/**"
+  - ".venv/**"

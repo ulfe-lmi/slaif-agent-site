@@ -195,11 +195,19 @@ def render_blocks(
             raise RuntimeError(
                 "temporary Mermaid output directory is inside repository root"
             )
+        # Pipe transport avoids WSL2 mirrored-networking loopback issues
+        # between the Node driver and headless Chromium.
+        puppeteer_config_path = temporary_root / "puppeteer.json"
+        puppeteer_config_path.write_text('{"pipe": true}', encoding="utf-8")
         for index, block in enumerate(blocks, start=1):
             input_path = temporary_root / f"diagram-{index:03d}.mmd"
             output_path = temporary_root / f"diagram-{index:03d}.svg"
             input_path.write_text(block.content, encoding="utf-8")
-            command = build_renderer_command(input_path, output_path)
+            command = [
+                *build_renderer_command(input_path, output_path),
+                "--puppeteerConfigFile",
+                str(puppeteer_config_path),
+            ]
             try:
                 result = runner(
                     command,

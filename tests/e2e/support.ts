@@ -78,11 +78,32 @@ export async function expectAdminUsable(page: Page) {
   }
 }
 
+export const modalContainmentStages = [
+  "modal-aria-inert",
+  "tab-forward",
+  "tab-reverse",
+  "background-dom-focus",
+  "background-pointer",
+  "escape-cleanup",
+  "trigger-return",
+] as const;
+
+export type ModalContainmentStage = (typeof modalContainmentStages)[number];
+
+function reportStage(
+  stage: ((description: string) => void) | undefined,
+  value: ModalContainmentStage,
+) {
+  stage?.(value);
+}
+
 export async function expectModalContained(
   page: Page,
   dialog: Locator,
   trigger: Locator,
+  stage?: (description: string) => void,
 ) {
+  reportStage(stage, "modal-aria-inert");
   const background = page.locator("[data-admin-background-root]");
   await expect(dialog).toHaveAttribute("aria-modal", "true");
   await expect(background).toHaveAttribute("inert", "");
@@ -90,6 +111,7 @@ export async function expectModalContained(
     'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
   );
   const steps = (await controls.count()) + 2;
+  reportStage(stage, "tab-forward");
   for (let index = 0; index < steps; index += 1) {
     await page.keyboard.press("Tab");
     await expect(page.locator(":focus")).toBeVisible();
@@ -99,6 +121,7 @@ export async function expectModalContained(
         .evaluate((element) => Boolean(element.closest('[role="dialog"]'))),
     ).toBe(true);
   }
+  reportStage(stage, "tab-reverse");
   for (let index = 0; index < steps; index += 1) {
     await page.keyboard.press("Shift+Tab");
     expect(
@@ -108,18 +131,23 @@ export async function expectModalContained(
     ).toBe(true);
   }
   const backgroundControl = background.locator("button:visible, a:visible").first();
+  reportStage(stage, "background-dom-focus");
   await backgroundControl.evaluate((element) => element.focus());
   await expect(backgroundControl).not.toBeFocused();
-  const box = await backgroundControl.boundingBox();
-  if (box) await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
-  expect(
-    await page
-      .locator(":focus")
-      .evaluate((element) => Boolean(element.closest('[role="dialog"]'))),
-  ).toBe(true);
+  reportStage(stage, "background-pointer");
+  await page.mouse.click(1, 1);
+  const focused = await page.evaluate(() =>
+    Boolean(
+      document.activeElement instanceof Element &&
+      document.activeElement.closest('[role="dialog"]'),
+    ),
+  );
+  expect(focused).toBe(true);
+  reportStage(stage, "escape-cleanup");
   await page.keyboard.press("Escape");
   await expect(dialog).toBeHidden();
   await expect(background).not.toHaveAttribute("inert", "");
+  reportStage(stage, "trigger-return");
   await expect(trigger).toBeFocused();
 }
 

@@ -45,7 +45,7 @@ test("responsive-admin-keyboard-read-states-and-logout", async ({ page }) => {
   await trigger.click();
   const dialog = page.getByRole("dialog", { name: "Choose an authorized site" });
   await expect(dialog).toBeVisible();
-  await expectModalContained(page, dialog, trigger);
+  await expectModalContained(page, dialog, trigger, stage);
 
   stage("site-overview-read");
   await trigger.click();

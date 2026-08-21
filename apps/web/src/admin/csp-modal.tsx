@@ -90,10 +90,17 @@ export function CspModal({
     const containFocus = (event: FocusEvent) => {
       if (!content.contains(event.target as Node)) focusFirst();
     };
+    // Inert background controls reject focus, so browser pointer handling can
+    // move activation to body without a later focusin event.
+    const containPointer = () => {
+      if (!content.contains(document.activeElement)) focusFirst();
+    };
     document.addEventListener("focusin", containFocus);
+    document.addEventListener("pointerup", containPointer);
     queueMicrotask(focusFirst);
     return () => {
       document.removeEventListener("focusin", containFocus);
+      document.removeEventListener("pointerup", containPointer);
       restore();
       if (restoreBackgroundRef.current === restore) {
         restoreBackgroundRef.current = () => undefined;
@@ -136,6 +143,7 @@ export function CspModal({
           aria-modal="true"
           className={contentClassName}
           onKeyDown={containTab}
+          onInteractOutside={(event) => event.preventDefault()}
           onOpenAutoFocus={(event) => event.preventDefault()}
           ref={bindContent}
           tabIndex={-1}

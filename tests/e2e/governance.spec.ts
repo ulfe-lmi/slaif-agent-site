@@ -60,7 +60,7 @@ test("governance-visible-workflows-negatives-and-privacy", async ({ page }) => {
   await switcherTrigger.click();
   const switcher = page.getByRole("dialog", { name: "Choose an authorized site" });
   await expect(switcher).toBeVisible();
-  await expectModalContained(page, switcher, switcherTrigger);
+  await expectModalContained(page, switcher, switcherTrigger, stage);
 
   stage("site-create-visible");
   await page.getByRole("link", { name: "Create a site" }).click();
@@ -146,7 +146,7 @@ test("governance-visible-workflows-negatives-and-privacy", async ({ page }) => {
   const editTrigger = card.getByRole("button", { name: "Edit membership" });
   await editTrigger.click();
   let edit = page.getByRole("dialog", { name: new RegExp("^Edit ") });
-  await expectModalContained(page, edit, editTrigger);
+  await expectModalContained(page, edit, editTrigger, stage);
   await editTrigger.click();
   await edit.getByLabel("Built-in role").selectOption("SITE_DESIGNER");
   await edit.getByLabel("Explicit delegation ceiling").selectOption("3");
@@ -320,7 +320,7 @@ test("governance-visible-workflows-negatives-and-privacy", async ({ page }) => {
   const deactivateTrigger = card.getByRole("button", { name: "Deactivate" });
   await deactivateTrigger.click();
   const deactivate = page.getByRole("dialog", { name: /^Deactivate / });
-  await expectModalContained(page, deactivate, deactivateTrigger);
+  await expectModalContained(page, deactivate, deactivateTrigger, stage);
   await deactivateTrigger.click();
   await expect(deactivate).toContainText("does not delete");
   await deactivate.getByRole("button", { name: "Confirm deactivation" }).click();
@@ -367,7 +367,7 @@ test("governance-visible-workflows-negatives-and-privacy", async ({ page }) => {
     name: "Archive Governance Evidence Site?",
   });
   await expect(archive).toBeVisible();
-  await expectModalContained(page, archive, archiveTrigger);
+  await expectModalContained(page, archive, archiveTrigger, stage);
   await archiveTrigger.click();
   const archiveResponse = page.waitForResponse(
     (response) =>
