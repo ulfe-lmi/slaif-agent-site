@@ -217,6 +217,8 @@ class RepositoryPolicyTestCase(unittest.TestCase):
             "services/backend/src/slaif_agent_site/sites/normalization.py",
             "services/backend/src/slaif_agent_site/sites/service.py",
             "services/backend/src/slaif_agent_site/control_api/auth_http.py",
+            "services/backend/src/slaif_agent_site/control_api/site_http.py",
+            "services/backend/tests/integration/test_site_control_http_integration.py",
             "services/backend/src/slaif_agent_site/identity/passwords.py",
             "services/backend/src/slaif_agent_site/identity/authentication.py",
             "services/backend/src/slaif_agent_site/identity/sessions.py",

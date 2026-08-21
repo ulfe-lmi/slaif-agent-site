@@ -93,6 +93,11 @@ async def test_each_app_has_only_typed_health_routes(
             "/api/control/v1/login",
             "/api/control/v1/session",
             "/api/control/v1/logout",
+            "/api/control/v1/sites",
+            "/api/control/v1/sites/{site_id}",
+            "/api/control/v1/sites/{site_id}/archive",
+            "/api/control/v1/sites/{site_id}/domains",
+            "/api/control/v1/sites/{site_id}/domains/{domain_id}",
         }
     assert _route_paths(app) == expected_routes
     assert app.docs_url is None

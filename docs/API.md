@@ -20,14 +20,36 @@ The Next.js setup/login/admin UI and clean Compose authentication journey use
 these same-origin routes. Six self-hosted Playwright browser/device projects
 prove setup, login, authenticated admin, and logout through NGINX. Rate
 limiting, durable authentication audit, OIDC, MFA,
-site-management HTTP routes and membership management also remain absent.
+and membership management remain absent.
 
-## Internal site service boundary
+## Platform Administrator site API
 
-The Control process now has a typed, database-backed semantic service for
-creating, reading, listing, updating, and archiving sites; managing domain
-mappings; and resolving trusted request host/path inputs. This is an internal
-application boundary only: objective 011-a adds no public HTTP endpoint and no
-request may supply a site UUID as routing authority. Trusted server code
-derives an immutable `SiteContext` after successful resolution. See
-[Sites](SITES.md) for normalization and resolution rules.
+Every route below requires a current server-side human session whose active
+user has a current `platform_administrator` assignment. Safe `GET` requests do
+not use CSRF. Every state-changing request additionally requires the bound CSRF
+cookie and exactly one matching `X-CSRF-Token` header.
+
+| Route | Success | Request body |
+| --- | --- | --- |
+| `GET /sites` | 200 | none |
+| `POST /sites` | 201 | `site_key`, `display_name`, `default_locale` |
+| `GET /sites/{site_id}` | 200 | none |
+| `PATCH /sites/{site_id}` | 200 | `display_name`, `default_locale` |
+| `POST /sites/{site_id}/archive` | 200 | none |
+| `GET /sites/{site_id}/domains` | 200 | none |
+| `POST /sites/{site_id}/domains` | 201 | `hostname`, `path_prefix`, `is_primary` |
+| `PUT /sites/{site_id}/domains/{domain_id}` | 200 | `hostname`, `path_prefix`, `is_primary` |
+| `DELETE /sites/{site_id}/domains/{domain_id}` | 204 | none |
+
+Bodies are frozen extra-forbid models and cannot select IDs, lifecycle state,
+revisions, catalog version, timestamps, routing Host/path, or authorization
+context. Server code parses the path UUID, resolves it through the semantic
+service, and creates the active `SiteContext`; handlers never construct one.
+Responses contain only the safe site/domain record fields documented in
+[Sites](SITES.md).
+
+Authentication failures are 401; authorization and CSRF failures 403; absent
+or cross-site resources 404; duplicates, quota, primary-domain rules, and
+archived state 409; validation 422; persistence unavailability 503. Every
+success and error is `private, no-store`, `noindex`, and carries one request ID.
+Errors use the stable envelope and reveal no credential or cross-site detail.

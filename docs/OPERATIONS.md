@@ -160,6 +160,13 @@ UUID or revision override. Diagnose mapping data through the Control semantic
 service and disposable integration tests—never by granting relation access to
 an online role.
 
+The Control site API is available only to an authenticated active Platform
+Administrator. State changes require the session-bound CSRF proof. Archive is
+idempotent, irreversible through the online API, and prevents every later
+profile/domain mutation even if a caller retained a prior active context.
+There is no online site deletion, DNS automation, demo seed, public renderer,
+membership management, or publication operation in this round.
+
 ## Verification
 
 The destructive packaging smoke uses only a validated explicit project name:

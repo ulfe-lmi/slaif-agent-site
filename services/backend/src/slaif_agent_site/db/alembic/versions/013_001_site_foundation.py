@@ -124,6 +124,56 @@ def upgrade() -> None:
         op.execute(f'REVOKE ALL ON TABLE "control"."{table}" FROM PUBLIC')
 
     op.execute(
+        """
+        CREATE FUNCTION "control"."slaif_site_context"("p_site_id" uuid)
+        RETURNS TABLE (
+            "site_id" uuid, "site_key" text, "status" text,
+            "canonical_revision" bigint, "default_locale" text,
+            "matched_hostname" text, "matched_path_prefix" text
+        ) LANGUAGE sql STABLE SECURITY DEFINER PARALLEL SAFE
+        SET search_path = pg_catalog ROWS 1 AS $function$
+            SELECT site.id, site.site_key, site.status,
+                site.canonical_revision, site.default_locale, NULL::text, NULL::text
+            FROM "control"."site" AS site
+            WHERE site.id = p_site_id AND site.status = 'ACTIVE'
+        $function$
+        """
+    )
+    op.execute(
+        """
+        CREATE FUNCTION "control"."slaif_platform_administrator_authorized"(
+            "p_user_account_id" uuid
+        ) RETURNS boolean
+        LANGUAGE sql STABLE SECURITY DEFINER PARALLEL SAFE
+        SET search_path = pg_catalog AS $function$
+            SELECT EXISTS (
+                SELECT 1 FROM "control"."user_account" AS account
+                JOIN "control"."platform_administrator" AS assignment
+                  ON assignment.user_account_id = account.id
+                WHERE account.id = p_user_account_id
+                  AND account.status = 'ACTIVE'
+            )
+        $function$
+        """
+    )
+    op.execute(
+        """
+        CREATE FUNCTION "control"."slaif_site_domain_list"("p_site_id" uuid)
+        RETURNS TABLE (
+            "domain_id" uuid, "site_id" uuid, "hostname" text,
+            "path_prefix" text, "is_primary" boolean,
+            "created_at" timestamp with time zone
+        ) LANGUAGE sql STABLE SECURITY DEFINER PARALLEL SAFE
+        SET search_path = pg_catalog AS $function$
+            SELECT mapping.id, mapping.site_id, mapping.hostname,
+                mapping.path_prefix, mapping.is_primary, mapping.created_at
+            FROM "control"."site_domain" AS mapping
+            WHERE mapping.site_id = p_site_id
+            ORDER BY mapping.hostname, mapping.path_prefix, mapping.id
+        $function$
+        """
+    )
+    op.execute(
         f"""
         CREATE FUNCTION "control"."slaif_site_create"(
             "p_site_key" text, "p_display_name" text,
@@ -188,6 +238,12 @@ def upgrade() -> None:
         SET search_path = pg_catalog ROWS 1 AS $function$
         DECLARE changed "control"."site"%ROWTYPE;
         BEGIN
+            PERFORM 1 FROM "control"."site" AS locked_site
+                WHERE locked_site.id = p_site_id
+                  AND locked_site.status = 'ACTIVE' FOR UPDATE;
+            IF NOT FOUND THEN
+                RAISE EXCEPTION USING ERRCODE = 'P0001', MESSAGE = 'site inactive';
+            END IF;
             UPDATE "control"."site" AS site SET
                 display_name = p_display_name,
                 default_locale = p_default_locale,
@@ -240,7 +296,9 @@ def upgrade() -> None:
         BEGIN
             PERFORM 1 FROM "control"."site" WHERE id = p_site_id
                 AND status = 'ACTIVE' FOR UPDATE;
-            IF NOT FOUND THEN RETURN; END IF;
+            IF NOT FOUND THEN
+                RAISE EXCEPTION USING ERRCODE = 'P0001', MESSAGE = 'site inactive';
+            END IF;
             PERFORM 1 FROM "control"."site_domain" AS mapping
                 WHERE mapping.site_id = p_site_id
                 FOR UPDATE;
@@ -285,12 +343,16 @@ def upgrade() -> None:
         SET search_path = pg_catalog AS $function$
         DECLARE target "control"."site_domain"%ROWTYPE;
         BEGIN
-            PERFORM 1 FROM "control"."site" WHERE id = p_site_id FOR UPDATE;
-            IF NOT FOUND THEN RETURN FALSE; END IF;
+            PERFORM 1 FROM "control"."site" WHERE id = p_site_id
+                AND status = 'ACTIVE' FOR UPDATE;
+            IF NOT FOUND THEN
+                RAISE EXCEPTION USING ERRCODE = 'P0001', MESSAGE = 'site inactive';
+            END IF;
             SELECT * INTO target FROM "control"."site_domain" AS mapping
                 WHERE mapping.id = p_domain_id
                   AND mapping.site_id = p_site_id FOR UPDATE;
-            IF NOT FOUND OR target.is_primary THEN RETURN FALSE; END IF;
+            IF NOT FOUND THEN RETURN NULL; END IF;
+            IF target.is_primary THEN RETURN FALSE; END IF;
             DELETE FROM "control"."site_domain" AS mapping
                 WHERE mapping.id = p_domain_id
                   AND mapping.site_id = p_site_id;
@@ -341,6 +403,9 @@ def upgrade() -> None:
     _secure(
         (
             '"slaif_site_create"(text, text, text, text)',
+            '"slaif_site_context"(uuid)',
+            '"slaif_platform_administrator_authorized"(uuid)',
+            '"slaif_site_domain_list"(uuid)',
             '"slaif_site_get"(uuid)',
             '"slaif_site_list"()',
             '"slaif_site_update"(uuid, text, text)',
@@ -355,6 +420,9 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     for function in (
+        '"slaif_site_domain_list"(uuid)',
+        '"slaif_platform_administrator_authorized"(uuid)',
+        '"slaif_site_context"(uuid)',
         '"slaif_site_resolve_local"(text)',
         '"slaif_site_resolve"(text, text)',
         '"slaif_site_domain_remove"(uuid, uuid)',

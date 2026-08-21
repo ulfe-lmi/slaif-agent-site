@@ -30,6 +30,8 @@ COMPONENT_CATALOG_VERSION = "catalog-v0"
 CREATE_SITE_SQL = "SELECT * FROM control.slaif_site_create($1, $2, $3, $4)"
 GET_SITE_SQL = "SELECT * FROM control.slaif_site_get($1)"
 LIST_SITES_SQL = "SELECT * FROM control.slaif_site_list()"
+SITE_CONTEXT_SQL = "SELECT * FROM control.slaif_site_context($1)"
+LIST_DOMAINS_SQL = "SELECT * FROM control.slaif_site_domain_list($1)"
 UPDATE_SITE_SQL = "SELECT * FROM control.slaif_site_update($1, $2, $3)"
 ARCHIVE_SITE_SQL = "SELECT * FROM control.slaif_site_archive($1)"
 PUT_DOMAIN_SQL = "SELECT * FROM control.slaif_site_domain_put($1, $2, $3, $4, $5)"
@@ -121,6 +123,14 @@ class SiteService:
             raise SiteServiceError(SiteServiceReason.NOT_FOUND)
         return _site(row)
 
+    async def active_context(self, site_id: UUID) -> SiteContext:
+        """Resolve a trusted active context from a server-parsed site UUID."""
+
+        row = await self._fetchrow(SITE_CONTEXT_SQL, site_id)
+        if row is None:
+            raise SiteServiceError(SiteServiceReason.CONFLICT)
+        return SiteContext._from_database(row)
+
     async def list(self) -> tuple[SiteRecord, ...]:
         try:
             async with self._pool.acquire(timeout=self._acquire_timeout) as connection:
@@ -130,6 +140,16 @@ class SiteService:
         except (asyncpg.PostgresError, OSError, TimeoutError):
             raise SiteServiceError(SiteServiceReason.UNAVAILABLE) from None
         return tuple(_site(row) for row in rows)
+
+    async def list_domains(self, site_id: UUID) -> tuple[DomainMapping, ...]:
+        try:
+            async with self._pool.acquire(timeout=self._acquire_timeout) as connection:
+                rows = await connection.fetch(LIST_DOMAINS_SQL, site_id)
+        except asyncio.CancelledError:
+            raise
+        except (asyncpg.PostgresError, OSError, TimeoutError):
+            raise SiteServiceError(SiteServiceReason.UNAVAILABLE) from None
+        return tuple(_mapping(row) for row in rows)
 
     async def update(
         self, context: SiteContext, request: UpdateSiteRequest
@@ -143,7 +163,7 @@ class SiteService:
             request.default_locale,
         )
         if row is None:
-            raise SiteServiceError(SiteServiceReason.NOT_FOUND)
+            raise SiteServiceError(SiteServiceReason.CONFLICT)
         return _site(row)
 
     async def archive(self, context: SiteContext) -> SiteRecord:
@@ -177,7 +197,9 @@ class SiteService:
         if context.status is not SiteStatus.ACTIVE:
             raise SiteServiceError(SiteServiceReason.NOT_FOUND)
         removed = await self._fetchrow(REMOVE_DOMAIN_SQL, context.site_id, domain_id)
-        if removed is None or removed[0] is not True:
+        if removed is None or removed[0] is None:
+            raise SiteServiceError(SiteServiceReason.NOT_FOUND)
+        if removed[0] is not True:
             raise SiteServiceError(SiteServiceReason.CONFLICT)
 
     async def resolve(self, authority: str, path: str) -> SiteContext:
@@ -228,10 +250,12 @@ __all__ = [
     "CREATE_SITE_SQL",
     "GET_SITE_SQL",
     "LIST_SITES_SQL",
+    "LIST_DOMAINS_SQL",
     "PUT_DOMAIN_SQL",
     "REMOVE_DOMAIN_SQL",
     "RESOLVE_LOCAL_SQL",
     "RESOLVE_SITE_SQL",
+    "SITE_CONTEXT_SQL",
     "UPDATE_SITE_SQL",
     "SiteService",
     "SiteServiceError",

@@ -223,6 +223,61 @@ async def test_archive_is_idempotent_stops_resolution_and_deletes_nothing(
         await pool.close()
 
 
+async def test_stale_pre_archive_context_cannot_mutate_profile_or_domains(
+    agent_site_database: AgentSiteDatabase,
+) -> None:
+    database = agent_site_database
+    await upgrade(database.settings)
+    await reconcile(database.settings)
+    pool, service = await _site_service(database)
+    try:
+        site = await _create(service, "stale-context")
+        stale = await _local_context(service, site.site_key)
+        primary = await service.put_domain(
+            stale,
+            DomainMappingRequest(
+                hostname="stale.example.test", path_prefix="/", is_primary=True
+            ),
+        )
+        secondary = await service.put_domain(
+            stale,
+            DomainMappingRequest(
+                hostname="other.example.test", path_prefix="/", is_primary=False
+            ),
+        )
+        await service.archive(stale)
+        operations = (
+            service.update(
+                stale, UpdateSiteRequest(display_name="Forbidden", default_locale="de")
+            ),
+            service.put_domain(
+                stale,
+                DomainMappingRequest(
+                    hostname="new.example.test", path_prefix="/", is_primary=False
+                ),
+            ),
+            service.put_domain(
+                stale,
+                DomainMappingRequest(
+                    hostname="changed.example.test",
+                    path_prefix="/",
+                    is_primary=False,
+                ),
+                domain_id=secondary.domain_id,
+            ),
+            service.remove_domain(stale, secondary.domain_id),
+        )
+        for operation in operations:
+            with pytest.raises(SiteServiceError) as denied:
+                await operation
+            assert denied.value.reason is SiteServiceReason.CONFLICT
+        unchanged = await service.get(site.site_id)
+        assert unchanged.display_name == "Site Stale-Context"
+        assert await service.list_domains(site.site_id) == (secondary, primary)
+    finally:
+        await pool.close()
+
+
 async def test_revisions_are_server_owned_and_constraints_rollback_changes(
     agent_site_database: AgentSiteDatabase,
 ) -> None:

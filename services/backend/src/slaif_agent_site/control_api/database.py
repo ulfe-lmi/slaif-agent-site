@@ -60,6 +60,9 @@ INITIAL_SETUP_COMPLETE_SQL = (
     "created_at FROM control.slaif_complete_initial_local_administrator("
     "$1, $2, $3, $4, $5, $6, $7, $8)"
 )
+PLATFORM_ADMINISTRATOR_SQL = (
+    "SELECT control.slaif_platform_administrator_authorized($1)"
+)
 
 
 class ControlDatabaseReason(StrEnum):
@@ -397,6 +400,28 @@ class ControlDatabase:
             password_service=self._password_service,
         ).authenticate(request)
 
+    async def authorize_platform_administrator(self, user_account_id: UUID) -> bool:
+        """Check one fixed active installation-authority assignment."""
+
+        pool = self._pool
+        if pool is None:
+            raise ControlDatabaseError(ControlDatabaseReason.CONNECTION_UNAVAILABLE)
+        try:
+            async with pool.acquire(
+                timeout=self._settings.acquire_timeout_seconds
+            ) as connection:
+                return bool(
+                    await connection.fetchval(
+                        PLATFORM_ADMINISTRATOR_SQL, user_account_id
+                    )
+                )
+        except asyncio.CancelledError:
+            raise
+        except (TimeoutError, asyncpg.PostgresError, OSError):
+            raise ControlDatabaseError(
+                ControlDatabaseReason.CONNECTION_UNAVAILABLE
+            ) from None
+
     def site_service(self) -> SiteService:
         """Return the Control-only semantic site adapter for this pool."""
 
@@ -410,6 +435,7 @@ class ControlDatabase:
 __all__ = [
     "INITIAL_SETUP_COMPLETE_SQL",
     "INITIAL_SETUP_LOCK_SQL",
+    "PLATFORM_ADMINISTRATOR_SQL",
     "READINESS_SQL",
     "ControlDatabase",
     "ControlDatabaseAdapter",

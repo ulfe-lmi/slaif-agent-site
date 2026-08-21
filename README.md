@@ -28,7 +28,7 @@ the real responsive result, and publish only after human review.
 > Compose stack builds non-root OCI images,
 > generates file-backed local credentials, reaches `EMPTY_SAFE safe=true`, and
 > exposes an honest Next.js status surface, health routes, and bounded backend
-> Control authentication endpoints through NGINX
+> Control authentication and Platform Administrator site endpoints through NGINX
 > on <http://localhost:8080/>.
 > The database now includes non-COW Control-owned site and domain records plus
 > a typed internal site service and trusted host/path resolver. Its clean
@@ -36,11 +36,12 @@ the real responsive result, and publish only after human review.
 > claiming foundation table hardening. Any real content object requires the
 > fully validated `HARDENED` state. A local human authentication/setup UI is
 > implemented and qualified through six self-hosted Playwright browser/device
-> projects. Public site-management routes and UI, site membership,
+> projects. Site-management UI, site membership,
 > workspaces, editing/Puck, content tables and APIs,
 > runtime browser commands, review, publication, and product behavior are
-> not implemented yet. Control API alone owns one isolated file-backed
-> login, bounded asyncpg pool, and read-only database readiness component; no
+> not implemented yet. Control API alone owns one isolated file-backed login,
+> bounded asyncpg pool, readiness/authentication adapters, and the bounded site
+> semantic service; no
 > other online process receives a database credential.
 
 The current automation also migrates/rebuilds disposable databases, verifies

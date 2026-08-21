@@ -10,8 +10,9 @@ and not an Agent-State workspace.
 Only the owner role has direct relation access. The Control role can execute a
 small fixed function surface for site lifecycle, domain mappings, and
 resolution. Other product roles have neither relation nor function authority.
-The Control application exposes the same boundary as typed semantic services,
-but this round intentionally adds no public site-management HTTP routes or UI.
+The Control application exposes the same boundary through the authenticated
+Platform Administrator API documented in [API](API.md). No anonymous site
+endpoint or site-management UI exists.
 
 Site UUIDs, mapping UUIDs, revisions, timestamps, and lifecycle state are
 server/database-owned. Request bodies cannot select routing identity. A
@@ -25,6 +26,9 @@ status, normalized default locale, catalog version, and non-negative canonical
 and content-model revisions. Create, update, list, get, and archive operations
 are bounded Control functions. There is no online delete operation and an
 archived site cannot resolve.
+Profile and domain mutations lock and re-check the site as active in their own
+transaction, so a context retained before archive cannot mutate afterward.
+Archive is idempotent and deletes neither site nor mapping rows.
 
 The installation-bound `control.site_policy` singleton contains `max_sites`,
 defaulting to 100 and bounded from 1 through 1000. Creation locks that row before counting sites, so
@@ -60,7 +64,8 @@ production edge routing remain deferred.
 
 ## Deferred work
 
-Site-management HTTP routes and UI, site membership/RBAC, workspaces, content
-models, editorial content, public rendering, DNS automation, and deletion are
-not implemented by this foundation. Multi-site support remains trusted
+Site-management UI, site membership/RBAC, demo seeding, workspaces, content
+models, editorial content, anonymous rendering/routing, DNS automation, and
+deletion are not implemented. This API does not make the application
+production-ready or hostile-tenant-safe. Multi-site support remains trusted
 institutional tenancy and does not claim hostile public-SaaS isolation.

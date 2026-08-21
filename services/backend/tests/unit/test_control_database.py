@@ -422,6 +422,7 @@ def test_adapter_exposes_no_native_pool_or_sql_locator() -> None:
     assert public == {
         "create_initial_local_administrator",
         "authenticate_local_login",
+        "authorize_platform_administrator",
         "human_session_service",
         "site_service",
         "setup_status",

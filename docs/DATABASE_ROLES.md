@@ -46,11 +46,15 @@ and password-hash compare-and-set functions. No role receives direct
 Revision `013_001` adds the non-COW `control.site`, `control.site_domain`, and
 installation-bound `control.site_policy` relations. Only `slaif_owner` owns or accesses the
 relations directly. `slaif_control` receives execution on the exact bounded
-site CRUD, domain-mapping, archive, and resolution functions; it receives no
+site CRUD, active-context, domain-mapping/listing, archive, resolution, and
+active Platform Administrator authorization functions; it receives no
 table, sequence, or column grant. Every runtime, reader, reviewer, scheduler,
 media, and GC role is denied both relation and function authority. Site and
 operation identifiers are generated or selected inside trusted server/database
 code, and archive is the only exposed removal lifecycle.
+Authorization joins the active user and current assignment inside one fixed-
+search-path owner function; callers cannot infer authority from username,
+setup history, cookies, Host, or client claims.
 
 ## Login-principal design
 

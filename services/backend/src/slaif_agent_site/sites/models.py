@@ -122,8 +122,8 @@ class SiteContext:
     status: SiteStatus
     canonical_revision: int
     default_locale: str
-    matched_hostname: str
-    matched_path_prefix: str
+    matched_hostname: str | None
+    matched_path_prefix: str | None
 
     def __new__(cls) -> SiteContext:
         raise TypeError("SiteContext is created only by the trusted resolver")

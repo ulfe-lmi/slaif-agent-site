@@ -91,6 +91,12 @@ CONTROL_FUNCTIONS = {
         "p_site_key text, p_display_name text, p_default_locale text, "
         "p_component_catalog_version text",
     ): "text, text, text, text",
+    ("slaif_site_context", "p_site_id uuid"): "uuid",
+    (
+        "slaif_platform_administrator_authorized",
+        "p_user_account_id uuid",
+    ): "uuid",
+    ("slaif_site_domain_list", "p_site_id uuid"): "uuid",
     ("slaif_site_get", "p_site_id uuid"): "uuid",
     ("slaif_site_list", ""): "",
     (
