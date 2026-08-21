@@ -61,7 +61,9 @@ class ComposeSmokeContractTests(unittest.TestCase):
         self.assertLess(render, web)
         self.assertLess(web, nginx)
         self.assertLess(nginx, global_wait)
-        self.assertGreaterEqual(source.count("--force-recreate --no-deps render-api"), 2)
+        self.assertGreaterEqual(
+            source.count("--force-recreate --no-deps render-api"), 2
+        )
         self.assertIn('test "$(render_fingerprint)" = "$render_before"', source)
         self.assertIn('test "$(site_fingerprint)" = "$sites_before"', source)
 
