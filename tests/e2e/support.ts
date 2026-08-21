@@ -1,4 +1,10 @@
-import { expect, type APIResponse, type Page, type Response } from "@playwright/test";
+import {
+  expect,
+  type APIResponse,
+  type Locator,
+  type Page,
+  type Response,
+} from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { classifyConsoleMessage, classifyConsoleSource } from "./observation";
 
@@ -70,6 +76,51 @@ export async function expectAdminUsable(page: Page) {
     const box = await critical.nth(index).boundingBox();
     expect(box?.height ?? 0, "44px critical target").toBeGreaterThanOrEqual(44);
   }
+}
+
+export async function expectModalContained(
+  page: Page,
+  dialog: Locator,
+  trigger: Locator,
+) {
+  const background = page.locator("[data-admin-background-root]");
+  await expect(dialog).toHaveAttribute("aria-modal", "true");
+  await expect(background).toHaveAttribute("inert", "");
+  const controls = dialog.locator(
+    'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+  );
+  const steps = (await controls.count()) + 2;
+  for (let index = 0; index < steps; index += 1) {
+    await page.keyboard.press("Tab");
+    await expect(page.locator(":focus")).toBeVisible();
+    expect(
+      await page
+        .locator(":focus")
+        .evaluate((element) => Boolean(element.closest('[role="dialog"]'))),
+    ).toBe(true);
+  }
+  for (let index = 0; index < steps; index += 1) {
+    await page.keyboard.press("Shift+Tab");
+    expect(
+      await page
+        .locator(":focus")
+        .evaluate((element) => Boolean(element.closest('[role="dialog"]'))),
+    ).toBe(true);
+  }
+  const backgroundControl = background.locator("button:visible, a:visible").first();
+  await backgroundControl.evaluate((element) => element.focus());
+  await expect(backgroundControl).not.toBeFocused();
+  const box = await backgroundControl.boundingBox();
+  if (box) await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  expect(
+    await page
+      .locator(":focus")
+      .evaluate((element) => Boolean(element.closest('[role="dialog"]'))),
+  ).toBe(true);
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+  await expect(background).not.toHaveAttribute("inert", "");
+  await expect(trigger).toBeFocused();
 }
 
 export function expectPrivateHeaders(response: APIResponse | Response) {

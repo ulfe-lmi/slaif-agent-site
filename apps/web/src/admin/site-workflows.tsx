@@ -1,6 +1,5 @@
 "use client";
 
-import * as Dialog from "@radix-ui/react-dialog";
 import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 
@@ -19,6 +18,7 @@ import {
   type DomainMapping,
   type SiteRecord,
 } from "./api";
+import { CspModal } from "./csp-modal";
 
 function message(reason: unknown): string {
   const code = reason instanceof Error ? reason.message : "invalid-response";
@@ -129,7 +129,7 @@ export function SiteSettingsWorkflow({ siteId }: { siteId: string }) {
     void refresh().catch((reason) => setError(message(reason)));
   }, [siteId]);
   async function act(operation: () => Promise<unknown>, success: string) {
-    if (pending.current) return;
+    if (pending.current) return false;
     pending.current = true;
     setError("");
     setNotice("");
@@ -137,8 +137,10 @@ export function SiteSettingsWorkflow({ siteId }: { siteId: string }) {
       await operation();
       await refresh();
       setNotice(success);
+      return true;
     } catch (reason) {
       setError(message(reason));
+      return false;
     } finally {
       pending.current = false;
     }
@@ -289,43 +291,40 @@ export function SiteSettingsWorkflow({ siteId }: { siteId: string }) {
             Archive disables routing and future mutations. It does not delete the site
             or its rows.
           </p>
-          <Dialog.Root modal={false}>
-            <Dialog.Trigger asChild>
-              <Button type="button">Archive {site.display_name}</Button>
-            </Dialog.Trigger>
-            <Dialog.Portal>
-              <Dialog.Overlay className="site-switcher-overlay" />
-              <Dialog.Content className="site-switcher-dialog">
-                <Dialog.Title>Archive {site.display_name}?</Dialog.Title>
-                <Dialog.Description>
-                  This does not delete data. Explicit confirmation and a recent
-                  authenticated session are required.
-                </Dialog.Description>
+          <CspModal
+            title={`Archive ${site.display_name}?`}
+            description="This does not delete data. Explicit confirmation and a recent authenticated session are required."
+            trigger={<Button type="button">Archive {site.display_name}</Button>}
+          >
+            {({ close }) => (
+              <>
                 {!recent && (
                   <StatusPanel>
                     Your authentication is not recent. Sign in again before archiving.
                   </StatusPanel>
                 )}
                 <div className="admin-actions">
-                  <Dialog.Close asChild>
-                    <Button type="button">Cancel</Button>
-                  </Dialog.Close>
+                  <Button type="button" onClick={close}>
+                    Cancel
+                  </Button>
                   <Button
                     type="button"
                     disabled={!recent}
-                    onClick={() =>
+                    onClick={() => {
                       void act(
                         () => archiveSite(siteId),
                         "Site archived. Routing is disabled.",
-                      )
-                    }
+                      ).then((succeeded) => {
+                        if (succeeded) close();
+                      });
+                    }}
                   >
                     Confirm archive
                   </Button>
                 </div>
-              </Dialog.Content>
-            </Dialog.Portal>
-          </Dialog.Root>
+              </>
+            )}
+          </CspModal>
         </Card>
       )}
     </div>

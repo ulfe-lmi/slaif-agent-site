@@ -50,6 +50,7 @@ test("admin workflows are URL-owned, server-filtered, and accessible", async () 
     "../app/admin/sites/[siteId]/memberships/page.tsx",
   );
   const primitives = await read("../src/components/ui/primitives.tsx");
+  const modal = await read("../src/admin/csp-modal.tsx");
   const workflows = await read("../src/admin/site-workflows.tsx");
   const memberships = await read("../src/admin/membership-workflows.tsx");
   for (const path of ["/me/sites", "/my-authority"])
@@ -63,9 +64,15 @@ test("admin workflows are URL-owned, server-filtered, and accessible", async () 
   assert.match(api, /encodeURIComponent\(siteId\)/);
   assert.doesNotMatch(`${api}${shell}`, /localStorage|sessionStorage|serviceWorker/);
   assert.match(shell, /Skip to main content/);
-  assert.match(shell, /@radix-ui\/react-dialog/);
-  assert.match(shell, /Dialog\.Overlay/);
-  assert.match(shell, /Dialog\.Close/);
+  assert.match(modal, /@radix-ui\/react-dialog/);
+  assert.match(modal, /<Dialog\.Root modal=\{false\}/);
+  assert.match(modal, /aria-modal="true"/);
+  assert.match(modal, /background\.inert = true/);
+  assert.match(modal, /priorInertAttribute/);
+  assert.match(modal, /document\.addEventListener\("focusin"/);
+  assert.match(modal, /event\.shiftKey/);
+  assert.match(modal, /onPointerDown=\{\(event\) => event\.preventDefault\(\)\}/);
+  assert.doesNotMatch(modal, /\.style\.|setAttribute\(["']style|innerHTML/);
   assert.match(shell, /Platform governance/);
   assert.match(shell, /No authorized sites/);
   assert.match(shell, /Authenticated session active\./);
@@ -92,16 +99,8 @@ test("admin workflows are URL-owned, server-filtered, and accessible", async () 
   assert.match(workflows, /site-domain:manage/);
   assert.match(workflows, /do not automate DNS/);
   assert.match(workflows, /does not delete|does not\s+delete/);
-  assert.match(workflows, /Dialog\.Description/);
-  assert.equal(
-    `${shell}${workflows}${memberships}`.match(/<Dialog\.Root modal=\{false\}>/g)
-      ?.length,
-    4,
-  );
-  assert.doesNotMatch(
-    `${shell}${workflows}${memberships}`,
-    /<Dialog\.Root(?! modal=\{false\}>)/,
-  );
+  assert.equal(`${shell}${workflows}${memberships}`.match(/<CspModal/g)?.length, 4);
+  assert.doesNotMatch(`${shell}${workflows}${memberships}`, /<Dialog\./);
   assert.match(workflows, /disabled=\{!recent\}/);
   assert.doesNotMatch(`${api}${shell}${workflows}`, /localStorage|sessionStorage/);
 });
@@ -144,7 +143,7 @@ test("membership administration preserves exact server contracts and UX boundari
   assert.match(workflow, /Architect ceiling 4 does not\s+publish by default/);
   assert.match(workflow, /completely replaces explicit overrides/);
   assert.match(workflow, /Nonassignable installation and system scopes/);
-  assert.match(workflow, /expected version \{item\.version\}/);
+  assert.match(workflow, /expected version \$\{item\.version\}/);
   assert.match(workflow, /preserves the membership row, history, role, and overrides/);
   assert.match(workflow, /self-mutation controls are not presented/);
   assert.match(workflow, /sequence\.current/);
@@ -160,8 +159,8 @@ test("membership administration preserves exact server contracts and UX boundari
     "invalid-response",
   ])
     assert.match(workflow, new RegExp(state));
-  assert.match(workflow, /@radix-ui\/react-dialog/);
-  assert.match(workflow, /Dialog\.Description/);
+  assert.match(workflow, /CspModal/);
+  assert.doesNotMatch(workflow, /<Dialog\./);
   assert.match(page, /MembershipWorkflow siteId=\{siteId\}/);
   assert.match(shell, /Manage memberships/);
   assert.match(css, /membership-card[\s\S]*overflow-wrap: anywhere/);

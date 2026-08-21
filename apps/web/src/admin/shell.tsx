@@ -1,6 +1,5 @@
 "use client";
 
-import * as Dialog from "@radix-ui/react-dialog";
 import { type ReactNode, useEffect, useState } from "react";
 
 import { csrfCookie, logout } from "../auth/client";
@@ -17,25 +16,22 @@ import {
   type CurrentAuthority,
   type CurrentSite,
 } from "./api";
+import { CspModal } from "./csp-modal";
 
 function SiteSwitcher({ sites }: { sites: CurrentSite[] }) {
   return (
-    <Dialog.Root modal={false}>
-      <Dialog.Trigger asChild>
-        <Button type="button">Choose site</Button>
-      </Dialog.Trigger>
-      <Dialog.Portal>
-        <Dialog.Overlay className="site-switcher-overlay" />
-        <Dialog.Content className="site-switcher-dialog">
-          <Dialog.Title>Choose an authorized site</Dialog.Title>
-          <Dialog.Description>
-            Site selection is kept in the address and checked again by the server.
-          </Dialog.Description>
+    <CspModal
+      title="Choose an authorized site"
+      description="Site selection is kept in the address and checked again by the server."
+      trigger={<Button type="button">Choose site</Button>}
+    >
+      {({ close }) => (
+        <>
           {sites.length ? (
             <ul className="site-switcher-list">
               {sites.map((site) => (
                 <li key={site.site_id}>
-                  <a href={`/admin/sites/${site.site_id}`}>
+                  <a href={`/admin/sites/${site.site_id}`} onClick={close}>
                     {site.display_name} · {site.status}
                   </a>
                 </li>
@@ -44,12 +40,12 @@ function SiteSwitcher({ sites }: { sites: CurrentSite[] }) {
           ) : (
             <p>No authorized sites</p>
           )}
-          <Dialog.Close asChild>
-            <Button type="button">Close</Button>
-          </Dialog.Close>
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
+          <Button type="button" onClick={close}>
+            Close
+          </Button>
+        </>
+      )}
+    </CspModal>
   );
 }
 
@@ -129,7 +125,7 @@ export function AdminShell({
     }
   }
   return (
-    <div className="admin-shell">
+    <div className="admin-shell" data-admin-background-root>
       <a className="skip-link" href="#admin-main">
         Skip to main content
       </a>

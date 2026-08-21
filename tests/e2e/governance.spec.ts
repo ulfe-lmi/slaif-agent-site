@@ -7,6 +7,7 @@ import {
 } from "@playwright/test";
 import {
   expectAdminUsable,
+  expectModalContained,
   expectPrivateHeaders,
   login,
   observe,
@@ -59,8 +60,7 @@ test("governance-visible-workflows-negatives-and-privacy", async ({ page }) => {
   await switcherTrigger.click();
   const switcher = page.getByRole("dialog", { name: "Choose an authorized site" });
   await expect(switcher).toBeVisible();
-  await page.keyboard.press("Escape");
-  await expect(switcherTrigger).toBeFocused();
+  await expectModalContained(page, switcher, switcherTrigger);
 
   stage("site-create-visible");
   await page.getByRole("link", { name: "Create a site" }).click();
@@ -143,8 +143,11 @@ test("governance-visible-workflows-negatives-and-privacy", async ({ page }) => {
   await expect(card).toContainText("1");
 
   stage("membership-edit-publish-grant-visible");
-  await card.getByRole("button", { name: "Edit membership" }).click();
+  const editTrigger = card.getByRole("button", { name: "Edit membership" });
+  await editTrigger.click();
   let edit = page.getByRole("dialog", { name: new RegExp("^Edit ") });
+  await expectModalContained(page, edit, editTrigger);
+  await editTrigger.click();
   await edit.getByLabel("Built-in role").selectOption("SITE_DESIGNER");
   await edit.getByLabel("Explicit delegation ceiling").selectOption("3");
   await edit.getByLabel("Site publication override").selectOption("allow");
@@ -157,7 +160,12 @@ test("governance-visible-workflows-negatives-and-privacy", async ({ page }) => {
   const grant = await grantResponse;
   expect(grant.status()).toBe(200);
   expectPrivateHeaders(grant);
-  await edit.getByRole("button", { name: "Cancel" }).click();
+  await expect(edit).toBeHidden();
+  await expect(page.locator("[data-admin-background-root]")).not.toHaveAttribute(
+    "inert",
+    "",
+  );
+  await expectAdminUsable(page);
   await expect(page.getByRole("status")).toHaveText("Membership updated.");
   card = await membershipCard(page, credential.fixtureUserOne);
   await expect(card).toContainText("SITE_DESIGNER · ACTIVE");
@@ -176,7 +184,7 @@ test("governance-visible-workflows-negatives-and-privacy", async ({ page }) => {
   const deny = await denyResponse;
   expect(deny.status()).toBe(200);
   expectPrivateHeaders(deny);
-  await edit.getByRole("button", { name: "Cancel" }).click();
+  await expect(edit).toBeHidden();
   await expect(page.getByRole("status")).toHaveText("Membership updated.");
   card = await membershipCard(page, credential.fixtureUserOne);
   await expect(card).toContainText("3");
@@ -309,14 +317,22 @@ test("governance-visible-workflows-negatives-and-privacy", async ({ page }) => {
   stage("semantic-deactivation-visible");
   await page.goto(`/admin/sites/${siteId}/memberships`);
   card = await membershipCard(page, credential.fixtureUserOne);
-  await card.getByRole("button", { name: "Deactivate" }).click();
+  const deactivateTrigger = card.getByRole("button", { name: "Deactivate" });
+  await deactivateTrigger.click();
   const deactivate = page.getByRole("dialog", { name: /^Deactivate / });
+  await expectModalContained(page, deactivate, deactivateTrigger);
+  await deactivateTrigger.click();
   await expect(deactivate).toContainText("does not delete");
   await deactivate.getByRole("button", { name: "Confirm deactivation" }).click();
   await expect(page.getByRole("status")).toHaveText("Membership deactivated.");
   card = await membershipCard(page, credential.fixtureUserOne);
   await expect(card).toContainText("SITE_DESIGNER · INACTIVE");
   await expect(card).toContainText("5");
+  await expect(page.locator("[data-admin-background-root]")).not.toHaveAttribute(
+    "inert",
+    "",
+  );
+  await expectAdminUsable(page);
 
   stage("privacy-csp-edge");
   const adminResponse = await page.request.get(`/admin/sites/${siteId}`);
@@ -351,14 +367,7 @@ test("governance-visible-workflows-negatives-and-privacy", async ({ page }) => {
     name: "Archive Governance Evidence Site?",
   });
   await expect(archive).toBeVisible();
-  await page.keyboard.press("Tab");
-  expect(
-    await page
-      .locator(":focus")
-      .evaluate((element) => Boolean(element.closest('[role="dialog"]'))),
-  ).toBe(true);
-  await page.keyboard.press("Escape");
-  await expect(archiveTrigger).toBeFocused();
+  await expectModalContained(page, archive, archiveTrigger);
   await archiveTrigger.click();
   const archiveResponse = page.waitForResponse(
     (response) =>
@@ -369,7 +378,12 @@ test("governance-visible-workflows-negatives-and-privacy", async ({ page }) => {
   const archived = await archiveResponse;
   expect(archived.status()).toBe(200);
   expectPrivateHeaders(archived);
-  await archive.getByRole("button", { name: "Cancel" }).click();
+  await expect(archive).toBeHidden();
+  await expect(page.locator("[data-admin-background-root]")).not.toHaveAttribute(
+    "inert",
+    "",
+  );
+  await expectAdminUsable(page);
   await expect(page.getByRole("status")).toHaveText(
     "Site archived. Routing is disabled.",
   );

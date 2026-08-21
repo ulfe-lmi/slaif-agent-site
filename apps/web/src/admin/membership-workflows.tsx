@@ -1,6 +1,5 @@
 "use client";
 
-import * as Dialog from "@radix-ui/react-dialog";
 import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 
@@ -15,6 +14,7 @@ import {
   type PermissionCatalog,
   type RoleCatalog,
 } from "./api";
+import { CspModal } from "./csp-modal";
 
 type Data = Awaited<ReturnType<typeof loadMembershipAdministration>>;
 const UUID =
@@ -226,7 +226,7 @@ function MembershipCard({
     operation: () => Promise<unknown>,
     success: string,
     close?: () => void,
-  ) => void;
+  ) => Promise<boolean>;
 }) {
   const self = item.user_account_id === data.session.user_account_id;
   return (
@@ -271,26 +271,22 @@ function MembershipCard({
       </dl>
       {canManage && !self && (
         <div className="admin-actions">
-          <Dialog.Root modal={false}>
-            <Dialog.Trigger asChild>
-              <Button type="button">Edit membership</Button>
-            </Dialog.Trigger>
-            <Dialog.Portal>
-              <Dialog.Overlay className="site-switcher-overlay" />
-              <Dialog.Content className="site-switcher-dialog membership-dialog">
-                <Dialog.Title>Edit {item.user_account_id}</Dialog.Title>
-                <Dialog.Description>
-                  Saving replaces the complete role, ceiling, and explicit override set
-                  using expected version {item.version}.
-                </Dialog.Description>
+          <CspModal
+            contentClassName="site-switcher-dialog membership-dialog"
+            title={`Edit ${item.user_account_id}`}
+            description={`Saving replaces the complete role, ceiling, and explicit override set using expected version ${item.version}.`}
+            trigger={<Button type="button">Edit membership</Button>}
+          >
+            {({ close }) => (
+              <>
                 <MembershipForm
                   roles={data.roles}
                   permissions={data.permissions}
                   membership={item}
                   label="Save membership"
                   disabled={busy}
-                  onSubmit={(body) =>
-                    mutate(
+                  onSubmit={(body) => {
+                    void mutate(
                       () =>
                         updateMembership(
                           data.authority.site_id,
@@ -300,37 +296,34 @@ function MembershipCard({
                           body,
                         ),
                       "Membership updated.",
-                    )
-                  }
+                    ).then((succeeded) => {
+                      if (succeeded) close();
+                    });
+                  }}
                 />
-                <Dialog.Close asChild>
-                  <Button type="button">Cancel</Button>
-                </Dialog.Close>
-              </Dialog.Content>
-            </Dialog.Portal>
-          </Dialog.Root>
+                <Button type="button" onClick={close}>
+                  Cancel
+                </Button>
+              </>
+            )}
+          </CspModal>
           {item.status === "ACTIVE" && (
-            <Dialog.Root modal={false}>
-              <Dialog.Trigger asChild>
-                <Button type="button">Deactivate</Button>
-              </Dialog.Trigger>
-              <Dialog.Portal>
-                <Dialog.Overlay className="site-switcher-overlay" />
-                <Dialog.Content className="site-switcher-dialog">
-                  <Dialog.Title>Deactivate {item.user_account_id}?</Dialog.Title>
-                  <Dialog.Description>
-                    This preserves the membership row, history, role, and overrides. It
-                    does not delete the user or membership.
-                  </Dialog.Description>
+            <CspModal
+              title={`Deactivate ${item.user_account_id}?`}
+              description="This preserves the membership row, history, role, and overrides. It does not delete the user or membership."
+              trigger={<Button type="button">Deactivate</Button>}
+            >
+              {({ close }) => (
+                <>
                   <div className="admin-actions">
-                    <Dialog.Close asChild>
-                      <Button type="button">Cancel</Button>
-                    </Dialog.Close>
+                    <Button type="button" onClick={close}>
+                      Cancel
+                    </Button>
                     <Button
                       type="button"
                       disabled={busy}
-                      onClick={() =>
-                        mutate(
+                      onClick={() => {
+                        void mutate(
                           () =>
                             deactivateMembership(
                               data.authority.site_id,
@@ -338,15 +331,17 @@ function MembershipCard({
                               item.version,
                             ),
                           "Membership deactivated.",
-                        )
-                      }
+                        ).then((succeeded) => {
+                          if (succeeded) close();
+                        });
+                      }}
                     >
                       Confirm deactivation
                     </Button>
                   </div>
-                </Dialog.Content>
-              </Dialog.Portal>
-            </Dialog.Root>
+                </>
+              )}
+            </CspModal>
           )}
         </div>
       )}
@@ -380,7 +375,7 @@ export function MembershipWorkflow({ siteId }: { siteId: string }) {
     if (error) errorRef.current?.focus();
   }, [error]);
   async function mutate(operation: () => Promise<unknown>, success: string) {
-    if (pending.current) return;
+    if (pending.current) return false;
     pending.current = true;
     setBusy(true);
     setError("");
@@ -389,9 +384,11 @@ export function MembershipWorkflow({ siteId }: { siteId: string }) {
       await operation();
       await refresh();
       setNotice(success);
+      return true;
     } catch (reason) {
       setError(failure(reason));
       if (reason instanceof Error && reason.message === "conflict") void refresh();
+      return false;
     } finally {
       pending.current = false;
       setBusy(false);
@@ -452,7 +449,7 @@ export function MembershipWorkflow({ siteId }: { siteId: string }) {
                 data={data}
                 canManage={canManage}
                 busy={busy}
-                mutate={(operation, success) => void mutate(operation, success)}
+                mutate={mutate}
               />
             ))}
           </ul>
@@ -471,7 +468,7 @@ function AddMembershipEditor({
 }: {
   data: Data;
   busy: boolean;
-  mutate: (operation: () => Promise<unknown>, success: string) => Promise<void>;
+  mutate: (operation: () => Promise<unknown>, success: string) => Promise<boolean>;
 }) {
   const [target, setTarget] = useState("");
   const [invalid, setInvalid] = useState(false);

@@ -1,5 +1,11 @@
 import { expect, test } from "@playwright/test";
-import { expectAdminUsable, login, observe, secrets } from "./support";
+import {
+  expectAdminUsable,
+  expectModalContained,
+  login,
+  observe,
+  secrets,
+} from "./support";
 
 test("responsive-admin-keyboard-read-states-and-logout", async ({ page }) => {
   const info = test.info();
@@ -39,15 +45,7 @@ test("responsive-admin-keyboard-read-states-and-logout", async ({ page }) => {
   await trigger.click();
   const dialog = page.getByRole("dialog", { name: "Choose an authorized site" });
   await expect(dialog).toBeVisible();
-  await page.keyboard.press("Tab");
-  expect(
-    await page
-      .locator(":focus")
-      .evaluate((element) => Boolean(element.closest('[role="dialog"]'))),
-  ).toBe(true);
-  await page.keyboard.press("Escape");
-  await expect(dialog).toBeHidden();
-  await expect(trigger).toBeFocused();
+  await expectModalContained(page, dialog, trigger);
 
   stage("site-overview-read");
   await trigger.click();
