@@ -124,7 +124,7 @@ test("governance-visible-workflows-negatives-and-privacy", async ({ page }) => {
     "Governance Evidence Site memberships",
   );
   const add = page.getByRole("heading", { name: "Add existing user" }).locator("..");
-  await expect(add.getByRole("option", { name: "Site Architect" })).toBeAttached();
+  await expect(add.getByRole("option", { name: "Architect" })).toBeAttached();
   await add.getByText("Advanced permission overrides").click();
   await expect(add.getByText("READ", { exact: true })).toBeVisible();
   await expect(add.getByText("L4 WRITE", { exact: true })).toBeVisible();
@@ -148,9 +148,17 @@ test("governance-visible-workflows-negatives-and-privacy", async ({ page }) => {
   await edit.getByLabel("Built-in role").selectOption("SITE_DESIGNER");
   await edit.getByLabel("Explicit delegation ceiling").selectOption("3");
   await edit.getByLabel("Site publication override").selectOption("allow");
+  const grantResponse = page.waitForResponse(
+    (response) =>
+      response.request().method() === "PATCH" &&
+      response.url().endsWith(`/memberships/${credential.fixtureUserOne}`),
+  );
   await edit.getByRole("button", { name: "Save membership" }).click();
-  await expect(page.getByRole("status")).toHaveText("Membership updated.");
+  const grant = await grantResponse;
+  expect(grant.status()).toBe(200);
+  expectPrivateHeaders(grant);
   await edit.getByRole("button", { name: "Cancel" }).click();
+  await expect(page.getByRole("status")).toHaveText("Membership updated.");
   card = await membershipCard(page, credential.fixtureUserOne);
   await expect(card).toContainText("SITE_DESIGNER · ACTIVE");
   await expect(card).toContainText("2");
@@ -159,9 +167,17 @@ test("governance-visible-workflows-negatives-and-privacy", async ({ page }) => {
   await card.getByRole("button", { name: "Edit membership" }).click();
   edit = page.getByRole("dialog", { name: new RegExp("^Edit ") });
   await edit.getByLabel("Site publication override").selectOption("deny");
+  const denyResponse = page.waitForResponse(
+    (response) =>
+      response.request().method() === "PATCH" &&
+      response.url().endsWith(`/memberships/${credential.fixtureUserOne}`),
+  );
   await edit.getByRole("button", { name: "Save membership" }).click();
-  await expect(page.getByRole("status")).toHaveText("Membership updated.");
+  const deny = await denyResponse;
+  expect(deny.status()).toBe(200);
+  expectPrivateHeaders(deny);
   await edit.getByRole("button", { name: "Cancel" }).click();
+  await expect(page.getByRole("status")).toHaveText("Membership updated.");
   card = await membershipCard(page, credential.fixtureUserOne);
   await expect(card).toContainText("3");
 
@@ -185,11 +201,19 @@ test("governance-visible-workflows-negatives-and-privacy", async ({ page }) => {
     data: { expected_version: 3, status: "ACTIVE", ...replacement },
   });
   responseStatus(concurrent, 200);
+  const staleResponse = page.waitForResponse(
+    (response) =>
+      response.request().method() === "PATCH" &&
+      response.url().endsWith(`/memberships/${credential.fixtureUserOne}`),
+  );
   await edit.getByRole("button", { name: "Save membership" }).click();
+  const stale = await staleResponse;
+  expect(stale.status()).toBe(409);
+  expectPrivateHeaders(stale);
+  await edit.getByRole("button", { name: "Cancel" }).click();
   await expect(page.getByRole("status")).toHaveText(
     "The membership changed. The current server state has been refreshed.",
   );
-  await edit.getByRole("button", { name: "Cancel" }).click();
   card = await membershipCard(page, credential.fixtureUserOne);
   await expect(card).toContainText("4");
 

@@ -1,4 +1,4 @@
-import { expect, type Page } from "@playwright/test";
+import { expect, type APIResponse, type Page, type Response } from "@playwright/test";
 import { readFileSync } from "node:fs";
 
 export type Secrets = {
@@ -69,9 +69,7 @@ export async function expectAdminUsable(page: Page) {
   }
 }
 
-export function expectPrivateHeaders(
-  response: Awaited<ReturnType<Page["request"]["get"]>>,
-) {
+export function expectPrivateHeaders(response: APIResponse | Response) {
   const headers = response.headers();
   expect(headers["cache-control"]).toBe("private, no-store");
   expect(headers["x-robots-tag"]).toBe("noindex, nofollow, noarchive");
