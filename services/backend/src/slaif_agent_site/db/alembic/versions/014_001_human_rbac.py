@@ -304,7 +304,7 @@ def upgrade() -> None:
                           AND denied.user_account_id = membership.user_account_id
                           AND denied.permission_key = allowed.permission_key
                           AND denied.effect = 'DENY'
-                    ) ORDER BY permission_key
+                    ) ORDER BY permission_key COLLATE "C"
                 ),
                 EXISTS (
                     SELECT 1 FROM "control"."platform_administrator" AS admin
@@ -366,10 +366,10 @@ def upgrade() -> None:
                     SELECT role_permission.role_key
                     FROM "control"."human_role_permission" AS role_permission
                     WHERE role_permission.permission_key = permission.permission_key
-                    ORDER BY role_permission.role_key
+                    ORDER BY role_permission.role_key COLLATE "C"
                 )
             FROM "control"."permission" AS permission
-            ORDER BY permission.permission_key
+            ORDER BY permission.permission_key COLLATE "C"
         $function$
         """
     )
@@ -392,12 +392,14 @@ def upgrade() -> None:
                     "control"."site_membership_permission_override" AS override_
                     WHERE override_.site_id = membership.site_id
                       AND override_.user_account_id = membership.user_account_id
-                      AND override_.effect = 'ALLOW' ORDER BY permission_key),
+                      AND override_.effect = 'ALLOW'
+                    ORDER BY permission_key COLLATE "C"),
                 ARRAY(SELECT permission_key FROM
                     "control"."site_membership_permission_override" AS override_
                     WHERE override_.site_id = membership.site_id
                       AND override_.user_account_id = membership.user_account_id
-                      AND override_.effect = 'DENY' ORDER BY permission_key),
+                      AND override_.effect = 'DENY'
+                    ORDER BY permission_key COLLATE "C"),
                 membership.created_at, membership.updated_at
             FROM "control"."site_membership" AS membership
             WHERE membership.site_id = p_site_id
@@ -501,7 +503,7 @@ def upgrade() -> None:
                 SELECT role_permission.permission_key
                 FROM "control"."human_role_permission" AS role_permission
                 WHERE role_permission.role_key = p_role_key
-                ORDER BY role_permission.permission_key
+                ORDER BY role_permission.permission_key COLLATE "C"
             ) INTO target_permissions;
             FOREACH item IN ARRAY COALESCE(p_overrides, ARRAY[]::text[]) LOOP
                 effect_ := split_part(item, ':', 1);
