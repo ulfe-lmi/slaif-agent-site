@@ -46,7 +46,8 @@ export async function loadAdmin(): Promise<{
   session: SessionSummary;
   sites: CurrentSite[];
 }> {
-  const [currentSession, response] = await Promise.all([session(), get("/me/sites")]);
+  const currentSession = await session();
+  const response = await get("/me/sites");
   if (response.status === 401) throw new Error("unauthenticated");
   if (!response.ok) throw new Error(response.status === 503 ? "unavailable" : "denied");
   const value = (await response.json()) as unknown;

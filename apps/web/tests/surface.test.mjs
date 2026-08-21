@@ -58,6 +58,8 @@ test("admin shell is URL-owned, server-filtered, accessible, and read-only", asy
   assert.match(shell, /Dialog\.Close/);
   assert.match(shell, /Platform governance/);
   assert.match(shell, /No authorized sites/);
+  assert.match(shell, /Authenticated session active\./);
+  assert.match(shell, /Local administrator/);
   assert.match(shell, /This site is unavailable or you do not have access/);
   assert.match(shell, /"Content"[\s\S]*\{item\} · planned/);
   assert.match(shell, /Users &amp; Permissions/);

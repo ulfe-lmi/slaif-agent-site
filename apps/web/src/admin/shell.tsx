@@ -160,6 +160,8 @@ export function AdminShell({ selectedSiteId }: { selectedSiteId?: string }) {
                 </Card>
                 <Card>
                   <h2>Current session</h2>
+                  <p>Authenticated session active.</p>
+                  <p>Account: Local administrator</p>
                   <p>
                     Recent authentication: {sessionSummary?.recent_auth ? "yes" : "no"}
                   </p>
