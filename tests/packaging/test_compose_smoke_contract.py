@@ -120,9 +120,7 @@ class ComposeSmokeContractTests(unittest.TestCase):
             "mobile-webkit",
         ):
             self.assertIn(f'name: "{project}"', config)
-        governance = (ROOT / "tests/e2e/governance.spec.ts").read_text(
-            encoding="utf-8"
-        )
+        governance = (ROOT / "tests/e2e/governance.spec.ts").read_text(encoding="utf-8")
         for marker in (
             "site-create-visible",
             "domain-primary-replace-visible",
