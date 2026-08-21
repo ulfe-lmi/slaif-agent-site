@@ -48,8 +48,9 @@ publication execution remain unimplemented.
 > zero-object content state remains explicitly `EMPTY_SAFE` without
 > claiming foundation table hardening. Any real content object requires the
 > fully validated `HARDENED` state. A local human authentication/setup UI is
-> implemented and qualified through six self-hosted Playwright browser/device
-> projects. A fresh reference stack seeds one demo site and serves a small
+> implemented and qualified through ordered setup, single-writer governance,
+> and six read-only self-hosted Playwright browser/device projects. A fresh
+> reference stack seeds one demo site and serves a small
 > Web→Render routing-context shell for active local or custom-host mappings;
 > this is routing evidence, not site content or publication. Invitations,
 > custom roles, workspaces, editing/Puck, content tables and APIs,
@@ -261,7 +262,8 @@ pull-request dependency review, frozen Node 24/pnpm 11 contract checks, Python
 3.12–3.14 lint/type/unit/package gates (including process, config, health,
 error, correlation, logging, and entrypoint contracts), and separate foundation
 plus Agent-Site database suites on PostgreSQL 14–18, and a clean Compose/edge
-smoke with the six-project Playwright authentication journey. A separate
+smoke with setup, Chromium governance, and the six-project responsive
+authentication journey. A separate
 bounded job builds reproducible artifacts, creates
 and validates six SPDX SBOMs, scans symbol-aware SBOMs with a fresh database,
 fails on every unexcepted Critical, retains High findings, secret-scans and

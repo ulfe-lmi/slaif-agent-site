@@ -20,7 +20,9 @@ equal-cost dummy verification path for unknown or disabled identities. Budget
 roughly 64 MiB per concurrent Argon2 operation. Backend HTTP login and session
 issuance and the local setup/login/admin UI exist; rate limiting, durable login
 audit, OIDC, MFA, and runtime agent browser tooling remain absent. Local
-authentication is qualified by six Playwright browser/device projects.
+authentication and administration are qualified by one setup project, one
+single-writer governance project, and six read-only Playwright browser/device
+projects.
 
 Revision `014_001` upgrades and downgrades deterministically with its complete
 built-in authorization catalogs. Catalog defaults change only through
@@ -52,10 +54,14 @@ sudo tools/compose/smoke.sh slaif009auth
 ```
 
 The smoke first renders `/s/demo/` at desktop and 320-pixel phone viewports,
-then runs setup and creates a second site/domain through authenticated Control
-APIs, followed by login/admin/logout on `desktop-chromium`, `desktop-firefox`, `desktop-webkit`,
-`tablet`, `mobile-chromium`, and `mobile-webkit`. It retains no trace,
-screenshot, video, HTML report, storage state, or credential file.
+then runs setup. A single Chromium `governance` project creates and administers
+a disposable site and existing-user membership through visible controls. Only
+after it completes do `desktop-chromium`, `desktop-firefox`, `desktop-webkit`,
+`tablet`, `mobile-chromium`, and `mobile-webkit` perform read-only responsive,
+keyboard, and logout checks. It retains no trace, screenshot, video, HTML
+report, storage state, or credential file. A later stop/start compares site,
+domain, membership, secret, and Render fingerprints and verifies setup remains
+closed without fixture or demo recreation.
 
 ## Lifecycle commands
 
@@ -97,8 +103,8 @@ issued or rotated plaintext is shown once on its own stdout line; the setup URL 
 separate line and never carries the token. Repeated default issuance returns
 only expiry/generation facts and directs the operator to explicit rotation.
 The atomic consumer is exposed through the bounded Control backend and existing
-default edge route. The operator UI and Compose smoke include the six-project
-Playwright browser/device E2E. Store real
+default edge route. The operator UI and Compose smoke include the ordered
+setup/governance/six-device Playwright E2E. Store real
 output only in an operator-approved secret channel and see
 [installation setup](INSTALLATION_SETUP.md) for the exact boundary.
 
@@ -197,14 +203,14 @@ The Control site API is available only to an authenticated active Platform
 Administrator. State changes require the session-bound CSRF proof. Archive is
 idempotent, irreversible through the online API, and prevents every later
 profile/domain mutation even if a caller retained a prior active context.
-There is no online site deletion, DNS automation, membership UI, invitation,
-custom-role design, content/workspace/capability, or publication operation in
-this round.
+There is no online site deletion, DNS automation, invitation, custom-role
+design, content/workspace/capability, or publication operation in this round.
+The implemented membership UI manages existing UUIDs only.
 
 The clean Compose verification creates two non-authenticatable OIDC fixture
-accounts directly in its disposable database before setup, exercises the catalog
-and two-site membership lifecycle through NGINX, checks persistence across
-stop/start, and removes the database volume during normal cleanup. These are test
+accounts directly in its disposable database before setup, exercises visible
+site/domain/membership governance plus crafted denials through NGINX, checks
+persistence across stop/start, and removes the database volume during normal cleanup. These are test
 harness records, not demo users, bootstrap seed data, or a user provisioning
 mechanism. A collision or non-fresh installation state fails the smoke instead of
 overwriting data.
@@ -224,9 +230,9 @@ read-denial boundary, empty-safe marker, exact login authority, Control
 wrong-login/role/secret/marker/migration/database failure behavior, restart
 idempotence, fail-closed bootstrap, Apache syntax, single
 request-ID and CSP headers on page/API/404 responses, secret absence in
-configuration/history/logs, the implemented membership API lifecycle, and
-exact-project cleanup. It does not claim membership UI, content editing, or
-publication execution.
+configuration/history/logs, the implemented visible governance lifecycle, and
+exact-project cleanup. It does not claim identity provisioning, content editing,
+or publication execution.
 
 ## Supply-chain evidence
 

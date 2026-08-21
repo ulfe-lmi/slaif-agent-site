@@ -48,3 +48,15 @@ The workflow creates no account, invitation, email, password, or login and has
 no user directory, custom roles, or identity editing. Content/models/pages,
 Puck, workspaces/capabilities, review, audit workflows, and publication
 execution remain deferred.
+
+## Browser evidence
+
+The clean NGINX/Compose gate runs successful site, profile, domain, membership,
+and archive changes once in the Chromium `governance` project after setup. Six
+stable desktop/tablet/mobile projects then read the resulting dashboard,
+overview, settings, and membership states without racing mutations. They cover
+keyboard focus, site-switcher and confirmation dialog Escape/focus return,
+landmarks, one H1, skip navigation, labelled controls, critical 44 px targets,
+reduced motion, and narrow overflow. Crafted negative calls cover policy paths
+that visible controls intentionally cannot invoke. This is repeatable browser
+evidence, not a security or accessibility certification.

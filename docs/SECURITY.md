@@ -37,6 +37,16 @@ and are destroyed with disposable volumes. Their UUIDs are non-secret metadata
 passed through the existing mode-0600 E2E channel; session, CSRF, setup-token,
 password, and database locators remain excluded from arguments and artifacts.
 
+The clean browser gate performs successful governance mutations only through
+visible UI controls. Direct request calls are limited to concurrency setup,
+crafted negative requests, and read verification. It proves missing/wrong CSRF,
+self-change, system-scope, ceiling, stale-version, cross-site, unknown, and
+archived-route failures leave state unchanged. NGINX response checks require one
+edge request ID, self-only CSP without unsafe inline/eval or remote origins, and
+private/no-store/noindex API responses. Secret values are absent from URL, DOM,
+storage, observed request URLs, console, and retained artifacts; screenshots,
+traces, videos, and HTML reports are disabled locally.
+
 The internal Render API owns one `slaif_public_login` connection pool with the
 sole `slaif_public_reader` membership. Pool initialization verifies database,
 login/current-user, and exact membership before readiness succeeds. Locator and

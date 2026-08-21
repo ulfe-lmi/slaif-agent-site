@@ -132,9 +132,8 @@ docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif -v ON_ERROR_STOP=1
    WHERE membership.user_account_id IN (
      '12000000-0000-4000-8000-000000000001'::uuid,
      '12000000-0000-4000-8000-000000000002'::uuid
-   );" | grep -Fxq "$(printf '%s\n%s\n%s' \
-    '12000000-0000-4000-8000-000000000001|demo|CONTENT_EDITOR|ACTIVE|1' \
-    '12000000-0000-4000-8000-000000000001|second|SITE_ARCHITECT|INACTIVE|3' \
+   );" | grep -Fxq "$(printf '%s\n%s' \
+    '12000000-0000-4000-8000-000000000001|governance|SITE_DESIGNER|INACTIVE|5' \
     '12000000-0000-4000-8000-000000000002|demo|VIEWER|ACTIVE|1')"
 docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif -v ON_ERROR_STOP=1 -Atc \
   "SET ROLE slaif_owner;
@@ -168,7 +167,7 @@ docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif -v ON_ERROR_STOP=1
      ) = 1
      AND (SELECT count(*) FROM control.platform_administrator) = 1
    FROM control.user_account account;" | grep -q '^t$'
-echo "membership-e2e: OK fixtures=2 sites=2 lifecycle=created-updated-deactivated privacy=verified"
+echo "governance-e2e: OK visible=create-profile-domains-membership-archive negatives=verified devices=6"
 for path in \
   /health/live \
   /health/ready \
@@ -324,22 +323,35 @@ membership_fingerprint() {
   docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif -Atc \
     "SELECT md5(string_agg(row_to_json(snapshot)::text, E'\n' ORDER BY user_account_id, site_id)) FROM (SELECT site_id, user_account_id, role_key, delegation_ceiling, status, version FROM control.site_membership) snapshot"
 }
+domain_fingerprint() {
+  docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif -Atc \
+    "SELECT md5(string_agg(row_to_json(snapshot)::text, E'\n' ORDER BY hostname, path_prefix)) FROM (SELECT site_id, hostname, path_prefix, is_primary FROM control.site_domain) snapshot"
+}
 before=$(fingerprint)
 render_before=$(render_fingerprint)
 sites_before=$(site_fingerprint)
 memberships_before=$(membership_fingerprint)
+domains_before=$(domain_fingerprint)
 docker compose -p "$PROJECT" stop
 docker compose -p "$PROJECT" up --wait
 after=$(fingerprint)
 test "$before" = "$after"
 test "$(docker compose -p "$PROJECT" logs --no-color bootstrap 2>/dev/null | grep -c 'setup-token-secret:')" = 1
 test "$(membership_fingerprint)" = "$memberships_before"
+test "$(domain_fingerprint)" = "$domains_before"
 docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif -Atc \
   "SELECT count(*) FROM control.user_account WHERE id IN ('12000000-0000-4000-8000-000000000001'::uuid, '12000000-0000-4000-8000-000000000002'::uuid)" \
   | grep -q '^2$'
 docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif -Atc \
   "SELECT site_key || '|' || display_name || '|' || default_locale || '|' || status FROM control.site WHERE site_key = 'demo'" \
   | grep -q '^demo|SLAIF Demo Site|en|ACTIVE$'
+docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif -Atc \
+  "SELECT site_key || '|' || display_name || '|' || default_locale || '|' || status FROM control.site WHERE site_key = 'governance'" \
+  | grep -q '^governance|Governance Evidence Site|sl-SI|ARCHIVED$'
+docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif -Atc \
+  "SELECT hostname || '|' || path_prefix || '|' || is_primary::text FROM control.site_domain domain JOIN control.site site ON site.id = domain.site_id WHERE site.site_key = 'governance'" \
+  | grep -q '^routes.test|/secondary|true$'
+echo "governance-restart: OK site=archived membership=inactive domain=primary fixtures=retained setup=closed"
 
 docker run --rm --network none --read-only --cap-drop ALL --cap-add DAC_OVERRIDE \
   --user 0:0 --volume "${PROJECT}_render-secret:/render" \
@@ -390,6 +402,7 @@ test "$(render_fingerprint)" = "$render_before"
 test "$(fingerprint)" = "$before"
 test "$(site_fingerprint)" = "$sites_before"
 test "$(membership_fingerprint)" = "$memberships_before"
+test "$(domain_fingerprint)" = "$domains_before"
 test "$(docker compose -p "$PROJECT" logs --no-color bootstrap 2>/dev/null | grep -c 'setup-token-secret:')" = 1
 echo "render-locator-recovery: restored render=healthy web=healthy nginx=healthy"
 docker compose -p "$PROJECT" up --wait >/dev/null
@@ -397,6 +410,7 @@ test "$(render_fingerprint)" = "$render_before"
 test "$(fingerprint)" = "$before"
 test "$(site_fingerprint)" = "$sites_before"
 test "$(membership_fingerprint)" = "$memberships_before"
+test "$(domain_fingerprint)" = "$domains_before"
 test "$(docker compose -p "$PROJECT" logs --no-color bootstrap 2>/dev/null | grep -c 'setup-token-secret:')" = 1
 
 if docker compose -p "$NEGATIVE_PROJECT" -f compose.yaml \

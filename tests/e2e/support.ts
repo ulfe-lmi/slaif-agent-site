@@ -55,6 +55,29 @@ export async function expectUsable(page: Page) {
   await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
 }
 
+export async function expectAdminUsable(page: Page) {
+  await expectUsable(page);
+  await expect(page.getByRole("heading", { level: 1 })).toHaveCount(1);
+  await expect(page.locator("header")).toBeVisible();
+  await expect(page.getByRole("main")).toBeVisible();
+  await expect(page.getByRole("navigation", { name: "Administration" })).toBeAttached();
+  await expect(page.getByRole("link", { name: "Skip to main content" })).toBeAttached();
+  const critical = page.locator("button:visible, .site-list a:visible");
+  for (let index = 0; index < (await critical.count()); index += 1) {
+    const box = await critical.nth(index).boundingBox();
+    expect(box?.height ?? 0, "44px critical target").toBeGreaterThanOrEqual(44);
+  }
+}
+
+export function expectPrivateHeaders(
+  response: Awaited<ReturnType<Page["request"]["get"]>>,
+) {
+  const headers = response.headers();
+  expect(headers["cache-control"]).toBe("private, no-store");
+  expect(headers["x-robots-tag"]).toBe("noindex, nofollow, noarchive");
+  expect(headers["x-request-id"]).toMatch(/^[0-9a-f]{32}$/);
+}
+
 export async function login(page: Page, credential: Secrets) {
   await page.goto("/login");
   await page.getByLabel("Username").fill(credential.loginUsername);

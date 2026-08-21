@@ -20,6 +20,14 @@ PostCSS 8.5.26, and Autoprefixer 10.5.4. They reject Tailwind 4, `@tailwindcss/p
 Lightning CSS, remote CSS origins, and unfrozen UI packages. The Node license inventory
 must contain no MPL license family.
 
-Objective 013-a deliberately does not run local Compose or Playwright. Those browser and
-public-edge checks are reserved for objective 013-d; GitHub's existing packaging check
-remains the clean-stack evidence for this round.
+The clean Compose browser sequence is deliberately ordered: `setup` initializes
+once, Chromium `governance` performs the only UI mutations, and the six stable
+desktop/tablet/mobile projects depend on governance and remain read-only. The
+governance project creates and archives a site, changes profile/domains, manages
+an existing-user membership, exercises optimistic conflict recovery and crafted
+server denials, and checks CSP/privacy through NGINX. Each stable project proves
+dashboard, switcher, site overview/settings/membership reads, keyboard dialog
+behavior, 44 px critical targets, 320 px overflow safety where applicable,
+reduced motion, and logout. Stop/start fingerprints then verify site, domain,
+membership, fixture, setup, and secret persistence. These automated checks are
+bounded executable evidence, not an accessibility or security certification.

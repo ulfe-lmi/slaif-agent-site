@@ -115,6 +115,7 @@ test("membership administration preserves exact server contracts and UX boundari
     "user_account_id",
   ])
     assert.match(api, new RegExp(validator));
+  assert.match(api, /delegationLevel >= 0/);
   assert.match(workflow, /membership:manage/);
   assert.match(workflow, /role:manage/);
   assert.match(workflow, /site:publish/);

@@ -157,7 +157,7 @@ function permission(value: unknown): PermissionCatalog {
     !(
       (typeof delegationLevel === "number" &&
         Number.isInteger(delegationLevel) &&
-        delegationLevel >= 1 &&
+        delegationLevel >= 0 &&
         delegationLevel <= 4) ||
       delegationLevel === null
     )

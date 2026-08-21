@@ -38,4 +38,4 @@ if ! SLAIF_E2E_SECRET_FILE="$SECRET_FILE" \
 then
   fail browser contract
 fi
-echo "compose-e2e: OK projects=6 setup-viewports=2 artifacts=disabled"
+echo "compose-e2e: OK projects=8 setup=1 governance=1 stable-devices=6 artifacts=disabled"
