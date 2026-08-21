@@ -26,6 +26,8 @@ interface PackageManifest {
 }
 
 const repositoryRoot = resolve(import.meta.dirname, "../..");
+const PACKAGE_SCRIPTS_BUILD = "tsc --project tsconfig.json";
+
 const boundaries = [
   {
     slug: "api-client",
@@ -108,6 +110,10 @@ describe("workspace contract package boundaries", () => {
   it("keeps every package private, exact, dependency-free, and buildable", () => {
     for (const { expectedName, slug } of boundaries) {
       const manifest = loadManifest(slug);
+      const buildScript =
+        slug === "scope-catalog"
+          ? "tsc --project tsconfig.build.json"
+          : PACKAGE_SCRIPTS_BUILD;
       expect(manifest).toMatchObject({
         name: expectedName,
         version: "0.0.0",
@@ -123,7 +129,7 @@ describe("workspace contract package boundaries", () => {
         },
         types: "./dist/index.d.ts",
         scripts: {
-          build: "tsc --project tsconfig.json",
+          build: buildScript,
           typecheck: "tsc --project tsconfig.json --noEmit",
         },
       });

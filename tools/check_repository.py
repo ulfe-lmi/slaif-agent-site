@@ -1402,6 +1402,11 @@ class RepositoryPolicy:
             if is_scaffold_config:
                 expected_config["compilerOptions"]["rootDir"] = "src"
                 expected_config["include"] = ["src/**/*.ts"]
+            else:
+                # Non-scaffold packages use a separate build config for
+                # dist output while the main config includes tests for lint.
+                expected_config["compilerOptions"].pop("rootDir", None)
+                expected_config["include"] = ["src/**/*.ts", "tests/**/*.ts"]
             if config != expected_config:
                 self.error(
                     config_path, "package TypeScript build boundary is not exact"
