@@ -111,6 +111,8 @@ async def test_each_app_has_only_typed_health_routes(
             "/api/control/v1/permissions",
             "/api/control/v1/sites/{site_id}/memberships",
             "/api/control/v1/sites/{site_id}/memberships/{user_id}",
+            "/api/control/v1/me/sites",
+            "/api/control/v1/sites/{site_id}/my-authority",
         }
     if process is ProcessKind.RENDER_API:
         expected_routes.add("/internal/render/v1/site-context")

@@ -11,6 +11,8 @@ import asyncpg
 
 from .catalog import ROLE_CEILINGS, ROLE_DEFAULTS, ROLE_LABELS
 from .models import (
+    CurrentHumanAuthority,
+    CurrentHumanSite,
     HumanSiteContext,
     MembershipChange,
     MembershipRecord,
@@ -25,6 +27,10 @@ MEMBERSHIP_PUT_SQL = (
 MEMBERSHIP_GET_SQL = "SELECT * FROM control.slaif_membership_get($1, $2)"
 MEMBERSHIP_LIST_SQL = "SELECT * FROM control.slaif_membership_list($1)"
 CATALOG_SQL = "SELECT * FROM control.slaif_human_rbac_catalog()"
+CURRENT_HUMAN_SITES_SQL = "SELECT * FROM control.slaif_current_human_sites($1)"
+CURRENT_HUMAN_AUTHORITY_SQL = (
+    "SELECT * FROM control.slaif_current_human_authority($1, $2)"
+)
 
 
 class HumanAuthorizationReason(StrEnum):
@@ -113,6 +119,49 @@ class HumanAuthorizationService:
                 role_keys=tuple(row[6]),
             )
             for row in rows
+        )
+
+    async def current_human_sites(
+        self, user_account_id: UUID
+    ) -> tuple[CurrentHumanSite, ...]:
+        rows = await self._fetch(CURRENT_HUMAN_SITES_SQL, user_account_id)
+        return tuple(
+            CurrentHumanSite(
+                site_id=row[0],
+                site_key=row[1],
+                display_name=row[2],
+                status=row[3],
+                default_locale=row[4],
+                canonical_revision=row[5],
+                role_key=row[6],
+                membership_version=row[7],
+                explicit_delegation_ceiling=row[8],
+                effective_delegation_ceiling=row[9],
+                platform_administrator=row[10],
+            )
+            for row in rows
+        )
+
+    async def current_human_authority(
+        self, user_account_id: UUID, site_id: UUID
+    ) -> CurrentHumanAuthority:
+        rows = await self._fetch(CURRENT_HUMAN_AUTHORITY_SQL, user_account_id, site_id)
+        if not rows:
+            raise HumanAuthorizationError(HumanAuthorizationReason.NOT_FOUND)
+        row = rows[0]
+        return CurrentHumanAuthority(
+            site_id=row[0],
+            site_key=row[1],
+            display_name=row[2],
+            status=row[3],
+            default_locale=row[4],
+            canonical_revision=row[5],
+            role_key=row[6],
+            membership_version=row[7],
+            explicit_delegation_ceiling=row[8],
+            effective_delegation_ceiling=row[9],
+            effective_permissions=tuple(row[10]),
+            platform_administrator=row[11],
         )
 
     def roles(self) -> tuple[RoleCatalogRecord, ...]:
@@ -230,6 +279,8 @@ class HumanAuthorizationService:
 __all__ = [
     "AUTHORIZE_SQL",
     "CATALOG_SQL",
+    "CURRENT_HUMAN_AUTHORITY_SQL",
+    "CURRENT_HUMAN_SITES_SQL",
     "MEMBERSHIP_GET_SQL",
     "MEMBERSHIP_LIST_SQL",
     "MEMBERSHIP_PUT_SQL",

@@ -1,5 +1,12 @@
 # Render resolution security boundary
 
+The admin shell stores no session token, CSRF token, user UUID, permission list,
+or selected site in local/session storage. Requests are same-origin,
+credential-bound, no-store reads. Missing sessions redirect to login; direct
+foreign/unknown site URLs render one constant state without caller-data
+fallback. Tailwind is local build-time CSS and the Radix primitive is
+self-hosted; there are no remote fonts, icons, scripts, telemetry, or origins.
+
 Human authorization rechecks active user, active site, active membership,
 exact site association, current membership version, and permission inside the
 database boundary. Cross-site substitution, self-escalation, stale versions,

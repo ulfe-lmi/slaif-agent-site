@@ -88,6 +88,7 @@ NEW_PACKAGE_FILES = {
     "slaif_agent_site/db/alembic/versions/009_001_local_identity.py",
     "slaif_agent_site/db/alembic/versions/013_001_site_foundation.py",
     "slaif_agent_site/db/alembic/versions/014_001_human_rbac.py",
+    "slaif_agent_site/db/alembic/versions/015_001_admin_read_model.py",
     "slaif_agent_site/db/connections.py",
     "slaif_agent_site/db/executor.py",
     "slaif_agent_site/db/migrations.py",
@@ -142,6 +143,7 @@ EXPECTED_PACKAGE_FILES = NEW_PACKAGE_FILES | {
     "slaif_agent_site/db/alembic/versions/011_001_local_authentication.py",
     "slaif_agent_site/db/alembic/versions/012_001_control_auth_http.py",
     "slaif_agent_site/control_api/auth_http.py",
+    "slaif_agent_site/control_api/current_human_http.py",
     "slaif_agent_site/control_api/membership_http.py",
     "slaif_agent_site/control_api/route_policy.py",
     "slaif_agent_site/control_api/site_http.py",
@@ -165,6 +167,7 @@ EXPECTED_SDIST_FILES = {
     "services/backend/src/slaif_agent_site/db/alembic/versions/012_001_control_auth_http.py",
     "services/backend/src/slaif_agent_site/db/alembic/versions/013_001_site_foundation.py",
     "services/backend/src/slaif_agent_site/control_api/auth_http.py",
+    "services/backend/src/slaif_agent_site/control_api/current_human_http.py",
     "services/backend/src/slaif_agent_site/control_api/membership_http.py",
     "services/backend/src/slaif_agent_site/control_api/route_policy.py",
     "services/backend/src/slaif_agent_site/control_api/site_http.py",
@@ -416,8 +419,9 @@ def test_locked_foundation_artifact_hash_constants_are_sha256() -> None:
 
 
 def test_alembic_graph_and_offline_sql_need_no_locator_or_network() -> None:
-    assert migration_heads() == ("014_001",)
+    assert migration_heads() == ("015_001",)
     assert migration_history() == (
+        "015_001",
         "014_001",
         "013_001",
         "012_001",

@@ -36,13 +36,34 @@ test("auth routes and landing page expose truthful local flows", async () => {
   assert.doesNotMatch(deferred, /Membership\/RBAC|membership APIs/i);
   for (const route of ["setup", "login", "admin"]) {
     const expected =
-      route === "admin"
-        ? "AdminSession"
-        : route === "setup"
-          ? "SetupForm"
-          : "LoginForm";
+      route === "admin" ? "AdminShell" : route === "setup" ? "SetupForm" : "LoginForm";
     assert.match(await read(`../app/${route}/page.tsx`), new RegExp(expected));
   }
+});
+
+test("admin shell is URL-owned, server-filtered, accessible, and read-only", async () => {
+  const api = await read("../src/admin/api.ts");
+  const shell = await read("../src/admin/shell.tsx");
+  const sitePage = await read("../app/admin/sites/[siteId]/page.tsx");
+  const primitives = await read("../src/components/ui/primitives.tsx");
+  for (const path of ["/me/sites", "/my-authority"])
+    assert.match(api, new RegExp(path));
+  assert.match(api, /credentials: "same-origin"/);
+  assert.match(api, /cache: "no-store"/);
+  assert.match(api, /encodeURIComponent\(siteId\)/);
+  assert.doesNotMatch(`${api}${shell}`, /localStorage|sessionStorage|serviceWorker/);
+  assert.match(shell, /Skip to main content/);
+  assert.match(shell, /@radix-ui\/react-dialog/);
+  assert.match(shell, /Dialog\.Overlay/);
+  assert.match(shell, /Dialog\.Close/);
+  assert.match(shell, /Platform governance/);
+  assert.match(shell, /No authorized sites/);
+  assert.match(shell, /This site is unavailable or you do not have access/);
+  assert.match(shell, /"Content"[\s\S]*\{item\} · planned/);
+  assert.match(shell, /Users &amp; Permissions/);
+  assert.match(sitePage, /selectedSiteId=\{siteId\}/);
+  assert.match(primitives, /role="status"/);
+  assert.doesNotMatch(shell, /create|update|delete|archive/i);
 });
 
 test("forms preserve accessibility, password manager, and pending contracts", async () => {

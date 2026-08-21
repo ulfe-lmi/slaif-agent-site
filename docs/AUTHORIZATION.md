@@ -1,5 +1,12 @@
 # Human site authorization
 
+The current-human admin read model is UX support, not an authority source.
+Trusted session code supplies the user UUID and FastAPI parses the site UUID
+only from the route. Owner-controlled fixed-search-path functions filter global
+or exact active-membership facts; `slaif_control` receives EXECUTE only and no
+direct relation grant. URL selection and client visibility never authorize a
+crafted API call.
+
 Revision `014_001` provides site-scoped human membership and built-in
 role-based authorization. Control exposes the bounded catalog and membership
 HTTP surface described in [the API guide](API.md); no membership UI exists.

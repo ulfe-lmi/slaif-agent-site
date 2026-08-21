@@ -1,5 +1,22 @@
 # Control HTTP API
 
+## Current-human administration reads
+
+`GET /api/control/v1/me/sites` requires a valid human session and returns a
+deterministically ordered, server-filtered site summary list. Platform
+Administrators receive all sites, including archived status, with an explicit
+global flag and null membership fields. Ordinary active users receive only
+active sites with active memberships and their role, membership version,
+ceilings, and safe site summary fields.
+
+`GET /api/control/v1/sites/{site_id}/my-authority` returns only the current
+human's authority for the path-selected site. A global administrator receives
+no synthetic membership and an empty permission list; an ordinary member
+receives effective permission keys. Neither route accepts user, role,
+permission, Host, forwarded, query-authority, or mutation input. Stable statuses
+are `401`, constant `404`, and `503`; responses are private/no-store/noindex and
+contain no profile, credential, token, cookie, digest, or database locator.
+
 The Control service exposes a bounded local-authentication boundary under
 `/api/control/v1`. Existing NGINX routing makes these backend endpoints
 externally reachable in the default topology. Public OpenAPI and documentation

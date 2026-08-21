@@ -4,20 +4,24 @@
   "private": true,
   "license": "Apache-2.0",
   "scripts": {
-    "build": "NEXT_TELEMETRY_DISABLED=1 next build",
+    "build": "NEXT_TELEMETRY_DISABLED=1 next build --webpack",
     "lint": "eslint --config eslint.config.mjs . --max-warnings 0",
     "typecheck": "tsc --noEmit",
     "test": "node --test tests/*.test.mjs"
   },
   "dependencies": {
+    "@radix-ui/react-dialog": "1.1.23",
     "next": "16.3.1",
     "react": "19.2.8",
     "react-dom": "19.2.8"
   },
   "devDependencies": {
+    "@tailwindcss/postcss": "4.3.3",
     "@types/node": "24.13.3",
     "@types/react": "19.2.18",
     "@types/react-dom": "19.2.4",
+    "postcss": "8.5.26",
+    "tailwindcss": "4.3.3",
     "typescript": "6.0.3"
   }
 }
