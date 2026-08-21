@@ -139,7 +139,9 @@ mode-`0400` locator file; production requires verified-full TLS and an absolute
 root certificate. Direct DSNs are test-only and restricted to loopback or
 `.test`. Check mode validates the static contract without reading the file or
 opening a connection. This round deliberately adds no Compose mount or secret
-distribution.
+distribution. Consequently, the unchanged development Compose service retains
+its health-only scaffold until that fixed locator is mounted; the configured
+Render application fails readiness closed when its database boundary is active.
 
 ## One-shot database configuration
 

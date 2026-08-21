@@ -8,7 +8,9 @@ connectivity, role, or migration mismatch. Shutdown drains the pool within the
 configured bound and terminates it on timeout. `python -m
 slaif_agent_site.render_api --check` performs no locator read or connection.
 No Render DSN is distributed by the default stack in this round, so operators
-must not claim the endpoint is deployed or publicly routed.
+must not claim the endpoint is deployed or publicly routed. The unchanged
+development Compose process therefore remains its health-only scaffold; a
+mounted fixed locator activates the internal resolver application.
 
 The Control process is the only online authority for local credential lookup
 and compare-and-set password rehash. It uses fixed-cost Argon2id and an
