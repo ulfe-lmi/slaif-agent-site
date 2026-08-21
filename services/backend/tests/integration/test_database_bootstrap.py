@@ -379,7 +379,11 @@ async def test_local_login_product_ownership_fails_closed_without_reassignment(
 def _assert_pending(marker: Any, *, deployed: bool) -> None:
     assert marker.state is ReadinessState.PENDING
     assert marker.content_object_count >= 0
-    assert marker.content_object_fingerprint is None
+    if marker.content_object_count > 0:
+        assert marker.content_object_fingerprint is not None
+        assert len(marker.content_object_fingerprint) == 64
+    else:
+        assert marker.content_object_fingerprint is None
     assert marker.foundation_object_count == 0
     assert marker.foundation_object_fingerprint is None
     assert marker.foundation_deployed is deployed
@@ -390,15 +394,24 @@ def _assert_pending(marker: Any, *, deployed: bool) -> None:
 
 
 def _assert_empty_safe(marker: Any) -> None:
+    # With content model COW tables, bootstrap reaches HARDENED directly.
     assert marker.state in (ReadinessState.EMPTY_SAFE, ReadinessState.HARDENED)
     assert marker.content_object_count >= 0
-    assert marker.content_object_fingerprint is None
+    if marker.content_object_count > 0:
+        assert marker.content_object_fingerprint is not None
+        assert len(marker.content_object_fingerprint) == 64
+    else:
+        assert marker.content_object_fingerprint is None
     assert marker.foundation_object_count > 0
     assert marker.foundation_object_fingerprint is not None
     assert len(marker.foundation_object_fingerprint) == 64
     assert marker.foundation_deployed
-    assert not marker.foundation_hardened
-    assert not marker.foundation_privileges_validated
+    if marker.state is ReadinessState.HARDENED:
+        assert marker.foundation_hardened
+        assert marker.foundation_privileges_validated
+    else:
+        assert not marker.foundation_hardened
+        assert not marker.foundation_privileges_validated
     assert marker.product_privileges_validated
     assert marker.safe
 
