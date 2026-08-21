@@ -9,6 +9,7 @@ from fastapi import FastAPI
 from ..application import create_http_application
 from ..authority import ProcessKind
 from ..config import ServiceSettings
+from ..control_api.route_policy import validate_route_policy_coverage
 from ..health import ReadinessProbe
 
 
@@ -17,11 +18,13 @@ def create_app(
     settings: ServiceSettings | None = None,
     readiness_probes: Sequence[ReadinessProbe] = (),
 ) -> FastAPI:
-    return create_http_application(
+    app = create_http_application(
         ProcessKind.EDITOR_API,
         settings=settings,
         readiness_probes=readiness_probes,
     )
+    validate_route_policy_coverage(app, ProcessKind.EDITOR_API)
+    return app
 
 
 __all__ = ["create_app"]

@@ -58,7 +58,7 @@ requires a separately designed and tested logical process.
 | `/` | Web | Accessible pre-alpha deployment-status page. |
 | `/health/live`, `/health/ready` | Web | Bounded Web process health only. |
 | `/s/demo/` and other resolved paths | Web→Render | Routing-context shell for an active trusted site match. |
-| `/api/control/` | Control API | Prefix-stripped health routes only; readiness includes one database component. |
+| `/api/control/` | Control API | Prefix-stripped health plus authenticated setup/session, site/domain, RBAC catalog, and membership routes; readiness includes one database component. |
 | `/api/editor/` | Editor API | Prefix-stripped health routes only. |
 | `/api/agent/` | Agent API | Prefix-stripped health routes only. |
 | `/mcp/` | MCP adapter | Prefix-stripped health routes only. |
@@ -155,6 +155,12 @@ the readable tag it is meant to freeze.
 
 The named internal networks express current and future connection direction;
 network membership does not grant application authority.
+
+Control validates its exact public route-policy declarations at startup. The clean
+Compose browser proof reaches all seven catalog and membership routes through NGINX;
+each response retains the single edge request ID and private/no-store/noindex policy.
+Its two fixed OIDC identities exist only in that disposable test database, have no
+usable credential or administrator assignment, and are removed with its volumes.
 
 - `edge`: NGINX, Web, and the five externally routed API processes.
 - `application`: Web to Render, plus MCP internal HTTP access.

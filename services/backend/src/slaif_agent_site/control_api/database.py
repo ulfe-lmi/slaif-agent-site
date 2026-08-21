@@ -23,6 +23,7 @@ from slaif_agent_site.bootstrap.setup_token import (
 from slaif_agent_site.db.migrations import migration_heads
 from slaif_agent_site.db.roles import ROLE_NAMES
 from slaif_agent_site.health import ProbeResult
+from slaif_agent_site.human_authorization import HumanAuthorizationService
 from slaif_agent_site.identity.authentication import (
     LocalAuthenticationError,
     LocalAuthenticationResult,
@@ -110,6 +111,12 @@ class ControlDatabaseAdapter(Protocol):
     async def authenticate_local_login(
         self, request: LocalLoginRequest
     ) -> LocalAuthenticationResult: ...
+
+    async def authorize_platform_administrator(self, user_account_id: UUID) -> bool: ...
+
+    def site_service(self) -> SiteService: ...
+
+    def human_authorization_service(self) -> HumanAuthorizationService: ...
 
 
 PoolFactory = Callable[..., Awaitable[Any]]
@@ -428,6 +435,15 @@ class ControlDatabase:
         if self._pool is None:
             raise ControlDatabaseError(ControlDatabaseReason.CONNECTION_UNAVAILABLE)
         return SiteService(
+            self._pool, acquire_timeout=self._settings.acquire_timeout_seconds
+        )
+
+    def human_authorization_service(self) -> HumanAuthorizationService:
+        """Return the Control-only membership/RBAC service for this pool."""
+
+        if self._pool is None:
+            raise ControlDatabaseError(ControlDatabaseReason.CONNECTION_UNAVAILABLE)
+        return HumanAuthorizationService(
             self._pool, acquire_timeout=self._settings.acquire_timeout_seconds
         )
 

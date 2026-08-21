@@ -73,6 +73,36 @@ docker compose build --pull
 docker compose -p "$PROJECT" up --build --wait
 python tools/compose/verify.py --root "$ROOT" --project "$PROJECT"
 
+# These non-authenticatable OIDC identities exist only in this disposable smoke
+# database. The fixed statement deliberately fails on a collision or any
+# unexpected installation state; it never updates product or demo seed data.
+docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif \
+  -v ON_ERROR_STOP=1 -c \
+  "BEGIN;
+   DO \$fixture\$
+   BEGIN
+     IF (SELECT initialized_at IS NOT NULL FROM control.installation_state WHERE singleton)
+        OR EXISTS (SELECT 1 FROM control.platform_administrator)
+        OR EXISTS (SELECT 1 FROM control.site_membership)
+        OR EXISTS (SELECT 1 FROM control.user_account)
+     THEN
+       RAISE EXCEPTION 'unexpected fixture precondition';
+     END IF;
+   END
+   \$fixture\$;
+   INSERT INTO control.user_account (
+     id, identity_kind, local_username, local_username_normalized,
+     password_hash, oidc_issuer, oidc_subject, email, display_name, status
+   ) VALUES
+     ('12000000-0000-4000-8000-000000000001', 'OIDC', NULL, NULL, NULL,
+      'https://fixture.invalid', 'compose-fixture-subject-one', NULL,
+      'Compose Fixture One', 'ACTIVE'),
+     ('12000000-0000-4000-8000-000000000002', 'OIDC', NULL, NULL, NULL,
+      'https://fixture.invalid', 'compose-fixture-subject-two', NULL,
+      'Compose Fixture Two', 'ACTIVE');
+   COMMIT;" >/dev/null
+echo "membership-fixtures: OK count=2 kind=OIDC authenticatable=no installation=uninitialized"
+
 mode_count=0
 for service in control-api editor-api agent-api render-api mcp-adapter media-service review-worker scheduler media-gc
 do
@@ -89,6 +119,56 @@ docker compose -p "$PROJECT" logs --no-color bootstrap 2>/dev/null \
   | sed -n 's/^.*setup-token-secret: //p' >"$TOKEN_FILE"
 test "$(wc -l <"$TOKEN_FILE" | tr -d ' ')" = 1
 tools/compose/e2e.sh "$TOKEN_FILE" "$E2E_SECRET_FILE"
+docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif -v ON_ERROR_STOP=1 -Atc \
+  "SET ROLE slaif_owner;
+   SELECT string_agg(
+     membership.user_account_id::text || '|' || site.site_key || '|' ||
+     membership.role_key || '|' || membership.status || '|' ||
+     membership.version::text,
+     E'\n' ORDER BY membership.user_account_id, site.site_key
+   )
+   FROM control.site_membership membership
+   JOIN control.site site ON site.id = membership.site_id
+   WHERE membership.user_account_id IN (
+     '12000000-0000-4000-8000-000000000001'::uuid,
+     '12000000-0000-4000-8000-000000000002'::uuid
+   );" | grep -Fxq "$(printf '%s\n%s\n%s' \
+    '12000000-0000-4000-8000-000000000001|demo|CONTENT_EDITOR|ACTIVE|1' \
+    '12000000-0000-4000-8000-000000000001|second|SITE_ARCHITECT|INACTIVE|3' \
+    '12000000-0000-4000-8000-000000000002|demo|VIEWER|ACTIVE|1')"
+docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif -v ON_ERROR_STOP=1 -Atc \
+  "SET ROLE slaif_owner;
+   SELECT count(*) = 3
+     AND count(*) FILTER (WHERE
+       identity_kind = 'OIDC' AND status = 'ACTIVE'
+       AND local_username IS NULL AND local_username_normalized IS NULL
+       AND password_hash IS NULL AND email IS NULL
+       AND oidc_issuer = 'https://fixture.invalid'
+       AND (id, oidc_subject, display_name) IN (
+         ('12000000-0000-4000-8000-000000000001'::uuid,
+          'compose-fixture-subject-one', 'Compose Fixture One'),
+         ('12000000-0000-4000-8000-000000000002'::uuid,
+          'compose-fixture-subject-two', 'Compose Fixture Two')
+       )
+       AND NOT EXISTS (
+         SELECT 1 FROM control.platform_administrator administrator
+         WHERE administrator.user_account_id = account.id
+       )
+     ) = 2
+     AND count(*) FILTER (WHERE
+       identity_kind = 'LOCAL' AND status = 'ACTIVE'
+       AND local_username IS NOT NULL
+       AND local_username_normalized IS NOT NULL
+       AND password_hash IS NOT NULL
+       AND oidc_issuer IS NULL AND oidc_subject IS NULL
+       AND EXISTS (
+         SELECT 1 FROM control.platform_administrator administrator
+         WHERE administrator.user_account_id = account.id
+       )
+     ) = 1
+     AND (SELECT count(*) FROM control.platform_administrator) = 1
+   FROM control.user_account account;" | grep -q '^t$'
+echo "membership-e2e: OK fixtures=2 sites=2 lifecycle=created-updated-deactivated privacy=verified"
 for path in \
   /health/live \
   /health/ready \
@@ -240,14 +320,23 @@ site_fingerprint() {
   docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif -Atc \
     "SELECT md5(string_agg(row_to_json(snapshot)::text, E'\\n' ORDER BY site_key)) FROM (SELECT site_key, display_name, default_locale, status, canonical_revision, content_model_revision, component_catalog_version FROM control.site) snapshot"
 }
+membership_fingerprint() {
+  docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif -Atc \
+    "SELECT md5(string_agg(row_to_json(snapshot)::text, E'\n' ORDER BY user_account_id, site_id)) FROM (SELECT site_id, user_account_id, role_key, delegation_ceiling, status, version FROM control.site_membership) snapshot"
+}
 before=$(fingerprint)
 render_before=$(render_fingerprint)
 sites_before=$(site_fingerprint)
+memberships_before=$(membership_fingerprint)
 docker compose -p "$PROJECT" stop
 docker compose -p "$PROJECT" up --wait
 after=$(fingerprint)
 test "$before" = "$after"
 test "$(docker compose -p "$PROJECT" logs --no-color bootstrap 2>/dev/null | grep -c 'setup-token-secret:')" = 1
+test "$(membership_fingerprint)" = "$memberships_before"
+docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif -Atc \
+  "SELECT count(*) FROM control.user_account WHERE id IN ('12000000-0000-4000-8000-000000000001'::uuid, '12000000-0000-4000-8000-000000000002'::uuid)" \
+  | grep -q '^2$'
 docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif -Atc \
   "SELECT site_key || '|' || display_name || '|' || default_locale || '|' || status FROM control.site WHERE site_key = 'demo'" \
   | grep -q '^demo|SLAIF Demo Site|en|ACTIVE$'
@@ -300,12 +389,14 @@ wait_healthy nginx
 test "$(render_fingerprint)" = "$render_before"
 test "$(fingerprint)" = "$before"
 test "$(site_fingerprint)" = "$sites_before"
+test "$(membership_fingerprint)" = "$memberships_before"
 test "$(docker compose -p "$PROJECT" logs --no-color bootstrap 2>/dev/null | grep -c 'setup-token-secret:')" = 1
 echo "render-locator-recovery: restored render=healthy web=healthy nginx=healthy"
 docker compose -p "$PROJECT" up --wait >/dev/null
 test "$(render_fingerprint)" = "$render_before"
 test "$(fingerprint)" = "$before"
 test "$(site_fingerprint)" = "$sites_before"
+test "$(membership_fingerprint)" = "$memberships_before"
 test "$(docker compose -p "$PROJECT" logs --no-color bootstrap 2>/dev/null | grep -c 'setup-token-secret:')" = 1
 
 if docker compose -p "$NEGATIVE_PROJECT" -f compose.yaml \

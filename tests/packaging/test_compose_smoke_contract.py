@@ -66,6 +66,46 @@ class ComposeSmokeContractTests(unittest.TestCase):
         self.assertIn('test "$(render_fingerprint)" = "$render_before"', source)
         self.assertIn('test "$(site_fingerprint)" = "$sites_before"', source)
 
+    def test_membership_fixtures_are_bounded_to_smoke_and_fail_on_collision(
+        self,
+    ) -> None:
+        source = SMOKE.read_text(encoding="utf-8")
+        first = "12000000-0000-4000-8000-000000000001"
+        second = "12000000-0000-4000-8000-000000000002"
+        precondition, _insert = source.split(
+            "INSERT INTO control.user_account", maxsplit=1
+        )
+        self.assertEqual(source.count("INSERT INTO control.user_account"), 1)
+        self.assertIn("unexpected fixture precondition", source)
+        self.assertIn("OR EXISTS (SELECT 1 FROM control.user_account)", precondition)
+        self.assertNotIn(
+            "FROM control.user_account\n          WHERE id IN", precondition
+        )
+        self.assertIn("https://fixture.invalid", source)
+        self.assertIn("identity_kind = 'OIDC'", source)
+        self.assertIn("identity_kind = 'LOCAL'", source)
+        self.assertIn("password_hash IS NULL", source)
+        self.assertIn("password_hash IS NOT NULL", source)
+        self.assertIn("SELECT count(*) = 3", source)
+        self.assertIn(
+            "(SELECT count(*) FROM control.platform_administrator) = 1", source
+        )
+        self.assertIn("SET ROLE slaif_owner", source)
+        self.assertIn("membership_fingerprint", source)
+        self.assertGreaterEqual(source.count(first), 4)
+        self.assertGreaterEqual(source.count(second), 4)
+        for path in (
+            ROOT / "compose.yaml",
+            ROOT / "services" / "backend" / "src",
+            ROOT / "migrations",
+        ):
+            files = [path] if path.is_file() else list(path.rglob("*"))
+            for candidate in files:
+                if candidate.is_file():
+                    text = candidate.read_text(encoding="utf-8", errors="ignore")
+                    self.assertNotIn(first, text, str(candidate))
+                    self.assertNotIn(second, text, str(candidate))
+
 
 if __name__ == "__main__":
     unittest.main()

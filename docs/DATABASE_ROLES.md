@@ -59,6 +59,18 @@ Authorization joins the active user and current assignment inside one fixed-
 search-path owner function; callers cannot infer authority from username,
 setup history, cookies, Host, or client claims.
 
+Revision `014_001` adds `control.permission`, `control.human_role`,
+`control.human_role_permission`, `control.site_membership`, and
+`control.site_membership_permission_override`. All are owner-controlled.
+`slaif_control` receives only named catalog/context/authorize/membership
+functions and no direct relation access. Every other runtime role has both
+relation and RBAC-function authority revoked. The membership mutation function
+locks the active site, actor/target users in UUID order, their administrator
+assignments, memberships, and overrides before authority evaluation. Its
+active and inactive trusted results compute Platform Administrator status from
+the target. The authenticated Control HTTP layer calls only this named surface;
+no HTTP handler receives a native connection or relation grant.
+
 ## Login-principal design
 
 Privilege roles never contain passwords. The local deployment provisions this

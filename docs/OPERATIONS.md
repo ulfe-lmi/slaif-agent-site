@@ -22,6 +22,20 @@ issuance and the local setup/login/admin UI exist; rate limiting, durable login
 audit, OIDC, MFA, and runtime agent browser tooling remain absent. Local
 authentication is qualified by six Playwright browser/device projects.
 
+Revision `014_001` upgrades and downgrades deterministically with its complete
+built-in authorization catalogs. Catalog defaults change only through
+migrations. Membership rows are deactivated, not hard-deleted; optimistic
+versions and explicit overrides remain inspectable history.
+
+Control now serves authenticated catalog and membership routes. A 401 points to
+session lifecycle, 403 to CSRF/current authority/self-or-beyond-authority
+policy, 404 to an invisible active-site/user/membership boundary, 409 to
+duplicate or expected-version conflict, 422 to typed input, and 503 to the
+Control pool. Do not diagnose these by querying relations from the runtime
+role. The immutable route-policy registry is checked against actual Control and
+Editor handlers in CI; adding a handler requires an exact declaration plus real
+enforcement, not a blanket exemption.
+
 These commands operate the default Compose project in a local, non-production
 environment. Use an explicit `-p NAME` for disposable tests so cleanup targets
 cannot overlap an operator's persistent project.
@@ -183,8 +197,17 @@ The Control site API is available only to an authenticated active Platform
 Administrator. State changes require the session-bound CSRF proof. Archive is
 idempotent, irreversible through the online API, and prevents every later
 profile/domain mutation even if a caller retained a prior active context.
-There is no online site deletion, DNS automation, demo seed, public renderer,
-membership management, or publication operation in this round.
+There is no online site deletion, DNS automation, membership UI, invitation,
+custom-role design, content/workspace/capability, or publication operation in
+this round.
+
+The clean Compose verification creates two non-authenticatable OIDC fixture
+accounts directly in its disposable database before setup, exercises the catalog
+and two-site membership lifecycle through NGINX, checks persistence across
+stop/start, and removes the database volume during normal cleanup. These are test
+harness records, not demo users, bootstrap seed data, or a user provisioning
+mechanism. A collision or non-fresh installation state fails the smoke instead of
+overwriting data.
 
 ## Verification
 
@@ -201,8 +224,9 @@ read-denial boundary, empty-safe marker, exact login authority, Control
 wrong-login/role/secret/marker/migration/database failure behavior, restart
 idempotence, fail-closed bootstrap, Apache syntax, single
 request-ID and CSP headers on page/API/404 responses, secret absence in
-configuration/history/logs, and exact-project cleanup. It does not test product
-workflows because they do not exist.
+configuration/history/logs, the implemented membership API lifecycle, and
+exact-project cleanup. It does not claim membership UI, content editing, or
+publication execution.
 
 ## Supply-chain evidence
 

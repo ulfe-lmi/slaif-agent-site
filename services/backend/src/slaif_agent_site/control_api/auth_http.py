@@ -40,6 +40,8 @@ _AUTH_PATHS = {
     "/api/control/v1/login",
     "/api/control/v1/session",
     "/api/control/v1/logout",
+    "/api/control/v1/roles",
+    "/api/control/v1/permissions",
 }
 
 

@@ -5,6 +5,11 @@ their request-domain mappings. The data lives in `control.site` and
 `control.site_domain`; it is installation control data, not editorial content
 and not an Agent-State workspace.
 
+Human authority is site-scoped through active versioned memberships; one user
+may hold different roles, ceilings, and overrides on different sites. Global
+account status alone grants no site authority. See [Human site
+authorization](AUTHORIZATION.md).
+
 ## Authority boundary
 
 Only the owner role has direct relation access. The Control role can execute a
@@ -14,8 +19,9 @@ only the two active hostname/path and local-key resolver functions; its
 `SiteResolver` exposes only `resolve(authority, request_path)`. Other product
 roles have neither relation nor site-function authority.
 The Control application exposes the same boundary through the authenticated
-Platform Administrator API documented in [API](API.md). No anonymous site
-endpoint or site-management UI exists.
+Platform Administrator API documented in [API](API.md). Site membership
+lifecycle is separately governed by global administrator or exact site-manager
+authority. No anonymous site endpoint or site-management UI exists.
 
 Site UUIDs, mapping UUIDs, revisions, timestamps, and lifecycle state are
 server/database-owned. Request bodies cannot select routing identity. A
@@ -73,9 +79,15 @@ and production edge routing remain deferred.
 
 ## Deferred work
 
-Site-management UI, site membership/RBAC, workspaces, content models, actual
-site content, editor/Puck, agent capabilities, review/publication, DNS
+Site-management and membership UI, invitations/custom roles, workspaces,
+content models, actual site content, editor/Puck, agent capabilities,
+review/publication, DNS
 automation, and deletion are not implemented. The accessible shell proves
 routing context only; it is not a publication surface. This API does not make the application
 production-ready or hostile-tenant-safe. Multi-site support remains trusted
 institutional tenancy and does not claim hostile public-SaaS isolation.
+
+The clean Compose browser proof creates disposable non-login OIDC identities only
+inside its test database, assigns different roles to the same identity on two
+sites, and confirms constant cross-site absence plus semantic deactivation. They
+are not default site members or product/demo users.

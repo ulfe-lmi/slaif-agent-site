@@ -19,8 +19,52 @@ and cookie values are never returned in response bodies or errors.
 The Next.js setup/login/admin UI and clean Compose authentication journey use
 these same-origin routes. Six self-hosted Playwright browser/device projects
 prove setup, login, authenticated admin, and logout through NGINX. Rate
-limiting, durable authentication audit, OIDC, MFA,
-and membership management remain absent.
+limiting, durable authentication audit, OIDC, and MFA remain absent.
+
+## Role, permission, and membership API
+
+The catalog routes require one current human session and no CSRF. Membership
+reads require a current Platform Administrator or an active site member holding
+both `membership:manage` and `role:manage`. Mutations additionally require the
+bound CSRF cookie/header proof and reassert authority under database locks.
+
+| Route | Success | Request contract |
+| --- | --- | --- |
+| `GET /roles` | 200 | none; immutable seven-role defaults and ceilings |
+| `GET /permissions` | 200 | none; immutable categories, assignability, delegation level, and default roles |
+| `GET /sites/{site_id}/memberships` | 200 | none |
+| `GET /sites/{site_id}/memberships/{user_id}` | 200 | none |
+| `POST /sites/{site_id}/memberships` | 201 | target user, role, explicit ceiling, complete disjoint allow/deny sets |
+| `PATCH /sites/{site_id}/memberships/{user_id}` | 200 | positive expected version, role, ceiling, `ACTIVE` or `INACTIVE`, complete replacement overrides |
+| `DELETE /sites/{site_id}/memberships/{user_id}?expected_version=N` | 200 | positive expected version; semantic deactivation, never hard delete |
+
+POST cannot set site, actor, status, expected/result version, effective
+permissions, administrator fact, or timestamps. PATCH takes the target only
+from the path and cannot set those trusted/result fields. Responses contain
+only site/user UUIDs, role, explicit/effective ceilings, lifecycle/version,
+sorted overrides/effective permissions, the target's current global
+administrator fact, and safe timestamps. They contain no identity profile,
+session, CSRF, credential, digest, SQL, or locator.
+
+Session failures are 401; CSRF, self-change, inactive/lower/beyond-authority,
+and nonassignable override denials are 403; invisible site/user/membership and
+cross-site substitution are 404; duplicate creation and stale/concurrent
+versions are 409; malformed/extra/unknown values are 422; persistence/pool/
+timeout failures are 503. Successes and errors are private/no-store/noindex and
+request-ID correlated. Publication remains an explicit permission independent
+of role ceiling or edit authority.
+
+## Route-policy registry
+
+Every actual Control and Editor handler has one immutable declaration keyed by
+process, method, and normalized path template. It records read/mutation class,
+session and CSRF requirements, global/site authority kind, policy kind, and
+exact permissions. Health has the only shared system exemption. Tests compare
+the actual FastAPI inventory against the registry and fail on missing,
+duplicate, stale, method/path-mismatched, unknown-permission, or request-shape
+declarations. HEAD and OPTIONS are not registered handler methods and retain
+their deterministic framework 405 behavior. The registry audits enforcement;
+handlers and database policy remain authoritative.
 
 ## Platform Administrator site API
 

@@ -1,5 +1,29 @@
 # Render resolution security boundary
 
+Human authorization rechecks active user, active site, active membership,
+exact site association, current membership version, and permission inside the
+database boundary. Cross-site substitution, self-escalation, stale versions,
+nonassignable permissions, and beyond-actor ceilings fail closed. Publication
+is independent and never follows from editing or delegation level. See [Human
+site authorization](AUTHORIZATION.md).
+
+Control membership reads authenticate the strict human cookie once, resolve an
+active site through trusted persistence, and require global administrator or
+both membership-management permissions. POST, PATCH, and semantic DELETE use
+the atomic session-plus-CSRF helper and then repeat actor authorization under
+the mutation function's canonical row locks. Client Host, forwarded headers,
+body IDs, roles, and versions never establish site authority. All catalog,
+membership, validation, and error responses are private/no-store/noindex and
+carry one request ID without foreign-site or credential detail.
+
+Clean Compose E2E uses two fixed OIDC fixture identities with a reserved
+non-routable issuer. The smoke harness is their only insertion point; neither
+bootstrap, migrations, Compose configuration, nor product source creates them.
+They have no local credentials, administrator assignment, or enabled OIDC login
+and are destroyed with disposable volumes. Their UUIDs are non-secret metadata
+passed through the existing mode-0600 E2E channel; session, CSRF, setup-token,
+password, and database locators remain excluded from arguments and artifacts.
+
 The internal Render API owns one `slaif_public_login` connection pool with the
 sole `slaif_public_reader` membership. Pool initialization verifies database,
 login/current-user, and exact membership before readiness succeeds. Locator and
