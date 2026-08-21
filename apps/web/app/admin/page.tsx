@@ -1,4 +1,4 @@
-import { AdminSession } from "../../src/auth/forms";
+import { AdminShell } from "../../src/admin/shell";
 export default function AdminPage() {
-  return <AdminSession />;
+  return <AdminShell />;
 }

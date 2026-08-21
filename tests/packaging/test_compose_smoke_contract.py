@@ -106,6 +106,35 @@ class ComposeSmokeContractTests(unittest.TestCase):
                     self.assertNotIn(first, text, str(candidate))
                     self.assertNotIn(second, text, str(candidate))
 
+    def test_governance_project_orders_all_six_stable_devices(self) -> None:
+        config = (ROOT / "playwright.config.ts").read_text(encoding="utf-8")
+        self.assertEqual(config.count('name: "governance"'), 1)
+        self.assertIn('dependencies: ["setup"]', config)
+        self.assertEqual(config.count('dependencies: ["governance"]'), 6)
+        for project in (
+            "desktop-chromium",
+            "desktop-firefox",
+            "desktop-webkit",
+            "tablet",
+            "mobile-chromium",
+            "mobile-webkit",
+        ):
+            self.assertIn(f'name: "{project}"', config)
+        governance = (ROOT / "tests/e2e/governance.spec.ts").read_text(encoding="utf-8")
+        for marker in (
+            "site-create-visible",
+            "domain-primary-replace-visible",
+            "membership-add-visible",
+            "stale-ui-conflict-recovery",
+            "crafted-membership-negatives",
+            "archive-dialog-keyboard-visible",
+            "privacy-csp-edge",
+        ):
+            self.assertIn(marker, governance)
+        smoke = SMOKE.read_text(encoding="utf-8")
+        self.assertIn("governance-restart: OK", smoke)
+        self.assertIn("domain_fingerprint", smoke)
+
 
 if __name__ == "__main__":
     unittest.main()

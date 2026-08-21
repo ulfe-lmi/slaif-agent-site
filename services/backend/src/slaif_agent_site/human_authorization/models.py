@@ -107,6 +107,26 @@ class MembershipRecord(BaseModel):
     updated_at: datetime
 
 
+class CurrentHumanSite(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    site_id: UUID
+    site_key: str
+    display_name: str
+    status: str
+    default_locale: str
+    canonical_revision: int
+    role_key: str | None
+    membership_version: int | None
+    explicit_delegation_ceiling: int | None
+    effective_delegation_ceiling: int | None
+    platform_administrator: bool
+
+
+class CurrentHumanAuthority(CurrentHumanSite):
+    effective_permissions: tuple[str, ...]
+
+
 @dataclass(frozen=True, slots=True, init=False)
 class HumanSiteContext:
     """Trusted server-created human authority for one active site."""
@@ -138,6 +158,8 @@ class HumanSiteContext:
 
 
 __all__ = [
+    "CurrentHumanAuthority",
+    "CurrentHumanSite",
     "HumanSiteContext",
     "MembershipChange",
     "MembershipRecord",

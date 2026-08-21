@@ -20,13 +20,13 @@ test("auth routes and landing page expose truthful local flows", async () => {
   )?.[1];
   assert.ok(deferred);
   for (const claim of [
-    /Site and membership UI/,
+    /Membership UI/,
     /invitations/,
     /custom roles/,
     /content models and\s+site\s+content/,
     /workspaces and agent capabilities/,
     /editing\/Puck/,
-    /review,\s+and\s+publication execution/,
+    /review,\s+and\s+publication\s+execution/,
   ])
     assert.match(deferred, claim);
   assert.doesNotMatch(deferred, /\bsites\b|site routing/i);
@@ -36,13 +36,140 @@ test("auth routes and landing page expose truthful local flows", async () => {
   assert.doesNotMatch(deferred, /Membership\/RBAC|membership APIs/i);
   for (const route of ["setup", "login", "admin"]) {
     const expected =
-      route === "admin"
-        ? "AdminSession"
-        : route === "setup"
-          ? "SetupForm"
-          : "LoginForm";
+      route === "admin" ? "AdminShell" : route === "setup" ? "SetupForm" : "LoginForm";
     assert.match(await read(`../app/${route}/page.tsx`), new RegExp(expected));
   }
+});
+
+test("admin workflows are URL-owned, server-filtered, and accessible", async () => {
+  const api = await read("../src/admin/api.ts");
+  const shell = await read("../src/admin/shell.tsx");
+  const sitePage = await read("../app/admin/sites/[siteId]/page.tsx");
+  const settingsPage = await read("../app/admin/sites/[siteId]/settings/page.tsx");
+  const membershipsPage = await read(
+    "../app/admin/sites/[siteId]/memberships/page.tsx",
+  );
+  const primitives = await read("../src/components/ui/primitives.tsx");
+  const modal = await read("../src/admin/csp-modal.tsx");
+  const workflows = await read("../src/admin/site-workflows.tsx");
+  const memberships = await read("../src/admin/membership-workflows.tsx");
+  for (const path of ["/me/sites", "/my-authority"])
+    assert.match(api, new RegExp(path));
+  assert.match(api, /credentials: "same-origin"/);
+  for (const page of [settingsPage, membershipsPage]) {
+    assert.match(page, /<AdminShell selectedSiteId=\{siteId\}>/);
+  }
+  assert.match(shell, /<nav className="mobile-nav" aria-label="Administration">/);
+  assert.match(api, /cache: "no-store"/);
+  assert.match(api, /encodeURIComponent\(siteId\)/);
+  assert.doesNotMatch(`${api}${shell}`, /localStorage|sessionStorage|serviceWorker/);
+  assert.match(shell, /Skip to main content/);
+  assert.match(modal, /@radix-ui\/react-dialog/);
+  assert.match(modal, /<Dialog\.Root modal=\{false\}/);
+  assert.match(modal, /aria-modal="true"/);
+  assert.match(modal, /background\.inert = true/);
+  assert.match(modal, /priorInertAttribute/);
+  assert.match(modal, /document\.addEventListener\("focusin"/);
+  assert.match(modal, /event\.shiftKey/);
+  assert.match(modal, /onPointerDown=\{\(event\) => event\.preventDefault\(\)\}/);
+  assert.doesNotMatch(modal, /\.style\.|setAttribute\(["']style|innerHTML/);
+  assert.match(shell, /Platform governance/);
+  assert.match(shell, /No authorized sites/);
+  assert.match(shell, /Authenticated session active\./);
+  assert.match(shell, /Local administrator/);
+  assert.match(shell, /This site is unavailable or you do not have access/);
+  assert.match(
+    shell,
+    /value\.sites\.some\(\(site\) => site\.site_id === selectedSiteId\)/,
+  );
+  assert.match(shell, /"Content"[\s\S]*\{item\} · planned/);
+  assert.match(shell, /Users &amp; Permissions/);
+  assert.match(sitePage, /selectedSiteId=\{siteId\}/);
+  assert.match(primitives, /role="status"/);
+  for (const operation of [
+    "createSite",
+    "updateSite",
+    "putDomain",
+    "removeDomain",
+    "archiveSite",
+  ])
+    assert.match(workflows, new RegExp(operation));
+  assert.match(workflows, /pending\.current/);
+  assert.match(workflows, /site-policy:manage/);
+  assert.match(workflows, /site-domain:manage/);
+  assert.match(workflows, /do not automate DNS/);
+  assert.match(workflows, /does not delete|does not\s+delete/);
+  assert.equal(`${shell}${workflows}${memberships}`.match(/<CspModal/g)?.length, 4);
+  assert.doesNotMatch(`${shell}${workflows}${memberships}`, /<Dialog\./);
+  assert.match(workflows, /disabled=\{!recent\}/);
+  assert.doesNotMatch(`${api}${shell}${workflows}`, /localStorage|sessionStorage/);
+});
+
+test("membership administration preserves exact server contracts and UX boundaries", async () => {
+  const api = await read("../src/admin/api.ts");
+  const workflow = await read("../src/admin/membership-workflows.tsx");
+  const page = await read("../app/admin/sites/[siteId]/memberships/page.tsx");
+  const shell = await read("../src/admin/shell.tsx");
+  const css = await read("../app/styles.css");
+  for (const path of [
+    'json("/roles")',
+    'json("/permissions")',
+    "/memberships`",
+    "?expected_version=",
+  ])
+    assert.ok(api.includes(path), path);
+  for (const method of ['mutation("POST"', 'mutation("PATCH"', 'mutation("DELETE"'])
+    assert.ok(api.includes(method), method);
+  for (const field of [
+    "target_user_id",
+    "expected_version",
+    "delegation_ceiling",
+    "allow_permissions",
+    "deny_permissions",
+  ])
+    assert.match(api, new RegExp(field));
+  for (const validator of [
+    "default_permissions",
+    "site_assignable",
+    "effective_permissions",
+    "platform_administrator",
+    "user_account_id",
+  ])
+    assert.match(api, new RegExp(validator));
+  assert.match(api, /delegationLevel >= 0/);
+  assert.match(workflow, /membership:manage/);
+  assert.match(workflow, /role:manage/);
+  assert.match(workflow, /site:publish/);
+  assert.match(workflow, /Architect ceiling 4 does not\s+publish by default/);
+  assert.match(workflow, /completely replaces explicit overrides/);
+  assert.match(workflow, /Nonassignable installation and system scopes/);
+  assert.match(workflow, /expected version \$\{item\.version\}/);
+  assert.match(workflow, /preserves the membership row, history, role, and overrides/);
+  assert.match(workflow, /self-mutation controls are not presented/);
+  assert.match(workflow, /sequence\.current/);
+  assert.match(workflow, /if \(pending\.current\) return/);
+  assert.match(workflow, /errorRef\.current\?\.focus/);
+  for (const state of [
+    "unauthenticated",
+    "denied",
+    "not-found",
+    "conflict",
+    "invalid",
+    "unavailable",
+    "invalid-response",
+  ])
+    assert.match(workflow, new RegExp(state));
+  assert.match(workflow, /CspModal/);
+  assert.doesNotMatch(workflow, /<Dialog\./);
+  assert.match(page, /MembershipWorkflow siteId=\{siteId\}/);
+  assert.match(shell, /Manage memberships/);
+  assert.match(css, /membership-card[\s\S]*overflow-wrap: anywhere/);
+  assert.match(css, /@media \(max-width: 760px\)[\s\S]*permission-group/);
+  assert.doesNotMatch(
+    `${api}${workflow}${page}`,
+    /localStorage|sessionStorage|dangerouslySetInnerHTML|https?:\/\//,
+  );
+  assert.doesNotMatch(`${api}${workflow}`, /public_id|email_address/);
 });
 
 test("forms preserve accessibility, password manager, and pending contracts", async () => {
@@ -72,6 +199,22 @@ test("auth client uses exact same-origin methods and strict CSRF cookies", async
 
 test("responsive styles cover narrow layout, focus, contrast, and reduced motion", async () => {
   const css = await read("../app/styles.css");
+  const postcss = await read("../postcss.config.mjs");
+  const tailwind = await read("../tailwind.config.mjs");
+  const manifest = await read("../package.json");
+  assert.match(
+    css,
+    /@tailwind base;[\s\S]*@tailwind components;[\s\S]*@tailwind utilities;/,
+  );
+  assert.match(postcss, /tailwindcss: \{\}[\s\S]*autoprefixer: \{\}/);
+  assert.match(tailwind, /\.\/app\/\*\*\/[\s\S]*\.\/src\/\*\*\//);
+  assert.match(manifest, /"tailwindcss": "3\.4\.19"/);
+  assert.match(manifest, /"autoprefixer": "10\.5\.4"/);
+  assert.doesNotMatch(
+    `${css}${postcss}${tailwind}${manifest}`,
+    /lightningcss|@tailwindcss\/postcss|tailwindcss": "4\./,
+  );
+  assert.doesNotMatch(`${css}${postcss}${tailwind}`, /https?:\/\/|@import\s+url/);
   assert.match(css, /@media \(max-width: 360px\)/);
   assert.match(css, /overflow-wrap: anywhere/);
   assert.match(css, /focus-visible/);

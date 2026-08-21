@@ -16,6 +16,7 @@ from ..health import ReadinessProbe
 from ..logging import configure_json_logging
 from .auth_http import install_control_auth_routes
 from .config import ControlDatabaseConfigurationError, ControlDatabaseSettings
+from .current_human_http import install_current_human_routes
 from .database import ControlDatabase, ControlDatabaseAdapter
 from .membership_http import install_control_membership_routes
 from .route_policy import validate_route_policy_coverage
@@ -54,6 +55,7 @@ def create_app(
     install_control_auth_routes(app, selected_database, app.state.settings)
     install_control_site_routes(app, selected_database, app.state.settings)
     install_control_membership_routes(app, selected_database, app.state.settings)
+    install_current_human_routes(app, selected_database, app.state.settings)
     validate_route_policy_coverage(app, ProcessKind.CONTROL_API)
     return app
 

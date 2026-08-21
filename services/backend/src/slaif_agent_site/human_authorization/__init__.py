@@ -2,6 +2,8 @@
 
 from .catalog import PERMISSIONS, ROLE_CEILINGS, ROLE_DEFAULTS
 from .models import (
+    CurrentHumanAuthority,
+    CurrentHumanSite,
     HumanSiteContext,
     MembershipChange,
     MembershipRecord,
@@ -22,6 +24,8 @@ __all__ = [
     "HumanAuthorizationError",
     "HumanAuthorizationReason",
     "HumanAuthorizationService",
+    "CurrentHumanAuthority",
+    "CurrentHumanSite",
     "HumanSiteContext",
     "MembershipChange",
     "MembershipRecord",

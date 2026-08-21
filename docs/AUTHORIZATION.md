@@ -1,8 +1,17 @@
 # Human site authorization
 
+The current-human admin read model is UX support, not an authority source.
+Trusted session code supplies the user UUID and FastAPI parses the site UUID
+only from the route. Owner-controlled fixed-search-path functions filter global
+or exact active-membership facts; `slaif_control` receives EXECUTE only and no
+direct relation grant. URL selection and client visibility never authorize a
+crafted API call.
+
 Revision `014_001` provides site-scoped human membership and built-in
 role-based authorization. Control exposes the bounded catalog and membership
-HTTP surface described in [the API guide](API.md); no membership UI exists.
+HTTP surface described in [the API guide](API.md). The responsive administration
+UI consumes that exact surface for existing user UUIDs and never substitutes
+client-side role logic for server authorization.
 
 ## Built-in roles
 
@@ -77,6 +86,14 @@ Path UUIDs are parsed input, not authority: Control resolves the active site and
 current server-side membership version before use. Deactivation is HTTP
 `DELETE` semantics but updates the row to `INACTIVE`; it never hard-deletes it.
 
+Site governance uses the same reusable current-site chain. Reads require
+`site:read`, profile writes `site-policy:manage`, and domain writes
+`site-domain:manage`. The server fetches the current membership version and
+calls the database permission function immediately before the operation.
+Inactive, disabled, stale, archived-for-member, unknown, and cross-site
+authority fails closed. Create and archive remain global, and archive also
+checks recent authentication after the atomic session/CSRF decision.
+
 ## Database authority and limitations
 
 The owner controls all five catalog/membership relations. `slaif_control` has
@@ -85,5 +102,6 @@ editor, public/preview reader, reviewer, scheduler, media, and GC roles have
 neither relation access nor RBAC function execution.
 
 This remains trusted institutional multi-site tenancy, not hostile public SaaS
-isolation or RLS. Membership UI, invitations, custom roles, workspaces,
-capabilities, content, and publication execution are not implemented yet.
+isolation or RLS. The membership UI does not provision identities or implement
+invitations or custom roles. Workspaces, capabilities, content, and publication
+execution are not implemented yet.

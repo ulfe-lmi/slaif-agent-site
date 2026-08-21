@@ -242,6 +242,38 @@ async def test_platform_administrator_site_lifecycle_and_isolation(
         )
         assert duplicate.status_code == 409
 
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            administrator_id = await owner.fetchval(
+                "SELECT user_account_id FROM control.platform_administrator LIMIT 1"
+            )
+        old_auth = await adapter.human_session_service().create(administrator_id)
+        old_public_id, _old_secret = parse_session_token(
+            old_auth.token.get_secret_value()
+        )
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            await owner.execute(
+                "UPDATE control.user_session SET "
+                "created_at = current_timestamp - interval '2 days', "
+                "recent_auth_at = current_timestamp - interval '1 day' "
+                "WHERE public_id = $1",
+                old_public_id,
+            )
+        non_recent_archive = await client.post(
+            f"/api/control/v1/sites/{alpha_id}/archive",
+            headers=_mutation_headers(
+                old_auth.token.get_secret_value(),
+                old_auth.csrf_token.get_secret_value(),
+            ),
+        )
+        assert non_recent_archive.status_code == 403
+        assert (
+            await client.get(f"/api/control/v1/sites/{alpha_id}", headers=read)
+        ).json()["status"] == "ACTIVE"
+
         archived = await client.post(
             f"/api/control/v1/sites/{alpha_id}/archive", headers=mutate
         )

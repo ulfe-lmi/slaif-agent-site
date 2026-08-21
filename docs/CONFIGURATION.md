@@ -1,5 +1,17 @@
 # Backend configuration contract
 
+## Administration shell
+
+The administration shell has no client-configurable API origin. It uses
+same-origin requests under `/api/control/v1`, keeps the selected site in the
+canonical `/admin/sites/{site_id}` URL, and does not persist site, permission,
+session, or capability claims in browser storage. NGINX remains the only
+published origin in the default topology.
+
+Tailwind CSS is compiled into the application build. The in-repository UI
+primitives and exact Radix primitive dependency require no CDN, font host,
+telemetry endpoint, hosted account, or runtime package service.
+
 The current Python backend has shared typed configuration for long-running
 services, separate Control and Render online database models, and
 separate typed configuration for explicit one-shot database bootstrap. Control

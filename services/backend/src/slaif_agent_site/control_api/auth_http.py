@@ -85,6 +85,7 @@ def _secure_headers(response: Response) -> None:
 def _private_control_path(path: str) -> bool:
     return (
         path in _AUTH_PATHS
+        or path == "/api/control/v1/me/sites"
         or path == "/api/control/v1/sites"
         or path.startswith("/api/control/v1/sites/")
     )

@@ -36,6 +36,7 @@ class RoutePolicyKind(StrEnum):
     BOUND_SESSION_CSRF = "BOUND_SESSION_CSRF"
     PLATFORM_ADMINISTRATOR = "PLATFORM_ADMINISTRATOR"
     AUTHENTICATED_CATALOG_READ = "AUTHENTICATED_CATALOG_READ"
+    CURRENT_HUMAN_READ = "CURRENT_HUMAN_READ"
     SITE_PERMISSION = "SITE_PERMISSION"
 
 
@@ -96,6 +97,9 @@ class RoutePolicy:
                 RouteAuthorityKind.PLATFORM_ADMINISTRATOR
             ),
             RoutePolicyKind.AUTHENTICATED_CATALOG_READ: (
+                RouteAuthorityKind.AUTHENTICATED_SESSION
+            ),
+            RoutePolicyKind.CURRENT_HUMAN_READ: (
                 RouteAuthorityKind.AUTHENTICATED_SESSION
             ),
             RoutePolicyKind.SITE_PERMISSION: RouteAuthorityKind.SITE_PERMISSION,
@@ -237,13 +241,43 @@ ROUTE_POLICIES: Final[tuple[RoutePolicy, ...]] = (
         for method, path, mutation in (
             ("GET", "/api/control/v1/sites", _R),
             ("POST", "/api/control/v1/sites", _M),
-            ("GET", "/api/control/v1/sites/{site_id}", _R),
-            ("PATCH", "/api/control/v1/sites/{site_id}", _M),
             ("POST", "/api/control/v1/sites/{site_id}/archive", _M),
-            ("GET", "/api/control/v1/sites/{site_id}/domains", _R),
-            ("POST", "/api/control/v1/sites/{site_id}/domains", _M),
-            ("PUT", "/api/control/v1/sites/{site_id}/domains/{domain_id}", _M),
-            ("DELETE", "/api/control/v1/sites/{site_id}/domains/{domain_id}", _M),
+        )
+    ),
+    *(
+        _policy(
+            _CONTROL,
+            method,
+            path,
+            mutation,
+            True,
+            mutation is _M,
+            _SITE,
+            RoutePolicyKind.SITE_PERMISSION,
+            permission,
+        )
+        for method, path, mutation, permission in (
+            ("GET", "/api/control/v1/sites/{site_id}", _R, "site:read"),
+            ("PATCH", "/api/control/v1/sites/{site_id}", _M, "site-policy:manage"),
+            ("GET", "/api/control/v1/sites/{site_id}/domains", _R, "site:read"),
+            (
+                "POST",
+                "/api/control/v1/sites/{site_id}/domains",
+                _M,
+                "site-domain:manage",
+            ),
+            (
+                "PUT",
+                "/api/control/v1/sites/{site_id}/domains/{domain_id}",
+                _M,
+                "site-domain:manage",
+            ),
+            (
+                "DELETE",
+                "/api/control/v1/sites/{site_id}/domains/{domain_id}",
+                _M,
+                "site-domain:manage",
+            ),
         )
     ),
     *(
@@ -258,6 +292,22 @@ ROUTE_POLICIES: Final[tuple[RoutePolicy, ...]] = (
             RoutePolicyKind.AUTHENTICATED_CATALOG_READ,
         )
         for path in ("/api/control/v1/roles", "/api/control/v1/permissions")
+    ),
+    *(
+        _policy(
+            _CONTROL,
+            "GET",
+            path,
+            _R,
+            True,
+            False,
+            _SESSION,
+            RoutePolicyKind.CURRENT_HUMAN_READ,
+        )
+        for path in (
+            "/api/control/v1/me/sites",
+            "/api/control/v1/sites/{site_id}/my-authority",
+        )
     ),
     *(
         _policy(

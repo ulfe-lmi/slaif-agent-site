@@ -1,5 +1,22 @@
 # Control HTTP API
 
+## Current-human administration reads
+
+`GET /api/control/v1/me/sites` requires a valid human session and returns a
+deterministically ordered, server-filtered site summary list. Platform
+Administrators receive all sites, including archived status, with an explicit
+global flag and null membership fields. Ordinary active users receive only
+active sites with active memberships and their role, membership version,
+ceilings, and safe site summary fields.
+
+`GET /api/control/v1/sites/{site_id}/my-authority` returns only the current
+human's authority for the path-selected site. A global administrator receives
+no synthetic membership and an empty permission list; an ordinary member
+receives effective permission keys. Neither route accepts user, role,
+permission, Host, forwarded, query-authority, or mutation input. Stable statuses
+are `401`, constant `404`, and `503`; responses are private/no-store/noindex and
+contain no profile, credential, token, cookie, digest, or database locator.
+
 The Control service exposes a bounded local-authentication boundary under
 `/api/control/v1`. Existing NGINX routing makes these backend endpoints
 externally reachable in the default topology. Public OpenAPI and documentation
@@ -54,6 +71,14 @@ timeout failures are 503. Successes and errors are private/no-store/noindex and
 request-ID correlated. Publication remains an explicit permission independent
 of role ceiling or edit authority.
 
+The responsive admin client validates catalog and membership responses, sorts
+memberships by exact user UUID, and sends only these documented request shapes
+with same-origin credentials and the existing CSRF proof. A stale-version 409
+refreshes the current server record. Client-hidden self controls and
+permission-driven read-only states are usability measures, not authorization.
+The client accepts only an existing user UUID; it does not create identities,
+invitations, login credentials, or custom roles.
+
 ## Route-policy registry
 
 Every actual Control and Editor handler has one immutable declaration keyed by
@@ -66,12 +91,15 @@ declarations. HEAD and OPTIONS are not registered handler methods and retain
 their deterministic framework 405 behavior. The registry audits enforcement;
 handlers and database policy remain authoritative.
 
-## Platform Administrator site API
+## Site governance API
 
-Every route below requires a current server-side human session whose active
-user has a current `platform_administrator` assignment. Safe `GET` requests do
-not use CSRF. Every state-changing request additionally requires the bound CSRF
-cookie and exactly one matching `X-CSRF-Token` header.
+Every route requires a current server-side human session. Site creation and
+archive require Platform Administrator authority; archive also requires recent
+authentication. Detail/domain reads require `site:read`, profile updates
+require `site-policy:manage`, and domain mutations require
+`site-domain:manage`, unless the caller is a Platform Administrator. Safe GETs
+do not use CSRF; every mutation requires the bound CSRF cookie and one matching
+`X-CSRF-Token` header.
 
 | Route | Success | Request body |
 | --- | --- | --- |

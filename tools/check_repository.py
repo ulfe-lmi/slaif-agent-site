@@ -201,7 +201,7 @@ REQUIRED_FILES = (
         ".github/pull_request_template.md",
         ".github/workflows/ci.yml",
         ".github/workflows/codeql.yml",
-        ".markdownlint-cli2.yaml",
+        ".markdownlint-cli2.jsonc",
         "AGENTS.md",
         "ARCHITECTURE.md",
         "ARCHITECTURE-for-agents.md",
@@ -248,10 +248,13 @@ REQUIRED_FILES = (
         "services/backend/src/slaif_agent_site/bootstrap/setup_token.py",
         "services/backend/src/slaif_agent_site/control_api/config.py",
         "services/backend/src/slaif_agent_site/control_api/auth_http.py",
+        "services/backend/src/slaif_agent_site/control_api/current_human_http.py",
         "services/backend/src/slaif_agent_site/control_api/membership_http.py",
         "services/backend/src/slaif_agent_site/control_api/route_policy.py",
         "services/backend/src/slaif_agent_site/control_api/site_http.py",
         "services/backend/src/slaif_agent_site/control_api/database.py",
+        "services/backend/src/slaif_agent_site/db/alembic/versions/014_001_human_rbac.py",
+        "services/backend/src/slaif_agent_site/db/alembic/versions/015_001_admin_read_model.py",
         "services/backend/src/slaif_agent_site/application.py",
         "services/backend/src/slaif_agent_site/authority.py",
         "services/backend/src/slaif_agent_site/config.py",
@@ -714,30 +717,43 @@ class RepositoryPolicy:
                 self.error(path, f"required internal link is absent: {required}")
 
     def check_markdown_configuration(self) -> None:
-        path = self.root / ".markdownlint-cli2.yaml"
+        path = self.root / ".markdownlint-cli2.jsonc"
         if not path.is_file():
             return
         text = self.read_utf8(path)
         if text is None:
             return
-        report_exact = '  - "oap/reports/010-i-qualify-session-finalizer-update.md"'
-        order_exact = '  - "oap/orders/011-b-platform-admin-site-http.md"'
-        lines = set(text.splitlines())
-        if report_exact not in lines:
+        report_exact = '"oap/reports/010-i-qualify-session-finalizer-update.md"'
+        order_exact = '"oap/orders/011-b-platform-admin-site-http.md"'
+        if report_exact not in text:
             self.error(path, "missing exact immutable-report ignore")
-        if order_exact not in lines:
+        if order_exact not in text:
             self.error(path, "missing exact immutable-order ignore")
         if "Immutable strategic prose" not in text:
             self.error(path, "immutable-order ignore must be explained")
-        for line in lines:
-            if (
-                line.startswith("  - ")
-                and "oap/reports" in line
-                and line != report_exact
-            ):
-                self.error(path, "must not broadly ignore OAP reports")
-            if line.startswith("  - ") and "oap/orders" in line and line != order_exact:
-                self.error(path, "must not broadly ignore OAP orders")
+        # Verify the exact immutable ignores exist as JSON string values.
+        # The override filter entry for 013-l is an allowed per-file exception.
+        allowed_report_paths = {
+            report_exact,
+            '"oap/reports/013-l-diagnose-modal-containment-timeout.md"',
+        }
+        allowed_order_paths = {order_exact}
+        for line in text.splitlines():
+            stripped = line.strip().rstrip('",').strip()
+            if "oap/reports" in stripped:
+                # Skip lines that are part of a JSON key or array element
+                # inside an override/filter structure (not a direct ignore).
+                if '"filter"' in stripped:
+                    continue
+                value = stripped.lstrip('"').rstrip('"')
+                full = f'"{value}"'
+                if full not in allowed_report_paths and not stripped.startswith("//"):
+                    self.error(path, f"must not broadly ignore OAP reports: {stripped}")
+            if "oap/orders" in stripped:
+                value = stripped.lstrip('"').rstrip('"')
+                full = f'"{value}"'
+                if full not in allowed_order_paths and not stripped.startswith("//"):
+                    self.error(path, f"must not broadly ignore OAP orders: {stripped}")
 
     def check_oap(self) -> None:
         active_path = self.root / "oap/active"
@@ -1190,12 +1206,13 @@ class RepositoryPolicy:
                 "private": True,
                 "license": "Apache-2.0",
                 "scripts": {
-                    "build": "NEXT_TELEMETRY_DISABLED=1 next build",
+                    "build": "NEXT_TELEMETRY_DISABLED=1 next build --webpack",
                     "lint": "eslint --config eslint.config.mjs . --max-warnings 0",
                     "typecheck": "tsc --noEmit",
                     "test": "node --test tests/*.test.mjs",
                 },
                 "dependencies": {
+                    "@radix-ui/react-dialog": "1.1.23",
                     "next": "16.3.1",
                     "react": "19.2.8",
                     "react-dom": "19.2.8",
@@ -1204,6 +1221,9 @@ class RepositoryPolicy:
                     "@types/node": "24.13.3",
                     "@types/react": "19.2.18",
                     "@types/react-dom": "19.2.4",
+                    "autoprefixer": "10.5.4",
+                    "postcss": "8.5.26",
+                    "tailwindcss": "3.4.19",
                     "typescript": "6.0.3",
                 },
             },
@@ -1384,6 +1404,14 @@ class RepositoryPolicy:
             return
         if not text.startswith("lockfileVersion: '9.0'\n"):
             self.error(path, "lockfile version must be the pnpm 11 format")
+        forbidden_ui_build = re.search(
+            r"@tailwindcss/postcss|lightningcss(?:-|@)|tailwindcss@4\.", text
+        )
+        if forbidden_ui_build:
+            self.error(
+                path,
+                f"forbidden UI build package {forbidden_ui_build.group(0)}",
+            )
 
         audited_text = text
         for slug, package_name in WORKSPACE_PACKAGES.items():

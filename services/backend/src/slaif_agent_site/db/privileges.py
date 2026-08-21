@@ -142,6 +142,11 @@ CONTROL_FUNCTIONS = {
         "p_site_id uuid, p_user_account_id uuid",
     ): "uuid, uuid",
     ("slaif_membership_list", "p_site_id uuid"): "uuid",
+    ("slaif_current_human_sites", "p_user_account_id uuid"): "uuid",
+    (
+        "slaif_current_human_authority",
+        "p_user_account_id uuid, p_site_id uuid",
+    ): "uuid, uuid",
     (
         "slaif_membership_put",
         "p_actor_user_id uuid, p_site_id uuid, p_target_user_id uuid, "

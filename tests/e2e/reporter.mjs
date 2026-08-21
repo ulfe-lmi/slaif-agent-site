@@ -9,8 +9,12 @@ export default class SafeReporter {
     const project = test.parent.project()?.name ?? "unknown";
     const status = result.status === "passed" ? "PASSED" : "FAILED";
     const stage = test.annotations.find((annotation) => annotation.type === "stage");
+    const location = result.error?.location;
+    const safeLocation = location
+      ? ` line=${location.line} column=${location.column}`
+      : "";
     process.stdout.write(
-      `browser-e2e: ${status} project=${project} contract=${test.title} stage=${stage?.description ?? "unknown"}\n`,
+      `browser-e2e: ${status} project=${project} contract=${test.title} stage=${stage?.description ?? "unknown"}${safeLocation}\n`,
     );
   }
 

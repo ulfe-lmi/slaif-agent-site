@@ -35,14 +35,14 @@ class PolicyDatabase:
 
 def test_registry_exact_inventory_and_policy_shapes() -> None:
     keys = [policy.key for policy in ROUTE_POLICIES]
-    assert len(keys) == len(set(keys)) == 25
+    assert len(keys) == len(set(keys)) == 27
     assert {policy.process for policy in ROUTE_POLICIES} == {
         ProcessKind.CONTROL_API,
         ProcessKind.EDITOR_API,
     }
     control = route_policies_for(ProcessKind.CONTROL_API)
     editor = route_policies_for(ProcessKind.EDITOR_API)
-    assert len(control) == 23
+    assert len(control) == 25
     assert len(editor) == 2
     assert all(policy.policy_kind is RoutePolicyKind.SYSTEM_HEALTH for policy in editor)
     membership = [
@@ -57,6 +57,22 @@ def test_registry_exact_inventory_and_policy_shapes() -> None:
     assert all(
         policy.csrf_required is (policy.mutation_class is RouteMutationClass.MUTATION)
         for policy in membership
+    )
+    current_human = [
+        policy
+        for policy in control
+        if policy.policy_kind is RoutePolicyKind.CURRENT_HUMAN_READ
+    ]
+    assert [policy.path_template for policy in current_human] == [
+        "/api/control/v1/me/sites",
+        "/api/control/v1/sites/{site_id}/my-authority",
+    ]
+    assert all(
+        policy.authority_kind is RouteAuthorityKind.AUTHENTICATED_SESSION
+        and policy.mutation_class is RouteMutationClass.READ
+        and not policy.csrf_required
+        and not policy.required_permissions
+        for policy in current_human
     )
 
 

@@ -1,5 +1,12 @@
 # Render resolution security boundary
 
+The admin shell stores no session token, CSRF token, user UUID, permission list,
+or selected site in local/session storage. Requests are same-origin,
+credential-bound, no-store reads. Missing sessions redirect to login; direct
+foreign/unknown site URLs render one constant state without caller-data
+fallback. Tailwind is local build-time CSS and the Radix primitive is
+self-hosted; there are no remote fonts, icons, scripts, telemetry, or origins.
+
 Human authorization rechecks active user, active site, active membership,
 exact site association, current membership version, and permission inside the
 database boundary. Cross-site substitution, self-escalation, stale versions,
@@ -16,6 +23,12 @@ body IDs, roles, and versions never establish site authority. All catalog,
 membership, validation, and error responses are private/no-store/noindex and
 carry one request ID without foreign-site or credential detail.
 
+Site profile and domain routes use server-fetched current membership
+permissions. No request can provide an actor, permission, membership version,
+or recent-auth override. Archive requires current global authority and current
+recent authentication at the server; the confirmation dialog is usability
+protection, not authority.
+
 Clean Compose E2E uses two fixed OIDC fixture identities with a reserved
 non-routable issuer. The smoke harness is their only insertion point; neither
 bootstrap, migrations, Compose configuration, nor product source creates them.
@@ -23,6 +36,16 @@ They have no local credentials, administrator assignment, or enabled OIDC login
 and are destroyed with disposable volumes. Their UUIDs are non-secret metadata
 passed through the existing mode-0600 E2E channel; session, CSRF, setup-token,
 password, and database locators remain excluded from arguments and artifacts.
+
+The clean browser gate performs successful governance mutations only through
+visible UI controls. Direct request calls are limited to concurrency setup,
+crafted negative requests, and read verification. It proves missing/wrong CSRF,
+self-change, system-scope, ceiling, stale-version, cross-site, unknown, and
+archived-route failures leave state unchanged. NGINX response checks require one
+edge request ID, self-only CSP without unsafe inline/eval or remote origins, and
+private/no-store/noindex API responses. Secret values are absent from URL, DOM,
+storage, observed request URLs, console, and retained artifacts; screenshots,
+traces, videos, and HTML reports are disabled locally.
 
 The internal Render API owns one `slaif_public_login` connection pool with the
 sole `slaif_public_reader` membership. Pool initialization verifies database,

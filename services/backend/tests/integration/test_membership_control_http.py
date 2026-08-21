@@ -260,6 +260,61 @@ async def test_catalog_membership_lifecycle_authority_and_site_isolation(
         assert "site:publish" not in created_body["effective_permissions"]
         _assert_safe(created)
 
+        target_read, target_mutate = await _human_headers(adapter, target)
+        beta_only_read, beta_only_mutate = await _human_headers(adapter, beta_only)
+        assert (
+            await client.get(f"/api/control/v1/sites/{alpha}", headers=owner_read)
+        ).status_code == 200
+        owner_profile = await client.patch(
+            f"/api/control/v1/sites/{alpha}",
+            headers=owner_mutate,
+            json={"display_name": "Owner managed", "default_locale": "sl"},
+        )
+        assert owner_profile.status_code == 200
+        owner_domain = await client.post(
+            f"/api/control/v1/sites/{alpha}/domains",
+            headers=owner_mutate,
+            json={
+                "hostname": "owner.example.test",
+                "path_prefix": "/",
+                "is_primary": True,
+            },
+        )
+        assert owner_domain.status_code == 201
+        assert (
+            await client.get(f"/api/control/v1/sites/{alpha}", headers=target_read)
+        ).status_code == 200
+        architect_denied = await client.patch(
+            f"/api/control/v1/sites/{alpha}",
+            headers=target_mutate,
+            json={"display_name": "Denied", "default_locale": "en"},
+        )
+        non_member_read = await client.get(
+            f"/api/control/v1/sites/{alpha}", headers=beta_only_read
+        )
+        non_member_write = await client.post(
+            f"/api/control/v1/sites/{alpha}/domains",
+            headers=beta_only_mutate,
+            json={
+                "hostname": "denied.example.test",
+                "path_prefix": "/",
+                "is_primary": False,
+            },
+        )
+        assert architect_denied.status_code in {403, 404}
+        assert non_member_read.status_code == non_member_write.status_code == 404
+        assert (
+            await client.get(f"/api/control/v1/sites/{alpha}", headers=owner_read)
+        ).json()["display_name"] == "Owner managed"
+        assert [
+            row["hostname"]
+            for row in (
+                await client.get(
+                    f"/api/control/v1/sites/{alpha}/domains", headers=owner_read
+                )
+            ).json()
+        ] == ["owner.example.test"]
+
         listed = await client.get(
             f"/api/control/v1/sites/{alpha}/memberships", headers=owner_read
         )
@@ -375,6 +430,19 @@ async def test_catalog_membership_lifecycle_authority_and_site_isolation(
         )
         assert lower.status_code == 201
         viewer_read, _viewer_mutate = await _human_headers(adapter, viewer)
+        assert (
+            await client.get(f"/api/control/v1/sites/{alpha}", headers=viewer_read)
+        ).status_code == 200
+        viewer_domain_denied = await client.post(
+            f"/api/control/v1/sites/{alpha}/domains",
+            headers=(await _human_headers(adapter, viewer))[1],
+            json={
+                "hostname": "viewer-denied.example.test",
+                "path_prefix": "/",
+                "is_primary": False,
+            },
+        )
+        assert viewer_domain_denied.status_code in {403, 404}
         lower_denied = await client.get(
             f"/api/control/v1/sites/{alpha}/memberships", headers=viewer_read
         )

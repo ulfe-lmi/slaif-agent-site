@@ -101,12 +101,13 @@ class RepositoryPolicyTestCase(unittest.TestCase):
                 "private": True,
                 "license": "Apache-2.0",
                 "scripts": {
-                    "build": "NEXT_TELEMETRY_DISABLED=1 next build",
+                    "build": "NEXT_TELEMETRY_DISABLED=1 next build --webpack",
                     "lint": "eslint --config eslint.config.mjs . --max-warnings 0",
                     "typecheck": "tsc --noEmit",
                     "test": "node --test tests/*.test.mjs",
                 },
                 "dependencies": {
+                    "@radix-ui/react-dialog": "1.1.23",
                     "next": "16.3.1",
                     "react": "19.2.8",
                     "react-dom": "19.2.8",
@@ -115,6 +116,9 @@ class RepositoryPolicyTestCase(unittest.TestCase):
                     "@types/node": "24.13.3",
                     "@types/react": "19.2.18",
                     "@types/react-dom": "19.2.4",
+                    "autoprefixer": "10.5.4",
+                    "postcss": "8.5.26",
+                    "tailwindcss": "3.4.19",
                     "typescript": "6.0.3",
                 },
             },
@@ -214,6 +218,7 @@ class RepositoryPolicyTestCase(unittest.TestCase):
             "services/backend/src/slaif_agent_site/db/alembic/versions/012_001_control_auth_http.py",
             "services/backend/src/slaif_agent_site/db/alembic/versions/013_001_site_foundation.py",
             "services/backend/src/slaif_agent_site/db/alembic/versions/014_001_human_rbac.py",
+            "services/backend/src/slaif_agent_site/db/alembic/versions/015_001_admin_read_model.py",
             "services/backend/src/slaif_agent_site/sites/models.py",
             "services/backend/src/slaif_agent_site/sites/normalization.py",
             "services/backend/src/slaif_agent_site/sites/service.py",
@@ -221,6 +226,7 @@ class RepositoryPolicyTestCase(unittest.TestCase):
             "services/backend/src/slaif_agent_site/human_authorization/models.py",
             "services/backend/src/slaif_agent_site/human_authorization/service.py",
             "services/backend/src/slaif_agent_site/control_api/auth_http.py",
+            "services/backend/src/slaif_agent_site/control_api/current_human_http.py",
             "services/backend/src/slaif_agent_site/control_api/membership_http.py",
             "services/backend/src/slaif_agent_site/control_api/route_policy.py",
             "services/backend/src/slaif_agent_site/control_api/site_http.py",
@@ -506,7 +512,7 @@ class RepositoryPolicyTestCase(unittest.TestCase):
         self,
     ) -> None:
         self.write(
-            ".markdownlint-cli2.yaml",
+            ".markdownlint-cli2.jsonc",
             'ignores:\n  - "oap/reports/**"\n',
         )
 
@@ -523,7 +529,7 @@ class RepositoryPolicyTestCase(unittest.TestCase):
         )
 
         self.write(
-            ".markdownlint-cli2.yaml",
+            ".markdownlint-cli2.jsonc",
             "# Immutable strategic prose is retained byte-for-byte.\n"
             "ignores:\n"
             '  - "oap/reports/010-i-qualify-session-finalizer-update.md"\n'
@@ -956,6 +962,24 @@ class RepositoryPolicyTestCase(unittest.TestCase):
         )
         errors = self.errors_from("check_pnpm_lock", lock_path)
         self.assertTrue(any("lacks sha512 integrity" in error for error in errors))
+
+    def test_pnpm_lock_rejects_forbidden_ui_build_chain(self) -> None:
+        for package in (
+            "tailwindcss@4.3.3",
+            "@tailwindcss/postcss@4.3.3",
+            "lightningcss@1.32.0",
+            "lightningcss-linux-x64-gnu@1.32.0",
+        ):
+            with self.subTest(package=package):
+                self.write_node_workspace()
+                lock_path = self.root / "pnpm-lock.yaml"
+                lock_path.write_text(
+                    lock_path.read_text(encoding="utf-8") + f"\n  {package}:\n"
+                    "    resolution: {integrity: sha512-YWJjZA==}\n",
+                    encoding="utf-8",
+                )
+                errors = self.errors_from("check_pnpm_lock", lock_path)
+                self.assertTrue(any("forbidden UI build" in error for error in errors))
 
     def test_workflow_accepts_exact_pnpm_action_pin(self) -> None:
         setup_pnpm = APPROVED_ACTIONS["pnpm/action-setup"]
