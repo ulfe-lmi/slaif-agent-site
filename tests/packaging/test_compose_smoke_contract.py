@@ -50,14 +50,13 @@ class ComposeSmokeContractTests(unittest.TestCase):
         self.assertIn('while test "$attempt" -lt 40', source)
         self.assertIn("render-locator-recovery: failed service=", source)
         marker = (
-            "render-locator-recovery: restored render=healthy "
-            "web=healthy nginx=healthy"
+            "render-locator-recovery: restored render=healthy web=healthy nginx=healthy"
         )
         self.assertEqual(source.count(marker), 1)
         render = source.index("wait_healthy render-api")
         web = source.index("wait_healthy web", render)
         nginx = source.index("wait_healthy nginx", web)
-        global_wait = source.index('up --wait >/dev/null', nginx)
+        global_wait = source.index("up --wait >/dev/null", nginx)
         self.assertLess(render, web)
         self.assertLess(web, nginx)
         self.assertLess(nginx, global_wait)
