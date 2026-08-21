@@ -170,6 +170,14 @@ functions. See
 
 ## Deferred configuration
 
+The installation-bound `control.site_policy` singleton stores a bounded
+`max_sites` quota (default 100,
+valid range 1 through 1000). It is owner-managed installation policy, not an
+environment variable or caller-controlled site-create field. Site keys,
+locales, hostnames, and path prefixes are normalized by trusted Control code;
+there is no wildcard-domain, trusted-proxy, or forwarded-header setting in
+this round.
+
 The default initializer generates future service DSN files, but only the exact
 Control DSN is copied into a separate mounted volume. All other online service
 database locators/pools, identity providers, browser sources,

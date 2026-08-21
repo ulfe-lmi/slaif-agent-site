@@ -32,6 +32,9 @@ ALLOWED_CLEAN_RELATIONS = {
     ("control", "platform_administrator"),
     ("control", "user_account"),
     ("control", "user_session"),
+    ("control", "site"),
+    ("control", "site_domain"),
+    ("control", "site_policy"),
 }
 FOUNDATION_SCHEMA = "agentcow"
 CONTROL_READINESS_FUNCTION = "slaif_control_readiness"
@@ -83,6 +86,32 @@ CONTROL_FUNCTIONS = {
         "p_user_account_id uuid, p_expected_password_hash text, "
         "p_new_password_hash text",
     ): "uuid, text, text",
+    (
+        "slaif_site_create",
+        "p_site_key text, p_display_name text, p_default_locale text, "
+        "p_component_catalog_version text",
+    ): "text, text, text, text",
+    ("slaif_site_get", "p_site_id uuid"): "uuid",
+    ("slaif_site_list", ""): "",
+    (
+        "slaif_site_update",
+        "p_site_id uuid, p_display_name text, p_default_locale text",
+    ): "uuid, text, text",
+    ("slaif_site_archive", "p_site_id uuid"): "uuid",
+    (
+        "slaif_site_domain_put",
+        "p_site_id uuid, p_domain_id uuid, p_hostname text, "
+        "p_path_prefix text, p_is_primary boolean",
+    ): "uuid, uuid, text, text, boolean",
+    (
+        "slaif_site_domain_remove",
+        "p_site_id uuid, p_domain_id uuid",
+    ): "uuid, uuid",
+    (
+        "slaif_site_resolve",
+        "p_hostname text, p_path text",
+    ): "text, text",
+    ("slaif_site_resolve_local", "p_site_key text"): "text",
 }
 
 

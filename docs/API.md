@@ -20,4 +20,14 @@ The Next.js setup/login/admin UI and clean Compose authentication journey use
 these same-origin routes. Six self-hosted Playwright browser/device projects
 prove setup, login, authenticated admin, and logout through NGINX. Rate
 limiting, durable authentication audit, OIDC, MFA,
-sites, and membership management also remain absent.
+site-management HTTP routes and membership management also remain absent.
+
+## Internal site service boundary
+
+The Control process now has a typed, database-backed semantic service for
+creating, reading, listing, updating, and archiving sites; managing domain
+mappings; and resolving trusted request host/path inputs. This is an internal
+application boundary only: objective 011-a adds no public HTTP endpoint and no
+request may supply a site UUID as routing authority. Trusted server code
+derives an immutable `SiteContext` after successful resolution. See
+[Sites](SITES.md) for normalization and resolution rules.

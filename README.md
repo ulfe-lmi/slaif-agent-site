@@ -30,13 +30,14 @@ the real responsive result, and publish only after human review.
 > exposes an honest Next.js status surface, health routes, and bounded backend
 > Control authentication endpoints through NGINX
 > on <http://localhost:8080/>.
-> The database revision contains only schema/version/readiness infrastructure;
-> its clean zero-object content state is explicitly `EMPTY_SAFE` without
+> The database now includes non-COW Control-owned site and domain records plus
+> a typed internal site service and trusted host/path resolver. Its clean
+> zero-object content state remains explicitly `EMPTY_SAFE` without
 > claiming foundation table hardening. Any real content object requires the
 > fully validated `HARDENED` state. A local human authentication/setup UI is
 > implemented and qualified through six self-hosted Playwright browser/device
-> projects; sites,
-> workspaces, editing/Puck, product routes/tables, database-backed product APIs,
+> projects. Public site-management routes and UI, site membership,
+> workspaces, editing/Puck, content tables and APIs,
 > runtime browser commands, review, publication, and product behavior are
 > not implemented yet. Control API alone owns one isolated file-backed
 > login, bounded asyncpg pool, and read-only database readiness component; no
@@ -177,7 +178,8 @@ first-run administrator or website-management product. See the
 | Completed supply-chain baseline | Reproducible Python/Web artifacts, exact source/action/base/scanner policy, deterministic notices, six-image SPDX SBOMs, fresh Grype scans, and checksummed retained CI evidence. |
 | Completed Control readiness boundary | Isolated `slaif_control_login` mount, bounded identity-verified Control pool, one owner-defined read-only readiness function, and fail-closed Control/NGINX health dependency. |
 | Completed local authentication proof | One-time setup plus login/session/logout through real NGINX/Compose on desktop Chromium, Firefox, WebKit, tablet, mobile Chromium, and mobile WebKit. |
-| Planned product work | Add sites/workspaces, configurable content, normalized composition/Puck, semantic tools, runtime browser feedback, review/promotion, reconstruction, and hardening. |
+| Completed site foundation | Control-owned sites and domain mappings, bounded installation quota, strict identifier normalization, immutable site context, and trusted longest-prefix/local-development resolution. |
+| Planned product work | Add site-management HTTP/UI, memberships, workspaces, configurable content, normalized composition/Puck, semantic tools, runtime browser feedback, review/promotion, reconstruction, and hardening. |
 
 See [Architecture Section 50](ARCHITECTURE.md#50-implementation-phases) for
 the normative phase plan.
@@ -220,6 +222,7 @@ product work. Control readiness has one injected database component, while
 its liveness remains process-only. Bootstrap mutations require explicit
 one-shot commands. See the
 [configuration contract](docs/CONFIGURATION.md),
+[site foundation](docs/SITES.md),
 [database bootstrap](docs/DATABASE_BOOTSTRAP.md),
 [database roles](docs/DATABASE_ROLES.md), and
 [database connection boundary](docs/DATABASE_CONNECTIONS.md), with process

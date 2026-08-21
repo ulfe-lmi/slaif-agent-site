@@ -43,6 +43,15 @@ Revision `011_001` adds only `slaif_control` execution on local-login lookup
 and password-hash compare-and-set functions. No role receives direct
 `user_account` relation access; plaintext passwords never reach PostgreSQL.
 
+Revision `013_001` adds the non-COW `control.site`, `control.site_domain`, and
+installation-bound `control.site_policy` relations. Only `slaif_owner` owns or accesses the
+relations directly. `slaif_control` receives execution on the exact bounded
+site CRUD, domain-mapping, archive, and resolution functions; it receives no
+table, sequence, or column grant. Every runtime, reader, reviewer, scheduler,
+media, and GC role is denied both relation and function authority. Site and
+operation identifiers are generated or selected inside trusted server/database
+code, and archive is the only exposed removal lifecycle.
+
 ## Login-principal design
 
 Privilege roles never contain passwords. The local deployment provisions this

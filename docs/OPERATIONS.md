@@ -147,6 +147,19 @@ The default binds `127.0.0.1:8080`. Stop the unrelated local listener or use a
 separately reviewed override; do not publish an internal service directly as a
 workaround.
 
+### Site resolution and quota
+
+Site creation fails safely when the owner-managed `max_sites` quota is reached,
+including concurrent attempts. Operators may archive a site but there is no
+online delete operation. Domain mappings are exact normalized host plus path
+prefix pairs; resolution selects the unique longest matching prefix and only
+returns active sites. The primary mapping cannot be removed until another
+mapping is made primary. Local development additionally resolves only the
+reserved `/s/<site-key>` form on `localhost`; callers cannot provide a site
+UUID or revision override. Diagnose mapping data through the Control semantic
+service and disposable integration tests—never by granting relation access to
+an online role.
+
 ## Verification
 
 The destructive packaging smoke uses only a validated explicit project name:

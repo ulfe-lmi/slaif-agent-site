@@ -39,6 +39,7 @@ from slaif_agent_site.identity.sessions import (
     HumanSessionPolicy,
     HumanSessionService,
 )
+from slaif_agent_site.sites.service import SiteService
 
 from .config import ControlDatabaseConfigurationError, ControlDatabaseSettings
 
@@ -395,6 +396,15 @@ class ControlDatabase:
             acquire_timeout=self._settings.acquire_timeout_seconds,
             password_service=self._password_service,
         ).authenticate(request)
+
+    def site_service(self) -> SiteService:
+        """Return the Control-only semantic site adapter for this pool."""
+
+        if self._pool is None:
+            raise ControlDatabaseError(ControlDatabaseReason.CONNECTION_UNAVAILABLE)
+        return SiteService(
+            self._pool, acquire_timeout=self._settings.acquire_timeout_seconds
+        )
 
 
 __all__ = [
