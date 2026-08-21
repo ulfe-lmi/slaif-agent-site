@@ -114,6 +114,10 @@ test("setup-desktop-phone-and-initialize", async ({ page }) => {
   expect(archived.status()).toBe(200);
   expect((await page.request.get("/s/second/")).status()).toBe(404);
 
+  stage("authenticated-admin-return");
+  await page.goto("/admin");
+  await expect(page.getByText("Authenticated session active.")).toBeVisible();
+
   stage("cookie-policy");
   const cookies = await page.context().cookies();
   const session = cookies.find((cookie) => cookie.name === "slaif_session");
