@@ -84,13 +84,7 @@ docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif \
      IF (SELECT initialized_at IS NOT NULL FROM control.installation_state WHERE singleton)
         OR EXISTS (SELECT 1 FROM control.platform_administrator)
         OR EXISTS (SELECT 1 FROM control.site_membership)
-        OR EXISTS (
-          SELECT 1 FROM control.user_account
-          WHERE id IN (
-            '12000000-0000-4000-8000-000000000001'::uuid,
-            '12000000-0000-4000-8000-000000000002'::uuid
-          )
-        )
+        OR EXISTS (SELECT 1 FROM control.user_account)
      THEN
        RAISE EXCEPTION 'unexpected fixture precondition';
      END IF;
@@ -144,20 +138,36 @@ docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif -v ON_ERROR_STOP=1
     '12000000-0000-4000-8000-000000000002|demo|VIEWER|ACTIVE|1')"
 docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif -v ON_ERROR_STOP=1 -Atc \
   "SET ROLE slaif_owner;
-   SELECT count(*) = 2 AND bool_and(
-     identity_kind = 'OIDC' AND status = 'ACTIVE'
-     AND local_username IS NULL AND local_username_normalized IS NULL
-     AND password_hash IS NULL AND email IS NULL
-     AND oidc_issuer = 'https://fixture.invalid'
-     AND NOT EXISTS (
-       SELECT 1 FROM control.platform_administrator administrator
-       WHERE administrator.user_account_id = account.id
-     )
-   ) FROM control.user_account account
-   WHERE id IN (
-     '12000000-0000-4000-8000-000000000001'::uuid,
-     '12000000-0000-4000-8000-000000000002'::uuid
-   );" | grep -q '^t$'
+   SELECT count(*) = 3
+     AND count(*) FILTER (WHERE
+       identity_kind = 'OIDC' AND status = 'ACTIVE'
+       AND local_username IS NULL AND local_username_normalized IS NULL
+       AND password_hash IS NULL AND email IS NULL
+       AND oidc_issuer = 'https://fixture.invalid'
+       AND (id, oidc_subject, display_name) IN (
+         ('12000000-0000-4000-8000-000000000001'::uuid,
+          'compose-fixture-subject-one', 'Compose Fixture One'),
+         ('12000000-0000-4000-8000-000000000002'::uuid,
+          'compose-fixture-subject-two', 'Compose Fixture Two')
+       )
+       AND NOT EXISTS (
+         SELECT 1 FROM control.platform_administrator administrator
+         WHERE administrator.user_account_id = account.id
+       )
+     ) = 2
+     AND count(*) FILTER (WHERE
+       identity_kind = 'LOCAL' AND status = 'ACTIVE'
+       AND local_username IS NOT NULL
+       AND local_username_normalized IS NOT NULL
+       AND password_hash IS NOT NULL
+       AND oidc_issuer IS NULL AND oidc_subject IS NULL
+       AND EXISTS (
+         SELECT 1 FROM control.platform_administrator administrator
+         WHERE administrator.user_account_id = account.id
+       )
+     ) = 1
+     AND (SELECT count(*) FROM control.platform_administrator) = 1
+   FROM control.user_account account;" | grep -q '^t$'
 echo "membership-e2e: OK fixtures=2 sites=2 lifecycle=created-updated-deactivated privacy=verified"
 for path in \
   /health/live \
