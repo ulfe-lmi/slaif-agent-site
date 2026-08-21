@@ -1,4 +1,30 @@
-export default function Home() {
+import { headers } from "next/headers";
+import { notFound } from "next/navigation";
+
+import { resolveSiteContext } from "../src/sites/render";
+import { SiteContextShell } from "../src/sites/shell";
+
+function isLoopbackAuthority(authority: string): boolean {
+  try {
+    const parsed = new URL(`http://${authority}`);
+    return (
+      parsed.username === "" &&
+      parsed.password === "" &&
+      parsed.pathname === "/" &&
+      ["localhost", "127.0.0.1", "[::1]"].includes(parsed.hostname.toLowerCase())
+    );
+  } catch {
+    return false;
+  }
+}
+
+export default async function Home() {
+  const authority = (await headers()).get("host") ?? "";
+  if (!isLoopbackAuthority(authority)) {
+    const context = await resolveSiteContext(authority, "/");
+    if (!context) notFound();
+    return <SiteContextShell context={context} />;
+  }
   return (
     <main>
       <section className="hero" aria-labelledby="page-title">

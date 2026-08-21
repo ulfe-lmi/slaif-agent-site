@@ -36,13 +36,15 @@ the real responsive result, and publish only after human review.
 > claiming foundation table hardening. Any real content object requires the
 > fully validated `HARDENED` state. A local human authentication/setup UI is
 > implemented and qualified through six self-hosted Playwright browser/device
-> projects. Site-management UI, site membership,
+> projects. A fresh reference stack seeds one demo site and serves a small
+> Web→Render routing-context shell for active local or custom-host mappings;
+> this is routing evidence, not site content or publication. Site-management UI, site membership,
 > workspaces, editing/Puck, content tables and APIs,
 > runtime browser commands, review, publication, and product behavior are
 > not implemented yet. Control API alone owns one isolated file-backed login,
 > bounded asyncpg pool, readiness/authentication adapters, and the bounded site
-> semantic service; no
-> other online process receives a database credential.
+> semantic service. Render alone receives a separate fixed public-reader
+> locator; Web and every other online process remain database-credential-free.
 
 The current automation also migrates/rebuilds disposable databases, verifies
 the exact role/ownership/grant matrix, exercises COW runtime/reviewer paths,

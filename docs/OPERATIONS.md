@@ -7,10 +7,12 @@ public-reader identity, and fails readiness closed on configuration,
 connectivity, role, or migration mismatch. Shutdown drains the pool within the
 configured bound and terminates it on timeout. `python -m
 slaif_agent_site.render_api --check` performs no locator read or connection.
-No Render DSN is distributed by the default stack in this round, so operators
-must not claim the endpoint is deployed or publicly routed. The unchanged
-development Compose process therefore remains its health-only scaffold; a
-mounted fixed locator activates the internal resolver application.
+Reference Compose derives a one-file `render-secret` volume from the master
+public-reader locator and mounts it read-only only in Render. Web calls the
+fixed internal resolver URL and has no database credential. The endpoint is
+never edge-routed. Removing or corrupting the locator makes Render unhealthy,
+Web readiness return 503, and NGINX become unhealthy; restore the coordinated
+secret rather than adding a fallback.
 
 The Control process is the only online authority for local credential lookup
 and compare-and-set password rehash. It uses fixed-cost Argon2id and an
@@ -35,8 +37,9 @@ pnpm exec playwright install --with-deps chromium firefox webkit
 sudo tools/compose/smoke.sh slaif009auth
 ```
 
-The smoke runs setup at desktop and 320-pixel phone viewports, followed by
-login/admin/logout on `desktop-chromium`, `desktop-firefox`, `desktop-webkit`,
+The smoke first renders `/s/demo/` at desktop and 320-pixel phone viewports,
+then runs setup and creates a second site/domain through authenticated Control
+APIs, followed by login/admin/logout on `desktop-chromium`, `desktop-firefox`, `desktop-webkit`,
 `tablet`, `mobile-chromium`, and `mobile-webkit`. It retains no trace,
 screenshot, video, HTML report, storage state, or credential file.
 
@@ -51,7 +54,7 @@ docker compose down --remove-orphans
 ```
 
 The final command preserves named data and secrets. `docker compose stop`
-followed by `docker compose up --wait` reuses all four volumes and revalidates
+followed by `docker compose up --wait` reuses all five volumes and revalidates
 the same generated credentials. Bootstrap must print exactly a safe result
 shaped as:
 
@@ -88,10 +91,10 @@ output only in an operator-approved secret channel and see
 ## Volumes, backup, and cleanup
 
 The default named volumes are `postgres-data`, `media-data`, `local-secrets`,
-and `control-secret`, prefixed by the Compose project name. PostgreSQL data,
-master local secrets, and the derived Control secret must be backed up and
-restored together. The media volume is only a placeholder in this slice; no
-media behavior exists.
+`control-secret`, and `render-secret`, prefixed by the Compose project name.
+PostgreSQL data, master local secrets, and both derived online secrets must be
+backed up and restored together. The media volume is only a placeholder in
+this slice; no media behavior exists.
 
 There is no automated credential rotation yet. Replacing only password or DSN
 files can desynchronize PostgreSQL principals and make bootstrap fail closed.
@@ -134,6 +137,10 @@ login-membership, inventory, or readiness-marker failure. NGINX cannot start
 until bootstrap exits zero with an independently validated safe-empty marker.
 Use the documented one-shot commands and database integration tests for a
 disposable diagnosis; do not weaken a grant or marker to bypass the failure.
+The clean smoke captures the intentionally broken-bootstrap output and prints
+one `negative-bootstrap: correctly blocked` marker. Demo seeding is enabled
+only by reference Compose: before setup an exact existing seed is idempotent,
+any other site state fails and rolls back, and after setup it is ignored.
 
 ### Upstream health
 

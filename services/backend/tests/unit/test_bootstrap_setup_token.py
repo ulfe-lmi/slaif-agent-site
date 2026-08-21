@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -66,6 +67,24 @@ def test_token_format_entropy_and_digest_are_deterministic() -> None:
     assert (
         digest_setup_token(token) == hashlib.sha256(plaintext.encode("ascii")).digest()
     )
+
+
+def test_demo_seed_requires_local_manifest_and_loopback_setup(tmp_path: Path) -> None:
+    with pytest.raises(ValidationError):
+        _settings(demo_seed=True)
+    with pytest.raises(ValidationError):
+        _settings(
+            demo_seed=True,
+            local_secrets_dir=tmp_path,
+            setup_url="https://example.test/setup",
+        )
+    seeded = _settings(
+        demo_seed=True,
+        local_secrets_dir=tmp_path,
+        setup_url="http://localhost:8080/setup",
+    )
+    assert seeded.demo_seed is True
+    assert _settings().demo_seed is False
 
 
 def test_token_shape_rejection_and_constant_time_comparison() -> None:

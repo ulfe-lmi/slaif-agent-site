@@ -10,5 +10,12 @@ administrator, session, setup, migration, or publication function. It can call
 only the two active site resolver functions. Resolution derives site identity
 from normalized authority/path input and returns routing facts, not
 authorization. Caller-provided identity, workspace, preview, membership, and
-capability headers have no meaning. The endpoint is internal and has no edge,
-Web, Control, Agent, Editor, or MCP route in this round.
+capability headers have no meaning. Web calls its single fixed URL with only
+the actual request Host and path, no cookies, authorization, forwarded
+identity, or caller-selected base URL. NGINX and Apache explicitly reject
+`/internal/`; Control, Agent, Editor, and MCP expose no route to it.
+
+Compose gives Render one isolated, read-only locator file containing only the
+public-reader DSN. It does not mount the master or Control secret volume. Web
+and the edge have no database locator, and readiness fails closed through
+Render→Web→NGINX if the Render locator is missing or invalid.

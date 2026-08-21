@@ -86,11 +86,14 @@ services:
       - /run/slaif-secrets
       - --control-directory
       - /run/slaif-control
+      - --render-directory
+      - /run/slaif-render
     restart: "no"
     network_mode: none
     volumes:
       - control-secret:/run/slaif-control
       - local-secrets:/run/slaif-secrets
+      - render-secret:/run/slaif-render
 
   postgres:
     <<: *common-security
@@ -139,6 +142,7 @@ services:
     restart: "no"
     environment:
       SLAIF_BOOTSTRAP_EXPECTED_DATABASE: slaif
+      SLAIF_BOOTSTRAP_DEMO_SEED: "true"
       SLAIF_BOOTSTRAP_LOCAL_SECRETS_DIR: /run/slaif-secrets
       SLAIF_BOOTSTRAP_MODE: production
       SLAIF_BOOTSTRAP_OWNER_DSN_FILE: /run/slaif-secrets/owner-dsn
@@ -187,6 +191,20 @@ services:
   render-api:
     <<: *backend-service
     command: ["python", "-m", "slaif_agent_site.render_api"]
+    environment:
+      SLAIF_BIND_HOST: 0.0.0.0
+      SLAIF_BIND_PORT: "8000"
+      SLAIF_LOG_FORMAT: json
+      SLAIF_LOG_LEVEL: INFO
+      SLAIF_MODE: development
+      SLAIF_PUBLIC_URL: http://localhost:8080
+      SLAIF_RENDER_DSN_FILE: /run/slaif-render/render-dsn
+      SLAIF_RENDER_EXPECTED_DATABASE: slaif
+      SLAIF_RENDER_EXPECTED_LOGIN: slaif_public_login
+      SLAIF_RENDER_EXPECTED_PRIVILEGE_ROLE: slaif_public_reader
+      SLAIF_RENDER_MODE: development
+    volumes:
+      - render-secret:/run/slaif-render:ro
     networks: [application, database]
 
   mcp-adapter:
@@ -241,8 +259,8 @@ services:
         - node
         - -e
         - >-
-          fetch('http://127.0.0.1:3100/health/ready').then(r => {
-          if (!r.ok) process.exit(1)}).catch(() => process.exit(1))
+          fetch('http://127.0.0.1:3100/health/ready').then(r => { if (!r.ok)
+          process.exit(1)}).catch(() => process.exit(1))
       interval: 5s
       timeout: 3s
       retries: 12
@@ -273,8 +291,8 @@ services:
         - node
         - -e
         - >-
-          fetch('http://127.0.0.1:3000/health/ready').then(r => {
-          if (!r.ok) process.exit(1)}).catch(() => process.exit(1))
+          fetch('http://127.0.0.1:3000/health/ready').then(r => { if (!r.ok)
+          process.exit(1)}).catch(() => process.exit(1))
       interval: 5s
       timeout: 3s
       retries: 12
@@ -311,8 +329,8 @@ services:
       test:
         - CMD-SHELL
         - >-
-          wget --quiet --spider http://127.0.0.1:8080/health/ready &&
-          wget --quiet --spider http://127.0.0.1:8080/api/control/health/ready
+          wget --quiet --spider http://127.0.0.1:8080/health/ready && wget --quiet
+          --spider http://127.0.0.1:8080/api/control/health/ready
       interval: 5s
       timeout: 3s
       retries: 12
@@ -332,3 +350,4 @@ volumes:
   local-secrets: {}
   media-data: {}
   postgres-data: {}
+  render-secret: {}

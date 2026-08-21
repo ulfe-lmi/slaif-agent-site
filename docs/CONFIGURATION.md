@@ -138,10 +138,11 @@ locator `/run/slaif-render/render-dsn`, and application name
 mode-`0400` locator file; production requires verified-full TLS and an absolute
 root certificate. Direct DSNs are test-only and restricted to loopback or
 `.test`. Check mode validates the static contract without reading the file or
-opening a connection. This round deliberately adds no Compose mount or secret
-distribution. Consequently, the unchanged development Compose service retains
-its health-only scaffold until that fixed locator is mounted; the configured
-Render application fails readiness closed when its database boundary is active.
+opening a connection. Reference Compose mounts only the isolated
+`render-secret` volume at `/run/slaif-render`, read-only. Missing, empty,
+symlinked, broad-mode, wrong-owner, wrong-login, wrong-role, or unavailable
+locator state makes Render readiness fail closed and consequently makes Web and
+NGINX readiness fail.
 
 ## One-shot database configuration
 
@@ -163,6 +164,9 @@ Production accepts only absolute mounted secret files:
 - `SLAIF_BOOTSTRAP_SETUP_URL` optionally sets the absolute HTTP(S) `/setup`
   URL printed separately from a newly issued token; it cannot carry
   credentials, a query, or a fragment.
+- `SLAIF_BOOTSTRAP_DEMO_SEED` defaults to `false`. It may be true only with the
+  local secret manifest and a loopback `/setup` URL. Reference Compose enables
+  it to create the exact fresh active `demo` site before token output.
 
 The local stack uses bootstrap `production` mode because both database locators
 are mounted files. Its health-only long-running services use `development` mode
@@ -193,10 +197,10 @@ locales, hostnames, and path prefixes are normalized by trusted Control code;
 there is no wildcard-domain, trusted-proxy, or forwarded-header setting in
 this round.
 
-The default initializer generates future service DSN files, but only the exact
-Control DSN is copied into a separate mounted volume. Render has an implemented
-pool contract but its DSN is deliberately not distributed by Compose yet. All
-other online service database locators/pools, identity providers, browser sources,
+The default initializer generates future service DSN files. It copies only the
+exact Control DSN and public-reader Render DSN into separate one-file mounted
+volumes; neither online process sees the master volume. All other online
+service database locators/pools, identity providers, browser sources,
 media stores, service authentication, trusted proxies, CORS, sessions, jobs,
 metrics, and product feature settings are not implemented. They must be added
 later under their process-specific authority and architecture work orders.

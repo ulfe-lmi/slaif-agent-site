@@ -4,14 +4,12 @@ import argparse
 
 import uvicorn
 
-from ..application import create_http_application
 from ..authority import ProcessKind
 from ..config import ConfigurationError, ServiceSettings
 from ..logging import configure_json_logging
 from .app import create_app
 from .config import (
     RenderDatabaseConfigurationError,
-    RenderDatabaseMode,
     RenderDatabaseSettings,
 )
 
@@ -23,17 +21,7 @@ def main() -> int:
     try:
         settings = ServiceSettings.load()
         database_settings = RenderDatabaseSettings.load()
-        locator_is_deployed = database_settings.dsn is not None or (
-            database_settings.dsn_file is not None
-            and database_settings.dsn_file.is_file()
-        )
-        app = (
-            create_app(settings=settings, database_settings=database_settings)
-            if args.check
-            or locator_is_deployed
-            or database_settings.mode is not RenderDatabaseMode.DEVELOPMENT
-            else create_http_application(ProcessKind.RENDER_API, settings=settings)
-        )
+        app = create_app(settings=settings, database_settings=database_settings)
     except (ConfigurationError, RenderDatabaseConfigurationError) as error:
         parser.exit(2, f"{error}\n")
     if args.check:

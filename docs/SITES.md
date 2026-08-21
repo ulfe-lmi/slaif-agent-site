@@ -62,14 +62,20 @@ prefix. Equal-best ambiguity fails closed. Only active sites are returned.
 
 For local development, `localhost` can use `/s/<site-key>` and derives the key
 from that trusted path form. It does not accept a caller-provided site UUID.
-Wildcard domains, forwarded-header trust, DNS verification, redirects, and
-production edge routing remain deferred. The internal Render endpoint ignores
-site/workspace/identity headers and returns routing context, never authorization.
+Reference Compose explicitly seeds the active `demo` site only while setup is
+incomplete and the catalog is otherwise empty, so `/s/demo/` needs no domain
+row. After setup, administrators may change or archive it and bootstrap does
+not restore it. Web sends only the actual Host and path to its fixed internal
+Render endpoint. A second API-created site can resolve through `/s/<key>/` or
+an exact custom Host/path-prefix mapping; prefix matching preserves segment
+boundaries. Wildcards, forwarded-header trust, DNS verification, redirects,
+and production edge routing remain deferred.
 
 ## Deferred work
 
-Site-management UI, site membership/RBAC, demo seeding, workspaces, content
-models, editorial content, anonymous public rendering/edge routing, DNS automation, and
-deletion are not implemented. This API does not make the application
+Site-management UI, site membership/RBAC, workspaces, content models, actual
+site content, editor/Puck, agent capabilities, review/publication, DNS
+automation, and deletion are not implemented. The accessible shell proves
+routing context only; it is not a publication surface. This API does not make the application
 production-ready or hostile-tenant-safe. Multi-site support remains trusted
 institutional tenancy and does not claim hostile public-SaaS isolation.

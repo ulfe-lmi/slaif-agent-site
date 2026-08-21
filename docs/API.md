@@ -64,3 +64,11 @@ contains no lifecycle, user, workspace, capability, preview, or publication
 authority. Invalid, reserved, unknown, and archived inputs share 404; ambiguity
 is 409 and persistence failure is 503. All responses are private/no-store,
 noindex, and request-ID correlated. No edge or public route targets it.
+
+The database-free Web server is its only routing-shell client. It calls the
+fixed `http://render-api:8000/internal/render/v1/site-context` URL with a short
+timeout, `no-store`, no cookies or authorization, and only the actual request
+Host/path. The browser never receives the internal URL. Successful resolution
+renders routing facts only; failure returns 404, while Render unavailability
+makes Web readiness fail with 503. NGINX and Apache reject direct `/internal/`
+requests.

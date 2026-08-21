@@ -20,11 +20,13 @@ fi
 HEADER_FILE=
 TOKEN_FILE=
 E2E_SECRET_FILE=
+NEGATIVE_OUTPUT_FILE=
 
 cleanup() {
   test -z "$HEADER_FILE" || rm -f "$HEADER_FILE"
   test -z "$TOKEN_FILE" || rm -f "$TOKEN_FILE"
   test -z "$E2E_SECRET_FILE" || rm -f "$E2E_SECRET_FILE"
+  test -z "$NEGATIVE_OUTPUT_FILE" || rm -f "$NEGATIVE_OUTPUT_FILE"
   docker compose -p "$NEGATIVE_PROJECT" -f "$ROOT/compose.yaml" \
     -f "$ROOT/tests/packaging/compose.broken-bootstrap.yaml" \
     down --volumes --remove-orphans >/dev/null 2>&1 || true
@@ -37,6 +39,7 @@ cleanup
 HEADER_FILE=$(mktemp)
 TOKEN_FILE=$(mktemp)
 E2E_SECRET_FILE=$(mktemp)
+NEGATIVE_OUTPUT_FILE=$(mktemp)
 chmod 600 "$TOKEN_FILE" "$E2E_SECRET_FILE"
 
 cd "$ROOT"
@@ -180,6 +183,21 @@ then
   exit 1
 fi
 
+docker run --rm --network none --read-only --cap-drop ALL --cap-add DAC_READ_SEARCH \
+  --user 0:0 --volume "${PROJECT}_local-secrets:/master:ro" \
+  --volume "${PROJECT}_render-secret:/render:ro" \
+  --entrypoint python slaif-agent-site-backend:local -c \
+  "import pathlib,secrets,stat; root=pathlib.Path('/render'); files=list(root.iterdir()); assert len(files)==1 and files[0].name=='render-dsn'; info=root.stat(); file=files[0]; assert stat.S_IMODE(info.st_mode)==0o700 and info.st_uid==10001 and info.st_gid==10001; assert stat.S_IMODE(file.stat().st_mode)==0o400 and file.stat().st_uid==10001; assert secrets.compare_digest(file.read_bytes(), pathlib.Path('/master/service-public-dsn').read_bytes()); print('render-secret-policy: OK files=1 mode=0400 owner=10001')"
+if docker run --rm --network none --read-only --cap-drop ALL \
+  --user 10003:10003 --volume "${PROJECT}_render-secret:/render:ro" \
+  --entrypoint python slaif-agent-site-backend:local -c \
+  "import pathlib; pathlib.Path('/render/render-dsn').read_bytes()" \
+  >/dev/null 2>&1
+then
+  echo "compose-smoke: unrelated uid unexpectedly read Render locator" >&2
+  exit 1
+fi
+
 python tools/compose/control_readiness.py "$PROJECT" --existing
 
 fingerprint() {
@@ -194,15 +212,59 @@ docker compose -p "$PROJECT" up --wait
 after=$(fingerprint)
 test "$before" = "$after"
 test "$(docker compose -p "$PROJECT" logs --no-color bootstrap 2>/dev/null | grep -c 'setup-token-secret:')" = 1
+docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif -Atc \
+  "SELECT site_key || '|' || display_name || '|' || default_locale || '|' || status FROM control.site WHERE site_key = 'demo'" \
+  | grep -q '^demo|SLAIF Demo Site|en|ACTIVE$'
+
+docker run --rm --network none --read-only --cap-drop ALL --cap-add DAC_OVERRIDE \
+  --user 0:0 --volume "${PROJECT}_render-secret:/render" \
+  --entrypoint python slaif-agent-site-backend:local -c \
+  "import pathlib; pathlib.Path('/render/render-dsn').write_bytes(b'corrupt-render-locator')"
+docker compose -p "$PROJECT" up -d --force-recreate render-api >/dev/null
+attempt=0
+while test "$attempt" -lt 40
+do
+  render_health=$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "${PROJECT}-render-api-1")
+  web_status=$(curl --silent --output /dev/null --write-out '%{http_code}' http://localhost:8080/health/ready || true)
+  if test "$render_health" = unhealthy && test "$web_status" = 503
+  then
+    break
+  fi
+  attempt=$((attempt + 1))
+  sleep 2
+done
+test "$render_health" = unhealthy
+test "$web_status" = 503
+attempt=0
+while test "$attempt" -lt 40
+do
+  nginx_health=$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "${PROJECT}-nginx-1")
+  test "$nginx_health" != unhealthy || break
+  attempt=$((attempt + 1))
+  sleep 2
+done
+test "$nginx_health" = unhealthy
+echo "render-locator-failure: correctly blocked render=unhealthy web=503 nginx=unhealthy"
+docker run --rm --network none --read-only --cap-drop ALL --cap-add DAC_OVERRIDE \
+  --user 0:0 --volume "${PROJECT}_local-secrets:/master:ro" \
+  --volume "${PROJECT}_render-secret:/render" \
+  --entrypoint python slaif-agent-site-backend:local -c \
+  "import pathlib; pathlib.Path('/render/render-dsn').write_bytes(pathlib.Path('/master/service-public-dsn').read_bytes())"
+docker compose -p "$PROJECT" up -d --force-recreate render-api >/dev/null
+docker compose -p "$PROJECT" up --wait >/dev/null
 
 if docker compose -p "$NEGATIVE_PROJECT" -f compose.yaml \
-  -f tests/packaging/compose.broken-bootstrap.yaml up --wait
+  -f tests/packaging/compose.broken-bootstrap.yaml up --wait \
+  >"$NEGATIVE_OUTPUT_FILE" 2>&1
 then
+  tail -40 "$NEGATIVE_OUTPUT_FILE" >&2
   echo "compose-smoke: broken bootstrap unexpectedly succeeded" >&2
   exit 1
 fi
 test -z "$(docker compose -p "$NEGATIVE_PROJECT" -f compose.yaml \
   -f tests/packaging/compose.broken-bootstrap.yaml ps -q --status running nginx)"
+grep -Eq 'bootstrap.*(failed|didn.t complete|exited)' "$NEGATIVE_OUTPUT_FILE"
+echo "negative-bootstrap: correctly blocked"
 
 if for image in slaif-agent-site-backend:local slaif-agent-site-browser-worker:local slaif-agent-site-web:local slaif-agent-site-nginx:local
 do

@@ -74,6 +74,18 @@ def _configuration() -> dict[str, object]:
                     "SLAIF_CONTROL_MODE": "development",
                 }
             )
+        if name == "render-api":
+            service["environment"].update(
+                {
+                    "SLAIF_RENDER_DSN_FILE": "/run/slaif-render/render-dsn",
+                    "SLAIF_RENDER_EXPECTED_DATABASE": "slaif",
+                    "SLAIF_RENDER_EXPECTED_LOGIN": "slaif_public_login",
+                    "SLAIF_RENDER_EXPECTED_PRIVILEGE_ROLE": "slaif_public_reader",
+                    "SLAIF_RENDER_MODE": "development",
+                }
+            )
+        if name == "bootstrap":
+            service["environment"]["SLAIF_BOOTSTRAP_DEMO_SEED"] = "true"
         if name in VERIFY.EXPECTED_CAP_ADD:
             service["cap_add"] = sorted(VERIFY.EXPECTED_CAP_ADD[name])
         if name in VERIFY.EXPECTED_GROUP_ADD:
@@ -107,6 +119,7 @@ def _configuration() -> dict[str, object]:
                 "local-secrets",
                 "media-data",
                 "postgres-data",
+                "render-secret",
             )
         },
     }

@@ -61,3 +61,20 @@ test("health routes make only web-process claims", async () => {
     assert.doesNotMatch(route, /database|product|published/i);
   }
 });
+
+test("site shell uses only the fixed server-side Render resolver", async () => {
+  const client = await read("../src/sites/render.ts");
+  const shell = await read("../app/[...sitePath]/page.tsx");
+  const shellView = await read("../src/sites/shell.tsx");
+  const landing = await read("../app/page.tsx");
+  assert.match(client, /http:\/\/render-api:8000\/internal\/render\/v1\/site-context/);
+  assert.match(client, /credentials: "omit"/);
+  assert.match(client, /cache: "no-store"/);
+  assert.doesNotMatch(client, /process\.env|cookie|authorization|forwarded/i);
+  assert.match(shell, /requestHeaders\.get\("host"\)/);
+  assert.match(shellView, /Trusted routing context/);
+  assert.match(shellView, /Editorial content and\s+publication are not implemented/);
+  assert.match(landing, /isLoopbackAuthority/);
+  assert.match(landing, /resolveSiteContext\(authority, "\/"\)/);
+  assert.doesNotMatch(shell, /site_id.*params|x-forwarded-host/i);
+});

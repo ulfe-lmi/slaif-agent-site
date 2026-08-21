@@ -9,7 +9,7 @@ import hashlib
 import re
 import secrets
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from enum import StrEnum
 from typing import Any, Protocol
 from uuid import UUID, uuid4
@@ -357,7 +357,9 @@ class HumanSessionService:
             async with self._pool.acquire() as connection:
                 async with connection.transaction():
                     inspection = await connection.fetchrow(
-                        'SELECT * FROM "control"."slaif_inspect_human_session"($1)',
+                        "SELECT inspected.*, CURRENT_TIMESTAMP AS database_now "
+                        'FROM "control"."slaif_inspect_human_session"($1) '
+                        "AS inspected",
                         public_id,
                     )
                     if inspection is None:
@@ -373,13 +375,13 @@ class HumanSessionService:
                     if not session_matches:
                         raise ClassifiedHumanSessionError(HumanSessionFailure.SESSION)
                     if not csrf_well_formed or not csrf_matches:
-                        now = datetime.now(UTC)
+                        database_now = inspection[10]
                         if (
                             inspection[7] is not None
-                            or inspection[5] <= now
+                            or inspection[5] <= database_now
                             or inspection[4]
                             + timedelta(seconds=self._policy.idle_timeout_seconds)
-                            <= now
+                            <= database_now
                         ):
                             raise ClassifiedHumanSessionError(
                                 HumanSessionFailure.SESSION

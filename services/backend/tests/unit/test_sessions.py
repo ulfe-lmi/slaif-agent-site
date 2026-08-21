@@ -8,8 +8,10 @@ from uuid import UUID, uuid4
 import pytest
 from pydantic import SecretStr, ValidationError
 from slaif_agent_site.identity.sessions import (
+    ClassifiedHumanSessionError,
     HumanSessionContext,
     HumanSessionError,
+    HumanSessionFailure,
     HumanSessionPolicy,
     HumanSessionService,
     SessionCookiePolicy,
@@ -321,3 +323,60 @@ async def test_failed_or_unknown_comparison_never_finalizes() -> None:
         await service.authenticate(wrong)
     assert len(connection.queries) == 1
     assert "inspect_human_session" in connection.queries[0]
+
+
+@pytest.mark.asyncio
+async def test_bad_csrf_classification_uses_locked_database_time_only() -> None:
+    secret = b"s" * 32
+    csrf = b"c" * 32
+    token = format_session_token("sas2_" + "a" * 32, secret)
+    wrong_csrf = format_csrf_token(b"w" * 32)
+
+    def inspection(
+        *, database_now: datetime, last_seen: datetime, expires: datetime
+    ) -> tuple[object, ...]:
+        return (
+            uuid4(),
+            uuid4(),
+            "sas2_" + "a" * 32,
+            database_now,
+            last_seen,
+            expires,
+            database_now,
+            None,
+            digest_secret(secret),
+            digest_secret(csrf),
+            database_now,
+        )
+
+    current_connection = _Connection(
+        [
+            inspection(
+                database_now=datetime(2000, 1, 1, tzinfo=UTC),
+                last_seen=datetime(1999, 12, 31, 23, 59, 59, tzinfo=UTC),
+                expires=datetime(2000, 1, 1, 1, tzinfo=UTC),
+            )
+        ]
+    )
+    with pytest.raises(ClassifiedHumanSessionError) as current:
+        await HumanSessionService(
+            _Pool(current_connection)
+        ).authenticate_state_changing(token, wrong_csrf)
+    assert current.value.reason is HumanSessionFailure.CSRF
+    assert len(current_connection.queries) == 1
+    assert "CURRENT_TIMESTAMP AS database_now" in current_connection.queries[0]
+
+    expired_connection = _Connection(
+        [
+            inspection(
+                database_now=datetime(2100, 1, 1, tzinfo=UTC),
+                last_seen=datetime(2099, 12, 31, 23, tzinfo=UTC),
+                expires=datetime(2099, 12, 31, 23, 59, 59, tzinfo=UTC),
+            )
+        ]
+    )
+    with pytest.raises(ClassifiedHumanSessionError) as expired:
+        await HumanSessionService(
+            _Pool(expired_connection)
+        ).authenticate_state_changing(token, wrong_csrf)
+    assert expired.value.reason is HumanSessionFailure.SESSION

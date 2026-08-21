@@ -50,6 +50,7 @@ class BootstrapSettings(BaseSettings):
     local_secrets_dir: Path | None = None
     setup_token_ttl_minutes: int = Field(default=30, ge=5, le=60)
     setup_url: HttpUrl = HttpUrl("http://localhost:8080/setup")
+    demo_seed: bool = False
 
     @field_validator("expected_database")
     @classmethod
@@ -90,6 +91,11 @@ class BootstrapSettings(BaseSettings):
             direct is not None for direct, _file in pairs
         ):
             raise ValueError("production database locators require secret files")
+        if self.demo_seed and (
+            self.local_secrets_dir is None
+            or self.setup_url.host not in {"localhost", "127.0.0.1", "::1"}
+        ):
+            raise ValueError("demo seed requires local secrets and loopback setup")
         return self
 
     @staticmethod
