@@ -512,7 +512,7 @@ class RepositoryPolicyTestCase(unittest.TestCase):
         self,
     ) -> None:
         self.write(
-            ".markdownlint-cli2.yaml",
+            ".markdownlint-cli2.jsonc",
             'ignores:\n  - "oap/reports/**"\n',
         )
 
@@ -529,7 +529,7 @@ class RepositoryPolicyTestCase(unittest.TestCase):
         )
 
         self.write(
-            ".markdownlint-cli2.yaml",
+            ".markdownlint-cli2.jsonc",
             "# Immutable strategic prose is retained byte-for-byte.\n"
             "ignores:\n"
             '  - "oap/reports/010-i-qualify-session-finalizer-update.md"\n'

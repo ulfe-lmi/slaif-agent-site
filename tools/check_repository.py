@@ -201,7 +201,7 @@ REQUIRED_FILES = (
         ".github/pull_request_template.md",
         ".github/workflows/ci.yml",
         ".github/workflows/codeql.yml",
-        ".markdownlint-cli2.yaml",
+        ".markdownlint-cli2.jsonc",
         "AGENTS.md",
         "ARCHITECTURE.md",
         "ARCHITECTURE-for-agents.md",
@@ -717,30 +717,43 @@ class RepositoryPolicy:
                 self.error(path, f"required internal link is absent: {required}")
 
     def check_markdown_configuration(self) -> None:
-        path = self.root / ".markdownlint-cli2.yaml"
+        path = self.root / ".markdownlint-cli2.jsonc"
         if not path.is_file():
             return
         text = self.read_utf8(path)
         if text is None:
             return
-        report_exact = '  - "oap/reports/010-i-qualify-session-finalizer-update.md"'
-        order_exact = '  - "oap/orders/011-b-platform-admin-site-http.md"'
-        lines = set(text.splitlines())
-        if report_exact not in lines:
+        report_exact = '"oap/reports/010-i-qualify-session-finalizer-update.md"'
+        order_exact = '"oap/orders/011-b-platform-admin-site-http.md"'
+        if report_exact not in text:
             self.error(path, "missing exact immutable-report ignore")
-        if order_exact not in lines:
+        if order_exact not in text:
             self.error(path, "missing exact immutable-order ignore")
         if "Immutable strategic prose" not in text:
             self.error(path, "immutable-order ignore must be explained")
-        for line in lines:
-            if (
-                line.startswith("  - ")
-                and "oap/reports" in line
-                and line != report_exact
-            ):
-                self.error(path, "must not broadly ignore OAP reports")
-            if line.startswith("  - ") and "oap/orders" in line and line != order_exact:
-                self.error(path, "must not broadly ignore OAP orders")
+        # Verify the exact immutable ignores exist as JSON string values.
+        # The override filter entry for 013-l is an allowed per-file exception.
+        allowed_report_paths = {
+            report_exact,
+            '"oap/reports/013-l-diagnose-modal-containment-timeout.md"',
+        }
+        allowed_order_paths = {order_exact}
+        for line in text.splitlines():
+            stripped = line.strip().rstrip('",').strip()
+            if "oap/reports" in stripped:
+                # Skip lines that are part of a JSON key or array element
+                # inside an override/filter structure (not a direct ignore).
+                if '"filter"' in stripped:
+                    continue
+                value = stripped.lstrip('"').rstrip('"')
+                full = f'"{value}"'
+                if full not in allowed_report_paths and not stripped.startswith("//"):
+                    self.error(path, f"must not broadly ignore OAP reports: {stripped}")
+            if "oap/orders" in stripped:
+                value = stripped.lstrip('"').rstrip('"')
+                full = f'"{value}"'
+                if full not in allowed_order_paths and not stripped.startswith("//"):
+                    self.error(path, f"must not broadly ignore OAP orders: {stripped}")
 
     def check_oap(self) -> None:
         active_path = self.root / "oap/active"
