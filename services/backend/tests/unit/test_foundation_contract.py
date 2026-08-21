@@ -86,6 +86,7 @@ NEW_PACKAGE_FILES = {
     "slaif_agent_site/db/alembic/versions/007_001_control_readiness.py",
     "slaif_agent_site/db/alembic/versions/008_001_installation_state.py",
     "slaif_agent_site/db/alembic/versions/009_001_local_identity.py",
+    "slaif_agent_site/db/alembic/versions/013_001_site_foundation.py",
     "slaif_agent_site/db/connections.py",
     "slaif_agent_site/db/executor.py",
     "slaif_agent_site/db/migrations.py",
@@ -97,6 +98,11 @@ NEW_PACKAGE_FILES = {
     "slaif_agent_site/identity/authentication.py",
     "slaif_agent_site/identity/passwords.py",
     "slaif_agent_site/identity/sessions.py",
+    "slaif_agent_site/sites/__init__.py",
+    "slaif_agent_site/sites/models.py",
+    "slaif_agent_site/sites/normalization.py",
+    "slaif_agent_site/sites/service.py",
+    "slaif_agent_site/sites/resolver.py",
     "slaif_agent_site/editor_api/__init__.py",
     "slaif_agent_site/editor_api/__main__.py",
     "slaif_agent_site/editor_api/app.py",
@@ -114,6 +120,9 @@ NEW_PACKAGE_FILES = {
     "slaif_agent_site/render_api/__init__.py",
     "slaif_agent_site/render_api/__main__.py",
     "slaif_agent_site/render_api/app.py",
+    "slaif_agent_site/render_api/config.py",
+    "slaif_agent_site/render_api/database.py",
+    "slaif_agent_site/render_api/site_http.py",
     "slaif_agent_site/review_worker/__init__.py",
     "slaif_agent_site/review_worker/__main__.py",
     "slaif_agent_site/scheduler/__init__.py",
@@ -128,6 +137,7 @@ EXPECTED_PACKAGE_FILES = NEW_PACKAGE_FILES | {
     "slaif_agent_site/db/alembic/versions/011_001_local_authentication.py",
     "slaif_agent_site/db/alembic/versions/012_001_control_auth_http.py",
     "slaif_agent_site/control_api/auth_http.py",
+    "slaif_agent_site/control_api/site_http.py",
 }
 EXPECTED_SDIST_FILES = {
     "alembic.ini",
@@ -146,7 +156,9 @@ EXPECTED_SDIST_FILES = {
     "services/backend/src/slaif_agent_site/db/alembic/versions/010_001_human_session.py",
     "services/backend/src/slaif_agent_site/db/alembic/versions/011_001_local_authentication.py",
     "services/backend/src/slaif_agent_site/db/alembic/versions/012_001_control_auth_http.py",
+    "services/backend/src/slaif_agent_site/db/alembic/versions/013_001_site_foundation.py",
     "services/backend/src/slaif_agent_site/control_api/auth_http.py",
+    "services/backend/src/slaif_agent_site/control_api/site_http.py",
 } | {f"services/backend/src/{path}" for path in NEW_PACKAGE_FILES}
 
 
@@ -395,8 +407,9 @@ def test_locked_foundation_artifact_hash_constants_are_sha256() -> None:
 
 
 def test_alembic_graph_and_offline_sql_need_no_locator_or_network() -> None:
-    assert migration_heads() == ("012_001",)
+    assert migration_heads() == ("013_001",)
     assert migration_history() == (
+        "013_001",
         "012_001",
         "011_001",
         "010_001",

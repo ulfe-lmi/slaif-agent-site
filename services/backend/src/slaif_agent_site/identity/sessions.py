@@ -9,7 +9,8 @@ import hashlib
 import re
 import secrets
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
+from enum import StrEnum
 from typing import Any, Protocol
 from uuid import UUID, uuid4
 
@@ -36,6 +37,20 @@ class HumanSessionError(RuntimeError):
 
     def __init__(self) -> None:
         super().__init__("Human session unavailable.")
+
+
+class HumanSessionFailure(StrEnum):
+    SESSION = "session"
+    CSRF = "csrf"
+    UNAVAILABLE = "unavailable"
+
+
+class ClassifiedHumanSessionError(HumanSessionError):
+    """Internal classification used only to select a stable HTTP status."""
+
+    def __init__(self, reason: HumanSessionFailure) -> None:
+        super().__init__()
+        self.reason = reason
 
 
 class HumanSessionPolicy(BaseModel):
@@ -327,25 +342,51 @@ class HumanSessionService:
 
         try:
             public_id, secret = parse_session_token(token)
+        except (SessionCredentialError, ValidationError):
+            raise ClassifiedHumanSessionError(HumanSessionFailure.SESSION) from None
+        try:
             csrf_secret = parse_csrf_token(csrf_token)
-            presented_digest = digest_secret(secret)
-            presented_csrf_digest = digest_secret(csrf_secret)
+        except (SessionCredentialError, ValidationError):
+            csrf_secret = b"\x00" * _CSRF_SECRET_BYTES
+            csrf_well_formed = False
+        else:
+            csrf_well_formed = True
+        presented_digest = digest_secret(secret)
+        presented_csrf_digest = digest_secret(csrf_secret)
+        try:
             async with self._pool.acquire() as connection:
                 async with connection.transaction():
                     inspection = await connection.fetchrow(
-                        'SELECT * FROM "control"."slaif_inspect_human_session"($1)',
+                        "SELECT inspected.*, CURRENT_TIMESTAMP AS database_now "
+                        'FROM "control"."slaif_inspect_human_session"($1) '
+                        "AS inspected",
                         public_id,
                     )
                     if inspection is None:
                         constant_time_digest_equal(_DUMMY_DIGEST, presented_digest)
                         constant_time_digest_equal(_DUMMY_DIGEST, presented_csrf_digest)
-                        raise HumanSessionError()
-                    if not constant_time_digest_equal(
+                        raise ClassifiedHumanSessionError(HumanSessionFailure.SESSION)
+                    session_matches = constant_time_digest_equal(
                         bytes(inspection[8]), presented_digest
-                    ) or not constant_time_digest_equal(
+                    )
+                    csrf_matches = constant_time_digest_equal(
                         bytes(inspection[9]), presented_csrf_digest
-                    ):
-                        raise HumanSessionError()
+                    )
+                    if not session_matches:
+                        raise ClassifiedHumanSessionError(HumanSessionFailure.SESSION)
+                    if not csrf_well_formed or not csrf_matches:
+                        database_now = inspection[10]
+                        if (
+                            inspection[7] is not None
+                            or inspection[5] <= database_now
+                            or inspection[4]
+                            + timedelta(seconds=self._policy.idle_timeout_seconds)
+                            <= database_now
+                        ):
+                            raise ClassifiedHumanSessionError(
+                                HumanSessionFailure.SESSION
+                            )
+                        raise ClassifiedHumanSessionError(HumanSessionFailure.CSRF)
                     row = await connection.fetchrow(
                         "SELECT * FROM "
                         '"control"."slaif_finalize_state_changing_human_session"('
@@ -358,15 +399,13 @@ class HumanSessionService:
                         self._policy.recent_auth_window_seconds,
                     )
                     if row is None:
-                        raise HumanSessionError()
-        except (SessionCredentialError, ValidationError):
-            raise HumanSessionError() from None
+                        raise ClassifiedHumanSessionError(HumanSessionFailure.SESSION)
         except asyncio.CancelledError:
             raise
-        except HumanSessionError:
+        except ClassifiedHumanSessionError:
             raise
         except Exception:
-            raise HumanSessionError() from None
+            raise ClassifiedHumanSessionError(HumanSessionFailure.UNAVAILABLE) from None
         return HumanSessionContext(
             session_id=row[0],
             user_account_id=row[1],
@@ -422,8 +461,10 @@ class HumanSessionService:
 
 
 __all__ = [
+    "ClassifiedHumanSessionError",
     "HumanSessionContext",
     "HumanSessionError",
+    "HumanSessionFailure",
     "HumanSessionPolicy",
     "HumanSessionService",
     "IssuedHumanSession",

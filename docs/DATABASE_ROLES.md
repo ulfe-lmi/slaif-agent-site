@@ -15,7 +15,7 @@ NOREPLICATION NOBYPASSRLS`.
 | `slaif_control` | Control API and human-session principal | `USAGE` on `control` plus execute on owner-defined readiness, setup, opaque-session, and local-credential lookup/compare-and-set functions; direct relation access, content DML, and reviewer/setup-owner authority remain denied. |
 | `slaif_editor_runtime` | Future Editor API principal | COW-view `SELECT`, `INSERT`, `UPDATE`, and `DELETE` after a table is enabled/hardened; no base/change, reviewer, or setup authority. |
 | `slaif_agent_runtime` | Future Agent API principal | Same COW-view DML boundary as Editor under a distinct role; no base/change, reviewer, or setup authority. |
-| `slaif_public_reader` | Future canonical render principal | `SELECT` on present COW views after product grant reconciliation; no DML or internal tables. |
+| `slaif_public_reader` | Canonical Render principal | Exact execute on the two active site resolver functions, plus `SELECT` on present COW views after product grant reconciliation; no site relations, management functions, or DML. |
 | `slaif_preview_reader` | Future preview render principal | Read-only view access; a future trusted session wrapper must establish preview context. |
 | `slaif_reviewer` | Future review-worker principal | Read-only COW views and only the foundation-controlled reviewer function surface; no runtime DML or setup. |
 | `slaif_scheduler` | Future scheduler principal | No object grant yet; content and reviewer authority remain denied. |
@@ -23,8 +23,9 @@ NOREPLICATION NOBYPASSRLS`.
 | `slaif_gc` | Future media-GC principal | No object grant yet; content and reviewer authority remain denied. |
 
 MCP adapter, Web, and browser worker have no database privilege role. Render
-will eventually use separate canonical and preview credentials rather than a
-combined writer. No generic all-authority role exists.
+uses the canonical public-reader credential; future preview access remains a
+separate credential rather than a combined writer. No generic all-authority
+role exists.
 
 The clean revision has no `content` object. In `EMPTY_SAFE`, every non-owner
 role also lacks content schema `USAGE`/`CREATE`, and Reviewer has no foundation
@@ -42,6 +43,21 @@ function authority for these objects.
 Revision `011_001` adds only `slaif_control` execution on local-login lookup
 and password-hash compare-and-set functions. No role receives direct
 `user_account` relation access; plaintext passwords never reach PostgreSQL.
+
+Revision `013_001` adds the non-COW `control.site`, `control.site_domain`, and
+installation-bound `control.site_policy` relations. Only `slaif_owner` owns or accesses the
+relations directly. `slaif_control` receives execution on the exact bounded
+site CRUD, active-context, domain-mapping/listing, archive, resolution, and
+active Platform Administrator authorization functions; it receives no
+table, sequence, or column grant. `slaif_public_reader` receives only
+`slaif_site_resolve(text,text)` and `slaif_site_resolve_local(text)`; every
+other runtime, reader, reviewer, scheduler, media, and GC role is denied site
+relation and function authority. Site and
+operation identifiers are generated or selected inside trusted server/database
+code, and archive is the only exposed removal lifecycle.
+Authorization joins the active user and current assignment inside one fixed-
+search-path owner function; callers cannot infer authority from username,
+setup history, cookies, Host, or client claims.
 
 ## Login-principal design
 

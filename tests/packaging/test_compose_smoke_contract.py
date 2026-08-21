@@ -45,6 +45,27 @@ class ComposeSmokeContractTests(unittest.TestCase):
                 self.assertEqual(result.stdout, "")
                 self.assertEqual(result.stderr, "compose-smoke: unsafe project name\n")
 
+    def test_render_recovery_is_bounded_ordered_and_stable(self) -> None:
+        source = SMOKE.read_text(encoding="utf-8")
+        self.assertIn('while test "$attempt" -lt 40', source)
+        self.assertIn("render-locator-recovery: failed service=", source)
+        marker = (
+            "render-locator-recovery: restored render=healthy web=healthy nginx=healthy"
+        )
+        self.assertEqual(source.count(marker), 1)
+        render = source.index("wait_healthy render-api")
+        web = source.index("wait_healthy web", render)
+        nginx = source.index("wait_healthy nginx", web)
+        global_wait = source.index("up --wait >/dev/null", nginx)
+        self.assertLess(render, web)
+        self.assertLess(web, nginx)
+        self.assertLess(nginx, global_wait)
+        self.assertGreaterEqual(
+            source.count("--force-recreate --no-deps render-api"), 2
+        )
+        self.assertIn('test "$(render_fingerprint)" = "$render_before"', source)
+        self.assertIn('test "$(site_fingerprint)" = "$sites_before"', source)
+
 
 if __name__ == "__main__":
     unittest.main()

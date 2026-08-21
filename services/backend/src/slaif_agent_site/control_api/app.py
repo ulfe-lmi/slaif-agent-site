@@ -17,6 +17,7 @@ from ..logging import configure_json_logging
 from .auth_http import install_control_auth_routes
 from .config import ControlDatabaseConfigurationError, ControlDatabaseSettings
 from .database import ControlDatabase, ControlDatabaseAdapter
+from .site_http import install_control_site_routes
 
 
 def create_app(
@@ -49,6 +50,7 @@ def create_app(
     )
     app.state.control_database = selected_database
     install_control_auth_routes(app, selected_database, app.state.settings)
+    install_control_site_routes(app, selected_database, app.state.settings)
     return app
 
 

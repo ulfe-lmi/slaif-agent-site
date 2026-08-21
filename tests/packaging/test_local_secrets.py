@@ -113,6 +113,40 @@ class LocalSecretTests(unittest.TestCase):
                 INITIALIZER.initialize(directory)
             self.assertEqual(broken.stat().st_size, 0)
 
+    def test_render_locator_is_exactly_isolated_and_idempotent(self) -> None:
+        INITIALIZER.POSTGRES_UID = os.getuid()
+        INITIALIZER.APPLICATION_UID = os.getuid()
+        INITIALIZER.MARKER_UID = os.getuid()
+        INITIALIZER.DIRECTORY_UID = os.getuid()
+        INITIALIZER.SECRET_DIRECTORY_GID = os.getgid()
+        with tempfile.TemporaryDirectory() as parent:
+            directory = Path(parent) / "secrets"
+            render_directory = Path(parent) / "render"
+            render_directory.mkdir()
+            count = INITIALIZER.initialize(directory, render_directory=render_directory)
+            self.assertEqual(count, 24)
+            render_file = render_directory / "render-dsn"
+            self.assertEqual(
+                render_file.read_bytes(),
+                (directory / "service-public-dsn").read_bytes(),
+            )
+            self.assertEqual(
+                {path.name for path in render_directory.iterdir()}, {"render-dsn"}
+            )
+            self.assertEqual(stat.S_IMODE(render_directory.stat().st_mode), 0o700)
+            self.assertEqual(stat.S_IMODE(render_file.stat().st_mode), 0o400)
+            self.assertEqual(
+                INITIALIZER.initialize(directory, render_directory=render_directory),
+                count,
+            )
+            extra = render_directory / "control-dsn"
+            extra.write_text("x" * 43, encoding="ascii")
+            with self.assertRaisesRegex(
+                INITIALIZER.SecretInitializationError,
+                "Render secret directory policy mismatch",
+            ):
+                INITIALIZER.initialize(directory, render_directory=render_directory)
+
 
 if __name__ == "__main__":
     unittest.main()

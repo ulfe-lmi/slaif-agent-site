@@ -2,9 +2,9 @@
 
 The implemented default deployment is a pre-alpha status and authority
 skeleton. It starts every planned process identity, establishes the empty-safe
-database foundation, and exposes health-only services through NGINX. It does
-implements local setup/authentication but not sites, workspaces, editing, browser
-automation, review, or publication.
+database foundation, and exposes bounded services through NGINX. It implements
+local setup/authentication and a trusted multi-site routing shell, but not site
+content, workspaces, editing, browser automation, review, or publication.
 
 ## Prerequisites and startup
 
@@ -36,10 +36,11 @@ docker compose up --build --wait
 docker compose ps
 ```
 
-The first start creates four named volumes, generates private local database
-files, isolates the Control DSN, initializes PostgreSQL, and runs the one-shot
-bootstrap. A returning start validates and reuses the credentials and data,
-reruns the idempotent bootstrap proof, and then starts the same service graph.
+The first start creates five named volumes, generates private local database
+files, isolates the Control and Render DSNs, initializes PostgreSQL, seeds the
+exact fresh `demo` site, and runs the one-shot bootstrap. A returning start
+validates and reuses credentials and data, does not reissue the setup token,
+skips seed enforcement after setup, and starts the same service graph.
 
 ### PostgreSQL baseline
 
@@ -56,13 +57,15 @@ requires a separately designed and tested logical process.
 | --- | --- | --- |
 | `/` | Web | Accessible pre-alpha deployment-status page. |
 | `/health/live`, `/health/ready` | Web | Bounded Web process health only. |
+| `/s/demo/` and other resolved paths | Web→Render | Routing-context shell for an active trusted site match. |
 | `/api/control/` | Control API | Prefix-stripped health routes only; readiness includes one database component. |
 | `/api/editor/` | Editor API | Prefix-stripped health routes only. |
 | `/api/agent/` | Agent API | Prefix-stripped health routes only. |
 | `/mcp/` | MCP adapter | Prefix-stripped health routes only. |
 | `/media/` | Media service | Prefix-stripped health routes only. |
 
-Unknown product and API paths return 404. Render, PostgreSQL, bootstrap,
+Unknown product and API paths return 404. `/internal/` is explicitly rejected
+at both supported edges. Render, PostgreSQL, bootstrap,
 workers, and browser worker are not routed. Health is process evidence, not
 product readiness or publication authority.
 
@@ -176,6 +179,14 @@ Its directory is mode `0700` and owned by `10001:10001`; its file is mode
 mounts it read-only at `/run/slaif-control`; every other long-running process
 lacks the mount, and Control cannot see the master secret directory. The DSN
 is never an environment value.
+
+The separate `render-secret` volume likewise contains exactly one
+`render-dsn`, byte-identical to the generated public-reader locator. Its
+directory is mode `0700`, its file is mode `0400`, and both belong to
+`10001:10001`. Only the initializer mounts it read/write; Render mounts it
+read-only. Web reaches Render over the application network and has no database
+credential. NGINX, Control, agents, browser, and workers receive no Render
+locator.
 
 Institutional deployments may replace the generator with externally managed
 files that use the same names and fixed principal model. They must preserve

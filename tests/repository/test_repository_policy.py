@@ -212,7 +212,13 @@ class RepositoryPolicyTestCase(unittest.TestCase):
             "services/backend/src/slaif_agent_site/db/alembic/versions/010_001_human_session.py",
             "services/backend/src/slaif_agent_site/db/alembic/versions/011_001_local_authentication.py",
             "services/backend/src/slaif_agent_site/db/alembic/versions/012_001_control_auth_http.py",
+            "services/backend/src/slaif_agent_site/db/alembic/versions/013_001_site_foundation.py",
+            "services/backend/src/slaif_agent_site/sites/models.py",
+            "services/backend/src/slaif_agent_site/sites/normalization.py",
+            "services/backend/src/slaif_agent_site/sites/service.py",
             "services/backend/src/slaif_agent_site/control_api/auth_http.py",
+            "services/backend/src/slaif_agent_site/control_api/site_http.py",
+            "services/backend/tests/integration/test_site_control_http_integration.py",
             "services/backend/src/slaif_agent_site/identity/passwords.py",
             "services/backend/src/slaif_agent_site/identity/authentication.py",
             "services/backend/src/slaif_agent_site/identity/sessions.py",
@@ -488,7 +494,7 @@ class RepositoryPolicyTestCase(unittest.TestCase):
 
         self.assertTrue(any("precede the first H1" in error for error in errors))
 
-    def test_markdown_configuration_requires_single_historical_report_exception(
+    def test_markdown_configuration_requires_only_exact_immutable_exceptions(
         self,
     ) -> None:
         self.write(
@@ -503,6 +509,22 @@ class RepositoryPolicyTestCase(unittest.TestCase):
         )
         self.assertTrue(
             any("must not broadly ignore OAP reports" in error for error in errors)
+        )
+        self.assertTrue(
+            any("missing exact immutable-order ignore" in error for error in errors)
+        )
+
+        self.write(
+            ".markdownlint-cli2.yaml",
+            "# Immutable strategic prose is retained byte-for-byte.\n"
+            "ignores:\n"
+            '  - "oap/reports/010-i-qualify-session-finalizer-update.md"\n'
+            '  - "oap/orders/011-b-platform-admin-site-http.md"\n'
+            '  - "oap/orders/**"\n',
+        )
+        errors = self.errors_from("check_markdown_configuration")
+        self.assertTrue(
+            any("must not broadly ignore OAP orders" in error for error in errors)
         )
 
     def test_foundation_exact_registry_requirement_is_allowed(self) -> None:

@@ -23,7 +23,13 @@ from slaif_agent_site.identity.authentication import (
     LocalLoginRequest,
 )
 from slaif_agent_site.identity.models import InitialLocalAdministratorRequest
-from slaif_agent_site.identity.sessions import HumanSessionError, IssuedHumanSession
+from slaif_agent_site.identity.sessions import (
+    ClassifiedHumanSessionError,
+    HumanSessionContext,
+    HumanSessionError,
+    HumanSessionFailure,
+    IssuedHumanSession,
+)
 
 SETUP_STATUS_SQL = 'SELECT * FROM "control"."slaif_setup_status"()'
 _COOKIE_NAME = compile_pattern(r"^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$")
@@ -74,12 +80,20 @@ def _secure_headers(response: Response) -> None:
     response.headers["X-Robots-Tag"] = "noindex, nofollow, noarchive"
 
 
+def _private_control_path(path: str) -> bool:
+    return (
+        path in _AUTH_PATHS
+        or path == "/api/control/v1/sites"
+        or path.startswith("/api/control/v1/sites/")
+    )
+
+
 class ControlAuthSecurityHeadersMiddleware(BaseHTTPMiddleware):
     async def dispatch(
         self, request: Request, call_next: RequestResponseEndpoint
     ) -> Response:
         response = await call_next(request)
-        if request.url.path in _AUTH_PATHS:
+        if _private_control_path(request.url.path):
             _secure_headers(response)
         return response
 
@@ -126,6 +140,62 @@ def _csrf_header(request: Request) -> str:
     if not value or value != value.strip():
         raise AuthorizationError()
     return value
+
+
+async def authenticate_human_request(
+    request: Request,
+    database: Any,
+    settings: Any,
+    *,
+    state_changing: bool,
+) -> HumanSessionContext:
+    """Apply the strict cookie policy and optional bound CSRF proof."""
+
+    names = _cookie_values(request)
+    session_name = (
+        "__Host-slaif_session" if settings.secure_cookies else "slaif_session"
+    )
+    csrf_name = "__Host-slaif_csrf" if settings.secure_cookies else "slaif_csrf"
+    alternate_names = (
+        {"slaif_session", "slaif_csrf"}
+        if settings.secure_cookies
+        else {"__Host-slaif_session", "__Host-slaif_csrf"}
+    )
+    if alternate_names & names.keys():
+        raise AuthenticationError()
+    token = names.get(session_name)
+    if not token:
+        raise AuthenticationError()
+    try:
+        service = database.human_session_service()
+    except HumanSessionError:
+        raise ServiceUnavailableError() from None
+    if not state_changing:
+        try:
+            return cast(HumanSessionContext, await service.authenticate(token))
+        except HumanSessionError:
+            raise AuthenticationError() from None
+    try:
+        header = _csrf_header(request)
+    except AuthorizationError:
+        header = ""
+    csrf = names.get(csrf_name)
+    presented_csrf = (
+        csrf if csrf and header and secrets.compare_digest(csrf, header) else ""
+    )
+    try:
+        return cast(
+            HumanSessionContext,
+            await service.authenticate_state_changing(token, presented_csrf),
+        )
+    except ClassifiedHumanSessionError as error:
+        if error.reason is HumanSessionFailure.SESSION:
+            raise AuthenticationError() from None
+        if error.reason is HumanSessionFailure.CSRF:
+            raise AuthorizationError() from None
+        raise ServiceUnavailableError() from None
+    except HumanSessionError:
+        raise ServiceUnavailableError() from None
 
 
 def _set_session_cookies(
@@ -231,22 +301,9 @@ def install_control_auth_routes(app: Any, database: Any, settings: Any) -> None:
     @router.get("/session", response_model=SessionResponse)
     async def session(request: Request, response: Response) -> SessionResponse:
         _secure_headers(response)
-        names = _cookie_values(request)
-        name = "__Host-slaif_session" if settings.secure_cookies else "slaif_session"
-        alternate_names = (
-            {"slaif_session", "slaif_csrf"}
-            if settings.secure_cookies
-            else {"__Host-slaif_session", "__Host-slaif_csrf"}
+        context = await authenticate_human_request(
+            request, database, settings, state_changing=False
         )
-        if alternate_names & names.keys():
-            raise AuthenticationError()
-        token = names.get(name)
-        if not token:
-            raise AuthenticationError()
-        try:
-            context = await database.human_session_service().authenticate(token)
-        except HumanSessionError:
-            raise AuthenticationError() from None
         return SessionResponse(
             user_account_id=str(context.user_account_id),
             public_id=context.public_id,
@@ -284,3 +341,10 @@ def install_control_auth_routes(app: Any, database: Any, settings: Any) -> None:
         return response
 
     app.include_router(router)
+
+
+__all__ = [
+    "ControlAuthSecurityHeadersMiddleware",
+    "authenticate_human_request",
+    "install_control_auth_routes",
+]

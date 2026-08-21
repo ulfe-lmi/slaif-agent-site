@@ -32,11 +32,18 @@ ALLOWED_CLEAN_RELATIONS = {
     ("control", "platform_administrator"),
     ("control", "user_account"),
     ("control", "user_session"),
+    ("control", "site"),
+    ("control", "site_domain"),
+    ("control", "site_policy"),
 }
 FOUNDATION_SCHEMA = "agentcow"
 CONTROL_READINESS_FUNCTION = "slaif_control_readiness"
 CONTROL_SETUP_STATUS_FUNCTION = "slaif_setup_status"
 CONTROL_ROLE = "slaif_control"
+PUBLIC_RESOLVER_FUNCTIONS = {
+    ("slaif_site_resolve", "p_hostname text, p_path text"): "text, text",
+    ("slaif_site_resolve_local", "p_site_key text"): "text",
+}
 CONTROL_FUNCTIONS = {
     (CONTROL_READINESS_FUNCTION, ""): "",
     (CONTROL_SETUP_STATUS_FUNCTION, ""): "",
@@ -83,6 +90,38 @@ CONTROL_FUNCTIONS = {
         "p_user_account_id uuid, p_expected_password_hash text, "
         "p_new_password_hash text",
     ): "uuid, text, text",
+    (
+        "slaif_site_create",
+        "p_site_key text, p_display_name text, p_default_locale text, "
+        "p_component_catalog_version text",
+    ): "text, text, text, text",
+    ("slaif_site_context", "p_site_id uuid"): "uuid",
+    (
+        "slaif_platform_administrator_authorized",
+        "p_user_account_id uuid",
+    ): "uuid",
+    ("slaif_site_domain_list", "p_site_id uuid"): "uuid",
+    ("slaif_site_get", "p_site_id uuid"): "uuid",
+    ("slaif_site_list", ""): "",
+    (
+        "slaif_site_update",
+        "p_site_id uuid, p_display_name text, p_default_locale text",
+    ): "uuid, text, text",
+    ("slaif_site_archive", "p_site_id uuid"): "uuid",
+    (
+        "slaif_site_domain_put",
+        "p_site_id uuid, p_domain_id uuid, p_hostname text, "
+        "p_path_prefix text, p_is_primary boolean",
+    ): "uuid, uuid, text, text, boolean",
+    (
+        "slaif_site_domain_remove",
+        "p_site_id uuid, p_domain_id uuid",
+    ): "uuid, uuid",
+    (
+        "slaif_site_resolve",
+        "p_hostname text, p_path text",
+    ): "text, text",
+    ("slaif_site_resolve_local", "p_site_key text"): "text",
 }
 
 
@@ -378,6 +417,13 @@ async def apply_product_privileges(
             f'"control".{quote_identifier(name)}({signature}) '
             f"TO {quote_identifier(CONTROL_ROLE)}"
         )
+    await connection.execute('GRANT USAGE ON SCHEMA "control" TO "slaif_public_reader"')
+    for (name, _identity), signature in PUBLIC_RESOLVER_FUNCTIONS.items():
+        await connection.execute(
+            "GRANT EXECUTE ON FUNCTION "
+            f'"control".{quote_identifier(name)}({signature}) '
+            'TO "slaif_public_reader"'
+        )
 
 
 async def _role_violations(connection: asyncpg.Connection[Any]) -> list[str]:
@@ -478,7 +524,9 @@ async def _schema_violations(
             )
             if can_create:
                 violations.append(f"schema/{schema}/{role}/create")
-            expected_usage = (schema == "control" and role == CONTROL_ROLE) or (
+            expected_usage = (
+                schema == "control" and role in {CONTROL_ROLE, "slaif_public_reader"}
+            ) or (
                 readiness_state is ReadinessState.HARDENED
                 and (
                     (
@@ -662,10 +710,19 @@ async def _function_violations(
                 role,
                 oid,
             )
-            allowed = (is_control_function and role == CONTROL_ROLE) or (
-                readiness_state is ReadinessState.HARDENED
-                and schema == FOUNDATION_SCHEMA
-                and role in REVIEWER_ROLES
+            public_resolver = (
+                schema == "control"
+                and (name, arguments) in PUBLIC_RESOLVER_FUNCTIONS
+                and role == "slaif_public_reader"
+            )
+            allowed = (
+                (is_control_function and role == CONTROL_ROLE)
+                or public_resolver
+                or (
+                    readiness_state is ReadinessState.HARDENED
+                    and schema == FOUNDATION_SCHEMA
+                    and role in REVIEWER_ROLES
+                )
             )
             if can_execute and not allowed:
                 violations.append(f"function/{schema}.{name}/{role}/execute")

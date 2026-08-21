@@ -82,7 +82,7 @@ async def test_each_app_has_only_typed_health_routes(
 ) -> None:
     database = FakeControlDatabase()
     arguments: dict[str, object] = {"settings": ServiceSettings.for_test()}
-    if process is ProcessKind.CONTROL_API:
+    if process in {ProcessKind.CONTROL_API, ProcessKind.RENDER_API}:
         arguments["database"] = database
     app = factory(**arguments)
     expected_routes = {"/health/live", "/health/ready"}
@@ -93,7 +93,14 @@ async def test_each_app_has_only_typed_health_routes(
             "/api/control/v1/login",
             "/api/control/v1/session",
             "/api/control/v1/logout",
+            "/api/control/v1/sites",
+            "/api/control/v1/sites/{site_id}",
+            "/api/control/v1/sites/{site_id}/archive",
+            "/api/control/v1/sites/{site_id}/domains",
+            "/api/control/v1/sites/{site_id}/domains/{domain_id}",
         }
+    if process is ProcessKind.RENDER_API:
+        expected_routes.add("/internal/render/v1/site-context")
     assert _route_paths(app) == expected_routes
     assert app.docs_url is None
     assert app.redoc_url is None
@@ -121,13 +128,13 @@ async def test_each_app_has_only_typed_health_routes(
                 "service": process.value,
                 "components": (
                     [{"component": "database", "status": "ok", "reason": None}]
-                    if process is ProcessKind.CONTROL_API
+                    if process in {ProcessKind.CONTROL_API, ProcessKind.RENDER_API}
                     else []
                 ),
             }
             for hidden in ("/docs", "/redoc", "/openapi.json"):
                 assert (await client.get(hidden)).status_code == 404
-    if process is ProcessKind.CONTROL_API:
+    if process in {ProcessKind.CONTROL_API, ProcessKind.RENDER_API}:
         assert database.started == database.stopped == 1
 
 

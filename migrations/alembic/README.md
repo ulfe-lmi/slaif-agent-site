@@ -12,6 +12,12 @@ atomic setup functions at `009_001`, followed by the non-COW opaque human
 session relation and Control-only lifecycle functions at `010_001`, followed
 by Control-only local credential lookup and password-hash compare-and-set
 functions at `011_001`.
+Revision `012_001` connects those authentication primitives to the bounded
+Control HTTP surface without adding database objects. Revision `013_001` adds
+the non-COW Control-owned site/domain foundation, the installation site quota,
+and exact Control-only semantic functions for site lifecycle and trusted
+resolution. It does not create content/workspace objects or public site HTTP
+routes.
 Application services never invoke
 Alembic; only the one-shot
 bootstrap authority supplies the owner connection used by migration commands

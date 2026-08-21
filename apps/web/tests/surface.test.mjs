@@ -9,7 +9,26 @@ test("auth routes and landing page expose truthful local flows", async () => {
   const home = await read("../app/page.tsx");
   assert.match(home, /href="\/setup"/);
   assert.match(home, /href="\/login"/);
-  assert.match(home, /OIDC, MFA, rate limiting/);
+  assert.match(home, /Secure local administrator setup and server-side sessions/);
+  assert.match(home, /trusted\s+multi-site identity and routing/);
+  assert.match(home, /Platform Administrator site\/domain\s+APIs/);
+  const deferred = home.match(
+    /Still deliberately absent<\/h2>\s*<p>([\s\S]*?)<\/p>/,
+  )?.[1];
+  assert.ok(deferred);
+  for (const claim of [
+    /Membership\/RBAC/,
+    /site-management UI/,
+    /content models and site content/,
+    /workspaces and agent capabilities/,
+    /editing\/Puck/,
+    /review, and publication/,
+  ])
+    assert.match(deferred, claim);
+  assert.doesNotMatch(deferred, /\bsites\b|site routing/i);
+  const implemented = home.match(/Implemented now<\/h2>\s*<p>([\s\S]*?)<\/p>/)?.[1];
+  assert.ok(implemented);
+  assert.doesNotMatch(implemented, /content models|publication/i);
   for (const route of ["setup", "login", "admin"]) {
     const expected =
       route === "admin"
@@ -60,4 +79,21 @@ test("health routes make only web-process claims", async () => {
     assert.match(route, /service: "web"/);
     assert.doesNotMatch(route, /database|product|published/i);
   }
+});
+
+test("site shell uses only the fixed server-side Render resolver", async () => {
+  const client = await read("../src/sites/render.ts");
+  const shell = await read("../app/[...sitePath]/page.tsx");
+  const shellView = await read("../src/sites/shell.tsx");
+  const landing = await read("../app/page.tsx");
+  assert.match(client, /http:\/\/render-api:8000\/internal\/render\/v1\/site-context/);
+  assert.match(client, /credentials: "omit"/);
+  assert.match(client, /cache: "no-store"/);
+  assert.doesNotMatch(client, /process\.env|cookie|authorization|forwarded/i);
+  assert.match(shell, /requestHeaders\.get\("host"\)/);
+  assert.match(shellView, /Trusted routing context/);
+  assert.match(shellView, /Editorial content and\s+publication are not implemented/);
+  assert.match(landing, /isLoopbackAuthority/);
+  assert.match(landing, /resolveSiteContext\(authority, "\/"\)/);
+  assert.doesNotMatch(shell, /site_id.*params|x-forwarded-host/i);
 });

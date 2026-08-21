@@ -23,6 +23,7 @@ SECRET_MODE = 0o400
 DIRECTORY_MODE = 0o710
 CONTROL_DIRECTORY_MODE = 0o700
 CONTROL_DSN_FILE = "control-dsn"
+RENDER_DSN_FILE = "render-dsn"
 MARKER = ".initialized-v1"
 LOGINS = (
     ("bootstrap", "slaif_bootstrap_login"),
@@ -116,12 +117,15 @@ def initialize(
     directory: Path,
     *,
     control_directory: Path | None = None,
+    render_directory: Path | None = None,
     validate_only: bool = False,
 ) -> int:
     if not directory.is_absolute():
         raise SecretInitializationError("secret directory must be absolute")
     if control_directory is not None and not control_directory.is_absolute():
         raise SecretInitializationError("Control secret directory must be absolute")
+    if render_directory is not None and not render_directory.is_absolute():
+        raise SecretInitializationError("Render secret directory must be absolute")
     if not directory.exists():
         if validate_only:
             raise SecretInitializationError("secret directory is unavailable")
@@ -208,6 +212,47 @@ def initialize(
             os.close(control_fd)
         isolated_files = 1
 
+    if render_directory is not None:
+        render_file = render_directory / RENDER_DSN_FILE
+        expected_render_dsn = dsn_files["service-public-dsn"]
+        initialize_render_file = not render_file.exists()
+        if initialize_render_file:
+            if validate_only:
+                raise SecretInitializationError(
+                    "Render secret directory is unavailable"
+                )
+            if render_directory.exists() and any(render_directory.iterdir()):
+                raise SecretInitializationError(
+                    "Render secret directory policy mismatch"
+                )
+            _prepare_directory(
+                render_directory,
+                mode=CONTROL_DIRECTORY_MODE,
+                uid=DIRECTORY_UID,
+                gid=DIRECTORY_UID,
+            )
+            _write_once(render_file, expected_render_dsn, uid=APPLICATION_UID)
+        _prepare_directory(
+            render_directory,
+            mode=CONTROL_DIRECTORY_MODE,
+            uid=APPLICATION_UID,
+            gid=APPLICATION_UID,
+        )
+        if {path.name for path in render_directory.iterdir()} != {RENDER_DSN_FILE}:
+            raise SecretInitializationError("Render secret directory policy mismatch")
+        actual_render_dsn = _read_secret(render_file, uid=APPLICATION_UID)
+        if not secrets.compare_digest(actual_render_dsn, expected_render_dsn):
+            raise SecretInitializationError("isolated Render locator mismatch")
+        render_fd = os.open(
+            render_directory,
+            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+        )
+        try:
+            os.fsync(render_fd)
+        finally:
+            os.close(render_fd)
+        isolated_files += 1
+
     marker = directory / MARKER
     if not validate_only and not marker.exists():
         _write_once(marker, "initialized-v1:" + ("0" * 48), uid=MARKER_UID)
@@ -228,12 +273,18 @@ def main() -> int:
         type=Path,
         default=Path("/run/slaif-control"),
     )
+    parser.add_argument(
+        "--render-directory",
+        type=Path,
+        default=Path("/run/slaif-render"),
+    )
     parser.add_argument("--validate-only", action="store_true")
     arguments = parser.parse_args()
     try:
         count = initialize(
             arguments.directory,
             control_directory=arguments.control_directory,
+            render_directory=arguments.render_directory,
             validate_only=arguments.validate_only,
         )
     except (OSError, SecretInitializationError):

@@ -222,6 +222,7 @@ REQUIRED_FILES = (
         "docs/DATABASE_ROLES.md",
         "docs/DEPLOYMENT.md",
         "docs/OPERATIONS.md",
+        "docs/SITES.md",
         "docs/LICENSE_POLICY.md",
         "docs/SERVICE_AUTHORITY.md",
         "docs/SUPPLY_CHAIN.md",
@@ -247,6 +248,7 @@ REQUIRED_FILES = (
         "services/backend/src/slaif_agent_site/bootstrap/setup_token.py",
         "services/backend/src/slaif_agent_site/control_api/config.py",
         "services/backend/src/slaif_agent_site/control_api/auth_http.py",
+        "services/backend/src/slaif_agent_site/control_api/site_http.py",
         "services/backend/src/slaif_agent_site/control_api/database.py",
         "services/backend/src/slaif_agent_site/application.py",
         "services/backend/src/slaif_agent_site/authority.py",
@@ -262,6 +264,7 @@ REQUIRED_FILES = (
         "services/backend/src/slaif_agent_site/db/alembic/versions/010_001_human_session.py",
         "services/backend/src/slaif_agent_site/db/alembic/versions/011_001_local_authentication.py",
         "services/backend/src/slaif_agent_site/db/alembic/versions/012_001_control_auth_http.py",
+        "services/backend/src/slaif_agent_site/db/alembic/versions/013_001_site_foundation.py",
         "services/backend/src/slaif_agent_site/db/connections.py",
         "services/backend/src/slaif_agent_site/db/executor.py",
         "services/backend/src/slaif_agent_site/db/migrations.py",
@@ -273,6 +276,11 @@ REQUIRED_FILES = (
         "services/backend/src/slaif_agent_site/identity/passwords.py",
         "services/backend/src/slaif_agent_site/identity/authentication.py",
         "services/backend/src/slaif_agent_site/identity/sessions.py",
+        "services/backend/src/slaif_agent_site/sites/__init__.py",
+        "services/backend/src/slaif_agent_site/sites/models.py",
+        "services/backend/src/slaif_agent_site/sites/normalization.py",
+        "services/backend/src/slaif_agent_site/sites/service.py",
+        "services/backend/tests/integration/test_site_control_http_integration.py",
         "services/backend/Dockerfile",
         "services/backend/src/slaif_agent_site/errors.py",
         "services/backend/src/slaif_agent_site/health.py",
@@ -703,13 +711,24 @@ class RepositoryPolicy:
         text = self.read_utf8(path)
         if text is None:
             return
-        exact = '  - "oap/reports/010-i-qualify-session-finalizer-update.md"'
+        report_exact = '  - "oap/reports/010-i-qualify-session-finalizer-update.md"'
+        order_exact = '  - "oap/orders/011-b-platform-admin-site-http.md"'
         lines = set(text.splitlines())
-        if exact not in lines:
+        if report_exact not in lines:
             self.error(path, "missing exact immutable-report ignore")
+        if order_exact not in lines:
+            self.error(path, "missing exact immutable-order ignore")
+        if "Immutable strategic prose" not in text:
+            self.error(path, "immutable-order ignore must be explained")
         for line in lines:
-            if line.startswith("  - ") and "oap/reports" in line and line != exact:
+            if (
+                line.startswith("  - ")
+                and "oap/reports" in line
+                and line != report_exact
+            ):
                 self.error(path, "must not broadly ignore OAP reports")
+            if line.startswith("  - ") and "oap/orders" in line and line != order_exact:
+                self.error(path, "must not broadly ignore OAP orders")
 
     def check_oap(self) -> None:
         active_path = self.root / "oap/active"

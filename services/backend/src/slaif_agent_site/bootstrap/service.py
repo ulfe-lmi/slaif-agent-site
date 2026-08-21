@@ -269,6 +269,8 @@ async def compose_bootstrap(settings: BootstrapSettings) -> BootstrapStatus:
     await upgrade(settings)
     marker = await reconcile(settings)
     checked_marker, validation = await validate(settings)
+    if settings.demo_seed:
+        await ensure_demo_site(settings)
     async with provisioner_connection(
         settings.resolved_provisioner_dsn(),
         expected_database=settings.expected_database,
@@ -285,6 +287,42 @@ async def compose_bootstrap(settings: BootstrapSettings) -> BootstrapStatus:
     ):
         raise BootstrapStateError("local Compose bootstrap validation failed")
     return marker
+
+
+async def ensure_demo_site(settings: BootstrapSettings) -> None:
+    """Create only the exact fresh-install demo site, atomically and idempotently."""
+
+    async with owner_connection(
+        settings.resolved_owner_dsn(), expected_database=settings.expected_database
+    ) as connection:
+        async with connection.transaction():
+            installation = await connection.fetchrow(
+                "SELECT initialized_at FROM control.installation_state "
+                "WHERE singleton FOR UPDATE"
+            )
+            if installation is None:
+                raise BootstrapStateError("installation state is missing")
+            if installation[0] is not None:
+                return
+            rows = await connection.fetch(
+                "SELECT site_key, display_name, default_locale, status, "
+                "canonical_revision, content_model_revision, "
+                "component_catalog_version FROM control.site ORDER BY site_key"
+            )
+            expected = ("demo", "SLAIF Demo Site", "en", "ACTIVE", 0, 0, "catalog-v0")
+            if not rows:
+                await connection.execute(
+                    "INSERT INTO control.site "
+                    "(site_key, display_name, default_locale, "
+                    "component_catalog_version) VALUES ($1, $2, $3, $4)",
+                    expected[0],
+                    expected[1],
+                    expected[2],
+                    expected[6],
+                )
+                return
+            if len(rows) != 1 or tuple(rows[0]) != expected:
+                raise BootstrapStateError("demo seed state mismatch")
 
 
 async def _authenticate_local_logins(
@@ -675,6 +713,7 @@ __all__ = [
     "compose_bootstrap",
     "downgrade",
     "ensure_setup_token",
+    "ensure_demo_site",
     "provision",
     "rebuild",
     "reconcile",

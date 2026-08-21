@@ -88,6 +88,8 @@ EXPECTED_COMMANDS = {
         "/run/slaif-secrets",
         "--control-directory",
         "/run/slaif-control",
+        "--render-directory",
+        "/run/slaif-render",
     ],
 }
 EXPECTED_BUILD_FILES = {
@@ -106,6 +108,7 @@ EXPECTED_MOUNTS = {
     **{name: set() for name in REQUIRED_SERVICES},
     "bootstrap": {("local-secrets", "/run/slaif-secrets", True)},
     "control-api": {("control-secret", "/run/slaif-control", True)},
+    "render-api": {("render-secret", "/run/slaif-render", True)},
     "media-gc": {("media-data", "/var/lib/slaif/media", False)},
     "media-service": {("media-data", "/var/lib/slaif/media", False)},
     "postgres": {
@@ -115,6 +118,7 @@ EXPECTED_MOUNTS = {
     "secrets-init": {
         ("control-secret", "/run/slaif-control", False),
         ("local-secrets", "/run/slaif-secrets", False),
+        ("render-secret", "/run/slaif-render", False),
     },
 }
 EXPECTED_CAP_ADD = {
@@ -127,6 +131,7 @@ EXPECTED_GROUP_ADD = {
 }
 SECRET_MOUNT_SERVICES = {"bootstrap", "postgres", "secrets-init"}
 CONTROL_SECRET_MOUNT_SERVICES = {"control-api", "secrets-init"}
+RENDER_SECRET_MOUNT_SERVICES = {"render-api", "secrets-init"}
 LONG_RUNNING_APPLICATIONS = REQUIRED_SERVICES - {
     "bootstrap",
     "postgres",
@@ -175,7 +180,13 @@ def validate_config(config: dict[str, Any]) -> None:
     )
     _fail(
         set(config.get("volumes", {}))
-        == {"control-secret", "local-secrets", "media-data", "postgres-data"},
+        == {
+            "control-secret",
+            "local-secrets",
+            "media-data",
+            "postgres-data",
+            "render-secret",
+        },
         "volume inventory mismatch",
     )
     networks = config["networks"]
@@ -255,12 +266,22 @@ def validate_config(config: dict[str, Any]) -> None:
             has_control_secret == (name in CONTROL_SECRET_MOUNT_SERVICES),
             f"{name}: Control secret mount policy mismatch",
         )
+        has_render_secret = any(
+            mount.get("source") == "render-secret" for mount in mounts
+        )
+        _fail(
+            has_render_secret == (name in RENDER_SECRET_MOUNT_SERVICES),
+            f"{name}: Render secret mount policy mismatch",
+        )
         environment = service.get("environment", {})
         if name in LONG_RUNNING_APPLICATIONS:
             safe_environment = {
                 key: value
                 for key, value in environment.items()
-                if key == "SLAIF_CONTROL_DSN_FILE" and name == "control-api"
+                if (
+                    (key == "SLAIF_CONTROL_DSN_FILE" and name == "control-api")
+                    or (key == "SLAIF_RENDER_DSN_FILE" and name == "render-api")
+                )
             }
             serialized = json.dumps(
                 {
@@ -302,6 +323,27 @@ def validate_config(config: dict[str, Any]) -> None:
                 },
                 "control-api: database configuration mismatch",
             )
+        if name == "render-api":
+            _fail(
+                {
+                    key: environment.get(key)
+                    for key in (
+                        "SLAIF_RENDER_DSN_FILE",
+                        "SLAIF_RENDER_EXPECTED_DATABASE",
+                        "SLAIF_RENDER_EXPECTED_LOGIN",
+                        "SLAIF_RENDER_EXPECTED_PRIVILEGE_ROLE",
+                        "SLAIF_RENDER_MODE",
+                    )
+                }
+                == {
+                    "SLAIF_RENDER_DSN_FILE": "/run/slaif-render/render-dsn",
+                    "SLAIF_RENDER_EXPECTED_DATABASE": "slaif",
+                    "SLAIF_RENDER_EXPECTED_LOGIN": "slaif_public_login",
+                    "SLAIF_RENDER_EXPECTED_PRIVILEGE_ROLE": "slaif_public_reader",
+                    "SLAIF_RENDER_MODE": "development",
+                },
+                "render-api: database configuration mismatch",
+            )
         if name in LONG_RUNNING_BACKENDS:
             _fail(
                 environment.get("SLAIF_MODE") == "development",
@@ -325,6 +367,11 @@ def validate_config(config: dict[str, Any]) -> None:
             set(services[name].get("networks", {})) == networks,
             f"{name}: network policy mismatch",
         )
+    _fail(
+        services["bootstrap"].get("environment", {}).get("SLAIF_BOOTSTRAP_DEMO_SEED")
+        == "true",
+        "bootstrap: explicit demo seed is not enabled",
+    )
     _fail(
         services["secrets-init"].get("network_mode") == "none",
         "secret initializer must have no network",

@@ -28,19 +28,23 @@ the real responsive result, and publish only after human review.
 > Compose stack builds non-root OCI images,
 > generates file-backed local credentials, reaches `EMPTY_SAFE safe=true`, and
 > exposes an honest Next.js status surface, health routes, and bounded backend
-> Control authentication endpoints through NGINX
+> Control authentication and Platform Administrator site endpoints through NGINX
 > on <http://localhost:8080/>.
-> The database revision contains only schema/version/readiness infrastructure;
-> its clean zero-object content state is explicitly `EMPTY_SAFE` without
+> The database now includes non-COW Control-owned site and domain records plus
+> a typed internal site service and trusted host/path resolver. Its clean
+> zero-object content state remains explicitly `EMPTY_SAFE` without
 > claiming foundation table hardening. Any real content object requires the
 > fully validated `HARDENED` state. A local human authentication/setup UI is
 > implemented and qualified through six self-hosted Playwright browser/device
-> projects; sites,
-> workspaces, editing/Puck, product routes/tables, database-backed product APIs,
+> projects. A fresh reference stack seeds one demo site and serves a small
+> Web→Render routing-context shell for active local or custom-host mappings;
+> this is routing evidence, not site content or publication. Site-management UI, site membership,
+> workspaces, editing/Puck, content tables and APIs,
 > runtime browser commands, review, publication, and product behavior are
-> not implemented yet. Control API alone owns one isolated file-backed
-> login, bounded asyncpg pool, and read-only database readiness component; no
-> other online process receives a database credential.
+> not implemented yet. Control API alone owns one isolated file-backed login,
+> bounded asyncpg pool, readiness/authentication adapters, and the bounded site
+> semantic service. Render alone receives a separate fixed public-reader
+> locator; Web and every other online process remain database-credential-free.
 
 The current automation also migrates/rebuilds disposable databases, verifies
 the exact role/ownership/grant matrix, exercises COW runtime/reviewer paths,
@@ -171,13 +175,14 @@ first-run administrator or website-management product. See the
 | Completed preparation | Normative architecture, coding governance, versioned OAP transcript, professional project guidance, deterministic repository policy, and initial CI/CodeQL configuration. |
 | Completed foundation baseline | Exact PyPI dependency and artifact hashes, public API adapter boundary, Python packaging, and downstream PostgreSQL 14–18 adoption gate. |
 | Completed contract-toolchain baseline | Reproducible Node 24/pnpm 11 workspace, strict TypeScript tooling, and seven private scaffold-only package boundaries. |
-| Completed backend process skeleton | Six health-only FastAPI apps, four non-listening process entrypoints, typed local configuration, conceptual authority mapping, safe errors/correlation/logging, and readiness probes. |
+| Backend process boundary | Five health-only FastAPI apps, one internal Render resolver API, four non-listening process entrypoints, typed local configuration, authority mapping, safe errors/correlation/logging, and readiness probes. |
 | Completed database boundary baseline | Exact password-free roles, packaged Alembic head, three empty product schemas, constrained `PENDING`/`EMPTY_SAFE`/`HARDENED` readiness, public-API COW reconciliation, and independent privilege validation. |
 | Completed deployable skeleton | One-command Compose, generated local database principals, safe-empty bootstrap, digest-pinned OCI images, isolated browser placeholder, Next setup/login/admin UI, NGINX edge, and Apache reference. |
 | Completed supply-chain baseline | Reproducible Python/Web artifacts, exact source/action/base/scanner policy, deterministic notices, six-image SPDX SBOMs, fresh Grype scans, and checksummed retained CI evidence. |
 | Completed Control readiness boundary | Isolated `slaif_control_login` mount, bounded identity-verified Control pool, one owner-defined read-only readiness function, and fail-closed Control/NGINX health dependency. |
 | Completed local authentication proof | One-time setup plus login/session/logout through real NGINX/Compose on desktop Chromium, Firefox, WebKit, tablet, mobile Chromium, and mobile WebKit. |
-| Planned product work | Add sites/workspaces, configurable content, normalized composition/Puck, semantic tools, runtime browser feedback, review/promotion, reconstruction, and hardening. |
+| Completed site foundation | Control-owned sites and domain mappings, bounded installation quota, strict identifier normalization, immutable site context, and trusted longest-prefix/local-development resolution. |
+| Planned product work | Add site-management HTTP/UI, memberships, workspaces, configurable content, normalized composition/Puck, semantic tools, runtime browser feedback, review/promotion, reconstruction, and hardening. |
 
 See [Architecture Section 50](ARCHITECTURE.md#50-implementation-phases) for
 the normative phase plan.
@@ -220,6 +225,7 @@ product work. Control readiness has one injected database component, while
 its liveness remains process-only. Bootstrap mutations require explicit
 one-shot commands. See the
 [configuration contract](docs/CONFIGURATION.md),
+[site foundation](docs/SITES.md),
 [database bootstrap](docs/DATABASE_BOOTSTRAP.md),
 [database roles](docs/DATABASE_ROLES.md), and
 [database connection boundary](docs/DATABASE_CONNECTIONS.md), with process

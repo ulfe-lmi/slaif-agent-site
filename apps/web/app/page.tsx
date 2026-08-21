@@ -1,4 +1,30 @@
-export default function Home() {
+import { headers } from "next/headers";
+import { notFound } from "next/navigation";
+
+import { resolveSiteContext } from "../src/sites/render";
+import { SiteContextShell } from "../src/sites/shell";
+
+function isLoopbackAuthority(authority: string): boolean {
+  try {
+    const parsed = new URL(`http://${authority}`);
+    return (
+      parsed.username === "" &&
+      parsed.password === "" &&
+      parsed.pathname === "/" &&
+      ["localhost", "127.0.0.1", "[::1]"].includes(parsed.hostname.toLowerCase())
+    );
+  } catch {
+    return false;
+  }
+}
+
+export default async function Home() {
+  const authority = (await headers()).get("host") ?? "";
+  if (!isLoopbackAuthority(authority)) {
+    const context = await resolveSiteContext(authority, "/");
+    if (!context) notFound();
+    return <SiteContextShell context={context} />;
+  }
   return (
     <main>
       <section className="hero" aria-labelledby="page-title">
@@ -35,16 +61,17 @@ export default function Home() {
           <p className="number">01</p>
           <h2>Implemented now</h2>
           <p>
-            Local first-administrator setup, login, session inspection, logout, isolated
-            services, and human-controlled foundations.
+            Secure local administrator setup and server-side sessions, trusted
+            multi-site identity and routing, and Platform Administrator site/domain
+            APIs.
           </p>
         </article>
         <article>
           <p className="number">02</p>
           <h2>Still deliberately absent</h2>
           <p>
-            OIDC, MFA, rate limiting, durable authentication audit, sites, workspaces,
-            editing, review, and publication.
+            Membership/RBAC, site-management UI, content models and site content,
+            workspaces and agent capabilities, editing/Puck, review, and publication.
           </p>
         </article>
         <article>

@@ -11,6 +11,7 @@ import pytest
 from pydantic import HttpUrl, SecretStr
 from slaif_agent_site.config import ServiceSettings
 from slaif_agent_site.control_api.app import create_app
+from slaif_agent_site.control_api.auth_http import authenticate_human_request
 from slaif_agent_site.control_api.database import InitialSetupError
 from slaif_agent_site.health import ProbeResult
 from slaif_agent_site.identity.authentication import (
@@ -25,6 +26,7 @@ from slaif_agent_site.identity.sessions import (
     format_csrf_token,
     format_session_token,
 )
+from starlette.requests import Request
 
 USER_ID = UUID("11111111-1111-4111-8111-111111111111")
 PUBLIC_ID = "sas2_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -62,6 +64,7 @@ class StrictSessions:
     def __init__(self) -> None:
         self.created: list[UUID] = []
         self.authenticated: list[str] = []
+        self.state_authenticated: list[tuple[str, str]] = []
         self.revoke_calls: list[tuple[str, str]] = []
         self.revoked: set[str] = set()
         self.create_error: Exception | None = None
@@ -83,6 +86,14 @@ class StrictSessions:
     async def authenticate(self, token: str) -> HumanSessionContext:
         self.authenticated.append(token)
         if token != SESSION_TOKEN or token in self.revoked:
+            raise HumanSessionError()
+        return self.context
+
+    async def authenticate_state_changing(
+        self, token: str, csrf: str
+    ) -> HumanSessionContext:
+        self.state_authenticated.append((token, csrf))
+        if (token, csrf) != (SESSION_TOKEN, CSRF_TOKEN):
             raise HumanSessionError()
         return self.context
 
@@ -196,6 +207,31 @@ def _assert_issue_cookies(
     assert CSRF_TOKEN in csrf
     assert SESSION_TOKEN not in response.text
     assert CSRF_TOKEN not in response.text
+
+
+@pytest.mark.anyio
+async def test_state_changing_helper_uses_only_bound_authentication_method() -> None:
+    database = StrictDatabase()
+    request = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/api/control/v1/sites",
+            "headers": [
+                (
+                    b"cookie",
+                    f"slaif_session={SESSION_TOKEN}; slaif_csrf={CSRF_TOKEN}".encode(),
+                ),
+                (b"x-csrf-token", CSRF_TOKEN.encode()),
+            ],
+        }
+    )
+    context = await authenticate_human_request(
+        request, database, _settings(), state_changing=True
+    )
+    assert context is database.sessions.context
+    assert database.sessions.authenticated == []
+    assert database.sessions.state_authenticated == [(SESSION_TOKEN, CSRF_TOKEN)]
 
 
 @pytest.mark.anyio
