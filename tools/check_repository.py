@@ -1205,12 +1205,12 @@ class RepositoryPolicy:
                     "react-dom": "19.2.8",
                 },
                 "devDependencies": {
-                    "@tailwindcss/postcss": "4.3.3",
                     "@types/node": "24.13.3",
                     "@types/react": "19.2.18",
                     "@types/react-dom": "19.2.4",
+                    "autoprefixer": "10.5.4",
                     "postcss": "8.5.26",
-                    "tailwindcss": "4.3.3",
+                    "tailwindcss": "3.4.19",
                     "typescript": "6.0.3",
                 },
             },
@@ -1391,6 +1391,14 @@ class RepositoryPolicy:
             return
         if not text.startswith("lockfileVersion: '9.0'\n"):
             self.error(path, "lockfile version must be the pnpm 11 format")
+        forbidden_ui_build = re.search(
+            r"@tailwindcss/postcss|lightningcss(?:-|@)|tailwindcss@4\.", text
+        )
+        if forbidden_ui_build:
+            self.error(
+                path,
+                f"forbidden UI build package {forbidden_ui_build.group(0)}",
+            )
 
         audited_text = text
         for slug, package_name in WORKSPACE_PACKAGES.items():

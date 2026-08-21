@@ -17,12 +17,13 @@ and a single-column layout below 760 px without 320 px overflow. Loading,
 no-sites, denied/not-found, expired session, service, and network failure have
 stable non-leaking states. Missing sessions redirect to `/login`.
 
-Tailwind CSS 4.3.3 is compiled locally through the exact PostCSS integration.
-The small shadcn-style component layer is repository-owned source. Radix
-Dropdown Menu 2.1.24 is the only direct Radix primitive. These MIT dependencies
-are registry-locked for Node 24, React 19, and Next 16. The UI uses the local
-logo, system fonts, no remote origin or telemetry, and no browser-persisted
-token, permission, or selected-site state.
+Tailwind CSS 3.4.19 is compiled locally through PostCSS 8.5.26 and Autoprefixer
+10.5.4. The small shadcn-style component layer is repository-owned source.
+Radix Dialog 1.1.23 is the only direct Radix primitive. This build and runtime
+chain is exact, registry-locked, MIT-licensed, and compatible with Node 24,
+React 19, and Next 16. It contains no Lightning CSS or MPL-licensed npm package.
+The UI uses the local logo, system fonts, no remote origin or telemetry, and no
+browser-persisted token, permission, or selected-site state.
 
 Site and membership mutations remain API-only until 013-b/c. User creation,
 invitations, custom roles, content/models/pages, Puck, workspaces/capabilities,

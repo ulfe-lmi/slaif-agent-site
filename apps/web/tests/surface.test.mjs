@@ -95,6 +95,22 @@ test("auth client uses exact same-origin methods and strict CSRF cookies", async
 
 test("responsive styles cover narrow layout, focus, contrast, and reduced motion", async () => {
   const css = await read("../app/styles.css");
+  const postcss = await read("../postcss.config.mjs");
+  const tailwind = await read("../tailwind.config.mjs");
+  const manifest = await read("../package.json");
+  assert.match(
+    css,
+    /@tailwind base;[\s\S]*@tailwind components;[\s\S]*@tailwind utilities;/,
+  );
+  assert.match(postcss, /tailwindcss: \{\}[\s\S]*autoprefixer: \{\}/);
+  assert.match(tailwind, /\.\/app\/\*\*\/[\s\S]*\.\/src\/\*\*\//);
+  assert.match(manifest, /"tailwindcss": "3\.4\.19"/);
+  assert.match(manifest, /"autoprefixer": "10\.5\.4"/);
+  assert.doesNotMatch(
+    `${css}${postcss}${tailwind}${manifest}`,
+    /lightningcss|@tailwindcss\/postcss|tailwindcss": "4\./,
+  );
+  assert.doesNotMatch(`${css}${postcss}${tailwind}`, /https?:\/\/|@import\s+url/);
   assert.match(css, /@media \(max-width: 360px\)/);
   assert.match(css, /overflow-wrap: anywhere/);
   assert.match(css, /focus-visible/);

@@ -113,12 +113,12 @@ class RepositoryPolicyTestCase(unittest.TestCase):
                     "react-dom": "19.2.8",
                 },
                 "devDependencies": {
-                    "@tailwindcss/postcss": "4.3.3",
                     "@types/node": "24.13.3",
                     "@types/react": "19.2.18",
                     "@types/react-dom": "19.2.4",
+                    "autoprefixer": "10.5.4",
                     "postcss": "8.5.26",
-                    "tailwindcss": "4.3.3",
+                    "tailwindcss": "3.4.19",
                     "typescript": "6.0.3",
                 },
             },
@@ -962,6 +962,24 @@ class RepositoryPolicyTestCase(unittest.TestCase):
         )
         errors = self.errors_from("check_pnpm_lock", lock_path)
         self.assertTrue(any("lacks sha512 integrity" in error for error in errors))
+
+    def test_pnpm_lock_rejects_forbidden_ui_build_chain(self) -> None:
+        for package in (
+            "tailwindcss@4.3.3",
+            "@tailwindcss/postcss@4.3.3",
+            "lightningcss@1.32.0",
+            "lightningcss-linux-x64-gnu@1.32.0",
+        ):
+            with self.subTest(package=package):
+                self.write_node_workspace()
+                lock_path = self.root / "pnpm-lock.yaml"
+                lock_path.write_text(
+                    lock_path.read_text(encoding="utf-8") + f"\n  {package}:\n"
+                    "    resolution: {integrity: sha512-YWJjZA==}\n",
+                    encoding="utf-8",
+                )
+                errors = self.errors_from("check_pnpm_lock", lock_path)
+                self.assertTrue(any("forbidden UI build" in error for error in errors))
 
     def test_workflow_accepts_exact_pnpm_action_pin(self) -> None:
         setup_pnpm = APPROVED_ACTIONS["pnpm/action-setup"]

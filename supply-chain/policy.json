@@ -67,14 +67,6 @@
     "pkg:pypi/pathspec@1.1.1": {
       "license": "MPL-2.0",
       "source": "https://github.com/cpburnz/python-pathspec"
-    },
-    "pkg:npm/lightningcss@1.32.0": {
-      "license": "MPL-2.0",
-      "source": "https://github.com/parcel-bundler/lightningcss"
-    },
-    "pkg:npm/lightningcss-linux-x64-gnu@1.32.0": {
-      "license": "MPL-2.0",
-      "source": "https://github.com/parcel-bundler/lightningcss"
     }
   },
   "sources": {

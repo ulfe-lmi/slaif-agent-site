@@ -15,6 +15,11 @@ absence of browser storage, remote origins, or telemetry. The normal Node gate a
 lint, formatting, type checking, package tests, the production build, and license
 inventory.
 
+Repository and supply-chain gates pin the administration build to Tailwind CSS 3.4.19,
+PostCSS 8.5.26, and Autoprefixer 10.5.4. They reject Tailwind 4, `@tailwindcss/postcss`,
+Lightning CSS, remote CSS origins, and unfrozen UI packages. The Node license inventory
+must contain no MPL license family.
+
 Objective 013-a deliberately does not run local Compose or Playwright. Those browser and
 public-edge checks are reserved for objective 013-d; GitHub's existing packaging check
 remains the clean-stack evidence for this round.

@@ -88,7 +88,6 @@ jobs:
             "CC-BY-4.0", // attribution-licensed browser compatibility data
             "ISC",
             "MIT",
-            "MPL-2.0", // explicitly reviewed packages in supply-chain/policy.json
           ]);
           const inventory = JSON.parse(readFileSync(process.argv[2], "utf8"));
           const rejected = Object.keys(inventory).filter(
