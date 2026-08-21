@@ -53,3 +53,14 @@ or cross-site resources 404; duplicates, quota, primary-domain rules, and
 archived state 409; validation 422; persistence unavailability 503. Every
 success and error is `private, no-store`, `noindex`, and carries one request ID.
 Errors use the stable envelope and reveal no credential or cross-site detail.
+
+## Internal Render resolution API
+
+Render exposes exactly one non-health route on its internal listener:
+`POST /internal/render/v1/site-context`. Its extra-forbid body contains only
+`authority` and `path`. The response contains the resolved active site UUID,
+key, canonical revision, default locale, and matched hostname/path prefix; it
+contains no lifecycle, user, workspace, capability, preview, or publication
+authority. Invalid, reserved, unknown, and archived inputs share 404; ambiguity
+is 409 and persistence failure is 503. All responses are private/no-store,
+noindex, and request-ID correlated. No edge or public route targets it.

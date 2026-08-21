@@ -1,9 +1,9 @@
 # Backend configuration contract
 
-The current Python backend has shared typed configuration for health-only
-long-running skeletons, a separate Control-only online database model, and
+The current Python backend has shared typed configuration for long-running
+services, separate Control and Render online database models, and
 separate typed configuration for explicit one-shot database bootstrap. Control
-API is the only online process that connects to PostgreSQL. Its initial-local-
+Control and Render are the only online processes that connect to PostgreSQL. The initial-local-
 administrator operation exists only as a semantic code/test boundary; no
 process authenticates a caller, exposes a product API, or runs a product job.
 
@@ -84,7 +84,8 @@ python -m slaif_agent_site.mcp_adapter
 python -m slaif_agent_site.media_service
 ```
 
-Those apps expose only `/health/live` and `/health/ready`. Their public docs,
+All expose `/health/live` and `/health/ready`; Render additionally exposes the
+internal-only resolver documented in [API](API.md). Their public docs,
 ReDoc, and OpenAPI routes are disabled, although deterministic in-process tests
 can call `app.openapi()`.
 
@@ -127,6 +128,18 @@ Explicit test mode permits only local or `.test` fake direct locators.
 The locator uses `SecretStr`, is never emitted through repr/JSON/errors/health,
 and is resolved only inside Control lifespan startup. See
 [database connections](DATABASE_CONNECTIONS.md) for pool and failure semantics.
+
+## Render database configuration
+
+`RenderDatabaseSettings` is owned by `render_api`, uses `SLAIF_RENDER_`, and
+fixes login `slaif_public_login`, privilege role `slaif_public_reader`, default
+locator `/run/slaif-render/render-dsn`, and application name
+`slaif-render-api`. Development and production use an absolute, process-owned,
+mode-`0400` locator file; production requires verified-full TLS and an absolute
+root certificate. Direct DSNs are test-only and restricted to loopback or
+`.test`. Check mode validates the static contract without reading the file or
+opening a connection. This round deliberately adds no Compose mount or secret
+distribution.
 
 ## One-shot database configuration
 
@@ -179,8 +192,9 @@ there is no wildcard-domain, trusted-proxy, or forwarded-header setting in
 this round.
 
 The default initializer generates future service DSN files, but only the exact
-Control DSN is copied into a separate mounted volume. All other online service
-database locators/pools, identity providers, browser sources,
+Control DSN is copied into a separate mounted volume. Render has an implemented
+pool contract but its DSN is deliberately not distributed by Compose yet. All
+other online service database locators/pools, identity providers, browser sources,
 media stores, service authentication, trusted proxies, CORS, sessions, jobs,
 metrics, and product feature settings are not implemented. They must be added
 later under their process-specific authority and architecture work orders.
@@ -199,9 +213,11 @@ recent-auth window. Validation requires `0 < touch < idle < absolute` and
 `0 < recent-auth <= absolute`. PostgreSQL database time decides expiry and
 recent-auth; application wall-clock injection is not used for authorization.
 
-The future HTTP layer must use the value-object contract: HTTP-only,
+The HTTP layer uses the value-object contract: HTTP-only,
 `SameSite=Lax`, `Path=/`, no Domain, and Max-Age no greater than absolute
 lifetime. Production uses `Secure` and `__Host-slaif_session`; development
 local uses non-Secure `slaif_session`. CSRF is a separate `sas2_csrf_...`
 credential and is required for every future state-changing cookie-authenticated
-Control call. No cookie or route is emitted by this round.
+Control call. State-changing authentication verifies both bound credentials
+before its single persistence finalization; denied requests do not touch the
+session row.

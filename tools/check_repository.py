@@ -711,13 +711,24 @@ class RepositoryPolicy:
         text = self.read_utf8(path)
         if text is None:
             return
-        exact = '  - "oap/reports/010-i-qualify-session-finalizer-update.md"'
+        report_exact = '  - "oap/reports/010-i-qualify-session-finalizer-update.md"'
+        order_exact = '  - "oap/orders/011-b-platform-admin-site-http.md"'
         lines = set(text.splitlines())
-        if exact not in lines:
+        if report_exact not in lines:
             self.error(path, "missing exact immutable-report ignore")
+        if order_exact not in lines:
+            self.error(path, "missing exact immutable-order ignore")
+        if "Immutable strategic prose" not in text:
+            self.error(path, "immutable-order ignore must be explained")
         for line in lines:
-            if line.startswith("  - ") and "oap/reports" in line and line != exact:
+            if (
+                line.startswith("  - ")
+                and "oap/reports" in line
+                and line != report_exact
+            ):
                 self.error(path, "must not broadly ignore OAP reports")
+            if line.startswith("  - ") and "oap/orders" in line and line != order_exact:
+                self.error(path, "must not broadly ignore OAP orders")
 
     def check_oap(self) -> None:
         active_path = self.root / "oap/active"

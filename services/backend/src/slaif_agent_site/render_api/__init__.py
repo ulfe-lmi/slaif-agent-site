@@ -1,4 +1,4 @@
-"""Internal Render API health-only process skeleton."""
+"""Internal least-privilege Render API."""
 
 from .app import create_app
 

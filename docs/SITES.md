@@ -9,7 +9,10 @@ and not an Agent-State workspace.
 
 Only the owner role has direct relation access. The Control role can execute a
 small fixed function surface for site lifecycle, domain mappings, and
-resolution. Other product roles have neither relation nor function authority.
+resolution. The canonical Render credential (`slaif_public_reader`) can execute
+only the two active hostname/path and local-key resolver functions; its
+`SiteResolver` exposes only `resolve(authority, request_path)`. Other product
+roles have neither relation nor site-function authority.
 The Control application exposes the same boundary through the authenticated
 Platform Administrator API documented in [API](API.md). No anonymous site
 endpoint or site-management UI exists.
@@ -60,12 +63,13 @@ prefix. Equal-best ambiguity fails closed. Only active sites are returned.
 For local development, `localhost` can use `/s/<site-key>` and derives the key
 from that trusted path form. It does not accept a caller-provided site UUID.
 Wildcard domains, forwarded-header trust, DNS verification, redirects, and
-production edge routing remain deferred.
+production edge routing remain deferred. The internal Render endpoint ignores
+site/workspace/identity headers and returns routing context, never authorization.
 
 ## Deferred work
 
 Site-management UI, site membership/RBAC, demo seeding, workspaces, content
-models, editorial content, anonymous rendering/routing, DNS automation, and
+models, editorial content, anonymous public rendering/edge routing, DNS automation, and
 deletion are not implemented. This API does not make the application
 production-ready or hostile-tenant-safe. Multi-site support remains trusted
 institutional tenancy and does not claim hostile public-SaaS isolation.

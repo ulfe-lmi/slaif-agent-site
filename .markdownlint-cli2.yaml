@@ -32,3 +32,5 @@ ignores:
   - "oap/strategic-instructions/**"
   # Immutable 010-i report predates the mandatory pre-publication lint gate.
   - "oap/reports/010-i-qualify-session-finalizer-update.md"
+  # Immutable strategic prose contains a literal line beginning `#23,`.
+  - "oap/orders/011-b-platform-admin-site-http.md"

@@ -24,8 +24,10 @@ from slaif_agent_site.identity.authentication import (
 )
 from slaif_agent_site.identity.models import InitialLocalAdministratorRequest
 from slaif_agent_site.identity.sessions import (
+    ClassifiedHumanSessionError,
     HumanSessionContext,
     HumanSessionError,
+    HumanSessionFailure,
     IssuedHumanSession,
 )
 
@@ -168,23 +170,32 @@ async def authenticate_human_request(
         service = database.human_session_service()
     except HumanSessionError:
         raise ServiceUnavailableError() from None
-    try:
-        context = cast(HumanSessionContext, await service.authenticate(token))
-    except HumanSessionError:
-        raise AuthenticationError() from None
     if not state_changing:
-        return context
-    header = _csrf_header(request)
+        try:
+            return cast(HumanSessionContext, await service.authenticate(token))
+        except HumanSessionError:
+            raise AuthenticationError() from None
+    try:
+        header = _csrf_header(request)
+    except AuthorizationError:
+        header = ""
     csrf = names.get(csrf_name)
-    if not csrf or not secrets.compare_digest(csrf, header):
-        raise AuthorizationError()
+    presented_csrf = (
+        csrf if csrf and header and secrets.compare_digest(csrf, header) else ""
+    )
     try:
         return cast(
             HumanSessionContext,
-            await service.authenticate_state_changing(token, csrf),
+            await service.authenticate_state_changing(token, presented_csrf),
         )
+    except ClassifiedHumanSessionError as error:
+        if error.reason is HumanSessionFailure.SESSION:
+            raise AuthenticationError() from None
+        if error.reason is HumanSessionFailure.CSRF:
+            raise AuthorizationError() from None
+        raise ServiceUnavailableError() from None
     except HumanSessionError:
-        raise AuthorizationError() from None
+        raise ServiceUnavailableError() from None
 
 
 def _set_session_cookies(

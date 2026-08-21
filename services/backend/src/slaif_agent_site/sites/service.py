@@ -18,13 +18,7 @@ from .models import (
     SiteStatus,
     UpdateSiteRequest,
 )
-from .normalization import (
-    SiteInputError,
-    normalize_authority,
-    normalize_request_path,
-    normalize_site_key,
-    path_is_reserved,
-)
+from .resolver import SiteResolver, SiteResolverError
 
 COMPONENT_CATALOG_VERSION = "catalog-v0"
 CREATE_SITE_SQL = "SELECT * FROM control.slaif_site_create($1, $2, $3, $4)"
@@ -204,44 +198,12 @@ class SiteService:
 
     async def resolve(self, authority: str, path: str) -> SiteContext:
         """Resolve trusted routing facts only; this grants no authorization."""
-
         try:
-            normalized_authority = normalize_authority(authority)
-            normalized_path = normalize_request_path(path)
-        except SiteInputError:
-            raise SiteServiceError(SiteServiceReason.NOT_FOUND) from None
-        if path_is_reserved(normalized_path):
-            raise SiteServiceError(SiteServiceReason.NOT_FOUND)
-
-        segments = normalized_path.split("/")
-        if len(segments) >= 2 and segments[1] == "s":
-            if normalized_authority.hostname == "localhost" and len(segments) >= 3:
-                try:
-                    key = normalize_site_key(segments[2])
-                except SiteInputError:
-                    raise SiteServiceError(SiteServiceReason.NOT_FOUND) from None
-                row = await self._fetchrow(RESOLVE_LOCAL_SQL, key)
-                if row is None:
-                    raise SiteServiceError(SiteServiceReason.NOT_FOUND)
-                return SiteContext._from_database(
-                    (*tuple(row), normalized_authority.hostname, f"/s/{key}")
-                )
-            raise SiteServiceError(SiteServiceReason.NOT_FOUND)
-
-        try:
-            async with self._pool.acquire(timeout=self._acquire_timeout) as connection:
-                rows = await connection.fetch(
-                    RESOLVE_SITE_SQL, normalized_authority.hostname, normalized_path
-                )
-        except asyncio.CancelledError:
-            raise
-        except (asyncpg.PostgresError, OSError, TimeoutError):
-            raise SiteServiceError(SiteServiceReason.UNAVAILABLE) from None
-        if not rows:
-            raise SiteServiceError(SiteServiceReason.NOT_FOUND)
-        if len(rows) > 1 and len(rows[0][6]) == len(rows[1][6]):
-            raise SiteServiceError(SiteServiceReason.CONFLICT)
-        return SiteContext._from_database(rows[0])
+            return await SiteResolver(
+                self._pool, acquire_timeout=self._acquire_timeout
+            ).resolve(authority, path)
+        except SiteResolverError as error:
+            raise SiteServiceError(SiteServiceReason(error.reason)) from None
 
 
 __all__ = [

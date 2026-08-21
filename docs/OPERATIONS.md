@@ -1,5 +1,15 @@
 # Local skeleton operations
 
+## Render resolver
+
+Render startup resolves its private database locator, validates the fixed
+public-reader identity, and fails readiness closed on configuration,
+connectivity, role, or migration mismatch. Shutdown drains the pool within the
+configured bound and terminates it on timeout. `python -m
+slaif_agent_site.render_api --check` performs no locator read or connection.
+No Render DSN is distributed by the default stack in this round, so operators
+must not claim the endpoint is deployed or publicly routed.
+
 The Control process is the only online authority for local credential lookup
 and compare-and-set password rehash. It uses fixed-cost Argon2id and an
 equal-cost dummy verification path for unknown or disabled identities. Budget

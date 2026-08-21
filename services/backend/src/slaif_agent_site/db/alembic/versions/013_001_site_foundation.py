@@ -27,6 +27,13 @@ def _secure(functions: tuple[str, ...]) -> None:
         op.execute(f'GRANT EXECUTE ON FUNCTION "control".{function} TO "slaif_control"')
 
 
+def _grant_public_resolver(functions: tuple[str, ...]) -> None:
+    for function in functions:
+        op.execute(
+            f'GRANT EXECUTE ON FUNCTION "control".{function} TO "slaif_public_reader"'
+        )
+
+
 def upgrade() -> None:
     op.execute(
         """
@@ -412,6 +419,12 @@ def upgrade() -> None:
             '"slaif_site_archive"(uuid)',
             '"slaif_site_domain_put"(uuid, uuid, text, text, boolean)',
             '"slaif_site_domain_remove"(uuid, uuid)',
+            '"slaif_site_resolve"(text, text)',
+            '"slaif_site_resolve_local"(text)',
+        )
+    )
+    _grant_public_resolver(
+        (
             '"slaif_site_resolve"(text, text)',
             '"slaif_site_resolve_local"(text)',
         )
