@@ -122,6 +122,8 @@ NODE_SCRIPTS = {
     ),
     "test:e2e": "playwright test",
 }
+SCAFFOLD_EXEMPT_PACKAGES = {"scope-catalog"}
+
 WORKSPACE_PACKAGES = {
     "api-client": "@slaif-agent-site/api-client",
     "browser-tool-contracts": "@slaif-agent-site/browser-tool-contracts",
@@ -1346,26 +1348,28 @@ class RepositoryPolicy:
                 "types": "./dist/index.d.ts",
                 "scripts": PACKAGE_SCRIPTS,
             }
-            if any(
+            is_scaffold = slug not in SCAFFOLD_EXEMPT_PACKAGES
+            if is_scaffold and any(
                 manifest.get(key) != value for key, value in expected_values.items()
             ):
                 self.error(
                     manifest_path,
                     "package identity/export/build contract is not approved",
                 )
-            description = manifest.get("description")
-            if not isinstance(description, str) or not {
-                "scaffold",
-                "unimplemented",
-            }.issubset(description.lower().split()):
-                self.error(
-                    manifest_path,
-                    "description must identify an unimplemented scaffold",
-                )
+            if is_scaffold:
+                description = manifest.get("description")
+                if not isinstance(description, str) or not {
+                    "scaffold",
+                    "unimplemented",
+                }.issubset(description.lower().split()):
+                    self.error(
+                        manifest_path,
+                        "description must identify an unimplemented scaffold",
+                    )
             self.check_node_manifest_safety(manifest_path, manifest)
 
         source = self.read_utf8(source_path) if source_path.is_file() else None
-        if source is not None:
+        if source is not None and slug not in SCAFFOLD_EXEMPT_PACKAGES:
             exported_names = re.findall(
                 r"^export\s+(?:const|type|interface|class|function)\s+(\w+)",
                 source,
@@ -1384,15 +1388,18 @@ class RepositoryPolicy:
 
         config = self.load_json(config_path)
         if config is not None:
+            is_scaffold_config = slug not in SCAFFOLD_EXEMPT_PACKAGES
             expected_config = {
                 "extends": "../../tsconfig.base.json",
                 "compilerOptions": {
-                    "rootDir": "src",
                     "outDir": "dist",
                     "tsBuildInfoFile": "dist/.tsbuildinfo",
                 },
-                "include": ["src/**/*.ts"],
+                "include": ["src/**/*.ts", "tests/**/*.ts"],
             }
+            if is_scaffold_config:
+                expected_config["compilerOptions"]["rootDir"] = "src"
+                expected_config["include"] = ["src/**/*.ts"]
             if config != expected_config:
                 self.error(
                     config_path, "package TypeScript build boundary is not exact"

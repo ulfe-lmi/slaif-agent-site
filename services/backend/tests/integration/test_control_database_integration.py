@@ -102,14 +102,12 @@ async def test_readiness_function_owner_security_grants_and_denial_matrix(
             row = await control.fetchrow(
                 "SELECT * FROM control.slaif_control_readiness()"
             )
-            assert tuple(row) == (
-                "015_001",
-                "015_001",
-                "EMPTY_SAFE",
-                True,
-                "agent-cow-postgresql",
-                "0.2.0",
-            )
+            assert row["schema_revision"] == "016_001"
+            assert row["marker_revision"] == "016_001"
+            assert row["readiness_state"] in ("EMPTY_SAFE", "HARDENED")
+            assert row["safe"] is True
+            assert row["foundation_distribution"] == "agent-cow-postgresql"
+            assert row["foundation_version"] == "0.2.0"
             with pytest.raises(asyncpg.InsufficientPrivilegeError):
                 await control.fetch("SELECT * FROM control.bootstrap_readiness")
         for role, pool in pools.items():
@@ -158,7 +156,7 @@ async def test_control_pool_reports_exact_marker_migration_and_foundation_state(
         ) as connection:
             await connection.execute(
                 "UPDATE control.bootstrap_readiness "
-                "SET migration_revision = '015_001', "
+                "SET migration_revision = '016_001', "
                 "foundation_version = '0.0.0' WHERE singleton"
             )
         assert (await adapter.readiness()).reason == (

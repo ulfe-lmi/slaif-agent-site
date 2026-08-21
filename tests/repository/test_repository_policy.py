@@ -27,6 +27,7 @@ from tools.check_repository import (
     PYTHON_RUNTIME_DEPENDENCIES,
     REQUIRED_FILES,
     ROOT_NODE_DEV_DEPENDENCIES,
+    SCAFFOLD_EXEMPT_PACKAGES,
     WORKSPACE_PACKAGES,
     RepositoryPolicy,
 )
@@ -168,18 +169,18 @@ class RepositoryPolicyTestCase(unittest.TestCase):
                 '  version: "0.0.0",\n'
                 "} as const);\n",
             )
-            self.write_json(
-                f"packages/{slug}/tsconfig.json",
-                {
-                    "extends": "../../tsconfig.base.json",
-                    "compilerOptions": {
-                        "rootDir": "src",
-                        "outDir": "dist",
-                        "tsBuildInfoFile": "dist/.tsbuildinfo",
-                    },
-                    "include": ["src/**/*.ts"],
+            tsconfig: dict[str, object] = {
+                "extends": "../../tsconfig.base.json",
+                "compilerOptions": {
+                    "outDir": "dist",
+                    "tsBuildInfoFile": "dist/.tsbuildinfo",
                 },
-            )
+                "include": ["src/**/*.ts", "tests/**/*.ts"],
+            }
+            if slug not in SCAFFOLD_EXEMPT_PACKAGES:
+                tsconfig["compilerOptions"]["rootDir"] = "src"
+                tsconfig["include"] = ["src/**/*.ts"]
+            self.write_json(f"packages/{slug}/tsconfig.json", tsconfig)
 
         workspace_links = "\n".join(
             f"      '{package_name}':\n"

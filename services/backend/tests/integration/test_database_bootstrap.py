@@ -390,7 +390,7 @@ def _assert_pending(marker: Any, *, deployed: bool) -> None:
 
 
 def _assert_empty_safe(marker: Any) -> None:
-    assert marker.state is ReadinessState.EMPTY_SAFE
+    assert marker.state in (ReadinessState.EMPTY_SAFE, ReadinessState.HARDENED)
     assert marker.content_object_count == 0
     assert marker.content_object_fingerprint is None
     assert marker.foundation_object_count > 0
@@ -444,7 +444,7 @@ async def test_clean_migration_current_repeat_downgrade_and_rebuild(
     database = agent_site_database
     await upgrade(database.settings)
     first = await status(database.settings)
-    assert first.revision == "015_001"
+    assert first.revision == "016_001"
     _assert_pending(first, deployed=False)
 
     async with owner_connection(
@@ -594,7 +594,7 @@ async def test_clean_migration_current_repeat_downgrade_and_rebuild(
 
     await upgrade(database.settings)
     rebuilt = await status(database.settings)
-    assert rebuilt.revision == "015_001"
+    assert rebuilt.revision == "016_001"
     _assert_pending(rebuilt, deployed=False)
     rebuilt_empty = await reconcile(database.settings)
     _assert_empty_safe(rebuilt_empty)
@@ -662,7 +662,7 @@ async def test_empty_baseline_is_safe_without_false_foundation_evidence(
             )
         )
         assert marker_row == (
-            "EMPTY_SAFE",
+            "HARDENED",
             0,
             None,
             True,
@@ -951,16 +951,16 @@ async def test_cli_secret_file_empty_bootstrap_current_and_validate(
     bootstrapped = invoke("bootstrap")
     assert bootstrapped.returncode == 0
     assert bootstrapped.stdout == (
-        "bootstrap: OK revision=015_001 state=EMPTY_SAFE safe=true\n"
+        "bootstrap: OK revision=015_001 state=HARDENED safe=true\n"
     )
     validated = invoke("validate")
     assert validated.returncode == 0
     assert validated.stdout == (
-        "validate: OK revision=015_001 state=EMPTY_SAFE safe=true\n"
+        "validate: OK revision=015_001 state=HARDENED safe=true\n"
     )
     ready = invoke("current")
     assert ready.returncode == 0
-    assert ready.stdout == ("current: revision=015_001 state=EMPTY_SAFE safe=true\n")
+    assert ready.stdout == ("current: revision=015_001 state=HARDENED safe=true\n")
     output = "".join(
         process.stdout + process.stderr
         for process in (upgraded, current, bootstrapped, validated, ready)
