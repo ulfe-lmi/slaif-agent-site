@@ -9,7 +9,9 @@ crafted API call.
 
 Revision `014_001` provides site-scoped human membership and built-in
 role-based authorization. Control exposes the bounded catalog and membership
-HTTP surface described in [the API guide](API.md); no membership UI exists.
+HTTP surface described in [the API guide](API.md). The responsive administration
+UI consumes that exact surface for existing user UUIDs and never substitutes
+client-side role logic for server authorization.
 
 ## Built-in roles
 
@@ -100,5 +102,6 @@ editor, public/preview reader, reviewer, scheduler, media, and GC roles have
 neither relation access nor RBAC function execution.
 
 This remains trusted institutional multi-site tenancy, not hostile public SaaS
-isolation or RLS. Membership UI, invitations, custom roles, workspaces,
-capabilities, content, and publication execution are not implemented yet.
+isolation or RLS. The membership UI does not provision identities or implement
+invitations or custom roles. Workspaces, capabilities, content, and publication
+execution are not implemented yet.

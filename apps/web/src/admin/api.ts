@@ -1,4 +1,10 @@
-import { CONTROL, csrfCookie, type SessionSummary, session } from "../auth/client";
+import { CONTROL, csrfCookie } from "../auth/client";
+
+export type AdminSession = {
+  recent_auth: boolean;
+  absolute_expires_at: string;
+  user_account_id: string;
+};
 
 export type CurrentSite = {
   site_id: string;
@@ -36,6 +42,43 @@ export type DomainMapping = {
   is_primary: boolean;
   created_at: string;
 };
+export type RoleCatalog = {
+  role_key: string;
+  label: string;
+  description: string;
+  default_delegation_ceiling: number;
+  default_permissions: string[];
+};
+export type PermissionCatalog = {
+  permission_key: string;
+  category: string;
+  agent_delegation_level: number | null;
+  site_assignable: boolean;
+  installation_only: boolean;
+  system_only: boolean;
+  role_keys: string[];
+};
+export type Membership = {
+  site_id: string;
+  user_account_id: string;
+  role_key: string;
+  delegation_ceiling: number;
+  effective_delegation_ceiling: number;
+  status: "ACTIVE" | "INACTIVE";
+  version: number;
+  allow_permissions: string[];
+  deny_permissions: string[];
+  effective_permissions: string[];
+  platform_administrator: boolean;
+  created_at: string;
+  updated_at: string;
+};
+export type MembershipBody = {
+  role_key: string;
+  delegation_ceiling: number;
+  allow_permissions: string[];
+  deny_permissions: string[];
+};
 
 function object(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value))
@@ -50,6 +93,113 @@ function number(item: Record<string, unknown>, key: string): number {
   if (typeof item[key] !== "number") throw new Error("invalid-response");
   return item[key];
 }
+function integer(item: Record<string, unknown>, key: string, minimum = 0): number {
+  const value = number(item, key);
+  if (!Number.isInteger(value) || value < minimum) throw new Error("invalid-response");
+  return value;
+}
+function uuid(item: Record<string, unknown>, key: string): string {
+  const value = text(item, key);
+  if (
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+      value,
+    )
+  )
+    throw new Error("invalid-response");
+  return value;
+}
+function strings(item: Record<string, unknown>, key: string): string[] {
+  const value = item[key];
+  if (!Array.isArray(value) || !value.every((entry) => typeof entry === "string"))
+    throw new Error("invalid-response");
+  return value;
+}
+function adminSession(value: unknown): AdminSession {
+  const item = object(value);
+  if (typeof item.recent_auth !== "boolean") throw new Error("invalid-response");
+  return {
+    recent_auth: item.recent_auth,
+    absolute_expires_at: text(item, "absolute_expires_at"),
+    user_account_id: uuid(item, "user_account_id"),
+  };
+}
+function role(value: unknown): RoleCatalog {
+  const item = object(value);
+  const ceiling = integer(item, "default_delegation_ceiling");
+  if (ceiling > 4) throw new Error("invalid-response");
+  return {
+    role_key: text(item, "role_key"),
+    label: text(item, "label"),
+    description: text(item, "description"),
+    default_delegation_ceiling: ceiling,
+    default_permissions: strings(item, "default_permissions"),
+  };
+}
+function permission(value: unknown): PermissionCatalog {
+  const item = object(value);
+  const category = text(item, "category");
+  const delegationLevel = item.agent_delegation_level;
+  const categories = new Set([
+    "READ",
+    "L1_WRITE",
+    "L2_WRITE",
+    "L3_WRITE",
+    "L4_WRITE",
+    "HUMAN_ONLY",
+    "INSTALLATION_ONLY",
+    "SYSTEM_ONLY",
+  ]);
+  if (
+    !categories.has(category) ||
+    typeof item.site_assignable !== "boolean" ||
+    typeof item.installation_only !== "boolean" ||
+    typeof item.system_only !== "boolean" ||
+    !(
+      (typeof delegationLevel === "number" &&
+        Number.isInteger(delegationLevel) &&
+        delegationLevel >= 1 &&
+        delegationLevel <= 4) ||
+      delegationLevel === null
+    )
+  )
+    throw new Error("invalid-response");
+  return {
+    permission_key: text(item, "permission_key"),
+    category,
+    agent_delegation_level: delegationLevel,
+    site_assignable: item.site_assignable,
+    installation_only: item.installation_only,
+    system_only: item.system_only,
+    role_keys: strings(item, "role_keys"),
+  };
+}
+function membership(value: unknown): Membership {
+  const item = object(value);
+  const explicitCeiling = integer(item, "delegation_ceiling");
+  const effectiveCeiling = integer(item, "effective_delegation_ceiling");
+  if (
+    (item.status !== "ACTIVE" && item.status !== "INACTIVE") ||
+    typeof item.platform_administrator !== "boolean" ||
+    explicitCeiling > 4 ||
+    effectiveCeiling > 4
+  )
+    throw new Error("invalid-response");
+  return {
+    site_id: uuid(item, "site_id"),
+    user_account_id: uuid(item, "user_account_id"),
+    role_key: text(item, "role_key"),
+    delegation_ceiling: explicitCeiling,
+    effective_delegation_ceiling: effectiveCeiling,
+    status: item.status,
+    version: integer(item, "version", 1),
+    allow_permissions: strings(item, "allow_permissions"),
+    deny_permissions: strings(item, "deny_permissions"),
+    effective_permissions: strings(item, "effective_permissions"),
+    platform_administrator: item.platform_administrator,
+    created_at: text(item, "created_at"),
+    updated_at: text(item, "updated_at"),
+  };
+}
 function currentSite(value: unknown): CurrentSite {
   const item = object(value);
   const status = item.status;
@@ -60,7 +210,7 @@ function currentSite(value: unknown): CurrentSite {
   )
     throw new Error("invalid-response");
   return {
-    site_id: text(item, "site_id"),
+    site_id: uuid(item, "site_id"),
     site_key: text(item, "site_key"),
     display_name: text(item, "display_name"),
     status,
@@ -143,10 +293,10 @@ function mutation(method: string, body?: unknown): RequestInit {
 }
 
 export async function loadAdmin(): Promise<{
-  session: SessionSummary;
+  session: AdminSession;
   sites: CurrentSite[];
 }> {
-  const currentSession = await session();
+  const currentSession = adminSession(await json("/session"));
   const value = await json("/me/sites");
   if (!Array.isArray(value)) throw new Error("invalid-response");
   return { session: currentSession, sites: value.map(currentSite) };
@@ -201,4 +351,97 @@ export async function removeDomain(siteId: string, domainId: string): Promise<vo
 export const archiveSite = async (siteId: string) =>
   siteRecord(
     await json(`/sites/${encodeURIComponent(siteId)}/archive`, mutation("POST")),
+  );
+
+export async function loadMembershipAdministration(siteId: string): Promise<{
+  authority: CurrentAuthority;
+  roles: RoleCatalog[];
+  permissions: PermissionCatalog[];
+  memberships: Membership[];
+  session: AdminSession;
+}> {
+  const [authority, rolesValue, permissionsValue, membershipsValue, sessionValue] =
+    await Promise.all([
+      loadAuthority(siteId),
+      json("/roles"),
+      json("/permissions"),
+      json(`/sites/${encodeURIComponent(siteId)}/memberships`),
+      json("/session"),
+    ]);
+  if (
+    !Array.isArray(rolesValue) ||
+    !Array.isArray(permissionsValue) ||
+    !Array.isArray(membershipsValue)
+  )
+    throw new Error("invalid-response");
+  const roles = rolesValue.map(role);
+  const permissions = permissionsValue.map(permission);
+  const memberships = membershipsValue.map(membership);
+  const roleByKey = new Map(roles.map((item) => [item.role_key, item]));
+  const permissionByKey = new Map(
+    permissions.map((item) => [item.permission_key, item]),
+  );
+  if (roleByKey.size !== roles.length || permissionByKey.size !== permissions.length)
+    throw new Error("invalid-response");
+  for (const item of memberships) {
+    const membershipRole = roleByKey.get(item.role_key);
+    const overrides = [...item.allow_permissions, ...item.deny_permissions];
+    if (
+      item.site_id !== authority.site_id ||
+      !membershipRole ||
+      item.delegation_ceiling > membershipRole.default_delegation_ceiling ||
+      new Set(overrides).size !== overrides.length ||
+      overrides.some((key) => !permissionByKey.get(key)?.site_assignable) ||
+      item.effective_permissions.some((key) => !permissionByKey.has(key))
+    )
+      throw new Error("invalid-response");
+  }
+  return {
+    authority,
+    roles,
+    permissions,
+    memberships: memberships.sort((left, right) =>
+      left.user_account_id.localeCompare(right.user_account_id),
+    ),
+    session: adminSession(sessionValue),
+  };
+}
+export const createMembership = async (
+  siteId: string,
+  targetUserId: string,
+  body: MembershipBody,
+) =>
+  membership(
+    await json(
+      `/sites/${encodeURIComponent(siteId)}/memberships`,
+      mutation("POST", { target_user_id: targetUserId, ...body }),
+    ),
+  );
+export const updateMembership = async (
+  siteId: string,
+  userId: string,
+  expectedVersion: number,
+  status: "ACTIVE" | "INACTIVE",
+  body: MembershipBody,
+) =>
+  membership(
+    await json(
+      `/sites/${encodeURIComponent(siteId)}/memberships/${encodeURIComponent(userId)}`,
+      mutation("PATCH", {
+        expected_version: expectedVersion,
+        status,
+        ...body,
+      }),
+    ),
+  );
+export const deactivateMembership = async (
+  siteId: string,
+  userId: string,
+  expectedVersion: number,
+) =>
+  membership(
+    await json(
+      `/sites/${encodeURIComponent(siteId)}/memberships/${encodeURIComponent(userId)}?expected_version=${encodeURIComponent(String(expectedVersion))}`,
+      mutation("DELETE"),
+    ),
   );

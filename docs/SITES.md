@@ -80,8 +80,10 @@ and production edge routing remain deferred.
 
 ## Deferred work
 
-Membership UI, invitations/custom roles, workspaces, content models, actual
-site content, editor/Puck, agent capabilities, review/publication, DNS
+The responsive membership UI manages existing user UUIDs through the bounded
+server API, including role, ceiling, complete overrides, optimistic versions,
+and semantic deactivation. Invitations/custom roles, workspaces, content models,
+actual site content, editor/Puck, agent capabilities, review/publication, DNS
 automation, and deletion are not implemented. Domain rows do not automate DNS,
 and archive preserves all rows. This API does not make the application
 production-ready or hostile-tenant-safe. Multi-site support remains trusted

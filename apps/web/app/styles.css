@@ -388,6 +388,65 @@ input:focus-visible,
   gap: 0.75rem;
   overflow-wrap: anywhere;
 }
+.membership-list {
+  display: grid;
+  gap: 1rem;
+  padding: 0;
+  list-style: none;
+}
+.membership-card {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 0.6rem;
+  padding: 1rem;
+  overflow-wrap: anywhere;
+}
+.membership-card dl {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+.membership-card dt {
+  color: var(--muted);
+  font-weight: 700;
+}
+.membership-card dd {
+  margin: 0.2rem 0 0;
+}
+.membership-dialog {
+  width: min(54rem, calc(100vw - 2rem));
+}
+.permission-group {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+  border: 1px solid var(--line);
+  margin-block: 1rem;
+  padding: 1rem;
+}
+.permission-group legend {
+  padding-inline: 0.4rem;
+  font-weight: 800;
+}
+.permission-group p,
+.publication-control label {
+  grid-column: 1 / -1;
+}
+.admin-form select,
+.add-membership input {
+  width: 100%;
+  min-height: 2.75rem;
+  border: 1px solid var(--line);
+  border-radius: 0.4rem;
+  background: #07171d;
+  color: var(--ink);
+  padding: 0.65rem;
+}
+.add-membership > label {
+  display: grid;
+  gap: 0.4rem;
+  font-weight: 700;
+}
 
 @media (max-width: 760px) {
   .admin-layout {
@@ -405,6 +464,14 @@ input:focus-visible,
   .admin-main {
     padding: 1rem;
     overflow-wrap: anywhere;
+  }
+  .membership-card dl,
+  .permission-group {
+    grid-template-columns: 1fr;
+  }
+  .permission-group p,
+  .publication-control label {
+    grid-column: auto;
   }
 }
 

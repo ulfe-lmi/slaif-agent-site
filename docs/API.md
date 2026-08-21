@@ -71,6 +71,14 @@ timeout failures are 503. Successes and errors are private/no-store/noindex and
 request-ID correlated. Publication remains an explicit permission independent
 of role ceiling or edit authority.
 
+The responsive admin client validates catalog and membership responses, sorts
+memberships by exact user UUID, and sends only these documented request shapes
+with same-origin credentials and the existing CSRF proof. A stale-version 409
+refreshes the current server record. Client-hidden self controls and
+permission-driven read-only states are usability measures, not authorization.
+The client accepts only an existing user UUID; it does not create identities,
+invitations, login credentials, or custom roles.
+
 ## Route-policy registry
 
 Every actual Control and Editor handler has one immutable declaration keyed by

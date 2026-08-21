@@ -238,6 +238,15 @@ export function AdminShell({ selectedSiteId }: { selectedSiteId?: string }) {
                       Open site settings
                     </a>
                   </p>
+                  {(authority.platform_administrator ||
+                    (authority.effective_permissions.includes("membership:manage") &&
+                      authority.effective_permissions.includes("role:manage"))) && (
+                    <p>
+                      <a href={`/admin/sites/${authority.site_id}/memberships`}>
+                        Manage memberships
+                      </a>
+                    </p>
+                  )}
                 </Card>
               </div>
               <p>

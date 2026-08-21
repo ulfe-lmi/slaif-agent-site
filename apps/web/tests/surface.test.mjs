@@ -84,6 +84,72 @@ test("admin workflows are URL-owned, server-filtered, and accessible", async () 
   assert.doesNotMatch(`${api}${shell}${workflows}`, /localStorage|sessionStorage/);
 });
 
+test("membership administration preserves exact server contracts and UX boundaries", async () => {
+  const api = await read("../src/admin/api.ts");
+  const workflow = await read("../src/admin/membership-workflows.tsx");
+  const page = await read("../app/admin/sites/[siteId]/memberships/page.tsx");
+  const shell = await read("../src/admin/shell.tsx");
+  const css = await read("../app/styles.css");
+  for (const path of [
+    'json("/roles")',
+    'json("/permissions")',
+    "/memberships`",
+    "?expected_version=",
+  ])
+    assert.ok(api.includes(path), path);
+  for (const method of ['mutation("POST"', 'mutation("PATCH"', 'mutation("DELETE"'])
+    assert.ok(api.includes(method), method);
+  for (const field of [
+    "target_user_id",
+    "expected_version",
+    "delegation_ceiling",
+    "allow_permissions",
+    "deny_permissions",
+  ])
+    assert.match(api, new RegExp(field));
+  for (const validator of [
+    "default_permissions",
+    "site_assignable",
+    "effective_permissions",
+    "platform_administrator",
+    "user_account_id",
+  ])
+    assert.match(api, new RegExp(validator));
+  assert.match(workflow, /membership:manage/);
+  assert.match(workflow, /role:manage/);
+  assert.match(workflow, /site:publish/);
+  assert.match(workflow, /Architect ceiling 4 does not\s+publish by default/);
+  assert.match(workflow, /completely replaces explicit overrides/);
+  assert.match(workflow, /Nonassignable installation and system scopes/);
+  assert.match(workflow, /expected version \{item\.version\}/);
+  assert.match(workflow, /preserves the membership row, history, role, and overrides/);
+  assert.match(workflow, /self-mutation controls are not presented/);
+  assert.match(workflow, /sequence\.current/);
+  assert.match(workflow, /if \(pending\.current\) return/);
+  assert.match(workflow, /errorRef\.current\?\.focus/);
+  for (const state of [
+    "unauthenticated",
+    "denied",
+    "not-found",
+    "conflict",
+    "invalid",
+    "unavailable",
+    "invalid-response",
+  ])
+    assert.match(workflow, new RegExp(state));
+  assert.match(workflow, /@radix-ui\/react-dialog/);
+  assert.match(workflow, /Dialog\.Description/);
+  assert.match(page, /MembershipWorkflow siteId=\{siteId\}/);
+  assert.match(shell, /Manage memberships/);
+  assert.match(css, /membership-card[\s\S]*overflow-wrap: anywhere/);
+  assert.match(css, /@media \(max-width: 760px\)[\s\S]*permission-group/);
+  assert.doesNotMatch(
+    `${api}${workflow}${page}`,
+    /localStorage|sessionStorage|dangerouslySetInnerHTML|https?:\/\//,
+  );
+  assert.doesNotMatch(`${api}${workflow}`, /public_id|email_address/);
+});
+
 test("forms preserve accessibility, password manager, and pending contracts", async () => {
   const forms = await read("../src/auth/forms.tsx");
   for (const value of ["username", "new-password", "current-password", "name", "email"])

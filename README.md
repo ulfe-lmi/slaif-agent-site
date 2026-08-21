@@ -18,16 +18,17 @@ the real responsive result, and publish only after human review.
 ## Current status
 
 The authenticated administration surface provides responsive site lists,
-details, creation, profile/domain settings, and recent-auth-protected archive.
-Membership UI, invitations, custom roles, content/Puck, workspaces/capabilities,
-review, and publication execution remain absent. See [site administration](docs/ADMIN.md).
+details, creation, profile/domain settings, recent-auth-protected archive, and
+existing-user UUID membership management. Invitations, custom roles,
+content/Puck, workspaces/capabilities, review, and publication execution remain
+absent. See [site administration](docs/ADMIN.md).
 
 The backend includes authenticated Control HTTP for immutable role/permission
 catalogs and site-scoped human membership lifecycle, with seven built-in roles,
 exact permissions, bounded delegation, explicit overrides, optimistic versions,
-and transactional authority locking. Membership UI, custom roles,
-workspaces/capabilities, content editing, review, and publication execution
-remain unimplemented.
+and transactional authority locking. The responsive client uses these exact
+contracts; custom roles, workspaces/capabilities, content editing, review, and
+publication execution remain unimplemented.
 
 > **Pre-alpha / deployable skeleton.** This
 > repository contains the normative architecture, coding-agent governance,
@@ -50,8 +51,8 @@ remain unimplemented.
 > implemented and qualified through six self-hosted Playwright browser/device
 > projects. A fresh reference stack seeds one demo site and serves a small
 > Web→Render routing-context shell for active local or custom-host mappings;
-> this is routing evidence, not site content or publication. Site-management and membership UI,
-> invitations, custom roles, workspaces, editing/Puck, content tables and APIs,
+> this is routing evidence, not site content or publication. Invitations,
+> custom roles, workspaces, editing/Puck, content tables and APIs,
 > runtime browser commands, review, publication, and product behavior are
 > not implemented yet. Control API alone owns one isolated file-backed login,
 > bounded asyncpg pool, readiness/authentication adapters, and the bounded site
@@ -195,7 +196,8 @@ first-run administrator or website-management product. See the
 | Completed local authentication proof | One-time setup plus login/session/logout through real NGINX/Compose on desktop Chromium, Firefox, WebKit, tablet, mobile Chromium, and mobile WebKit. |
 | Completed site foundation | Control-owned sites and domain mappings, bounded installation quota, strict identifier normalization, immutable site context, and trusted longest-prefix/local-development resolution. |
 | Completed human RBAC HTTP boundary | Immutable role/permission catalogs, site membership list/get/create/update/deactivate, strict session/CSRF policy, optimistic concurrency, and complete Control/Editor route declarations. |
-| Planned product work | Add site-management/membership UI, workspaces, configurable content, normalized composition/Puck, semantic tools, runtime browser feedback, review/promotion, reconstruction, and hardening. |
+| Responsive site and membership administration | Permission-driven site/profile/domain workflows plus existing-user UUID membership cards, built-in roles, bounded ceilings, separate publication overrides, complete override replacement, version refresh, and semantic deactivation. |
+| Planned product work | Add workspaces, configurable content, normalized composition/Puck, semantic tools, runtime browser feedback, review/promotion, reconstruction, and hardening. |
 
 See [Architecture Section 50](ARCHITECTURE.md#50-implementation-phases) for
 the normative phase plan.

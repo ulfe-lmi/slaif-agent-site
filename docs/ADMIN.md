@@ -32,6 +32,19 @@ not automate DNS. Archive is Platform-Administrator-only, names the site,
 explains that no rows are deleted, requires explicit confirmation and recent
 authentication, and remains protected by the server gate.
 
-Membership UI remains deferred to 013-d. User creation, invitations, custom
-roles, content/models/pages, Puck, workspaces/capabilities, review, audit
-workflows, and publication execution are not implemented.
+`/admin/sites/{site_id}/memberships` lists deterministic membership cards and
+lets an authorized Platform Administrator or member holding both membership
+and role management permissions add an already-provisioned user UUID, replace
+its built-in role, bounded delegation ceiling, and complete override set, or
+semantically deactivate it. Publication is a separate explicit override:
+ceiling 4 never implies publication and Architect does not publish by default.
+Version conflicts refresh the server record before another edit. Dialogs retain
+Radix keyboard, Escape, and focus-return behavior; stable denied, missing,
+conflict, validation, unavailable, loading, and empty states remain usable at
+320 px. These controls are only UX; the server remains authoritative for CSRF,
+site association, self-change, ceiling, permission, and version policy.
+
+The workflow creates no account, invitation, email, password, or login and has
+no user directory, custom roles, or identity editing. Content/models/pages,
+Puck, workspaces/capabilities, review, audit workflows, and publication
+execution remain deferred.
