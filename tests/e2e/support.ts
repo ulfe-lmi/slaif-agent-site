@@ -1,5 +1,6 @@
 import { expect, type APIResponse, type Page, type Response } from "@playwright/test";
 import { readFileSync } from "node:fs";
+import { classifyConsoleMessage, classifyConsoleSource } from "./observation";
 
 export type Secrets = {
   setupToken: string;
@@ -10,34 +11,23 @@ export type Secrets = {
   fixtureUserTwo: string;
 };
 
-type ExpectedConsoleFailure = {
-  source: RegExp;
-  text: RegExp;
-};
-
 export function secrets(): Secrets {
   const path = process.env.SLAIF_E2E_SECRET_FILE;
   if (!path) throw new Error("missing bounded secret channel");
   return JSON.parse(readFileSync(path, "utf8")) as Secrets;
 }
 
-export function observe(
-  page: Page,
-  expectedFailures: RegExp[] = [],
-  expectedConsoleFailures: ExpectedConsoleFailure[] = [],
-) {
+export function observe(page: Page, expectedFailures: RegExp[] = []) {
   const failures: string[] = [];
   page.on("console", (message) => {
     const source = message.location().url;
     if (
       message.type() === "error" &&
-      !expectedFailures.some((pattern) => pattern.test(source)) &&
-      !expectedConsoleFailures.some(
-        (expected) =>
-          expected.source.test(source) && expected.text.test(message.text()),
-      )
+      !expectedFailures.some((pattern) => pattern.test(source))
     ) {
-      failures.push("console");
+      failures.push(
+        `console-${classifyConsoleSource(source, page.url())}-${classifyConsoleMessage(message.text())}`,
+      );
     }
   });
   page.on("pageerror", () => failures.push("page"));

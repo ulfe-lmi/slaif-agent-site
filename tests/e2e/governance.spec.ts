@@ -44,21 +44,11 @@ test("governance-visible-workflows-negatives-and-privacy", async ({ page }) => {
   const credential = secrets();
   const requestedUrls: string[] = [];
   page.on("request", (request) => requestedUrls.push(request.url()));
-  const assertClean = observe(
-    page,
-    [
-      /\/api\/control\/v1\/sites\/[^/]+\/memberships/,
-      /\/api\/control\/v1\/sites\/[^/]+$/,
-      /\/api\/control\/v1\/sites\/12000000-0000-4000-8000-000000000099\/my-authority$/,
-      /\/s\/governance/,
-    ],
-    [
-      {
-        source: /\/admin\/sites\/12000000-0000-4000-8000-000000000099$/,
-        text: /^Failed to load resource: the server responded with a status of 404 \(Not Found\)$/,
-      },
-    ],
-  );
+  const assertClean = observe(page, [
+    /\/api\/control\/v1\/sites\/[^/]+\/memberships/,
+    /\/api\/control\/v1\/sites\/[^/]+$/,
+    /\/s\/governance/,
+  ]);
 
   stage("dashboard-and-switcher");
   await login(page, credential);
@@ -393,6 +383,10 @@ test("governance-visible-workflows-negatives-and-privacy", async ({ page }) => {
   await login(page, credential);
   await page.goto(`/admin/sites/${siteId}`);
   await expect(page.getByText("ARCHIVED", { exact: true })).toBeVisible();
+  responseStatus(
+    await page.request.get(`/api/control/v1/sites/${fixtureUnknown}/my-authority`),
+    404,
+  );
   await page.goto(`/admin/sites/${fixtureUnknown}`);
   await expect(
     page.getByText("This site is unavailable or you do not have access."),

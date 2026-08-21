@@ -62,6 +62,10 @@ test("admin workflows are URL-owned, server-filtered, and accessible", async () 
   assert.match(shell, /Authenticated session active\./);
   assert.match(shell, /Local administrator/);
   assert.match(shell, /This site is unavailable or you do not have access/);
+  assert.match(
+    shell,
+    /value\.sites\.some\(\(site\) => site\.site_id === selectedSiteId\)/,
+  );
   assert.match(shell, /"Content"[\s\S]*\{item\} · planned/);
   assert.match(shell, /Users &amp; Permissions/);
   assert.match(sitePage, /selectedSiteId=\{siteId\}/);

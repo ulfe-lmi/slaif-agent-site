@@ -92,7 +92,13 @@ export function AdminShell({ selectedSiteId }: { selectedSiteId?: string }) {
       .then(async (value) => {
         setSites(value.sites);
         setSessionSummary(value.session);
-        if (selectedSiteId) setAuthority(await loadAuthority(selectedSiteId));
+        if (selectedSiteId) {
+          if (value.sites.some((site) => site.site_id === selectedSiteId)) {
+            setAuthority(await loadAuthority(selectedSiteId));
+          } else {
+            setError("This site is unavailable or you do not have access.");
+          }
+        }
       })
       .catch((reason: unknown) => {
         if (reason instanceof Error && reason.message === "unauthenticated")
