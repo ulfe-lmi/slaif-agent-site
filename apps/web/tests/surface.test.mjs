@@ -45,11 +45,20 @@ test("admin workflows are URL-owned, server-filtered, and accessible", async () 
   const api = await read("../src/admin/api.ts");
   const shell = await read("../src/admin/shell.tsx");
   const sitePage = await read("../app/admin/sites/[siteId]/page.tsx");
+  const settingsPage = await read("../app/admin/sites/[siteId]/settings/page.tsx");
+  const membershipsPage = await read(
+    "../app/admin/sites/[siteId]/memberships/page.tsx",
+  );
   const primitives = await read("../src/components/ui/primitives.tsx");
   const workflows = await read("../src/admin/site-workflows.tsx");
+  const memberships = await read("../src/admin/membership-workflows.tsx");
   for (const path of ["/me/sites", "/my-authority"])
     assert.match(api, new RegExp(path));
   assert.match(api, /credentials: "same-origin"/);
+  for (const page of [settingsPage, membershipsPage]) {
+    assert.match(page, /<AdminShell selectedSiteId=\{siteId\}>/);
+  }
+  assert.match(shell, /<nav className="mobile-nav" aria-label="Administration">/);
   assert.match(api, /cache: "no-store"/);
   assert.match(api, /encodeURIComponent\(siteId\)/);
   assert.doesNotMatch(`${api}${shell}`, /localStorage|sessionStorage|serviceWorker/);
@@ -84,6 +93,15 @@ test("admin workflows are URL-owned, server-filtered, and accessible", async () 
   assert.match(workflows, /do not automate DNS/);
   assert.match(workflows, /does not delete|does not\s+delete/);
   assert.match(workflows, /Dialog\.Description/);
+  assert.equal(
+    `${shell}${workflows}${memberships}`.match(/<Dialog\.Root modal=\{false\}>/g)
+      ?.length,
+    4,
+  );
+  assert.doesNotMatch(
+    `${shell}${workflows}${memberships}`,
+    /<Dialog\.Root(?! modal=\{false\}>)/,
+  );
   assert.match(workflows, /disabled=\{!recent\}/);
   assert.doesNotMatch(`${api}${shell}${workflows}`, /localStorage|sessionStorage/);
 });

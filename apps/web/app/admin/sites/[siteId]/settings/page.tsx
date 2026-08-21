@@ -1,4 +1,5 @@
 import { SiteSettingsWorkflow } from "../../../../../src/admin/site-workflows";
+import { AdminShell } from "../../../../../src/admin/shell";
 
 export default async function SiteSettingsPage({
   params,
@@ -7,8 +8,8 @@ export default async function SiteSettingsPage({
 }) {
   const { siteId } = await params;
   return (
-    <main className="admin-main">
+    <AdminShell selectedSiteId={siteId}>
       <SiteSettingsWorkflow siteId={siteId} />
-    </main>
+    </AdminShell>
   );
 }

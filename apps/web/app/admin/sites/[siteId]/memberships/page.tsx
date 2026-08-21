@@ -1,4 +1,5 @@
 import { MembershipWorkflow } from "../../../../../src/admin/membership-workflows";
+import { AdminShell } from "../../../../../src/admin/shell";
 
 export default async function MembershipPage({
   params,
@@ -6,5 +7,9 @@ export default async function MembershipPage({
   params: Promise<{ siteId: string }>;
 }) {
   const { siteId } = await params;
-  return <MembershipWorkflow siteId={siteId} />;
+  return (
+    <AdminShell selectedSiteId={siteId}>
+      <MembershipWorkflow siteId={siteId} />
+    </AdminShell>
+  );
 }

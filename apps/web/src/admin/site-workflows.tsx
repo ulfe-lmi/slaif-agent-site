@@ -289,7 +289,7 @@ export function SiteSettingsWorkflow({ siteId }: { siteId: string }) {
             Archive disables routing and future mutations. It does not delete the site
             or its rows.
           </p>
-          <Dialog.Root>
+          <Dialog.Root modal={false}>
             <Dialog.Trigger asChild>
               <Button type="button">Archive {site.display_name}</Button>
             </Dialog.Trigger>

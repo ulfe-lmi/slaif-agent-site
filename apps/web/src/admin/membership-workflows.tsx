@@ -271,7 +271,7 @@ function MembershipCard({
       </dl>
       {canManage && !self && (
         <div className="admin-actions">
-          <Dialog.Root>
+          <Dialog.Root modal={false}>
             <Dialog.Trigger asChild>
               <Button type="button">Edit membership</Button>
             </Dialog.Trigger>
@@ -310,7 +310,7 @@ function MembershipCard({
             </Dialog.Portal>
           </Dialog.Root>
           {item.status === "ACTIVE" && (
-            <Dialog.Root>
+            <Dialog.Root modal={false}>
               <Dialog.Trigger asChild>
                 <Button type="button">Deactivate</Button>
               </Dialog.Trigger>
@@ -399,7 +399,7 @@ export function MembershipWorkflow({ siteId }: { siteId: string }) {
   }
   if (!data)
     return (
-      <main className="admin-main">
+      <div className="workflow-stack">
         <h1>Memberships</h1>
         {error ? (
           <div ref={errorRef} tabIndex={-1}>
@@ -408,14 +408,14 @@ export function MembershipWorkflow({ siteId }: { siteId: string }) {
         ) : (
           <p>Loading roles, permissions, and memberships…</p>
         )}
-      </main>
+      </div>
     );
   const canManage =
     data.authority.platform_administrator ||
     (data.authority.effective_permissions.includes("membership:manage") &&
       data.authority.effective_permissions.includes("role:manage"));
   return (
-    <main className="admin-main">
+    <div className="workflow-stack">
       <h1>{data.authority.display_name} memberships</h1>
       <p>
         <a href={`/admin/sites/${siteId}`}>Back to site overview</a>
@@ -460,7 +460,7 @@ export function MembershipWorkflow({ siteId }: { siteId: string }) {
           <StatusPanel>No membership rows exist for this site.</StatusPanel>
         )}
       </section>
-    </main>
+    </div>
   );
 }
 

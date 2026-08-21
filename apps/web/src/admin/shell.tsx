@@ -1,7 +1,7 @@
 "use client";
 
 import * as Dialog from "@radix-ui/react-dialog";
-import { useEffect, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 
 import { csrfCookie, logout } from "../auth/client";
 import {
@@ -20,7 +20,7 @@ import {
 
 function SiteSwitcher({ sites }: { sites: CurrentSite[] }) {
   return (
-    <Dialog.Root>
+    <Dialog.Root modal={false}>
       <Dialog.Trigger asChild>
         <Button type="button">Choose site</Button>
       </Dialog.Trigger>
@@ -79,7 +79,13 @@ function Navigation({ global }: { global: boolean }) {
   );
 }
 
-export function AdminShell({ selectedSiteId }: { selectedSiteId?: string }) {
+export function AdminShell({
+  children,
+  selectedSiteId,
+}: {
+  children?: ReactNode;
+  selectedSiteId?: string;
+}) {
   const [sites, setSites] = useState<CurrentSite[] | null>(null);
   const [authority, setAuthority] = useState<CurrentAuthority | null>(null);
   const [sessionSummary, setSessionSummary] = useState<{
@@ -133,9 +139,9 @@ export function AdminShell({ selectedSiteId }: { selectedSiteId?: string }) {
           SLAIF Agent-Site
         </a>
         <div className="admin-actions">
-          <span className="mobile-nav">
+          <nav className="mobile-nav" aria-label="Administration">
             <SiteSwitcher sites={sites ?? []} />
-          </span>
+          </nav>
           <Button type="button" onClick={() => void signOut()}>
             Sign out
           </Button>
@@ -147,117 +153,129 @@ export function AdminShell({ selectedSiteId }: { selectedSiteId?: string }) {
           <Navigation global={global} />
         </aside>
         <main className="admin-main" id="admin-main">
-          <h1>{authority ? authority.display_name : "Administration dashboard"}</h1>
-          {error && <StatusPanel>{error}</StatusPanel>}
-          {!sites && !error && (
+          {children ?? (
             <>
-              <p>Loading authorized administration data…</p>
-              <Skeleton />
-            </>
-          )}
-          {sites && !selectedSiteId && (
-            <>
-              <div className="admin-cards">
-                <Card>
-                  <h2>Authorized sites</h2>
+              <h1>{authority ? authority.display_name : "Administration dashboard"}</h1>
+              {error && <StatusPanel>{error}</StatusPanel>}
+              {!sites && !error && (
+                <>
+                  <p>Loading authorized administration data…</p>
+                  <Skeleton />
+                </>
+              )}
+              {sites && !selectedSiteId && (
+                <>
+                  <div className="admin-cards">
+                    <Card>
+                      <h2>Authorized sites</h2>
+                      <p>
+                        {sites.length} server-filtered site
+                        {sites.length === 1 ? "" : "s"}.
+                      </p>
+                    </Card>
+                    <Card>
+                      <h2>Current session</h2>
+                      <p>Authenticated session active.</p>
+                      <p>Account: Local administrator</p>
+                      <p>
+                        Recent authentication:{" "}
+                        {sessionSummary?.recent_auth ? "yes" : "no"}
+                      </p>
+                      <p>
+                        Expires{" "}
+                        {sessionSummary
+                          ? new Date(
+                              sessionSummary.absolute_expires_at,
+                            ).toLocaleString()
+                          : "—"}
+                      </p>
+                    </Card>
+                    <Card>
+                      <h2>Implemented scope</h2>
+                      <p>
+                        Site overview, profile, domain, creation, and protected archive
+                        workflows.
+                      </p>
+                    </Card>
+                  </div>
+                  <section id="sites">
+                    <h2>Sites</h2>
+                    {global && (
+                      <p>
+                        <a href="/admin/sites/new">Create a site</a>
+                      </p>
+                    )}
+                    {sites.length ? (
+                      <ul className="site-list">
+                        {sites.map((site) => (
+                          <li key={site.site_id}>
+                            <a href={`/admin/sites/${site.site_id}`}>
+                              <strong>{site.display_name}</strong>
+                              <br />
+                              {site.status} ·{" "}
+                              {site.platform_administrator
+                                ? "Platform Administrator"
+                                : site.role_key}
+                            </a>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <StatusPanel>
+                        No active site memberships are available.
+                      </StatusPanel>
+                    )}
+                  </section>
+                </>
+              )}
+              {authority && (
+                <>
                   <p>
-                    {sites.length} server-filtered site{sites.length === 1 ? "" : "s"}.
-                  </p>
-                </Card>
-                <Card>
-                  <h2>Current session</h2>
-                  <p>Authenticated session active.</p>
-                  <p>Account: Local administrator</p>
-                  <p>
-                    Recent authentication: {sessionSummary?.recent_auth ? "yes" : "no"}
-                  </p>
-                  <p>
-                    Expires{" "}
-                    {sessionSummary
-                      ? new Date(sessionSummary.absolute_expires_at).toLocaleString()
-                      : "—"}
-                  </p>
-                </Card>
-                <Card>
-                  <h2>Implemented scope</h2>
-                  <p>
-                    Site overview, profile, domain, creation, and protected archive
-                    workflows.
-                  </p>
-                </Card>
-              </div>
-              <section id="sites">
-                <h2>Sites</h2>
-                {global && (
-                  <p>
-                    <a href="/admin/sites/new">Create a site</a>
-                  </p>
-                )}
-                {sites.length ? (
-                  <ul className="site-list">
-                    {sites.map((site) => (
-                      <li key={site.site_id}>
-                        <a href={`/admin/sites/${site.site_id}`}>
-                          <strong>{site.display_name}</strong>
-                          <br />
-                          {site.status} ·{" "}
-                          {site.platform_administrator
-                            ? "Platform Administrator"
-                            : site.role_key}
-                        </a>
-                      </li>
-                    ))}
-                  </ul>
-                ) : (
-                  <StatusPanel>No active site memberships are available.</StatusPanel>
-                )}
-              </section>
-            </>
-          )}
-          {authority && (
-            <>
-              <p>
-                <StatusBadge>{authority.status}</StatusBadge>{" "}
-                {authority.platform_administrator
-                  ? "Platform Administrator"
-                  : authority.role_key}
-              </p>
-              <div className="admin-cards">
-                <Card>
-                  <h2>Site identity</h2>
-                  <p>Key: {authority.site_key}</p>
-                  <p>Locale: {authority.default_locale}</p>
-                </Card>
-                <Card>
-                  <h2>Revision</h2>
-                  <p>Canonical revision {authority.canonical_revision}</p>
-                </Card>
-                <Card>
-                  <h2>Authority</h2>
-                  <p>
+                    <StatusBadge>{authority.status}</StatusBadge>{" "}
                     {authority.platform_administrator
-                      ? "Global governance authority; no synthetic membership."
-                      : `${authority.effective_permissions.length} effective permissions.`}
+                      ? "Platform Administrator"
+                      : authority.role_key}
                   </p>
+                  <div className="admin-cards">
+                    <Card>
+                      <h2>Site identity</h2>
+                      <p>Key: {authority.site_key}</p>
+                      <p>Locale: {authority.default_locale}</p>
+                    </Card>
+                    <Card>
+                      <h2>Revision</h2>
+                      <p>Canonical revision {authority.canonical_revision}</p>
+                    </Card>
+                    <Card>
+                      <h2>Authority</h2>
+                      <p>
+                        {authority.platform_administrator
+                          ? "Global governance authority; no synthetic membership."
+                          : `${authority.effective_permissions.length} effective permissions.`}
+                      </p>
+                      <p>
+                        <a href={`/admin/sites/${authority.site_id}/settings`}>
+                          Open site settings
+                        </a>
+                      </p>
+                      {(authority.platform_administrator ||
+                        (authority.effective_permissions.includes(
+                          "membership:manage",
+                        ) &&
+                          authority.effective_permissions.includes("role:manage"))) && (
+                        <p>
+                          <a href={`/admin/sites/${authority.site_id}/memberships`}>
+                            Manage memberships
+                          </a>
+                        </p>
+                      )}
+                    </Card>
+                  </div>
                   <p>
-                    <a href={`/admin/sites/${authority.site_id}/settings`}>
-                      Open site settings
-                    </a>
+                    <a href={`/s/${authority.site_key}/`}>Open public local route</a>
                   </p>
-                  {(authority.platform_administrator ||
-                    (authority.effective_permissions.includes("membership:manage") &&
-                      authority.effective_permissions.includes("role:manage"))) && (
-                    <p>
-                      <a href={`/admin/sites/${authority.site_id}/memberships`}>
-                        Manage memberships
-                      </a>
-                    </p>
-                  )}
-                </Card>
-              </div>
-              <p>
-                <a href={`/s/${authority.site_key}/`}>Open public local route</a>
-              </p>
+                </>
+              )}
             </>
           )}
         </main>
