@@ -360,15 +360,26 @@ test("governance-visible-workflows-negatives-and-privacy", async ({ page }) => {
   await page.keyboard.press("Escape");
   await expect(archiveTrigger).toBeFocused();
   await archiveTrigger.click();
+  const archiveResponse = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      response.url().endsWith(`/sites/${siteId}/archive`),
+  );
   await archive.getByRole("button", { name: "Confirm archive" }).click();
+  const archived = await archiveResponse;
+  expect(archived.status()).toBe(200);
+  expectPrivateHeaders(archived);
+  await archive.getByRole("button", { name: "Cancel" }).click();
   await expect(page.getByRole("status")).toHaveText(
     "Site archived. Routing is disabled.",
   );
+  await page.getByRole("link", { name: "Back to overview" }).click();
   await expect(page.getByText("ARCHIVED", { exact: true })).toBeVisible();
   expect((await page.request.get("/s/governance/")).status()).toBe(404);
 
   stage("logout-relogin-persistence");
   await page.getByRole("button", { name: "Sign out" }).click();
+  await expect(page).toHaveURL(/\/login$/);
   await login(page, credential);
   await page.goto(`/admin/sites/${siteId}`);
   await expect(page.getByText("ARCHIVED", { exact: true })).toBeVisible();
