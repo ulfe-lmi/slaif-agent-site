@@ -61,16 +61,17 @@ export default async function Home() {
           <p className="number">01</p>
           <h2>Implemented now</h2>
           <p>
-            Local first-administrator setup, login, session inspection, logout, isolated
-            services, and human-controlled foundations.
+            Secure local administrator setup and server-side sessions, trusted
+            multi-site identity and routing, and Platform Administrator site/domain
+            APIs.
           </p>
         </article>
         <article>
           <p className="number">02</p>
           <h2>Still deliberately absent</h2>
           <p>
-            OIDC, MFA, rate limiting, durable authentication audit, sites, workspaces,
-            editing, review, and publication.
+            Membership/RBAC, site-management UI, content models and site content,
+            workspaces and agent capabilities, editing/Puck, review, and publication.
           </p>
         </article>
         <article>

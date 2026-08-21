@@ -9,7 +9,26 @@ test("auth routes and landing page expose truthful local flows", async () => {
   const home = await read("../app/page.tsx");
   assert.match(home, /href="\/setup"/);
   assert.match(home, /href="\/login"/);
-  assert.match(home, /OIDC, MFA, rate limiting/);
+  assert.match(home, /Secure local administrator setup and server-side sessions/);
+  assert.match(home, /trusted\s+multi-site identity and routing/);
+  assert.match(home, /Platform Administrator site\/domain\s+APIs/);
+  const deferred = home.match(
+    /Still deliberately absent<\/h2>\s*<p>([\s\S]*?)<\/p>/,
+  )?.[1];
+  assert.ok(deferred);
+  for (const claim of [
+    /Membership\/RBAC/,
+    /site-management UI/,
+    /content models and site content/,
+    /workspaces and agent capabilities/,
+    /editing\/Puck/,
+    /review, and publication/,
+  ])
+    assert.match(deferred, claim);
+  assert.doesNotMatch(deferred, /\bsites\b|site routing/i);
+  const implemented = home.match(/Implemented now<\/h2>\s*<p>([\s\S]*?)<\/p>/)?.[1];
+  assert.ok(implemented);
+  assert.doesNotMatch(implemented, /content models|publication/i);
   for (const route of ["setup", "login", "admin"]) {
     const expected =
       route === "admin"
