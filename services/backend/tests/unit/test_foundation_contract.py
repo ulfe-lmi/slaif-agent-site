@@ -146,6 +146,7 @@ EXPECTED_PACKAGE_FILES = NEW_PACKAGE_FILES | {
     "slaif_agent_site/control_api/current_human_http.py",
     "slaif_agent_site/control_api/membership_http.py",
     "slaif_agent_site/control_api/route_policy.py",
+    "slaif_agent_site/control_api/site_authority.py",
     "slaif_agent_site/control_api/site_http.py",
 }
 EXPECTED_SDIST_FILES = {
@@ -170,6 +171,7 @@ EXPECTED_SDIST_FILES = {
     "services/backend/src/slaif_agent_site/control_api/current_human_http.py",
     "services/backend/src/slaif_agent_site/control_api/membership_http.py",
     "services/backend/src/slaif_agent_site/control_api/route_policy.py",
+    "services/backend/src/slaif_agent_site/control_api/site_authority.py",
     "services/backend/src/slaif_agent_site/control_api/site_http.py",
 } | {f"services/backend/src/{path}" for path in NEW_PACKAGE_FILES}
 

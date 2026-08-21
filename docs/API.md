@@ -83,12 +83,15 @@ declarations. HEAD and OPTIONS are not registered handler methods and retain
 their deterministic framework 405 behavior. The registry audits enforcement;
 handlers and database policy remain authoritative.
 
-## Platform Administrator site API
+## Site governance API
 
-Every route below requires a current server-side human session whose active
-user has a current `platform_administrator` assignment. Safe `GET` requests do
-not use CSRF. Every state-changing request additionally requires the bound CSRF
-cookie and exactly one matching `X-CSRF-Token` header.
+Every route requires a current server-side human session. Site creation and
+archive require Platform Administrator authority; archive also requires recent
+authentication. Detail/domain reads require `site:read`, profile updates
+require `site-policy:manage`, and domain mutations require
+`site-domain:manage`, unless the caller is a Platform Administrator. Safe GETs
+do not use CSRF; every mutation requires the bound CSRF cookie and one matching
+`X-CSRF-Token` header.
 
 | Route | Success | Request body |
 | --- | --- | --- |

@@ -241,13 +241,43 @@ ROUTE_POLICIES: Final[tuple[RoutePolicy, ...]] = (
         for method, path, mutation in (
             ("GET", "/api/control/v1/sites", _R),
             ("POST", "/api/control/v1/sites", _M),
-            ("GET", "/api/control/v1/sites/{site_id}", _R),
-            ("PATCH", "/api/control/v1/sites/{site_id}", _M),
             ("POST", "/api/control/v1/sites/{site_id}/archive", _M),
-            ("GET", "/api/control/v1/sites/{site_id}/domains", _R),
-            ("POST", "/api/control/v1/sites/{site_id}/domains", _M),
-            ("PUT", "/api/control/v1/sites/{site_id}/domains/{domain_id}", _M),
-            ("DELETE", "/api/control/v1/sites/{site_id}/domains/{domain_id}", _M),
+        )
+    ),
+    *(
+        _policy(
+            _CONTROL,
+            method,
+            path,
+            mutation,
+            True,
+            mutation is _M,
+            _SITE,
+            RoutePolicyKind.SITE_PERMISSION,
+            permission,
+        )
+        for method, path, mutation, permission in (
+            ("GET", "/api/control/v1/sites/{site_id}", _R, "site:read"),
+            ("PATCH", "/api/control/v1/sites/{site_id}", _M, "site-policy:manage"),
+            ("GET", "/api/control/v1/sites/{site_id}/domains", _R, "site:read"),
+            (
+                "POST",
+                "/api/control/v1/sites/{site_id}/domains",
+                _M,
+                "site-domain:manage",
+            ),
+            (
+                "PUT",
+                "/api/control/v1/sites/{site_id}/domains/{domain_id}",
+                _M,
+                "site-domain:manage",
+            ),
+            (
+                "DELETE",
+                "/api/control/v1/sites/{site_id}/domains/{domain_id}",
+                _M,
+                "site-domain:manage",
+            ),
         )
     ),
     *(

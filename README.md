@@ -17,11 +17,10 @@ the real responsive result, and publish only after human review.
 
 ## Current status
 
-The authenticated administration surface now provides a responsive, read-only
-dashboard and URL-owned site overview backed by server-filtered current-human
-site/authority APIs. Site and membership mutation UI, invitations, custom roles,
-content/Puck, workspaces/capabilities, review, and publication execution remain
-absent. See [the admin foundation](docs/ADMIN.md).
+The authenticated administration surface provides responsive site lists,
+details, creation, profile/domain settings, and recent-auth-protected archive.
+Membership UI, invitations, custom roles, content/Puck, workspaces/capabilities,
+review, and publication execution remain absent. See [site administration](docs/ADMIN.md).
 
 The backend includes authenticated Control HTTP for immutable role/permission
 catalogs and site-scoped human membership lifecycle, with seven built-in roles,

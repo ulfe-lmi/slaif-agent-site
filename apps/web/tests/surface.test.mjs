@@ -20,13 +20,13 @@ test("auth routes and landing page expose truthful local flows", async () => {
   )?.[1];
   assert.ok(deferred);
   for (const claim of [
-    /Site and membership UI/,
+    /Membership UI/,
     /invitations/,
     /custom roles/,
     /content models and\s+site\s+content/,
     /workspaces and agent capabilities/,
     /editing\/Puck/,
-    /review,\s+and\s+publication execution/,
+    /review,\s+and\s+publication\s+execution/,
   ])
     assert.match(deferred, claim);
   assert.doesNotMatch(deferred, /\bsites\b|site routing/i);
@@ -41,11 +41,12 @@ test("auth routes and landing page expose truthful local flows", async () => {
   }
 });
 
-test("admin shell is URL-owned, server-filtered, accessible, and read-only", async () => {
+test("admin workflows are URL-owned, server-filtered, and accessible", async () => {
   const api = await read("../src/admin/api.ts");
   const shell = await read("../src/admin/shell.tsx");
   const sitePage = await read("../app/admin/sites/[siteId]/page.tsx");
   const primitives = await read("../src/components/ui/primitives.tsx");
+  const workflows = await read("../src/admin/site-workflows.tsx");
   for (const path of ["/me/sites", "/my-authority"])
     assert.match(api, new RegExp(path));
   assert.match(api, /credentials: "same-origin"/);
@@ -65,7 +66,22 @@ test("admin shell is URL-owned, server-filtered, accessible, and read-only", asy
   assert.match(shell, /Users &amp; Permissions/);
   assert.match(sitePage, /selectedSiteId=\{siteId\}/);
   assert.match(primitives, /role="status"/);
-  assert.doesNotMatch(shell, /create|update|delete|archive/i);
+  for (const operation of [
+    "createSite",
+    "updateSite",
+    "putDomain",
+    "removeDomain",
+    "archiveSite",
+  ])
+    assert.match(workflows, new RegExp(operation));
+  assert.match(workflows, /pending\.current/);
+  assert.match(workflows, /site-policy:manage/);
+  assert.match(workflows, /site-domain:manage/);
+  assert.match(workflows, /do not automate DNS/);
+  assert.match(workflows, /does not delete|does not\s+delete/);
+  assert.match(workflows, /Dialog\.Description/);
+  assert.match(workflows, /disabled=\{!recent\}/);
+  assert.doesNotMatch(`${api}${shell}${workflows}`, /localStorage|sessionStorage/);
 });
 
 test("forms preserve accessibility, password manager, and pending contracts", async () => {

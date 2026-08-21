@@ -175,12 +175,18 @@ export function AdminShell({ selectedSiteId }: { selectedSiteId?: string }) {
                 <Card>
                   <h2>Implemented scope</h2>
                   <p>
-                    Read-only site and authority overview. Mutations remain API-only.
+                    Site overview, profile, domain, creation, and protected archive
+                    workflows.
                   </p>
                 </Card>
               </div>
               <section id="sites">
                 <h2>Sites</h2>
+                {global && (
+                  <p>
+                    <a href="/admin/sites/new">Create a site</a>
+                  </p>
+                )}
                 {sites.length ? (
                   <ul className="site-list">
                     {sites.map((site) => (
@@ -227,8 +233,16 @@ export function AdminShell({ selectedSiteId }: { selectedSiteId?: string }) {
                       ? "Global governance authority; no synthetic membership."
                       : `${authority.effective_permissions.length} effective permissions.`}
                   </p>
+                  <p>
+                    <a href={`/admin/sites/${authority.site_id}/settings`}>
+                      Open site settings
+                    </a>
+                  </p>
                 </Card>
               </div>
+              <p>
+                <a href={`/s/${authority.site_key}/`}>Open public local route</a>
+              </p>
             </>
           )}
         </main>

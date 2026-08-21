@@ -84,6 +84,14 @@ Path UUIDs are parsed input, not authority: Control resolves the active site and
 current server-side membership version before use. Deactivation is HTTP
 `DELETE` semantics but updates the row to `INACTIVE`; it never hard-deletes it.
 
+Site governance uses the same reusable current-site chain. Reads require
+`site:read`, profile writes `site-policy:manage`, and domain writes
+`site-domain:manage`. The server fetches the current membership version and
+calls the database permission function immediately before the operation.
+Inactive, disabled, stale, archived-for-member, unknown, and cross-site
+authority fails closed. Create and archive remain global, and archive also
+checks recent authentication after the atomic session/CSRF decision.
+
 ## Database authority and limitations
 
 The owner controls all five catalog/membership relations. `slaif_control` has

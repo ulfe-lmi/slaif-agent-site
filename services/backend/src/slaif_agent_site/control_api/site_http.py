@@ -29,6 +29,7 @@ from slaif_agent_site.sites.service import (
 )
 
 from .auth_http import authenticate_human_request
+from .site_authority import authorize_site_request
 
 
 def _service(database: Any) -> SiteService:
@@ -105,14 +106,23 @@ def install_control_site_routes(app: Any, database: Any, settings: Any) -> None:
 
     @router.get("/{site_id}", response_model=SiteRecord)
     async def get_site(request: Request, site_id: UUID) -> SiteRecord:
-        await _authorize(request, database, settings, state_changing=False)
+        await authorize_site_request(
+            request, database, settings, site_id, "site:read", state_changing=False
+        )
         return await _record(_service(database), site_id)
 
     @router.patch("/{site_id}", response_model=SiteRecord)
     async def update_site(
         request: Request, site_id: UUID, body: UpdateSiteRequest
     ) -> SiteRecord:
-        await _authorize(request, database, settings, state_changing=True)
+        await authorize_site_request(
+            request,
+            database,
+            settings,
+            site_id,
+            "site-policy:manage",
+            state_changing=True,
+        )
         service = _service(database)
         _existing, context = await _active_context(service, site_id)
         try:
@@ -122,7 +132,17 @@ def install_control_site_routes(app: Any, database: Any, settings: Any) -> None:
 
     @router.post("/{site_id}/archive", response_model=SiteRecord)
     async def archive_site(request: Request, site_id: UUID) -> SiteRecord:
-        await _authorize(request, database, settings, state_changing=True)
+        authority = await authorize_site_request(
+            request,
+            database,
+            settings,
+            site_id,
+            "site:archive",
+            state_changing=True,
+            active_required=False,
+        )
+        if not authority.platform_administrator or not authority.session.recent_auth:
+            raise AuthorizationError()
         service = _service(database)
         existing = await _record(service, site_id)
         if existing.status is SiteStatus.ARCHIVED:
@@ -137,7 +157,9 @@ def install_control_site_routes(app: Any, database: Any, settings: Any) -> None:
     async def list_domains(
         request: Request, site_id: UUID
     ) -> tuple[DomainMapping, ...]:
-        await _authorize(request, database, settings, state_changing=False)
+        await authorize_site_request(
+            request, database, settings, site_id, "site:read", state_changing=False
+        )
         service = _service(database)
         await _record(service, site_id)
         try:
@@ -149,7 +171,14 @@ def install_control_site_routes(app: Any, database: Any, settings: Any) -> None:
     async def create_domain(
         request: Request, site_id: UUID, body: DomainMappingRequest
     ) -> DomainMapping:
-        await _authorize(request, database, settings, state_changing=True)
+        await authorize_site_request(
+            request,
+            database,
+            settings,
+            site_id,
+            "site-domain:manage",
+            state_changing=True,
+        )
         service = _service(database)
         _existing, context = await _active_context(service, site_id)
         try:
@@ -164,7 +193,14 @@ def install_control_site_routes(app: Any, database: Any, settings: Any) -> None:
         domain_id: UUID,
         body: DomainMappingRequest,
     ) -> DomainMapping:
-        await _authorize(request, database, settings, state_changing=True)
+        await authorize_site_request(
+            request,
+            database,
+            settings,
+            site_id,
+            "site-domain:manage",
+            state_changing=True,
+        )
         service = _service(database)
         _existing, context = await _active_context(service, site_id)
         try:
@@ -176,7 +212,14 @@ def install_control_site_routes(app: Any, database: Any, settings: Any) -> None:
     async def delete_domain(
         request: Request, site_id: UUID, domain_id: UUID
     ) -> Response:
-        await _authorize(request, database, settings, state_changing=True)
+        await authorize_site_request(
+            request,
+            database,
+            settings,
+            site_id,
+            "site-domain:manage",
+            state_changing=True,
+        )
         service = _service(database)
         _existing, context = await _active_context(service, site_id)
         try:

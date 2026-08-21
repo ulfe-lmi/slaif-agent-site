@@ -19,9 +19,10 @@ only the two active hostname/path and local-key resolver functions; its
 `SiteResolver` exposes only `resolve(authority, request_path)`. Other product
 roles have neither relation nor site-function authority.
 The Control application exposes the same boundary through the authenticated
-Platform Administrator API documented in [API](API.md). Site membership
-lifecycle is separately governed by global administrator or exact site-manager
-authority. No anonymous site endpoint or site-management UI exists.
+site governance API documented in [API](API.md). Platform Administrators create
+and archive sites. Active members read or manage profile/domains only with the
+exact server-evaluated permission. The admin URL selects a site; it never grants
+authority.
 
 Site UUIDs, mapping UUIDs, revisions, timestamps, and lifecycle state are
 server/database-owned. Request bodies cannot select routing identity. A
@@ -79,11 +80,10 @@ and production edge routing remain deferred.
 
 ## Deferred work
 
-Site-management and membership UI, invitations/custom roles, workspaces,
-content models, actual site content, editor/Puck, agent capabilities,
-review/publication, DNS
-automation, and deletion are not implemented. The accessible shell proves
-routing context only; it is not a publication surface. This API does not make the application
+Membership UI, invitations/custom roles, workspaces, content models, actual
+site content, editor/Puck, agent capabilities, review/publication, DNS
+automation, and deletion are not implemented. Domain rows do not automate DNS,
+and archive preserves all rows. This API does not make the application
 production-ready or hostile-tenant-safe. Multi-site support remains trusted
 institutional tenancy and does not claim hostile public-SaaS isolation.
 

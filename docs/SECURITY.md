@@ -23,6 +23,12 @@ body IDs, roles, and versions never establish site authority. All catalog,
 membership, validation, and error responses are private/no-store/noindex and
 carry one request ID without foreign-site or credential detail.
 
+Site profile and domain routes use server-fetched current membership
+permissions. No request can provide an actor, permission, membership version,
+or recent-auth override. Archive requires current global authority and current
+recent authentication at the server; the confirmation dialog is usability
+protection, not authority.
+
 Clean Compose E2E uses two fixed OIDC fixture identities with a reserved
 non-routable issuer. The smoke harness is their only insertion point; neither
 bootstrap, migrations, Compose configuration, nor product source creates them.

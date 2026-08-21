@@ -1,4 +1,4 @@
-# Read-only administration foundation
+# Responsive site administration
 
 The authenticated `/admin` dashboard is a responsive, read-only administration
 shell. It loads the current session and server-filtered current-human site list.
@@ -25,6 +25,13 @@ React 19, and Next 16. It contains no Lightning CSS or MPL-licensed npm package.
 The UI uses the local logo, system fonts, no remote origin or telemetry, and no
 browser-persisted token, permission, or selected-site state.
 
-Site and membership mutations remain API-only until 013-b/c. User creation,
-invitations, custom roles, content/models/pages, Puck, workspaces/capabilities,
-review, audit workflows, and publication execution are not implemented.
+Platform Administrators can create sites at `/admin/sites/new`. Returned
+`site-policy:manage` and `site-domain:manage` permissions control Site Owner
+profile/locale and domain create/replace/remove controls. Domain mappings do
+not automate DNS. Archive is Platform-Administrator-only, names the site,
+explains that no rows are deleted, requires explicit confirmation and recent
+authentication, and remains protected by the server gate.
+
+Membership UI remains deferred to 013-d. User creation, invitations, custom
+roles, content/models/pages, Puck, workspaces/capabilities, review, audit
+workflows, and publication execution are not implemented.

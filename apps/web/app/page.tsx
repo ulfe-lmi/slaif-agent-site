@@ -72,9 +72,9 @@ export default async function Home() {
           <p className="number">02</p>
           <h2>Still deliberately absent</h2>
           <p>
-            Site and membership UI, invitations, custom roles, content models and site
-            content, workspaces and agent capabilities, editing/Puck, review, and
-            publication execution.
+            Membership UI, invitations, custom roles, content models and site content,
+            workspaces and agent capabilities, editing/Puck, review, and publication
+            execution.
           </p>
         </article>
         <article>
