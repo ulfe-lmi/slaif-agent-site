@@ -220,7 +220,7 @@ docker run --rm --network none --read-only --cap-drop ALL --cap-add DAC_OVERRIDE
   --user 0:0 --volume "${PROJECT}_render-secret:/render" \
   --entrypoint python slaif-agent-site-backend:local -c \
   "import pathlib; pathlib.Path('/render/render-dsn').write_bytes(b'corrupt-render-locator')"
-docker compose -p "$PROJECT" up -d --force-recreate render-api >/dev/null
+docker compose -p "$PROJECT" up -d --force-recreate --no-deps render-api >/dev/null
 attempt=0
 while test "$attempt" -lt 40
 do
@@ -250,7 +250,7 @@ docker run --rm --network none --read-only --cap-drop ALL --cap-add DAC_OVERRIDE
   --volume "${PROJECT}_render-secret:/render" \
   --entrypoint python slaif-agent-site-backend:local -c \
   "import pathlib; pathlib.Path('/render/render-dsn').write_bytes(pathlib.Path('/master/service-public-dsn').read_bytes())"
-docker compose -p "$PROJECT" up -d --force-recreate render-api >/dev/null
+docker compose -p "$PROJECT" up -d --force-recreate --no-deps render-api >/dev/null
 docker compose -p "$PROJECT" up --wait >/dev/null
 
 if docker compose -p "$NEGATIVE_PROJECT" -f compose.yaml \
