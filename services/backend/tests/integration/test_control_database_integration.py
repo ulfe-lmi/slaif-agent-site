@@ -104,7 +104,7 @@ async def test_readiness_function_owner_security_grants_and_denial_matrix(
             )
             assert row["schema_revision"] == "016_001"
             assert row["marker_revision"] == "016_001"
-            assert row["readiness_state"] in ("EMPTY_SAFE", "HARDENED")
+            assert row["readiness_state"] in ("HARDENED", "HARDENED")
             assert row["safe"] is True
             assert row["foundation_distribution"] == "agent-cow-postgresql"
             assert row["foundation_version"] == "0.2.0"

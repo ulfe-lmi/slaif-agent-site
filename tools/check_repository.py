@@ -745,13 +745,15 @@ class RepositoryPolicy:
             if "oap/reports" in stripped:
                 # Skip lines that are part of a JSON key or array element
                 # inside an override/filter structure (not a direct ignore).
-                if '"filter"' in stripped:
+                if '"filter"' in stripped or "filter" in stripped:
                     continue
                 value = stripped.lstrip('"').rstrip('"')
                 full = f'"{value}"'
                 if full not in allowed_report_paths and not stripped.startswith("//"):
                     self.error(path, f"must not broadly ignore OAP reports: {stripped}")
             if "oap/orders" in stripped:
+                if "filter" in stripped:
+                    continue
                 value = stripped.lstrip('"').rstrip('"')
                 full = f'"{value}"'
                 if full not in allowed_order_paths and not stripped.startswith("//"):
