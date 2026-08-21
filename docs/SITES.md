@@ -86,3 +86,8 @@ automation, and deletion are not implemented. The accessible shell proves
 routing context only; it is not a publication surface. This API does not make the application
 production-ready or hostile-tenant-safe. Multi-site support remains trusted
 institutional tenancy and does not claim hostile public-SaaS isolation.
+
+The clean Compose browser proof creates disposable non-login OIDC identities only
+inside its test database, assigns different roles to the same identity on two
+sites, and confirms constant cross-site absence plus semantic deactivation. They
+are not default site members or product/demo users.

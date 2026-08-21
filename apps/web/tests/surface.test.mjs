@@ -12,23 +12,28 @@ test("auth routes and landing page expose truthful local flows", async () => {
   assert.match(home, /Secure local administrator setup and server-side sessions/);
   assert.match(home, /trusted\s+multi-site identity and routing/);
   assert.match(home, /Platform Administrator site\/domain\s+APIs/);
+  assert.match(home, /built-in RBAC and membership APIs/);
+  assert.match(home, /route-policy declarations/);
+  assert.match(home, /publication authority stays separate/);
   const deferred = home.match(
     /Still deliberately absent<\/h2>\s*<p>([\s\S]*?)<\/p>/,
   )?.[1];
   assert.ok(deferred);
   for (const claim of [
-    /Membership\/RBAC/,
-    /site-management UI/,
-    /content models and site content/,
+    /Site and membership UI/,
+    /invitations/,
+    /custom roles/,
+    /content models and\s+site\s+content/,
     /workspaces and agent capabilities/,
     /editing\/Puck/,
-    /review, and publication/,
+    /review,\s+and\s+publication execution/,
   ])
     assert.match(deferred, claim);
   assert.doesNotMatch(deferred, /\bsites\b|site routing/i);
   const implemented = home.match(/Implemented now<\/h2>\s*<p>([\s\S]*?)<\/p>/)?.[1];
   assert.ok(implemented);
-  assert.doesNotMatch(implemented, /content models|publication/i);
+  assert.doesNotMatch(implemented, /content models|publication execution/i);
+  assert.doesNotMatch(deferred, /Membership\/RBAC|membership APIs/i);
   for (const route of ["setup", "login", "admin"]) {
     const expected =
       route === "admin"

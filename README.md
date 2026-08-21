@@ -46,7 +46,7 @@ remain unimplemented.
 > projects. A fresh reference stack seeds one demo site and serves a small
 > Web→Render routing-context shell for active local or custom-host mappings;
 > this is routing evidence, not site content or publication. Site-management and membership UI,
-> workspaces, editing/Puck, content tables and APIs,
+> invitations, custom roles, workspaces, editing/Puck, content tables and APIs,
 > runtime browser commands, review, publication, and product behavior are
 > not implemented yet. Control API alone owns one isolated file-backed login,
 > bounded asyncpg pool, readiness/authentication adapters, and the bounded site
@@ -227,9 +227,11 @@ The current repository is intentionally small:
 ```
 
 The TypeScript package boundaries contain no product schemas, components,
-scopes, browser tools, API behavior, or fixture data. The Python HTTP processes
-contain only `/health/live` and `/health/ready`; long-running workers do no
-product work. Control readiness has one injected database component, while
+scopes, browser tools, API behavior, or fixture data. Control HTTP additionally
+implements setup/session, Platform Administrator site/domain, immutable
+role/permission catalog, and site-membership lifecycle routes; the other public
+Python processes remain health-only. Long-running workers do no product work.
+Control readiness has one injected database component, while
 its liveness remains process-only. Bootstrap mutations require explicit
 one-shot commands. See the
 [configuration contract](docs/CONFIGURATION.md),

@@ -6,6 +6,8 @@ export type Secrets = {
   username: string;
   loginUsername: string;
   password: string;
+  fixtureUserOne: string;
+  fixtureUserTwo: string;
 };
 
 export function secrets(): Secrets {

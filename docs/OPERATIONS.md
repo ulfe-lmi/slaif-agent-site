@@ -201,6 +201,14 @@ There is no online site deletion, DNS automation, membership UI, invitation,
 custom-role design, content/workspace/capability, or publication operation in
 this round.
 
+The clean Compose verification creates two non-authenticatable OIDC fixture
+accounts directly in its disposable database before setup, exercises the catalog
+and two-site membership lifecycle through NGINX, checks persistence across
+stop/start, and removes the database volume during normal cleanup. These are test
+harness records, not demo users, bootstrap seed data, or a user provisioning
+mechanism. A collision or non-fresh installation state fails the smoke instead of
+overwriting data.
+
 ## Verification
 
 The destructive packaging smoke uses only a validated explicit project name:
@@ -216,8 +224,9 @@ read-denial boundary, empty-safe marker, exact login authority, Control
 wrong-login/role/secret/marker/migration/database failure behavior, restart
 idempotence, fail-closed bootstrap, Apache syntax, single
 request-ID and CSP headers on page/API/404 responses, secret absence in
-configuration/history/logs, and exact-project cleanup. It does not test product
-workflows because they do not exist.
+configuration/history/logs, the implemented membership API lifecycle, and
+exact-project cleanup. It does not claim membership UI, content editing, or
+publication execution.
 
 ## Supply-chain evidence
 

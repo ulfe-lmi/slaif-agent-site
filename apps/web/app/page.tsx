@@ -63,15 +63,18 @@ export default async function Home() {
           <p>
             Secure local administrator setup and server-side sessions, trusted
             multi-site identity and routing, and Platform Administrator site/domain
-            APIs.
+            APIs. Site-scoped built-in RBAC and membership APIs share explicit
+            route-policy declarations, while publication authority stays separate from
+            delegation ceilings.
           </p>
         </article>
         <article>
           <p className="number">02</p>
           <h2>Still deliberately absent</h2>
           <p>
-            Membership/RBAC, site-management UI, content models and site content,
-            workspaces and agent capabilities, editing/Puck, review, and publication.
+            Site and membership UI, invitations, custom roles, content models and site
+            content, workspaces and agent capabilities, editing/Puck, review, and
+            publication execution.
           </p>
         </article>
         <article>
