@@ -7,6 +7,15 @@ nonassignable permissions, and beyond-actor ceilings fail closed. Publication
 is independent and never follows from editing or delegation level. See [Human
 site authorization](AUTHORIZATION.md).
 
+Control membership reads authenticate the strict human cookie once, resolve an
+active site through trusted persistence, and require global administrator or
+both membership-management permissions. POST, PATCH, and semantic DELETE use
+the atomic session-plus-CSRF helper and then repeat actor authorization under
+the mutation function's canonical row locks. Client Host, forwarded headers,
+body IDs, roles, and versions never establish site authority. All catalog,
+membership, validation, and error responses are private/no-store/noindex and
+carry one request ID without foreign-site or credential detail.
+
 The internal Render API owns one `slaif_public_login` connection pool with the
 sole `slaif_public_reader` membership. Pool initialization verifies database,
 login/current-user, and exact membership before readiness succeeds. Locator and

@@ -27,6 +27,15 @@ built-in authorization catalogs. Catalog defaults change only through
 migrations. Membership rows are deactivated, not hard-deleted; optimistic
 versions and explicit overrides remain inspectable history.
 
+Control now serves authenticated catalog and membership routes. A 401 points to
+session lifecycle, 403 to CSRF/current authority/self-or-beyond-authority
+policy, 404 to an invisible active-site/user/membership boundary, 409 to
+duplicate or expected-version conflict, 422 to typed input, and 503 to the
+Control pool. Do not diagnose these by querying relations from the runtime
+role. The immutable route-policy registry is checked against actual Control and
+Editor handlers in CI; adding a handler requires an exact declaration plus real
+enforcement, not a blanket exemption.
+
 These commands operate the default Compose project in a local, non-production
 environment. Use an explicit `-p NAME` for disposable tests so cleanup targets
 cannot overlap an operator's persistent project.
@@ -188,8 +197,9 @@ The Control site API is available only to an authenticated active Platform
 Administrator. State changes require the session-bound CSRF proof. Archive is
 idempotent, irreversible through the online API, and prevents every later
 profile/domain mutation even if a caller retained a prior active context.
-There is no online site deletion, DNS automation, demo seed, public renderer,
-membership management, or publication operation in this round.
+There is no online site deletion, DNS automation, membership UI, invitation,
+custom-role design, content/workspace/capability, or publication operation in
+this round.
 
 ## Verification
 

@@ -200,6 +200,7 @@ jobs:
           services/backend/tests/integration/test_site_control_http_integration.py
           services/backend/tests/integration/test_render_site_resolution.py
           services/backend/tests/integration/test_human_rbac.py
+          services/backend/tests/integration/test_membership_control_http.py
 
   compose-edge-packaging:
     name: Compose and edge packaging

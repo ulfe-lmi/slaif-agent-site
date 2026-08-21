@@ -56,6 +56,8 @@ class MembershipChange(BaseModel):
 
     @model_validator(mode="after")
     def overrides_are_disjoint_and_known(self) -> MembershipChange:
+        if self.delegation_ceiling > ROLE_CEILINGS[self.role_key]:
+            raise ValueError("ceiling exceeds built-in role")
         if self.allow_permissions & self.deny_permissions:
             raise ValueError("permission override conflict")
         if not (self.allow_permissions | self.deny_permissions) <= set(
@@ -66,7 +68,7 @@ class MembershipChange(BaseModel):
 
 
 class PermissionCatalogRecord(BaseModel):
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     permission_key: str
     category: str
@@ -77,8 +79,18 @@ class PermissionCatalogRecord(BaseModel):
     role_keys: tuple[str, ...]
 
 
+class RoleCatalogRecord(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    role_key: str
+    label: str
+    description: str
+    default_delegation_ceiling: int
+    default_permissions: tuple[str, ...]
+
+
 class MembershipRecord(BaseModel):
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     site_id: UUID
     user_account_id: UUID
@@ -88,6 +100,9 @@ class MembershipRecord(BaseModel):
     version: int
     allow_permissions: frozenset[str]
     deny_permissions: frozenset[str]
+    effective_delegation_ceiling: int
+    effective_permissions: frozenset[str]
+    platform_administrator: bool
     created_at: datetime
     updated_at: datetime
 
@@ -129,4 +144,5 @@ __all__ = [
     "MembershipStatus",
     "OverrideEffect",
     "PermissionCatalogRecord",
+    "RoleCatalogRecord",
 ]

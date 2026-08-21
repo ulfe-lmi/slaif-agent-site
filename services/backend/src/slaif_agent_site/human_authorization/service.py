@@ -9,11 +9,13 @@ from uuid import UUID
 
 import asyncpg
 
+from .catalog import ROLE_CEILINGS, ROLE_DEFAULTS, ROLE_LABELS
 from .models import (
     HumanSiteContext,
     MembershipChange,
     MembershipRecord,
     PermissionCatalogRecord,
+    RoleCatalogRecord,
 )
 
 AUTHORIZE_SQL = "SELECT * FROM control.slaif_human_authorize($1, $2, $3, $4)"
@@ -56,8 +58,11 @@ def _membership(row: Any) -> MembershipRecord:
         version=row[5],
         allow_permissions=frozenset(row[6]),
         deny_permissions=frozenset(row[7]),
-        created_at=row[8],
-        updated_at=row[9],
+        effective_delegation_ceiling=row[8],
+        effective_permissions=frozenset(row[9]),
+        platform_administrator=row[10],
+        created_at=row[11],
+        updated_at=row[12],
     )
 
 
@@ -110,6 +115,18 @@ class HumanAuthorizationService:
             for row in rows
         )
 
+    def roles(self) -> tuple[RoleCatalogRecord, ...]:
+        return tuple(
+            RoleCatalogRecord(
+                role_key=role_key,
+                label=ROLE_LABELS[role_key],
+                description=f"Built-in {ROLE_LABELS[role_key]} role.",
+                default_delegation_ceiling=ceiling,
+                default_permissions=tuple(sorted(ROLE_DEFAULTS[role_key])),
+            )
+            for role_key, ceiling in ROLE_CEILINGS.items()
+        )
+
     async def membership(
         self, site_id: UUID, user_account_id: UUID
     ) -> MembershipRecord:
@@ -141,6 +158,32 @@ class HumanAuthorizationService:
         target_user_id: UUID,
         change: MembershipChange,
     ) -> HumanSiteContext:
+        context, _record = await self._put_membership(
+            actor_user_id, site_id, target_user_id, change
+        )
+        return context
+
+    async def put_membership_record(
+        self,
+        actor_user_id: UUID,
+        site_id: UUID,
+        target_user_id: UUID,
+        change: MembershipChange,
+    ) -> MembershipRecord:
+        """Mutate and read the resulting record under the same transaction locks."""
+
+        _context, record = await self._put_membership(
+            actor_user_id, site_id, target_user_id, change
+        )
+        return record
+
+    async def _put_membership(
+        self,
+        actor_user_id: UUID,
+        site_id: UUID,
+        target_user_id: UUID,
+        change: MembershipChange,
+    ) -> tuple[HumanSiteContext, MembershipRecord]:
         try:
             async with self._pool.acquire(timeout=self._acquire_timeout) as connection:
                 async with connection.transaction():
@@ -161,9 +204,12 @@ class HumanAuthorizationService:
                             *(f"DENY:{key}" for key in sorted(change.deny_permissions)),
                         ],
                     )
+                    record_row = await connection.fetchrow(
+                        MEMBERSHIP_GET_SQL, site_id, target_user_id
+                    )
         except asyncio.CancelledError:
             raise
-        except asyncpg.SerializationError:
+        except asyncpg.TransactionRollbackError:
             raise HumanAuthorizationError(HumanAuthorizationReason.CONFLICT) from None
         except asyncpg.RaiseError as error:
             reason = {
@@ -176,9 +222,9 @@ class HumanAuthorizationService:
             raise HumanAuthorizationError(
                 HumanAuthorizationReason.UNAVAILABLE
             ) from None
-        if row is None:
+        if row is None or record_row is None:
             raise HumanAuthorizationError(HumanAuthorizationReason.NOT_FOUND)
-        return _context(row)
+        return _context(row), _membership(record_row)
 
 
 __all__ = [

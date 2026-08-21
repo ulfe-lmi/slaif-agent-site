@@ -381,6 +381,8 @@ def upgrade() -> None:
             "site_id" uuid, "user_account_id" uuid, "role_key" text,
             "delegation_ceiling" smallint, "status" text, "version" bigint,
             "allow_permissions" text[], "deny_permissions" text[],
+            "effective_ceiling" smallint, "effective_permissions" text[],
+            "platform_administrator" boolean,
             "created_at" timestamp with time zone,
             "updated_at" timestamp with time zone
         ) LANGUAGE sql STABLE SECURITY DEFINER PARALLEL SAFE
@@ -400,8 +402,21 @@ def upgrade() -> None:
                       AND override_.user_account_id = membership.user_account_id
                       AND override_.effect = 'DENY'
                     ORDER BY permission_key COLLATE "C"),
+                COALESCE(context.effective_ceiling,
+                    LEAST(membership.delegation_ceiling,
+                        role.default_delegation_ceiling)::smallint),
+                COALESCE(context.effective_permissions, ARRAY[]::text[]),
+                EXISTS (
+                    SELECT 1 FROM "control"."platform_administrator" AS admin
+                    WHERE admin.user_account_id = membership.user_account_id
+                ),
                 membership.created_at, membership.updated_at
             FROM "control"."site_membership" AS membership
+            JOIN "control"."human_role" AS role
+              ON role.role_key = membership.role_key
+            LEFT JOIN LATERAL "control"."slaif_effective_human_membership"(
+                membership.user_account_id, membership.site_id
+            ) AS context ON TRUE
             WHERE membership.site_id = p_site_id
               AND membership.user_account_id = p_user_account_id
         $function$
@@ -414,6 +429,8 @@ def upgrade() -> None:
             "site_id" uuid, "user_account_id" uuid, "role_key" text,
             "delegation_ceiling" smallint, "status" text, "version" bigint,
             "allow_permissions" text[], "deny_permissions" text[],
+            "effective_ceiling" smallint, "effective_permissions" text[],
+            "platform_administrator" boolean,
             "created_at" timestamp with time zone,
             "updated_at" timestamp with time zone
         )
@@ -445,22 +462,60 @@ def upgrade() -> None:
         #variable_conflict use_column
         DECLARE
             actor_admin boolean; actor_context record; target_role record;
-            target_status text; current_ record; item text; effect_ text;
-            permission_ text; target_permissions text[];
+            actor_status text; target_status text; target_admin boolean;
+            current_ record; item text; effect_ text; permission_ text;
+            target_permissions text[];
         BEGIN
+            -- Canonical lock order: active site; both user rows ordered by UUID;
+            -- administrator assignments; both site memberships; then overrides.
+            -- The site lock serializes membership_put calls for this site while
+            -- the row locks also serialize owner-driven account/authority edits.
             PERFORM 1 FROM "control"."site" AS site
                 WHERE site.id = p_site_id AND site.status = 'ACTIVE' FOR UPDATE;
             IF NOT FOUND THEN RAISE EXCEPTION 'RBAC_NOT_FOUND' USING ERRCODE='P0001'; END IF;
+
+            PERFORM 1 FROM "control"."user_account" AS account
+                WHERE account.id = ANY(ARRAY[p_actor_user_id, p_target_user_id])
+                ORDER BY account.id FOR UPDATE;
+            SELECT account.status INTO actor_status
+                FROM "control"."user_account" AS account
+                WHERE account.id = p_actor_user_id;
+            IF NOT FOUND THEN RAISE EXCEPTION 'RBAC_NOT_FOUND' USING ERRCODE='P0001'; END IF;
             SELECT account.status INTO target_status
                 FROM "control"."user_account" AS account
-                WHERE account.id = p_target_user_id FOR UPDATE;
+                WHERE account.id = p_target_user_id;
             IF NOT FOUND THEN RAISE EXCEPTION 'RBAC_NOT_FOUND' USING ERRCODE='P0001'; END IF;
+
+            PERFORM 1 FROM "control"."platform_administrator" AS admin
+                WHERE admin.user_account_id = ANY(
+                    ARRAY[p_actor_user_id, p_target_user_id]
+                ) ORDER BY admin.user_account_id FOR UPDATE;
             SELECT EXISTS (
-                SELECT 1 FROM "control"."user_account" AS account
-                JOIN "control"."platform_administrator" AS admin
-                  ON admin.user_account_id = account.id
-                WHERE account.id = p_actor_user_id AND account.status = 'ACTIVE'
-            ) INTO actor_admin;
+                SELECT 1 FROM "control"."platform_administrator" AS admin
+                WHERE admin.user_account_id = p_actor_user_id
+            ) AND actor_status = 'ACTIVE' INTO actor_admin;
+            SELECT EXISTS (
+                SELECT 1 FROM "control"."platform_administrator" AS admin
+                WHERE admin.user_account_id = p_target_user_id
+            ) INTO target_admin;
+
+            PERFORM 1 FROM "control"."site_membership" AS membership
+                WHERE membership.site_id = p_site_id
+                  AND membership.user_account_id = ANY(
+                      ARRAY[p_actor_user_id, p_target_user_id]
+                  ) ORDER BY membership.user_account_id FOR UPDATE;
+            PERFORM 1
+                FROM "control"."site_membership_permission_override" AS override_
+                WHERE override_.site_id = p_site_id
+                  AND override_.user_account_id = ANY(
+                      ARRAY[p_actor_user_id, p_target_user_id]
+                  )
+                ORDER BY override_.user_account_id, override_.permission_key
+                FOR UPDATE;
+
+            IF actor_status <> 'ACTIVE' THEN
+                RAISE EXCEPTION 'RBAC_DENIED' USING ERRCODE='P0001';
+            END IF;
             IF NOT actor_admin THEN
                 IF p_actor_user_id = p_target_user_id THEN
                     RAISE EXCEPTION 'RBAC_DENIED' USING ERRCODE='P0001';
@@ -491,7 +546,7 @@ def upgrade() -> None:
             END IF;
             SELECT * INTO current_ FROM "control"."site_membership" AS membership
                 WHERE membership.site_id = p_site_id
-                  AND membership.user_account_id = p_target_user_id FOR UPDATE;
+                  AND membership.user_account_id = p_target_user_id;
             IF NOT FOUND THEN
                 IF p_expected_version IS NOT NULL THEN
                     RAISE EXCEPTION 'RBAC_CONFLICT' USING ERRCODE='P0001';
@@ -554,7 +609,7 @@ def upgrade() -> None:
                     membership.version, p_delegation_ceiling,
                     LEAST(p_delegation_ceiling,
                         target_role.default_delegation_ceiling)::smallint,
-                    ARRAY[]::text[], actor_admin
+                    ARRAY[]::text[], target_admin
                     FROM "control"."site_membership" AS membership
                     WHERE membership.site_id = p_site_id
                       AND membership.user_account_id = p_target_user_id;

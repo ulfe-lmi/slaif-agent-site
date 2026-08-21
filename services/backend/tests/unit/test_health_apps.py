@@ -59,6 +59,15 @@ class FakeControlDatabase:
     async def authenticate_local_login(self, _request: Any) -> Any:
         raise AssertionError("health-only app cannot invoke login")
 
+    async def authorize_platform_administrator(self, _user_id: Any) -> bool:
+        raise AssertionError("health-only app cannot invoke authorization")
+
+    def site_service(self) -> Any:
+        raise AssertionError("health-only app cannot invoke site service")
+
+    def human_authorization_service(self) -> Any:
+        raise AssertionError("health-only app cannot invoke membership service")
+
     async def create_initial_local_administrator(
         self, _request: InitialLocalAdministratorRequest
     ) -> InitialLocalAdministratorResult:
@@ -98,6 +107,10 @@ async def test_each_app_has_only_typed_health_routes(
             "/api/control/v1/sites/{site_id}/archive",
             "/api/control/v1/sites/{site_id}/domains",
             "/api/control/v1/sites/{site_id}/domains/{domain_id}",
+            "/api/control/v1/roles",
+            "/api/control/v1/permissions",
+            "/api/control/v1/sites/{site_id}/memberships",
+            "/api/control/v1/sites/{site_id}/memberships/{user_id}",
         }
     if process is ProcessKind.RENDER_API:
         expected_routes.add("/internal/render/v1/site-context")

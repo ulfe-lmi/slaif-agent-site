@@ -17,10 +17,12 @@ the real responsive result, and publish only after human review.
 
 ## Current status
 
-The backend includes a non-HTTP foundation for site-scoped human memberships,
-seven built-in roles, exact permissions, bounded delegation, and explicit
-overrides. Membership HTTP/UI, custom roles, workspaces/capabilities, content
-editing, review, and publication execution remain unimplemented.
+The backend includes authenticated Control HTTP for immutable role/permission
+catalogs and site-scoped human membership lifecycle, with seven built-in roles,
+exact permissions, bounded delegation, explicit overrides, optimistic versions,
+and transactional authority locking. Membership UI, custom roles,
+workspaces/capabilities, content editing, review, and publication execution
+remain unimplemented.
 
 > **Pre-alpha / deployable skeleton.** This
 > repository contains the normative architecture, coding-agent governance,
@@ -43,7 +45,7 @@ editing, review, and publication execution remain unimplemented.
 > implemented and qualified through six self-hosted Playwright browser/device
 > projects. A fresh reference stack seeds one demo site and serves a small
 > Web→Render routing-context shell for active local or custom-host mappings;
-> this is routing evidence, not site content or publication. Site-management UI, site membership,
+> this is routing evidence, not site content or publication. Site-management and membership UI,
 > workspaces, editing/Puck, content tables and APIs,
 > runtime browser commands, review, publication, and product behavior are
 > not implemented yet. Control API alone owns one isolated file-backed login,
@@ -187,7 +189,8 @@ first-run administrator or website-management product. See the
 | Completed Control readiness boundary | Isolated `slaif_control_login` mount, bounded identity-verified Control pool, one owner-defined read-only readiness function, and fail-closed Control/NGINX health dependency. |
 | Completed local authentication proof | One-time setup plus login/session/logout through real NGINX/Compose on desktop Chromium, Firefox, WebKit, tablet, mobile Chromium, and mobile WebKit. |
 | Completed site foundation | Control-owned sites and domain mappings, bounded installation quota, strict identifier normalization, immutable site context, and trusted longest-prefix/local-development resolution. |
-| Planned product work | Add site-management HTTP/UI, memberships, workspaces, configurable content, normalized composition/Puck, semantic tools, runtime browser feedback, review/promotion, reconstruction, and hardening. |
+| Completed human RBAC HTTP boundary | Immutable role/permission catalogs, site membership list/get/create/update/deactivate, strict session/CSRF policy, optimistic concurrency, and complete Control/Editor route declarations. |
+| Planned product work | Add site-management/membership UI, workspaces, configurable content, normalized composition/Puck, semantic tools, runtime browser feedback, review/promotion, reconstruction, and hardening. |
 
 See [Architecture Section 50](ARCHITECTURE.md#50-implementation-phases) for
 the normative phase plan.

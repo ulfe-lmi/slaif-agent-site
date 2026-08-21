@@ -21,7 +21,10 @@ routes.
 Revision `014_001` adds owner-controlled human permission/role catalogs,
 site membership and overrides, and fixed Control authorization/mutation
 functions. These objects are non-COW and grant runtime roles no direct relation
-access.
+access. Membership mutation locks the active site, ordered actor/target user
+and membership identities, administrator assignments, and overrides before
+evaluating authority; inactive trusted results report the target's global
+administrator fact.
 Application services never invoke
 Alembic; only the one-shot
 bootstrap authority supplies the owner connection used by migration commands

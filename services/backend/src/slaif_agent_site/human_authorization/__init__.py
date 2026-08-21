@@ -7,6 +7,7 @@ from .models import (
     MembershipRecord,
     MembershipStatus,
     PermissionCatalogRecord,
+    RoleCatalogRecord,
 )
 from .service import (
     HumanAuthorizationError,
@@ -26,4 +27,5 @@ __all__ = [
     "MembershipRecord",
     "MembershipStatus",
     "PermissionCatalogRecord",
+    "RoleCatalogRecord",
 ]

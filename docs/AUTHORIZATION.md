@@ -1,8 +1,8 @@
 # Human site authorization
 
-Revision `014_001` provides the non-HTTP foundation for site-scoped human
-membership and built-in role-based authorization. It adds no membership route
-or UI.
+Revision `014_001` provides site-scoped human membership and built-in
+role-based authorization. Control exposes the bounded catalog and membership
+HTTP surface described in [the API guide](API.md); no membership UI exists.
 
 ## Built-in roles
 
@@ -43,8 +43,16 @@ A membership is keyed by exact site and user, references a built-in role, is
 require the expected version and replace all overrides atomically. Deactivation
 preserves the row and immediately denies authorization.
 
-Every mutation rechecks active actor, site, target, actor permissions, ceiling,
-and target role under row locks in the same transaction. Non-administrators
+Every mutation uses one lock order: active site; actor and target user rows in
+UUID order; their current Platform Administrator assignments; actor and target
+membership rows; then their override rows. It evaluates authority only after
+those locks are held. A revocation, disable, downgrade, ceiling reduction, or
+permission removal that commits first therefore denies a later grant. A grant
+that holds the locks first completes before a waiting revocation, giving both
+commits one serial explanation. Cancellation, timeout, deadlock, or
+serialization failure rolls back the complete target mutation.
+
+Non-administrators
 cannot change themselves, cross sites, exceed their authority, grant system
 permissions, or grant publication without holding it. Disabled users cannot be
 activated. Stale/concurrent, cancelled, constraint, and policy failures roll
@@ -53,9 +61,21 @@ back without partial override changes.
 `HumanSiteContext` is immutable and constructed only from trusted database
 results. It contains user/site IDs, built-in role, membership version,
 explicit/effective ceiling, effective permissions, and the existing global
-administrator fact. It contains no cookie, token, digest, credential, or
-request-selected identity. Unknown, inactive, stale, and cross-site cases share
-the stable denial boundary.
+administrator fact for that target. Active and inactive results never copy the
+actor's administrator status. It contains no cookie, token, digest, credential,
+or request-selected identity. Unknown, inactive, stale, and cross-site cases
+share the stable denial boundary.
+
+## HTTP authorization chain
+
+`GET /roles` and `GET /permissions` require a current human session and expose
+only immutable built-in facts. Membership reads require either a current global
+Platform Administrator assignment or the exact site's active membership with
+both `membership:manage` and `role:manage`. Mutations also require the one bound
+CSRF decision and reassert actor authority inside the database transaction.
+Path UUIDs are parsed input, not authority: Control resolves the active site and
+current server-side membership version before use. Deactivation is HTTP
+`DELETE` semantics but updates the row to `INACTIVE`; it never hard-deletes it.
 
 ## Database authority and limitations
 
@@ -65,5 +85,5 @@ editor, public/preview reader, reviewer, scheduler, media, and GC roles have
 neither relation access nor RBAC function execution.
 
 This remains trusted institutional multi-site tenancy, not hostile public SaaS
-isolation or RLS. Membership HTTP/UI, invitations, custom roles, workspaces,
+isolation or RLS. Membership UI, invitations, custom roles, workspaces,
 capabilities, content, and publication execution are not implemented yet.

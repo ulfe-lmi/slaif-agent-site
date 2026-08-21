@@ -120,6 +120,13 @@ ROLE_CEILINGS = MappingProxyType(
     }
 )
 
+ROLE_LABELS = MappingProxyType(
+    {
+        role_key: role_key.removeprefix("SITE_").replace("_", " ").title()
+        for role_key in ROLE_CEILINGS
+    }
+)
+
 _EDITORIAL_BY_LEVEL = {
     0: READ_SCOPES,
     1: READ_SCOPES | L1_SCOPES,
@@ -158,6 +165,7 @@ __all__ = [
     "READ_SCOPES",
     "ROLE_CEILINGS",
     "ROLE_DEFAULTS",
+    "ROLE_LABELS",
     "SITE_GOVERNANCE_SCOPES",
     "SYSTEM_SCOPES",
     "PermissionDefinition",

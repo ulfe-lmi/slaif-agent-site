@@ -74,6 +74,8 @@ def test_membership_change_is_frozen_bounded_and_disjoint() -> None:
             allow_permissions=frozenset({"site:publish"}),
             deny_permissions=frozenset({"site:publish"}),
         )
+    with pytest.raises(ValidationError):
+        MembershipChange(role_key="VIEWER", delegation_ceiling=1)
 
 
 def test_human_site_context_has_no_public_constructor_or_credentials() -> None:
