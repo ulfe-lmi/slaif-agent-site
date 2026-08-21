@@ -66,7 +66,9 @@ class ComposeSmokeContractTests(unittest.TestCase):
         self.assertIn('test "$(render_fingerprint)" = "$render_before"', source)
         self.assertIn('test "$(site_fingerprint)" = "$sites_before"', source)
 
-    def test_membership_fixtures_are_bounded_to_smoke_and_fail_on_collision(self) -> None:
+    def test_membership_fixtures_are_bounded_to_smoke_and_fail_on_collision(
+        self,
+    ) -> None:
         source = SMOKE.read_text(encoding="utf-8")
         first = "12000000-0000-4000-8000-000000000001"
         second = "12000000-0000-4000-8000-000000000002"
