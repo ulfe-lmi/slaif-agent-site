@@ -17,11 +17,11 @@ Updated after each merged work order.
 | 5 | Semantic REST (read + write stubs) | ✅ | #36, #37 | ~40% (write stubs done; idempotency/batches remain) |
 | 5 | MCP adapter | ⬜ | — | 0% |
 | 6 | Browser visual loop / Playwright | ⬜ | — | 0% |
-| 7 | Workspace lifecycle + HTTP routes | ✅ | #38, #40 | ~35% (HTTP routes done; accept/selective/conflict/promotion remain) |
+| 7 | Workspace lifecycle + HTTP + accept | ✅ | #38, #40, #43 | ~50% (accept done; conflict/COW-promotion remain) |
 | 8 | Source reconstruction (L4 import) | ⬜ | — | 0% |
 | 9 | Hardening/E2E/SBOM/full matrix | ⬜ | — | 0% |
 
-## Overall estimate: ~58%
+## Overall estimate: ~62%
 
 ## Remaining critical path
 1. ~~Finish media (022)~~ → DONE (#35)
