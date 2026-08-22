@@ -144,6 +144,58 @@ def upgrade() -> None:
         "GRANT EXECUTE ON FUNCTION control.slaif_workspace_discard(uuid) TO slaif_control"
     )
 
+    # Accept workspace (promote to canonical)
+    op.execute("""
+        CREATE FUNCTION control.slaif_workspace_accept(
+            p_workspace_id uuid
+        ) RETURNS TABLE (
+            id uuid, status text, accepted_at timestamptz
+        ) LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $fn$
+        DECLARE
+            ws_status text;
+        BEGIN
+            SELECT status INTO ws_status FROM control.workspace WHERE id = p_workspace_id;
+            IF ws_status IS NULL THEN
+                RAISE EXCEPTION 'NOT_FOUND' USING ERRCODE = 'P0002';
+            END IF;
+            IF ws_status NOT IN ('REVIEW') THEN
+                RAISE EXCEPTION 'NOT_IN_REVIEW' USING ERRCODE = 'P0002';
+            END IF;
+            UPDATE control.workspace SET
+                status = 'ACCEPTED',
+                accepted_at = CURRENT_TIMESTAMP
+            WHERE id = p_workspace_id AND status = 'REVIEW';
+            RETURN QUERY SELECT w.id, w.status, w.accepted_at
+            FROM control.workspace w WHERE w.id = p_workspace_id;
+        END;
+        $fn$
+    """)
+    op.execute(
+        "GRANT EXECUTE ON FUNCTION control.slaif_workspace_accept(uuid) TO slaif_control"
+    )
+
+    # Queue selective accept
+    op.execute("""
+        CREATE FUNCTION control.slaif_workspace_selective_accept(
+            p_workspace_id uuid, p_operation_ids jsonb
+        ) RETURNS TABLE (
+            id uuid, status text
+        ) LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $fn$
+        BEGIN
+            UPDATE control.workspace SET
+                status = 'SELECTIVE_ACCEPT_QUEUED'
+            WHERE id = p_workspace_id AND status = 'REVIEW';
+            IF NOT FOUND THEN
+                RAISE EXCEPTION 'NOT_FOUND_OR_NOT_REVIEW' USING ERRCODE = 'P0002';
+            END IF;
+            RETURN QUERY SELECT w.id, w.status FROM control.workspace w WHERE w.id = p_workspace_id;
+        END;
+        $fn$
+    """)
+    op.execute(
+        "GRANT EXECUTE ON FUNCTION control.slaif_workspace_selective_accept(uuid,jsonb) TO slaif_control"
+    )
+
 
 def downgrade() -> None:
     for fn in (
