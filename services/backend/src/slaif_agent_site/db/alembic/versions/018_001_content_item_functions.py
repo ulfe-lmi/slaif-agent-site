@@ -21,11 +21,11 @@ def upgrade() -> None:
         ) RETURNS TABLE (
             id uuid, site_id uuid, type_id uuid, slug text,
             status text, type_definition_version integer,
-            values jsonb, row_version integer,
+            "values" jsonb, row_version integer,
             created_at timestamptz, updated_at timestamptz
         ) LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $fn$
         BEGIN
-            INSERT INTO content.content_item (site_id, type_id, slug, status, values, type_definition_version)
+            INSERT INTO content.content_item (site_id, type_id, slug, status, "values", type_definition_version)
             VALUES (p_site_id, p_type_id, p_slug, p_status, p_values, p_type_def_version);
             RETURN QUERY SELECT * FROM content.content_item
             WHERE site_id = p_site_id AND type_id = p_type_id AND slug = p_slug LIMIT 1;
@@ -45,7 +45,7 @@ def upgrade() -> None:
         ) RETURNS TABLE (
             id uuid, site_id uuid, type_id uuid, slug text,
             status text, type_definition_version integer,
-            values jsonb, row_version integer,
+            "values" jsonb, row_version integer,
             created_at timestamptz, updated_at timestamptz
         ) LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog STABLE AS $fn$
             SELECT * FROM content.content_item
@@ -67,7 +67,7 @@ def upgrade() -> None:
         ) RETURNS TABLE (
             id uuid, site_id uuid, type_id uuid, slug text,
             status text, type_definition_version integer,
-            values jsonb, row_version integer,
+            "values" jsonb, row_version integer,
             created_at timestamptz, updated_at timestamptz
         ) LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog STABLE AS $fn$
             SELECT * FROM content.content_item WHERE id = p_item_id
@@ -87,7 +87,7 @@ def upgrade() -> None:
         ) RETURNS TABLE (
             id uuid, site_id uuid, type_id uuid, slug text,
             status text, type_definition_version integer,
-            values jsonb, row_version integer,
+            "values" jsonb, row_version integer,
             created_at timestamptz, updated_at timestamptz
         ) LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $fn$
         BEGIN
