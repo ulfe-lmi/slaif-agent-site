@@ -543,6 +543,11 @@ async def reconcile(
                     "slaif_composition_node_move(uuid,uuid,text,integer)",
                     "slaif_composition_node_delete(uuid)",
                     "slaif_composition_list(uuid)",
+                    "slaif_media_create(uuid,uuid,text,text,bigint,text,text,text,jsonb)",
+                    "slaif_media_list(uuid)",
+                    "slaif_media_get(uuid)",
+                    "slaif_media_update(uuid,text,jsonb)",
+                    "slaif_media_delete(uuid)",
                 ):
                     await executor.execute(
                         f"GRANT EXECUTE ON FUNCTION content.{fn} "
