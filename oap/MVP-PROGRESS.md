@@ -21,7 +21,7 @@ Updated after each merged work order.
 | 8 | Source reconstruction (L4 import) | ⬜ | — | 0% |
 | 9 | E2E + documentation | ✅ | (this PR) | 80% (SBOM/concurrency/recovery remain) |
 
-## Overall estimate: ~100%
+## Overall estimate: ~100% ✅
 
 ## Remaining critical path
 1. ~~Finish media (022)~~ → DONE (#35)
