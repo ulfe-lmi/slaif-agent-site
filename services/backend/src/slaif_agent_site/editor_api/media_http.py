@@ -3,11 +3,9 @@
 from __future__ import annotations
 
 import hashlib
-from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Request, Response
-from fastapi.responses import JSONResponse
 
 from slaif_agent_site.content_model.media_models import (
     CreateMediaRequest,
@@ -30,7 +28,7 @@ router = APIRouter(prefix="/api/editor/v1/sites/{site_id}/media")
 
 
 def _service(request: Request) -> ContentModelService:
-    return request.app.state.content_model_service  # type: ignore[no-any-return]
+    return request.app.state.content_model_service
 
 
 async def _auth(
@@ -55,7 +53,7 @@ async def register_media(
     content_hash = hashlib.sha256(body.filename.encode()).hexdigest()
     storage_key = f"{site_id}/{content_hash}/{body.filename}"
     try:
-        return await _service(request).create_media(
+        return await _service(request).create_media(  # type: ignore[no-any-return]
             site_id=site_id,
             uploaded_by=None,
             filename=body.filename,
@@ -65,7 +63,7 @@ async def register_media(
             storage_key=storage_key,
             alt_text=body.alt_text,
             metadata=body.metadata,
-        )  # type: ignore[no-any-return]
+        )
     except ContentModelServiceError as exc:
         if exc.reason is ContentModelServiceReason.CONFLICT:
             raise ResourceConflictError() from None
@@ -77,12 +75,14 @@ async def list_media(site_id: UUID, request: Request) -> list[MediaAssetRecord]:
     await _auth(request, site_id, permission="media:read", state_changing=False)
     try:
         return list(await _service(request).list_media(site_id))
-    except ContentModelServiceError as exc:
+    except ContentModelServiceError:
         raise ServiceUnavailableError() from None
 
 
 @router.get("/{media_id}")
-async def get_media(site_id: UUID, media_id: UUID, request: Request) -> MediaAssetRecord:
+async def get_media(
+    site_id: UUID, media_id: UUID, request: Request
+) -> MediaAssetRecord:
     await _auth(request, site_id, permission="media:read", state_changing=False)
     try:
         record = await _service(request).get_media(media_id)
@@ -99,7 +99,9 @@ async def get_media(site_id: UUID, media_id: UUID, request: Request) -> MediaAss
 async def update_media(
     site_id: UUID, media_id: UUID, request: Request, body: UpdateMediaRequest
 ) -> MediaAssetRecord:
-    await _auth(request, site_id, permission="media-metadata:write", state_changing=True)
+    await _auth(
+        request, site_id, permission="media-metadata:write", state_changing=True
+    )
     try:
         record = await _service(request).get_media(media_id)
     except ContentModelServiceError as exc:
@@ -109,9 +111,9 @@ async def update_media(
     if record.site_id != site_id:
         raise ResourceNotFoundError()
     try:
-        return await _service(request).update_media(
+        return await _service(request).update_media(  # type: ignore[no-any-return]
             media_id=media_id, alt_text=body.alt_text, metadata=body.metadata
-        )  # type: ignore[no-any-return]
+        )
     except ContentModelServiceError as exc:
         if exc.reason is ContentModelServiceReason.NOT_FOUND:
             raise ResourceNotFoundError() from None
@@ -120,7 +122,9 @@ async def update_media(
 
 @router.delete("/{media_id}", status_code=204)
 async def delete_media(site_id: UUID, media_id: UUID, request: Request) -> Response:
-    await _auth(request, site_id, permission="media-reference:delete", state_changing=True)
+    await _auth(
+        request, site_id, permission="media-reference:delete", state_changing=True
+    )
     try:
         record = await _service(request).get_media(media_id)
     except ContentModelServiceError as exc:

@@ -54,7 +54,9 @@ def upgrade() -> None:
         END;
         $fn$
     """)
-    op.execute("GRANT EXECUTE ON FUNCTION content.slaif_media_create(uuid,uuid,text,text,bigint,text,text,text,jsonb) TO slaif_editor_runtime, slaif_control")
+    op.execute(
+        "GRANT EXECUTE ON FUNCTION content.slaif_media_create(uuid,uuid,text,text,bigint,text,text,text,jsonb) TO slaif_editor_runtime, slaif_control"
+    )
 
     op.execute("""
         CREATE FUNCTION content.slaif_media_list(
@@ -69,7 +71,9 @@ def upgrade() -> None:
             ORDER BY created_at DESC
         $fn$
     """)
-    op.execute("GRANT EXECUTE ON FUNCTION content.slaif_media_list(uuid) TO slaif_editor_runtime, slaif_control")
+    op.execute(
+        "GRANT EXECUTE ON FUNCTION content.slaif_media_list(uuid) TO slaif_editor_runtime, slaif_control"
+    )
 
     op.execute("""
         CREATE FUNCTION content.slaif_media_get(
@@ -83,7 +87,9 @@ def upgrade() -> None:
             SELECT * FROM content.media_asset WHERE id = p_media_id
         $fn$
     """)
-    op.execute("GRANT EXECUTE ON FUNCTION content.slaif_media_get(uuid) TO slaif_editor_runtime, slaif_control")
+    op.execute(
+        "GRANT EXECUTE ON FUNCTION content.slaif_media_get(uuid) TO slaif_editor_runtime, slaif_control"
+    )
 
     op.execute("""
         CREATE FUNCTION content.slaif_media_update(
@@ -107,7 +113,9 @@ def upgrade() -> None:
         END;
         $fn$
     """)
-    op.execute("GRANT EXECUTE ON FUNCTION content.slaif_media_update(uuid,text,jsonb) TO slaif_editor_runtime, slaif_control")
+    op.execute(
+        "GRANT EXECUTE ON FUNCTION content.slaif_media_update(uuid,text,jsonb) TO slaif_editor_runtime, slaif_control"
+    )
 
     op.execute("""
         CREATE FUNCTION content.slaif_media_delete(
@@ -118,7 +126,9 @@ def upgrade() -> None:
         END;
         $fn$
     """)
-    op.execute("GRANT EXECUTE ON FUNCTION content.slaif_media_delete(uuid) TO slaif_editor_runtime, slaif_control")
+    op.execute(
+        "GRANT EXECUTE ON FUNCTION content.slaif_media_delete(uuid) TO slaif_editor_runtime, slaif_control"
+    )
 
 
 def downgrade() -> None:

@@ -10,10 +10,18 @@ from pydantic import BaseModel, ConfigDict, field_validator
 
 from .models import _bounded_json, _bounded_text
 
-ALLOWED_MIME_TYPES = frozenset({
-    "image/jpeg", "image/png", "image/gif", "image/webp", "image/svg+xml",
-    "application/pdf", "video/mp4", "audio/mpeg",
-})
+ALLOWED_MIME_TYPES = frozenset(
+    {
+        "image/jpeg",
+        "image/png",
+        "image/gif",
+        "image/webp",
+        "image/svg+xml",
+        "application/pdf",
+        "video/mp4",
+        "audio/mpeg",
+    }
+)
 
 MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
 
@@ -31,7 +39,12 @@ class CreateMediaRequest(BaseModel):
     @classmethod
     def filename_is_safe(cls, value: str) -> str:
         normalized = value.strip()
-        if not normalized or ".." in normalized or "/" in normalized or "\\" in normalized:
+        if (
+            not normalized
+            or ".." in normalized
+            or "/" in normalized
+            or "\\" in normalized
+        ):
             raise ValueError("invalid filename")
         if len(normalized) > 255:
             raise ValueError("filename too long")
@@ -72,9 +85,7 @@ class UpdateMediaRequest(BaseModel):
 
     @field_validator("metadata")
     @classmethod
-    def metadata_is_bounded(
-        cls, value: dict[str, Any] | None
-    ) -> dict[str, Any] | None:
+    def metadata_is_bounded(cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
         if value is None:
             return None
         result = _bounded_json(value)

@@ -663,15 +663,46 @@ ROUTE_POLICIES: Final[tuple[RoutePolicy, ...]] = (
     ),
     *(
         _policy(
-            _EDITOR, method, path, mutation, True, csrf, _SITE,
-            RoutePolicyKind.SITE_PERMISSION, permission,
+            _EDITOR,
+            method,
+            path,
+            mutation,
+            True,
+            csrf,
+            _SITE,
+            RoutePolicyKind.SITE_PERMISSION,
+            permission,
         )
         for method, path, mutation, csrf, permission in (
-            ("POST", "/api/editor/v1/sites/{site_id}/media/register", _M, True, "media:upload"),
+            (
+                "POST",
+                "/api/editor/v1/sites/{site_id}/media/register",
+                _M,
+                True,
+                "media:upload",
+            ),
             ("GET", "/api/editor/v1/sites/{site_id}/media/", _R, False, "media:read"),
-            ("GET", "/api/editor/v1/sites/{site_id}/media/{media_id}", _R, False, "media:read"),
-            ("PATCH", "/api/editor/v1/sites/{site_id}/media/{media_id}", _M, True, "media-metadata:write"),
-            ("DELETE", "/api/editor/v1/sites/{site_id}/media/{media_id}", _M, True, "media-reference:delete"),
+            (
+                "GET",
+                "/api/editor/v1/sites/{site_id}/media/{media_id}",
+                _R,
+                False,
+                "media:read",
+            ),
+            (
+                "PATCH",
+                "/api/editor/v1/sites/{site_id}/media/{media_id}",
+                _M,
+                True,
+                "media-metadata:write",
+            ),
+            (
+                "DELETE",
+                "/api/editor/v1/sites/{site_id}/media/{media_id}",
+                _M,
+                True,
+                "media-reference:delete",
+            ),
         )
     ),
 )

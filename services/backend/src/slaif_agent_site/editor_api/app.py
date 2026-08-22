@@ -12,9 +12,9 @@ from ..config import ServiceSettings
 from ..control_api.route_policy import validate_route_policy_coverage
 from ..health import ReadinessProbe
 from .composition_http import router as composition_router
-from .media_http import router as media_router
 from .content_http import router as content_model_router
 from .item_http import router as content_item_router
+from .media_http import router as media_router
 from .nav_theme_http import router as nav_theme_router
 from .page_http import router as page_router
 from .view_http import router as collection_view_router

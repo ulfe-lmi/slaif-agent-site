@@ -148,7 +148,7 @@ EXPECTED_PACKAGE_FILES = NEW_PACKAGE_FILES | {
     "slaif_agent_site/content_model/nav_models.py",
     "slaif_agent_site/content_model/page_models.py",
     "slaif_agent_site/content_model/composition_models.py",
-        "slaif_agent_site/content_model/media_models.py"
+    "slaif_agent_site/content_model/media_models.py",
     "slaif_agent_site/editor_api/media_http.py",
     "slaif_agent_site/editor_api/composition_http.py",
     "slaif_agent_site/editor_api/page_http.py",
@@ -200,7 +200,7 @@ EXPECTED_SDIST_FILES = {
     "services/backend/src/slaif_agent_site/db/alembic/versions/022_001_composition_functions.py",
     "services/backend/src/slaif_agent_site/db/alembic/versions/023_001_media_functions.py",
     "services/backend/src/slaif_agent_site/editor_api/media_http.py",
-    "services/backend/src/slaif_agent_site/content_model/media_models.py",,
+    "services/backend/src/slaif_agent_site/content_model/media_models.py",
     "services/backend/src/slaif_agent_site/editor_api/composition_http.py",
     "services/backend/src/slaif_agent_site/content_model/composition_models.py",
     "services/backend/src/slaif_agent_site/editor_api/page_http.py",
@@ -475,6 +475,7 @@ def test_alembic_graph_and_offline_sql_need_no_locator_or_network() -> None:
     assert migration_heads() == ("023_001",)
     assert migration_history() == (
         "023_001",
+        "022_001",
         "021_001",
         "020_001",
         "019_001",
