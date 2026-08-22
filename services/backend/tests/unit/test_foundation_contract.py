@@ -152,7 +152,7 @@ EXPECTED_PACKAGE_FILES = NEW_PACKAGE_FILES | {
     "slaif_agent_site/agent_state/workspace_models.py",
     "slaif_agent_site/agent_state/capability.py",
     "slaif_agent_site/control_api/workspace_http.py",
-        "slaif_agent_site/control_api/capability_http.py",
+    "slaif_agent_site/control_api/capability_http.py",
     "slaif_agent_site/agent_api/models.py",
     "slaif_agent_site/agent_api/agent_http.py",
     "slaif_agent_site/editor_api/media_http.py",
