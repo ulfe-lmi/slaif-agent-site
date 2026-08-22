@@ -755,6 +755,7 @@ async def _function_violations(
                 or (schema == "content" and name.startswith("slaif_navigation_"))
                 or (schema == "content" and name.startswith("slaif_theme_"))
                 or (schema == "content" and name.startswith("slaif_page_"))
+                or (schema == "content" and name.startswith("slaif_composition_"))
             )
             allowed = (
                 (is_control_function and role == CONTROL_ROLE)

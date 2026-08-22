@@ -538,6 +538,11 @@ async def reconcile(
                     "slaif_page_get(uuid)",
                     "slaif_page_update(uuid,text,text,text,integer)",
                     "slaif_page_delete(uuid)",
+                    "slaif_composition_node_add(uuid,uuid,text,uuid,text,integer,jsonb)",
+                    "slaif_composition_node_update(uuid,jsonb,text,integer)",
+                    "slaif_composition_node_move(uuid,uuid,text,integer)",
+                    "slaif_composition_node_delete(uuid)",
+                    "slaif_composition_list(uuid)",
                 ):
                     await executor.execute(
                         f"GRANT EXECUTE ON FUNCTION content.{fn} "
