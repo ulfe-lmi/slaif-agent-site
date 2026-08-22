@@ -58,7 +58,7 @@ async def create_view(
             sort_spec=body.sort_spec,
             projection_spec=body.projection_spec,
             pagination_spec=body.pagination_spec,
-        )
+        )  # type: ignore[no-any-return]
     except ContentModelServiceError as exc:
         if exc.reason is ContentModelServiceReason.CONFLICT:
             raise ResourceConflictError() from None
@@ -118,7 +118,7 @@ async def update_view(
             sort_spec=body.sort_spec,
             projection_spec=body.projection_spec,
             pagination_spec=body.pagination_spec,
-        )
+        )  # type: ignore[no-any-return]
     except ContentModelServiceError as exc:
         if exc.reason is ContentModelServiceReason.NOT_FOUND:
             raise ResourceNotFoundError() from None
