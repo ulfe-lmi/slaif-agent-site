@@ -76,7 +76,10 @@ def generate_sbom() -> dict[str, Any]:
                 "type": dep["type"],
                 "name": dep["name"],
                 "version": dep["version"],
-                "purl": f"pkg:{'pypi' if dep in python_deps else 'npm'}/{dep['name']}@{dep['version']}",
+                "purl": (
+                    f"pkg:{'pypi' if dep in python_deps else 'npm'}"
+                    f"/{dep['name']}@{dep['version']}"
+                ),
             }
             for dep in sorted(components, key=lambda d: d["name"])
         ],
