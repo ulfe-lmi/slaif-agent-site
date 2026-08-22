@@ -146,7 +146,7 @@ def upgrade() -> None:
 
     # Accept workspace (promote to canonical)
     op.execute("""
-        CREATE FUNCTION control.slaif_workspace_accept(
+        CREATE OR REPLACE FUNCTION control.slaif_workspace_accept(
             p_workspace_id uuid
         ) RETURNS TABLE (
             id uuid, status text, accepted_at timestamptz
@@ -176,7 +176,7 @@ def upgrade() -> None:
 
     # Queue selective accept
     op.execute("""
-        CREATE FUNCTION control.slaif_workspace_selective_accept(
+        CREATE OR REPLACE FUNCTION control.slaif_workspace_selective_accept(
             p_workspace_id uuid, p_operation_ids jsonb
         ) RETURNS TABLE (
             id uuid, status text
