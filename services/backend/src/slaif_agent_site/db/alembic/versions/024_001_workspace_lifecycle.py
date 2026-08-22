@@ -36,6 +36,20 @@ def upgrade() -> None:
         )
     """)
 
+    # Capability table
+    op.execute("""
+        CREATE TABLE IF NOT EXISTS control.capability (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            workspace_id UUID NOT NULL REFERENCES control.workspace(id),
+            public_id TEXT NOT NULL UNIQUE,
+            secret_digest TEXT NOT NULL,
+            scopes JSONB NOT NULL DEFAULT '[]',
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            expires_at TIMESTAMPTZ,
+            revoked_at TIMESTAMPTZ
+        )
+    """)
+
     # Create workspace
     op.execute("""
         CREATE FUNCTION control.slaif_workspace_create(
