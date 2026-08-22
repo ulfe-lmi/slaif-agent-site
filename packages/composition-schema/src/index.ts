@@ -43,7 +43,7 @@ export function isCompositionNode(value: unknown): value is CompositionNode {
   return (
     typeof node.id === "string" &&
     typeof node.componentType === "string" &&
-    typeof node.parentId === "string" &&
+    (node.parentId === null || typeof node.parentId === "string") &&
     typeof node.slotKey === "string" &&
     typeof node.orderKey === "number" &&
     typeof node.props === "object"

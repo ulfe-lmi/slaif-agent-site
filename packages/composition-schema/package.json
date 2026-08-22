@@ -2,7 +2,7 @@
   "name": "@slaif-agent-site/composition-schema",
   "version": "0.0.0",
   "private": true,
-  "description": "Boundary scaffold for the unimplemented composition schema contracts.",
+  "description": "Normalized composition schema for SLAIF Agent-Site.",
   "license": "Apache-2.0",
   "type": "module",
   "files": [
@@ -16,7 +16,8 @@
   },
   "types": "./dist/index.d.ts",
   "scripts": {
-    "build": "tsc --project tsconfig.json",
-    "typecheck": "tsc --project tsconfig.json --noEmit"
+    "build": "tsc --project tsconfig.build.json",
+    "typecheck": "tsc --project tsconfig.json --noEmit",
+    "test": "vitest run tests/index.test.ts"
   }
 }
