@@ -149,6 +149,7 @@ EXPECTED_PACKAGE_FILES = NEW_PACKAGE_FILES | {
     "slaif_agent_site/content_model/page_models.py",
     "slaif_agent_site/content_model/composition_models.py",
     "slaif_agent_site/content_model/media_models.py",
+    "slaif_agent_site/agent_state/workspace_models.py",
     "slaif_agent_site/agent_api/models.py",
     "slaif_agent_site/agent_api/agent_http.py",
     "slaif_agent_site/editor_api/media_http.py",
@@ -175,6 +176,7 @@ EXPECTED_PACKAGE_FILES = NEW_PACKAGE_FILES | {
     "slaif_agent_site/db/alembic/versions/021_001_page_functions.py",
     "slaif_agent_site/db/alembic/versions/022_001_composition_functions.py",
     "slaif_agent_site/db/alembic/versions/023_001_media_functions.py",
+    "slaif_agent_site/db/alembic/versions/024_001_workspace_lifecycle.py",
 }
 EXPECTED_SDIST_FILES = {
     "alembic.ini",
@@ -199,6 +201,8 @@ EXPECTED_SDIST_FILES = {
     "services/backend/src/slaif_agent_site/db/alembic/versions/021_001_page_functions.py",
     "services/backend/src/slaif_agent_site/db/alembic/versions/022_001_composition_functions.py",
     "services/backend/src/slaif_agent_site/db/alembic/versions/023_001_media_functions.py",
+    "services/backend/src/slaif_agent_site/db/alembic/versions/024_001_workspace_lifecycle.py",
+    "services/backend/src/slaif_agent_site/agent_state/workspace_models.py",
     "services/backend/src/slaif_agent_site/agent_api/models.py",
     "services/backend/src/slaif_agent_site/agent_api/agent_http.py",
     "services/backend/src/slaif_agent_site/editor_api/composition_http.py",
@@ -474,8 +478,9 @@ def test_locked_foundation_artifact_hash_constants_are_sha256() -> None:
 
 
 def test_alembic_graph_and_offline_sql_need_no_locator_or_network() -> None:
-    assert migration_heads() == ("023_001",)
+    assert migration_heads() == ("024_001",)
     assert migration_history() == (
+        "024_001",
         "023_001",
         "022_001",
         "021_001",
