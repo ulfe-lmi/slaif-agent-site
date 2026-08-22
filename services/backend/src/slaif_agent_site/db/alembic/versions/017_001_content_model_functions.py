@@ -128,13 +128,13 @@ def upgrade() -> None:
         ) RETURNS TABLE (
             id uuid, type_id uuid, "key" text, label text, field_type text,
             required boolean, localized boolean, cardinality integer,
-            position integer, validation jsonb, ui_options jsonb,
+            "position" integer, validation jsonb, ui_options jsonb,
             definition_version integer, created_at timestamptz, updated_at timestamptz
         ) LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $fn$
         BEGIN
             INSERT INTO content.field_definition
                 (type_id, "key", label, field_type, required, localized,
-                 cardinality, position, validation, ui_options)
+                 cardinality, "position", validation, ui_options)
             VALUES (p_type_id, p_key, p_label, p_field_type, p_required,
                     p_localized, p_cardinality, p_position, p_validation, p_ui_options)
             RETURNING *;
@@ -151,12 +151,12 @@ def upgrade() -> None:
         ) RETURNS TABLE (
             id uuid, type_id uuid, "key" text, label text, field_type text,
             required boolean, localized boolean, cardinality integer,
-            position integer, validation jsonb, ui_options jsonb,
+            "position" integer, validation jsonb, ui_options jsonb,
             definition_version integer, created_at timestamptz, updated_at timestamptz
         ) LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog STABLE AS $fn$
             SELECT * FROM content.field_definition
             WHERE type_id = p_type_id
-            ORDER BY position, "key" COLLATE "C"
+            ORDER BY "position", "key" COLLATE "C"
         $fn$
     """)
     _secure('"content"."slaif_field_definition_list"(uuid)')
@@ -167,7 +167,7 @@ def upgrade() -> None:
         ) RETURNS TABLE (
             id uuid, type_id uuid, "key" text, label text, field_type text,
             required boolean, localized boolean, cardinality integer,
-            position integer, validation jsonb, ui_options jsonb,
+            "position" integer, validation jsonb, ui_options jsonb,
             definition_version integer, created_at timestamptz, updated_at timestamptz
         ) LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog STABLE AS $fn$
             SELECT * FROM content.field_definition WHERE id = p_field_id
@@ -183,7 +183,7 @@ def upgrade() -> None:
         ) RETURNS TABLE (
             id uuid, type_id uuid, "key" text, label text, field_type text,
             required boolean, localized boolean, cardinality integer,
-            position integer, validation jsonb, ui_options jsonb,
+            "position" integer, validation jsonb, ui_options jsonb,
             definition_version integer, created_at timestamptz, updated_at timestamptz
         ) LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $fn$
         BEGIN
@@ -192,7 +192,7 @@ def upgrade() -> None:
                 required = COALESCE(p_required, required),
                 localized = COALESCE(p_localized, localized),
                 cardinality = COALESCE(p_cardinality, cardinality),
-                position = COALESCE(p_position, position),
+                "position" = COALESCE(p_position, "position"),
                 validation = COALESCE(p_validation, validation),
                 ui_options = COALESCE(p_ui_options, ui_options),
                 definition_version = definition_version + 1,
