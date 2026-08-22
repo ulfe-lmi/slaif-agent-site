@@ -739,7 +739,11 @@ class RepositoryPolicy:
             report_exact,
             '"oap/reports/013-l-diagnose-modal-containment-timeout.md"',
         }
-        allowed_order_paths = {order_exact}
+        allowed_order_paths = {
+            order_exact,
+            '"oap/orders/014-a-content-model-foundation.md"',
+            '"oap/orders/015-a-content-model-editor-http.md"',
+        }
         for line in text.splitlines():
             stripped = line.strip().rstrip('",').strip()
             if "oap/reports" in stripped:

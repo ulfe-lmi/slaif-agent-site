@@ -35,7 +35,7 @@ class PolicyDatabase:
 
 def test_registry_exact_inventory_and_policy_shapes() -> None:
     keys = [policy.key for policy in ROUTE_POLICIES]
-    assert len(keys) == len(set(keys)) == 27
+    assert len(keys) == len(set(keys)) == 37
     assert {policy.process for policy in ROUTE_POLICIES} == {
         ProcessKind.CONTROL_API,
         ProcessKind.EDITOR_API,
@@ -43,8 +43,19 @@ def test_registry_exact_inventory_and_policy_shapes() -> None:
     control = route_policies_for(ProcessKind.CONTROL_API)
     editor = route_policies_for(ProcessKind.EDITOR_API)
     assert len(control) == 25
-    assert len(editor) == 2
-    assert all(policy.policy_kind is RoutePolicyKind.SYSTEM_HEALTH for policy in editor)
+    assert len(editor) == 12
+    health_routes = [p for p in editor if p.path_template.startswith("/health")]
+    assert len(health_routes) == 2
+    assert all(
+        policy.policy_kind is RoutePolicyKind.SYSTEM_HEALTH for policy in health_routes
+    )
+    content_routes = [p for p in editor if "content-model" in p.path_template]
+    assert len(content_routes) == 10
+    assert all(
+        policy.policy_kind is RoutePolicyKind.SITE_PERMISSION
+        and policy.authority_kind is RouteAuthorityKind.SITE_PERMISSION
+        for policy in content_routes
+    )
     membership = [
         policy for policy in control if "/memberships" in policy.path_template
     ]

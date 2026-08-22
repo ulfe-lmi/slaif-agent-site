@@ -505,6 +505,22 @@ async def reconcile(
                 await apply_product_privileges(
                     connection, readiness_state=ReadinessState.HARDENED
                 )
+                for fn in (
+                    "slaif_content_type_create(uuid,text,jsonb,text,jsonb)",
+                    "slaif_content_type_list(uuid)",
+                    "slaif_content_type_get(uuid)",
+                    "slaif_content_type_update(uuid,jsonb,text,jsonb)",
+                    "slaif_content_type_delete(uuid)",
+                    "slaif_field_definition_create(uuid,text,text,text,boolean,boolean,integer,integer,jsonb,jsonb)",
+                    "slaif_field_definition_list(uuid)",
+                    "slaif_field_definition_get(uuid)",
+                    "slaif_field_definition_update(uuid,text,boolean,boolean,integer,integer,jsonb,jsonb)",
+                    "slaif_field_definition_delete(uuid)",
+                ):
+                    await executor.execute(
+                        f"GRANT EXECUTE ON FUNCTION content.{fn} "
+                        "TO slaif_editor_runtime, slaif_control"
+                    )
                 foundation = await validate_cow_schema_privileges(
                     executor,
                     schema="content",
