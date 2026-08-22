@@ -7,8 +7,6 @@ inconsistent state and that all errors are properly contained.
 
 from __future__ import annotations
 
-import pytest
-
 from slaif_agent_site.agent_state.promotion import PromotionError
 
 
