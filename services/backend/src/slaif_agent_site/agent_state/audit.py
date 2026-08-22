@@ -24,7 +24,10 @@ def compute_event_hash(
     payload_digest: str,
 ) -> str:
     """Compute the SHA-256 hash for an audit event in the chain."""
-    data = f"{previous_hash}:{timestamp}:{actor_id}:{action}:{resource_type}:{resource_id}:{payload_digest}"
+    data = (
+        f"{previous_hash}:{timestamp}:{actor_id}:{action}:"
+        f"{resource_type}:{resource_id}:{payload_digest}"
+    )
     return hashlib.sha256(data.encode("utf-8")).hexdigest()
 
 
