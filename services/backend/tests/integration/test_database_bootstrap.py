@@ -457,7 +457,7 @@ async def test_clean_migration_current_repeat_downgrade_and_rebuild(
     database = agent_site_database
     await upgrade(database.settings)
     first = await status(database.settings)
-    assert first.revision == "017_001"
+    assert first.revision == "018_001"
     _assert_pending(first, deployed=False)
 
     async with owner_connection(
@@ -600,7 +600,7 @@ async def test_clean_migration_current_repeat_downgrade_and_rebuild(
 
     await upgrade(database.settings)
     rebuilt = await status(database.settings)
-    assert rebuilt.revision == "017_001"
+    assert rebuilt.revision == "018_001"
     _assert_pending(rebuilt, deployed=False)
     rebuilt_empty = await reconcile(database.settings)
     _assert_empty_safe(rebuilt_empty)
