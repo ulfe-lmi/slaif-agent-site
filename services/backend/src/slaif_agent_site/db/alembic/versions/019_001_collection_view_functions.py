@@ -15,6 +15,22 @@ depends_on: str | Sequence[str] | None = None
 
 def upgrade() -> None:
     op.execute("""
+        CREATE TABLE IF NOT EXISTS content.collection_view (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            site_id UUID NOT NULL REFERENCES control.site(id),
+            type_id UUID NOT NULL REFERENCES content.content_type(id),
+            "key" TEXT NOT NULL,
+            filter_spec JSONB NOT NULL DEFAULT '{}',
+            sort_spec JSONB NOT NULL DEFAULT '{}',
+            projection_spec JSONB NOT NULL DEFAULT '{}',
+            pagination_spec JSONB NOT NULL DEFAULT '{}',
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            CONSTRAINT uq_collection_view_type_key UNIQUE (type_id, "key")
+        )
+    """)
+
+    op.execute("""
         CREATE FUNCTION content.slaif_collection_view_create(
             p_type_id uuid, p_key text, p_filter jsonb,
             p_sort jsonb, p_projection jsonb, p_pagination jsonb
