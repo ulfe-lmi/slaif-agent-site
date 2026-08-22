@@ -27,7 +27,7 @@ router = APIRouter(prefix="/api/editor/v1/sites/{site_id}/pages")
 
 
 def _service(request: Request) -> ContentModelService:
-    return request.app.state.content_model_service
+    return request.app.state.content_model_service  # type: ignore[no-any-return]
 
 
 async def _auth(
