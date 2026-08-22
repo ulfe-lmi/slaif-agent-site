@@ -9,7 +9,6 @@ from fastapi import FastAPI
 from ..application import create_http_application
 from ..authority import ProcessKind
 from ..config import ServiceSettings
-from ..control_api.route_policy import validate_route_policy_coverage
 from ..health import ReadinessProbe
 from .agent_http import router as agent_router
 

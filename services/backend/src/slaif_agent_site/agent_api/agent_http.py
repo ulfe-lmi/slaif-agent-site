@@ -119,7 +119,7 @@ async def list_content_items(type_id: UUID, request: Request) -> list[dict[str, 
     try:
         records = await _service(request).list_items(context.site_id, type_id)
         return [record.model_dump(mode="json") for record in records]
-    except ContentModelServiceError as exc:
+    except ContentModelServiceError:
         raise ServiceUnavailableError() from None
 
 
@@ -130,7 +130,7 @@ async def list_pages(request: Request) -> list[dict[str, Any]]:
     try:
         records = await _service(request).list_pages(context.site_id)
         return [record.model_dump(mode="json") for record in records]
-    except ContentModelServiceError as exc:
+    except ContentModelServiceError:
         raise ServiceUnavailableError() from None
 
 
@@ -141,5 +141,5 @@ async def list_media(request: Request) -> list[dict[str, Any]]:
     try:
         records = await _service(request).list_media(context.site_id)
         return [record.model_dump(mode="json") for record in records]
-    except ContentModelServiceError as exc:
+    except ContentModelServiceError:
         raise ServiceUnavailableError() from None

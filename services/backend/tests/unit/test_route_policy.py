@@ -6,8 +6,6 @@ from typing import Any, cast
 
 import httpx
 import pytest
-from fastapi import FastAPI
-from slaif_agent_site.agent_api import create_app as create_agent_app
 from slaif_agent_site.authority import ProcessKind
 from slaif_agent_site.config import ServiceSettings
 from slaif_agent_site.control_api.app import create_app as create_control_app
