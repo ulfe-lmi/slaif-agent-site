@@ -12,7 +12,7 @@ Updated after each merged work order.
 | 3 | Page CRUD | ✅ | #32 | 100% |
 | 4a | Component catalog + composition schema | ✅ | #33 | 100% |
 | 4b | Page composition tree CRUD | ✅ | #34 | 100% |
-| 4c | Media service foundation | 🔨 In progress | — | ~80% coded |
+| 4c | Media service foundation | ✅ | #35 | 100% (metadata CRUD; file upload/storage is future) |
 | 4d | Puck adapter + shared renderer | ⬜ | — | 0% |
 | 5 | Semantic REST/MCP/audit/scopes | ⬜ | — | 0% |
 | 6 | Browser visual loop / Playwright | ⬜ | — | 0% |
