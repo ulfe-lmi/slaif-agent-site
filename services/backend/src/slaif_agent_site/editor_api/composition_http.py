@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Request, Response
@@ -56,7 +55,7 @@ async def add_component(
         request, site_id, permission="component-structure:create", state_changing=True
     )
     try:
-        return await _service(request).add_composition_node(
+        return await _service(request).add_composition_node(  # type: ignore[no-any-return]
             site_id=site_id,
             page_id=page_id,
             component_type=body.component_type,
@@ -64,7 +63,7 @@ async def add_component(
             slot_key=body.slot_key,
             order_key=body.order_key,
             props=body.props,
-        )  # type: ignore[no-any-return]
+        )
     except ContentModelServiceError as exc:
         if exc.reason is ContentModelServiceReason.CONFLICT:
             raise ResourceConflictError() from None
@@ -78,7 +77,7 @@ async def get_composition(
     await _auth(request, site_id, permission="composition:read", state_changing=False)
     try:
         return list(await _service(request).list_composition(page_id))
-    except ContentModelServiceError as exc:
+    except ContentModelServiceError:
         raise ServiceUnavailableError() from None
 
 
@@ -97,12 +96,12 @@ async def update_component(
         state_changing=True,
     )
     try:
-        return await _service(request).update_composition_node(
+        return await _service(request).update_composition_node(  # type: ignore[no-any-return]
             node_id=node_id,
             props=body.props,
             slot_key=body.slot_key,
             order_key=body.order_key,
-        )  # type: ignore[no-any-return]
+        )
     except ContentModelServiceError as exc:
         if exc.reason is ContentModelServiceReason.NOT_FOUND:
             raise ResourceNotFoundError() from None
@@ -122,12 +121,12 @@ async def move_component(
     )
     parent = UUID(body.new_parent_id) if body.new_parent_id else None
     try:
-        return await _service(request).move_composition_node(
+        return await _service(request).move_composition_node(  # type: ignore[no-any-return]
             node_id=node_id,
             new_parent_id=parent,
             new_slot_key=body.new_slot_key,
             new_order_key=body.new_order_key,
-        )  # type: ignore[no-any-return]
+        )
     except ContentModelServiceError as exc:
         if exc.reason is ContentModelServiceReason.NOT_FOUND:
             raise ResourceNotFoundError() from None
