@@ -1,0 +1,1 @@
+"""Browser worker confinement module."""

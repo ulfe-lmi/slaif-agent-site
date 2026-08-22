@@ -8,6 +8,7 @@ from fastapi import FastAPI
 
 from ..application import create_http_application
 from ..authority import ProcessKind
+from ..browser_worker.browser_http import router as browser_router
 from ..config import ServiceSettings
 from ..health import ReadinessProbe
 from .agent_http import router as agent_router
@@ -24,6 +25,8 @@ def create_app(
         readiness_probes=readiness_probes,
     )
     app.include_router(agent_router)
+    app.include_router(browser_router)
+    app.include_router(browser_router)
     return app
 
 
