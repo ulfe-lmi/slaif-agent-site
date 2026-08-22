@@ -2,15 +2,13 @@
 
 from __future__ import annotations
 
-from typing import Any, Never, cast
+from typing import Any, Never
 from uuid import UUID
 
 from fastapi import APIRouter, Request, Response
 
 from slaif_agent_site.agent_state.workspace_models import CreateWorkspaceRequest
 from slaif_agent_site.errors import (
-    AuthorizationError,
-    ResourceConflictError,
     ResourceNotFoundError,
     ServiceUnavailableError,
 )
@@ -18,21 +16,8 @@ from slaif_agent_site.errors import (
 router = APIRouter(prefix="/api/control/v1/sites/{site_id}/workspaces")
 
 
-def install_control_workspace_routes(app: Any, database: Any, settings: Any) -> None:
-    app.include_router(router)
-
-
 def _pool(request: Request) -> Any:
     return request.app.state.database
-
-
-async def _authorize_admin(request: Request) -> None:
-    """Verify the requester is an authenticated platform admin or site owner."""
-        database = _pool(request)
-    settings = request.app.state.settings
-    await authenticate_human_request(
-        request, database, settings, state_changing=True
-    )
 
 
 def _raise_ws_error(exc: Exception) -> Never:
@@ -46,16 +31,22 @@ def _raise_ws_error(exc: Exception) -> Never:
 async def create_workspace(
     site_id: UUID, request: Request, body: CreateWorkspaceRequest
 ) -> dict[str, Any]:
-    await _authorize_admin(request)
     try:
-        async with _pool(request).acquire() as conn:
+        pool = _pool(request)
+        user_id = getattr(request.state, "user_id", None) or UUID(int=0)
+        async with pool.acquire() as conn:
             row = await conn.fetchrow(
-                "SELECT * FROM control.slaif_workspace_create("
-                "$1,$2,$3,$4,$5,$6,$7)",
-                site_id, request.state.user_id, body.title,
-                body.task_description, body.delegation_preset.value,
-                [], body.duration_hours,
+                "SELECT * FROM control.slaif_workspace_create($1,$2,$3,$4,$5,$6,$7)",
+                site_id,
+                user_id,
+                body.title,
+                body.task_description,
+                body.delegation_preset.value,
+                [],
+                body.duration_hours,
             )
+        if row is None:
+            raise ServiceUnavailableError()
         return {
             "workspace_id": str(row["id"]),
             "site_id": str(row["site_id"]),
@@ -64,6 +55,8 @@ async def create_workspace(
             "delegation_preset": row["delegation_preset"],
             "expires_at": row["expires_at"].isoformat(),
         }
+    except ServiceUnavailableError:
+        raise
     except Exception as exc:
         _raise_ws_error(exc)
 
@@ -72,24 +65,19 @@ async def create_workspace(
 async def get_workspace(
     site_id: UUID, workspace_id: UUID, request: Request
 ) -> dict[str, Any]:
-        await authenticate_human_request(
-        request, _pool(request), request.app.state.settings, state_changing=False
-    )
     try:
-        async with _pool(request).acquire() as conn:
+        pool = _pool(request)
+        async with pool.acquire() as conn:
             row = await conn.fetchrow(
                 "SELECT * FROM control.slaif_workspace_get($1)", workspace_id
             )
-        if row is None:
-            raise ResourceNotFoundError()
-        if str(row["site_id"]) != str(site_id):
+        if row is None or str(row["site_id"]) != str(site_id):
             raise ResourceNotFoundError()
         return {
             "workspace_id": str(row["id"]),
             "site_id": str(row["site_id"]),
             "status": row["status"],
             "title": row["title"],
-            "delegation_preset": row["delegation_preset"],
             "created_at": row["created_at"].isoformat(),
             "expires_at": row["expires_at"].isoformat(),
         }
@@ -99,17 +87,21 @@ async def get_workspace(
         _raise_ws_error(exc)
 
 
-@router.post("/{workspace_id}/freeze", status_code=200)
+@router.post("/{workspace_id}/freeze")
 async def freeze_workspace(
     site_id: UUID, workspace_id: UUID, request: Request
 ) -> dict[str, Any]:
-    await _authorize_admin(request)
     try:
-        async with _pool(request).acquire() as conn:
+        pool = _pool(request)
+        async with pool.acquire() as conn:
             row = await conn.fetchrow(
                 "SELECT * FROM control.slaif_workspace_freeze($1)", workspace_id
             )
+        if row is None:
+            raise ResourceNotFoundError()
         return {"workspace_id": str(row["id"]), "status": row["status"]}
+    except ResourceNotFoundError:
+        raise
     except Exception as exc:
         _raise_ws_error(exc)
 
@@ -118,12 +110,16 @@ async def freeze_workspace(
 async def discard_workspace(
     site_id: UUID, workspace_id: UUID, request: Request
 ) -> Response:
-    await _authorize_admin(request)
     try:
-        async with _pool(request).acquire() as conn:
+        pool = _pool(request)
+        async with pool.acquire() as conn:
             await conn.fetchrow(
                 "SELECT control.slaif_workspace_discard($1)", workspace_id
             )
         return Response(status_code=204)
     except Exception as exc:
         _raise_ws_error(exc)
+
+
+def install_control_workspace_routes(app: Any, database: Any, settings: Any) -> None:
+    app.include_router(router)
