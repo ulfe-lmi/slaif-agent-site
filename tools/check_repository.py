@@ -122,12 +122,13 @@ NODE_SCRIPTS = {
     ),
     "test:e2e": "playwright test",
 }
-SCAFFOLD_EXEMPT_PACKAGES = {"scope-catalog"}
+SCAFFOLD_EXEMPT_PACKAGES = {"scope-catalog", "component-catalog", "composition-schema"}
 
 WORKSPACE_PACKAGES = {
     "api-client": "@slaif-agent-site/api-client",
     "browser-tool-contracts": "@slaif-agent-site/browser-tool-contracts",
     "component-catalog": "@slaif-agent-site/component-catalog",
+    # component-catalog and composition-schema are now implemented packages
     "composition-schema": "@slaif-agent-site/composition-schema",
     "content-model-schema": "@slaif-agent-site/content-model-schema",
     "scope-catalog": "@slaif-agent-site/scope-catalog",

@@ -83,6 +83,8 @@ describe("workspace contract package boundaries", () => {
     for (const boundary of boundaries) {
       const module_ = boundary.packageModule as Record<string, unknown>;
       if (boundary.slug === "scope-catalog") continue;
+      if (boundary.slug === "component-catalog") continue;
+      if (boundary.slug === "composition-schema") continue;
       expect(Object.keys(module_)).toEqual(["packageMetadata"]);
       const metadata = module_.packageMetadata as {
         name: string;
@@ -103,15 +105,17 @@ describe("workspace contract package boundaries", () => {
       names.push(metadata.name);
     }
 
-    expect(names).toHaveLength(6);
-    expect(new Set(names).size).toBe(6);
+    expect(names).toHaveLength(4);
+    expect(new Set(names).size).toBe(4);
   });
 
   it("keeps every package private, exact, dependency-free, and buildable", () => {
     for (const { expectedName, slug } of boundaries) {
       const manifest = loadManifest(slug);
       const buildScript =
-        slug === "scope-catalog"
+        slug === "scope-catalog" ||
+        slug === "component-catalog" ||
+        slug === "composition-schema"
           ? "tsc --project tsconfig.build.json"
           : PACKAGE_SCRIPTS_BUILD;
       expect(manifest).toMatchObject({
