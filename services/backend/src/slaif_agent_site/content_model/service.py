@@ -150,6 +150,61 @@ class CollectionViewMixin:
         await self._fetchrow(CV_DELETE_SQL, view_id)
 
 
+class NavThemeMixin:
+    _fetchrow: Any
+    _fetch: Any
+
+    async def create_navigation(
+        self, site_id: UUID, key: str, label: str, settings: dict[str, Any]
+    ) -> Any:
+        row = await self._fetchrow(NV_CREATE_SQL, site_id, key, label, settings)
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.CONFLICT)
+        return _nv(row)
+
+    async def list_navigation(self, site_id: UUID) -> tuple[Any, ...]:
+        rows = await self._fetch(NV_LIST_SQL, site_id)
+        return tuple(_nv(row) for row in rows)
+
+    async def get_navigation(self, nav_id: UUID) -> Any:
+        row = await self._fetchrow(NV_GET_SQL, nav_id)
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
+        return _nv(row)
+
+    async def update_navigation(
+        self, nav_id: UUID, label: str | None, settings: dict[str, Any] | None
+    ) -> Any:
+        row = await self._fetchrow(NV_UPDATE_SQL, nav_id, label, settings)
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
+        return _nv(row)
+
+    async def delete_navigation(self, nav_id: UUID) -> None:
+        await self._fetchrow(NV_DELETE_SQL, nav_id)
+
+    async def get_theme(self, site_id: UUID) -> Any:
+        row = await self._fetchrow(TH_GET_SQL, site_id)
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
+        return _th(row)
+
+    async def update_theme(
+        self,
+        site_id: UUID,
+        palette: dict[str, Any] | None,
+        typography: dict[str, Any] | None,
+        layout: dict[str, Any] | None,
+        shape: dict[str, Any] | None,
+    ) -> Any:
+        row = await self._fetchrow(
+            TH_UPDATE_SQL, site_id, palette, typography, layout, shape
+        )
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
+        return _th(row)
+
+
 class ContentItemMixin:
     _fetchrow: Any
     _fetch: Any
@@ -207,7 +262,7 @@ class ContentItemMixin:
         await self._fetchrow(CI_DELETE_SQL, item_id, expected_row_version)
 
 
-class ContentModelService(ContentItemMixin, CollectionViewMixin):
+class ContentModelService(ContentItemMixin, CollectionViewMixin, NavThemeMixin):
     """Perform semantic content model operations via SECURITY DEFINER functions."""
 
     def __init__(self, pool: _Pool, *, acquire_timeout: float = 3.0) -> None:
@@ -389,4 +444,46 @@ def _cv(row: Any) -> Any:
         pagination_spec=json.loads(row[7]) if isinstance(row[7], str) else row[7],
         created_at=row[8],
         updated_at=row[9],
+    )
+
+
+NV_CREATE_SQL = "SELECT * FROM content.slaif_navigation_create($1,$2,$3,$4)"
+NV_LIST_SQL = "SELECT * FROM content.slaif_navigation_list($1)"
+NV_GET_SQL = "SELECT * FROM content.slaif_navigation_get($1)"
+NV_UPDATE_SQL = "SELECT * FROM content.slaif_navigation_update($1,$2,$3)"
+NV_DELETE_SQL = "SELECT content.slaif_navigation_delete($1)"
+TH_GET_SQL = "SELECT * FROM content.slaif_theme_get($1)"
+TH_UPDATE_SQL = "SELECT * FROM content.slaif_theme_update($1,$2,$3,$4,$5)"
+
+
+def _nv(row: Any) -> Any:
+    import json
+
+    from .nav_models import NavigationRecord
+
+    return NavigationRecord(
+        id=row[0],
+        site_id=row[1],
+        key=row[2],
+        label=row[3],
+        settings=json.loads(row[4]) if isinstance(row[4], str) else row[4],
+        created_at=row[5],
+        updated_at=row[6],
+    )
+
+
+def _th(row: Any) -> Any:
+    import json
+
+    from .nav_models import ThemeRecord
+
+    return ThemeRecord(
+        id=row[0],
+        site_id=row[1],
+        palette=json.loads(row[2]) if isinstance(row[2], str) else row[2],
+        typography=json.loads(row[3]) if isinstance(row[3], str) else row[3],
+        layout=json.loads(row[4]) if isinstance(row[4], str) else row[4],
+        shape=json.loads(row[5]) if isinstance(row[5], str) else row[5],
+        created_at=row[6],
+        updated_at=row[7],
     )
