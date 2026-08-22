@@ -515,6 +515,64 @@ ROUTE_POLICIES: Final[tuple[RoutePolicy, ...]] = (
             ),
         )
     ),
+    *(
+        _policy(
+            _EDITOR,
+            method,
+            path,
+            mutation,
+            True,
+            csrf,
+            _SITE,
+            RoutePolicyKind.SITE_PERMISSION,
+            permission,
+        )
+        for method, path, mutation, csrf, permission in (
+            (
+                "POST",
+                "/api/editor/v1/sites/{site_id}/navigation",
+                _M,
+                True,
+                "navigation:create",
+            ),
+            (
+                "GET",
+                "/api/editor/v1/sites/{site_id}/navigation",
+                _R,
+                False,
+                "navigation:read",
+            ),
+            (
+                "GET",
+                "/api/editor/v1/sites/{site_id}/navigation/{nav_id}",
+                _R,
+                False,
+                "navigation:read",
+            ),
+            (
+                "PATCH",
+                "/api/editor/v1/sites/{site_id}/navigation/{nav_id}",
+                _M,
+                True,
+                "navigation:write",
+            ),
+            (
+                "DELETE",
+                "/api/editor/v1/sites/{site_id}/navigation/{nav_id}",
+                _M,
+                True,
+                "navigation:delete",
+            ),
+            ("GET", "/api/editor/v1/sites/{site_id}/theme", _R, False, "theme:read"),
+            (
+                "PATCH",
+                "/api/editor/v1/sites/{site_id}/theme",
+                _M,
+                True,
+                "theme-global:write",
+            ),
+        )
+    ),
 )
 
 _POLICY_BY_KEY = MappingProxyType({policy.key: policy for policy in ROUTE_POLICIES})
