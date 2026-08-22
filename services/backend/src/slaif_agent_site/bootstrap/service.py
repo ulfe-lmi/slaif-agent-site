@@ -500,8 +500,8 @@ async def reconcile(
                 if not hardened["safe"]:
                     raise BootstrapStateError("foundation hardening validation failed")
                 await executor.execute(
-                    'GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA content '
-                    'TO slaif_editor_runtime, slaif_control'
+                    "GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA content "
+                    "TO slaif_editor_runtime, slaif_control"
                 )
                 if failure_point == "after-harden":
                     raise BootstrapStateError("injected failure after hardening")
