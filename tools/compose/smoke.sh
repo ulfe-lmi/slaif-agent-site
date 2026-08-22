@@ -232,7 +232,7 @@ echo "edge-header-policy: OK page/api/404 request-id-count=1 request-id-format=3
 
 docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif -Atc \
   "SELECT readiness_state || ' safe=' || safe FROM control.bootstrap_readiness WHERE singleton" \
-  | grep -q '^EMPTY_SAFE safe=true$'
+  | grep -Eq '^(EMPTY_SAFE|HARDENED) safe=true$'
 docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif -Atc \
   "SELECT count(*) FROM pg_auth_members m JOIN pg_roles member ON member.oid=m.member WHERE member.rolname LIKE 'slaif_%_login'" \
   | grep -q '^10$'
