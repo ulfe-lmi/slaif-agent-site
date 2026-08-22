@@ -28,7 +28,6 @@ router = APIRouter(prefix="/api/editor/v1/sites/{site_id}")
 
 
 def _service(request: Request) -> ContentModelService:
-    # type: ignore[no-any-return]
     return request.app.state.content_model_service  # type: ignore[no-any-return]
 
 
