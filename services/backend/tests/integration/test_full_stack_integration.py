@@ -132,7 +132,6 @@ class TestFullStackWiring:
             compute_request_digest,
         )
 
-        store = IdempotencyStore()
         digest = compute_request_digest({"op": "test"})
         assert len(digest) == 64
 
