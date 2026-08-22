@@ -123,3 +123,51 @@ async def discard_workspace(
 
 def install_control_workspace_routes(app: Any, database: Any, settings: Any) -> None:
     app.include_router(router)
+
+
+@router.post("/{workspace_id}/accept")
+async def accept_workspace(
+    site_id: UUID, workspace_id: UUID, request: Request
+) -> dict[str, Any]:
+    try:
+        pool = _pool(request)
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT * FROM control.slaif_workspace_accept($1)", workspace_id
+            )
+        if row is None:
+            raise ResourceNotFoundError()
+        return {"workspace_id": str(row["id"]), "status": row["status"]}
+    except ResourceNotFoundError:
+        raise
+    except Exception as exc:
+        _raise_ws_error(exc)
+
+
+@router.post("/{workspace_id}/accept-selective")
+async def selective_accept_workspace(
+    site_id: UUID,
+    workspace_id: UUID,
+    request: Request,
+    body: dict[str, Any],
+) -> dict[str, Any]:
+    operation_ids = body.get("operation_ids", [])
+    if not isinstance(operation_ids, list):
+        raise ResourceNotFoundError()
+    try:
+        pool = _pool(request)
+        import json
+
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT * FROM control.slaif_workspace_selective_accept($1,$2)",
+                workspace_id,
+                json.dumps(operation_ids),
+            )
+        if row is None:
+            raise ResourceNotFoundError()
+        return {"workspace_id": str(row["id"]), "status": row["status"]}
+    except ResourceNotFoundError:
+        raise
+    except Exception as exc:
+        _raise_ws_error(exc)
