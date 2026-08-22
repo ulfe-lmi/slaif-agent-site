@@ -27,7 +27,7 @@ router = APIRouter(prefix="/api/editor/v1/sites/{site_id}/pages")
 
 
 def _service(request: Request) -> ContentModelService:
-    return request.app.state.content_model_service  # type: ignore[no-any-return]
+    return request.app.state.content_model_service
 
 
 async def _auth(
@@ -82,7 +82,7 @@ async def get_page(site_id: UUID, page_id: UUID, request: Request) -> PageRecord
         raise ServiceUnavailableError() from None
     if record.site_id != site_id:
         raise ResourceNotFoundError()
-    return record
+    return record  # type: ignore[no-any-return]
 
 
 @router.patch("/{page_id}")
@@ -99,13 +99,13 @@ async def update_page(
     if record.site_id != site_id:
         raise ResourceNotFoundError()
     try:
-        return await _service(request).update_page(
+        return await _service(request).update_page(  # type: ignore[no-any-return]
             page_id=page_id,
             slug=body.slug,
             title=body.title,
             status=body.status,
             expected_row_version=body.expected_row_version,
-        )  # type: ignore[no-any-return]
+        )
     except ContentModelServiceError as exc:
         if exc.reason is ContentModelServiceReason.NOT_FOUND:
             raise ResourceNotFoundError() from None
