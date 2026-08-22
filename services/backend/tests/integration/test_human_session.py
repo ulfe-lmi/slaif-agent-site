@@ -68,7 +68,7 @@ async def test_human_session_lifecycle_security_and_concurrency(
             "Session User",
         )
         validation = await verify_database_privileges(
-            owner, readiness_state=ReadinessState.EMPTY_SAFE
+            owner, readiness_state=ReadinessState.HARDENED
         )
         assert validation.safe, validation.violations
 

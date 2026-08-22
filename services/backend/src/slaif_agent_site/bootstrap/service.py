@@ -277,9 +277,11 @@ async def compose_bootstrap(settings: BootstrapSettings) -> BootstrapStatus:
     ) as connection:
         login_violations = await local_login_violations(connection)
     authenticated_logins = await _authenticate_local_logins(settings)
+    # Content model COW tables cause bootstrap to reach HARDENED directly.
+    valid_states = (ReadinessState.EMPTY_SAFE, ReadinessState.HARDENED)
     if (
         marker != checked_marker
-        or marker.state is not ReadinessState.EMPTY_SAFE
+        or marker.state not in valid_states
         or not marker.safe
         or not validation.safe
         or login_violations

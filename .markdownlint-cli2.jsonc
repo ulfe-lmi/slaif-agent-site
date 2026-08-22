@@ -26,6 +26,11 @@
       "filter": ["oap/reports/013-l-diagnose-modal-containment-timeout.md"],
       "config": { "MD032": false },
       "combine": "merge"
+    },
+    {
+      "filter": ["oap/orders/014-a-content-model-foundation.md"],
+      "config": { "MD031": false, "MD032": false, "MD040": false },
+      "combine": "merge"
     }
   ]
 }
