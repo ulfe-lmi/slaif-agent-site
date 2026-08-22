@@ -750,6 +750,7 @@ async def _function_violations(
                 schema == "content"
                 and name.startswith("slaif_content_type_")
                 or (schema == "content" and name.startswith("slaif_field_definition_"))
+                or (schema == "content" and name.startswith("slaif_content_item_"))
             )
             allowed = (
                 (is_control_function and role == CONTROL_ROLE)
