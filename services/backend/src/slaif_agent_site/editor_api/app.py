@@ -12,6 +12,7 @@ from ..config import ServiceSettings
 from ..control_api.route_policy import validate_route_policy_coverage
 from ..health import ReadinessProbe
 from .composition_http import router as composition_router
+from .media_http import router as media_router
 from .content_http import router as content_model_router
 from .item_http import router as content_item_router
 from .nav_theme_http import router as nav_theme_router
@@ -35,6 +36,7 @@ def create_app(
     app.include_router(nav_theme_router)
     app.include_router(page_router)
     app.include_router(composition_router)
+    app.include_router(media_router)
     validate_route_policy_coverage(app, ProcessKind.EDITOR_API)
     return app
 

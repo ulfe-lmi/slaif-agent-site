@@ -647,3 +647,70 @@ def _cmp(row: Any) -> Any:
         created_at=row[9],
         updated_at=row[10],
     )
+
+
+MD_CREATE_SQL = (
+    "SELECT * FROM content.slaif_media_create($1,$2,$3,$4,$5,$6,$7,$8,$9)"
+)
+MD_LIST_SQL = "SELECT * FROM content.slaif_media_list($1)"
+MD_GET_SQL = "SELECT * FROM content.slaif_media_get($1)"
+MD_UPDATE_SQL = "SELECT * FROM content.slaif_media_update($1,$2,$3)"
+MD_DELETE_SQL = "SELECT content.slaif_media_delete($1)"
+
+
+def _md(row: Any) -> Any:
+    import json
+
+    from .media_models import MediaAssetRecord
+
+    return MediaAssetRecord(
+        id=row[0],
+        site_id=row[1],
+        uploaded_by=row[2],
+        filename=row[3],
+        mime_type=row[4],
+        size_bytes=row[5],
+        content_hash=row[6],
+        storage_key=row[7],
+        alt_text=row[8],
+        metadata=json.loads(row[9]) if isinstance(row[9], str) else row[9],
+        created_at=row[10],
+        updated_at=row[11],
+    )
+
+
+class MediaMixin:
+    _fetchrow: Any
+    _fetch: Any
+
+    async def create_media(
+        self, site_id: UUID, uploaded_by: UUID | None, filename: str,
+        mime_type: str, size_bytes: int, content_hash: str,
+        storage_key: str, alt_text: str, metadata: dict[str, Any],
+    ) -> Any:
+        row = await self._fetchrow(
+            MD_CREATE_SQL, site_id, uploaded_by, filename, mime_type,
+            size_bytes, content_hash, storage_key, alt_text, metadata,
+        )
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.CONFLICT)
+        return _md(row)
+
+    async def list_media(self, site_id: UUID) -> tuple[Any, ...]:
+        rows = await self._fetch(MD_LIST_SQL, site_id)
+        return tuple(_md(row) for row in rows)
+
+    async def get_media(self, media_id: UUID) -> Any:
+        row = await self._fetchrow(MD_GET_SQL, media_id)
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
+        return _md(row)
+
+    async def update_media(self, media_id: UUID, alt_text: str | None, metadata: dict[str, Any] | None) -> Any:
+        row = await self._fetchrow(MD_UPDATE_SQL, media_id, alt_text, metadata)
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
+        return _md(row)
+
+    async def delete_media(self, media_id: UUID) -> None:
+        await self._fetchrow(MD_DELETE_SQL, media_id)
