@@ -15,13 +15,13 @@ Updated after each merged work order.
 | 4c | Media service foundation | ✅ | #35 | 100% (metadata CRUD; file upload/storage is future) |
 | 4d | Shared renderer | ✅ | #42 | 100% (Puck adapter is future) |
 | 5 | Semantic REST (read + write stubs) | ✅ | #36, #37 | ~40% (write stubs done; idempotency/batches remain) |
-| 5 | MCP adapter | ⬜ | — | 0% |
+| 5 | MCP adapter | ✅ | #45 | 100% (read tools done; write tools need idempotency framework) |
 | 6 | Browser confinement API | ✅ | #44 | ~30% (API routes done; actual Playwright integration/E2E remain) |
 | 7 | Workspace lifecycle + HTTP + accept | ✅ | #38, #40, #43 | ~50% (accept done; conflict/COW-promotion remain) |
 | 8 | Source reconstruction (L4 import) | ⬜ | — | 0% |
 | 9 | Hardening/E2E/SBOM/full matrix | ⬜ | — | 0% |
 
-## Overall estimate: ~65%
+## Overall estimate: ~68%
 
 ## Remaining critical path
 1. ~~Finish media (022)~~ → DONE (#35)
