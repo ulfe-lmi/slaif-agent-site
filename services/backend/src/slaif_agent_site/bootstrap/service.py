@@ -521,6 +521,11 @@ async def reconcile(
                     "slaif_content_item_get(uuid)",
                     "slaif_content_item_update(uuid,text,text,jsonb,integer,text)",
                     "slaif_content_item_delete(uuid,integer)",
+                    "slaif_collection_view_create(uuid,text,jsonb,jsonb,jsonb,jsonb)",
+                    "slaif_collection_view_list(uuid)",
+                    "slaif_collection_view_get(uuid)",
+                    "slaif_collection_view_update(uuid,jsonb,jsonb,jsonb,jsonb)",
+                    "slaif_collection_view_delete(uuid)",
                 ):
                     await executor.execute(
                         f"GRANT EXECUTE ON FUNCTION content.{fn} "

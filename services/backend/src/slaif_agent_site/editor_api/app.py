@@ -13,6 +13,7 @@ from ..control_api.route_policy import validate_route_policy_coverage
 from ..health import ReadinessProbe
 from .content_http import router as content_model_router
 from .item_http import router as content_item_router
+from .view_http import router as collection_view_router
 
 
 def create_app(
@@ -27,6 +28,7 @@ def create_app(
     )
     app.include_router(content_model_router)
     app.include_router(content_item_router)
+    app.include_router(collection_view_router)
     validate_route_policy_coverage(app, ProcessKind.EDITOR_API)
     return app
 
