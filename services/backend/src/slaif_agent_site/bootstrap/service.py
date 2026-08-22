@@ -499,6 +499,12 @@ async def reconcile(
                     ) from error
                 if not hardened["safe"]:
                     raise BootstrapStateError("foundation hardening validation failed")
+                if failure_point == "after-harden":
+                    raise BootstrapStateError("injected failure after hardening")
+
+                await apply_product_privileges(
+                    connection, readiness_state=ReadinessState.HARDENED
+                )
                 for fn in (
                     "slaif_content_type_create(uuid,text,jsonb,text,jsonb)",
                     "slaif_content_type_list(uuid)",
@@ -515,12 +521,6 @@ async def reconcile(
                         f"GRANT EXECUTE ON FUNCTION content.{fn} "
                         "TO slaif_editor_runtime, slaif_control"
                     )
-                if failure_point == "after-harden":
-                    raise BootstrapStateError("injected failure after hardening")
-
-                await apply_product_privileges(
-                    connection, readiness_state=ReadinessState.HARDENED
-                )
                 foundation = await validate_cow_schema_privileges(
                     executor,
                     schema="content",
