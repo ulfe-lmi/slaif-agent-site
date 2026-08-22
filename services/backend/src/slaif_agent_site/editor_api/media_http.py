@@ -28,7 +28,7 @@ router = APIRouter(prefix="/api/editor/v1/sites/{site_id}/media")
 
 
 def _service(request: Request) -> ContentModelService:
-    return request.app.state.content_model_service
+    return request.app.state.content_model_service  # type: ignore[no-any-return]
 
 
 async def _auth(
@@ -92,7 +92,7 @@ async def get_media(
         raise ServiceUnavailableError() from None
     if record.site_id != site_id:
         raise ResourceNotFoundError()
-    return record
+    return record  # type: ignore[no-any-return]
 
 
 @router.patch("/{media_id}")
