@@ -955,20 +955,20 @@ async def test_cli_secret_file_empty_bootstrap_current_and_validate(
     assert upgraded.stdout == "upgrade: OK\n"
     current = invoke("current")
     assert current.returncode == 0
-    assert current.stdout == ("current: revision=017_001 state=PENDING safe=false\n")
+    assert current.stdout == ("current: revision=018_001 state=PENDING safe=false\n")
     bootstrapped = invoke("bootstrap")
     assert bootstrapped.returncode == 0
     assert bootstrapped.stdout == (
-        "bootstrap: OK revision=017_001 state=HARDENED safe=true\n"
+        "bootstrap: OK revision=018_001 state=HARDENED safe=true\n"
     )
     validated = invoke("validate")
     assert validated.returncode == 0
     assert validated.stdout == (
-        "validate: OK revision=017_001 state=HARDENED safe=true\n"
+        "validate: OK revision=018_001 state=HARDENED safe=true\n"
     )
     ready = invoke("current")
     assert ready.returncode == 0
-    assert ready.stdout == ("current: revision=017_001 state=HARDENED safe=true\n")
+    assert ready.stdout == ("current: revision=018_001 state=HARDENED safe=true\n")
     output = "".join(
         process.stdout + process.stderr
         for process in (upgraded, current, bootstrapped, validated, ready)

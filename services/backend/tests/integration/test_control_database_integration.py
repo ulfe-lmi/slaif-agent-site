@@ -102,8 +102,8 @@ async def test_readiness_function_owner_security_grants_and_denial_matrix(
             row = await control.fetchrow(
                 "SELECT * FROM control.slaif_control_readiness()"
             )
-            assert row["schema_revision"] == "017_001"
-            assert row["marker_revision"] == "017_001"
+            assert row["schema_revision"] == "018_001"
+            assert row["marker_revision"] == "018_001"
             assert row["readiness_state"] in ("HARDENED", "HARDENED")
             assert row["safe"] is True
             assert row["foundation_distribution"] == "agent-cow-postgresql"

@@ -90,7 +90,64 @@ def _fd(row: Any) -> FieldDefinitionRecord:
     )
 
 
-class ContentModelService:
+class ContentItemMixin:
+    _fetchrow: Any
+    _fetch: Any
+
+    async def create_item(
+        self,
+        site_id: UUID,
+        type_id: UUID,
+        slug: str,
+        status: str,
+        values: dict[str, Any],
+        type_definition_version: int,
+    ) -> Any:
+        row = await self._fetchrow(
+            CI_CREATE_SQL,
+            site_id,
+            type_id,
+            slug,
+            status,
+            values,
+            type_definition_version,
+        )
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.CONFLICT)
+        return _ci(row)
+
+    async def list_items(self, site_id: UUID, type_id: UUID) -> tuple[Any, ...]:
+        rows = await self._fetch(CI_LIST_SQL, site_id, type_id)
+        return tuple(_ci(row) for row in rows)
+
+    async def get_item(self, item_id: UUID) -> Any:
+        row = await self._fetchrow(CI_GET_SQL, item_id)
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
+        return _ci(row)
+
+    async def update_item(
+        self,
+        item_id: UUID,
+        slug: str | None,
+        status: str | None,
+        values: dict[str, Any] | None,
+        expected_row_version: int | None,
+    ) -> Any:
+        row = await self._fetchrow(
+            CI_UPDATE_SQL, item_id, slug, status, values, expected_row_version, None
+        )
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
+        return _ci(row)
+
+    async def delete_item(
+        self, item_id: UUID, expected_row_version: int | None
+    ) -> None:
+        await self._fetchrow(CI_DELETE_SQL, item_id, expected_row_version)
+
+
+class ContentModelService(ContentItemMixin):
     """Perform semantic content model operations via SECURITY DEFINER functions."""
 
     def __init__(self, pool: _Pool, *, acquire_timeout: float = 3.0) -> None:
@@ -220,3 +277,30 @@ class ContentModelService:
 
     async def delete_field(self, field_id: UUID) -> None:
         await self._fetchrow(FD_DELETE_SQL, field_id)
+
+
+# -- Content Item SQL constants --
+CI_CREATE_SQL = "SELECT * FROM content.slaif_content_item_create($1,$2,$3,$4,$5,$6)"
+CI_LIST_SQL = "SELECT * FROM content.slaif_content_item_list($1,$2)"
+CI_GET_SQL = "SELECT * FROM content.slaif_content_item_get($1)"
+CI_UPDATE_SQL = "SELECT * FROM content.slaif_content_item_update($1,$2,$3,$4,$5,$6)"
+CI_DELETE_SQL = "SELECT content.slaif_content_item_delete($1,$2)"
+
+
+def _ci(row: Any) -> Any:
+    import json
+
+    from .item_models import ContentItemRecord
+
+    return ContentItemRecord(
+        id=row[0],
+        site_id=row[1],
+        type_id=row[2],
+        slug=row[3],
+        status=row[4],
+        type_definition_version=row[5],
+        values=json.loads(row[6]) if isinstance(row[6], str) else row[6],
+        row_version=row[7],
+        created_at=row[8],
+        updated_at=row[9],
+    )
