@@ -163,4 +163,21 @@ def downgrade() -> None:
         "slaif_composition_list(uuid)",
     ):
         op.execute(f"DROP FUNCTION IF EXISTS content.{fn} CASCADE")
-    op.execute("DROP TABLE IF EXISTS content.page_composition CASCADE")
+    op.execute("""
+        DO $$
+        DECLARE obj record;
+        BEGIN
+          FOR obj IN
+            SELECT c.relname, c.relkind FROM pg_catalog.pg_class c
+            JOIN pg_catalog.pg_namespace ns ON ns.oid = c.relnamespace
+            WHERE ns.nspname = 'content' AND c.relname = 'page_composition'
+              AND c.relkind IN ('r','v','S')
+          LOOP
+            IF obj.relkind = 'v' THEN
+              EXECUTE format('DROP VIEW IF EXISTS content.%I CASCADE', obj.relname);
+            ELSE
+              EXECUTE format('DROP TABLE IF EXISTS content.%I CASCADE', obj.relname);
+            END IF;
+          END LOOP;
+        END $$;
+    """)
