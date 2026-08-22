@@ -39,9 +39,9 @@ def upgrade() -> None:
         ) LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $fn$
         BEGIN
             INSERT INTO content.content_type (site_id, "key", labels, slug_pattern, settings)
-            VALUES (p_site_id, p_key, p_labels, p_slug_pattern, p_settings)
-            RETURNING * INTO RETURNING.*;
-            RETURN QUERY SELECT * FROM content.content_type WHERE id = RETURNING.id LIMIT 1;
+            VALUES (p_site_id, p_key, p_labels, p_slug_pattern, p_settings);
+            RETURN QUERY SELECT * FROM content.content_type
+            WHERE site_id = p_site_id AND "key" = p_key LIMIT 1;
         END;
         $fn$
     """)
@@ -89,13 +89,12 @@ def upgrade() -> None:
             new_settings jsonb := COALESCE(p_settings, ct.settings);
         BEGIN
             UPDATE content.content_type SET
-                labels = new_labels,
-                slug_pattern = new_slug,
-                settings = new_settings,
+                labels = COALESCE(p_labels, labels),
+                slug_pattern = COALESCE(p_slug_pattern, slug_pattern),
+                settings = COALESCE(p_settings, settings),
                 definition_version = definition_version + 1,
                 updated_at = CURRENT_TIMESTAMP
-            WHERE id = p_type_id AND status != 'DELETED'
-            RETURNING * INTO RETURNING.*;
+            WHERE id = p_type_id AND status != 'DELETED';
             IF NOT FOUND THEN
                 RAISE EXCEPTION 'NOT_FOUND' USING ERRCODE = 'P0002';
             END IF;
@@ -189,21 +188,20 @@ def upgrade() -> None:
         ) LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $fn$
         BEGIN
             UPDATE content.field_definition SET
-                label = COALESCE(p_label, fd.label),
-                required = COALESCE(p_required, fd.required),
-                localized = COALESCE(p_localized, fd.localized),
-                cardinality = COALESCE(p_cardinality, fd.cardinality),
-                position = COALESCE(p_position, fd.position),
-                validation = COALESCE(p_validation, fd.validation),
-                ui_options = COALESCE(p_ui_options, fd.ui_options),
+                label = COALESCE(p_label, label),
+                required = COALESCE(p_required, required),
+                localized = COALESCE(p_localized, localized),
+                cardinality = COALESCE(p_cardinality, cardinality),
+                position = COALESCE(p_position, position),
+                validation = COALESCE(p_validation, validation),
+                ui_options = COALESCE(p_ui_options, ui_options),
                 definition_version = definition_version + 1,
                 updated_at = CURRENT_TIMESTAMP
-            FROM content.field_definition fd
-            WHERE content.field_definition.id = p_field_id
-            RETURNING content.field_definition.*;
+            WHERE id = p_field_id;
             IF NOT FOUND THEN
                 RAISE EXCEPTION 'NOT_FOUND' USING ERRCODE = 'P0002';
             END IF;
+            RETURN QUERY SELECT * FROM content.field_definition WHERE id = p_field_id;
         END;
         $fn$
     """)
