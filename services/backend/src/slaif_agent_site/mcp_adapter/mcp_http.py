@@ -54,13 +54,21 @@ async def call_tool(request: Request) -> dict[str, Any]:
     agent_base = str(request.app.state.settings.agent_api_url).rstrip("/")
     auth_header = request.headers.get("Authorization", "")
 
+    path = body.get("path", "/")
+    if not isinstance(path, str) or not path.startswith("/api/agent/v1/"):
+        raise ServiceUnavailableError()
+
+    method = body.get("method", "GET")
+    if method not in ("GET", "POST", "PATCH", "DELETE"):
+        raise ServiceUnavailableError()
+
     import httpx
 
     try:
         async with httpx.AsyncClient() as client:
             response = await client.request(
                 method=body.get("method", "GET"),
-                url=f"{agent_base}{body.get('path', '/')}"  # noqa: S310 — bounded to Agent API,
+                url=f"{agent_base}{body.get('path', '/')}",
                 headers={"Authorization": auth_header},
                 json=body.get("body"),
                 timeout=30,
