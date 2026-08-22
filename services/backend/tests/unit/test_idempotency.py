@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-
 from slaif_agent_site.agent_state.idempotency import (
     IdempotencyMismatchError,
     IdempotencyRecord,
