@@ -21,7 +21,7 @@ Updated after each merged work order.
 | 8 | Source reconstruction (L4 import) | ⬜ | — | 0% |
 | 9 | Hardening/E2E/SBOM/full matrix | ⬜ | — | 0% |
 
-## Overall estimate: ~70%
+## Overall estimate: ~75%
 
 ## Remaining critical path
 1. ~~Finish media (022)~~ → DONE (#35)
