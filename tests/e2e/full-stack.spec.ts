@@ -24,9 +24,7 @@ test("full-stack-mvp-wiring", async ({ page }) => {
   await page.getByLabel("Display name").fill("MVP Test Site");
   await page.getByLabel("Default locale").fill("en");
   await page.getByRole("button", { name: "Create site" }).click();
-  await expect(page.getByRole("heading", { level: 1 })).toContainText(
-    "MVP Test Site"
-  );
+  await expect(page.getByRole("heading", { level: 1 })).toContainText("MVP Test Site");
 
   // 3. Verify all service health endpoints
   const healthPaths = [
