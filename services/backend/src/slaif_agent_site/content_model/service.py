@@ -90,6 +90,66 @@ def _fd(row: Any) -> FieldDefinitionRecord:
     )
 
 
+class CollectionViewMixin:
+    _fetchrow: Any
+    _fetch: Any
+
+    async def create_view(
+        self,
+        type_id: UUID,
+        key: str,
+        filter_spec: dict[str, Any],
+        sort_spec: dict[str, Any],
+        projection_spec: dict[str, Any],
+        pagination_spec: dict[str, Any],
+    ) -> Any:
+        row = await self._fetchrow(
+            CV_CREATE_SQL,
+            type_id,
+            key,
+            filter_spec,
+            sort_spec,
+            projection_spec,
+            pagination_spec,
+        )
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.CONFLICT)
+        return _cv(row)
+
+    async def list_views(self, type_id: UUID) -> tuple[Any, ...]:
+        rows = await self._fetch(CV_LIST_SQL, type_id)
+        return tuple(_cv(row) for row in rows)
+
+    async def get_view(self, view_id: UUID) -> Any:
+        row = await self._fetchrow(CV_GET_SQL, view_id)
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
+        return _cv(row)
+
+    async def update_view(
+        self,
+        view_id: UUID,
+        filter_spec: dict[str, Any] | None,
+        sort_spec: dict[str, Any] | None,
+        projection_spec: dict[str, Any] | None,
+        pagination_spec: dict[str, Any] | None,
+    ) -> Any:
+        row = await self._fetchrow(
+            CV_UPDATE_SQL,
+            view_id,
+            filter_spec,
+            sort_spec,
+            projection_spec,
+            pagination_spec,
+        )
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
+        return _cv(row)
+
+    async def delete_view(self, view_id: UUID) -> None:
+        await self._fetchrow(CV_DELETE_SQL, view_id)
+
+
 class ContentItemMixin:
     _fetchrow: Any
     _fetch: Any
@@ -147,7 +207,7 @@ class ContentItemMixin:
         await self._fetchrow(CI_DELETE_SQL, item_id, expected_row_version)
 
 
-class ContentModelService(ContentItemMixin):
+class ContentModelService(ContentItemMixin, CollectionViewMixin):
     """Perform semantic content model operations via SECURITY DEFINER functions."""
 
     def __init__(self, pool: _Pool, *, acquire_timeout: float = 3.0) -> None:
@@ -301,6 +361,32 @@ def _ci(row: Any) -> Any:
         type_definition_version=row[5],
         values=json.loads(row[6]) if isinstance(row[6], str) else row[6],
         row_version=row[7],
+        created_at=row[8],
+        updated_at=row[9],
+    )
+
+
+CV_CREATE_SQL = "SELECT * FROM content.slaif_collection_view_create($1,$2,$3,$4,$5,$6)"
+CV_LIST_SQL = "SELECT * FROM content.slaif_collection_view_list($1)"
+CV_GET_SQL = "SELECT * FROM content.slaif_collection_view_get($1)"
+CV_UPDATE_SQL = "SELECT * FROM content.slaif_collection_view_update($1,$2,$3,$4,$5)"
+CV_DELETE_SQL = "SELECT content.slaif_collection_view_delete($1)"
+
+
+def _cv(row: Any) -> Any:
+    import json
+
+    from .view_models import CollectionViewRecord
+
+    return CollectionViewRecord(
+        id=row[0],
+        site_id=row[1],
+        type_id=row[2],
+        key=row[3],
+        filter_spec=json.loads(row[4]) if isinstance(row[4], str) else row[4],
+        sort_spec=json.loads(row[5]) if isinstance(row[5], str) else row[5],
+        projection_spec=json.loads(row[6]) if isinstance(row[6], str) else row[6],
+        pagination_spec=json.loads(row[7]) if isinstance(row[7], str) else row[7],
         created_at=row[8],
         updated_at=row[9],
     )
