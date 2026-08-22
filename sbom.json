@@ -1,0 +1,409 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "version": 1,
+  "metadata": {
+    "component": {
+      "type": "application",
+      "name": "slaif-agent-site"
+    }
+  },
+  "components": [
+    {
+      "type": "library",
+      "name": "@eslint/js",
+      "version": "10.0.1",
+      "purl": "pkg:npm/@eslint/js@10.0.1"
+    },
+    {
+      "type": "library",
+      "name": "@playwright/test",
+      "version": "1.62.1",
+      "purl": "pkg:npm/@playwright/test@1.62.1"
+    },
+    {
+      "type": "library",
+      "name": "@radix-ui/react-dialog",
+      "version": "1.1.23",
+      "purl": "pkg:npm/@radix-ui/react-dialog@1.1.23"
+    },
+    {
+      "type": "library",
+      "name": "@slaif-agent-site/api-client",
+      "version": "workspace:0.0.0",
+      "purl": "pkg:npm/@slaif-agent-site/api-client@workspace:0.0.0"
+    },
+    {
+      "type": "library",
+      "name": "@slaif-agent-site/browser-tool-contracts",
+      "version": "workspace:0.0.0",
+      "purl": "pkg:npm/@slaif-agent-site/browser-tool-contracts@workspace:0.0.0"
+    },
+    {
+      "type": "library",
+      "name": "@slaif-agent-site/component-catalog",
+      "version": "workspace:0.0.0",
+      "purl": "pkg:npm/@slaif-agent-site/component-catalog@workspace:0.0.0"
+    },
+    {
+      "type": "library",
+      "name": "@slaif-agent-site/composition-schema",
+      "version": "workspace:0.0.0",
+      "purl": "pkg:npm/@slaif-agent-site/composition-schema@workspace:0.0.0"
+    },
+    {
+      "type": "library",
+      "name": "@slaif-agent-site/content-model-schema",
+      "version": "workspace:0.0.0",
+      "purl": "pkg:npm/@slaif-agent-site/content-model-schema@workspace:0.0.0"
+    },
+    {
+      "type": "library",
+      "name": "@slaif-agent-site/scope-catalog",
+      "version": "workspace:0.0.0",
+      "purl": "pkg:npm/@slaif-agent-site/scope-catalog@workspace:0.0.0"
+    },
+    {
+      "type": "library",
+      "name": "@slaif-agent-site/test-fixtures",
+      "version": "workspace:0.0.0",
+      "purl": "pkg:npm/@slaif-agent-site/test-fixtures@workspace:0.0.0"
+    },
+    {
+      "type": "library",
+      "name": "@types/node",
+      "version": "24.13.3",
+      "purl": "pkg:npm/@types/node@24.13.3"
+    },
+    {
+      "type": "library",
+      "name": "@types/react",
+      "version": "19.2.18",
+      "purl": "pkg:npm/@types/react@19.2.18"
+    },
+    {
+      "type": "library",
+      "name": "@types/react-dom",
+      "version": "19.2.4",
+      "purl": "pkg:npm/@types/react-dom@19.2.4"
+    },
+    {
+      "type": "library",
+      "name": "agent-cow-postgresql",
+      "version": "0.2.0",
+      "purl": "pkg:pypi/agent-cow-postgresql@0.2.0"
+    },
+    {
+      "type": "library",
+      "name": "alembic",
+      "version": "1.19.1",
+      "purl": "pkg:pypi/alembic@1.19.1"
+    },
+    {
+      "type": "library",
+      "name": "annotated-doc",
+      "version": "0.0.5",
+      "purl": "pkg:pypi/annotated-doc@0.0.5"
+    },
+    {
+      "type": "library",
+      "name": "annotated-types",
+      "version": "0.8.0",
+      "purl": "pkg:pypi/annotated-types@0.8.0"
+    },
+    {
+      "type": "library",
+      "name": "anyio",
+      "version": "4.14.2",
+      "purl": "pkg:pypi/anyio@4.14.2"
+    },
+    {
+      "type": "library",
+      "name": "argon2-cffi",
+      "version": "25.1.0",
+      "purl": "pkg:pypi/argon2-cffi@25.1.0"
+    },
+    {
+      "type": "library",
+      "name": "argon2-cffi-bindings",
+      "version": "25.1.0",
+      "purl": "pkg:pypi/argon2-cffi-bindings@25.1.0"
+    },
+    {
+      "type": "library",
+      "name": "asyncpg",
+      "version": "0.31.0",
+      "purl": "pkg:pypi/asyncpg@0.31.0"
+    },
+    {
+      "type": "library",
+      "name": "autoprefixer",
+      "version": "10.5.4",
+      "purl": "pkg:npm/autoprefixer@10.5.4"
+    },
+    {
+      "type": "library",
+      "name": "build",
+      "version": "1.5.0",
+      "purl": "pkg:pypi/build@1.5.0"
+    },
+    {
+      "type": "library",
+      "name": "certifi",
+      "version": "2026.7.22",
+      "purl": "pkg:pypi/certifi@2026.7.22"
+    },
+    {
+      "type": "library",
+      "name": "cffi",
+      "version": "2.1.1",
+      "purl": "pkg:pypi/cffi@2.1.1"
+    },
+    {
+      "type": "library",
+      "name": "click",
+      "version": "8.4.2",
+      "purl": "pkg:pypi/click@8.4.2"
+    },
+    {
+      "type": "library",
+      "name": "eslint",
+      "version": "10.8.1",
+      "purl": "pkg:npm/eslint@10.8.1"
+    },
+    {
+      "type": "library",
+      "name": "fastapi",
+      "version": "0.141.1",
+      "purl": "pkg:pypi/fastapi@0.141.1"
+    },
+    {
+      "type": "library",
+      "name": "h11",
+      "version": "0.16.0",
+      "purl": "pkg:pypi/h11@0.16.0"
+    },
+    {
+      "type": "library",
+      "name": "httpcore",
+      "version": "1.0.9",
+      "purl": "pkg:pypi/httpcore@1.0.9"
+    },
+    {
+      "type": "library",
+      "name": "httpx",
+      "version": "0.28.1",
+      "purl": "pkg:pypi/httpx@0.28.1"
+    },
+    {
+      "type": "library",
+      "name": "idna",
+      "version": "3.18",
+      "purl": "pkg:pypi/idna@3.18"
+    },
+    {
+      "type": "library",
+      "name": "iniconfig",
+      "version": "2.3.0",
+      "purl": "pkg:pypi/iniconfig@2.3.0"
+    },
+    {
+      "type": "library",
+      "name": "librt",
+      "version": "0.15.0 ; platform_python_implementation != 'PyPy'",
+      "purl": "pkg:pypi/librt@0.15.0 ; platform_python_implementation != 'PyPy'"
+    },
+    {
+      "type": "library",
+      "name": "mako",
+      "version": "1.4.1",
+      "purl": "pkg:pypi/mako@1.4.1"
+    },
+    {
+      "type": "library",
+      "name": "markupsafe",
+      "version": "3.0.3",
+      "purl": "pkg:pypi/markupsafe@3.0.3"
+    },
+    {
+      "type": "library",
+      "name": "mypy",
+      "version": "1.20.2",
+      "purl": "pkg:pypi/mypy@1.20.2"
+    },
+    {
+      "type": "library",
+      "name": "mypy-extensions",
+      "version": "1.1.0",
+      "purl": "pkg:pypi/mypy-extensions@1.1.0"
+    },
+    {
+      "type": "library",
+      "name": "next",
+      "version": "16.3.1",
+      "purl": "pkg:npm/next@16.3.1"
+    },
+    {
+      "type": "library",
+      "name": "packaging",
+      "version": "25.0",
+      "purl": "pkg:pypi/packaging@25.0"
+    },
+    {
+      "type": "library",
+      "name": "pathspec",
+      "version": "1.1.1",
+      "purl": "pkg:pypi/pathspec@1.1.1"
+    },
+    {
+      "type": "library",
+      "name": "pluggy",
+      "version": "1.6.0",
+      "purl": "pkg:pypi/pluggy@1.6.0"
+    },
+    {
+      "type": "library",
+      "name": "postcss",
+      "version": "8.5.26",
+      "purl": "pkg:npm/postcss@8.5.26"
+    },
+    {
+      "type": "library",
+      "name": "prettier",
+      "version": "3.9.6",
+      "purl": "pkg:npm/prettier@3.9.6"
+    },
+    {
+      "type": "library",
+      "name": "pycparser",
+      "version": "3.0 ; implementation_name != 'PyPy'",
+      "purl": "pkg:pypi/pycparser@3.0 ; implementation_name != 'PyPy'"
+    },
+    {
+      "type": "library",
+      "name": "pydantic",
+      "version": "2.13.4",
+      "purl": "pkg:pypi/pydantic@2.13.4"
+    },
+    {
+      "type": "library",
+      "name": "pydantic-core",
+      "version": "2.46.4",
+      "purl": "pkg:pypi/pydantic-core@2.46.4"
+    },
+    {
+      "type": "library",
+      "name": "pydantic-settings",
+      "version": "2.15.0",
+      "purl": "pkg:pypi/pydantic-settings@2.15.0"
+    },
+    {
+      "type": "library",
+      "name": "pygments",
+      "version": "2.21.0",
+      "purl": "pkg:pypi/pygments@2.21.0"
+    },
+    {
+      "type": "library",
+      "name": "pyproject-hooks",
+      "version": "1.2.0",
+      "purl": "pkg:pypi/pyproject-hooks@1.2.0"
+    },
+    {
+      "type": "library",
+      "name": "pytest",
+      "version": "9.1.1",
+      "purl": "pkg:pypi/pytest@9.1.1"
+    },
+    {
+      "type": "library",
+      "name": "pytest-asyncio",
+      "version": "1.4.0",
+      "purl": "pkg:pypi/pytest-asyncio@1.4.0"
+    },
+    {
+      "type": "library",
+      "name": "python-dotenv",
+      "version": "1.2.3",
+      "purl": "pkg:pypi/python-dotenv@1.2.3"
+    },
+    {
+      "type": "library",
+      "name": "react",
+      "version": "19.2.8",
+      "purl": "pkg:npm/react@19.2.8"
+    },
+    {
+      "type": "library",
+      "name": "react-dom",
+      "version": "19.2.8",
+      "purl": "pkg:npm/react-dom@19.2.8"
+    },
+    {
+      "type": "library",
+      "name": "ruff",
+      "version": "0.16.3",
+      "purl": "pkg:pypi/ruff@0.16.3"
+    },
+    {
+      "type": "library",
+      "name": "sqlalchemy",
+      "version": "2.0.52",
+      "purl": "pkg:pypi/sqlalchemy@2.0.52"
+    },
+    {
+      "type": "library",
+      "name": "starlette",
+      "version": "1.6.0",
+      "purl": "pkg:pypi/starlette@1.6.0"
+    },
+    {
+      "type": "library",
+      "name": "tailwindcss",
+      "version": "3.4.19",
+      "purl": "pkg:npm/tailwindcss@3.4.19"
+    },
+    {
+      "type": "library",
+      "name": "typescript",
+      "version": "6.0.3",
+      "purl": "pkg:npm/typescript@6.0.3"
+    },
+    {
+      "type": "library",
+      "name": "typescript-eslint",
+      "version": "8.67.0",
+      "purl": "pkg:npm/typescript-eslint@8.67.0"
+    },
+    {
+      "type": "library",
+      "name": "typing-extensions",
+      "version": "4.16.0",
+      "purl": "pkg:pypi/typing-extensions@4.16.0"
+    },
+    {
+      "type": "library",
+      "name": "typing-inspection",
+      "version": "0.4.4",
+      "purl": "pkg:pypi/typing-inspection@0.4.4"
+    },
+    {
+      "type": "library",
+      "name": "uv-build",
+      "version": "0.12.5",
+      "purl": "pkg:pypi/uv-build@0.12.5"
+    },
+    {
+      "type": "library",
+      "name": "uvicorn",
+      "version": "0.52.3",
+      "purl": "pkg:pypi/uvicorn@0.52.3"
+    },
+    {
+      "type": "library",
+      "name": "vitest",
+      "version": "4.1.10",
+      "purl": "pkg:npm/vitest@4.1.10"
+    }
+  ]
+}
