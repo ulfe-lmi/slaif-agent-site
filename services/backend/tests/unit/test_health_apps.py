@@ -138,6 +138,16 @@ async def test_each_app_has_only_typed_health_routes(
             "/api/editor/v1/sites/{site_id}/media/",
             "/api/editor/v1/sites/{site_id}/media/{media_id}",
         }
+    if process is ProcessKind.AGENT_API:
+        expected_routes |= {
+            "/api/agent/v1/session",
+            "/api/agent/v1/permissions",
+            "/api/agent/v1/content-model/types",
+            "/api/agent/v1/content-model/types/{type_id}",
+            "/api/agent/v1/content-items/types/{type_id}",
+            "/api/agent/v1/pages/",
+            "/api/agent/v1/media/",
+        }
     if process is ProcessKind.RENDER_API:
         expected_routes.add("/internal/render/v1/site-context")
     assert _route_paths(app) == expected_routes
