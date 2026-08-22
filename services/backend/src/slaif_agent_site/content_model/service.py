@@ -150,6 +150,47 @@ class CollectionViewMixin:
         await self._fetchrow(CV_DELETE_SQL, view_id)
 
 
+class PageMixin:
+    _fetchrow: Any
+    _fetch: Any
+
+    async def create_page(
+        self, site_id: UUID, slug: str, title: str, status: str, locale: str
+    ) -> Any:
+        row = await self._fetchrow(PG_CREATE_SQL, site_id, slug, title, status, locale)
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.CONFLICT)
+        return _pg(row)
+
+    async def list_pages(self, site_id: UUID) -> tuple[Any, ...]:
+        rows = await self._fetch(PG_LIST_SQL, site_id)
+        return tuple(_pg(row) for row in rows)
+
+    async def get_page(self, page_id: UUID) -> Any:
+        row = await self._fetchrow(PG_GET_SQL, page_id)
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
+        return _pg(row)
+
+    async def update_page(
+        self,
+        page_id: UUID,
+        slug: str | None,
+        title: str | None,
+        status: str | None,
+        expected_row_version: int | None,
+    ) -> Any:
+        row = await self._fetchrow(
+            PG_UPDATE_SQL, page_id, slug, title, status, expected_row_version
+        )
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
+        return _pg(row)
+
+    async def delete_page(self, page_id: UUID) -> None:
+        await self._fetchrow(PG_DELETE_SQL, page_id)
+
+
 class NavThemeMixin:
     _fetchrow: Any
     _fetch: Any
@@ -262,7 +303,9 @@ class ContentItemMixin:
         await self._fetchrow(CI_DELETE_SQL, item_id, expected_row_version)
 
 
-class ContentModelService(ContentItemMixin, CollectionViewMixin, NavThemeMixin):
+class ContentModelService(
+    ContentItemMixin, CollectionViewMixin, NavThemeMixin, PageMixin
+):
     """Perform semantic content model operations via SECURITY DEFINER functions."""
 
     def __init__(self, pool: _Pool, *, acquire_timeout: float = 3.0) -> None:
@@ -486,4 +529,28 @@ def _th(row: Any) -> Any:
         shape=json.loads(row[5]) if isinstance(row[5], str) else row[5],
         created_at=row[6],
         updated_at=row[7],
+    )
+
+
+PG_CREATE_SQL = "SELECT * FROM content.slaif_page_create($1,$2,$3,$4,$5)"
+PG_LIST_SQL = "SELECT * FROM content.slaif_page_list($1)"
+PG_GET_SQL = "SELECT * FROM content.slaif_page_get($1)"
+PG_UPDATE_SQL = "SELECT * FROM content.slaif_page_update($1,$2,$3,$4,$5)"
+PG_DELETE_SQL = "SELECT content.slaif_page_delete($1)"
+
+
+def _pg(row: Any) -> Any:
+    from .page_models import PageRecord
+
+    return PageRecord(
+        id=row[0],
+        site_id=row[1],
+        slug=row[2],
+        title=row[3],
+        status=row[4],
+        locale=row[5],
+        parent_id=row[6],
+        row_version=row[7],
+        created_at=row[8],
+        updated_at=row[9],
     )

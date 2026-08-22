@@ -533,6 +533,11 @@ async def reconcile(
                     "slaif_navigation_delete(uuid)",
                     "slaif_theme_get(uuid)",
                     "slaif_theme_update(uuid,jsonb,jsonb,jsonb,jsonb)",
+                    "slaif_page_create(uuid,text,text,text,text)",
+                    "slaif_page_list(uuid)",
+                    "slaif_page_get(uuid)",
+                    "slaif_page_update(uuid,text,text,text,integer)",
+                    "slaif_page_delete(uuid)",
                 ):
                     await executor.execute(
                         f"GRANT EXECUTE ON FUNCTION content.{fn} "
