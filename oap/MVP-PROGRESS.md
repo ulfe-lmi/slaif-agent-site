@@ -20,10 +20,10 @@ Updated after each merged work order.
 | 8 | Source reconstruction (L4 import) | ⬜ | — | 0% |
 | 9 | Hardening/E2E/SBOM/full matrix | ⬜ | — | 0% |
 
-## Overall estimate: ~35%
+## Overall estimate: ~38%
 
 ## Remaining critical path
-1. Finish media (022) → wire into bootstrap grants
+1. ~~Finish media (022)~~ → DONE (#35)
 2. Puck adapter + shared renderer (biggest single remaining item)
 3. Agent API routes (semantic REST + MCP)
 4. Workspace lifecycle: freeze/snapshot/promotion/discard
