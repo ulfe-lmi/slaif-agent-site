@@ -499,10 +499,22 @@ async def reconcile(
                     ) from error
                 if not hardened["safe"]:
                     raise BootstrapStateError("foundation hardening validation failed")
-                await executor.execute(
-                    "GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA content "
-                    "TO slaif_editor_runtime, slaif_control"
-                )
+                for fn in (
+                    "slaif_content_type_create(uuid,text,jsonb,text,jsonb)",
+                    "slaif_content_type_list(uuid)",
+                    "slaif_content_type_get(uuid)",
+                    "slaif_content_type_update(uuid,jsonb,text,jsonb)",
+                    "slaif_content_type_delete(uuid)",
+                    "slaif_field_definition_create(uuid,text,text,text,boolean,boolean,integer,integer,jsonb,jsonb)",
+                    "slaif_field_definition_list(uuid)",
+                    "slaif_field_definition_get(uuid)",
+                    "slaif_field_definition_update(uuid,text,boolean,boolean,integer,integer,jsonb,jsonb)",
+                    "slaif_field_definition_delete(uuid)",
+                ):
+                    await executor.execute(
+                        f"GRANT EXECUTE ON FUNCTION content.{fn} "
+                        "TO slaif_editor_runtime, slaif_control"
+                    )
                 if failure_point == "after-harden":
                     raise BootstrapStateError("injected failure after hardening")
 
