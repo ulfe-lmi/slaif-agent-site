@@ -36,6 +36,11 @@
       "filter": ["oap/orders/015-a-content-model-editor-http.md"],
       "config": { "MD031": false, "MD032": false, "MD040": false },
       "combine": "merge"
+    },
+    {
+      "filter": ["oap/MVP-PROGRESS.md", "oap/orders/022-a-media-foundation.md", "oap/reports/022-a-media-foundation.md"],
+      "config": { "MD031": false, "MD032": false, "MD040": false, "MD058": false },
+      "combine": "merge"
     }
   ]
 }

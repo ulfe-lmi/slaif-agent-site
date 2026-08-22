@@ -1,0 +1,38 @@
+# MVP Progress Tracker
+
+Updated after each merged work order.
+
+| Phase | Objective | Status | PR | Est. Complete |
+|---|---|---|---|---|
+| 0 | Foundation qualification | ✅ | #4, #11 | 100% |
+| 1 | Monorepo/Compose/DB/bootstrap | ✅ | #9–#14 | 100% |
+| 2 | Auth/RBAC/sites/memberships | ✅ | #15, #23, #24 | 100% |
+| 3 | Content model CRUD (types, fields, items, views) | ✅ | #27–#29, #32 | 100% |
+| 3 | Navigation + theme CRUD | ✅ | #31 | 100% |
+| 3 | Page CRUD | ✅ | #32 | 100% |
+| 4a | Component catalog + composition schema | ✅ | #33 | 100% |
+| 4b | Page composition tree CRUD | ✅ | #34 | 100% |
+| 4c | Media service foundation | 🔨 In progress | — | ~80% coded |
+| 4d | Puck adapter + shared renderer | ⬜ | — | 0% |
+| 5 | Semantic REST/MCP/audit/scopes | ⬜ | — | 0% |
+| 6 | Browser visual loop / Playwright | ⬜ | — | 0% |
+| 7 | Freeze/promotion/review/publication | ⬜ | — | 0% |
+| 8 | Source reconstruction (L4 import) | ⬜ | — | 0% |
+| 9 | Hardening/E2E/SBOM/full matrix | ⬜ | — | 0% |
+
+## Overall estimate: ~35%
+
+## Remaining critical path
+1. Finish media (022) → wire into bootstrap grants
+2. Puck adapter + shared renderer (biggest single remaining item)
+3. Agent API routes (semantic REST + MCP)
+4. Workspace lifecycle: freeze/snapshot/promotion/discard
+5. Browser confinement + E2E
+6. Full security/concurrency/recovery hardening
+
+## CRITICAL.md review queue
+| PR | Risk | Priority |
+|---|---|---|
+| #28 | Privilege allowlist modification | P1 |
+| #29 | Content item hard-delete | P1 |
+| #30–#34 | CRUD route authorization patterns | P2 |
