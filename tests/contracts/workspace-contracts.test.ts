@@ -113,7 +113,9 @@ describe("workspace contract package boundaries", () => {
     for (const { expectedName, slug } of boundaries) {
       const manifest = loadManifest(slug);
       const buildScript =
-        slug === "scope-catalog"
+        slug === "scope-catalog" ||
+        slug === "component-catalog" ||
+        slug === "composition-schema"
           ? "tsc --project tsconfig.build.json"
           : PACKAGE_SCRIPTS_BUILD;
       expect(manifest).toMatchObject({
