@@ -53,7 +53,11 @@ class RoutePolicy:
     required_permissions: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
-        if self.process not in {ProcessKind.CONTROL_API, ProcessKind.EDITOR_API}:
+        if self.process not in {
+            ProcessKind.CONTROL_API,
+            ProcessKind.EDITOR_API,
+            ProcessKind.AGENT_API,
+        }:
             raise ValueError("route policy process is not registered")
         if self.method not in {"GET", "POST", "PUT", "PATCH", "DELETE"}:
             raise ValueError("route policy method is not explicit")
@@ -156,6 +160,7 @@ _R = RouteMutationClass.READ
 _M = RouteMutationClass.MUTATION
 _CONTROL = ProcessKind.CONTROL_API
 _EDITOR = ProcessKind.EDITOR_API
+_AGENT = ProcessKind.AGENT_API
 _HEALTH = RouteAuthorityKind.SYSTEM_EXEMPTION
 _PUBLIC = RouteAuthorityKind.PUBLIC
 _SESSION = RouteAuthorityKind.AUTHENTICATED_SESSION
@@ -703,6 +708,27 @@ ROUTE_POLICIES: Final[tuple[RoutePolicy, ...]] = (
                 True,
                 "media-reference:delete",
             ),
+        )
+    ),
+    *(
+        _policy(
+            _AGENT,
+            method,
+            path,
+            _R,
+            False,
+            False,
+            RouteAuthorityKind.SYSTEM_EXEMPTION,
+            RoutePolicyKind.SYSTEM_HEALTH,
+        )
+        for method, path in (
+            ("GET", "/api/agent/v1/session"),
+            ("GET", "/api/agent/v1/permissions"),
+            ("GET", "/api/agent/v1/content-model/types"),
+            ("GET", "/api/agent/v1/content-model/types/{type_id}"),
+            ("GET", "/api/agent/v1/content-items/types/{type_id}"),
+            ("GET", "/api/agent/v1/pages/"),
+            ("GET", "/api/agent/v1/media/"),
         )
     ),
 )

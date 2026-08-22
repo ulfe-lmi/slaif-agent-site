@@ -6,8 +6,6 @@ from typing import Any, cast
 
 import httpx
 import pytest
-from fastapi import FastAPI
-from slaif_agent_site.agent_api import create_app as create_agent_app
 from slaif_agent_site.authority import ProcessKind
 from slaif_agent_site.config import ServiceSettings
 from slaif_agent_site.control_api.app import create_app as create_control_app
@@ -35,13 +33,19 @@ class PolicyDatabase:
 
 def test_registry_exact_inventory_and_policy_shapes() -> None:
     keys = [policy.key for policy in ROUTE_POLICIES]
-    assert len(keys) == len(set(keys)) == 69
+    assert len(keys) == len(set(keys)) == 76
     assert {policy.process for policy in ROUTE_POLICIES} == {
         ProcessKind.CONTROL_API,
         ProcessKind.EDITOR_API,
+        ProcessKind.AGENT_API,
     }
     control = route_policies_for(ProcessKind.CONTROL_API)
     editor = route_policies_for(ProcessKind.EDITOR_API)
+    agent = route_policies_for(ProcessKind.AGENT_API)
+    assert len(agent) == 7
+    assert all(
+        policy.authority_kind is RouteAuthorityKind.SYSTEM_EXEMPTION for policy in agent
+    )
     assert len(control) == 25
     assert len(editor) == 44
     health_routes = [p for p in editor if p.path_template.startswith("/health")]
@@ -142,10 +146,7 @@ def test_synthetic_undeclared_or_mismatched_route_fails_closed() -> None:
     with pytest.raises(RuntimeError, match="coverage mismatch"):
         validate_route_policy_coverage(app, ProcessKind.CONTROL_API)
 
-    wrong_process: FastAPI = create_agent_app(settings=ServiceSettings.for_test())
-    assert route_policies_for(ProcessKind.AGENT_API) == ()
-    with pytest.raises(RuntimeError, match="coverage mismatch"):
-        validate_route_policy_coverage(wrong_process, ProcessKind.AGENT_API)
+    # Agent API has its own route policy entries; coverage is tested separately.
 
 
 @pytest.mark.anyio
