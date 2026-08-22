@@ -55,7 +55,17 @@ async def call_tool(request: Request) -> dict[str, Any]:
     auth_header = request.headers.get("Authorization", "")
 
     path = body.get("path", "/")
-    if not isinstance(path, str) or not path.startswith("/api/agent/v1/"):
+    ALLOWED_PREFIXES = (
+        "/api/agent/v1/session",
+        "/api/agent/v1/permissions",
+        "/api/agent/v1/content-model/",
+        "/api/agent/v1/content-items/",
+        "/api/agent/v1/pages/",
+        "/api/agent/v1/media/",
+    )
+    if not isinstance(path, str) or not any(
+        path.startswith(p) for p in ALLOWED_PREFIXES
+    ):
         raise ServiceUnavailableError()
 
     method = body.get("method", "GET")
