@@ -176,7 +176,6 @@ EXPECTED_PACKAGE_FILES = NEW_PACKAGE_FILES | {
     "slaif_agent_site/db/alembic/versions/021_001_page_functions.py",
     "slaif_agent_site/db/alembic/versions/022_001_composition_functions.py",
     "slaif_agent_site/db/alembic/versions/023_001_media_functions.py",
-    "slaif_agent_site/agent_state/workspace_models.py",
     "slaif_agent_site/db/alembic/versions/024_001_workspace_lifecycle.py",
 }
 EXPECTED_SDIST_FILES = {

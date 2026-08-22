@@ -4,12 +4,16 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import StrEnum
-from typing import Any
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, field_validator
 
-from .models import _bounded_json, _bounded_text
+
+def _bounded_text(value: str, max_length: int) -> str:
+    normalized = value.strip()
+    if not normalized or len(normalized) > max_length or "\x00" in normalized:
+        raise ValueError(f"text must be 1-{max_length} characters")
+    return normalized
 
 
 class WorkspaceStatus(StrEnum):
@@ -82,3 +86,11 @@ class WorkspaceRecord(BaseModel):
     frozen_at: datetime | None
     accepted_at: datetime | None
     discarded_at: datetime | None
+
+
+__all__ = [
+    "CreateWorkspaceRequest",
+    "DelegationPreset",
+    "WorkspaceRecord",
+    "WorkspaceStatus",
+]
