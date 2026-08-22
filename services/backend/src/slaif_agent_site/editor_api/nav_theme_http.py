@@ -28,7 +28,7 @@ router = APIRouter(prefix="/api/editor/v1/sites/{site_id}")
 
 
 def _service(request: Request) -> ContentModelService:
-    return request.app.state.content_model_service  # type: ignore[no-any-return]
+    return request.app.state.content_model_service
 
 
 async def _auth(
@@ -53,7 +53,7 @@ async def create_navigation(
 ) -> NavigationRecord:
     await _auth(request, site_id, permission="navigation:create", state_changing=True)
     try:
-        return await _service(request).create_navigation(
+        return await _service(request).create_navigation(  # type: ignore[no-any-return]
             site_id=site_id, key=body.key, label=body.label, settings=body.settings
         )
     except ContentModelServiceError as exc:
@@ -101,7 +101,7 @@ async def update_navigation(
     if record.site_id != site_id:
         raise ResourceNotFoundError()
     try:
-        return await _service(request).update_navigation(
+        return await _service(request).update_navigation(  # type: ignore[no-any-return]
             nav_id=nav_id, label=body.label, settings=body.settings
         )
     except ContentModelServiceError:
@@ -122,7 +122,7 @@ async def delete_navigation(site_id: UUID, nav_id: UUID, request: Request) -> Re
 async def get_theme(site_id: UUID, request: Request) -> ThemeRecord:
     await _auth(request, site_id, permission="theme:read", state_changing=False)
     try:
-        return await _service(request).get_theme(site_id)
+        return await _service(request).get_theme(site_id)  # type: ignore[no-any-return]
     except ContentModelServiceError:
         raise ServiceUnavailableError() from None
 
@@ -133,7 +133,7 @@ async def update_theme(
 ) -> ThemeRecord:
     await _auth(request, site_id, permission="theme-global:write", state_changing=True)
     try:
-        return await _service(request).update_theme(
+        return await _service(request).update_theme(  # type: ignore[no-any-return]
             site_id=site_id,
             palette=body.palette,
             typography=body.typography,

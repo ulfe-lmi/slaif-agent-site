@@ -163,8 +163,6 @@ EXPECTED_PACKAGE_FILES = NEW_PACKAGE_FILES | {
     "slaif_agent_site/editor_api/item_http.py",
     "slaif_agent_site/db/alembic/versions/018_001_content_item_functions.py",
     "slaif_agent_site/db/alembic/versions/019_001_collection_view_functions.py",
-    "slaif_agent_site/content_model/nav_models.py",
-    "slaif_agent_site/editor_api/nav_theme_http.py",
     "slaif_agent_site/db/alembic/versions/020_001_nav_theme_functions.py",
 }
 EXPECTED_SDIST_FILES = {
