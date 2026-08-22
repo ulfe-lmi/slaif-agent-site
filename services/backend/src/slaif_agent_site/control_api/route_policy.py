@@ -611,6 +611,56 @@ ROUTE_POLICIES: Final[tuple[RoutePolicy, ...]] = (
             ),
         )
     ),
+    *(
+        _policy(
+            _EDITOR,
+            method,
+            path,
+            mutation,
+            True,
+            csrf,
+            _SITE,
+            RoutePolicyKind.SITE_PERMISSION,
+            permission,
+        )
+        for method, path, mutation, csrf, permission in (
+            (
+                "POST",
+                "/api/editor/v1/sites/{site_id}/pages/{page_id}/composition/components",
+                _M,
+                True,
+                "component-structure:create",
+            ),
+            (
+                "GET",
+                "/api/editor/v1/sites/{site_id}/pages/{page_id}/composition/",
+                _R,
+                False,
+                "composition:read",
+            ),
+            (
+                "PATCH",
+                "/api/editor/v1/sites/{site_id}/pages/{page_id}/composition/components/{node_id}",
+                _M,
+                True,
+                "component-content-props:write",
+            ),
+            (
+                "POST",
+                "/api/editor/v1/sites/{site_id}/pages/{page_id}/composition/components/{node_id}/move",
+                _M,
+                True,
+                "component-structure:move",
+            ),
+            (
+                "DELETE",
+                "/api/editor/v1/sites/{site_id}/pages/{page_id}/composition/components/{node_id}",
+                _M,
+                True,
+                "component-structure:delete",
+            ),
+        )
+    ),
 )
 
 _POLICY_BY_KEY = MappingProxyType({policy.key: policy for policy in ROUTE_POLICIES})

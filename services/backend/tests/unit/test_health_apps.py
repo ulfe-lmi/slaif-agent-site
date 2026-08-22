@@ -130,6 +130,10 @@ async def test_each_app_has_only_typed_health_routes(
             "/api/editor/v1/sites/{site_id}/theme",
             "/api/editor/v1/sites/{site_id}/pages/",
             "/api/editor/v1/sites/{site_id}/pages/{page_id}",
+            "/api/editor/v1/sites/{site_id}/pages/{page_id}/composition/components",
+            "/api/editor/v1/sites/{site_id}/pages/{page_id}/composition/",
+            "/api/editor/v1/sites/{site_id}/pages/{page_id}/composition/components/{node_id}",
+            "/api/editor/v1/sites/{site_id}/pages/{page_id}/composition/components/{node_id}/move",
         }
     if process is ProcessKind.RENDER_API:
         expected_routes.add("/internal/render/v1/site-context")
