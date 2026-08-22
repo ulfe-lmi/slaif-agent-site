@@ -15,6 +15,7 @@ from .content_http import router as content_model_router
 from .item_http import router as content_item_router
 from .nav_theme_http import router as nav_theme_router
 from .page_http import router as page_router
+from .composition_http import router as composition_router
 from .view_http import router as collection_view_router
 
 
@@ -33,6 +34,7 @@ def create_app(
     app.include_router(collection_view_router)
     app.include_router(nav_theme_router)
     app.include_router(page_router)
+    app.include_router(composition_router)
     validate_route_policy_coverage(app, ProcessKind.EDITOR_API)
     return app
 

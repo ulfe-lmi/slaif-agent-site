@@ -246,6 +246,68 @@ class NavThemeMixin:
         return _th(row)
 
 
+class CompositionMixin:
+    _fetchrow: Any
+    _fetch: Any
+
+    async def add_composition_node(
+        self,
+        site_id: UUID,
+        page_id: UUID,
+        component_type: str,
+        parent_id: UUID | None,
+        slot_key: str,
+        order_key: int,
+        props: dict[str, Any],
+    ) -> Any:
+        row = await self._fetchrow(
+            CMP_ADD_SQL,
+            site_id,
+            page_id,
+            component_type,
+            parent_id,
+            slot_key,
+            order_key,
+            props,
+        )
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.CONFLICT)
+        return _cmp(row)
+
+    async def update_composition_node(
+        self,
+        node_id: UUID,
+        props: dict[str, Any] | None,
+        slot_key: str | None,
+        order_key: int | None,
+    ) -> Any:
+        row = await self._fetchrow(CMP_UPDATE_SQL, node_id, props, slot_key, order_key)
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
+        return _cmp(row)
+
+    async def move_composition_node(
+        self,
+        node_id: UUID,
+        new_parent_id: UUID | None,
+        new_slot_key: str | None,
+        new_order_key: int,
+    ) -> Any:
+        row = await self._fetchrow(
+            CMP_MOVE_SQL, node_id, new_parent_id, new_slot_key, new_order_key
+        )
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
+        return _cmp(row)
+
+    async def delete_composition_node(self, node_id: UUID) -> None:
+        await self._fetchrow(CMP_DELETE_SQL, node_id)
+
+    async def list_composition(self, page_id: UUID) -> tuple[Any, ...]:
+        rows = await self._fetch(CMP_LIST_SQL, page_id)
+        return tuple(_cmp(row) for row in rows)
+
+
 class ContentItemMixin:
     _fetchrow: Any
     _fetch: Any
@@ -304,7 +366,11 @@ class ContentItemMixin:
 
 
 class ContentModelService(
-    ContentItemMixin, CollectionViewMixin, NavThemeMixin, PageMixin
+    ContentItemMixin,
+    CollectionViewMixin,
+    NavThemeMixin,
+    PageMixin,
+    CompositionMixin,
 ):
     """Perform semantic content model operations via SECURITY DEFINER functions."""
 
@@ -553,4 +619,31 @@ def _pg(row: Any) -> Any:
         row_version=row[7],
         created_at=row[8],
         updated_at=row[9],
+    )
+
+
+CMP_ADD_SQL = "SELECT * FROM content.slaif_composition_node_add($1,$2,$3,$4,$5,$6,$7)"
+CMP_UPDATE_SQL = "SELECT * FROM content.slaif_composition_node_update($1,$2,$3,$4)"
+CMP_MOVE_SQL = "SELECT * FROM content.slaif_composition_node_move($1,$2,$3,$4)"
+CMP_DELETE_SQL = "SELECT content.slaif_composition_node_delete($1)"
+CMP_LIST_SQL = "SELECT * FROM content.slaif_composition_list($1)"
+
+
+def _cmp(row: Any) -> Any:
+    import json
+
+    from .composition_models import CompositionNodeRecord
+
+    return CompositionNodeRecord(
+        id=row[0],
+        site_id=row[1],
+        page_id=row[2],
+        component_type=row[3],
+        schema_version=row[4],
+        parent_id=row[5],
+        slot_key=row[6],
+        order_key=row[7],
+        props=json.loads(row[8]) if isinstance(row[8], str) else row[8],
+        created_at=row[9],
+        updated_at=row[10],
     )
