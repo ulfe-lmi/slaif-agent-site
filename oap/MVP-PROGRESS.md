@@ -14,13 +14,14 @@ Updated after each merged work order.
 | 4b | Page composition tree CRUD | ✅ | #34 | 100% |
 | 4c | Media service foundation | ✅ | #35 | 100% (metadata CRUD; file upload/storage is future) |
 | 4d | Puck adapter + shared renderer | ⬜ | — | 0% |
-| 5 | Semantic REST/MCP/audit/scopes | ⬜ | — | 0% |
+| 5 | Semantic REST (read-only) | ✅ | #36 | ~30% (read done; write/idempotency/batches remain) |
+| 5 | MCP adapter | ⬜ | — | 0% |
 | 6 | Browser visual loop / Playwright | ⬜ | — | 0% |
 | 7 | Freeze/promotion/review/publication | ⬜ | — | 0% |
 | 8 | Source reconstruction (L4 import) | ⬜ | — | 0% |
 | 9 | Hardening/E2E/SBOM/full matrix | ⬜ | — | 0% |
 
-## Overall estimate: ~38%
+## Overall estimate: ~42%
 
 ## Remaining critical path
 1. ~~Finish media (022)~~ → DONE (#35)
