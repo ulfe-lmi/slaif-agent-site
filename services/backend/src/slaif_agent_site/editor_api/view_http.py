@@ -51,14 +51,14 @@ async def create_view(
         request, site_id, permission="collection-view:create", state_changing=True
     )
     try:
-        return await _service(request).create_view(
+        return await _service(request).create_view(  # type: ignore[no-any-return]
             type_id=type_id,
             key=body.key,
             filter_spec=body.filter_spec,
             sort_spec=body.sort_spec,
             projection_spec=body.projection_spec,
             pagination_spec=body.pagination_spec,
-        )  # type: ignore[no-any-return]
+        )
     except ContentModelServiceError as exc:
         if exc.reason is ContentModelServiceReason.CONFLICT:
             raise ResourceConflictError() from None
@@ -93,7 +93,7 @@ async def get_view(
         raise ServiceUnavailableError() from None
     if record.site_id != site_id:
         raise ResourceNotFoundError()
-    return record
+    return record  # type: ignore[no-any-return]
 
 
 @router.patch("/{view_id}")
@@ -112,13 +112,13 @@ async def update_view(
     if record.site_id != site_id:
         raise ResourceNotFoundError()
     try:
-        return await _service(request).update_view(
+        return await _service(request).update_view(  # type: ignore[no-any-return]
             view_id=view_id,
             filter_spec=body.filter_spec,
             sort_spec=body.sort_spec,
             projection_spec=body.projection_spec,
             pagination_spec=body.pagination_spec,
-        )  # type: ignore[no-any-return]
+        )
     except ContentModelServiceError as exc:
         if exc.reason is ContentModelServiceReason.NOT_FOUND:
             raise ResourceNotFoundError() from None
