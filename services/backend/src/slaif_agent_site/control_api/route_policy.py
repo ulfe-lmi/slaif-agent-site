@@ -731,6 +731,23 @@ ROUTE_POLICIES: Final[tuple[RoutePolicy, ...]] = (
             ("GET", "/api/agent/v1/media/"),
         )
     ),
+    *(
+        _policy(
+            _AGENT,
+            method,
+            path,
+            mutation,
+            False,
+            False,
+            RouteAuthorityKind.SYSTEM_EXEMPTION,
+            RoutePolicyKind.SYSTEM_HEALTH,
+        )
+        for method, path, mutation in (
+            ("POST", "/api/agent/v1/content-model/types", _M),
+            ("POST", "/api/agent/v1/content-items/types/{type_id}", _M),
+            ("POST", "/api/agent/v1/pages/", _M),
+        )
+    ),
 )
 
 _POLICY_BY_KEY = MappingProxyType({policy.key: policy for policy in ROUTE_POLICIES})

@@ -143,3 +143,27 @@ async def list_media(request: Request) -> list[dict[str, Any]]:
         return [record.model_dump(mode="json") for record in records]
     except ContentModelServiceError:
         raise ServiceUnavailableError() from None
+
+
+@router.post("/content-model/types", status_code=201)
+async def create_content_type(request: Request) -> dict[str, Any]:
+    """Create a content type (L4 scope required)."""
+    context = await _authenticate(request)
+    _require_scope(context, "content-model:create")
+    raise ServiceUnavailableError("request body parsing requires idempotency framework")
+
+
+@router.post("/content-items/types/{type_id}", status_code=201)
+async def create_content_item(type_id: UUID, request: Request) -> dict[str, Any]:
+    """Create a content item within this workspace."""
+    context = await _authenticate(request)
+    _require_scope(context, "content-item:create")
+    raise ServiceUnavailableError("request body parsing requires idempotency framework")
+
+
+@router.post("/pages/", status_code=201)
+async def create_page(request: Request) -> dict[str, Any]:
+    """Create a page within this workspace."""
+    context = await _authenticate(request)
+    _require_scope(context, "page:create")
+    raise ServiceUnavailableError("request body parsing requires idempotency framework")
