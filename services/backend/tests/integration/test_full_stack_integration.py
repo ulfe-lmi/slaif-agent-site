@@ -128,7 +128,6 @@ class TestFullStackWiring:
 
     def test_idempotency_framework_complete(self) -> None:
         from slaif_agent_site.agent_state.idempotency import (
-            IdempotencyStore,
             compute_request_digest,
         )
 
