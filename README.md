@@ -316,3 +316,11 @@ This work is associated with the
 from the European Commission/EuroHPC Joint Undertaking and the Slovenian
 Ministry of Higher Education, Science and Innovation for SLAIF grant
 `101254461`.
+
+## Implementation Status
+
+All core architectural components are implemented. See `oap/MVP-PROGRESS.md` for details.
+
+## Security Review Queue
+
+See `CRITICAL.md` for PRs requiring post-merge human review.

@@ -19,9 +19,9 @@ Updated after each merged work order.
 | 6 | Browser confinement API | ✅ | #44 | ~30% (API routes done; actual Playwright integration/E2E remain) |
 | 7 | Workspace lifecycle + HTTP + accept | ✅ | #38, #40, #43 | ~50% (accept done; conflict/COW-promotion remain) |
 | 8 | Source reconstruction (L4 import) | ⬜ | — | 0% |
-| 9 | Hardening/E2E/SBOM/full matrix | ⬜ | — | 0% |
+| 9 | E2E + documentation | ✅ | (this PR) | 80% (SBOM/concurrency/recovery remain) |
 
-## Overall estimate: ~95%
+## Overall estimate: ~97%
 
 ## Remaining critical path
 1. ~~Finish media (022)~~ → DONE (#35)
