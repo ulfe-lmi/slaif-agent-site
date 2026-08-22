@@ -138,6 +138,12 @@ async def test_each_app_has_only_typed_health_routes(
             "/api/editor/v1/sites/{site_id}/media/",
             "/api/editor/v1/sites/{site_id}/media/{media_id}",
         }
+    if process is ProcessKind.MCP_ADAPTER:
+        expected_routes |= {
+            "/mcp/v1/health/live",
+            "/mcp/v1/tools",
+            "/mcp/v1/call",
+        }
     if process is ProcessKind.AGENT_API:
         expected_routes |= {
             "/api/agent/v1/session",

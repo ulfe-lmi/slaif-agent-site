@@ -10,6 +10,7 @@ from ..application import create_http_application
 from ..authority import ProcessKind
 from ..config import ServiceSettings
 from ..health import ReadinessProbe
+from .mcp_http import install_mcp_routes
 
 
 def create_app(
@@ -17,11 +18,13 @@ def create_app(
     settings: ServiceSettings | None = None,
     readiness_probes: Sequence[ReadinessProbe] = (),
 ) -> FastAPI:
-    return create_http_application(
+    app = create_http_application(
         ProcessKind.MCP_ADAPTER,
         settings=settings,
         readiness_probes=readiness_probes,
     )
+    install_mcp_routes(app, settings)
+    return app
 
 
 __all__ = ["create_app"]
