@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
@@ -69,7 +69,7 @@ class AuditEvent:
     ) -> None:
         self.sequence = sequence
         self.previous_hash = previous_hash
-        self.timestamp = datetime.now(timezone.utc).isoformat()
+        self.timestamp = datetime.now(UTC).isoformat()
         self.actor_id = actor_id
         self.action = action
         self.resource_type = resource_type

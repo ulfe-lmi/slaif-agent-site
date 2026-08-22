@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from slaif_agent_site.agent_state.audit import (
     AuditEvent,
-    compute_event_hash,
     compute_payload_digest,
 )
 
