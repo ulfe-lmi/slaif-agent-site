@@ -746,6 +746,11 @@ async def _function_violations(
                 and (name, arguments) in PUBLIC_RESOLVER_FUNCTIONS
                 and role == "slaif_public_reader"
             )
+            is_content_model_function = (
+                schema == "content"
+                and name.startswith("slaif_content_type_")
+                or (schema == "content" and name.startswith("slaif_field_definition_"))
+            )
             allowed = (
                 (is_control_function and role == CONTROL_ROLE)
                 or public_resolver
@@ -753,6 +758,11 @@ async def _function_violations(
                     readiness_state is ReadinessState.HARDENED
                     and schema == FOUNDATION_SCHEMA
                     and role in REVIEWER_ROLES
+                )
+                or (
+                    readiness_state is ReadinessState.HARDENED
+                    and is_content_model_function
+                    and role in {"slaif_editor_runtime", "slaif_control"}
                 )
             )
             if can_execute and not allowed:
