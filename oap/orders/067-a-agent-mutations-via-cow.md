@@ -1,4 +1,4 @@
-# OAP Work Order — 025-a
+# OAP Work Order — 067-a
 
 ## Objective
 
@@ -10,7 +10,7 @@ those writes going into the workspace COW overlay (not canonical).
 
 ## GitHub objective state
 
-- Numeric objective: `025`; round: `025-a`
+- Numeric objective: `067`; round: `067-a`
 - Mode: `CREATE_NEW_PR`; exactly one new PR
 
 ## Anti-false-positive clause
