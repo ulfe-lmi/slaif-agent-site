@@ -298,7 +298,11 @@ function mutation(method: string, body?: unknown): RequestInit {
   const csrf = csrfCookie(document.cookie, window.location.protocol === "https:");
   const init: RequestInit = {
     method,
-    headers: { "Content-Type": "application/json", "X-CSRF-Token": csrf },
+    headers: {
+      "Content-Type": "application/json",
+      "X-CSRF-Token": csrf,
+      "Idempotency-Key": crypto.randomUUID(),
+    },
   };
   if (body !== undefined) init.body = JSON.stringify(body);
   return init;

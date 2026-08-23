@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from typing import cast
 from uuid import UUID
 
 from fastapi import APIRouter, Request, Response
@@ -18,6 +17,7 @@ from slaif_agent_site.content_model.service import (
     ContentModelServiceReason,
 )
 from slaif_agent_site.control_api.site_authority import authorize_site_request
+from slaif_agent_site.editor_api.mutations import request_service
 from slaif_agent_site.errors import (
     ResourceConflictError,
     ResourceNotFoundError,
@@ -28,14 +28,7 @@ router = APIRouter(prefix="/api/editor/v1/sites/{site_id}/pages")
 
 
 def _service(request: Request) -> ContentModelService:
-    return cast(
-        ContentModelService,
-        getattr(
-            request.state,
-            "content_model_service",
-            request.app.state.content_model_service,
-        ),
-    )
+    return request_service(request)
 
 
 async def _auth(

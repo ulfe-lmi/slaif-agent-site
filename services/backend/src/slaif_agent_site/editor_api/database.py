@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from contextlib import asynccontextmanager, suppress
+from dataclasses import dataclass
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -24,12 +26,42 @@ IDENTITY_SQL = (
     "ORDER BY target.rolname)"
 )
 READINESS_SQL = "SELECT * FROM content.slaif_page_list($1)"
+WORKSPACE_ASSERT_SQL = (
+    "SELECT control.slaif_human_editor_workspace_assert($1,$2,$3,$4,$5)"
+)
+IDEMPOTENCY_BEGIN_SQL = (
+    "SELECT * FROM control.slaif_human_editor_idempotency_begin($1,$2,$3,$4,$5,$6,$7)"
+)
+IDEMPOTENCY_COMPLETE_SQL = (
+    "SELECT control.slaif_human_editor_idempotency_complete("
+    "$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)"
+)
 
 
-class _UnstartedPool:
-    def acquire(self, *, timeout: float) -> Any:
-        del timeout
-        raise TimeoutError()
+class EditorIdempotencyMismatchError(RuntimeError):
+    """The bounded key was reused with a different request digest."""
+
+
+class EditorIdempotencyReplayError(RuntimeError):
+    """A completed Editor mutation can return its stored response unchanged."""
+
+    def __init__(self, status_code: int, response_body: dict[str, Any]) -> None:
+        super().__init__("editor idempotency replay")
+        self.status_code = status_code
+        self.response_body = response_body
+
+
+@dataclass(frozen=True, slots=True)
+class EditorRequestContext:
+    service: ContentModelService
+    cow: Any
+    workspace_id: UUID
+    human_user_id: UUID
+    site_id: UUID
+    human_session_id: UUID
+    operation_id: UUID
+    idempotency_key: str | None
+    request_digest: str | None
 
 
 class EditorDatabase:
@@ -134,24 +166,105 @@ class EditorDatabase:
         except Exception:
             return ProbeResult.unavailable("connection_unavailable")
 
-    def content_model_service(self) -> ContentModelService:
-        return ContentModelService(
-            self._pool or _UnstartedPool(),
-            acquire_timeout=self._settings.acquire_timeout_seconds,
-        )
-
     @asynccontextmanager
-    async def request_content_service(self, session_id: UUID) -> Any:
+    async def request_content_service(
+        self,
+        *,
+        workspace_id: UUID,
+        human_user_id: UUID,
+        site_id: UUID,
+        human_session_id: UUID,
+        state_changing: bool,
+        idempotency_key: str | None,
+        request_digest: str | None,
+    ) -> Any:
         if self._pool is None:
             raise RuntimeError("editor database unavailable")
+        operation_id = uuid4()
         async with asyncpg_cow_session(
             self._pool,
-            session_id=session_id,
-            operation_id=uuid4(),
+            session_id=workspace_id,
+            operation_id=operation_id,
         ) as cow:
-            yield ContentModelService.for_cow_session(
-                cow, acquire_timeout=self._settings.acquire_timeout_seconds
+            await cow.native.fetchrow(
+                WORKSPACE_ASSERT_SQL,
+                workspace_id,
+                human_user_id,
+                site_id,
+                human_session_id,
+                state_changing,
+            )
+            if state_changing:
+                if idempotency_key is None or request_digest is None:
+                    raise RuntimeError("editor mutation envelope missing")
+                row = await cow.native.fetchrow(
+                    IDEMPOTENCY_BEGIN_SQL,
+                    workspace_id,
+                    human_user_id,
+                    site_id,
+                    human_session_id,
+                    idempotency_key,
+                    request_digest,
+                    operation_id,
+                )
+                state = str(row[0]) if row is not None else "UNAVAILABLE"
+                if state == "MISMATCH":
+                    raise EditorIdempotencyMismatchError()
+                if state == "REPLAY":
+                    body = row[3]
+                    if isinstance(body, str):
+                        body = json.loads(body)
+                    if not isinstance(body, dict) or not isinstance(row[2], int):
+                        raise RuntimeError("editor replay response invalid")
+                    raise EditorIdempotencyReplayError(row[2], body)
+                if state != "STARTED":
+                    raise RuntimeError("editor idempotency unavailable")
+            yield EditorRequestContext(
+                service=ContentModelService.for_cow_session(
+                    cow, acquire_timeout=self._settings.acquire_timeout_seconds
+                ),
+                cow=cow,
+                workspace_id=workspace_id,
+                human_user_id=human_user_id,
+                site_id=site_id,
+                human_session_id=human_session_id,
+                operation_id=operation_id,
+                idempotency_key=idempotency_key,
+                request_digest=request_digest,
             )
 
+    async def complete_request(
+        self,
+        context: EditorRequestContext,
+        *,
+        response_status: int,
+        response_body: dict[str, Any],
+        action: str,
+        resource_type: str,
+        resource_id: UUID,
+    ) -> None:
+        if context.idempotency_key is None or context.request_digest is None:
+            return
+        await context.cow.native.fetchrow(
+            IDEMPOTENCY_COMPLETE_SQL,
+            context.workspace_id,
+            context.human_user_id,
+            context.site_id,
+            context.human_session_id,
+            context.idempotency_key,
+            context.request_digest,
+            context.operation_id,
+            response_status,
+            json.dumps(response_body, sort_keys=True),
+            action,
+            resource_type,
+            resource_id,
+        )
 
-__all__ = ["EditorDatabase"]
+
+__all__ = [
+    "EditorDatabase",
+    "EditorIdempotencyMismatchError",
+    "EditorIdempotencyReplayError",
+    "EditorRequestContext",
+]

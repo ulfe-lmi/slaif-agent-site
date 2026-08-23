@@ -95,9 +95,12 @@ handlers and database policy remain authoritative.
 
 Editor routes use the same human session cookie and CSRF proof as Control; they
 never accept Agent capabilities. The server rechecks site membership and the
-required permission on every request, then opens a bounded COW session on the
-separate Editor runtime pool. Responses and errors are private, no-store,
-noindex, and request-ID correlated.
+required permission on every request, resolves an ACTIVE, unexpired HUMAN
+workspace owned by that human and site, and opens a bounded COW session on the
+separate Editor runtime pool. Every state-changing route also requires a
+bounded `Idempotency-Key`; replay is stable, digest mismatch is rejected, and
+the mutation plus HUMAN audit record commit atomically. Responses and errors
+are private, no-store, noindex, and request-ID correlated.
 
 | Route | Success | Request contract |
 | --- | --- | --- |
@@ -116,13 +119,14 @@ IDs, schema versions, parent IDs, slots, order keys, and trusted props remain
 outside Puck metadata and are reconciled against server records. Unknown
 component types, executable prop names, arbitrary code, CSS, packages, and SQL
 are rejected. This order does not implement publication, preview authority,
-responsive preview, workspace lifecycle, or new catalog/storage types.
+workspace-management UI, freeze/review/promotion, responsive preview, or new
+catalog/storage types.
 
-The package's legacy DropZone editor emits a browser CSP console warning for
-dynamic inline style attributes under the strict reference `style-src 'self'`
-policy; the policy is not weakened with `unsafe-inline`, and the warning is
-explicitly isolated in the Puck E2E observer. The warning is a dependency
-limitation, not publication or authorization evidence.
+The package's legacy DropZone editor currently emits a browser CSP console
+violation for dynamic inline style attributes under the strict reference
+`style-src 'self'` policy. This continuation does not weaken the policy or
+claim the Puck gesture proof complete; a CSP-compatible reviewed Puck
+adaptation remains blocked and must be resolved before acceptance.
 
 ## Capability-bound Agent mutation API
 

@@ -83,6 +83,9 @@ performing one bounded semantic create.
 Revision `026_001` places a guarded owner-defined layer over those wrappers;
 revision `027_001` qualifies the page/composition function columns so runtime
 output-variable names cannot make the human Editor API fail closed.
+Revision `028_001` adds only the narrow HUMAN Editor workspace assertion and
+Editor-owned idempotency/audit functions; Editor still has no direct Control or
+Audit table DML.
 It resolves the active workspace from `app.session_id`, requires a valid
 operation UUID and active non-expired workspace, and rejects any supplied
 site UUID that differs from the workspace site before delegation.

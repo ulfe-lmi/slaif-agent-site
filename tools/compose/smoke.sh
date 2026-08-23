@@ -119,6 +119,24 @@ docker compose -p "$PROJECT" logs --no-color bootstrap 2>/dev/null \
   | sed -n 's/^.*setup-token-secret: //p' >"$TOKEN_FILE"
 test "$(wc -l <"$TOKEN_FILE" | tr -d ' ')" = 1
 tools/compose/e2e.sh "$TOKEN_FILE" "$E2E_SECRET_FILE"
+docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif -Atc \
+  "SET ROLE slaif_owner;
+   SELECT count(*) >= 4
+      AND count(DISTINCT audit.workspace_id) = 1
+      AND bool_and(workspace.actor_type = 'HUMAN'
+                   AND workspace.status = 'ACTIVE'
+                   AND workspace.expires_at > CURRENT_TIMESTAMP
+                   AND workspace.site_id = audit.site_id
+                   AND workspace.created_by = audit.human_user_id)
+   FROM audit.human_editor_mutation audit
+   JOIN control.workspace workspace ON workspace.id = audit.workspace_id
+   WHERE audit.action LIKE 'POST /api/editor/v1/sites/%';" | grep -q '^t$'
+docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif -Atc \
+  "SET ROLE slaif_owner;
+   SELECT count(*) >= 4
+      AND bool_and(status_code BETWEEN 200 AND 299)
+   FROM control.human_editor_idempotency;" | grep -q '^t$'
+echo "human-editor-envelope: OK workspace=HUMAN active audit=idempotent mutation-count=4-plus"
 docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif -v ON_ERROR_STOP=1 -Atc \
   "SET ROLE slaif_owner;
    SELECT string_agg(

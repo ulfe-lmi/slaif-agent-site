@@ -415,9 +415,7 @@ test("governance-visible-workflows-negatives-and-privacy", async ({ page }) => {
 
 test("puck-editor-round-trip-through-human-editor-api", async ({ page }) => {
   const credential = secrets();
-  // @measured/puck 0.20.2 emits this strict-CSP warning for its dynamic editor
-  // style attributes; the edge policy itself remains free of unsafe-inline.
-  const failures = observe(page, [], [/style-src/]);
+  const failures = observe(page);
   await login(page, credential);
   await page.goto("/admin");
   const demoLink = page.locator(".site-list a").filter({ hasText: "SLAIF Demo Site" });
@@ -428,11 +426,15 @@ test("puck-editor-round-trip-through-human-editor-api", async ({ page }) => {
   const cookies = await page.context().cookies();
   const csrf = cookies.find((cookie) => cookie.name === "slaif_csrf")?.value;
   expect(csrf).toBeTruthy();
-  const editorHeaders = { "X-CSRF-Token": csrf! };
+  const editorHeaders = (key = crypto.randomUUID()) => ({
+    "X-CSRF-Token": csrf!,
+    "Idempotency-Key": key,
+  });
+  const pageMutationKey = crypto.randomUUID();
   const pageResponse = await page.request.post(
     `/api/editor/v1/sites/${siteId}/pages/`,
     {
-      headers: editorHeaders,
+      headers: editorHeaders(pageMutationKey),
       data: {
         slug: "puck-editor",
         title: "Puck editor evidence",
@@ -443,13 +445,38 @@ test("puck-editor-round-trip-through-human-editor-api", async ({ page }) => {
   );
   expect(pageResponse.status()).toBe(201);
   expectPrivateHeaders(pageResponse);
-  const pageRecord = (await pageResponse.json()) as { id: string };
+  const pageResponseBody = (await pageResponse.json()) as Record<string, unknown>;
+  const pageRecord = pageResponseBody as { id: string };
   expect(pageRecord.id).toMatch(/^[0-9a-f-]{36}$/i);
+  const pageReplay = await page.request.post(`/api/editor/v1/sites/${siteId}/pages/`, {
+    headers: editorHeaders(pageMutationKey),
+    data: {
+      slug: "puck-editor",
+      title: "Puck editor evidence",
+      status: "DRAFT",
+      locale: "en",
+    },
+  });
+  expect(pageReplay.status()).toBe(201);
+  expect(await pageReplay.json()).toEqual(pageResponseBody);
+  const pageMismatch = await page.request.post(
+    `/api/editor/v1/sites/${siteId}/pages/`,
+    {
+      headers: editorHeaders(pageMutationKey),
+      data: {
+        slug: "puck-editor-mismatch",
+        title: "Must not be accepted",
+        status: "DRAFT",
+        locale: "en",
+      },
+    },
+  );
+  expect(pageMismatch.status()).toBe(409);
 
   const initialComponent = await page.request.post(
     `/api/editor/v1/sites/${siteId}/pages/${pageRecord.id}/composition/components`,
     {
-      headers: editorHeaders,
+      headers: editorHeaders(),
       data: {
         component_type: "Section",
         slot_key: "default",
@@ -465,7 +492,7 @@ test("puck-editor-round-trip-through-human-editor-api", async ({ page }) => {
   const initialHeading = await page.request.post(
     `/api/editor/v1/sites/${siteId}/pages/${pageRecord.id}/composition/components`,
     {
-      headers: editorHeaders,
+      headers: editorHeaders(),
       data: {
         component_type: "Heading",
         slot_key: "default",
@@ -481,7 +508,7 @@ test("puck-editor-round-trip-through-human-editor-api", async ({ page }) => {
   const movedHeading = await page.request.post(
     `/api/editor/v1/sites/${siteId}/pages/${pageRecord.id}/composition/components/${headingRecord.id}/move`,
     {
-      headers: editorHeaders,
+      headers: editorHeaders(),
       data: {
         new_parent_id: section.id,
         new_slot_key: "default",

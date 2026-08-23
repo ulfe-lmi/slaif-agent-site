@@ -4,7 +4,9 @@ Control, Editor, and Agent API each own separate online PostgreSQL connection
 boundaries. Control reports bootstrap/database readiness and owns the initial
 local-administrator operation. Editor uses a separate runtime pool for
 human-authorized content COW calls and a separate Control pool for session/site
-authorization. Agent owns one typed lifespan pool and uses it only for
+authorization; each Editor request resolves a real HUMAN workspace and uses
+Editor-only workspace, idempotency, and audit functions. Agent owns one typed
+lifespan pool and uses it only for
 capability-authenticated semantic COW mutations and their narrow
 idempotency/audit functions; it does not expose a SQL endpoint or lifecycle,
 review, promotion, or publication authority.

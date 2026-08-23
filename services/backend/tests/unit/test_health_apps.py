@@ -65,6 +65,9 @@ class FakeControlDatabase:
     async def authorize_platform_administrator(self, _user_id: Any) -> bool:
         raise AssertionError("health-only app cannot invoke authorization")
 
+    async def resolve_human_editor_workspace(self, _site_id: Any, _user_id: Any) -> Any:
+        raise AssertionError("health-only app cannot invoke workspace resolution")
+
     def site_service(self) -> Any:
         raise AssertionError("health-only app cannot invoke site service")
 

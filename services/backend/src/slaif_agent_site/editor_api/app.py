@@ -10,6 +10,7 @@ from typing import Any
 
 import uvicorn
 from fastapi import FastAPI, Request
+from starlette.responses import JSONResponse, Response
 
 from ..application import create_http_application
 from ..authority import ProcessKind
@@ -25,9 +26,10 @@ from ..logging import configure_json_logging
 from .composition_http import router as composition_router
 from .config import EditorDatabaseConfigurationError, EditorDatabaseSettings
 from .content_http import router as content_model_router
-from .database import EditorDatabase
+from .database import EditorDatabase, EditorIdempotencyReplayError
 from .item_http import router as content_item_router
 from .media_http import router as media_router
+from .mutations import resource_type, response_payload, response_resource_id
 from .nav_theme_http import router as nav_theme_router
 from .page_http import router as page_router
 from .view_http import router as collection_view_router
@@ -71,22 +73,68 @@ def create_app(
     )
     app.state.database = selected_control_database
     app.state.editor_database = selected_editor_database
-    app.state.content_model_service = selected_editor_database.content_model_service()
+
+    @app.exception_handler(EditorIdempotencyReplayError)
+    async def editor_replay_handler(
+        _request: Request, error: EditorIdempotencyReplayError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=error.status_code,
+            content=error.response_body,
+        )
 
     @app.middleware("http")
     async def close_editor_content_context(request: Request, call_next: Any) -> Any:
+        context_manager: Any = None
+
+        async def rollback(error: BaseException) -> None:
+            nonlocal context_manager
+            if context_manager is not None:
+                await context_manager.__aexit__(type(error), error, error.__traceback__)
+                context_manager = None
+                request.state.editor_content_context = None
+
         try:
             response = await call_next(request)
+            context_manager = getattr(request.state, "editor_content_context", None)
+            context = getattr(request.state, "editor_request_context", None)
+            if context_manager is None or context is None:
+                return response
+            if response.status_code >= 400:
+                await rollback(RuntimeError("editor mutation response failed"))
+                return response
+            body = getattr(response, "body", None)
+            if body is None:
+                body = b"".join([chunk async for chunk in response.body_iterator])
+                response = Response(
+                    content=body,
+                    status_code=response.status_code,
+                    headers=dict(response.headers),
+                    background=response.background,
+                )
+            if context.idempotency_key is not None:
+                await selected_editor_database.complete_request(
+                    context,
+                    response_status=response.status_code,
+                    response_body=response_payload(body),
+                    action=f"{request.method} {request.url.path}",
+                    resource_type=resource_type(request),
+                    resource_id=response_resource_id(
+                        request, response_payload(body), context.site_id
+                    ),
+                )
+            await context_manager.__aexit__(None, None, None)
+            context_manager = None
+            request.state.editor_content_context = None
+            return response
         except BaseException:
             error = sys.exc_info()
-            context = getattr(request.state, "editor_content_context", None)
-            if context is not None:
-                await context.__aexit__(*error)
+            if context_manager is None:
+                context_manager = getattr(request.state, "editor_content_context", None)
+            if context_manager is not None:
+                await context_manager.__aexit__(*error)
+                request.state.editor_content_context = None
             raise
-        context = getattr(request.state, "editor_content_context", None)
-        if context is not None:
-            await context.__aexit__(None, None, None)
-        return response
 
     @app.middleware("http")
     async def editor_security_headers(request: Request, call_next: Any) -> Any:

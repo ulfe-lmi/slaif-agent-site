@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Never, cast
+from typing import Any, Never
 from uuid import UUID
 
 from fastapi import APIRouter, Request, Response
@@ -24,6 +24,7 @@ from slaif_agent_site.control_api.site_authority import (
     SiteRequestAuthority,
     authorize_site_request,
 )
+from slaif_agent_site.editor_api.mutations import request_service
 from slaif_agent_site.errors import (
     ResourceConflictError,
     ResourceNotFoundError,
@@ -34,14 +35,7 @@ router = APIRouter(prefix="/api/editor/v1/sites/{site_id}/content-model")
 
 
 def _service(request: Request) -> ContentModelService:
-    return cast(
-        ContentModelService,
-        getattr(
-            request.state,
-            "content_model_service",
-            request.app.state.content_model_service,
-        ),
-    )
+    return request_service(request)
 
 
 def _raise_cm_error(error: ContentModelServiceError) -> Never:
