@@ -426,6 +426,7 @@ def test_adapter_exposes_no_native_pool_or_sql_locator() -> None:
         "human_session_service",
         "human_authorization_service",
         "site_service",
+        "content_model_service",
         "setup_status",
         "readiness",
         "start",

@@ -176,7 +176,10 @@ Each row maps to a §51.1 bullet. Classification uses the strictest evidence.
 
 ## 9. Dependency Graph of Remaining Work
 
+<!-- markdownlint-disable MD040 -->
+
 ```
+<!-- markdownlint-enable MD040 -->
 P1-A: Fix ControlDatabase.content_model_service()
       └── Editor API routes actually work
       └── Agent API read routes actually work
@@ -245,45 +248,54 @@ P3-B: Review snapshot + promotion integration
 ## 12. Recommended Closure Sequence
 
 ### Priority A: Fix runtime wiring (blocks everything else)
+
 1. Add `content_model_service()` to ControlDatabase
 2. Fix duplicate browser_router include in agent app
 3. Wire ContentModelService into app.state for agent/editor APIs
 
 ### Priority B: Capability auth (security blocker)
+
 4. Implement real token validation against control.capability table
 5. Add TTL enforcement
 
 ### Priority C: Agent API mutations via COW sessions
+
 6. Wire agent write routes to ContentModelService via asyncpg_cow_session
 7. Add persistent idempotency (PostgreSQL-backed)
 8. Add semantic audit integration
 
 ### Priority D: Puck editor
+
 9. Add @pucklabs/puck dependency to web app
 10. Create Puck editor page using composition API
 11. Verify round-trip through UI
 
 ### Priority E: Media binary upload
+
 12. Add multipart upload endpoint to media service
 13. Content-addressed storage (SHA-256 digest → filesystem)
 14. Serve media through authenticated routes
 
 ### Priority F: Render API
+
 15. Implement page composition rendering using shared renderer
 16. Add preview rendering with workspace COW context
 
 ### Priority G: Browser worker with real Playwright
+
 17. Add Playwright dependency to browser-worker
 18. Implement screenshot/snapshot/diagnostic execution
 19. Store artifacts as immutable workspace-scoped objects
 
 ### Priority H: Review snapshot + real promotion
+
 20. Implement freeze: drain writes → create snapshot → revoke capabilities
 21. Implement accept: call promotion service with real reviewer
 22. Implement discard: call discard service
 23. Add conflict detection and structured error response
 
 ### Priority I: Demos
+
 24. Dynamic News E2E test
 25. Destructive safety E2E test
 26. Concurrent conflict E2E test

@@ -56,6 +56,9 @@ class FakeControlDatabase:
     def human_session_service(self) -> Any:
         raise AssertionError("health-only app cannot invoke sessions")
 
+    def content_model_service(self) -> Any:
+        raise AssertionError("health-only app cannot invoke content model service")
+
     async def authenticate_local_login(self, _request: Any) -> Any:
         raise AssertionError("health-only app cannot invoke login")
 

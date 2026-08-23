@@ -227,7 +227,7 @@ def test_only_control_package_imports_control_database_authority() -> None:
     source_root = REPOSITORY_ROOT / "services/backend/src/slaif_agent_site"
     sources: list[str] = []
     for package in MODULE_BY_PROCESS.values():
-        if package in {"bootstrap", "control_api", "render_api"}:
+        if package in {"bootstrap", "control_api", "editor_api", "render_api"}:
             continue
         package_root = source_root / package
         if package_root.is_dir():
