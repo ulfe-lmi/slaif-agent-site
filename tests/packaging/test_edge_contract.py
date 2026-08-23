@@ -44,6 +44,18 @@ class EdgeContractTests(unittest.TestCase):
         self.assertNotIn("location /api/control/ {\n            proxy_pass", nginx)
         self.assertIn("ProxyPass        /api/control/ !", apache)
 
+    def test_agent_health_aliases_and_prefix_preserving_route(self) -> None:
+        nginx = (ROOT / "infra/nginx/nginx.conf").read_text(encoding="utf-8")
+        for leaf in ("live", "ready"):
+            self.assertIn(f"location = /api/agent/health/{leaf}", nginx)
+            self.assertIn(f"proxy_pass http://agent-api:8000/health/{leaf};", nginx)
+        self.assertIn("location /api/agent/", nginx)
+        self.assertIn("proxy_pass http://agent-api:8000;", nginx)
+        self.assertNotIn(
+            "location /api/agent/ {\n            proxy_pass http://agent-api:8000/;",
+            nginx,
+        )
+
     def test_browser_and_render_are_not_edge_upstreams(self) -> None:
         for path in (
             ROOT / "infra/nginx/nginx.conf",
