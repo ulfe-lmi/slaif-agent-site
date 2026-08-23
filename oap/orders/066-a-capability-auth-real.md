@@ -1,4 +1,4 @@
-# OAP Work Order — 024-a
+# OAP Work Order — 066-a
 
 ## Objective
 
@@ -7,9 +7,9 @@ real token validation against the `control.capability` table.
 
 ## GitHub objective state
 
-- Numeric objective: `024`; round: `024-a`
+- Numeric objective: `066`; round: `066-a`
 - Mode: `CREATE_NEW_PR`; exactly one new PR
-- Base: current main (after 023-a merge)
+- Base: current main (after 065-a merge)
 
 ## Verified current state
 

@@ -65,6 +65,7 @@ NEW_PACKAGE_FILES = {
     "slaif_agent_site/agent_api/__init__.py",
     "slaif_agent_site/agent_api/__main__.py",
     "slaif_agent_site/agent_api/app.py",
+    "slaif_agent_site/agent_api/database.py",
     "slaif_agent_site/application.py",
     "slaif_agent_site/authority.py",
     "slaif_agent_site/bootstrap/__init__.py",
