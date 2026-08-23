@@ -3,11 +3,9 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import secrets
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
-from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any, Protocol
 from uuid import UUID, uuid4
@@ -17,10 +15,9 @@ import asyncpg
 from slaif_agent_site.agent_api.models import (
     AgentCapabilityContext as _AgentCapabilityContext,
 )
-from slaif_agent_site.agent_state.capability import (
-    compute_digest,
-    constant_time_digest_compare,
-    validate_token_format,
+from slaif_agent_site.agent_state.capability_auth import (
+    CapabilityAuthenticationUnavailableError,
+    authenticate_capability,
 )
 from slaif_agent_site.agent_state.foundation import (
     FOUNDATION_DISTRIBUTION,
@@ -75,17 +72,6 @@ INITIAL_SETUP_COMPLETE_SQL = (
 PLATFORM_ADMINISTRATOR_SQL = (
     "SELECT control.slaif_platform_administrator_authorized($1)"
 )
-CAPABILITY_AUTHENTICATION_SQL = """
-SELECT capability.id, capability.public_id, capability.secret_digest,
-       workspace.id AS workspace_id, workspace.site_id,
-       workspace.created_by, capability.scopes, capability.created_at,
-       capability.expires_at, capability.revoked_at
-FROM control.capability AS capability
-JOIN control.workspace AS workspace ON workspace.id = capability.workspace_id
-WHERE capability.public_id = $1
-  AND capability.revoked_at IS NULL
-  AND capability.expires_at > CURRENT_TIMESTAMP
-"""
 
 
 class ControlDatabaseReason(StrEnum):
@@ -437,69 +423,32 @@ class ControlDatabase:
     async def authenticate_agent_capability(self, auth_header: str) -> Any:
         """Validate one bearer capability and return its trusted context."""
 
-        if not auth_header.startswith("Bearer "):
-            return None
-        token = auth_header.removeprefix("Bearer ")
-        if not validate_token_format(token):
-            return None
-        _prefix, public_id, _secret = token.split("_", maxsplit=2)
         pool = self._pool
         if pool is None:
             raise ControlDatabaseError(ControlDatabaseReason.CONNECTION_UNAVAILABLE)
         try:
-            async with pool.acquire(
-                timeout=self._settings.acquire_timeout_seconds
-            ) as connection:
-                row = await connection.fetchrow(
-                    CAPABILITY_AUTHENTICATION_SQL, public_id
-                )
+            record = await authenticate_capability(
+                pool,
+                acquire_timeout=self._settings.acquire_timeout_seconds,
+                auth_header=auth_header,
+            )
         except asyncio.CancelledError:
             raise
-        except Exception:
+        except CapabilityAuthenticationUnavailableError:
             raise ControlDatabaseError(
                 ControlDatabaseReason.CONNECTION_UNAVAILABLE
             ) from None
-        if row is None:
+        if record is None:
             return None
-        try:
-            presented_digest = compute_digest(token)
-            stored_digest = row["secret_digest"]
-            if isinstance(stored_digest, bytes):
-                stored_digest = stored_digest.hex()
-            if not isinstance(stored_digest, str) or not constant_time_digest_compare(
-                presented_digest, stored_digest
-            ):
-                return None
-            if row["revoked_at"] is not None:
-                return None
-            expires_at = row["expires_at"]
-            if (
-                not isinstance(expires_at, datetime)
-                or expires_at.tzinfo is None
-                or expires_at <= datetime.now(UTC)
-            ):
-                return None
-            scopes_value = row["scopes"]
-            scopes = (
-                json.loads(scopes_value)
-                if isinstance(scopes_value, str)
-                else scopes_value
-            )
-            if not isinstance(scopes, list) or not all(
-                isinstance(scope, str) for scope in scopes
-            ):
-                return None
-            return _AgentCapabilityContext(
-                capability_id=row["id"],
-                site_id=row["site_id"],
-                workspace_id=row["workspace_id"],
-                delegator_id=row["created_by"],
-                scopes=frozenset(scopes),
-                created_at=row["created_at"],
-                expires_at=expires_at,
-            )
-        except (KeyError, TypeError, ValueError):
-            return None
+        return _AgentCapabilityContext(
+            capability_id=record.capability_id,
+            site_id=record.site_id,
+            workspace_id=record.workspace_id,
+            delegator_id=record.delegator_id,
+            scopes=record.scopes,
+            created_at=record.created_at,
+            expires_at=record.expires_at,
+        )
 
     async def authenticate_local_login(
         self, request: LocalLoginRequest

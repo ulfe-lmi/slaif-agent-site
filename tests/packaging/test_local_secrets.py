@@ -147,6 +147,34 @@ class LocalSecretTests(unittest.TestCase):
             ):
                 INITIALIZER.initialize(directory, render_directory=render_directory)
 
+    def test_agent_locator_is_exactly_isolated_and_idempotent(self) -> None:
+        INITIALIZER.POSTGRES_UID = os.getuid()
+        INITIALIZER.APPLICATION_UID = os.getuid()
+        INITIALIZER.CONTROL_DIRECTORY_UID = os.getuid()
+        INITIALIZER.CONTROL_DIRECTORY_GID = os.getgid()
+        INITIALIZER.MARKER_UID = os.getuid()
+        INITIALIZER.DIRECTORY_UID = os.getuid()
+        INITIALIZER.SECRET_DIRECTORY_GID = os.getgid()
+        with tempfile.TemporaryDirectory() as parent:
+            directory = Path(parent) / "secrets"
+            agent_directory = Path(parent) / "agent"
+            agent_directory.mkdir()
+            count = INITIALIZER.initialize(directory, agent_directory=agent_directory)
+            self.assertEqual(count, 24)
+            agent_file = agent_directory / "agent-dsn"
+            first = agent_file.read_bytes()
+            self.assertEqual(first, (directory / "service-agent-dsn").read_bytes())
+            self.assertEqual(
+                INITIALIZER.initialize(directory, agent_directory=agent_directory),
+                count,
+            )
+            self.assertEqual(agent_file.read_bytes(), first)
+            self.assertEqual(
+                {path.name for path in agent_directory.iterdir()}, {"agent-dsn"}
+            )
+            self.assertEqual(stat.S_IMODE(agent_directory.stat().st_mode), 0o700)
+            self.assertEqual(stat.S_IMODE(agent_file.stat().st_mode), 0o400)
+
 
 if __name__ == "__main__":
     unittest.main()

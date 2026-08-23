@@ -45,7 +45,8 @@ FOUNDATION_SCHEMA = "agentcow"
 CONTROL_READINESS_FUNCTION = "slaif_control_readiness"
 CONTROL_SETUP_STATUS_FUNCTION = "slaif_setup_status"
 CONTROL_ROLE = "slaif_control"
-CONTROL_READ_RELATIONS = ("workspace", "capability")
+CAPABILITY_READ_RELATIONS = ("workspace", "capability")
+CAPABILITY_READ_ROLES = (CONTROL_ROLE, "slaif_agent_runtime")
 PUBLIC_RESOLVER_FUNCTIONS = {
     ("slaif_site_resolve", "p_hostname text, p_path text"): "text, text",
     ("slaif_site_resolve_local", "p_site_key text"): "text",
@@ -440,14 +441,16 @@ async def apply_product_privileges(
                     f"GRANT SELECT ON {relation} TO {quote_identifier(role)}"
                 )
 
-    await connection.execute(
-        f'GRANT USAGE ON SCHEMA "control" TO {quote_identifier(CONTROL_ROLE)}'
-    )
-    for relation in CONTROL_READ_RELATIONS:
+    for role in CAPABILITY_READ_ROLES:
         await connection.execute(
-            f'GRANT SELECT ON "control".{quote_identifier(relation)} '
-            f"TO {quote_identifier(CONTROL_ROLE)}"
+            f'GRANT USAGE ON SCHEMA "control" TO {quote_identifier(role)}'
         )
+    for relation in CAPABILITY_READ_RELATIONS:
+        for role in CAPABILITY_READ_ROLES:
+            await connection.execute(
+                f'GRANT SELECT ON "control".{quote_identifier(relation)} '
+                f"TO {quote_identifier(role)}"
+            )
     for (name, _identity), signature in CONTROL_FUNCTIONS.items():
         await connection.execute(
             "GRANT EXECUTE ON FUNCTION "
@@ -562,7 +565,8 @@ async def _schema_violations(
             if can_create:
                 violations.append(f"schema/{schema}/{role}/create")
             expected_usage = (
-                schema == "control" and role in {CONTROL_ROLE, "slaif_public_reader"}
+                schema == "control"
+                and role in {*CAPABILITY_READ_ROLES, "slaif_public_reader"}
             ) or (
                 readiness_state is ReadinessState.HARDENED
                 and (
@@ -635,8 +639,8 @@ async def _relation_violations(
             if (
                 schema == "control"
                 and kind in {"r", "p"}
-                and name in CONTROL_READ_RELATIONS
-                and role == CONTROL_ROLE
+                and name in CAPABILITY_READ_RELATIONS
+                and role in CAPABILITY_READ_ROLES
             ):
                 expected = (True, False, False, False, False)
             if (
@@ -850,6 +854,8 @@ async def verify_database_privileges(
 
 __all__ = [
     "ALLOWED_CLEAN_RELATIONS",
+    "CAPABILITY_READ_RELATIONS",
+    "CAPABILITY_READ_ROLES",
     "CONTROL_FUNCTIONS",
     "CONTROL_READINESS_FUNCTION",
     "ContentObject",

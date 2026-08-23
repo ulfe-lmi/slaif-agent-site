@@ -3,36 +3,38 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
+import asyncpg
 import httpx
 import pytest
 from conftest import AgentSiteDatabase
 from pydantic import SecretStr
 from slaif_agent_site.agent_api.app import create_app as create_agent_app
+from slaif_agent_site.agent_api.config import (
+    AgentDatabaseMode,
+    AgentDatabaseSettings,
+)
 from slaif_agent_site.agent_state.capability import (
     compute_digest,
     generate_capability_token,
 )
 from slaif_agent_site.bootstrap.service import reconcile, upgrade
 from slaif_agent_site.config import ServiceSettings
-from slaif_agent_site.control_api.config import (
-    ControlDatabaseMode,
-    ControlDatabaseSettings,
-)
 from slaif_agent_site.db.connections import owner_connection
 
 
-def _control_settings(database: AgentSiteDatabase) -> ControlDatabaseSettings:
-    login, password = database.credentials["slaif_control"]
+def _agent_settings(database: AgentSiteDatabase) -> AgentDatabaseSettings:
+    login, password = database.credentials["slaif_agent_runtime"]
     host = quote(str(database.connection_parameters["host"]), safe="[]:.")
     locator = (
         f"postgresql://{quote(login, safe='')}:{quote(password, safe='')}@"
         f"{host}:{database.connection_parameters['port']}/{database.name}"
     )
-    return ControlDatabaseSettings(
-        mode=ControlDatabaseMode.TEST,
+    return AgentDatabaseSettings(
+        mode=AgentDatabaseMode.TEST,
         dsn=SecretStr(locator),
         dsn_file=None,
         expected_database=database.name,
@@ -120,9 +122,38 @@ async def test_capability_authentication_positive_negative_and_expiry_paths(
     database = agent_site_database
     valid_token, seeded = await _seed_workspace_and_capability(database)
     unknown_token, _public_id, _unknown_digest = generate_capability_token()
+    agent_settings = _agent_settings(database)
+    agent_connection = await asyncpg.connect(
+        agent_settings.resolved_dsn().get_secret_value()
+    )
+    try:
+        identity = await agent_connection.fetchrow(
+            "SELECT current_database(), session_user, current_user, "
+            "pg_has_role(current_user, $1, 'MEMBER'), "
+            "has_table_privilege(current_user, 'control.capability', 'SELECT'), "
+            "has_table_privilege(current_user, 'control.capability', 'INSERT')",
+            "slaif_agent_runtime",
+        )
+        assert tuple(identity) == (
+            database.name,
+            database.credentials["slaif_agent_runtime"][0],
+            database.credentials["slaif_agent_runtime"][0],
+            True,
+            True,
+            False,
+        )
+        with pytest.raises(asyncpg.InsufficientPrivilegeError):
+            await agent_connection.fetchval("SELECT control.slaif_setup_status()")
+        with pytest.raises(asyncpg.InsufficientPrivilegeError):
+            await agent_connection.fetchrow(
+                "SELECT * FROM control.slaif_workspace_get($1)",
+                seeded["workspace_id"],
+            )
+    finally:
+        await agent_connection.close()
     app = create_agent_app(
         settings=ServiceSettings.for_test(),
-        capability_database_settings=_control_settings(database),
+        database_settings=agent_settings,
     )
     async with app.router.lifespan_context(app):
         wrong_secret = valid_token[:-4] + ("0" * 4)
@@ -200,10 +231,10 @@ async def test_capability_authentication_positive_negative_and_expiry_paths(
             assert expired.status_code == 401
             assert expired_token not in expired.text
 
-    unavailable_settings = _control_settings(database).model_copy(
+    unavailable_settings = _agent_settings(database).model_copy(
         update={
             "dsn": SecretStr(
-                "postgresql://slaif_control_login:fixture@"
+                "postgresql://slaif_agent_login:fixture@"
                 "127.0.0.1:5432/slaif_unavailable"
             ),
             "expected_database": "slaif_unavailable",
@@ -212,7 +243,7 @@ async def test_capability_authentication_positive_negative_and_expiry_paths(
     )
     unavailable_app = create_agent_app(
         settings=ServiceSettings.for_test(),
-        capability_database_settings=unavailable_settings,
+        database_settings=unavailable_settings,
     )
     async with unavailable_app.router.lifespan_context(unavailable_app):
         unavailable_transport = httpx.ASGITransport(app=unavailable_app)
@@ -223,6 +254,32 @@ async def test_capability_authentication_positive_negative_and_expiry_paths(
                 "/api/agent/v1/session",
                 headers={"Authorization": f"Bearer {valid_token}"},
             )
-        assert response.status_code == 503
-        assert "postgresql" not in response.text
-        assert valid_token not in response.text
+    assert response.status_code == 503
+    assert "postgresql" not in response.text
+    assert valid_token not in response.text
+
+    for invalid_settings in (
+        agent_settings.model_copy(
+            update={
+                "dsn": None,
+                "dsn_file": Path("/definitely/missing/agent-dsn"),
+            }
+        ),
+        agent_settings.model_copy(update={"expected_privilege_role": "slaif_control"}),
+    ):
+        invalid_app = create_agent_app(
+            settings=ServiceSettings.for_test(),
+            database_settings=invalid_settings,
+        )
+        async with invalid_app.router.lifespan_context(invalid_app):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=invalid_app),
+                base_url="http://agent.test",
+            ) as invalid_client:
+                invalid_response = await invalid_client.get(
+                    "/api/agent/v1/session",
+                    headers={"Authorization": f"Bearer {valid_token}"},
+                )
+        assert invalid_response.status_code == 503
+        assert valid_token not in invalid_response.text
+        assert "postgresql" not in invalid_response.text

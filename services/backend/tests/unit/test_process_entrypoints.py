@@ -12,6 +12,7 @@ from unittest.mock import patch
 
 import pytest
 from fastapi import FastAPI
+from slaif_agent_site.agent_api.app import run_agent_process
 from slaif_agent_site.application import run_http_process
 from slaif_agent_site.authority import LifecycleKind, ProcessKind, authority_for
 from slaif_agent_site.control_api.app import run_control_process
@@ -83,6 +84,19 @@ def test_http_check_does_not_call_uvicorn_and_normal_run_passes_app_object() -> 
         assert isinstance(uvicorn_run.call_args.args[0], FastAPI)
         assert uvicorn_run.call_args.kwargs["host"] == "127.0.0.1"
         assert uvicorn_run.call_args.kwargs["port"] == 8000
+
+
+def test_agent_entrypoint_uses_real_factory_without_check_connection() -> None:
+    with patch.dict(os.environ, {"SLAIF_MODE": "test"}, clear=True):
+        with patch("slaif_agent_site.agent_api.app.uvicorn.run") as uvicorn_run:
+            assert run_agent_process(argv=["--check"]) == 0
+            uvicorn_run.assert_not_called()
+
+            assert run_agent_process(argv=[]) == 0
+            uvicorn_run.assert_called_once()
+            assert isinstance(uvicorn_run.call_args.args[0], FastAPI)
+            assert uvicorn_run.call_args.kwargs["host"] == "127.0.0.1"
+            assert uvicorn_run.call_args.kwargs["port"] == 8000
 
 
 def test_control_check_uses_package_app_without_reading_or_connecting() -> None:
@@ -239,4 +253,9 @@ def test_only_control_package_imports_control_database_authority() -> None:
     assert "ControlDatabaseSettings" not in combined
     assert "ControlDatabase" not in combined
     assert "SLAIF_CONTROL_" not in combined
-    assert "asyncpg" not in combined
+    agent_database = (source_root / "agent_api" / "database.py").read_text(
+        encoding="utf-8"
+    )
+    agent_sources = "\n".join(source for source in sources if "asyncpg" not in source)
+    assert "asyncpg" not in agent_sources
+    assert "asyncpg" in agent_database

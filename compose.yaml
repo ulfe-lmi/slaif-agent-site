@@ -86,12 +86,15 @@ services:
       - /run/slaif-secrets
       - --control-directory
       - /run/slaif-control
+      - --agent-directory
+      - /run/slaif-agent
       - --render-directory
       - /run/slaif-render
     restart: "no"
     network_mode: none
     volumes:
       - control-secret:/run/slaif-control
+      - agent-secret:/run/slaif-agent
       - local-secrets:/run/slaif-secrets
       - render-secret:/run/slaif-render
 
@@ -186,6 +189,20 @@ services:
   agent-api:
     <<: *backend-service
     command: ["python", "-m", "slaif_agent_site.agent_api"]
+    environment:
+      SLAIF_BIND_HOST: 0.0.0.0
+      SLAIF_BIND_PORT: "8000"
+      SLAIF_AGENT_DSN_FILE: /run/slaif-agent/agent-dsn
+      SLAIF_AGENT_EXPECTED_DATABASE: slaif
+      SLAIF_AGENT_EXPECTED_LOGIN: slaif_agent_login
+      SLAIF_AGENT_EXPECTED_PRIVILEGE_ROLE: slaif_agent_runtime
+      SLAIF_AGENT_MODE: development
+      SLAIF_LOG_FORMAT: json
+      SLAIF_LOG_LEVEL: INFO
+      SLAIF_MODE: development
+      SLAIF_PUBLIC_URL: http://localhost:8080
+    volumes:
+      - agent-secret:/run/slaif-agent:ro
     networks: [edge, database, browser]
 
   render-api:
@@ -346,6 +363,7 @@ networks:
     internal: true
 
 volumes:
+  agent-secret: {}
   control-secret: {}
   local-secrets: {}
   media-data: {}
