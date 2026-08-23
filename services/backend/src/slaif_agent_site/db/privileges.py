@@ -45,6 +45,7 @@ FOUNDATION_SCHEMA = "agentcow"
 CONTROL_READINESS_FUNCTION = "slaif_control_readiness"
 CONTROL_SETUP_STATUS_FUNCTION = "slaif_setup_status"
 CONTROL_ROLE = "slaif_control"
+CONTROL_READ_RELATIONS = ("workspace", "capability")
 PUBLIC_RESOLVER_FUNCTIONS = {
     ("slaif_site_resolve", "p_hostname text, p_path text"): "text, text",
     ("slaif_site_resolve_local", "p_site_key text"): "text",
@@ -442,6 +443,11 @@ async def apply_product_privileges(
     await connection.execute(
         f'GRANT USAGE ON SCHEMA "control" TO {quote_identifier(CONTROL_ROLE)}'
     )
+    for relation in CONTROL_READ_RELATIONS:
+        await connection.execute(
+            f'GRANT SELECT ON "control".{quote_identifier(relation)} '
+            f"TO {quote_identifier(CONTROL_ROLE)}"
+        )
     for (name, _identity), signature in CONTROL_FUNCTIONS.items():
         await connection.execute(
             "GRANT EXECUTE ON FUNCTION "
@@ -626,6 +632,13 @@ async def _relation_violations(
                 )
             )
             expected = (False, False, False, False, False)
+            if (
+                schema == "control"
+                and kind in {"r", "p"}
+                and name in CONTROL_READ_RELATIONS
+                and role == CONTROL_ROLE
+            ):
+                expected = (True, False, False, False, False)
             if (
                 readiness_state is ReadinessState.HARDENED
                 and schema == "content"
