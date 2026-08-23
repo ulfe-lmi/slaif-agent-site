@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from typing import cast
 from uuid import UUID
 
 from fastapi import APIRouter, Request, Response
@@ -27,7 +28,14 @@ router = APIRouter(prefix="/api/editor/v1/sites/{site_id}/collection-views")
 
 
 def _service(request: Request) -> ContentModelService:
-    return request.app.state.content_model_service  # type: ignore[no-any-return]
+    return cast(
+        ContentModelService,
+        getattr(
+            request.state,
+            "content_model_service",
+            request.app.state.content_model_service,
+        ),
+    )
 
 
 async def _auth(

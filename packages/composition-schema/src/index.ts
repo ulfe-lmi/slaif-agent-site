@@ -49,3 +49,5 @@ export function isCompositionNode(value: unknown): value is CompositionNode {
     typeof node.props === "object"
   );
 }
+
+export * from "./puck-adapter";

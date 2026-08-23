@@ -23,13 +23,18 @@ export function secrets(): Secrets {
   return JSON.parse(readFileSync(path, "utf8")) as Secrets;
 }
 
-export function observe(page: Page, expectedFailures: RegExp[] = []) {
+export function observe(
+  page: Page,
+  expectedFailures: RegExp[] = [],
+  expectedConsoleMessages: RegExp[] = [],
+) {
   const failures: string[] = [];
   page.on("console", (message) => {
     const source = message.location().url;
     if (
       message.type() === "error" &&
-      !expectedFailures.some((pattern) => pattern.test(source))
+      !expectedFailures.some((pattern) => pattern.test(source)) &&
+      !expectedConsoleMessages.some((pattern) => pattern.test(message.text()))
     ) {
       failures.push(
         `console-${classifyConsoleSource(source, page.url())}-${classifyConsoleMessage(message.text())}`,

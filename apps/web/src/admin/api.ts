@@ -1,4 +1,7 @@
 import { CONTROL, csrfCookie } from "../auth/client";
+import type { NormalizedCompositionNode } from "@slaif-agent-site/composition-schema";
+
+const EDITOR = "/api/editor/v1";
 
 export type AdminSession = {
   recent_auth: boolean;
@@ -277,6 +280,15 @@ async function request(path: string, init: RequestInit = {}): Promise<Response> 
     headers: { Accept: "application/json", ...init.headers },
   });
 }
+
+async function editorRequest(path: string, init: RequestInit = {}): Promise<Response> {
+  return fetch(`${EDITOR}${path}`, {
+    ...init,
+    credentials: "same-origin",
+    cache: "no-store",
+    headers: { Accept: "application/json", ...init.headers },
+  });
+}
 async function json(path: string, init: RequestInit = {}): Promise<unknown> {
   const response = await request(path, init);
   if (!response.ok) classify(response.status);
@@ -290,6 +302,150 @@ function mutation(method: string, body?: unknown): RequestInit {
   };
   if (body !== undefined) init.body = JSON.stringify(body);
   return init;
+}
+
+function editorMutation(method: string, body?: unknown): RequestInit {
+  const csrf = csrfCookie(document.cookie, window.location.protocol === "https:");
+  const init: RequestInit = {
+    method,
+    headers: { "Content-Type": "application/json", "X-CSRF-Token": csrf },
+  };
+  if (body !== undefined) init.body = JSON.stringify(body);
+  return init;
+}
+
+async function editorJson(path: string, init: RequestInit = {}): Promise<unknown> {
+  const response = await editorRequest(path, init);
+  if (!response.ok) classify(response.status);
+  return response.json() as Promise<unknown>;
+}
+
+function compositionNode(value: unknown): NormalizedCompositionNode {
+  const item = object(value);
+  const parentId = item.parent_id;
+  const props = item.props;
+  if (
+    (parentId !== null && typeof parentId !== "string") ||
+    !isUuidValue(item.id) ||
+    !isUuidValue(item.page_id) ||
+    !isUuidValue(item.site_id) ||
+    typeof item.component_type !== "string" ||
+    typeof item.schema_version !== "string" ||
+    typeof item.slot_key !== "string" ||
+    typeof item.order_key !== "number" ||
+    !Number.isInteger(item.order_key) ||
+    !isPlainObject(props)
+  )
+    throw new Error("invalid-response");
+  return {
+    id: item.id,
+    componentType: item.component_type,
+    schemaVersion: item.schema_version,
+    parentId,
+    slotKey: item.slot_key,
+    orderKey: item.order_key,
+    props,
+  };
+}
+
+function isUuidValue(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+      value,
+    )
+  );
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function editorPath(siteId: string, pageId: string, suffix = "") {
+  return `/sites/${encodeURIComponent(siteId)}/pages/${encodeURIComponent(pageId)}/composition/${suffix}`;
+}
+
+export async function loadComposition(
+  siteId: string,
+  pageId: string,
+): Promise<NormalizedCompositionNode[]> {
+  const value = await editorJson(editorPath(siteId, pageId));
+  if (!Array.isArray(value)) throw new Error("invalid-response");
+  return value.map((item) => {
+    const node = compositionNode(item);
+    if (node.parentId !== null && !isUuidValue(node.parentId))
+      throw new Error("invalid-response");
+    return node;
+  });
+}
+
+export async function addCompositionNode(
+  siteId: string,
+  pageId: string,
+  node: Pick<
+    NormalizedCompositionNode,
+    "componentType" | "parentId" | "slotKey" | "orderKey" | "props"
+  >,
+): Promise<NormalizedCompositionNode> {
+  const result = compositionNode(
+    await editorJson(
+      editorPath(siteId, pageId, "components"),
+      editorMutation("POST", {
+        component_type: node.componentType,
+        parent_id: node.parentId,
+        slot_key: node.slotKey,
+        order_key: node.orderKey,
+        props: node.props,
+      }),
+    ),
+  );
+  return result;
+}
+
+export async function updateCompositionNode(
+  siteId: string,
+  pageId: string,
+  nodeId: string,
+  props: Record<string, unknown>,
+): Promise<NormalizedCompositionNode> {
+  return compositionNode(
+    await editorJson(
+      editorPath(siteId, pageId, `components/${encodeURIComponent(nodeId)}`),
+      editorMutation("PATCH", { props }),
+    ),
+  );
+}
+
+export async function moveCompositionNode(
+  siteId: string,
+  pageId: string,
+  nodeId: string,
+  parentId: string | null,
+  slotKey: string,
+  orderKey: number,
+): Promise<NormalizedCompositionNode> {
+  return compositionNode(
+    await editorJson(
+      editorPath(siteId, pageId, `components/${encodeURIComponent(nodeId)}/move`),
+      editorMutation("POST", {
+        new_parent_id: parentId,
+        new_slot_key: slotKey,
+        new_order_key: orderKey,
+      }),
+    ),
+  );
+}
+
+export async function deleteCompositionNode(
+  siteId: string,
+  pageId: string,
+  nodeId: string,
+): Promise<void> {
+  const response = await editorRequest(
+    editorPath(siteId, pageId, `components/${encodeURIComponent(nodeId)}`),
+    editorMutation("DELETE"),
+  );
+  if (!response.ok) classify(response.status);
 }
 
 export async function loadAdmin(): Promise<{

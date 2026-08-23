@@ -9,6 +9,7 @@ second ordinary connection.
 from __future__ import annotations
 
 import asyncio
+import json
 from enum import StrEnum
 from typing import Any, Protocol
 from uuid import UUID
@@ -334,7 +335,7 @@ class CompositionMixin:
             parent_id,
             slot_key,
             order_key,
-            props,
+            json.dumps(props, sort_keys=True),
         )
         if row is None:
             raise ContentModelServiceError(ContentModelServiceReason.CONFLICT)
@@ -347,7 +348,13 @@ class CompositionMixin:
         slot_key: str | None,
         order_key: int | None,
     ) -> Any:
-        row = await self._fetchrow(CMP_UPDATE_SQL, node_id, props, slot_key, order_key)
+        row = await self._fetchrow(
+            CMP_UPDATE_SQL,
+            node_id,
+            json.dumps(props, sort_keys=True) if props is not None else None,
+            slot_key,
+            order_key,
+        )
         if row is None:
             raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
         return _cmp(row)

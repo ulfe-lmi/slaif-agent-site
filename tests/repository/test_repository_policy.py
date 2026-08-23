@@ -77,7 +77,7 @@ class RepositoryPolicyTestCase(unittest.TestCase):
             "  - services/browser-worker\n\nallowBuilds:\n  esbuild: false\n\n"
             "autoInstallPeers: false\n\nignoredOptionalDependencies:\n"
             "  - sharp\n\noverrides:\n  esbuild: 0.28.1\n"
-            "  vite: 7.3.6\n",
+            "  uuid: 11.1.1\n  vite: 7.3.6\n",
         )
         self.write_json(
             "tsconfig.base.json",
@@ -108,6 +108,7 @@ class RepositoryPolicyTestCase(unittest.TestCase):
                     "test": "node --test tests/*.test.mjs",
                 },
                 "dependencies": {
+                    "@measured/puck": "0.20.2",
                     "@radix-ui/react-dialog": "1.1.23",
                     "next": "16.3.1",
                     "react": "19.2.8",

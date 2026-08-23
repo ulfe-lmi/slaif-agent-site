@@ -9,6 +9,13 @@ CI SBOM evidence bundle.
 | Component | Version | Ecosystem / scope | License / review | Source | Attribution |
 | --- | --- | --- | --- | --- | --- |
 | `@alloc/quick-lru` | `5.2.0` | npm / development | `MIT` | <https://github.com/sindresorhus/quick-lru#readme> | — |
+| `@dnd-kit/abstract` | `0.1.21` | npm / production | `MIT` | <https://www.npmjs.com/package/%40dnd-kit/abstract/v/0.1.21> | — |
+| `@dnd-kit/collision` | `0.1.21` | npm / production | `MIT` | <https://www.npmjs.com/package/%40dnd-kit/collision/v/0.1.21> | — |
+| `@dnd-kit/dom` | `0.1.21` | npm / production | `MIT` | <https://www.npmjs.com/package/%40dnd-kit/dom/v/0.1.21> | — |
+| `@dnd-kit/geometry` | `0.1.21` | npm / production | `MIT` | <https://www.npmjs.com/package/%40dnd-kit/geometry/v/0.1.21> | — |
+| `@dnd-kit/helpers` | `0.1.18` | npm / production | `MIT` | <https://www.npmjs.com/package/%40dnd-kit/helpers/v/0.1.18> | — |
+| `@dnd-kit/react` | `0.1.18` | npm / production | `MIT` | <https://www.npmjs.com/package/%40dnd-kit/react/v/0.1.18> | — |
+| `@dnd-kit/state` | `0.1.21` | npm / production | `MIT` | <https://www.npmjs.com/package/%40dnd-kit/state/v/0.1.21> | — |
 | `@esbuild/linux-x64` | `0.28.1` | npm / development | `MIT` | <https://github.com/evanw/esbuild#readme> | — |
 | `@eslint-community/eslint-utils` | `4.10.1` | npm / development | `MIT` | <https://github.com/eslint-community/eslint-utils#readme> | — |
 | `@eslint-community/regexpp` | `4.12.2` | npm / development | `MIT` | <https://github.com/eslint-community/regexpp#readme> | — |
@@ -27,6 +34,7 @@ CI SBOM evidence bundle.
 | `@jridgewell/resolve-uri` | `3.1.2` | npm / development | `MIT` | <https://github.com/jridgewell/resolve-uri#readme> | — |
 | `@jridgewell/sourcemap-codec` | `1.5.5` | npm / development | `MIT` | <https://github.com/jridgewell/sourcemaps/tree/main/packages/sourcemap-codec> | — |
 | `@jridgewell/trace-mapping` | `0.3.31` | npm / development | `MIT` | <https://github.com/jridgewell/sourcemaps/tree/main/packages/trace-mapping> | — |
+| `@measured/puck` | `0.20.2` | npm / production | `MIT` | <https://puckeditor.com> | — |
 | `@napi-rs/lzma-linux-x64-gnu` | `1.5.1` | npm / development | `MIT` | <https://github.com/Brooooooklyn/lzma#readme> | — |
 | `@next/env` | `16.3.1` | npm / production | `MIT` | <https://github.com/vercel/next.js#readme> | — |
 | `@next/swc-linux-x64-gnu` | `16.3.1` | npm / production | `MIT` | <https://github.com/vercel/next.js#readme> | — |
@@ -34,6 +42,7 @@ CI SBOM evidence bundle.
 | `@nodelib/fs.stat` | `2.0.5` | npm / development | `MIT` | <https://github.com/nodelib/nodelib/tree/master#readme> | — |
 | `@nodelib/fs.walk` | `1.2.8` | npm / development | `MIT` | <https://github.com/nodelib/nodelib/tree/master#readme> | — |
 | `@playwright/test` | `1.62.1` | npm / production | `Apache-2.0` | <https://playwright.dev> | Apache-2.0 test-only browser automation; matching browser builds remain outside product images. |
+| `@preact/signals-core` | `1.14.4` | npm / production | `MIT` | <https://preactjs.com> | — |
 | `@radix-ui/primitive` | `1.1.7` | npm / production | `MIT` | <https://radix-ui.com/primitives> | — |
 | `@radix-ui/react-compose-refs` | `1.1.5` | npm / production | `MIT` | <https://radix-ui.com/primitives> | — |
 | `@radix-ui/react-context` | `1.2.2` | npm / production | `MIT` | <https://radix-ui.com/primitives> | — |
@@ -104,6 +113,7 @@ CI SBOM evidence bundle.
 | `cssesc` | `3.0.0` | npm / development | `MIT` | <https://mths.be/cssesc> | — |
 | `csstype` | `3.2.3` | npm / production | `MIT` | <https://github.com/frenic/csstype#readme> | — |
 | `debug` | `4.4.3` | npm / development | `MIT` | <https://github.com/debug-js/debug#readme> | — |
+| `deep-diff` | `1.0.2` | npm / production | `MIT` | <https://github.com/flitbit/diff#readme> | — |
 | `deep-is` | `0.1.4` | npm / development | `MIT` | <https://github.com/thlorenz/deep-is#readme> | — |
 | `detect-node-es` | `1.1.0` | npm / production | `MIT` | <https://github.com/thekashey/detect-node> | — |
 | `didyoumean` | `1.2.2` | npm / development | `Apache-2.0` | <https://github.com/dcporter/didyoumean.js> | — |
@@ -125,7 +135,7 @@ CI SBOM evidence bundle.
 | `estree-walker` | `3.0.3` | npm / development | `MIT` | <https://github.com/Rich-Harris/estree-walker#readme> | — |
 | `esutils` | `2.0.3` | npm / development | `BSD-2-Clause` | <https://github.com/estools/esutils> | — |
 | `expect-type` | `1.4.0` | npm / development | `Apache-2.0` | <https://github.com/mmkal/expect-type#readme> | — |
-| `fast-deep-equal` | `3.1.3` | npm / development | `MIT` | <https://github.com/epoberezkin/fast-deep-equal#readme> | — |
+| `fast-deep-equal` | `3.1.3` | npm / production | `MIT` | <https://github.com/epoberezkin/fast-deep-equal#readme> | — |
 | `fast-glob` | `3.3.3` | npm / development | `MIT` | <https://github.com/mrmlnc/fast-glob#readme> | — |
 | `fast-json-stable-stringify` | `2.1.0` | npm / development | `MIT` | <https://github.com/epoberezkin/fast-json-stable-stringify> | — |
 | `fast-levenshtein` | `2.0.6` | npm / development | `MIT` | <https://github.com/hiddentao/fast-levenshtein#readme> | — |
@@ -134,6 +144,7 @@ CI SBOM evidence bundle.
 | `file-entry-cache` | `8.0.0` | npm / development | `MIT` | <https://github.com/jaredwray/file-entry-cache#readme> | — |
 | `fill-range` | `7.1.1` | npm / development | `MIT` | <https://github.com/jonschlinkert/fill-range> | — |
 | `find-up` | `5.0.0` | npm / development | `MIT` | <https://github.com/sindresorhus/find-up#readme> | — |
+| `flat` | `5.0.2` | npm / production | `BSD-3-Clause` | <https://github.com/hughsk/flat> | — |
 | `flat-cache` | `4.0.1` | npm / development | `MIT` | <https://github.com/jaredwray/flat-cache#readme> | — |
 | `flatted` | `3.4.4` | npm / development | `ISC` | <https://github.com/WebReflection/flatted#readme> | — |
 | `fraction.js` | `5.3.4` | npm / development | `MIT` | <https://raw.org/article/rational-numbers-in-javascript/> | — |
@@ -172,7 +183,7 @@ CI SBOM evidence bundle.
 | `node-releases` | `2.0.53` | npm / development | `MIT` | <https://github.com/chicoxyzzy/node-releases#readme> | — |
 | `normalize-path` | `3.0.0` | npm / development | `MIT` | <https://github.com/jonschlinkert/normalize-path> | — |
 | `object-assign` | `4.1.1` | npm / development | `MIT` | <https://github.com/sindresorhus/object-assign#readme> | — |
-| `object-hash` | `3.0.0` | npm / development | `MIT` | <https://github.com/puleos/object-hash> | — |
+| `object-hash` | `3.0.0` | npm / production | `MIT` | <https://github.com/puleos/object-hash> | — |
 | `obug` | `2.1.4` | npm / development | `MIT` | <https://github.com/sxzz/obug#readme> | — |
 | `optionator` | `0.9.4` | npm / development | `MIT` | <https://github.com/gkz/optionator> | — |
 | `p-limit` | `3.1.0` | npm / development | `MIT` | <https://github.com/sindresorhus/p-limit#readme> | — |
@@ -201,6 +212,7 @@ CI SBOM evidence bundle.
 | `queue-microtask` | `1.2.3` | npm / development | `MIT` | <https://github.com/feross/queue-microtask> | — |
 | `react` | `19.2.8` | npm / production | `MIT` | <https://react.dev/> | — |
 | `react-dom` | `19.2.8` | npm / production | `MIT` | <https://react.dev/> | — |
+| `react-hotkeys-hook` | `4.6.2` | npm / production | `MIT` | <https://johannesklauss.github.io/react-hotkeys-hook/> | — |
 | `react-remove-scroll` | `2.7.2` | npm / production | `MIT` | <https://github.com/theKashey/react-remove-scroll#readme> | — |
 | `react-remove-scroll-bar` | `2.3.8` | npm / production | `MIT` | <https://github.com/theKashey/react-remove-scroll-bar#readme> | — |
 | `react-style-singleton` | `2.2.3` | npm / production | `MIT` | <https://github.com/theKashey/react-style-singleton#readme> | — |
@@ -239,14 +251,17 @@ CI SBOM evidence bundle.
 | `update-browserslist-db` | `1.3.1` | npm / development | `MIT` | <https://github.com/browserslist/update-db#readme> | — |
 | `uri-js` | `4.4.1` | npm / development | `BSD-2-Clause` | <https://github.com/garycourt/uri-js> | — |
 | `use-callback-ref` | `1.3.3` | npm / production | `MIT` | <https://github.com/theKashey/use-callback-ref#readme> | — |
+| `use-debounce` | `9.0.4` | npm / production | `MIT` | <https://github.com/xnimorz/use-debounce#readme> | — |
 | `use-sidecar` | `1.1.3` | npm / production | `MIT` | <https://github.com/theKashey/use-sidecar> | — |
 | `util-deprecate` | `1.0.2` | npm / development | `MIT` | <https://github.com/TooTallNate/util-deprecate> | — |
+| `uuid` | `11.1.1` | npm / production | `MIT` | <https://github.com/uuidjs/uuid#readme> | — |
 | `vite` | `7.3.6` | npm / development | `MIT` | <https://vite.dev> | — |
 | `vitest` | `4.1.10` | npm / development | `MIT` | <https://vitest.dev> | — |
 | `which` | `2.0.2` | npm / development | `ISC` | <https://github.com/isaacs/node-which#readme> | — |
 | `why-is-node-running` | `2.3.0` | npm / development | `MIT` | <https://github.com/mafintosh/why-is-node-running> | — |
 | `word-wrap` | `1.2.5` | npm / development | `MIT` | <https://github.com/jonschlinkert/word-wrap> | — |
 | `yocto-queue` | `0.1.0` | npm / development | `MIT` | <https://github.com/sindresorhus/yocto-queue#readme> | — |
+| `zustand` | `5.0.15` | npm / production | `MIT` | <https://github.com/pmndrs/zustand> | — |
 | `agent-cow-postgresql` | `0.2.0` | PyPI / production | `MIT` | <https://github.com/jpers1/agent-cow-postgresql> | MIT foundation derived from agent-cow-python; retain upstream and downstream attribution. |
 | `alembic` | `1.19.1` | PyPI / production | `MIT` | <https://github.com/sqlalchemy/alembic/> | — |
 | `annotated-doc` | `0.0.5` | PyPI / production | `MIT` | <https://github.com/fastapi/annotated-doc> | — |

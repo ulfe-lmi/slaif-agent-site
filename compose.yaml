@@ -90,6 +90,8 @@ services:
       - /run/slaif-agent
       - --render-directory
       - /run/slaif-render
+      - --editor-directory
+      - /run/slaif-editor
     restart: "no"
     network_mode: none
     volumes:
@@ -97,6 +99,7 @@ services:
       - agent-secret:/run/slaif-agent
       - local-secrets:/run/slaif-secrets
       - render-secret:/run/slaif-render
+      - editor-secret:/run/slaif-editor
 
   postgres:
     <<: *common-security
@@ -184,6 +187,26 @@ services:
   editor-api:
     <<: *backend-service
     command: ["python", "-m", "slaif_agent_site.editor_api"]
+    environment:
+      SLAIF_BIND_HOST: 0.0.0.0
+      SLAIF_BIND_PORT: "8000"
+      SLAIF_LOG_FORMAT: json
+      SLAIF_LOG_LEVEL: INFO
+      SLAIF_MODE: development
+      SLAIF_PUBLIC_URL: http://localhost:8080
+      SLAIF_CONTROL_DSN_FILE: /run/slaif-control/control-dsn
+      SLAIF_CONTROL_EXPECTED_DATABASE: slaif
+      SLAIF_CONTROL_EXPECTED_LOGIN: slaif_control_login
+      SLAIF_CONTROL_EXPECTED_PRIVILEGE_ROLE: slaif_control
+      SLAIF_CONTROL_MODE: development
+      SLAIF_EDITOR_DSN_FILE: /run/slaif-editor/editor-dsn
+      SLAIF_EDITOR_EXPECTED_DATABASE: slaif
+      SLAIF_EDITOR_EXPECTED_LOGIN: slaif_editor_login
+      SLAIF_EDITOR_EXPECTED_PRIVILEGE_ROLE: slaif_editor_runtime
+      SLAIF_EDITOR_MODE: development
+    volumes:
+      - control-secret:/run/slaif-control:ro
+      - editor-secret:/run/slaif-editor:ro
     networks: [edge, database]
 
   agent-api:
@@ -365,6 +388,7 @@ networks:
 volumes:
   agent-secret: {}
   control-secret: {}
+  editor-secret: {}
   local-secrets: {}
   media-data: {}
   postgres-data: {}

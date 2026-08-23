@@ -156,6 +156,19 @@ symlinked, broad-mode, wrong-owner, wrong-login, wrong-role, or unavailable
 locator state makes Render readiness fail closed and consequently makes Web and
 NGINX readiness fail.
 
+## Editor database configuration
+
+`EditorDatabaseSettings` is owned by `editor_api`, uses `SLAIF_EDITOR_`, and
+fixes login `slaif_editor_login`, privilege role `slaif_editor_runtime`,
+default locator `/run/slaif-editor/editor-dsn`, and application name
+`slaif-editor-api`. The Editor process opens this pool for authorized human
+content and composition COW operations, while its separate Control pool handles
+human session and site authorization. Compose mounts only `editor-secret` at
+`/run/slaif-editor` for the Editor process. The editor readiness probe executes
+the bounded page-list function and fails closed on missing content migrations,
+wrong identity, or unavailable database state. `--check` validates both typed
+settings without reading either locator or opening a connection.
+
 ## One-shot database configuration
 
 `BootstrapSettings` is defined only inside the bootstrap package. It does not

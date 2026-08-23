@@ -98,7 +98,18 @@ async def authorize_site_request(
         raise
     except SiteServiceError:
         raise ResourceNotFoundError() from None
-    return SiteRequestAuthority(session, bool(administrator))
+    authority = SiteRequestAuthority(session, bool(administrator))
+    editor_database = getattr(request.app.state, "editor_database", None)
+    if request.url.path.startswith("/api/editor/") and editor_database is not None:
+        request_context = editor_database.request_content_service(session.session_id)
+        try:
+            request.state.editor_content_context = request_context
+            request.state.content_model_service = await request_context.__aenter__()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            raise ServiceUnavailableError() from None
+    return authority
 
 
 __all__ = ["SiteRequestAuthority", "authorize_site_request"]

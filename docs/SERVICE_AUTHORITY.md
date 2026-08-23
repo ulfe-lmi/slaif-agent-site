@@ -20,11 +20,12 @@ or credential.
 
 The role manifest, local login principals, schema owners, COW hardening,
 independent privilege verifier, container networks, and edge routing are
-implemented. Control API receives `slaif_control_login` and Agent API receives
-the distinct `slaif_agent_login`; each opens only its bounded lifespan-owned
-pool and its declared least-privilege functions. Bootstrap alone mounts the
-stronger one-shot locators. Every other long-running process remains
-database-credential-free.
+implemented. Control API receives `slaif_control_login`, Editor API receives
+the distinct `slaif_editor_login` for content COW plus Control's separate human
+authorization pool, and Agent API receives `slaif_agent_login`; each opens only
+its bounded lifespan-owned pools and declared least-privilege functions.
+Bootstrap alone mounts the stronger one-shot locators. Web, MCP, and browser
+worker remain database-credential-free.
 
 ## Structural boundaries
 
@@ -51,15 +52,15 @@ run SQL/Alembic, or select site/workspace/operation context from a request.
 Code descriptors do not provide security by themselves. Compose now separates
 edge, application, database, and browser networks. Initializer/PostgreSQL/
 bootstrap use the private master secret volume; initializer copies only the
-Control DSN into a separate volume mounted read-only only by Control. No other
-online process receives a DSN. Only NGINX publishes loopback port 8080. Browser
+Control and Editor DSNs into their separate volumes, mounted read-only only by
+their owning processes. Only NGINX publishes loopback port 8080. Browser
 worker is on an internal network shared only with Agent API and has no
 database, edge, host, mount, Docker-socket, Playwright, or browser-command
 authority. See [deployment](DEPLOYMENT.md),
 [database connections](DATABASE_CONNECTIONS.md), and
 [database roles](DATABASE_ROLES.md).
 
-Internal service authentication, pools for every non-Control process, browser
+Internal service authentication, pools for non-Editor/Agent processes, browser
 sandbox and egress enforcement, production TLS automation, and product
 authorization remain later work. Network membership alone is not authority.
 

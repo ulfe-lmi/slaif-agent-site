@@ -105,6 +105,32 @@ test("admin workflows are URL-owned, server-filtered, and accessible", async () 
   assert.doesNotMatch(`${api}${shell}${workflows}`, /localStorage|sessionStorage/);
 });
 
+test("Puck editor remains trusted, same-origin, and normalized", async () => {
+  const editor = await read("../src/admin/composition-editor.tsx");
+  const api = await read("../src/admin/api.ts");
+  const route = await read("../app/admin/sites/[siteId]/pages/[pageId]/edit/page.tsx");
+  const manifest = JSON.parse(await read("../package.json"));
+  const adapter = await read(
+    "../../../packages/composition-schema/src/puck-adapter.ts",
+  );
+  assert.equal(manifest.dependencies["@measured/puck"], "0.20.2");
+  assert.match(route, /CompositionEditor/);
+  assert.match(editor, /from "@measured\/puck"/);
+  assert.match(editor, /COMPONENT_CATALOG/);
+  assert.match(editor, /data-puck-component/);
+  assert.match(editor, /puckToComposition/);
+  assert.match(editor, /pending.current/);
+  assert.ok(api.includes("/api/editor/v1"));
+  assert.match(api, /X-CSRF-Token/);
+  assert.match(api, /cache: "no-store"/);
+  assert.match(adapter, /schemaVersion/);
+  assert.match(adapter, /parentId/);
+  assert.match(adapter, /slotKey/);
+  assert.match(adapter, /orderKey/);
+  assert.match(adapter, /forbidden-component-prop/);
+  assert.doesNotMatch(`${editor}${api}`, /localStorage|sessionStorage|Bearer|sas2_/);
+});
+
 test("membership administration preserves exact server contracts and UX boundaries", async () => {
   const api = await read("../src/admin/api.ts");
   const workflow = await read("../src/admin/membership-workflows.tsx");

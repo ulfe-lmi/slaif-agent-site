@@ -412,3 +412,124 @@ test("governance-visible-workflows-negatives-and-privacy", async ({ page }) => {
   );
   expect(failures, "unexpected governance browser failure category").toEqual([]);
 });
+
+test("puck-editor-round-trip-through-human-editor-api", async ({ page }) => {
+  const credential = secrets();
+  // @measured/puck 0.20.2 emits this strict-CSP warning for its dynamic editor
+  // style attributes; the edge policy itself remains free of unsafe-inline.
+  const failures = observe(page, [], [/style-src/]);
+  await login(page, credential);
+  await page.goto("/admin");
+  const demoLink = page.locator(".site-list a").filter({ hasText: "SLAIF Demo Site" });
+  const href = await demoLink.getAttribute("href");
+  const siteId = href?.split("/").at(-1) ?? "";
+  expect(siteId).toMatch(/^[0-9a-f-]{36}$/i);
+
+  const cookies = await page.context().cookies();
+  const csrf = cookies.find((cookie) => cookie.name === "slaif_csrf")?.value;
+  expect(csrf).toBeTruthy();
+  const editorHeaders = { "X-CSRF-Token": csrf! };
+  const pageResponse = await page.request.post(
+    `/api/editor/v1/sites/${siteId}/pages/`,
+    {
+      headers: editorHeaders,
+      data: {
+        slug: "puck-editor",
+        title: "Puck editor evidence",
+        status: "DRAFT",
+        locale: "en",
+      },
+    },
+  );
+  expect(pageResponse.status()).toBe(201);
+  expectPrivateHeaders(pageResponse);
+  const pageRecord = (await pageResponse.json()) as { id: string };
+  expect(pageRecord.id).toMatch(/^[0-9a-f-]{36}$/i);
+
+  const initialComponent = await page.request.post(
+    `/api/editor/v1/sites/${siteId}/pages/${pageRecord.id}/composition/components`,
+    {
+      headers: editorHeaders,
+      data: {
+        component_type: "Section",
+        slot_key: "default",
+        order_key: 0,
+        props: { variant: "narrow" },
+      },
+    },
+  );
+  expect(initialComponent.status()).toBe(201);
+  expectPrivateHeaders(initialComponent);
+  const section = (await initialComponent.json()) as { id: string };
+
+  const initialHeading = await page.request.post(
+    `/api/editor/v1/sites/${siteId}/pages/${pageRecord.id}/composition/components`,
+    {
+      headers: editorHeaders,
+      data: {
+        component_type: "Heading",
+        slot_key: "default",
+        order_key: 0,
+        props: { text: "Puck heading", level: 2 },
+      },
+    },
+  );
+  expect(initialHeading.status()).toBe(201);
+  expectPrivateHeaders(initialHeading);
+  const headingRecord = (await initialHeading.json()) as { id: string };
+  expect(headingRecord.id).toMatch(/^[0-9a-f-]{36}$/i);
+  const movedHeading = await page.request.post(
+    `/api/editor/v1/sites/${siteId}/pages/${pageRecord.id}/composition/components/${headingRecord.id}/move`,
+    {
+      headers: editorHeaders,
+      data: {
+        new_parent_id: section.id,
+        new_slot_key: "default",
+        new_order_key: 0,
+      },
+    },
+  );
+  expect(movedHeading.status()).toBe(200);
+  expectPrivateHeaders(movedHeading);
+
+  const compositionPath = `/api/editor/v1/sites/${siteId}/pages/${pageRecord.id}/composition/`;
+  const initialComposition = await page.request.get(compositionPath);
+  expect(initialComposition.status()).toBe(200);
+  expectPrivateHeaders(initialComposition);
+
+  await page.goto(`/admin/sites/${siteId}/pages/${pageRecord.id}/edit`);
+  await expect(
+    page.getByRole("heading", { name: "Page composition", exact: true }).first(),
+  ).toBeVisible();
+  const headingComponent = page.locator('[data-puck-component="Heading"]');
+  await expect(headingComponent).toHaveCount(1);
+  await page.getByRole("button", { name: "Save composition" }).click();
+  await expect(
+    page.getByText("Composition saved and reloaded from the server.", { exact: true }),
+  ).toBeVisible();
+
+  const persisted = await page.request.get(compositionPath);
+  expect(persisted.status()).toBe(200);
+  expectPrivateHeaders(persisted);
+  const persistedNodes = (await persisted.json()) as Array<{
+    id: string;
+    component_type: string;
+    parent_id: string | null;
+    slot_key: string;
+    order_key: number;
+    props: Record<string, unknown>;
+  }>;
+  const persistedHeading = persistedNodes.find(
+    (node) => node.component_type === "Heading",
+  );
+  expect(persistedHeading).toMatchObject({
+    parent_id: section.id,
+    slot_key: "default",
+    order_key: 0,
+  });
+  expect(persistedHeading?.props).not.toHaveProperty("id");
+
+  await page.reload();
+  await expect(page.locator('[data-puck-component="Heading"]')).toHaveCount(1);
+  expect(failures(), "unexpected Puck browser failure category").toEqual([]);
+});

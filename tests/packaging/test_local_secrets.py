@@ -175,6 +175,34 @@ class LocalSecretTests(unittest.TestCase):
             self.assertEqual(stat.S_IMODE(agent_directory.stat().st_mode), 0o700)
             self.assertEqual(stat.S_IMODE(agent_file.stat().st_mode), 0o400)
 
+    def test_editor_locator_is_exactly_isolated_and_idempotent(self) -> None:
+        INITIALIZER.POSTGRES_UID = os.getuid()
+        INITIALIZER.APPLICATION_UID = os.getuid()
+        INITIALIZER.CONTROL_DIRECTORY_UID = os.getuid()
+        INITIALIZER.CONTROL_DIRECTORY_GID = os.getgid()
+        INITIALIZER.MARKER_UID = os.getuid()
+        INITIALIZER.DIRECTORY_UID = os.getuid()
+        INITIALIZER.SECRET_DIRECTORY_GID = os.getgid()
+        with tempfile.TemporaryDirectory() as parent:
+            directory = Path(parent) / "secrets"
+            editor_directory = Path(parent) / "editor"
+            editor_directory.mkdir()
+            count = INITIALIZER.initialize(directory, editor_directory=editor_directory)
+            self.assertEqual(count, 24)
+            editor_file = editor_directory / "editor-dsn"
+            first = editor_file.read_bytes()
+            self.assertEqual(first, (directory / "service-editor-dsn").read_bytes())
+            self.assertEqual(
+                INITIALIZER.initialize(directory, editor_directory=editor_directory),
+                count,
+            )
+            self.assertEqual(editor_file.read_bytes(), first)
+            self.assertEqual(
+                {path.name for path in editor_directory.iterdir()}, {"editor-dsn"}
+            )
+            self.assertEqual(stat.S_IMODE(editor_directory.stat().st_mode), 0o700)
+            self.assertEqual(stat.S_IMODE(editor_file.stat().st_mode), 0o400)
+
 
 if __name__ == "__main__":
     unittest.main()

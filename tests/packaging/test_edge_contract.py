@@ -24,7 +24,13 @@ class EdgeContractTests(unittest.TestCase):
         for prefix, upstream in ROUTES.items():
             self.assertIn(f"location {prefix}", nginx)
             self.assertIn(f"http://{upstream}", nginx)
-            self.assertIn(f"ProxyPass        {prefix} http://{upstream}/", apache)
+            if prefix == "/api/editor/":
+                self.assertIn(
+                    "ProxyPass        /api/editor/v1/ http://editor-api:8000/api/editor/v1/",
+                    apache,
+                )
+            else:
+                self.assertIn(f"ProxyPass        {prefix} http://{upstream}/", apache)
 
     def test_control_health_is_adapted_and_v1_path_is_preserved(self) -> None:
         nginx = (ROOT / "infra/nginx/nginx.conf").read_text(encoding="utf-8")
@@ -55,6 +61,23 @@ class EdgeContractTests(unittest.TestCase):
             "location /api/agent/ {\n            proxy_pass http://agent-api:8000/;",
             nginx,
         )
+
+    def test_editor_health_aliases_and_versioned_prefix_preserving_route(self) -> None:
+        nginx = (ROOT / "infra/nginx/nginx.conf").read_text(encoding="utf-8")
+        apache = (ROOT / "infra/apache/slaif-agent-site.conf").read_text(
+            encoding="utf-8"
+        )
+        for leaf in ("live", "ready"):
+            self.assertIn(f"location = /api/editor/health/{leaf}", nginx)
+            self.assertIn(f"proxy_pass http://editor-api:8000/health/{leaf};", nginx)
+            self.assertIn(f"/api/editor/health/{leaf}", apache)
+        self.assertIn("location /api/editor/v1/", nginx)
+        self.assertIn("proxy_pass http://editor-api:8000;", nginx)
+        self.assertIn(
+            "ProxyPass        /api/editor/v1/ http://editor-api:8000/api/editor/v1/",
+            apache,
+        )
+        self.assertIn("ProxyPass        /api/editor/ !", apache)
 
     def test_browser_and_render_are_not_edge_upstreams(self) -> None:
         for path in (

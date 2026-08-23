@@ -92,6 +92,8 @@ EXPECTED_COMMANDS = {
         "/run/slaif-agent",
         "--render-directory",
         "/run/slaif-render",
+        "--editor-directory",
+        "/run/slaif-editor",
     ],
 }
 EXPECTED_BUILD_FILES = {
@@ -111,6 +113,10 @@ EXPECTED_MOUNTS = {
     "bootstrap": {("local-secrets", "/run/slaif-secrets", True)},
     "agent-api": {("agent-secret", "/run/slaif-agent", True)},
     "control-api": {("control-secret", "/run/slaif-control", True)},
+    "editor-api": {
+        ("control-secret", "/run/slaif-control", True),
+        ("editor-secret", "/run/slaif-editor", True),
+    },
     "render-api": {("render-secret", "/run/slaif-render", True)},
     "media-gc": {("media-data", "/var/lib/slaif/media", False)},
     "media-service": {("media-data", "/var/lib/slaif/media", False)},
@@ -123,6 +129,7 @@ EXPECTED_MOUNTS = {
         ("control-secret", "/run/slaif-control", False),
         ("local-secrets", "/run/slaif-secrets", False),
         ("render-secret", "/run/slaif-render", False),
+        ("editor-secret", "/run/slaif-editor", False),
     },
 }
 EXPECTED_CAP_ADD = {
@@ -134,7 +141,8 @@ EXPECTED_GROUP_ADD = {
     "postgres": {"10002"},
 }
 SECRET_MOUNT_SERVICES = {"bootstrap", "postgres", "secrets-init"}
-CONTROL_SECRET_MOUNT_SERVICES = {"control-api", "secrets-init"}
+CONTROL_SECRET_MOUNT_SERVICES = {"control-api", "editor-api", "secrets-init"}
+EDITOR_SECRET_MOUNT_SERVICES = {"editor-api", "secrets-init"}
 AGENT_SECRET_MOUNT_SERVICES = {"agent-api", "secrets-init"}
 RENDER_SECRET_MOUNT_SERVICES = {"render-api", "secrets-init"}
 LONG_RUNNING_APPLICATIONS = REQUIRED_SERVICES - {
@@ -188,6 +196,7 @@ def validate_config(config: dict[str, Any]) -> None:
         == {
             "agent-secret",
             "control-secret",
+            "editor-secret",
             "local-secrets",
             "media-data",
             "postgres-data",
@@ -272,6 +281,13 @@ def validate_config(config: dict[str, Any]) -> None:
             has_control_secret == (name in CONTROL_SECRET_MOUNT_SERVICES),
             f"{name}: Control secret mount policy mismatch",
         )
+        has_editor_secret = any(
+            mount.get("source") == "editor-secret" for mount in mounts
+        )
+        _fail(
+            has_editor_secret == (name in EDITOR_SECRET_MOUNT_SERVICES),
+            f"{name}: Editor secret mount policy mismatch",
+        )
         has_agent_secret = any(
             mount.get("source") == "agent-secret" for mount in mounts
         )
@@ -292,7 +308,11 @@ def validate_config(config: dict[str, Any]) -> None:
                 key: value
                 for key, value in environment.items()
                 if (
-                    (key == "SLAIF_CONTROL_DSN_FILE" and name == "control-api")
+                    (
+                        key == "SLAIF_CONTROL_DSN_FILE"
+                        and name in {"control-api", "editor-api"}
+                    )
+                    or (key == "SLAIF_EDITOR_DSN_FILE" and name == "editor-api")
                     or (key == "SLAIF_AGENT_DSN_FILE" and name == "agent-api")
                     or (key == "SLAIF_RENDER_DSN_FILE" and name == "render-api")
                 )
@@ -312,7 +332,7 @@ def validate_config(config: dict[str, Any]) -> None:
                 not any(
                     key.startswith("SLAIF_CONTROL_")
                     for key in environment
-                    if name != "control-api"
+                    if name not in {"control-api", "editor-api"}
                 ),
                 f"{name}: foreign Control setting present",
             )
@@ -323,6 +343,14 @@ def validate_config(config: dict[str, Any]) -> None:
                     if name != "agent-api"
                 ),
                 f"{name}: foreign Agent setting present",
+            )
+            _fail(
+                not any(
+                    key.startswith("SLAIF_EDITOR_")
+                    for key in environment
+                    if name != "editor-api"
+                ),
+                f"{name}: foreign Editor setting present",
             )
         if name == "agent-api":
             _fail(
@@ -345,7 +373,7 @@ def validate_config(config: dict[str, Any]) -> None:
                 },
                 "agent-api: database configuration mismatch",
             )
-        if name == "control-api":
+        if name in {"control-api", "editor-api"}:
             _fail(
                 {
                     key: environment.get(key)
@@ -364,7 +392,28 @@ def validate_config(config: dict[str, Any]) -> None:
                     "SLAIF_CONTROL_EXPECTED_PRIVILEGE_ROLE": "slaif_control",
                     "SLAIF_CONTROL_MODE": "development",
                 },
-                "control-api: database configuration mismatch",
+                f"{name}: database configuration mismatch",
+            )
+        if name == "editor-api":
+            _fail(
+                {
+                    key: environment.get(key)
+                    for key in (
+                        "SLAIF_EDITOR_DSN_FILE",
+                        "SLAIF_EDITOR_EXPECTED_DATABASE",
+                        "SLAIF_EDITOR_EXPECTED_LOGIN",
+                        "SLAIF_EDITOR_EXPECTED_PRIVILEGE_ROLE",
+                        "SLAIF_EDITOR_MODE",
+                    )
+                }
+                == {
+                    "SLAIF_EDITOR_DSN_FILE": "/run/slaif-editor/editor-dsn",
+                    "SLAIF_EDITOR_EXPECTED_DATABASE": "slaif",
+                    "SLAIF_EDITOR_EXPECTED_LOGIN": "slaif_editor_login",
+                    "SLAIF_EDITOR_EXPECTED_PRIVILEGE_ROLE": "slaif_editor_runtime",
+                    "SLAIF_EDITOR_MODE": "development",
+                },
+                "editor-api: database configuration mismatch",
             )
         if name == "render-api":
             _fail(
