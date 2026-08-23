@@ -21,7 +21,6 @@ from slaif_agent_site.control_api.config import (
     ControlDatabaseMode,
     ControlDatabaseSettings,
 )
-from slaif_agent_site.control_api.database import ControlDatabase
 from slaif_agent_site.db.connections import owner_connection
 
 
@@ -121,18 +120,11 @@ async def test_capability_authentication_positive_negative_and_expiry_paths(
     database = agent_site_database
     valid_token, seeded = await _seed_workspace_and_capability(database)
     unknown_token, _public_id, _unknown_digest = generate_capability_token()
-    adapter = ControlDatabase(_control_settings(database))
-    await adapter.start()
-    app = create_agent_app(settings=ServiceSettings.for_test())
-    app.state.database = adapter
-    try:
-        context = await adapter.authenticate_agent_capability(f"Bearer {valid_token}")
-        assert context is not None
-        assert str(context.capability_id) == str(seeded["capability_id"])
-        assert str(context.site_id) == str(seeded["site_id"])
-        assert str(context.workspace_id) == str(seeded["workspace_id"])
-        assert context.scopes == frozenset({"site:read", "content-item:read"})
-
+    app = create_agent_app(
+        settings=ServiceSettings.for_test(),
+        capability_database_settings=_control_settings(database),
+    )
+    async with app.router.lifespan_context(app):
         wrong_secret = valid_token[:-4] + ("0" * 4)
         app_transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(
@@ -143,7 +135,14 @@ async def test_capability_authentication_positive_negative_and_expiry_paths(
                 headers={"Authorization": f"Bearer {valid_token}"},
             )
             assert valid_response.status_code == 200
-            assert valid_response.json()["workspace_id"] == str(seeded["workspace_id"])
+            assert valid_response.json() == {
+                "site_id": str(seeded["site_id"]),
+                "workspace_id": str(seeded["workspace_id"]),
+                "scopes": ["content-item:read", "site:read"],
+                "component_catalog_version": "catalog-v1",
+                "composition_schema_version": "site-composition/v1",
+                "content_model_schema_version": "content-model/v1",
+            }
 
             for token in ("malformed", unknown_token, wrong_secret):
                 denied = await client.get(
@@ -164,10 +163,6 @@ async def test_capability_authentication_positive_negative_and_expiry_paths(
                     "WHERE public_id = $1",
                     public_id,
                 )
-            assert (
-                await adapter.authenticate_agent_capability(f"Bearer {valid_token}")
-                is None
-            )
             revoked = await client.get(
                 "/api/agent/v1/session",
                 headers={"Authorization": f"Bearer {valid_token}"},
@@ -198,10 +193,6 @@ async def test_capability_authentication_positive_negative_and_expiry_paths(
                     expired_public_id,
                     compute_digest(expired_token),
                 )
-            assert (
-                await adapter.authenticate_agent_capability(f"Bearer {expired_token}")
-                is None
-            )
             expired = await client.get(
                 "/api/agent/v1/session",
                 headers={"Authorization": f"Bearer {expired_token}"},
@@ -209,9 +200,22 @@ async def test_capability_authentication_positive_negative_and_expiry_paths(
             assert expired.status_code == 401
             assert expired_token not in expired.text
 
-        unavailable = ControlDatabase(_control_settings(database))
-        app.state.database = unavailable
-        unavailable_transport = httpx.ASGITransport(app=app)
+    unavailable_settings = _control_settings(database).model_copy(
+        update={
+            "dsn": SecretStr(
+                "postgresql://slaif_control_login:fixture@"
+                "127.0.0.1:5432/slaif_unavailable"
+            ),
+            "expected_database": "slaif_unavailable",
+            "application_name": "slaif-capability-unavailable",
+        }
+    )
+    unavailable_app = create_agent_app(
+        settings=ServiceSettings.for_test(),
+        capability_database_settings=unavailable_settings,
+    )
+    async with unavailable_app.router.lifespan_context(unavailable_app):
+        unavailable_transport = httpx.ASGITransport(app=unavailable_app)
         async with httpx.AsyncClient(
             transport=unavailable_transport, base_url="http://agent.test"
         ) as client:
@@ -222,5 +226,3 @@ async def test_capability_authentication_positive_negative_and_expiry_paths(
         assert response.status_code == 503
         assert "postgresql" not in response.text
         assert valid_token not in response.text
-    finally:
-        await adapter.stop()

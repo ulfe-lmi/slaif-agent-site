@@ -77,6 +77,14 @@ class FakeControlDatabase:
         raise AssertionError("health-only app cannot invoke initial setup")
 
 
+class FakeAgentDatabase(FakeControlDatabase):
+    def content_model_service(self) -> Any:
+        return object()
+
+    async def authenticate_agent_capability(self, _auth_header: str) -> Any:
+        raise AssertionError("health-only app cannot invoke capability auth")
+
+
 def _route_paths(app: FastAPI) -> set[str]:
     paths = {route.path for route in app.routes if isinstance(route, APIRoute)}
     for route in app.routes:
@@ -92,9 +100,17 @@ def _route_paths(app: FastAPI) -> set[str]:
 async def test_each_app_has_only_typed_health_routes(
     process: ProcessKind, factory: AppFactory
 ) -> None:
-    database = FakeControlDatabase()
+    database = (
+        FakeAgentDatabase()
+        if process is ProcessKind.AGENT_API
+        else FakeControlDatabase()
+    )
     arguments: dict[str, object] = {"settings": ServiceSettings.for_test()}
-    if process in {ProcessKind.CONTROL_API, ProcessKind.RENDER_API}:
+    if process in {
+        ProcessKind.CONTROL_API,
+        ProcessKind.RENDER_API,
+        ProcessKind.AGENT_API,
+    }:
         arguments["database"] = database
     app = factory(**arguments)
     expected_routes = {"/health/live", "/health/ready"}
@@ -188,13 +204,22 @@ async def test_each_app_has_only_typed_health_routes(
                 "service": process.value,
                 "components": (
                     [{"component": "database", "status": "ok", "reason": None}]
-                    if process in {ProcessKind.CONTROL_API, ProcessKind.RENDER_API}
+                    if process
+                    in {
+                        ProcessKind.CONTROL_API,
+                        ProcessKind.RENDER_API,
+                        ProcessKind.AGENT_API,
+                    }
                     else []
                 ),
             }
             for hidden in ("/docs", "/redoc", "/openapi.json"):
                 assert (await client.get(hidden)).status_code == 404
-    if process in {ProcessKind.CONTROL_API, ProcessKind.RENDER_API}:
+    if process in {
+        ProcessKind.CONTROL_API,
+        ProcessKind.RENDER_API,
+        ProcessKind.AGENT_API,
+    }:
         assert database.started == database.stopped == 1
 
 
@@ -217,8 +242,10 @@ async def test_readiness_aggregates_success_failure_timeout_and_sanitizes_error(
     settings = ServiceSettings.for_test().model_copy(
         update={"readiness_timeout_seconds": 0.05}
     )
+    database = FakeAgentDatabase()
     app = create_agent_app(
         settings=settings,
+        database=database,
         readiness_probes=(
             ReadinessProbe("healthy", healthy),
             ReadinessProbe("unavailable", unavailable),
@@ -235,6 +262,7 @@ async def test_readiness_aggregates_success_failure_timeout_and_sanitizes_error(
         "status": "not_ready",
         "service": "agent-api",
         "components": [
+            {"component": "database", "status": "ok", "reason": None},
             {"component": "healthy", "status": "ok", "reason": None},
             {
                 "component": "unavailable",
