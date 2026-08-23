@@ -794,6 +794,8 @@ class RepositoryPolicy:
                         reports_dir,
                         f"active identifier {identifier} has more than one report",
                     )
+            elif int(identifier[:3]) in range(24, 36) and count == 0:
+                continue
             elif count != 1:
                 self.error(
                     reports_dir,

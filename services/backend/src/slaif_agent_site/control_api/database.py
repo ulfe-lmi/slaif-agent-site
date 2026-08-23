@@ -20,6 +20,7 @@ from slaif_agent_site.bootstrap.setup_token import (
     digest_setup_token,
     setup_token_matches,
 )
+from slaif_agent_site.content_model.service import ContentModelService
 from slaif_agent_site.db.migrations import migration_heads
 from slaif_agent_site.db.roles import ROLE_NAMES
 from slaif_agent_site.health import ProbeResult
@@ -93,6 +94,14 @@ class InitialSetupError(RuntimeError):
         super().__init__("Initial setup failed.")
 
 
+class _UnstartedPool:
+    """Fail closed without exposing driver or locator details."""
+
+    def acquire(self, *, timeout: float) -> Any:
+        del timeout
+        raise TimeoutError()
+
+
 class ControlDatabaseAdapter(Protocol):
     async def start(self) -> None: ...
 
@@ -117,6 +126,8 @@ class ControlDatabaseAdapter(Protocol):
     def site_service(self) -> SiteService: ...
 
     def human_authorization_service(self) -> HumanAuthorizationService: ...
+
+    def content_model_service(self) -> Any: ...
 
 
 PoolFactory = Callable[..., Awaitable[Any]]
@@ -392,6 +403,14 @@ class ControlDatabase:
             self._pool,
             policy=policy,
             random_bytes=self._session_random_bytes or secrets.token_bytes,
+        )
+
+    def content_model_service(self) -> Any:
+        """Return the semantic content-model adapter for this owned pool."""
+
+        return ContentModelService(
+            self._pool or _UnstartedPool(),
+            acquire_timeout=self._settings.acquire_timeout_seconds,
         )
 
     async def authenticate_local_login(
