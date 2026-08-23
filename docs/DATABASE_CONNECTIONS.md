@@ -1,11 +1,11 @@
 # Online database connection boundary
 
-The only implemented online PostgreSQL connection belongs to Control API. It
-reports bootstrap/database readiness and owns one typed, atomic initial-local-
-administrator operation used only in code/tests. It does not expose that
-operation through a route and does not implement login, session, CSRF, OIDC,
-membership, site, workspace, capability, content, audit, job, media, review,
-promotion, or publication behavior.
+Control API and Agent API each own a separate online PostgreSQL connection
+boundary. Control reports bootstrap/database readiness and owns the initial
+local-administrator operation. Agent owns one typed lifespan pool and uses it
+only for capability-authenticated semantic COW mutations and their narrow
+idempotency/audit functions; it does not expose a SQL endpoint or lifecycle,
+review, promotion, or publication authority.
 
 ## Authority map
 
@@ -31,6 +31,14 @@ three narrow control functions
   v
 bounded readiness or atomic initial identity result
 ```
+
+Agent follows a separate credential path. `secrets-init` copies only
+`service-agent-dsn` into the isolated `agent-secret` volume, mounted read-only
+at `/run/slaif-agent/agent-dsn` only by Agent API. Agent validates the fixed
+`slaif_agent_login`/`slaif_agent_runtime` identity on every pooled connection
+and exposes only its typed `cow_pool()` boundary to the mutation executor.
+Control and Agent never share a locator, pool, native connection, or
+credential volume.
 
 The master `local-secrets` volume still contains PostgreSQL administrator,
 bootstrap owner, login-password, and future-service files. Control does not
@@ -175,6 +183,6 @@ architecture/work order that repeats, rather than shares, this pattern:
 8. updated Compose, documentation, cross-process negative tests, and full CI.
 
 Network membership, a generated future DSN, or a conceptual role in
-`authority.py` is not permission to connect. In particular, Agent, Editor,
-Render, MCP, Media, Review, Scheduler, GC, Web, and browser processes remain
+`authority.py` is not permission to connect. In particular, Editor, Render,
+MCP, Media, Review, Scheduler, GC, Web, and browser processes remain
 database-credential-free in this implementation.

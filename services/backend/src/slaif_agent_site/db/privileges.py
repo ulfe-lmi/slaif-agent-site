@@ -47,6 +47,49 @@ CONTROL_SETUP_STATUS_FUNCTION = "slaif_setup_status"
 CONTROL_ROLE = "slaif_control"
 CAPABILITY_READ_RELATIONS = ("workspace", "capability")
 CAPABILITY_READ_ROLES = (CONTROL_ROLE, "slaif_agent_runtime")
+AGENT_CONTROL_FUNCTIONS = {
+    (
+        "slaif_agent_idempotency_begin",
+        "p_capability_id uuid, p_workspace_id uuid, p_idempotency_key text, "
+        "p_request_digest text, p_operation_id uuid",
+    ): "uuid, uuid, text, text, uuid",
+    (
+        "slaif_agent_idempotency_complete",
+        "p_capability_id uuid, p_workspace_id uuid, p_idempotency_key text, "
+        "p_request_digest text, p_operation_id uuid, p_status_code integer, "
+        "p_response_body jsonb, p_resource_type text, p_resource_id uuid, "
+        "p_site_id uuid",
+    ): "uuid, uuid, text, text, uuid, integer, jsonb, text, uuid, uuid",
+}
+AGENT_CONTENT_FUNCTIONS = {
+    (
+        "slaif_agent_content_type_create",
+        "p_site_id uuid, p_key text, p_labels jsonb, "
+        "p_slug_pattern text, p_settings jsonb",
+    ): "uuid, text, jsonb, text, jsonb",
+    (
+        "slaif_agent_field_definition_create",
+        "p_site_id uuid, p_type_id uuid, p_key text, p_label text, "
+        "p_field_type text, p_required boolean, p_localized boolean, "
+        "p_cardinality integer, p_position integer, p_validation jsonb, "
+        "p_ui_options jsonb",
+    ): "uuid, uuid, text, text, text, boolean, boolean, integer, integer, jsonb, jsonb",
+    (
+        "slaif_agent_content_item_create",
+        "p_site_id uuid, p_type_id uuid, p_slug text, p_status text, "
+        "p_values jsonb, p_type_definition_version integer",
+    ): "uuid, uuid, text, text, jsonb, integer",
+    (
+        "slaif_agent_page_create",
+        "p_site_id uuid, p_slug text, p_title text, p_status text, "
+        "p_locale text, p_parent_id uuid",
+    ): "uuid, text, text, text, text, uuid",
+    (
+        "slaif_agent_composition_node_add",
+        "p_site_id uuid, p_page_id uuid, p_component_type text, "
+        "p_parent_id uuid, p_slot_key text, p_order_key integer, p_props jsonb",
+    ): "uuid, uuid, text, uuid, text, integer, jsonb",
+}
 PUBLIC_RESOLVER_FUNCTIONS = {
     ("slaif_site_resolve", "p_hostname text, p_path text"): "text, text",
     ("slaif_site_resolve_local", "p_site_key text"): "text",
@@ -457,6 +500,18 @@ async def apply_product_privileges(
             f'"control".{quote_identifier(name)}({signature}) '
             f"TO {quote_identifier(CONTROL_ROLE)}"
         )
+    for (name, _identity), signature in AGENT_CONTROL_FUNCTIONS.items():
+        await connection.execute(
+            "GRANT EXECUTE ON FUNCTION "
+            f'"control".{quote_identifier(name)}({signature}) '
+            'TO "slaif_agent_runtime"'
+        )
+    for (name, _identity), signature in AGENT_CONTENT_FUNCTIONS.items():
+        await connection.execute(
+            "GRANT EXECUTE ON FUNCTION "
+            f'"content".{quote_identifier(name)}({signature}) '
+            'TO "slaif_agent_runtime"'
+        )
     await connection.execute('GRANT USAGE ON SCHEMA "control" TO "slaif_public_reader"')
     for (name, _identity), signature in PUBLIC_RESOLVER_FUNCTIONS.items():
         await connection.execute(
@@ -738,12 +793,19 @@ async def _function_violations(
         is_control_function = (
             schema == "control" and control_identity in CONTROL_FUNCTIONS
         )
+        is_agent_function = (
+            schema == "control" and control_identity in AGENT_CONTROL_FUNCTIONS
+        ) or (schema == "content" and control_identity in AGENT_CONTENT_FUNCTIONS)
         if schema == FOUNDATION_SCHEMA:
             foundation_functions += 1
         elif is_control_function:
             control_function_counts[control_identity] += 1
             if not security_definer or "search_path=pg_catalog" not in config:
                 violations.append(f"function/{schema}.{name}/unsafe-security-definer")
+        elif is_agent_function and (
+            not security_definer or "search_path=pg_catalog" not in config
+        ):
+            violations.append(f"function/{schema}.{name}/unsafe-security-definer")
         elif readiness_state is ReadinessState.EMPTY_SAFE:
             violations.append(f"function/{schema}.{name}/unexpected-clean-object")
         if owner != OWNER_ROLE:
@@ -777,6 +839,7 @@ async def _function_violations(
             )
             allowed = (
                 (is_control_function and role == CONTROL_ROLE)
+                or (is_agent_function and role == "slaif_agent_runtime")
                 or public_resolver
                 or (
                     readiness_state is ReadinessState.HARDENED
@@ -792,6 +855,8 @@ async def _function_violations(
             if can_execute and not allowed:
                 violations.append(f"function/{schema}.{name}/{role}/execute")
             if is_control_function and role == CONTROL_ROLE and not can_execute:
+                violations.append(f"function/{schema}.{name}/{role}/missing-execute")
+            if is_agent_function and role == "slaif_agent_runtime" and not can_execute:
                 violations.append(f"function/{schema}.{name}/{role}/missing-execute")
             if can_execute and allowed and schema == FOUNDATION_SCHEMA:
                 reviewer_exec += 1
@@ -854,6 +919,8 @@ async def verify_database_privileges(
 
 __all__ = [
     "ALLOWED_CLEAN_RELATIONS",
+    "AGENT_CONTENT_FUNCTIONS",
+    "AGENT_CONTROL_FUNCTIONS",
     "CAPABILITY_READ_RELATIONS",
     "CAPABILITY_READ_ROLES",
     "CONTROL_FUNCTIONS",

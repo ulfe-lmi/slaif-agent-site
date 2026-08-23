@@ -87,6 +87,24 @@ class ResourceConflictError(AppError):
     public_message = "The request conflicts with current state."
 
 
+class IdempotencyKeyRequiredError(AppError):
+    code = "IDEMPOTENCY_KEY_REQUIRED"
+    status_code = 400
+    public_message = "An Idempotency-Key is required for this mutation."
+
+
+class IdempotencyKeyInvalidError(AppError):
+    code = "IDEMPOTENCY_KEY_INVALID"
+    status_code = 400
+    public_message = "The Idempotency-Key is invalid."
+
+
+class IdempotencyMismatchError(AppError):
+    code = "IDEMPOTENCY_MISMATCH"
+    status_code = 409
+    public_message = "The Idempotency-Key was already used for another request."
+
+
 class RequestTooLargeError(AppError):
     code = "REQUEST_TOO_LARGE"
     status_code = 413
@@ -221,6 +239,9 @@ __all__ = [
     "DomainValidationError",
     "ErrorBody",
     "ErrorEnvelope",
+    "IdempotencyKeyInvalidError",
+    "IdempotencyKeyRequiredError",
+    "IdempotencyMismatchError",
     "MalformedRequestError",
     "QuotaExceededError",
     "RequestTooLargeError",

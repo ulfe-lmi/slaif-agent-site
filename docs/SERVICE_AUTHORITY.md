@@ -20,10 +20,11 @@ or credential.
 
 The role manifest, local login principals, schema owners, COW hardening,
 independent privilege verifier, container networks, and edge routing are
-implemented. Control API alone now receives `slaif_control_login`, opens a
-bounded lifespan-owned pool, and can execute one read-only owner function for
-readiness. Bootstrap alone mounts the stronger one-shot locators. Every other
-long-running process remains database-credential-free.
+implemented. Control API receives `slaif_control_login` and Agent API receives
+the distinct `slaif_agent_login`; each opens only its bounded lifespan-owned
+pool and its declared least-privilege functions. Bootstrap alone mounts the
+stronger one-shot locators. Every other long-running process remains
+database-credential-free.
 
 ## Structural boundaries
 
@@ -62,7 +63,8 @@ Internal service authentication, pools for every non-Control process, browser
 sandbox and egress enforcement, production TLS automation, and product
 authorization remain later work. Network membership alone is not authority.
 
-The only current HTTP behavior is correlated, redacted, typed liveness and
-readiness. Control readiness includes its database boundary; Control liveness
-remains process-only. Health evidence is not product readiness or publication
+The Agent HTTP behavior additionally includes the capability-authenticated
+bounded COW create surface documented in [the API guide](API.md). Control
+readiness includes its database boundary; Control liveness remains
+process-only. Health evidence is not product readiness or publication
 authority.

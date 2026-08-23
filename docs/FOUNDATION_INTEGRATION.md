@@ -148,7 +148,8 @@ COW schema; Agent-Site therefore publishes `EMPTY_SAFE` only after a separate
 zero-object and zero-authority proof, while explicitly leaving foundation
 hardening/validation false and not applicable. Any content object requires the
 normal public foundation hardening path and `HARDENED`; see
-[database bootstrap](DATABASE_BOOTSTRAP.md). Capability authorization,
-immutable review snapshots, product concurrency policy, publication, Compose
-packaging, and public APIs remain unimplemented. Tests use only disposable fake
-credentials and databases.
+[database bootstrap](DATABASE_BOOTSTRAP.md). Capability authorization and the
+bounded Agent create/idempotency path now use the foundation session API.
+Immutable review snapshots, product concurrency policy, publication, Compose
+packaging, and the remaining public content/workspace APIs remain
+unimplemented. Tests use only disposable fake credentials and databases.

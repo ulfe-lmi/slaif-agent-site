@@ -60,7 +60,7 @@ requires a separately designed and tested logical process.
 | `/s/demo/` and other resolved paths | Web→Render | Routing-context shell for an active trusted site match. |
 | `/api/control/` | Control API | Prefix-stripped health plus authenticated setup/session, site/domain, RBAC catalog, and membership routes; readiness includes one database component. |
 | `/api/editor/` | Editor API | Prefix-stripped health routes only. |
-| `/api/agent/` | Agent API | Prefix-stripped health routes only. |
+| `/api/agent/` | Agent API | Prefix-stripped health plus capability-authenticated bounded COW create routes; no lifecycle or publication routes. |
 | `/mcp/` | MCP adapter | Prefix-stripped health routes only. |
 | `/media/` | Media service | Prefix-stripped health routes only. |
 

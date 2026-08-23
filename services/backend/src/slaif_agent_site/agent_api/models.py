@@ -38,3 +38,12 @@ class AgentErrorResponse(BaseModel):
     message: str
     request_id: str | None = None
     operation_id: UUID | None = None
+
+
+class AgentMutationResponse(BaseModel):
+    """One semantic record and the server-selected COW operation identity."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    record: dict[str, object]
+    operation_id: UUID

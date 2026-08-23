@@ -27,6 +27,16 @@ class CreateCompositionNodeRequest(BaseModel):
             raise ValueError("invalid component type")
         return value
 
+    @field_validator("parent_id")
+    @classmethod
+    def parent_id_is_uuid(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        try:
+            return str(UUID(value))
+        except ValueError:
+            raise ValueError("parent_id must be a UUID") from None
+
     @field_validator("slot_key")
     @classmethod
     def slot_key_is_valid(cls, value: str) -> str:

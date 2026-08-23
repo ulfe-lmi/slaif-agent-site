@@ -67,6 +67,7 @@ NEW_PACKAGE_FILES = {
     "slaif_agent_site/agent_api/app.py",
     "slaif_agent_site/agent_api/config.py",
     "slaif_agent_site/agent_api/database.py",
+    "slaif_agent_site/agent_state/mutations.py",
     "slaif_agent_site/application.py",
     "slaif_agent_site/authority.py",
     "slaif_agent_site/bootstrap/__init__.py",
@@ -92,6 +93,7 @@ NEW_PACKAGE_FILES = {
     "slaif_agent_site/db/alembic/versions/014_001_human_rbac.py",
     "slaif_agent_site/db/alembic/versions/015_001_admin_read_model.py",
     "slaif_agent_site/db/alembic/versions/016_001_content_model_tables.py",
+    "slaif_agent_site/db/alembic/versions/025_001_agent_mutation_surface.py",
     "slaif_agent_site/db/connections.py",
     "slaif_agent_site/db/executor.py",
     "slaif_agent_site/db/migrations.py",
@@ -155,6 +157,7 @@ EXPECTED_PACKAGE_FILES = NEW_PACKAGE_FILES | {
     "slaif_agent_site/agent_state/audit.py",
     "slaif_agent_site/agent_state/promotion.py",
     "slaif_agent_site/agent_state/idempotency.py",
+    "slaif_agent_site/agent_state/mutations.py",
     "slaif_agent_site/agent_state/capability.py",
     "slaif_agent_site/agent_state/capability_auth.py",
     "slaif_agent_site/browser_worker/__init__.py",
@@ -503,8 +506,9 @@ def test_locked_foundation_artifact_hash_constants_are_sha256() -> None:
 
 
 def test_alembic_graph_and_offline_sql_need_no_locator_or_network() -> None:
-    assert migration_heads() == ("024_001",)
+    assert migration_heads() == ("025_001",)
     assert migration_history() == (
+        "025_001",
         "024_001",
         "023_001",
         "022_001",

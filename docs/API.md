@@ -91,6 +91,36 @@ declarations. HEAD and OPTIONS are not registered handler methods and retain
 their deterministic framework 405 behavior. The registry audits enforcement;
 handlers and database policy remain authoritative.
 
+## Capability-bound Agent mutation API
+
+The Agent API authenticates a bearer capability and derives the site and
+workspace exclusively from that trusted capability. Its bounded mutation
+surface is:
+
+| Route | Success | Request body |
+| --- | --- | --- |
+| `POST /api/agent/v1/content-model/types` | 201 | `CreateContentTypeRequest` |
+| `POST /api/agent/v1/content-model/types/{type_id}/fields` | 201 | `CreateFieldDefinitionRequest` |
+| `POST /api/agent/v1/content-items/types/{type_id}` | 201 | `CreateContentItemRequest`; its `type_id` must match the path |
+| `POST /api/agent/v1/pages/` | 201 | `CreatePageRequest` |
+| `POST /api/agent/v1/pages/{page_id}/components` | 201 | `CreateCompositionNodeRequest` |
+
+Every mutation requires an `Idempotency-Key` containing 1–128 bounded ASCII
+key characters. The response is `{ "record": <semantic record>,
+"operation_id": <UUID> }`. A replay with the same capability, key, route,
+and request digest returns the stored response; reusing a key with another
+digest returns `409 IDEMPOTENCY_MISMATCH`. Missing and malformed keys return
+`IDEMPOTENCY_KEY_REQUIRED` and `IDEMPOTENCY_KEY_INVALID` respectively.
+
+The trusted server selects one workspace/session UUID and operation UUID,
+executes the semantic call inside `asyncpg_cow_session`, and records the
+idempotency result and audit event in the same transaction. The Agent role has
+no direct control-table DML, content base/change-table access, reviewer
+authority, SQL/DDL route, or lifecycle route. Created records are visible in
+the workspace overlay and remain absent from canonical content until a later
+human-only lifecycle order; this round does not implement freeze, accept,
+discard, review, or publication routes.
+
 ## Site governance API
 
 Every route requires a current server-side human session. Site creation and

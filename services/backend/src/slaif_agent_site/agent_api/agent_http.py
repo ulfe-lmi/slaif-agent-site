@@ -9,14 +9,36 @@ or alter infrastructure.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Annotated, Any
 from uuid import UUID
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Header, Request
 
 from slaif_agent_site.agent_api.models import (
     AgentDiscoveryResponse,
+    AgentMutationResponse,
 )
+from slaif_agent_site.agent_state.mutations import (
+    AgentMutationConflictError,
+    AgentMutationUnavailableError,
+    InvalidIdempotencyKeyError,
+    MissingIdempotencyKeyError,
+    execute_agent_mutation,
+    mutation_digest,
+    validate_idempotency_key,
+)
+from slaif_agent_site.agent_state.mutations import (
+    IdempotencyMismatchError as DurableIdempotencyMismatchError,
+)
+from slaif_agent_site.content_model.composition_models import (
+    CreateCompositionNodeRequest,
+)
+from slaif_agent_site.content_model.item_models import CreateContentItemRequest
+from slaif_agent_site.content_model.models import (
+    CreateContentTypeRequest,
+    CreateFieldDefinitionRequest,
+)
+from slaif_agent_site.content_model.page_models import CreatePageRequest
 from slaif_agent_site.content_model.service import (
     ContentModelService,
     ContentModelServiceError,
@@ -25,6 +47,10 @@ from slaif_agent_site.content_model.service import (
 from slaif_agent_site.errors import (
     AuthenticationError,
     AuthorizationError,
+    IdempotencyKeyInvalidError,
+    IdempotencyKeyRequiredError,
+    IdempotencyMismatchError,
+    ResourceConflictError,
     ResourceNotFoundError,
     ServiceUnavailableError,
 )
@@ -146,25 +172,151 @@ async def list_media(request: Request) -> list[dict[str, Any]]:
         raise ServiceUnavailableError() from None
 
 
+IdempotencyHeader = Annotated[str | None, Header(alias="Idempotency-Key")]
+
+
+async def _execute_mutation(
+    request: Request,
+    context: Any,
+    body: Any,
+    idempotency_key: str | None,
+    *,
+    resource_type: str,
+    mutate: Any,
+) -> AgentMutationResponse:
+    try:
+        key = validate_idempotency_key(idempotency_key)
+    except MissingIdempotencyKeyError:
+        raise IdempotencyKeyRequiredError() from None
+    except InvalidIdempotencyKeyError:
+        raise IdempotencyKeyInvalidError() from None
+    digest = mutation_digest(
+        method=request.method,
+        path=request.url.path,
+        body=body.model_dump(mode="json"),
+    )
+    try:
+        return await execute_agent_mutation(
+            database=request.app.state.database,
+            context=context,
+            key=key,
+            digest=digest,
+            mutate=mutate,
+            resource_type=resource_type,
+        )
+    except DurableIdempotencyMismatchError:
+        raise IdempotencyMismatchError() from None
+    except AgentMutationConflictError:
+        raise ResourceConflictError() from None
+    except AgentMutationUnavailableError:
+        raise ServiceUnavailableError() from None
+    except ContentModelServiceError as exc:
+        if exc.reason is ContentModelServiceReason.NOT_FOUND:
+            raise ResourceNotFoundError() from None
+        if exc.reason is ContentModelServiceReason.CONFLICT:
+            raise ResourceConflictError() from None
+        raise ServiceUnavailableError() from None
+
+
 @router.post("/content-model/types", status_code=201)
-async def create_content_type(request: Request) -> dict[str, Any]:
+async def create_content_type(
+    request: Request,
+    body: CreateContentTypeRequest,
+    idempotency_key: IdempotencyHeader = None,
+) -> AgentMutationResponse:
     """Create a content type (L4 scope required)."""
     context = await _authenticate(request)
     _require_scope(context, "content-model:create")
-    raise ServiceUnavailableError()
+    return await _execute_mutation(
+        request,
+        context,
+        body,
+        idempotency_key,
+        resource_type="content_type",
+        mutate=lambda service: service.create_type(context.site_id, body),
+    )
+
+
+@router.post("/content-model/types/{type_id}/fields", status_code=201)
+async def create_field_definition(
+    type_id: UUID,
+    request: Request,
+    body: CreateFieldDefinitionRequest,
+    idempotency_key: IdempotencyHeader = None,
+) -> AgentMutationResponse:
+    context = await _authenticate(request)
+    _require_scope(context, "content-model:create")
+    return await _execute_mutation(
+        request,
+        context,
+        body,
+        idempotency_key,
+        resource_type="field_definition",
+        mutate=lambda service: service.create_field_for_site(
+            context.site_id, type_id, body
+        ),
+    )
 
 
 @router.post("/content-items/types/{type_id}", status_code=201)
-async def create_content_item(type_id: UUID, request: Request) -> dict[str, Any]:
+async def create_content_item(
+    type_id: UUID,
+    request: Request,
+    body: CreateContentItemRequest,
+    idempotency_key: IdempotencyHeader = None,
+) -> AgentMutationResponse:
     """Create a content item within this workspace."""
     context = await _authenticate(request)
     _require_scope(context, "content-item:create")
-    raise ServiceUnavailableError()
+    if body.type_id != type_id:
+        raise ResourceNotFoundError()
+    return await _execute_mutation(
+        request,
+        context,
+        body,
+        idempotency_key,
+        resource_type="content_item",
+        mutate=lambda service: service.create_item_for_site(
+            context.site_id, type_id, body
+        ),
+    )
 
 
 @router.post("/pages/", status_code=201)
-async def create_page(request: Request) -> dict[str, Any]:
+async def create_page(
+    request: Request,
+    body: CreatePageRequest,
+    idempotency_key: IdempotencyHeader = None,
+) -> AgentMutationResponse:
     """Create a page within this workspace."""
     context = await _authenticate(request)
     _require_scope(context, "page:create")
-    raise ServiceUnavailableError()
+    return await _execute_mutation(
+        request,
+        context,
+        body,
+        idempotency_key,
+        resource_type="page",
+        mutate=lambda service: service.create_page_for_site(context.site_id, body),
+    )
+
+
+@router.post("/pages/{page_id}/components", status_code=201)
+async def create_component(
+    page_id: UUID,
+    request: Request,
+    body: CreateCompositionNodeRequest,
+    idempotency_key: IdempotencyHeader = None,
+) -> AgentMutationResponse:
+    context = await _authenticate(request)
+    _require_scope(context, "component-structure:create")
+    return await _execute_mutation(
+        request,
+        context,
+        body,
+        idempotency_key,
+        resource_type="composition_node",
+        mutate=lambda service: service.add_component_for_site(
+            context.site_id, page_id, body
+        ),
+    )
