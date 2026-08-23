@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.parse import quote
@@ -79,6 +80,39 @@ async def _seed(database: AgentSiteDatabase) -> tuple[str, dict[str, UUID]]:
             RETURNING id
             """
         )
+        site_b_id = await owner.fetchval(
+            """
+            INSERT INTO control.site (
+                site_key, display_name, default_locale, component_catalog_version
+            ) VALUES (
+                'agent-mutation-other', 'Other Agent Mutation', 'en-US',
+                'catalog-v1'
+            )
+            RETURNING id
+            """
+        )
+        type_b_id = uuid4()
+        page_b_id = uuid4()
+        await owner.execute(
+            """
+            INSERT INTO content.content_type_base (
+                id, site_id, "key", labels, slug_pattern, status,
+                definition_version, settings
+            ) VALUES ($1, $2, 'other-type', '{"en":"Other"}'::jsonb,
+                      '/other/{slug}', 'ACTIVE', 1, '{}'::jsonb)
+            """,
+            type_b_id,
+            site_b_id,
+        )
+        await owner.execute(
+            """
+            INSERT INTO content.page_base (
+                id, site_id, slug, title, status, locale
+            ) VALUES ($1, $2, 'other-page', 'Other page', 'DRAFT', 'en')
+            """,
+            page_b_id,
+            site_b_id,
+        )
         workspace_id = await owner.fetchval(
             """
             INSERT INTO control.workspace (
@@ -115,7 +149,35 @@ async def _seed(database: AgentSiteDatabase) -> tuple[str, dict[str, UUID]]:
         "capability_id": capability_id,
         "site_id": site_id,
         "workspace_id": workspace_id,
+        "site_b_id": site_b_id,
+        "type_b_id": type_b_id,
+        "page_b_id": page_b_id,
     }
+
+
+async def _capability_with_scopes(
+    database: AgentSiteDatabase,
+    seeded: dict[str, UUID],
+    scopes: list[str],
+) -> str:
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(),
+        expected_database=database.name,
+    ) as owner:
+        token, public_id, digest = generate_capability_token()
+        await owner.execute(
+            """
+            INSERT INTO control.capability (
+                workspace_id, public_id, secret_digest, scopes, expires_at
+            ) VALUES ($1, $2, $3, $4::jsonb, $5)
+            """,
+            seeded["workspace_id"],
+            public_id,
+            digest,
+            json.dumps(scopes),
+            datetime.now(UTC) + timedelta(minutes=30),
+        )
+    return token
 
 
 @pytest.mark.asyncio
@@ -138,48 +200,88 @@ async def test_agent_create_type_is_cow_only_and_durablely_idempotent(
         "Authorization": f"Bearer {token}",
         "Idempotency-Key": "article-create-1",
     }
-    async with app.router.lifespan_context(app):
-        async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url="http://agent.test"
-        ) as client:
-            created = await client.post(
-                "/api/agent/v1/content-model/types",
-                json=body,
-                headers=headers,
-            )
-            assert created.status_code == 201, created.text
-            result = created.json()
-            assert UUID(result["operation_id"])
-            assert result["record"]["key"] == "article"
-
-            replay = await client.post(
-                "/api/agent/v1/content-model/types",
-                json=body,
-                headers=headers,
-            )
-            assert replay.status_code == 201
-            assert replay.json() == result
-
-            mismatch = await client.post(
-                "/api/agent/v1/content-model/types",
-                json={**body, "key": "different"},
-                headers=headers,
-            )
-            assert mismatch.status_code == 409
-            assert mismatch.json()["error"]["code"] == "IDEMPOTENCY_MISMATCH"
-
-            missing_key = await client.post(
-                "/api/agent/v1/content-model/types",
-                json=body,
-                headers={"Authorization": f"Bearer {token}"},
-            )
-            assert missing_key.status_code == 400
-            assert missing_key.json()["error"]["code"] == "IDEMPOTENCY_KEY_REQUIRED"
-
-    type_id = UUID(result["record"]["id"])
     agent_pool = await database.role_pool("slaif_agent_runtime")
     reviewer_pool = await database.role_pool("slaif_reviewer")
     try:
+        async with app.router.lifespan_context(app):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://agent.test"
+            ) as client:
+                created = await client.post(
+                    "/api/agent/v1/content-model/types",
+                    json=body,
+                    headers=headers,
+                )
+                assert created.status_code == 201, created.text
+                result = created.json()
+                assert UUID(result["operation_id"])
+                assert result["record"]["key"] == "article"
+
+                async with asyncpg_cow_reviewer(reviewer_pool) as reviewer:
+                    operations_before_replay = await reviewer.operations(
+                        seeded["workspace_id"], schema="content"
+                    )
+                async with owner_connection(
+                    database.settings.resolved_owner_dsn(),
+                    expected_database=database.name,
+                ) as owner:
+                    durable_before_replay = await owner.fetchrow(
+                        "SELECT "
+                        "(SELECT count(*) FROM control.agent_idempotency "
+                        "WHERE capability_id = $1) "
+                        "AS idempotency_count, "
+                        "(SELECT count(*) FROM audit.agent_mutation "
+                        "WHERE capability_id = $1) "
+                        "AS audit_count",
+                        seeded["capability_id"],
+                    )
+
+                replay = await client.post(
+                    "/api/agent/v1/content-model/types",
+                    json=body,
+                    headers=headers,
+                )
+                assert replay.status_code == 201
+                assert replay.json() == result
+
+                mismatch = await client.post(
+                    "/api/agent/v1/content-model/types",
+                    json={**body, "key": "different"},
+                    headers=headers,
+                )
+                assert mismatch.status_code == 409
+                assert mismatch.json()["error"]["code"] == "IDEMPOTENCY_MISMATCH"
+
+                missing_key = await client.post(
+                    "/api/agent/v1/content-model/types",
+                    json=body,
+                    headers={"Authorization": f"Bearer {token}"},
+                )
+                assert missing_key.status_code == 400
+                assert missing_key.json()["error"]["code"] == "IDEMPOTENCY_KEY_REQUIRED"
+
+                async with asyncpg_cow_reviewer(reviewer_pool) as reviewer:
+                    operations_after_replay = await reviewer.operations(
+                        seeded["workspace_id"], schema="content"
+                    )
+                async with owner_connection(
+                    database.settings.resolved_owner_dsn(),
+                    expected_database=database.name,
+                ) as owner:
+                    durable_after_mismatch = await owner.fetchrow(
+                        "SELECT "
+                        "(SELECT count(*) FROM control.agent_idempotency "
+                        "WHERE capability_id = $1) "
+                        "AS idempotency_count, "
+                        "(SELECT count(*) FROM audit.agent_mutation "
+                        "WHERE capability_id = $1) "
+                        "AS audit_count",
+                        seeded["capability_id"],
+                    )
+                assert operations_after_replay == operations_before_replay
+                assert tuple(durable_after_mismatch) == tuple(durable_before_replay)
+
+        type_id = UUID(result["record"]["id"])
         async with agent_pool.acquire() as agent_connection:
             with pytest.raises(asyncpg.InsufficientPrivilegeError):
                 await agent_connection.fetch("SELECT * FROM content.content_type_base")
@@ -348,6 +450,208 @@ async def test_agent_create_routes_cover_field_item_page_and_component(
             )
             assert component_response.status_code == 201, component_response.text
             assert component_response.json()["record"]["page_id"] == page_id
+
+
+@pytest.mark.asyncio
+async def test_agent_rejects_wrong_site_scope_and_malformed_mutations(
+    agent_site_database: AgentSiteDatabase,
+) -> None:
+    database = agent_site_database
+    token, seeded = await _seed(database)
+    scope_token = await _capability_with_scopes(database, seeded, ["site:read"])
+    app = create_agent_app(
+        settings=ServiceSettings.for_test(),
+        database_settings=_agent_settings(database),
+    )
+    headers = {"Authorization": f"Bearer {token}"}
+    other_type = str(seeded["type_b_id"])
+    other_page = str(seeded["page_b_id"])
+    reviewer_pool = await database.role_pool("slaif_reviewer")
+    agent_pool = await database.role_pool("slaif_agent_runtime")
+    failed_keys = (
+        "wrong-site-field",
+        "wrong-site-item",
+        "wrong-site-parent",
+        "wrong-site-component",
+        "body-path-mismatch",
+        "malformed-extra",
+        "malformed-path",
+    )
+    try:
+        async with app.router.lifespan_context(app):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://agent.test"
+            ) as client:
+                wrong_site_field = await client.post(
+                    f"/api/agent/v1/content-model/types/{other_type}/fields",
+                    json={"key": "wrong", "label": "Wrong", "field_type": "short_text"},
+                    headers={**headers, "Idempotency-Key": failed_keys[0]},
+                )
+                assert wrong_site_field.status_code == 404
+                assert wrong_site_field.json()["error"]["code"] == "RESOURCE_NOT_FOUND"
+
+                wrong_site_item = await client.post(
+                    f"/api/agent/v1/content-items/types/{other_type}",
+                    json={
+                        "type_id": other_type,
+                        "slug": "wrong-site",
+                        "status": "DRAFT",
+                        "values": {},
+                    },
+                    headers={**headers, "Idempotency-Key": failed_keys[1]},
+                )
+                assert wrong_site_item.status_code == 404
+
+                wrong_site_parent = await client.post(
+                    "/api/agent/v1/pages/",
+                    json={
+                        "slug": "wrong-parent",
+                        "title": "Wrong parent",
+                        "parent_id": other_page,
+                    },
+                    headers={**headers, "Idempotency-Key": failed_keys[2]},
+                )
+                assert wrong_site_parent.status_code == 404
+
+                wrong_site_component = await client.post(
+                    f"/api/agent/v1/pages/{other_page}/components",
+                    json={"component_type": "Text"},
+                    headers={**headers, "Idempotency-Key": failed_keys[3]},
+                )
+                assert wrong_site_component.status_code == 404
+
+                body_path_mismatch = await client.post(
+                    f"/api/agent/v1/content-items/types/{other_type}",
+                    json={
+                        "type_id": str(seeded["type_b_id"]),
+                        "slug": "path-mismatch",
+                        "status": "DRAFT",
+                        "values": {},
+                    },
+                    headers={**headers, "Idempotency-Key": failed_keys[4]},
+                )
+                assert body_path_mismatch.status_code == 404
+
+                malformed_extra = await client.post(
+                    "/api/agent/v1/content-model/types",
+                    json={
+                        "key": "malformed",
+                        "slug_pattern": "/malformed",
+                        "unknown": True,
+                    },
+                    headers={**headers, "Idempotency-Key": failed_keys[5]},
+                )
+                assert malformed_extra.status_code == 422
+                assert malformed_extra.json()["error"]["code"] == "VALIDATION_ERROR"
+
+                malformed_path = await client.post(
+                    "/api/agent/v1/pages/not-a-uuid/components",
+                    json={"component_type": "Text"},
+                    headers={**headers, "Idempotency-Key": failed_keys[6]},
+                )
+                assert malformed_path.status_code == 422
+                assert malformed_path.json()["error"]["code"] == "VALIDATION_ERROR"
+
+                insufficient_scope_requests = (
+                    (
+                        "/api/agent/v1/content-model/types",
+                        {
+                            "key": "scope-type",
+                            "slug_pattern": "/scope-type",
+                        },
+                        "scope-type",
+                    ),
+                    (
+                        f"/api/agent/v1/content-model/types/{other_type}/fields",
+                        {
+                            "key": "scope-field",
+                            "label": "Scope",
+                            "field_type": "short_text",
+                        },
+                        "scope-field",
+                    ),
+                    (
+                        f"/api/agent/v1/content-items/types/{other_type}",
+                        {
+                            "type_id": other_type,
+                            "slug": "scope-item",
+                            "status": "DRAFT",
+                            "values": {},
+                        },
+                        "scope-item",
+                    ),
+                    (
+                        "/api/agent/v1/pages/",
+                        {"slug": "scope-page", "title": "Scope page"},
+                        "scope-page",
+                    ),
+                    (
+                        f"/api/agent/v1/pages/{other_page}/components",
+                        {"component_type": "Text"},
+                        "scope-component",
+                    ),
+                )
+                for path, payload, key in insufficient_scope_requests:
+                    denied = await client.post(
+                        path,
+                        json=payload,
+                        headers={
+                            "Authorization": f"Bearer {scope_token}",
+                            "Idempotency-Key": key,
+                        },
+                    )
+                    assert denied.status_code == 403
+                    assert denied.json()["error"]["code"] == "AUTHORIZATION_DENIED"
+
+        async with asyncpg_cow_session(
+            agent_pool,
+            session_id=seeded["workspace_id"],
+            operation_id=uuid4(),
+        ) as cow:
+            try:
+                await cow.native.fetchrow(
+                    "SELECT * FROM content.slaif_agent_content_type_create("
+                    "$1,$2,$3,$4,$5)",
+                    seeded["site_b_id"],
+                    "direct-wrong-site",
+                    '{"en":"Wrong"}',
+                    "/direct-wrong-site",
+                    "{}",
+                )
+            except asyncpg.PostgresError:
+                await cow.rollback()
+            else:
+                raise AssertionError(
+                    "wrong-site wrapper invocation unexpectedly succeeded"
+                )
+
+        async with asyncpg_cow_reviewer(reviewer_pool) as reviewer:
+            assert (
+                await reviewer.operations(seeded["workspace_id"], schema="content")
+                == []
+            )
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(),
+            expected_database=database.name,
+        ) as owner:
+            assert (
+                await owner.fetchval(
+                    "SELECT count(*) FROM control.agent_idempotency "
+                    "WHERE workspace_id = $1",
+                    seeded["workspace_id"],
+                )
+                == 0
+            )
+            assert (
+                await owner.fetchval(
+                    "SELECT count(*) FROM audit.agent_mutation WHERE workspace_id = $1",
+                    seeded["workspace_id"],
+                )
+                == 0
+            )
+    finally:
+        await reviewer_pool.close()
+        await agent_pool.close()
 
 
 @pytest.mark.asyncio

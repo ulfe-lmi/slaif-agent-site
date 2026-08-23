@@ -481,13 +481,21 @@ class ContentModelService(
             raise
         except asyncpg.UniqueViolationError:
             raise ContentModelServiceError(ContentModelServiceReason.CONFLICT) from None
-        except asyncpg.RaiseError as error:
+        except asyncpg.PostgresError as error:
             if getattr(error, "sqlstate", None) == "P0002":
                 raise ContentModelServiceError(
                     ContentModelServiceReason.NOT_FOUND
                 ) from None
-            raise ContentModelServiceError(ContentModelServiceReason.CONFLICT) from None
-        except (asyncpg.PostgresError, OSError, TimeoutError):
+            if getattr(error, "sqlstate", None) == "P0001" or isinstance(
+                error, asyncpg.RaiseError
+            ):
+                raise ContentModelServiceError(
+                    ContentModelServiceReason.CONFLICT
+                ) from None
+            raise ContentModelServiceError(
+                ContentModelServiceReason.UNAVAILABLE
+            ) from None
+        except (OSError, TimeoutError):
             raise ContentModelServiceError(
                 ContentModelServiceReason.UNAVAILABLE
             ) from None

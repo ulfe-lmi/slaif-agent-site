@@ -80,6 +80,11 @@ select either relation. The same revision adds five owner-defined
 operation settings and validates site/resource/parent relationships before
 performing one bounded semantic create.
 
+Revision `026_001` places a guarded owner-defined layer over those wrappers.
+It resolves the active workspace from `app.session_id`, requires a valid
+operation UUID and active non-expired workspace, and rejects any supplied
+site UUID that differs from the workspace site before delegation.
+
 ## Login-principal design
 
 Privilege roles never contain passwords. The local deployment provisions this
