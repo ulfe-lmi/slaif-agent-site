@@ -88,6 +88,8 @@ EXPECTED_COMMANDS = {
         "/run/slaif-secrets",
         "--control-directory",
         "/run/slaif-control",
+        "--agent-directory",
+        "/run/slaif-agent",
         "--render-directory",
         "/run/slaif-render",
     ],
@@ -107,6 +109,7 @@ EXPECTED_BUILD_ARGS = {
 EXPECTED_MOUNTS = {
     **{name: set() for name in REQUIRED_SERVICES},
     "bootstrap": {("local-secrets", "/run/slaif-secrets", True)},
+    "agent-api": {("agent-secret", "/run/slaif-agent", True)},
     "control-api": {("control-secret", "/run/slaif-control", True)},
     "render-api": {("render-secret", "/run/slaif-render", True)},
     "media-gc": {("media-data", "/var/lib/slaif/media", False)},
@@ -116,6 +119,7 @@ EXPECTED_MOUNTS = {
         ("postgres-data", "/var/lib/postgresql/data", False),
     },
     "secrets-init": {
+        ("agent-secret", "/run/slaif-agent", False),
         ("control-secret", "/run/slaif-control", False),
         ("local-secrets", "/run/slaif-secrets", False),
         ("render-secret", "/run/slaif-render", False),
@@ -131,6 +135,7 @@ EXPECTED_GROUP_ADD = {
 }
 SECRET_MOUNT_SERVICES = {"bootstrap", "postgres", "secrets-init"}
 CONTROL_SECRET_MOUNT_SERVICES = {"control-api", "secrets-init"}
+AGENT_SECRET_MOUNT_SERVICES = {"agent-api", "secrets-init"}
 RENDER_SECRET_MOUNT_SERVICES = {"render-api", "secrets-init"}
 LONG_RUNNING_APPLICATIONS = REQUIRED_SERVICES - {
     "bootstrap",
@@ -181,6 +186,7 @@ def validate_config(config: dict[str, Any]) -> None:
     _fail(
         set(config.get("volumes", {}))
         == {
+            "agent-secret",
             "control-secret",
             "local-secrets",
             "media-data",
@@ -266,6 +272,13 @@ def validate_config(config: dict[str, Any]) -> None:
             has_control_secret == (name in CONTROL_SECRET_MOUNT_SERVICES),
             f"{name}: Control secret mount policy mismatch",
         )
+        has_agent_secret = any(
+            mount.get("source") == "agent-secret" for mount in mounts
+        )
+        _fail(
+            has_agent_secret == (name in AGENT_SECRET_MOUNT_SERVICES),
+            f"{name}: Agent secret mount policy mismatch",
+        )
         has_render_secret = any(
             mount.get("source") == "render-secret" for mount in mounts
         )
@@ -280,6 +293,7 @@ def validate_config(config: dict[str, Any]) -> None:
                 for key, value in environment.items()
                 if (
                     (key == "SLAIF_CONTROL_DSN_FILE" and name == "control-api")
+                    or (key == "SLAIF_AGENT_DSN_FILE" and name == "agent-api")
                     or (key == "SLAIF_RENDER_DSN_FILE" and name == "render-api")
                 )
             }
@@ -301,6 +315,35 @@ def validate_config(config: dict[str, Any]) -> None:
                     if name != "control-api"
                 ),
                 f"{name}: foreign Control setting present",
+            )
+            _fail(
+                not any(
+                    key.startswith("SLAIF_AGENT_")
+                    for key in environment
+                    if name != "agent-api"
+                ),
+                f"{name}: foreign Agent setting present",
+            )
+        if name == "agent-api":
+            _fail(
+                {
+                    key: environment.get(key)
+                    for key in (
+                        "SLAIF_AGENT_DSN_FILE",
+                        "SLAIF_AGENT_EXPECTED_DATABASE",
+                        "SLAIF_AGENT_EXPECTED_LOGIN",
+                        "SLAIF_AGENT_EXPECTED_PRIVILEGE_ROLE",
+                        "SLAIF_AGENT_MODE",
+                    )
+                }
+                == {
+                    "SLAIF_AGENT_DSN_FILE": "/run/slaif-agent/agent-dsn",
+                    "SLAIF_AGENT_EXPECTED_DATABASE": "slaif",
+                    "SLAIF_AGENT_EXPECTED_LOGIN": "slaif_agent_login",
+                    "SLAIF_AGENT_EXPECTED_PRIVILEGE_ROLE": "slaif_agent_runtime",
+                    "SLAIF_AGENT_MODE": "development",
+                },
+                "agent-api: database configuration mismatch",
             )
         if name == "control-api":
             _fail(

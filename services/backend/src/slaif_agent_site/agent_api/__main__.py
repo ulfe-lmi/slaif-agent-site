@@ -1,11 +1,10 @@
 """Start the Agent API process."""
 
-from ..application import run_http_process
-from ..authority import ProcessKind
+from .app import run_agent_process
 
 
 def main() -> int:
-    return run_http_process(ProcessKind.AGENT_API)
+    return run_agent_process()
 
 
 if __name__ == "__main__":

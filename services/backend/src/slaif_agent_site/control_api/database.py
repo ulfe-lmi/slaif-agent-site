@@ -12,6 +12,13 @@ from uuid import UUID, uuid4
 
 import asyncpg
 
+from slaif_agent_site.agent_api.models import (
+    AgentCapabilityContext as _AgentCapabilityContext,
+)
+from slaif_agent_site.agent_state.capability_auth import (
+    CapabilityAuthenticationUnavailableError,
+    authenticate_capability,
+)
 from slaif_agent_site.agent_state.foundation import (
     FOUNDATION_DISTRIBUTION,
     FOUNDATION_VERSION,
@@ -411,6 +418,36 @@ class ControlDatabase:
         return ContentModelService(
             self._pool or _UnstartedPool(),
             acquire_timeout=self._settings.acquire_timeout_seconds,
+        )
+
+    async def authenticate_agent_capability(self, auth_header: str) -> Any:
+        """Validate one bearer capability and return its trusted context."""
+
+        pool = self._pool
+        if pool is None:
+            raise ControlDatabaseError(ControlDatabaseReason.CONNECTION_UNAVAILABLE)
+        try:
+            record = await authenticate_capability(
+                pool,
+                acquire_timeout=self._settings.acquire_timeout_seconds,
+                auth_header=auth_header,
+            )
+        except asyncio.CancelledError:
+            raise
+        except CapabilityAuthenticationUnavailableError:
+            raise ControlDatabaseError(
+                ControlDatabaseReason.CONNECTION_UNAVAILABLE
+            ) from None
+        if record is None:
+            return None
+        return _AgentCapabilityContext(
+            capability_id=record.capability_id,
+            site_id=record.site_id,
+            workspace_id=record.workspace_id,
+            delegator_id=record.delegator_id,
+            scopes=record.scopes,
+            created_at=record.created_at,
+            expires_at=record.expires_at,
         )
 
     async def authenticate_local_login(

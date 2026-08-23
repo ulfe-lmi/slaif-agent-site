@@ -23,6 +23,7 @@ from slaif_agent_site.content_model.service import (
     ContentModelServiceReason,
 )
 from slaif_agent_site.errors import (
+    AuthenticationError,
     AuthorizationError,
     ResourceNotFoundError,
     ServiceUnavailableError,
@@ -44,16 +45,16 @@ async def _authenticate(request: Request) -> Any:
     """Authenticate the agent capability and return trusted context."""
     auth_header = request.headers.get("Authorization", "")
     if not auth_header.startswith("Bearer sas2_"):
-        raise AuthorizationError()
-    # The actual capability validation is performed by the control schema's
-    # SECURITY DEFINER function. For now we derive context from the request.
+        raise AuthenticationError()
+    # The control-owned database validates the token and lifecycle state before
+    # returning a trusted, immutable capability context.
     database = request.app.state.database
     try:
         context = await database.authenticate_agent_capability(auth_header)
     except Exception:
         raise ServiceUnavailableError() from None
     if context is None:
-        raise AuthorizationError()
+        raise AuthenticationError()
     return context
 
 

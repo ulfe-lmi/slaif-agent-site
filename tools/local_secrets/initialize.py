@@ -23,6 +23,7 @@ SECRET_MODE = 0o400
 DIRECTORY_MODE = 0o710
 CONTROL_DIRECTORY_MODE = 0o700
 CONTROL_DSN_FILE = "control-dsn"
+AGENT_DSN_FILE = "agent-dsn"
 RENDER_DSN_FILE = "render-dsn"
 MARKER = ".initialized-v1"
 LOGINS = (
@@ -117,6 +118,7 @@ def initialize(
     directory: Path,
     *,
     control_directory: Path | None = None,
+    agent_directory: Path | None = None,
     render_directory: Path | None = None,
     validate_only: bool = False,
 ) -> int:
@@ -124,6 +126,8 @@ def initialize(
         raise SecretInitializationError("secret directory must be absolute")
     if control_directory is not None and not control_directory.is_absolute():
         raise SecretInitializationError("Control secret directory must be absolute")
+    if agent_directory is not None and not agent_directory.is_absolute():
+        raise SecretInitializationError("Agent secret directory must be absolute")
     if render_directory is not None and not render_directory.is_absolute():
         raise SecretInitializationError("Render secret directory must be absolute")
     if not directory.exists():
@@ -212,6 +216,45 @@ def initialize(
             os.close(control_fd)
         isolated_files = 1
 
+    if agent_directory is not None:
+        agent_file = agent_directory / AGENT_DSN_FILE
+        expected_agent_dsn = dsn_files["service-agent-dsn"]
+        initialize_agent_file = not agent_file.exists()
+        if initialize_agent_file:
+            if validate_only:
+                raise SecretInitializationError("Agent secret directory is unavailable")
+            if agent_directory.exists() and any(agent_directory.iterdir()):
+                raise SecretInitializationError(
+                    "Agent secret directory policy mismatch"
+                )
+            _prepare_directory(
+                agent_directory,
+                mode=CONTROL_DIRECTORY_MODE,
+                uid=DIRECTORY_UID,
+                gid=DIRECTORY_UID,
+            )
+            _write_once(agent_file, expected_agent_dsn, uid=APPLICATION_UID)
+        _prepare_directory(
+            agent_directory,
+            mode=CONTROL_DIRECTORY_MODE,
+            uid=CONTROL_DIRECTORY_UID,
+            gid=CONTROL_DIRECTORY_GID,
+        )
+        if {path.name for path in agent_directory.iterdir()} != {AGENT_DSN_FILE}:
+            raise SecretInitializationError("Agent secret directory policy mismatch")
+        actual_agent_dsn = _read_secret(agent_file, uid=APPLICATION_UID)
+        if not secrets.compare_digest(actual_agent_dsn, expected_agent_dsn):
+            raise SecretInitializationError("isolated Agent locator mismatch")
+        agent_fd = os.open(
+            agent_directory,
+            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+        )
+        try:
+            os.fsync(agent_fd)
+        finally:
+            os.close(agent_fd)
+        isolated_files += 1
+
     if render_directory is not None:
         render_file = render_directory / RENDER_DSN_FILE
         expected_render_dsn = dsn_files["service-public-dsn"]
@@ -274,6 +317,11 @@ def main() -> int:
         default=Path("/run/slaif-control"),
     )
     parser.add_argument(
+        "--agent-directory",
+        type=Path,
+        default=Path("/run/slaif-agent"),
+    )
+    parser.add_argument(
         "--render-directory",
         type=Path,
         default=Path("/run/slaif-render"),
@@ -284,6 +332,7 @@ def main() -> int:
         count = initialize(
             arguments.directory,
             control_directory=arguments.control_directory,
+            agent_directory=arguments.agent_directory,
             render_directory=arguments.render_directory,
             validate_only=arguments.validate_only,
         )

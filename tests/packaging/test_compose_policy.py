@@ -74,6 +74,16 @@ def _configuration() -> dict[str, object]:
                     "SLAIF_CONTROL_MODE": "development",
                 }
             )
+        if name == "agent-api":
+            service["environment"].update(
+                {
+                    "SLAIF_AGENT_DSN_FILE": "/run/slaif-agent/agent-dsn",
+                    "SLAIF_AGENT_EXPECTED_DATABASE": "slaif",
+                    "SLAIF_AGENT_EXPECTED_LOGIN": "slaif_agent_login",
+                    "SLAIF_AGENT_EXPECTED_PRIVILEGE_ROLE": "slaif_agent_runtime",
+                    "SLAIF_AGENT_MODE": "development",
+                }
+            )
         if name == "render-api":
             service["environment"].update(
                 {
@@ -115,6 +125,7 @@ def _configuration() -> dict[str, object]:
         "volumes": {
             name: {}
             for name in (
+                "agent-secret",
                 "control-secret",
                 "local-secrets",
                 "media-data",
