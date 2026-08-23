@@ -81,6 +81,9 @@ class FakeAgentDatabase(FakeControlDatabase):
     def content_model_service(self) -> Any:
         return object()
 
+    def cow_pool(self) -> Any:
+        raise AssertionError("health-only app cannot invoke COW mutations")
+
     async def authenticate_agent_capability(self, _auth_header: str) -> Any:
         raise AssertionError("health-only app cannot invoke capability auth")
 
@@ -169,8 +172,10 @@ async def test_each_app_has_only_typed_health_routes(
             "/api/agent/v1/permissions",
             "/api/agent/v1/content-model/types",
             "/api/agent/v1/content-model/types/{type_id}",
+            "/api/agent/v1/content-model/types/{type_id}/fields",
             "/api/agent/v1/content-items/types/{type_id}",
             "/api/agent/v1/pages/",
+            "/api/agent/v1/pages/{page_id}/components",
             "/api/agent/v1/media/",
             "/internal/browser/v1/preview-runs",
             "/internal/browser/v1/runs/{run_id}",

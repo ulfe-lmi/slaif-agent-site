@@ -14,7 +14,7 @@ NOREPLICATION NOBYPASSRLS`.
 | `slaif_owner` | One-shot bootstrap only | Own `control`, `content`, `audit`, their objects, and the `agentcow` deployment; run migrations and hardening. |
 | `slaif_control` | Control API and human-session principal | `USAGE` on `control` plus execute on owner-defined readiness, setup, opaque-session, and local-credential lookup/compare-and-set functions; direct relation access, content DML, and reviewer/setup-owner authority remain denied. |
 | `slaif_editor_runtime` | Future Editor API principal | COW-view `SELECT`, `INSERT`, `UPDATE`, and `DELETE` after a table is enabled/hardened; no base/change, reviewer, or setup authority. |
-| `slaif_agent_runtime` | Future Agent API principal | Same COW-view DML boundary as Editor under a distinct role; no base/change, reviewer, or setup authority. |
+| `slaif_agent_runtime` | Agent API principal | COW-session semantic create wrappers for five bounded content routes, two narrow durable idempotency/audit functions, and no base/change, direct control-table, reviewer, or setup authority. |
 | `slaif_public_reader` | Canonical Render principal | Exact execute on the two active site resolver functions, plus `SELECT` on present COW views after product grant reconciliation; no site relations, management functions, or DML. |
 | `slaif_preview_reader` | Future preview render principal | Read-only view access; a future trusted session wrapper must establish preview context. |
 | `slaif_reviewer` | Future review-worker principal | Read-only COW views and only the foundation-controlled reviewer function surface; no runtime DML or setup. |
@@ -70,6 +70,20 @@ assignments, memberships, and overrides before authority evaluation. Its
 active and inactive trusted results compute Platform Administrator status from
 the target. The authenticated Control HTTP layer calls only this named surface;
 no HTTP handler receives a native connection or relation grant.
+
+Revision `025_001` adds the control-plane `agent_idempotency` record and
+append-only `audit.agent_mutation` evidence. The Agent role can invoke only
+the begin/complete owner functions, which validate the capability/workspace
+binding and write the result transactionally; it cannot insert, update, or
+select either relation. The same revision adds five owner-defined
+`content.slaif_agent_*` wrappers. Each requires the foundation COW session and
+operation settings and validates site/resource/parent relationships before
+performing one bounded semantic create.
+
+Revision `026_001` places a guarded owner-defined layer over those wrappers.
+It resolves the active workspace from `app.session_id`, requires a valid
+operation UUID and active non-expired workspace, and rejects any supplied
+site UUID that differs from the workspace site before delegation.
 
 ## Login-principal design
 

@@ -1,4 +1,10 @@
-"""Content model persistence and query service (Editor API only)."""
+"""Content model persistence and query service.
+
+The normal service owns a pool acquisition.  Agent mutations bind a small
+specialized service instance to an already-open public ``CowSession`` so the
+semantic functions run inside the trusted COW transaction and never acquire a
+second ordinary connection.
+"""
 
 from __future__ import annotations
 
@@ -50,6 +56,12 @@ class ContentModelServiceError(RuntimeError):
 
 class _Pool(Protocol):
     def acquire(self, *, timeout: float) -> Any: ...
+
+
+class _CowSession(Protocol):
+    native: Any
+
+    async def validate_context(self) -> None: ...
 
 
 def _ct(row: Any) -> ContentTypeRecord:
@@ -429,12 +441,39 @@ class ContentModelService(
 ):
     """Perform semantic content model operations via SECURITY DEFINER functions."""
 
-    def __init__(self, pool: _Pool, *, acquire_timeout: float = 3.0) -> None:
+    def __init__(
+        self,
+        pool: _Pool | None,
+        *,
+        acquire_timeout: float = 3.0,
+        cow_session: _CowSession | None = None,
+    ) -> None:
+        if pool is None and cow_session is None:
+            raise ValueError("content service requires a pool or COW session")
+        if pool is not None and cow_session is not None:
+            raise ValueError("content service cannot own pool and COW session")
         self._pool = pool
         self._acquire_timeout = acquire_timeout
+        self._cow_session = cow_session
+
+    @classmethod
+    def for_cow_session(
+        cls, cow_session: _CowSession, *, acquire_timeout: float = 3.0
+    ) -> ContentModelService:
+        """Bind semantic calls to one active, trusted COW transaction."""
+
+        return cls(
+            None,
+            acquire_timeout=acquire_timeout,
+            cow_session=cow_session,
+        )
 
     async def _fetchrow(self, sql: str, *arguments: object) -> Any:
         try:
+            if self._cow_session is not None:
+                await self._cow_session.validate_context()
+                return await self._cow_session.native.fetchrow(sql, *arguments)
+            assert self._pool is not None
             async with self._pool.acquire(timeout=self._acquire_timeout) as connection:
                 async with connection.transaction():
                     return await connection.fetchrow(sql, *arguments)
@@ -442,15 +481,31 @@ class ContentModelService(
             raise
         except asyncpg.UniqueViolationError:
             raise ContentModelServiceError(ContentModelServiceReason.CONFLICT) from None
-        except asyncpg.RaiseError:
-            raise ContentModelServiceError(ContentModelServiceReason.CONFLICT) from None
-        except (asyncpg.PostgresError, OSError, TimeoutError):
+        except asyncpg.PostgresError as error:
+            if getattr(error, "sqlstate", None) == "P0002":
+                raise ContentModelServiceError(
+                    ContentModelServiceReason.NOT_FOUND
+                ) from None
+            if getattr(error, "sqlstate", None) == "P0001" or isinstance(
+                error, asyncpg.RaiseError
+            ):
+                raise ContentModelServiceError(
+                    ContentModelServiceReason.CONFLICT
+                ) from None
+            raise ContentModelServiceError(
+                ContentModelServiceReason.UNAVAILABLE
+            ) from None
+        except (OSError, TimeoutError):
             raise ContentModelServiceError(
                 ContentModelServiceReason.UNAVAILABLE
             ) from None
 
     async def _fetch(self, sql: str, *arguments: object) -> list[Any]:
         try:
+            if self._cow_session is not None:
+                await self._cow_session.validate_context()
+                return list(await self._cow_session.native.fetch(sql, *arguments))
+            assert self._pool is not None
             async with self._pool.acquire(timeout=self._acquire_timeout) as connection:
                 return list(await connection.fetch(sql, *arguments))
         except asyncio.CancelledError:

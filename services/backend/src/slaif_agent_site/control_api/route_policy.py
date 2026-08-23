@@ -744,8 +744,10 @@ ROUTE_POLICIES: Final[tuple[RoutePolicy, ...]] = (
         )
         for method, path, mutation in (
             ("POST", "/api/agent/v1/content-model/types", _M),
+            ("POST", "/api/agent/v1/content-model/types/{type_id}/fields", _M),
             ("POST", "/api/agent/v1/content-items/types/{type_id}", _M),
             ("POST", "/api/agent/v1/pages/", _M),
+            ("POST", "/api/agent/v1/pages/{page_id}/components", _M),
         )
     ),
 )

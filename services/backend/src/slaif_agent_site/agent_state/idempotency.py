@@ -44,7 +44,11 @@ class IdempotencyMismatchError(Exception):
 
 
 class IdempotencyStore:
-    """In-memory idempotency store. Production should use PostgreSQL."""
+    """Small in-memory test helper.
+
+    The Agent HTTP mutation path uses the durable control-plane functions in
+    ``agent_state.mutations``; this helper remains for framework/unit tests.
+    """
 
     def __init__(self) -> None:
         self._records: dict[str, IdempotencyRecord] = {}

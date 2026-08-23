@@ -66,6 +66,8 @@ class AgentDatabaseAdapter(Protocol):
 
     def content_model_service(self) -> ContentModelService: ...
 
+    def cow_pool(self) -> Any: ...
+
     async def authenticate_agent_capability(self, auth_header: str) -> Any: ...
 
 
@@ -181,6 +183,13 @@ class AgentDatabase:
 
     def content_model_service(self) -> ContentModelService:
         return ContentModelService(self._pool or _UnstartedPool())
+
+    def cow_pool(self) -> Any:
+        """Return the already-owned Agent pool for one COW session."""
+
+        if self._pool is None:
+            raise AgentDatabaseError(AgentDatabaseReason.CONNECTION_UNAVAILABLE)
+        return self._pool
 
     async def authenticate_agent_capability(
         self, auth_header: str
