@@ -662,10 +662,22 @@ test("puck-editor-round-trip-through-human-editor-api", async ({ page }) => {
   await expect(moveDown).toBeDisabled();
   await expect(undo).toBeEnabled();
   await expect(redo).toBeDisabled();
-  const otherPuckComponent = page.locator(`[data-puck-component="${secondVisibleId}"]`);
-  const otherPuckOverlay = otherPuckComponent.first();
-  await expect(otherPuckOverlay).toBeAttached();
-  await otherPuckOverlay.click({ force: true });
+  const otherPuckComponent = page.locator(".puck-trusted-component").first();
+  await expect(otherPuckComponent).toHaveAttribute(
+    "data-puck-component",
+    secondVisibleId,
+  );
+  await expect(otherPuckComponent).toBeVisible();
+  await otherPuckComponent.click();
+  await expect(moveUp).toBeDisabled();
+  await expect(moveDown).toBeEnabled();
+  await moveDown.click();
+  await expect.poll(visibleComponentOrder).toEqual([firstSectionId, secondVisibleId]);
+  await expect(moveUp).toBeEnabled();
+  await expect(moveDown).toBeDisabled();
+  await page.waitForTimeout(300);
+  await undo.click();
+  await expect.poll(visibleComponentOrder).toEqual([secondVisibleId, firstSectionId]);
   await expect(moveUp).toBeDisabled();
   await expect(moveDown).toBeEnabled();
   await saveComposition();
