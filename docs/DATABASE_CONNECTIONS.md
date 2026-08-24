@@ -73,7 +73,10 @@ connections: canonical requests use `slaif_public_login`/`slaif_public_reader`
 and preview requests use `slaif_preview_login`/`slaif_preview_reader`. Preview
 also receives exact `EXECUTE` on the owner-defined human-session/workspace
 authorization function and opens one COW session only after that function
-returns trusted workspace/site values. Web receives no database locator; it
+returns trusted workspace/site values. The wrapper takes the shared workspace
+advisory lock before inspecting mutable session/workspace authority and keeps
+it through the COW projection; ordinary preview touch updates only
+`last_seen_at`, never `recent_auth_at`. Web receives no database locator; it
 and Render share only a separate high-entropy file-backed Render-call
 credential mounted read-only from `render-auth-secret`.
 

@@ -279,8 +279,9 @@ human session proof is authorized by the fixed `preview:inspect` database
 function. HUMAN, AGENT, and IMPORT workspaces are eligible only for their
 authorized human creator/delegator; SYSTEM workspaces are denied. The
 authorization applies the normal absolute-expiry, idle-expiry, revocation,
-account/site/workspace, membership, touch, and recent-auth policy. Canonical
-and preview use separate read-only pools. Preview reasserts the complete
+account/site/workspace, membership, touch, and recent-auth policy. A preview
+touch advances only `last_seen_at`; it never renews or changes `recent_auth_at`.
+Canonical and preview use separate read-only pools. Preview reasserts the complete
 mutable authority on the COW connection under the workspace shared advisory
 lock before reading content, then leaves no mutation, idempotency, or audit
 residue. Every internal response is private/no-store, noindex, and

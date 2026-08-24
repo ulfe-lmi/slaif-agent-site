@@ -57,8 +57,10 @@ initializers verify database, login/current-user, and exact membership before
 readiness succeeds. Preview additionally has only the owner-defined
 `slaif_render_preview_authorize` function. That wrapper applies idle and
 absolute expiry, revocation, account/site/workspace state, membership, and
-touch/recent-auth semantics. The projection transaction reasserts the same
-authority on its own preview connection under the workspace shared advisory
+touch/recent-auth semantics. Preview touch updates only `last_seen_at` and
+never renews `recent_auth_at`. The wrapper acquires the shared workspace
+advisory lock before mutable row inspection; the projection transaction
+reasserts the same authority on its own preview connection and holds that
 lock before any content read. Locator and driver details are never returned
 or logged.
 
