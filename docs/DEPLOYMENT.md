@@ -93,13 +93,13 @@ design rather than weaken this baseline.
 
 | Services | Image | Runtime user | Networks | Persistent/private mount |
 | --- | --- | --- | --- | --- |
-| `secrets-init` | Backend | root with only `CHOWN` and `DAC_READ_SEARCH` added | none | master local secrets and isolated Control secret, read/write |
+| `secrets-init` | Backend | root with only `CHOWN` and `DAC_READ_SEARCH` added | none | master local secrets, isolated service secrets, and Media store ownership handoff, read/write |
 | `postgres` | PostgreSQL | official entrypoint drops to PostgreSQL user | database | PostgreSQL data; local secrets read-only |
 | `bootstrap` | Backend | `10001:10001` | database | local secrets read-only |
 | `control-api` | Backend | `10001:10001` | edge, database | isolated Control secret, read-only |
 | Control/Agent/Render/MCP HTTP services | Backend | `10001:10001` | exact edge/application/database memberships | no media volume |
 | Editor HTTP service | Backend | `10001:10001` | edge/database plus isolated Control/Editor secrets | no media volume |
-| Media HTTP service | Backend | `10001:10001` | edge/database plus isolated Media secret | private `media-data` only |
+| Media HTTP service | Backend | `10001:10001` | edge/database plus isolated Media secret | private `media-data` only; initialized `0700` for UID 10001 |
 | Three Python workers | Backend | `10001:10001` | database | media volume on media-GC only |
 | `browser-worker` | Browser placeholder | `10001:10001` | browser only | none |
 | `web` | Next.js | `10001:10001` | edge, application | none |

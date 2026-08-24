@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, field_validator
 
 from .models import _bounded_json, _bounded_text
 
+
 class UpdateMediaRequest(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 

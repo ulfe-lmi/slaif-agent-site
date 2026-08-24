@@ -32,6 +32,8 @@ class LocalSecretTests(unittest.TestCase):
         INITIALIZER.MARKER_UID = os.getuid()
         INITIALIZER.DIRECTORY_UID = os.getuid()
         INITIALIZER.SECRET_DIRECTORY_GID = os.getgid()
+        INITIALIZER.MEDIA_ROOT_UID = os.getuid()
+        INITIALIZER.MEDIA_ROOT_GID = os.getgid()
         with tempfile.TemporaryDirectory() as parent:
             directory = Path(parent) / "secrets"
             count = INITIALIZER.initialize(directory)
@@ -214,14 +216,23 @@ class LocalSecretTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as parent:
             directory = Path(parent) / "secrets"
             media_directory = Path(parent) / "media"
+            media_root = Path(parent) / "media-root"
             media_directory.mkdir()
-            count = INITIALIZER.initialize(directory, media_directory=media_directory)
+            count = INITIALIZER.initialize(
+                directory,
+                media_directory=media_directory,
+                media_root=media_root,
+            )
             self.assertEqual(count, 24)
             media_file = media_directory / "media-dsn"
             first = media_file.read_bytes()
             self.assertEqual(first, (directory / "service-media-dsn").read_bytes())
             self.assertEqual(
-                INITIALIZER.initialize(directory, media_directory=media_directory),
+                INITIALIZER.initialize(
+                    directory,
+                    media_directory=media_directory,
+                    media_root=media_root,
+                ),
                 count,
             )
             self.assertEqual(media_file.read_bytes(), first)
@@ -230,6 +241,9 @@ class LocalSecretTests(unittest.TestCase):
             )
             self.assertEqual(stat.S_IMODE(media_directory.stat().st_mode), 0o700)
             self.assertEqual(stat.S_IMODE(media_file.stat().st_mode), 0o400)
+            self.assertEqual(stat.S_IMODE(media_root.stat().st_mode), 0o700)
+            self.assertEqual(media_root.stat().st_uid, os.getuid())
+            self.assertEqual(media_root.stat().st_gid, os.getgid())
 
 
 if __name__ == "__main__":

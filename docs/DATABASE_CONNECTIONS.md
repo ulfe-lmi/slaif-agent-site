@@ -62,8 +62,9 @@ Media follows a third isolated credential path. `secrets-init` copies only
 `slaif_media_login`/`slaif_media` pool validates database identity on every
 connection and performs human session/site authorization, COW metadata
 registration, and authorized metadata lookup only through named owner-defined
-functions. Media bytes are held in the private `media-data` volume, shared only
-with Media GC; NGINX and Apache never mount or alias it.
+functions. Media bytes are held in the private `media-data` volume, initialized
+by the networkless secrets process for UID 10001 and shared only with Media GC;
+NGINX and Apache never mount or alias it.
 
 The master `local-secrets` volume still contains PostgreSQL administrator,
 bootstrap owner, login-password, and future-service files. Control does not

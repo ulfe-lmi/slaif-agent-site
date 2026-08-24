@@ -94,6 +94,8 @@ services:
       - /run/slaif-editor
       - --media-directory
       - /run/slaif-media
+      - --media-root
+      - /var/lib/slaif/media
     restart: "no"
     network_mode: none
     volumes:
@@ -103,6 +105,7 @@ services:
       - render-secret:/run/slaif-render
       - editor-secret:/run/slaif-editor
       - media-secret:/run/slaif-media
+      - media-data:/var/lib/slaif/media
 
   postgres:
     <<: *common-security

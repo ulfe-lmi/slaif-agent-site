@@ -96,6 +96,8 @@ EXPECTED_COMMANDS = {
         "/run/slaif-editor",
         "--media-directory",
         "/run/slaif-media",
+        "--media-root",
+        "/var/lib/slaif/media",
     ],
 }
 EXPECTED_BUILD_FILES = {
@@ -136,6 +138,7 @@ EXPECTED_MOUNTS = {
         ("render-secret", "/run/slaif-render", False),
         ("editor-secret", "/run/slaif-editor", False),
         ("media-secret", "/run/slaif-media", False),
+        ("media-data", "/var/lib/slaif/media", False),
     },
 }
 EXPECTED_CAP_ADD = {

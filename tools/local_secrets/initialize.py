@@ -27,6 +27,9 @@ AGENT_DSN_FILE = "agent-dsn"
 RENDER_DSN_FILE = "render-dsn"
 EDITOR_DSN_FILE = "editor-dsn"
 MEDIA_DSN_FILE = "media-dsn"
+MEDIA_ROOT_MODE = 0o700
+MEDIA_ROOT_UID = APPLICATION_UID
+MEDIA_ROOT_GID = APPLICATION_UID
 MARKER = ".initialized-v1"
 LOGINS = (
     ("bootstrap", "slaif_bootstrap_login"),
@@ -124,6 +127,7 @@ def initialize(
     render_directory: Path | None = None,
     editor_directory: Path | None = None,
     media_directory: Path | None = None,
+    media_root: Path | None = None,
     validate_only: bool = False,
 ) -> int:
     if not directory.is_absolute():
@@ -138,6 +142,8 @@ def initialize(
         raise SecretInitializationError("Editor secret directory must be absolute")
     if media_directory is not None and not media_directory.is_absolute():
         raise SecretInitializationError("Media secret directory must be absolute")
+    if media_root is not None and not media_root.is_absolute():
+        raise SecretInitializationError("Media root must be absolute")
     if not directory.exists():
         if validate_only:
             raise SecretInitializationError("secret directory is unavailable")
@@ -384,6 +390,14 @@ def initialize(
             os.close(media_fd)
         isolated_files += 1
 
+    if media_root is not None:
+        _prepare_directory(
+            media_root,
+            mode=MEDIA_ROOT_MODE,
+            uid=MEDIA_ROOT_UID,
+            gid=MEDIA_ROOT_GID,
+        )
+
     marker = directory / MARKER
     if not validate_only and not marker.exists():
         _write_once(marker, "initialized-v1:" + ("0" * 48), uid=MARKER_UID)
@@ -424,6 +438,7 @@ def main() -> int:
         type=Path,
         default=Path("/run/slaif-media"),
     )
+    parser.add_argument("--media-root", type=Path)
     parser.add_argument("--validate-only", action="store_true")
     arguments = parser.parse_args()
     try:
@@ -434,6 +449,7 @@ def main() -> int:
             render_directory=arguments.render_directory,
             editor_directory=arguments.editor_directory,
             media_directory=arguments.media_directory,
+            media_root=arguments.media_root,
             validate_only=arguments.validate_only,
         )
     except (OSError, SecretInitializationError):
