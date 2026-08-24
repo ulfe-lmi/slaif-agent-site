@@ -595,38 +595,110 @@ def test_alembic_graph_and_offline_sql_need_no_locator_or_network() -> None:
 
 
 def test_pre_070_migration_history_is_byte_immutable() -> None:
-    base = "76fee6d3e233a3909b8ab303d7f563216d86e468"
-    legacy = (
-        "services/backend/src/slaif_agent_site/db/alembic/versions/"
-        "023_001_media_functions.py"
+    base_hashes = (
+        (
+            "006_001_postgres_bootstrap.py",
+            "88d2b71a4f8748dc83d371c9aa9d5d4ebc34f27c9431482cc5adb2a2eafb6a82",
+        ),
+        (
+            "007_001_control_readiness.py",
+            "ea6ce130fab1ae6981ccc38c4fb6f9c269bdcab96a2877d772e5386f0a2c67e0",
+        ),
+        (
+            "008_001_installation_state.py",
+            "68ca17407ab53a6508a55d0c2aff9d710bd2413efd893a059c6eb8521e86ba14",
+        ),
+        (
+            "009_001_local_identity.py",
+            "9df5ef7151d63f70f6321a7ee18ea0eac96771a03903e9a694683b1078ebc57e",
+        ),
+        (
+            "010_001_human_session.py",
+            "4f48ee3f0923fc1cfe38430375c89937883ebfe37199ca7b5371903a1555026f",
+        ),
+        (
+            "011_001_local_authentication.py",
+            "54abe6b20506f0ee394ac36b7c985f1ca1b67320c80ab85d9f4767a17d9a6c9c",
+        ),
+        (
+            "012_001_control_auth_http.py",
+            "76b4c3279c8c523400222684f376673cd57998eee0d85444cd472245548e523e",
+        ),
+        (
+            "013_001_site_foundation.py",
+            "08a690bb22e339b414e14b5c87d5f5d0972932ee1ddf4f694ced21b1cac03e82",
+        ),
+        (
+            "014_001_human_rbac.py",
+            "1eba3c39054580f89b41a3f21e1bfab3f3c0d278384c2de8bb70770667199f4b",
+        ),
+        (
+            "015_001_admin_read_model.py",
+            "6e941f643bf90d1bdb9259cc65b47824159cb6b5189aa3b8fb42aa3870686997",
+        ),
+        (
+            "016_001_content_model_tables.py",
+            "09005811b885f0b41626acb5b3f9c2e8e815338cf5174ac30e6754db7eea9bb5",
+        ),
+        (
+            "017_001_content_model_functions.py",
+            "5a91db98d3309fea3fd7d2ead03fa43ae402645e204672fde78bea10b18608c9",
+        ),
+        (
+            "018_001_content_item_functions.py",
+            "c5b2be8b90fe6b8bd8acaf7b86d26e5b26607deedd5a51427c129393654db731",
+        ),
+        (
+            "019_001_collection_view_functions.py",
+            "2e0aeefdbc770a873bf927d659bf75dc8ca54dfa7b3e39e15f7b3ec5c507fc7a",
+        ),
+        (
+            "020_001_nav_theme_functions.py",
+            "f4f27281b88d94ad56efdae0eb91e94192a5b54b60c9ddf61061032688dcc731",
+        ),
+        (
+            "021_001_page_functions.py",
+            "5d9ad307aacc234c3e782eedb80be77d01df516baf0c841790446f68d31d7aba",
+        ),
+        (
+            "022_001_composition_functions.py",
+            "e84cb4f3e3653f1971cd7c08ded35b20000cff6b385867224502974cbf3b8f2b",
+        ),
+        (
+            "023_001_media_functions.py",
+            "353deb00671debb5caee92bf79d0a7803534df4ea9497cb0d3827fff2da8f68b",
+        ),
+        (
+            "024_001_workspace_lifecycle.py",
+            "dda56c023f76e9614a14188f26d1d0e5d98ec1c3d81cc17c1228a090a9372623",
+        ),
+        (
+            "025_001_agent_mutation_surface.py",
+            "c1cade20c6d96450c85881e0ab3e1ea7624a28723db23330f1c4b55ef629e55a",
+        ),
+        (
+            "026_001_agent_site_binding.py",
+            "0d5bc7d5b1a9064ae4bee831c6173774a27d6502e7f21a4f44ab452f1cee766a",
+        ),
+        (
+            "027_001_qualify_content_function_columns.py",
+            "1a966cd729741701a84e203019acddb1dbdf1ec102352311bfde48436d83be40",
+        ),
+        (
+            "028_001_human_editor_workspace_envelope.py",
+            "9a3083fe2bcba7e871c4fddbb560f154181ba0968884f2c11205246d9d870eb3",
+        ),
+        (
+            "029_001_agent_semantic_read_surface.py",
+            "42d041e36224fa1410dfec5409ca0c6697c7d9612bf3e6fb8284f6664f9803af",
+        ),
     )
-    result = subprocess.run(
-        ["git", "diff", "--exit-code", f"{base}...HEAD", "--", legacy],
-        cwd=REPOSITORY_ROOT,
-        capture_output=True,
-        text=True,
+    directory = (
+        REPOSITORY_ROOT / "services/backend/src/slaif_agent_site/db/alembic/versions"
     )
-    assert result.returncode == 0, result.stdout + result.stderr
-    base_migrations = subprocess.check_output(
-        [
-            "git",
-            "ls-tree",
-            "-r",
-            "--name-only",
-            base,
-            "services/backend/src/slaif_agent_site/db/alembic/versions",
-        ],
-        cwd=REPOSITORY_ROOT,
-        text=True,
-    ).splitlines()
-    for path in base_migrations:
-        result = subprocess.run(
-            ["git", "diff", "--exit-code", f"{base}...HEAD", "--", path],
-            cwd=REPOSITORY_ROOT,
-            capture_output=True,
-            text=True,
-        )
-        assert result.returncode == 0, path
+    for name, expected in base_hashes:
+        actual = hashlib.sha256((directory / name).read_bytes()).hexdigest()
+        assert actual == expected, name
 
 
 def test_database_source_uses_public_foundation_boundary_and_no_domain_ddl() -> None:
