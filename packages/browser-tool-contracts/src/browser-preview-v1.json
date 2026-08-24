@@ -1,0 +1,30 @@
+{
+  "contractVersion": "browser-preview/v1",
+  "targets": ["desktop-chromium", "tablet", "mobile-chromium"],
+  "evidence": [
+    "screenshot",
+    "accessibility-summary",
+    "structure-summary",
+    "heading-summary",
+    "link-summary",
+    "media-summary",
+    "overflow-summary",
+    "console-summary",
+    "failed-request-summary"
+  ],
+  "runStates": ["QUEUED", "RUNNING", "COMPLETED", "FAILED", "TIMED_OUT", "CANCELLED"],
+  "terminalStates": ["COMPLETED", "FAILED", "TIMED_OUT", "CANCELLED"],
+  "visibility": "PRIVATE",
+  "bounds": {
+    "routeBytes": 2048,
+    "evidenceItems": 9,
+    "summaryProperties": 32,
+    "summaryBytes": 16384,
+    "errorCodeCharacters": 64,
+    "errorMessageCharacters": 512,
+    "artifactItems": 16,
+    "artifactBytes": 1073741824,
+    "durationSeconds": 600,
+    "attempts": 5
+  }
+}

@@ -40,14 +40,22 @@ ALLOWED_CLEAN_RELATIONS = {
     ("control", "human_role_permission"),
     ("control", "site_membership"),
     ("control", "site_membership_permission_override"),
+    ("control", "browser_run"),
+    ("control", "browser_idempotency"),
+    ("control", "browser_artifact"),
+    ("audit", "browser_event"),
 }
 FOUNDATION_SCHEMA = "agentcow"
 CONTROL_READINESS_FUNCTION = "slaif_control_readiness"
 CONTROL_SETUP_STATUS_FUNCTION = "slaif_setup_status"
 CONTROL_ROLE = "slaif_control"
 CAPABILITY_READ_RELATIONS = ("workspace", "capability")
-CAPABILITY_READ_ROLES = (CONTROL_ROLE, "slaif_agent_runtime")
+CAPABILITY_READ_ROLES = (CONTROL_ROLE,)
 AGENT_CONTROL_FUNCTIONS = {
+    (
+        "slaif_agent_capability_authenticate",
+        "p_public_id text",
+    ): "text",
     (
         "slaif_agent_idempotency_begin",
         "p_capability_id uuid, p_workspace_id uuid, p_idempotency_key text, "
@@ -60,6 +68,54 @@ AGENT_CONTROL_FUNCTIONS = {
         "p_response_body jsonb, p_resource_type text, p_resource_id uuid, "
         "p_site_id uuid",
     ): "uuid, uuid, text, text, uuid, integer, jsonb, text, uuid, uuid",
+    (
+        "slaif_agent_browser_run_begin",
+        "p_capability_id uuid, p_site_id uuid, p_workspace_id uuid, "
+        "p_delegator_id uuid, p_idempotency_key text, p_request_digest text, "
+        "p_operation_id uuid, p_run_id uuid, p_contract_version text, "
+        "p_route text, p_route_digest text, p_target text, p_evidence text[], "
+        "p_reserved_screenshots integer, p_reserved_artifact_bytes bigint, "
+        "p_reserved_routes integer, p_duration_seconds integer",
+    ): (
+        "uuid, uuid, uuid, uuid, text, text, uuid, uuid, text, text, text, text, "
+        "text[], integer, bigint, integer, integer"
+    ),
+    (
+        "slaif_agent_browser_run_get",
+        "p_capability_id uuid, p_site_id uuid, p_workspace_id uuid, "
+        "p_delegator_id uuid, p_run_id uuid",
+    ): "uuid, uuid, uuid, uuid, uuid",
+    (
+        "slaif_agent_browser_artifact_list",
+        "p_capability_id uuid, p_site_id uuid, p_workspace_id uuid, "
+        "p_delegator_id uuid, p_run_id uuid",
+    ): "uuid, uuid, uuid, uuid, uuid",
+    (
+        "slaif_agent_browser_run_claim",
+        "p_lease_id uuid, p_lease_seconds integer",
+    ): "uuid, integer",
+    (
+        "slaif_agent_browser_run_renew",
+        "p_run_id uuid, p_lease_id uuid, p_lease_seconds integer",
+    ): "uuid, uuid, integer",
+    (
+        "slaif_agent_browser_run_release",
+        "p_run_id uuid, p_lease_id uuid",
+    ): "uuid, uuid",
+    (
+        "slaif_agent_browser_run_complete",
+        "p_run_id uuid, p_lease_id uuid, p_state text, p_summary jsonb, "
+        "p_error_code text, p_error_message text",
+    ): "uuid, uuid, text, jsonb, text, text",
+    (
+        "slaif_agent_browser_artifact_register",
+        "p_run_id uuid, p_lease_id uuid, p_artifact_id uuid, p_kind text, "
+        "p_mime_type text, p_sha256 text, p_size_bytes bigint, p_target text, "
+        "p_route_digest text, p_expires_at timestamp with time zone",
+    ): (
+        "uuid, uuid, uuid, text, text, text, bigint, text, text, "
+        "timestamp with time zone"
+    ),
 }
 MEDIA_CONTROL_FUNCTIONS = {
     (
@@ -598,7 +654,7 @@ async def apply_product_privileges(
                     f"GRANT SELECT ON {relation} TO {quote_identifier(role)}"
                 )
 
-    for role in CAPABILITY_READ_ROLES:
+    for role in (*CAPABILITY_READ_ROLES, "slaif_agent_runtime"):
         await connection.execute(
             f'GRANT USAGE ON SCHEMA "control" TO {quote_identifier(role)}'
         )
@@ -781,6 +837,7 @@ async def _schema_violations(
                 and role
                 in {
                     *CAPABILITY_READ_ROLES,
+                    "slaif_agent_runtime",
                     "slaif_public_reader",
                     "slaif_preview_reader",
                     "slaif_editor_runtime",

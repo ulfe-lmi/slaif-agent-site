@@ -2,7 +2,7 @@
   "name": "@slaif-agent-site/browser-tool-contracts",
   "version": "0.0.0",
   "private": true,
-  "description": "Boundary scaffold for unimplemented browser-tool contracts.",
+  "description": "Versioned bounded contracts for private browser preview runs.",
   "license": "Apache-2.0",
   "type": "module",
   "files": [
@@ -16,7 +16,8 @@
   },
   "types": "./dist/index.d.ts",
   "scripts": {
-    "build": "tsc --project tsconfig.json",
+    "build": "tsc --project tsconfig.build.json",
+    "test": "vitest run tests/index.test.ts",
     "typecheck": "tsc --project tsconfig.json --noEmit"
   }
 }

@@ -9,6 +9,9 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
+from pydantic import ValidationError
+
+from ..browser_contracts import BrowserCapabilityLimits
 from .capability import (
     compute_digest,
     constant_time_digest_compare,
@@ -16,10 +19,23 @@ from .capability import (
 )
 
 CAPABILITY_AUTHENTICATION_SQL = """
+SELECT * FROM control.slaif_agent_capability_authenticate($1)
+"""
+
+CONTROL_CAPABILITY_AUTHENTICATION_SQL = """
 SELECT capability.id, capability.public_id, capability.secret_digest,
        workspace.id AS workspace_id, workspace.site_id,
        workspace.created_by, capability.scopes, capability.created_at,
-       capability.expires_at, capability.revoked_at
+       capability.expires_at, capability.revoked_at,
+       capability.browser_max_runs,
+       capability.browser_max_concurrent_runs,
+       capability.browser_max_screenshots,
+       capability.browser_max_artifact_bytes,
+       capability.browser_max_routes_per_run,
+       capability.browser_max_evidence_per_run,
+       capability.browser_max_duration_seconds,
+       capability.browser_max_attempts,
+       capability.browser_allowed_targets
 FROM control.capability AS capability
 JOIN control.workspace AS workspace ON workspace.id = capability.workspace_id
 WHERE capability.public_id = $1
@@ -41,6 +57,7 @@ class CapabilityAuthenticationRecord:
     scopes: frozenset[str]
     created_at: datetime
     expires_at: datetime
+    browser_limits: BrowserCapabilityLimits
 
 
 async def authenticate_capability(
@@ -48,6 +65,7 @@ async def authenticate_capability(
     *,
     acquire_timeout: float,
     auth_header: str,
+    query: str = CAPABILITY_AUTHENTICATION_SQL,
 ) -> CapabilityAuthenticationRecord | None:
     """Validate one capability through a caller-owned, bounded pool."""
 
@@ -59,7 +77,7 @@ async def authenticate_capability(
     _prefix, public_id, _secret = token.split("_", maxsplit=2)
     try:
         async with pool.acquire(timeout=acquire_timeout) as connection:
-            row = await connection.fetchrow(CAPABILITY_AUTHENTICATION_SQL, public_id)
+            row = await connection.fetchrow(query, public_id)
     except asyncio.CancelledError:
         raise
     except Exception:
@@ -92,6 +110,22 @@ async def authenticate_capability(
             isinstance(scope, str) for scope in scopes
         ):
             return None
+        targets_value = row["browser_allowed_targets"]
+        if not isinstance(targets_value, (list, tuple)):
+            return None
+        browser_limits = BrowserCapabilityLimits.model_validate(
+            {
+                "max_runs": row["browser_max_runs"],
+                "max_concurrent_runs": row["browser_max_concurrent_runs"],
+                "max_screenshots": row["browser_max_screenshots"],
+                "max_artifact_bytes": row["browser_max_artifact_bytes"],
+                "max_routes_per_run": row["browser_max_routes_per_run"],
+                "max_evidence_per_run": row["browser_max_evidence_per_run"],
+                "max_duration_seconds": row["browser_max_duration_seconds"],
+                "max_attempts": row["browser_max_attempts"],
+                "allowed_targets": targets_value,
+            }
+        )
         return CapabilityAuthenticationRecord(
             capability_id=row["id"],
             site_id=row["site_id"],
@@ -100,13 +134,15 @@ async def authenticate_capability(
             scopes=frozenset(scopes),
             created_at=row["created_at"],
             expires_at=expires_at,
+            browser_limits=browser_limits,
         )
-    except (KeyError, TypeError, ValueError):
+    except (KeyError, TypeError, ValidationError, ValueError):
         return None
 
 
 __all__ = [
     "CAPABILITY_AUTHENTICATION_SQL",
+    "CONTROL_CAPABILITY_AUTHENTICATION_SQL",
     "CapabilityAuthenticationRecord",
     "CapabilityAuthenticationUnavailableError",
     "authenticate_capability",

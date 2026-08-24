@@ -203,6 +203,7 @@ class AgentDatabase:
             scopes=record.scopes,
             created_at=record.created_at,
             expires_at=record.expires_at,
+            browser_limits=record.browser_limits,
         )
 
 

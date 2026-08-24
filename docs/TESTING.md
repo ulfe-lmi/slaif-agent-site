@@ -104,3 +104,27 @@ Render credentials. Web tests preserve 401/404/503 distinctions for the
 server-only client, exact-root shell fallback, canonical-first non-loopback
 root resolution, strict public CSP, and absence of session/service credentials
 from client-visible output or artifacts.
+
+## Browser-run contract and durable control-plane proof
+
+Python and TypeScript tests compare one committed language-neutral
+`browser-preview/v1` fact document, exact targets/evidence/states/bounds, one
+canonical serialization vector, and its SHA-256 digest. Extra-field and unsafe
+route cases cover foreign versions/targets/states, duplicate evidence,
+absolute/scheme-relative origins, traversal, fragments, credential query data,
+viewport/ID/header/cookie/JavaScript/browser-command input, and malformed or
+out-of-policy stored capability limits.
+
+Real PostgreSQL tests use `slaif_agent_login`/`slaif_agent_runtime`, two sites,
+two workspaces, and multiple capabilities. They prove concurrent same-key
+serialization produces exactly one run/idempotency/enqueue event; replay and
+mismatch are stable; total/concurrent/screenshot/artifact/target/route/evidence/
+duration limits leave zero residue; authority and cross-site substitutions fail
+closed; freeze/revocation waits behind the shared lock and rechecks; and
+cancellation rolls back with a reusable pool connection. Separate lease tests
+prove `SKIP LOCKED`, expiry retry, maximum-attempt termination, renew/release,
+invalid transition/metadata denial, one private artifact registration event,
+idempotent terminal completion, revoked visibility denial, read-only audit/COW
+silence, exact function ownership/search path, and direct-relation/other-role
+denials. Owner connections seed inputs and inspect counts only; every claimed
+browser mutation executes through the Agent functions.

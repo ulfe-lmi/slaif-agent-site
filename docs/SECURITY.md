@@ -110,3 +110,22 @@ left stale after process death; the lock is released before database
 registration. Multipart owns an `O_CREAT|O_EXCL|O_NOFOLLOW` read/write staging
 descriptor from creation through publication and never path-reopens it for
 production writes.
+
+Browser preview-run contracts now have one immutable `browser-preview/v1`
+version shared by Python and TypeScript. External create data is extra-forbid:
+it accepts only a bounded normalized route, one approved Chromium target, and
+a unique allowlisted evidence list. Absolute/scheme-relative origins,
+traversal, fragments, credential-shaped query data, identifiers, viewport
+overrides, headers/cookies, JavaScript, and browser commands are rejected.
+Canonical serialization fixes evidence order before SHA-256 request digesting.
+
+Migration `035_001` persists only capability limits, run/idempotency/lease
+state, private artifact metadata, and append-only browser events. It stores no
+artifact path, URL, credential, cookie, header, command, or bytes. Agent runtime
+has exact owner-function execution and no direct relation access; all other
+online roles are denied. Begin takes the shared workspace advisory lock before
+authority recheck and quota reservation. Claim/renew/release/completion and
+artifact registration recheck current authority and exact leases. Revocation
+therefore prevents later artifact registration and visibility. The worker
+remains DB-less, and no HTTP route, credential exchange, Playwright execution,
+artifact filesystem, source browsing, or publication behavior is implemented.

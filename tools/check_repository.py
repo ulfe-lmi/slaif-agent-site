@@ -122,7 +122,12 @@ NODE_SCRIPTS = {
     ),
     "test:e2e": "playwright test",
 }
-SCAFFOLD_EXEMPT_PACKAGES = {"scope-catalog", "component-catalog", "composition-schema"}
+SCAFFOLD_EXEMPT_PACKAGES = {
+    "browser-tool-contracts",
+    "component-catalog",
+    "composition-schema",
+    "scope-catalog",
+}
 
 WORKSPACE_PACKAGES = {
     "api-client": "@slaif-agent-site/api-client",

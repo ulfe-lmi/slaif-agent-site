@@ -219,6 +219,17 @@ the workspace overlay and remain absent from canonical content until a later
 human-only lifecycle order; this round does not implement freeze, accept,
 discard, review, or publication routes.
 
+### Browser preview contract foundation (no public route)
+
+The shared `browser-preview/v1` contract now defines one external create shape,
+public status/result and private artifact metadata, and internal run/lease/
+completion metadata. Capability authentication carries validated browser limits
+inside the trusted server context, and PostgreSQL has exact Agent-only
+reservation/read/lease/completion/artifact-metadata functions. No Agent HTTP or
+MCP browser endpoint calls this surface yet. There is no preview credential
+dispatch, worker execution, Playwright, artifact byte storage, source browsing,
+public artifact URL, or publication behavior in this revision.
+
 ## Site governance API
 
 Every route requires a current server-side human session. Site creation and

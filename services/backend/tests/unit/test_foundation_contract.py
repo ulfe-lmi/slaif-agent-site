@@ -76,6 +76,7 @@ NEW_PACKAGE_FILES = {
     "slaif_agent_site/bootstrap/config.py",
     "slaif_agent_site/bootstrap/service.py",
     "slaif_agent_site/bootstrap/setup_token.py",
+    "slaif_agent_site/browser_contracts.py",
     "slaif_agent_site/config.py",
     "slaif_agent_site/control_api/__init__.py",
     "slaif_agent_site/control_api/__main__.py",
@@ -104,6 +105,7 @@ NEW_PACKAGE_FILES = {
     "slaif_agent_site/db/alembic/versions/032_001_render_preview_authorization.py",
     "slaif_agent_site/db/alembic/versions/033_001_render_preview_recheck.py",
     "slaif_agent_site/db/alembic/versions/034_001_render_preview_lock_order.py",
+    "slaif_agent_site/db/alembic/versions/035_001_browser_run_control_plane.py",
     "slaif_agent_site/db/connections.py",
     "slaif_agent_site/db/executor.py",
     "slaif_agent_site/db/migrations.py",
@@ -246,6 +248,8 @@ EXPECTED_SDIST_FILES = {
     "services/backend/src/slaif_agent_site/db/alembic/versions/032_001_render_preview_authorization.py",
     "services/backend/src/slaif_agent_site/db/alembic/versions/033_001_render_preview_recheck.py",
     "services/backend/src/slaif_agent_site/db/alembic/versions/034_001_render_preview_lock_order.py",
+    "services/backend/src/slaif_agent_site/db/alembic/versions/035_001_browser_run_control_plane.py",
+    "services/backend/src/slaif_agent_site/browser_contracts.py",
     "services/backend/src/slaif_agent_site/render_api/projection.py",
     "services/backend/src/slaif_agent_site/agent_state/workspace_models.py",
     "services/backend/src/slaif_agent_site/agent_state/audit.py",
@@ -535,8 +539,9 @@ def test_locked_foundation_artifact_hash_constants_are_sha256() -> None:
 
 
 def test_alembic_graph_and_offline_sql_need_no_locator_or_network() -> None:
-    assert migration_heads() == ("034_001",)
+    assert migration_heads() == ("035_001",)
     assert migration_history() == (
+        "035_001",
         "034_001",
         "033_001",
         "032_001",

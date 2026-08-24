@@ -69,6 +69,15 @@ Internal service authentication, pools for non-Editor/Agent processes, browser
 sandbox and egress enforcement, production TLS automation, and product
 authorization remain later work. Network membership alone is not authority.
 
+The Agent database role now has an internal durable browser-run function
+surface for a later Agent-owned dispatcher. It can authenticate bounded browser
+limits; atomically begin/replay a preview run; read exact capability-bound run
+and private artifact metadata; claim, renew, or release a bounded lease;
+complete a run; and register artifact metadata. It has no direct Control/audit
+table grant. This is durable foundation only: the Agent app exposes no browser
+route using it, and the browser worker still has no database credential,
+dispatcher credential, Playwright package, browser binary, or artifact mount.
+
 The Agent HTTP behavior additionally includes the capability-authenticated
 bounded COW semantic read and create surfaces documented in [the API guide](API.md).
 Agent GETs use the real `slaif_agent_login`/`slaif_agent_runtime` identity,

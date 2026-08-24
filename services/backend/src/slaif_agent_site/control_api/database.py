@@ -16,6 +16,7 @@ from slaif_agent_site.agent_api.models import (
     AgentCapabilityContext as _AgentCapabilityContext,
 )
 from slaif_agent_site.agent_state.capability_auth import (
+    CONTROL_CAPABILITY_AUTHENTICATION_SQL,
     CapabilityAuthenticationUnavailableError,
     authenticate_capability,
 )
@@ -472,6 +473,7 @@ class ControlDatabase:
                 pool,
                 acquire_timeout=self._settings.acquire_timeout_seconds,
                 auth_header=auth_header,
+                query=CONTROL_CAPABILITY_AUTHENTICATION_SQL,
             )
         except asyncio.CancelledError:
             raise
@@ -489,6 +491,7 @@ class ControlDatabase:
             scopes=record.scopes,
             created_at=record.created_at,
             expires_at=record.expires_at,
+            browser_limits=record.browser_limits,
         )
 
     async def authenticate_local_login(
