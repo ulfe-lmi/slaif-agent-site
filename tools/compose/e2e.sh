@@ -4,6 +4,7 @@ set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 TOKEN_FILE=$1
 SECRET_FILE=$2
+PROJECT=${3:?missing compose project}
 OUTPUT_DIR=$(mktemp -d)
 
 cleanup() {
@@ -34,8 +35,53 @@ unset token
 
 if ! SLAIF_E2E_SECRET_FILE="$SECRET_FILE" \
   SLAIF_E2E_OUTPUT_DIR="$OUTPUT_DIR" \
-  pnpm exec playwright test
+  pnpm exec playwright test --project=setup --project=governance
 then
-  fail browser contract
+  fail browser setup-governance-contract
 fi
-echo "compose-e2e: OK projects=8 setup=1 governance=1 stable-devices=6 artifacts=disabled"
+
+workspace_id=12000000-0000-4000-8000-000000000301
+admin_id=$(docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif -Atc \
+  "SELECT id FROM control.user_account WHERE local_username_normalized = 'compose.admin'")
+site_id=$(docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif -Atc \
+  "SELECT id FROM control.site WHERE site_key = 'demo'")
+test -n "$admin_id" || fail preview-fixture-admin
+test -n "$site_id" || fail preview-fixture-site
+docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif \
+  -v ON_ERROR_STOP=1 -c \
+  "BEGIN;
+   INSERT INTO control.workspace
+     (id, site_id, created_by, actor_type, title, delegation_preset, status, expires_at)
+   VALUES ('$workspace_id'::uuid, '$site_id'::uuid, '$admin_id'::uuid,
+           'HUMAN', 'Compose preview fixture', 'L4_SITE_ARCHITECT', 'ACTIVE',
+           CURRENT_TIMESTAMP + interval '1 hour');
+   SET LOCAL app.session_id = '$workspace_id';
+   SET LOCAL app.operation_id = '12000000-0000-4000-8000-000000000302';
+   UPDATE content.page
+   SET title = 'Compose preview overlay'
+   WHERE site_id = '$site_id'::uuid AND slug = 'home' AND locale = 'en';
+   UPDATE content.page_composition
+   SET props = '{\"text\":\"Compose overlay heading\",\"level\":2}'::jsonb
+   WHERE site_id = '$site_id'::uuid
+     AND page_id = (SELECT id FROM content.page_base
+                    WHERE site_id = '$site_id'::uuid AND slug = 'home' AND locale = 'en')
+     AND component_type = 'Heading';
+   COMMIT;" >/dev/null
+
+if ! SLAIF_E2E_SECRET_FILE="$SECRET_FILE" \
+  SLAIF_E2E_PREVIEW_WORKSPACE_ID="$workspace_id" \
+  SLAIF_E2E_OUTPUT_DIR="$OUTPUT_DIR" \
+  pnpm exec playwright test --no-deps --project=preview
+then
+  fail browser preview-contract
+fi
+
+if ! SLAIF_E2E_SECRET_FILE="$SECRET_FILE" \
+  SLAIF_E2E_OUTPUT_DIR="$OUTPUT_DIR" \
+  pnpm exec playwright test --no-deps \
+    --project=desktop-chromium --project=desktop-firefox --project=desktop-webkit \
+    --project=tablet --project=mobile-chromium --project=mobile-webkit
+then
+  fail browser stable-devices-contract
+fi
+echo "compose-e2e: OK projects=9 setup=1 governance=1 preview=1 stable-devices=6 artifacts=disabled"

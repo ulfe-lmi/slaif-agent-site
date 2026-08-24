@@ -136,7 +136,7 @@ curl --fail --show-error --silent http://localhost:8080/ | grep -q "Self-hosted 
 docker compose -p "$PROJECT" logs --no-color bootstrap 2>/dev/null \
   | sed -n 's/^.*setup-token-secret: //p' >"$TOKEN_FILE"
 test "$(wc -l <"$TOKEN_FILE" | tr -d ' ')" = 1
-tools/compose/e2e.sh "$TOKEN_FILE" "$E2E_SECRET_FILE"
+tools/compose/e2e.sh "$TOKEN_FILE" "$E2E_SECRET_FILE" "$PROJECT"
 
 media_login_status=$(curl --silent --show-error --cookie-jar "$MEDIA_COOKIE_FILE" \
   --output "$MEDIA_LOGIN_FILE" --write-out '%{http_code}' \

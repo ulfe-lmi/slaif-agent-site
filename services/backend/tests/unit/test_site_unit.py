@@ -232,7 +232,7 @@ def _site_row(key: str = "alpha") -> tuple[Any, ...]:
         "ACTIVE",
         0,
         "en",
-        "catalog-v0",
+        "catalog-v1",
         0,
         now,
         now,
@@ -248,7 +248,7 @@ async def test_service_normalizes_before_create_and_uses_server_identity() -> No
     )
     assert result.site_id == UUID(int=1)
     assert connection.calls == [
-        (CREATE_SITE_SQL, ("alpha", "Alpha", "en", "catalog-v0"))
+        (CREATE_SITE_SQL, ("alpha", "Alpha", "en", "catalog-v1"))
     ]
 
 

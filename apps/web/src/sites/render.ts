@@ -51,6 +51,16 @@ export type PageProjection = Readonly<{
   bindings: Record<string, readonly Record<string, unknown>[]>;
 }>;
 
+export class RenderResolutionError extends Error {
+  readonly status: number;
+
+  constructor(status: number) {
+    super(`Render resolution failed with status ${status}.`);
+    this.name = "RenderResolutionError";
+    this.status = status;
+  }
+}
+
 export async function resolveSiteContext(
   authority: string,
   path: string,
@@ -68,9 +78,11 @@ export async function resolveSiteContext(
       body: JSON.stringify({ authority, path }),
       signal,
     });
-    if (!response.ok) return null;
+    if (response.status === 404) return null;
+    if (!response.ok) throw new RenderResolutionError(response.status);
     return (await response.json()) as SiteContext;
-  } catch {
+  } catch (error) {
+    if (error instanceof RenderResolutionError) throw error;
     return null;
   }
 }
@@ -113,9 +125,11 @@ async function resolveProjection(
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(2500),
     });
-    if (!response.ok) return null;
+    if (response.status === 404) return null;
+    if (!response.ok) throw new RenderResolutionError(response.status);
     return (await response.json()) as PageProjection;
-  } catch {
+  } catch (error) {
+    if (error instanceof RenderResolutionError) throw error;
     return null;
   }
 }

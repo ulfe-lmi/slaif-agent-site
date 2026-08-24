@@ -31,6 +31,11 @@ export default defineConfig({
       use: { ...devices["Desktop Chrome"] },
     },
     {
+      name: "preview",
+      testMatch: /preview\.spec\.ts/,
+      use: { ...devices["Desktop Chrome"] },
+    },
+    {
       name: "desktop-chromium",
       dependencies: ["governance"],
       testMatch: /auth\.spec\.ts/,

@@ -59,8 +59,8 @@ requires a separately designed and tested logical process.
 | --- | --- | --- |
 | `/` | Web | Accessible pre-alpha deployment-status page. |
 | `/health/live`, `/health/ready` | Web | Bounded Web process health only. |
-| `/s/demo/` and other resolved paths | Web→Render | Canonical published page HTML from a typed Render projection, with a safe routing shell when no page exists. |
-| `/preview/{workspace_id}/...` | Web→Render | Authenticated HUMAN workspace-overlay HTML; private/no-store/noindex and never public cacheable. |
+| `/s/demo/` and other resolved paths | Web→Render | Canonical published page HTML from a typed Render projection; only an exact matched site root without a page uses the routing shell, while deeper unknown/unpublished paths return 404. |
+| `/preview/{workspace_id}/...` | Web→Render | Authenticated human-authorized HUMAN/AGENT/IMPORT workspace-overlay HTML; private/no-store/noindex and never public cacheable. |
 | `/api/control/` | Control API | Prefix-stripped health plus authenticated setup/session, site/domain, RBAC catalog, and membership routes; readiness includes one database component. |
 | `/api/editor/health/` | Editor API | Exact liveness/readiness aliases. |
 | `/api/editor/v1/` | Editor API | Prefix-preserving human Editor API routes. |

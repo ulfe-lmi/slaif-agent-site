@@ -40,7 +40,7 @@ async def test_demo_seed_is_exact_idempotent_concurrent_and_mismatch_safe(
     await asyncio.gather(
         ensure_demo_site(database.settings), ensure_demo_site(database.settings)
     )
-    expected = [("demo", "SLAIF Demo Site", "en", "ACTIVE", 0, 0, "catalog-v0")]
+    expected = [("demo", "SLAIF Demo Site", "en", "ACTIVE", 0, 0, "catalog-v1")]
     assert await _rows(database) == expected
     await ensure_demo_site(database.settings)
     assert await _rows(database) == expected

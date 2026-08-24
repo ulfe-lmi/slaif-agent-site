@@ -102,6 +102,7 @@ NEW_PACKAGE_FILES = {
     "slaif_agent_site/db/alembic/versions/030_001_media_service_surface.py",
     "slaif_agent_site/db/alembic/versions/031_001_media_security_hardening.py",
     "slaif_agent_site/db/alembic/versions/032_001_render_preview_authorization.py",
+    "slaif_agent_site/db/alembic/versions/033_001_render_preview_recheck.py",
     "slaif_agent_site/db/connections.py",
     "slaif_agent_site/db/executor.py",
     "slaif_agent_site/db/migrations.py",
@@ -242,6 +243,7 @@ EXPECTED_SDIST_FILES = {
     "services/backend/src/slaif_agent_site/db/alembic/versions/030_001_media_service_surface.py",
     "services/backend/src/slaif_agent_site/db/alembic/versions/031_001_media_security_hardening.py",
     "services/backend/src/slaif_agent_site/db/alembic/versions/032_001_render_preview_authorization.py",
+    "services/backend/src/slaif_agent_site/db/alembic/versions/033_001_render_preview_recheck.py",
     "services/backend/src/slaif_agent_site/render_api/projection.py",
     "services/backend/src/slaif_agent_site/agent_state/workspace_models.py",
     "services/backend/src/slaif_agent_site/agent_state/audit.py",
@@ -531,8 +533,9 @@ def test_locked_foundation_artifact_hash_constants_are_sha256() -> None:
 
 
 def test_alembic_graph_and_offline_sql_need_no_locator_or_network() -> None:
-    assert migration_heads() == ("032_001",)
+    assert migration_heads() == ("033_001",)
     assert migration_history() == (
+        "033_001",
         "032_001",
         "031_001",
         "030_001",

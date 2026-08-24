@@ -55,8 +55,12 @@ The canonical pool uses only `slaif_public_login`/`slaif_public_reader`; the
 preview pool uses only `slaif_preview_login`/`slaif_preview_reader`. Both pool
 initializers verify database, login/current-user, and exact membership before
 readiness succeeds. Preview additionally has only the owner-defined
-`slaif_render_preview_authorize` function. Locator and driver details are
-never returned or logged.
+`slaif_render_preview_authorize` function. That wrapper applies idle and
+absolute expiry, revocation, account/site/workspace state, membership, and
+touch/recent-auth semantics. The projection transaction reasserts the same
+authority on its own preview connection under the workspace shared advisory
+lock before any content read. Locator and driver details are never returned
+or logged.
 
 The role has no direct `control` relation access and no site management,
 administrator, session, setup, migration, or publication function. It can call
@@ -73,7 +77,10 @@ public-reader and preview-reader DSNs. A third isolated file contains only the
 high-entropy Web-to-Render credential and is mounted read-only to Web and
 Render. Render does not mount the master or Control secret volume; Web and the
 edge have no database locator. Missing/invalid locators or service credentials
-fail closed through Render→Web→NGINX.
+fail closed at startup or request authentication through Render→Web→NGINX.
+The Web reader validates the same process-owned directory, regular-file,
+no-symlink, mode, owner, and bounded nonempty ASCII policy once at startup;
+Render middleware never rereads an environment-selected path per request.
 
 The Media service is a separate human-authenticated boundary. Its only
 database authority is the fixed `slaif_media_login`/`slaif_media` identity and

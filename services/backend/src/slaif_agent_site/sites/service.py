@@ -20,7 +20,7 @@ from .models import (
 )
 from .resolver import SiteResolver, SiteResolverError
 
-COMPONENT_CATALOG_VERSION = "catalog-v0"
+COMPONENT_CATALOG_VERSION = "catalog-v1"
 CREATE_SITE_SQL = "SELECT * FROM control.slaif_site_create($1, $2, $3, $4)"
 GET_SITE_SQL = "SELECT * FROM control.slaif_site_get($1)"
 LIST_SITES_SQL = "SELECT * FROM control.slaif_site_list()"

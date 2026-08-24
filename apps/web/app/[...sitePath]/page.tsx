@@ -16,6 +16,9 @@ export default async function SiteShell({
   if (!projection) {
     const context = await resolveSiteContext(authority, path);
     if (!context) notFound();
+    const matchedRoot = (context.matched_path_prefix || "/").replace(/\/$/, "") || "/";
+    const requestedPath = path.replace(/\/$/, "") || "/";
+    if (matchedRoot !== requestedPath) notFound();
     return <SiteContextShell context={context} />;
   }
 

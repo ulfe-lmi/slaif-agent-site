@@ -311,7 +311,7 @@ async def ensure_demo_site(settings: BootstrapSettings) -> None:
                 "canonical_revision, content_model_revision, "
                 "component_catalog_version FROM control.site ORDER BY site_key"
             )
-            expected = ("demo", "SLAIF Demo Site", "en", "ACTIVE", 0, 0, "catalog-v0")
+            expected = ("demo", "SLAIF Demo Site", "en", "ACTIVE", 0, 0, "catalog-v1")
             if not rows:
                 site_id = await connection.fetchval(
                     "INSERT INTO control.site "
@@ -339,7 +339,8 @@ async def ensure_demo_site(settings: BootstrapSettings) -> None:
                     site_id,
                     page_id,
                     '{"text":"SLAIF Demo Site","level":2}',
-                    '{"content":"A trusted canonical page projection."}',
+                    '{"content":{"type":"paragraph","children":'
+                    '[{"text":"A trusted canonical page projection."}]}}',
                 )
                 return
             if len(rows) != 1 or tuple(rows[0]) != expected:

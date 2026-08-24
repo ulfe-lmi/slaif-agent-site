@@ -38,13 +38,7 @@ function text(value: unknown): string {
 
 function safeHref(value: unknown): string {
   if (typeof value !== "string" || !value || value.startsWith("//")) return "/";
-  if (value.startsWith("/")) return value;
-  try {
-    const parsed = new URL(value);
-    return parsed.protocol === "https:" ? parsed.toString() : "/";
-  } catch {
-    return "/";
-  }
+  return value.startsWith("/") ? value : "/";
 }
 
 function Section({ props, children }: RenderProps) {
@@ -148,11 +142,10 @@ function Image({ props }: RenderProps) {
   if (!mediaId || !/^[0-9a-f-]{36}$/i.test(mediaId))
     throw new Error("invalid media reference");
   return (
-    <img
-      className="renderer-image"
-      src={`/media/${encodeURIComponent(mediaId)}`}
-      alt={text(props.alt)}
-      loading="lazy"
+    <div
+      aria-label={text(props.alt)}
+      className="renderer-image-placeholder"
+      role="img"
     />
   );
 }
@@ -176,8 +169,8 @@ function Quote({ props }: RenderProps) {
 }
 function Hero({ props, children }: RenderProps) {
   return (
-    <section className="renderer-hero" aria-labelledby="renderer-hero-heading">
-      <h2 id="renderer-hero-heading">{text(props.heading)}</h2>
+    <section className="renderer-hero">
+      <h2>{text(props.heading)}</h2>
       {props.subheading ? <p>{text(props.subheading)}</p> : null}
       {children}
     </section>
@@ -225,12 +218,16 @@ function Collection({
       : []);
   if (mode === "detail") {
     const item = items[0];
+    const values =
+      item && typeof item.values === "object" && item.values !== null
+        ? (item.values as Record<string, unknown>)
+        : {};
     return (
       <article className="renderer-collection-detail">
         {item ? (
           <>
-            <h2>{text(item.title ?? item.slug)}</h2>
-            <p>{text(item.summary ?? item.description)}</p>
+            <h2>{text(values.title ?? item.slug)}</h2>
+            <p>{text(values.summary ?? values.description)}</p>
           </>
         ) : null}
       </article>
@@ -240,8 +237,18 @@ function Collection({
     <div className={`renderer-collection renderer-collection--${mode}`}>
       {items.map((item, index) => (
         <article key={text(item.id) || index}>
-          <h2>{text(item.title ?? item.slug)}</h2>
-          <p>{text(item.summary ?? item.description)}</p>
+          {(() => {
+            const values =
+              typeof item.values === "object" && item.values !== null
+                ? (item.values as Record<string, unknown>)
+                : {};
+            return (
+              <>
+                <h2>{text(values.title ?? item.slug)}</h2>
+                <p>{text(values.summary ?? values.description)}</p>
+              </>
+            );
+          })()}
         </article>
       ))}
     </div>

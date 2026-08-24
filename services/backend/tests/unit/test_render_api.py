@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any
 from uuid import UUID
@@ -22,6 +23,7 @@ from slaif_agent_site.render_api.config import (
     RenderDatabaseSettings,
 )
 from slaif_agent_site.render_api.database import RenderDatabase
+from slaif_agent_site.render_api.site_http import RenderServiceAuthenticationMiddleware
 from slaif_agent_site.sites.models import SiteContext
 from slaif_agent_site.sites.resolver import SiteResolverError, SiteResolverReason
 
@@ -106,6 +108,85 @@ def test_fixed_render_identity_and_test_locator_boundary() -> None:
             mode=RenderDatabaseMode.PRODUCTION,
             dsn_file=Path("relative"),
         )
+
+
+def test_render_service_credential_file_policy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    directory = tmp_path / "auth"
+    directory.mkdir()
+    directory.chmod(0o700)
+    token_file = directory / "render-token"
+    token_file.write_text("t" * 43, encoding="ascii")
+    token_file.chmod(0o400)
+    settings = RenderDatabaseSettings(
+        mode=RenderDatabaseMode.TEST,
+        dsn=SecretStr(
+            "postgresql://slaif_public_login:fake@127.0.0.1/slaif?sslmode=disable"
+        ),
+        service_token_file=token_file,
+    )
+    assert settings.resolved_service_token() == SecretStr("t" * 43)
+
+    token_file.chmod(0o600)
+    with pytest.raises(RenderDatabaseConfigurationError):
+        settings.resolved_service_token()
+    token_file.chmod(0o400)
+    directory.chmod(0o755)
+    with pytest.raises(RenderDatabaseConfigurationError):
+        settings.resolved_service_token()
+    directory.chmod(0o700)
+    real_euid = os.geteuid()
+    monkeypatch.setattr(os, "geteuid", lambda: real_euid + 1)
+    with pytest.raises(RenderDatabaseConfigurationError):
+        settings.resolved_service_token()
+    monkeypatch.setattr(os, "geteuid", lambda: real_euid)
+    token_file.unlink()
+    token_file.symlink_to(directory / "missing")
+    with pytest.raises(RenderDatabaseConfigurationError):
+        settings.resolved_service_token()
+
+
+@pytest.mark.asyncio
+async def test_render_service_auth_rejects_invalid_tokens() -> None:
+    from starlette.responses import JSONResponse
+
+    async def endpoint(scope: Any, receive: Any, send: Any) -> None:
+        await JSONResponse({"ok": True})(scope, receive, send)
+
+    app = RenderServiceAuthenticationMiddleware(endpoint, service_token=b"t" * 43)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://render.test"
+    ) as client:
+        cases: tuple[tuple[list[tuple[str, str]], int], ...] = (
+            ([], 401),
+            ([("x-slaif-render-token", "")], 401),
+            ([("x-slaif-render-token", "wrong")], 401),
+            (
+                [
+                    ("x-slaif-render-token", "t" * 43),
+                    ("x-slaif-render-token", "t" * 43),
+                ],
+                401,
+            ),
+            ([("x-slaif-render-token", "t" * 43)], 200),
+        )
+        for headers, expected in cases:
+            response = await client.post(
+                "/internal/render/v1/page", headers=headers, content=b"{}"
+            )
+            assert response.status_code == expected
+
+    unconfigured = RenderServiceAuthenticationMiddleware(endpoint)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=unconfigured), base_url="http://render.test"
+    ) as client:
+        response = await client.post(
+            "/internal/render/v1/page",
+            headers={"x-slaif-render-token": ""},
+            content=b"{}",
+        )
+        assert response.status_code == 401
 
 
 @pytest.mark.asyncio

@@ -266,7 +266,9 @@ Render exposes typed, private projection routes on its internal listener:
 
 Page responses contain site/revision, normalized route/locale, page metadata,
 a bounded normalized composition tree, catalog/schema versions,
-theme/navigation data, and same-site bounded collection bindings. Render
+theme/navigation data, and same-site bounded collection bindings. Collection
+editorial fields are returned only below each item's explicit `values` object;
+reserved identity metadata cannot be overwritten by content values. Render
 returns JSON only; Web owns HTML and uses the trusted React catalog renderer.
 Unknown, archived, unpublished, wrong-site, ambiguous, malformed, or
 cross-workspace resources fail closed without partial data.
@@ -274,15 +276,22 @@ cross-workspace resources fail closed without partial data.
 The preview route accepts an untrusted workspace UUID only after the internal
 Web request is authenticated with the file-backed service credential and the
 human session proof is authorized by the fixed `preview:inspect` database
-function. Canonical and preview use separate read-only pools. Preview opens
-one COW session using the authorized workspace UUID and leaves no mutation,
-idempotency, or audit residue. Every internal response is private/no-store,
-noindex, and request-ID correlated. NGINX and Apache reject direct
-`/internal/` requests.
+function. HUMAN, AGENT, and IMPORT workspaces are eligible only for their
+authorized human creator/delegator; SYSTEM workspaces are denied. The
+authorization applies the normal absolute-expiry, idle-expiry, revocation,
+account/site/workspace, membership, touch, and recent-auth policy. Canonical
+and preview use separate read-only pools. Preview reasserts the complete
+mutable authority on the COW connection under the workspace shared advisory
+lock before reading content, then leaves no mutation, idempotency, or audit
+residue. Every internal response is private/no-store, noindex, and
+request-ID correlated. NGINX and Apache reject direct `/internal/` requests.
 
 Web calls the fixed internal URLs server-side with a short timeout. The
 service credential and human session proof never enter browser JavaScript,
 HTML, query strings, storage, logs, or artifacts. Public catch-all pages and
 `/preview/{workspace_id}/{site_path...}` render the same trusted React
-component implementation; preview responses are additionally private,
-no-store, and `noindex`.
+component implementation. Only an exact matched site root without a page may
+use the routing shell; deeper unknown, unpublished, or deleted routes are 404.
+Preview responses are additionally private, no-store, and `noindex`. Public
+rendering does not emit a media URL until public media finalization exists;
+trusted image nodes use an honest non-broken placeholder meanwhile.

@@ -273,17 +273,30 @@ test("site shell uses only the fixed server-side Render resolver", async () => {
   const shell = await read("../app/[...sitePath]/page.tsx");
   const shellView = await read("../src/sites/shell.tsx");
   const landing = await read("../app/page.tsx");
+  const renderer = await read("../src/renderer/components.tsx");
+  const serviceAuth = await read("../src/sites/service-auth.ts");
   assert.match(client, /http:\/\/render-api:8000\/internal\/render\/v1\/site-context/);
+  assert.match(client, /internal\/render\/v1\/page/);
+  assert.match(client, /internal\/render\/v1\/preview/);
+  assert.match(client, /RenderResolutionError/);
+  assert.match(client, /response\.status === 404/);
   assert.match(client, /credentials: "omit"/);
   assert.match(client, /cache: "no-store"/);
   assert.doesNotMatch(client, /process\.env|cookie|authorization|forwarded/i);
   assert.match(shell, /requestHeaders\.get\("host"\)/);
   assert.match(shellView, /Trusted routing context/);
+  assert.match(shell, /matched_path_prefix/);
+  assert.match(shell, /notFound\(\)/);
   assert.match(
     shellView,
     /routing shell is available when a site has no published page/,
   );
   assert.match(landing, /isLoopbackAuthority/);
+  assert.match(landing, /resolveCanonicalPage\(authority, "\/"\)/);
+  assert.match(renderer, /renderer-image-placeholder/);
+  assert.doesNotMatch(renderer, /parsed\.protocol === "https:"/);
+  assert.match(serviceAuth, /lstat/);
+  assert.doesNotMatch(serviceAuth, /readFile\(file, "ascii"\)\)\.trim/);
   assert.match(landing, /resolveSiteContext\(authority, "\/"\)/);
   assert.doesNotMatch(shell, /site_id.*params|x-forwarded-host/i);
 });

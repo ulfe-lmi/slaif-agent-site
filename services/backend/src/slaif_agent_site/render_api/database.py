@@ -172,6 +172,14 @@ class RenderDatabase:
             raise RuntimeError("database unavailable")
         return self._pool
 
+    @property
+    def preview_policy(self) -> tuple[int, int, int]:
+        return (
+            self._settings.preview_idle_timeout_seconds,
+            self._settings.preview_touch_interval_seconds,
+            self._settings.preview_recent_auth_seconds,
+        )
+
     def preview_pool(self) -> Any:
         if self._preview_pool is None:
             raise RuntimeError("preview database unavailable")

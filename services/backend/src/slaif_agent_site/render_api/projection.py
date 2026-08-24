@@ -64,6 +64,72 @@ MAX_CHILDREN = {
     "Header": 12,
     "Footer": 16,
 }
+PROP_SCHEMA: dict[str, dict[str, dict[str, Any]]] = {
+    "Section": {
+        "variant": {"type": "enum", "values": ("default", "full", "narrow")},
+        "background": {"type": "string"},
+    },
+    "Container": {"width": {"type": "enum", "values": ("sm", "md", "lg", "xl")}},
+    "Columns": {
+        "count": {"type": "number", "required": True, "min": 1, "max": 4},
+        "gap": {"type": "enum", "values": ("none", "sm", "md", "lg")},
+    },
+    "Grid": {
+        "columns": {"type": "number", "min": 1, "max": 12},
+        "gap": {"type": "enum", "values": ("sm", "md", "lg")},
+    },
+    "Stack": {
+        "direction": {"type": "enum", "values": ("vertical", "horizontal")},
+        "gap": {"type": "enum", "values": ("none", "sm", "md", "lg")},
+    },
+    "Spacer": {
+        "size": {
+            "type": "enum",
+            "required": True,
+            "values": ("xs", "sm", "md", "lg", "xl"),
+        }
+    },
+    "Heading": {
+        "text": {"type": "string", "required": True},
+        "level": {"type": "number", "required": True, "min": 1, "max": 6},
+    },
+    "RichText": {"content": {"type": "object", "required": True}},
+    "Image": {
+        "mediaId": {"type": "reference", "required": True},
+        "alt": {"type": "string", "required": True},
+        "aspectRatio": {"type": "enum", "values": ("auto", "16:9", "4:3", "1:1")},
+    },
+    "Button": {
+        "label": {"type": "string", "required": True},
+        "href": {"type": "string", "required": True},
+        "variant": {"type": "enum", "values": ("primary", "secondary", "ghost")},
+    },
+    "Quote": {
+        "text": {"type": "string", "required": True},
+        "attribution": {"type": "string"},
+    },
+    "CollectionList": {
+        "viewId": {"type": "reference", "required": True},
+        "limit": {"type": "number", "min": 1, "max": 100},
+    },
+    "CollectionGrid": {
+        "viewId": {"type": "reference", "required": True},
+        "columns": {"type": "number", "min": 1, "max": 6},
+    },
+    "CollectionDetail": {"viewId": {"type": "reference", "required": True}},
+    "Hero": {
+        "heading": {"type": "string", "required": True},
+        "subheading": {"type": "string"},
+        "mediaId": {"type": "reference"},
+    },
+    "Statistics": {"items": {"type": "array", "required": True}},
+    "Timeline": {"items": {"type": "array", "required": True}},
+    "FAQ": {"items": {"type": "array", "required": True}},
+    "Header": {},
+    "Footer": {},
+    "Breadcrumbs": {},
+    "LanguageSwitcher": {},
+}
 
 
 class ProjectionError(RuntimeError):
@@ -168,6 +234,72 @@ def _json_value(value: Any) -> Any:
     return value
 
 
+def _validate_nested(value: Any, *, depth: int = 0) -> None:
+    if depth > 8:
+        raise ProjectionError("props_depth")
+    if isinstance(value, dict):
+        for key, child in value.items():
+            if not isinstance(key, str) or key.lower() in {
+                "innerhtml",
+                "dangerouslysetinnerhtml",
+                "style",
+                "onclick",
+                "onload",
+                "script",
+                "eval",
+                "handler",
+                "html",
+            }:
+                raise ProjectionError("executable_prop")
+            _validate_nested(child, depth=depth + 1)
+    elif isinstance(value, list):
+        for child in value:
+            _validate_nested(child, depth=depth + 1)
+    elif isinstance(value, str) and value.casefold().startswith(
+        ("javascript:", "data:", "file:")
+    ):
+        raise ProjectionError("unsafe_value")
+
+
+def _validate_props(component_type: str, props: dict[str, Any]) -> None:
+    schema = PROP_SCHEMA[component_type]
+    if set(props) - set(schema):
+        raise ProjectionError("unknown_prop")
+    for key, rule in schema.items():
+        if rule.get("required") and key not in props:
+            raise ProjectionError("missing_prop")
+    for key, value in props.items():
+        rule = schema[key]
+        kind = rule["type"]
+        if kind == "string" and not isinstance(value, str):
+            raise ProjectionError("prop_type")
+        if kind == "number" and (
+            isinstance(value, bool) or not isinstance(value, (int, float))
+        ):
+            raise ProjectionError("prop_type")
+        if kind == "object" and not isinstance(value, dict):
+            raise ProjectionError("prop_type")
+        if kind == "array" and not isinstance(value, list):
+            raise ProjectionError("prop_type")
+        if kind == "reference":
+            try:
+                UUID(str(value))
+            except (TypeError, ValueError):
+                raise ProjectionError("prop_reference") from None
+        if kind == "enum" and value not in rule["values"]:
+            raise ProjectionError("prop_enum")
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            if "min" in rule and value < rule["min"]:
+                raise ProjectionError("prop_bound")
+            if "max" in rule and value > rule["max"]:
+                raise ProjectionError("prop_bound")
+    if component_type == "Button":
+        href = props["href"]
+        if not href.startswith("/") or href.startswith("//"):
+            raise ProjectionError("unsafe_value")
+    _validate_nested(props)
+
+
 def _route_slug(context: SiteContext, path: str) -> str:
     try:
         normalized = normalize_request_path(path)
@@ -217,11 +349,7 @@ def _node_tree(
         }
         if any(key.lower() in forbidden_keys for key in props):
             raise ProjectionError("executable_prop")
-        for value in props.values():
-            if isinstance(value, str) and value.casefold().startswith(
-                ("javascript:", "data:", "file:")
-            ):
-                raise ProjectionError("unsafe_value")
+        _validate_props(component_type, props)
         item = {
             "id": node_id,
             "component_type": component_type,
@@ -248,10 +376,13 @@ def _node_tree(
             by_id[parent_id]["component_type"], MAX_NODES
         ):
             raise ProjectionError("too_many_children")
-        for item in items:
-            allowed = ALLOWED_SLOTS.get(item["component_type"])
-            if allowed is not None and item["slot_key"] not in allowed:
-                raise ProjectionError("invalid_slot")
+        allowed = (
+            frozenset({"default"})
+            if parent_id is None
+            else ALLOWED_SLOTS.get(by_id[parent_id]["component_type"], frozenset())
+        )
+        if any(item["slot_key"] not in allowed for item in items):
+            raise ProjectionError("invalid_slot")
 
     visiting: set[UUID] = set()
     visited: set[UUID] = set()
@@ -335,19 +466,57 @@ async def _collection_bindings(
             for value in (filter_spec, sort_spec, pagination_spec)
         ):
             raise ProjectionError("unsupported_collection_query")
-        if set(filter_spec) - {"status", "slug"} or set(sort_spec) - {
-            "field",
-            "direction",
-        }:
-            raise ProjectionError("unsupported_collection_query")
-        if projection_spec not in ({}, None) and not (
-            isinstance(projection_spec, list)
-            and len(projection_spec) <= 16
-            and all(isinstance(value, str) for value in projection_spec)
+        if (
+            set(filter_spec) - {"status", "slug"}
+            or set(sort_spec) - {"field", "direction"}
+            or set(pagination_spec) - {"limit"}
         ):
             raise ProjectionError("unsupported_collection_query")
+        if filter_spec.get("status") is not None and not isinstance(
+            filter_spec["status"], str
+        ):
+            raise ProjectionError("unsupported_collection_query")
+        if filter_spec.get("slug") is not None and not isinstance(
+            filter_spec["slug"], str
+        ):
+            raise ProjectionError("unsupported_collection_query")
+        if projection_spec in ({}, None):
+            projection_fields: list[str] = []
+        elif isinstance(projection_spec, list):
+            projection_fields = projection_spec
+        elif isinstance(projection_spec, dict) and set(projection_spec) == {"fields"}:
+            projection_fields = projection_spec["fields"]
+        else:
+            raise ProjectionError("unsupported_collection_query")
+        if len(projection_fields) > 16 or not all(
+            isinstance(value, str) and value for value in projection_fields
+        ):
+            raise ProjectionError("unsupported_collection_query")
+        if len(set(projection_fields)) != len(projection_fields) or any(
+            field in {"id", "site_id", "type_id", "slug", "status", "values"}
+            for field in projection_fields
+        ):
+            raise ProjectionError("unsupported_collection_query")
+        type_row = await connection.fetchrow(
+            "SELECT site_id, status FROM content.content_type WHERE id = $1 LIMIT 1",
+            view[2],
+        )
+        if type_row is None or type_row[0] != site_id or type_row[1] != "ACTIVE":
+            raise ProjectionError("collection_scope")
+        field_rows = await connection.fetch(
+            "SELECT key FROM content.field_definition WHERE type_id = $1 "
+            'ORDER BY key COLLATE "C"',
+            view[2],
+        )
+        defined_fields = {row[0] for row in field_rows}
+        if any(field not in defined_fields for field in projection_fields):
+            raise ProjectionError("unknown_projection_field")
         requested_limit = node.props.get("limit", pagination_spec.get("limit", 24))
-        if not isinstance(requested_limit, int) or not 1 <= requested_limit <= 100:
+        if (
+            isinstance(requested_limit, bool)
+            or not isinstance(requested_limit, int)
+            or not 1 <= requested_limit <= 100
+        ):
             raise ProjectionError("collection_limit")
         statuses = (
             ["PUBLISHED"] if render_mode == "canonical" else ["PUBLISHED", "DRAFT"]
@@ -376,10 +545,18 @@ async def _collection_bindings(
                 raise ProjectionError("malformed_item")
             item = {
                 "id": row[0],
+                "site_id": row[1],
+                "type_id": row[2],
                 "slug": row[3],
                 "status": row[4],
-                **values,
+                "values": {
+                    field: values[field]
+                    for field in projection_fields
+                    if field in values
+                },
             }
+            if any(field not in values for field in projection_fields):
+                raise ProjectionError("unknown_projection_field")
             items.append(item)
         field = sort_spec.get("field", "slug")
         if field not in {"slug", "id"}:
@@ -473,6 +650,12 @@ class RenderProjectionService:
             "WHERE site_id = $1 LIMIT 1",
             context.site_id,
         )
+        catalog_row = await connection.fetchrow(
+            "SELECT control.slaif_site_render_catalog($1)", context.site_id
+        )
+        catalog_version = catalog_row[0] if catalog_row is not None else None
+        if catalog_version != "catalog-v1":
+            raise ProjectionError("catalog_mismatch")
         return RenderPageProjection(
             render_mode=render_mode,
             site=ProjectionSite(
@@ -486,7 +669,7 @@ class RenderProjectionService:
             page=page,
             composition=ProjectionComposition(
                 schema_version="site-composition/v1",
-                catalog_version="catalog-v1",
+                catalog_version=catalog_version,
                 nodes=roots,
             ),
             theme=(
@@ -541,22 +724,47 @@ class RenderProjectionService:
             raise ProjectionError("not_found") from None
         try:
             pool = self._database.preview_pool()
+            idle_seconds, touch_seconds, recent_auth_seconds = getattr(
+                self._database, "preview_policy", (1800, 300, 900)
+            )
             async with pool.acquire(
                 timeout=self._database.acquire_timeout
             ) as connection:
                 authorized = await connection.fetchrow(
-                    "SELECT * FROM control.slaif_render_preview_authorize($1,$2,$3,$4)",
+                    "SELECT * FROM control.slaif_render_preview_authorize("
+                    "$1,$2,$3,$4,$5,$6,$7)",
                     public_id,
                     digest_secret(secret),
                     request.workspace_id,
                     context.site_id,
+                    idle_seconds,
+                    touch_seconds,
+                    recent_auth_seconds,
                 )
             if authorized is None or authorized[2] != request.workspace_id:
                 raise ProjectionError("not_found")
+            trusted_workspace_id = authorized[2]
             async with asyncpg_cow_session(
-                pool, session_id=request.workspace_id
+                pool, session_id=trusted_workspace_id
             ) as cow:
                 await cow.validate_context()
+                reauthorized = await cow.native.fetchrow(
+                    "SELECT * FROM control.slaif_render_preview_authorize("
+                    "$1,$2,$3,$4,$5,$6,$7)",
+                    public_id,
+                    digest_secret(secret),
+                    trusted_workspace_id,
+                    context.site_id,
+                    idle_seconds,
+                    touch_seconds,
+                    recent_auth_seconds,
+                )
+                if (
+                    reauthorized is None
+                    or reauthorized[2] != trusted_workspace_id
+                    or reauthorized[3] != context.site_id
+                ):
+                    raise ProjectionError("not_found")
                 return await self._query(
                     cow.native,
                     context=context,

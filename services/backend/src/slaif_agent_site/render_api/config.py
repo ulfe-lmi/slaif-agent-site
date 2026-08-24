@@ -66,6 +66,9 @@ class RenderDatabaseSettings(BaseSettings):
     statement_timeout_ms: int = Field(default=2000, ge=50, le=30000)
     lock_timeout_ms: int = Field(default=500, ge=10, le=10000)
     idle_transaction_timeout_ms: int = Field(default=2000, ge=50, le=30000)
+    preview_idle_timeout_seconds: int = Field(default=1800, ge=2, le=86400)
+    preview_touch_interval_seconds: int = Field(default=300, ge=1, le=86400)
+    preview_recent_auth_seconds: int = Field(default=900, ge=1, le=604800)
     application_name: str = RENDER_APPLICATION_NAME
 
     @field_validator("dsn_file", "preview_dsn_file", "service_token_file")
@@ -227,7 +230,20 @@ class RenderDatabaseSettings(BaseSettings):
             value = self._read_file(self.service_token_file)
         else:
             return None
-        if len(value) < 32 or any(char.isspace() for char in value):
+        try:
+            directory = (
+                self.service_token_file.parent if self.service_token_file else None
+            )
+            if directory is None:
+                raise ValueError
+            info = directory.stat(follow_symlinks=False)
+            if not stat.S_ISDIR(info.st_mode) or stat.S_IMODE(info.st_mode) != 0o700:
+                raise ValueError
+            if info.st_uid != os.geteuid():
+                raise ValueError
+        except (OSError, ValueError):
+            raise RenderDatabaseConfigurationError(_ERROR) from None
+        if len(value) < 32 or len(value) > 256 or any(char.isspace() for char in value):
             raise RenderDatabaseConfigurationError(_ERROR)
         return SecretStr(value)
 

@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import os
 import secrets
-from pathlib import Path
 from typing import Any, Never
 from uuid import UUID
 
@@ -125,40 +123,46 @@ def install_render_projection_routes(app: FastAPI, database: Any) -> None:
 class RenderServiceAuthenticationMiddleware:
     """Authenticate Web-to-Render calls before any projection body is used."""
 
-    def __init__(self, app: Any, *, allow_test: bool = False) -> None:
+    def __init__(
+        self,
+        app: Any,
+        *,
+        allow_test: bool = False,
+        service_token: bytes | None = None,
+    ) -> None:
         self.app = app
         self.allow_test = allow_test
+        self.service_token = service_token
 
     async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
         path = scope.get("path", "")
         if scope.get("type") != "http" or not path.startswith("/internal/render/v1/"):
             await self.app(scope, receive, send)
             return
-        mode = os.environ.get("SLAIF_MODE", "development").casefold()
         if self.allow_test:
-            mode = "test"
-        token = None
-        if mode == "test":
             await self.app(scope, receive, send)
             return
-        try:
-            token_path = Path(
-                os.environ.get(
-                    "SLAIF_RENDER_SERVICE_TOKEN_FILE",
-                    "/run/slaif-render-auth/render-token",
-                )
-            )
-            token = token_path.read_text(encoding="ascii")
-            if not token or "\n" in token or "\r" in token:
-                token = None
-        except (OSError, UnicodeError):
-            token = None
         headers = scope.get("headers", [])
         values = [
             value for name, value in headers if name.lower() == b"x-slaif-render-token"
         ]
-        expected = token.encode("ascii") if token else b""
-        if len(values) != 1 or not secrets.compare_digest(values[0], expected):
+        expected = self.service_token
+        candidate = values[0] if len(values) == 1 else None
+        well_formed = False
+        if candidate is not None:
+            try:
+                decoded = candidate.decode("ascii")
+            except UnicodeDecodeError:
+                decoded = ""
+            well_formed = bool(decoded) and not any(
+                character.isspace() for character in decoded
+            )
+        if (
+            expected is None
+            or candidate is None
+            or not well_formed
+            or not secrets.compare_digest(candidate, expected)
+        ):
             response = JSONResponse({"error": "authentication_error"}, status_code=401)
             await response(scope, receive, send)
             return
