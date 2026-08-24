@@ -5,7 +5,9 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import os
 from pathlib import Path
+from unittest.mock import patch
 from urllib.parse import quote
 from uuid import UUID, uuid4
 
@@ -26,7 +28,9 @@ from slaif_agent_site.db.connections import owner_connection
 from slaif_agent_site.media_service.app import create_app
 from slaif_agent_site.media_service.config import MediaDatabaseMode, MediaSettings
 from slaif_agent_site.media_service.database import MediaDatabase
+from slaif_agent_site.media_service.media_http import get_asset_content
 from slaif_agent_site.media_service.store import MediaStore, StagedMedia
+from starlette.requests import Request
 
 PNG = b"\x89PNG\r\n\x1a\nmedia-fixture"
 CANONICAL_PNG = b"\x89PNG\r\n\x1a\ncanonical-fixture"
@@ -271,6 +275,40 @@ async def test_media_upload_store_read_dedupe_and_canonical_fallback(
                 assert content.headers["etag"] == f'"{upload_digest}"'
                 assert content.headers["x-content-type-options"] == "nosniff"
                 assert content.headers["cache-control"] == "private, no-store"
+
+                closed: list[int] = []
+                original_close = os.close
+
+                def record_close(descriptor: int) -> None:
+                    closed.append(descriptor)
+                    original_close(descriptor)
+
+                async def disconnected() -> dict[str, object]:
+                    return {"type": "http.disconnect"}
+
+                streaming_request = Request(
+                    {
+                        "type": "http",
+                        "method": "GET",
+                        "path": f"/v1/sites/{site_id}/assets/{media_id}/content",
+                        "headers": [
+                            (b"cookie", _cookie(session, csrf).encode()),
+                        ],
+                        "app": app,
+                    },
+                    disconnected,
+                )
+                with patch(
+                    "slaif_agent_site.media_service.media_http.os.close",
+                    side_effect=record_close,
+                ):
+                    stream_response = await get_asset_content(
+                        site_id, media_id, streaming_request
+                    )
+                    iterator = stream_response.body_iterator
+                    assert await anext(iterator) == PNG
+                    await iterator.aclose()
+                assert closed
 
                 same_key_replay = await client.post(
                     f"/v1/sites/{site_id}/assets",
