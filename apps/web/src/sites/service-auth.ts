@@ -1,6 +1,7 @@
 import "server-only";
 
-import { lstat, readFile } from "node:fs/promises";
+import { constants } from "node:fs";
+import { lstat, open } from "node:fs/promises";
 
 const renderToken = loadRenderToken();
 
@@ -8,26 +9,26 @@ async function loadRenderToken(): Promise<string | null> {
   const file = process.env.SLAIF_RENDER_SERVICE_TOKEN_FILE;
   if (!file) return null;
   try {
-    const info = await lstat(file);
     const directory = await lstat(file.substring(0, file.lastIndexOf("/")) || "/");
     const uid = typeof process.getuid === "function" ? process.getuid() : -1;
-    if (
-      info.isSymbolicLink() ||
-      !info.isFile() ||
-      (info.mode & 0o777) !== 0o400 ||
-      info.uid !== uid
-    )
-      return null;
     if (
       !directory.isDirectory() ||
       (directory.mode & 0o777) !== 0o700 ||
       directory.uid !== uid
     )
       return null;
-    const token = await readFile(file, "ascii");
-    return token && token.length >= 32 && token.length <= 256 && !/\s/.test(token)
-      ? token
-      : null;
+    const handle = await open(file, constants.O_RDONLY | constants.O_NOFOLLOW);
+    try {
+      const info = await handle.stat();
+      if (!info.isFile() || (info.mode & 0o777) !== 0o400 || info.uid !== uid)
+        return null;
+      const token = await handle.readFile({ encoding: "ascii" });
+      return token && token.length >= 32 && token.length <= 256 && !/\s/.test(token)
+        ? token
+        : null;
+    } finally {
+      await handle.close();
+    }
   } catch {
     return null;
   }
