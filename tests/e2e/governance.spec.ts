@@ -497,6 +497,10 @@ test("puck-editor-round-trip-through-human-editor-api", async ({ page }) => {
     targetPosition: "top" | "bottom" | undefined = undefined,
   ) {
     for (let attempt = 0; attempt < 4; attempt += 1) {
+      await source.scrollIntoViewIfNeeded();
+      await target.scrollIntoViewIfNeeded();
+      await expect(source).toBeVisible();
+      await expect(target).toBeVisible();
       const bounds = targetPosition === "bottom" ? await target.boundingBox() : null;
       const topBounds = targetPosition === "top" ? await target.boundingBox() : null;
       const targetBounds = bounds ?? topBounds;
