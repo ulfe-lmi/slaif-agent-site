@@ -1,6 +1,6 @@
 "use client";
 
-import { DropZone, Puck, type Config, type Data } from "@measured/puck";
+import { createUsePuck, DropZone, Puck, type Config, type Data } from "@measured/puck";
 import {
   COMPONENT_CATALOG,
   COMPONENT_TYPES,
@@ -8,13 +8,14 @@ import {
 } from "@slaif-agent-site/component-catalog";
 import {
   compositionToPuck,
+  derivePuckSiblingReorderActions,
   puckToComposition,
   type NormalizedCompositionNode,
   type PuckComponentConfig,
   type PuckData,
   type PuckNodeMetadata,
 } from "@slaif-agent-site/composition-schema";
-import { useEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 
 import { renderComponent } from "../renderer/components";
 import { Button, Card, StatusPanel } from "../components/ui/primitives";
@@ -63,8 +64,7 @@ function trustedPuckComponent(
   definition: ComponentDefinition,
   props: Record<string, unknown>,
 ) {
-  const { id: _id, ...componentProps } = props;
-  void _id;
+  const { id, ...componentProps } = props;
   const zones = definition.allowedSlots.map((slot) => (
     <DropZone
       key={slot}
@@ -83,7 +83,10 @@ function trustedPuckComponent(
     </div>
   );
   return (
-    <div data-puck-component={definition.type} className="puck-trusted-component">
+    <div
+      data-puck-component={typeof id === "string" ? id : undefined}
+      className="puck-trusted-component"
+    >
       {rendered}
     </div>
   );
@@ -108,6 +111,51 @@ const PUCK_CONFIG = {
   ),
 } as Config;
 
+const usePuckState = createUsePuck<typeof PUCK_CONFIG>();
+
+function PuckSiblingReorderActions({ children }: { children: ReactNode }) {
+  const selectedItem = usePuckState((state) => state.selectedItem);
+  const data = usePuckState((state) => state.appState.data as PuckData);
+  const dispatch = usePuckState((state) => state.dispatch);
+  const getPermissions = usePuckState((state) => state.getPermissions);
+  const getSelectorForId = usePuckState((state) => state.getSelectorForId);
+  const selectedProps = selectedItem?.props as Record<string, unknown> | undefined;
+  const selectedId = typeof selectedProps?.id === "string" ? selectedProps.id : null;
+  const selector = selectedId ? getSelectorForId(selectedId) : undefined;
+  const derived = derivePuckSiblingReorderActions(data, selector);
+  const canDrag = selectedItem
+    ? getPermissions({ item: selectedItem }).drag === true
+    : false;
+  const moveUp = canDrag ? derived.moveUp : null;
+  const moveDown = canDrag ? derived.moveDown : null;
+
+  return (
+    <>
+      {children}
+      <div className="puck-sibling-reorder-actions" aria-label="Component reorder">
+        <button
+          type="button"
+          disabled={!moveUp}
+          onClick={() => {
+            if (moveUp) dispatch(moveUp);
+          }}
+        >
+          Move up
+        </button>
+        <button
+          type="button"
+          disabled={!moveDown}
+          onClick={() => {
+            if (moveDown) dispatch(moveDown);
+          }}
+        >
+          Move down
+        </button>
+      </div>
+    </>
+  );
+}
+
 function editorMessage(reason: unknown): string {
   const code = reason instanceof Error ? reason.message : "";
   if (code === "unauthenticated") return "Your session ended. Sign in and try again.";
@@ -123,15 +171,6 @@ function editorMessage(reason: unknown): string {
 
 function sameJson(left: unknown, right: unknown): boolean {
   return JSON.stringify(left) === JSON.stringify(right);
-}
-
-function moveFirstRootComponent(data: PuckData): PuckData {
-  const [first, second] = data.content;
-  if (!first || !second) return data;
-  return {
-    ...data,
-    content: [second, first, ...data.content.slice(2)],
-  };
 }
 
 function depth(
@@ -313,33 +352,9 @@ export function CompositionEditor({
           key={puckRenderKey}
           config={PUCK_CONFIG}
           data={data as Data}
-          permissions={{
-            drag: true,
-            edit: true,
-            delete: true,
-            duplicate: true,
-            insert: true,
-          }}
+          overrides={{ headerActions: PuckSiblingReorderActions }}
           onChange={(next) => {
             latestData.current = next as Data;
-          }}
-          renderHeaderActions={({ state }) => {
-            const hasMultipleRootComponents = state.data.content.length > 1;
-            return (
-              <button
-                type="button"
-                data-testid="puck-action:move-first-down"
-                disabled={!hasMultipleRootComponents}
-                onClick={() => {
-                  const nextData = moveFirstRootComponent(state.data as PuckData);
-                  latestData.current = nextData;
-                  setData(nextData);
-                  setPuckRenderKey((key) => key + 1);
-                }}
-              >
-                Move first component down
-              </button>
-            );
           }}
           onPublish={(next) => void publish(next)}
           headerTitle="Page composition"

@@ -18,6 +18,6 @@
   "scripts": {
     "build": "tsc --project tsconfig.build.json",
     "typecheck": "tsc --project tsconfig.json --noEmit",
-    "test": "vitest run tests/index.test.ts"
+    "test": "vitest run tests/*.test.ts"
   }
 }

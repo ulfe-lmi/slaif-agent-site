@@ -607,6 +607,16 @@ input:focus-visible,
   border-radius: 0.4rem;
   padding: 1rem;
 }
+.puck-sibling-reorder-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-inline: 0.5rem;
+}
+.puck-sibling-reorder-actions button {
+  min-height: 2rem;
+  padding: 0.25rem 0.6rem;
+}
 
 @media (max-width: 760px) {
   .composition-editor__intro {

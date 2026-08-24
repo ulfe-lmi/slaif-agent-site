@@ -5,6 +5,7 @@ import {
   puckToComposition,
   type NormalizedCompositionNode,
 } from "../src/puck-adapter";
+import { derivePuckSiblingReorderActions } from "../src/puck-reorder";
 
 const nodes: readonly NormalizedCompositionNode[] = [
   {
@@ -93,6 +94,88 @@ describe("puck adapter", () => {
     expect(
       result.filter((node) => node.parentId === "root").map((node) => node.orderKey),
     ).toEqual([0, 1]);
+  });
+
+  it("derives fail-closed root boundary actions with history", () => {
+    const puck = compositionToPuck([
+      nodes[0]!,
+      { ...nodes[0]!, id: "root-2", orderKey: 20 },
+      { ...nodes[0]!, id: "root-3", orderKey: 30 },
+    ]);
+    expect(derivePuckSiblingReorderActions(puck, null)).toEqual({
+      zone: null,
+      sourceIndex: null,
+      siblingCount: 0,
+      moveUp: null,
+      moveDown: null,
+    });
+    expect(derivePuckSiblingReorderActions(puck, { index: 0 })).toMatchObject({
+      zone: "root:default-zone",
+      sourceIndex: 0,
+      siblingCount: 3,
+      moveUp: null,
+      moveDown: {
+        type: "reorder",
+        sourceIndex: 0,
+        destinationIndex: 1,
+        destinationZone: "root:default-zone",
+        recordHistory: true,
+      },
+    });
+    expect(derivePuckSiblingReorderActions(puck, { index: 1 })).toMatchObject({
+      moveUp: {
+        type: "reorder",
+        sourceIndex: 1,
+        destinationIndex: 0,
+        destinationZone: "root:default-zone",
+        recordHistory: true,
+      },
+      moveDown: {
+        type: "reorder",
+        sourceIndex: 1,
+        destinationIndex: 2,
+        destinationZone: "root:default-zone",
+        recordHistory: true,
+      },
+    });
+    expect(derivePuckSiblingReorderActions(puck, { index: 2 })).toMatchObject({
+      moveUp: {
+        type: "reorder",
+        sourceIndex: 2,
+        destinationIndex: 1,
+        destinationZone: "root:default-zone",
+        recordHistory: true,
+      },
+      moveDown: null,
+    });
+    expect(derivePuckSiblingReorderActions(puck, { index: 3 })).toMatchObject({
+      zone: null,
+      sourceIndex: null,
+      siblingCount: 0,
+      moveUp: null,
+      moveDown: null,
+    });
+  });
+
+  it("derives the exact same-zone action for a nested sibling zone", () => {
+    const puck = compositionToPuck(nodes);
+    const result = derivePuckSiblingReorderActions(puck, {
+      index: 1,
+      zone: "root:default",
+    });
+    expect(result).toEqual({
+      zone: "root:default",
+      sourceIndex: 1,
+      siblingCount: 2,
+      moveUp: {
+        type: "reorder",
+        sourceIndex: 1,
+        destinationIndex: 0,
+        destinationZone: "root:default",
+        recordHistory: true,
+      },
+      moveDown: null,
+    });
   });
 
   it("rejects unknown component types and executable/bookkeeping props", () => {

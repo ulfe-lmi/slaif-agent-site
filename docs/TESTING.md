@@ -33,15 +33,19 @@ membership, fixture, setup, and secret persistence. These automated checks are
 bounded executable evidence, not an accessibility or security certification.
 
 The governance Puck scenario creates an empty page through the Editor API only,
-then adds two trusted Sections through the visible drawer and uses the visible
-accessible Puck reorder action to move the first component. It saves through
-the visible button, reloads the composition, and verifies the same stable
-first-component ID moved from order 0 to order 1, the second ID at order 0,
-normalized server records, workspace overlay, HUMAN audit, and idempotency
-evidence. The final editor response must carry only the documented style-only
-CSP exception; scripts remain nonce-bound and the observer fails on any CSP
-console violation, unexpected console/page/network failure, or server error.
-Public and unrelated admin policies remain strict.
+then adds two trusted Sections through the visible drawer. It selects a
+component through the rendered Puck UI and uses the visible accessible `Move up`
+and `Move down` sibling controls, backed by Puck's reorder/history action. The
+controls derive the selected component's exact sibling zone and index, disable
+at the first/last boundary, and are not limited to a particular fixture or
+pair of components. The scenario saves through the visible button, reloads the
+composition, and verifies the same stable first-component ID moved from order
+0 to order 1, the second ID at order 0, normalized server records, workspace
+overlay, HUMAN audit, and idempotency evidence. The final editor response must
+carry only the documented style-only CSP exception; scripts remain nonce-bound
+and the observer fails on any CSP console violation, unexpected console/page/
+network failure, or server error. Public and unrelated admin policies remain
+strict.
 
 The backend production-chain integration uses the fixed
 `slaif_control_login`/`slaif_control` and

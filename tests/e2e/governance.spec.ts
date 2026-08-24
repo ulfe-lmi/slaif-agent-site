@@ -552,7 +552,7 @@ test("puck-editor-round-trip-through-human-editor-api", async ({ page }) => {
   }
   const sectionDrawerItem = page.getByTestId("drawer-item:Section");
   await expect(sectionDrawerItem).toBeVisible();
-  const sectionComponent = page.locator('[data-puck-component="Section"]');
+  const sectionComponent = page.locator(".puck-trusted-component");
   await dragUntil(
     sectionDrawerItem,
     rootDropZone,
@@ -618,10 +618,30 @@ test("puck-editor-round-trip-through-human-editor-api", async ({ page }) => {
   await expect(sectionComponent).toHaveCount(2);
   await page.keyboard.press("Escape");
   await page.waitForTimeout(300);
-  const moveFirstDown = page.getByTestId("puck-action:move-first-down");
-  await expect(moveFirstDown).toBeEnabled();
-  await moveFirstDown.click();
-  await expect(sectionComponent).toHaveCount(2);
+  const firstRenderedComponent = page.locator(".puck-trusted-component").first();
+  await expect(firstRenderedComponent).toBeVisible();
+  await firstRenderedComponent.click();
+  const moveUp = page.getByRole("button", { name: "Move up", exact: true });
+  const moveDown = page.getByRole("button", { name: "Move down", exact: true });
+  await expect(moveUp).toBeDisabled();
+  await expect(moveDown).toBeEnabled();
+  const puckComponents = page.locator("[data-puck-component]");
+  const visibleComponentOrder = () =>
+    puckComponents.evaluateAll((items, firstId) => {
+      const ids = items
+        .map((item) => item.getAttribute("data-puck-component"))
+        .filter(
+          (id): id is string => id === firstId || id?.startsWith("Section-") === true,
+        );
+      return [...new Set(ids)];
+    }, firstSectionId);
+  const beforeVisibleOrder = await visibleComponentOrder();
+  expect(beforeVisibleOrder).toHaveLength(2);
+  expect(beforeVisibleOrder[0]).toBe(firstSectionId);
+  const secondVisibleId = beforeVisibleOrder[1];
+  expect(secondVisibleId).toBeTruthy();
+  await moveDown.click();
+  await expect.poll(visibleComponentOrder).toEqual([secondVisibleId, firstSectionId]);
   await saveComposition();
 
   const persistedNodes = await loadPersistedNodes();
@@ -649,7 +669,7 @@ test("puck-editor-round-trip-through-human-editor-api", async ({ page }) => {
   expect(secondPersistedSection?.props).not.toHaveProperty("id");
 
   await page.reload();
-  await expect(page.locator('[data-puck-component="Section"]')).toHaveCount(2);
+  await expect(page.locator(".puck-trusted-component")).toHaveCount(2);
   expect(await loadPersistedNodes()).toEqual(persistedNodes);
   expect(failures(), "unexpected Puck browser failure category").toEqual([]);
 });

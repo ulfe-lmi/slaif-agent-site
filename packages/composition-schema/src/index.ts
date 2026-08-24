@@ -51,3 +51,4 @@ export function isCompositionNode(value: unknown): value is CompositionNode {
 }
 
 export * from "./puck-adapter";
+export * from "./puck-reorder";

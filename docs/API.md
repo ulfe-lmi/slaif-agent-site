@@ -118,7 +118,10 @@ composition through the Editor API, adapts it to the pinned
 IDs, schema versions, parent IDs, slots, order keys, and trusted props remain
 outside Puck metadata and are reconciled against server records. Unknown
 component types, executable prop names, arbitrary code, CSS, packages, and SQL
-are rejected. This order does not implement publication, preview authority,
+are rejected. A selected component can be moved among its current siblings
+with the accessible `Move up`/`Move down` controls; those controls dispatch
+Puck's same-zone reorder action with history recording and never replace the
+controlled data directly. This order does not implement publication, preview authority,
 workspace-management UI, freeze/review/promotion, responsive preview, or new
 catalog/storage types.
 

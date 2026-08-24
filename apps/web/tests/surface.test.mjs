@@ -118,6 +118,11 @@ test("Puck editor remains trusted, same-origin, and normalized", async () => {
   assert.match(editor, /from "@measured\/puck"/);
   assert.match(editor, /COMPONENT_CATALOG/);
   assert.match(editor, /data-puck-component/);
+  assert.match(editor, /createUsePuck/);
+  assert.match(editor, /derivePuckSiblingReorderActions/);
+  assert.match(editor, /overrides=\{\{ headerActions:/);
+  assert.match(editor, /Move up/);
+  assert.match(editor, /Move down/);
   assert.match(editor, /puckToComposition/);
   assert.match(editor, /pending.current/);
   assert.ok(api.includes("/api/editor/v1"));
@@ -128,6 +133,10 @@ test("Puck editor remains trusted, same-origin, and normalized", async () => {
   assert.match(adapter, /slotKey/);
   assert.match(adapter, /orderKey/);
   assert.match(adapter, /forbidden-component-prop/);
+  assert.doesNotMatch(
+    editor,
+    /renderHeaderActions|moveFirstRootComponent|puck-action:move-first-down/,
+  );
   assert.doesNotMatch(`${editor}${api}`, /localStorage|sessionStorage|Bearer|sas2_/);
 });
 
