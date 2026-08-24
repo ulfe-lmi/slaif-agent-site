@@ -6,7 +6,9 @@ import asyncio
 import hashlib
 import json
 import os
+from collections.abc import AsyncGenerator
 from pathlib import Path
+from typing import cast
 from unittest.mock import patch
 from urllib.parse import quote
 from uuid import UUID, uuid4
@@ -305,7 +307,9 @@ async def test_media_upload_store_read_dedupe_and_canonical_fallback(
                     stream_response = await get_asset_content(
                         site_id, media_id, streaming_request
                     )
-                    iterator = stream_response.body_iterator
+                    iterator = cast(
+                        AsyncGenerator[bytes, None], stream_response.body_iterator
+                    )
                     assert await anext(iterator) == PNG
                     await iterator.aclose()
                 assert closed
