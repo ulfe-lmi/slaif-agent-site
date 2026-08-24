@@ -1,4 +1,4 @@
-# OAP Work Order — 073-a
+# OAP Work Order — 074-a
 
 ## Objective
 
@@ -8,7 +8,7 @@ discarded sessions cleanly roll back.
 
 ## GitHub objective state
 
-- Numeric objective: `073`; round: `073-a`
+- Numeric objective: `074`; round: `074-a`
 - Mode: `CREATE_NEW_PR`; exactly one new PR
 
 ## Verified current state
@@ -16,7 +16,7 @@ discarded sessions cleanly roll back.
 - Accept route updates workspace status only.
 - Discard route updates status only.
 - `agent_state/promotion.py` wraps reviewer but never invoked from HTTP.
-- Requires snapshot from 072-a.
+- Requires snapshot from 073-a.
 
 ## Required changes
 
@@ -57,5 +57,5 @@ discarded sessions cleanly roll back.
 
 ## Report
 
-Publish `oap/reports/073-a-accept-discard-real-cow-promotion.md` with SELF
+Publish `oap/reports/074-a-accept-discard-real-cow-promotion.md` with SELF
 report commit parenting implementation SHA.

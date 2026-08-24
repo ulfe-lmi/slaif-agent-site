@@ -1,4 +1,4 @@
-# OAP Work Order — 069-a
+# OAP Work Order — 070-a
 
 ## Objective
 
@@ -7,7 +7,7 @@ content-addressed immutable storage, replacing metadata-only CRUD.
 
 ## GitHub objective state
 
-- Numeric objective: `069`; round: `069-a`
+- Numeric objective: `070`; round: `070-a`
 - Mode: `CREATE_NEW_PR`; exactly one new PR
 
 ## Verified current state
@@ -50,5 +50,5 @@ content-addressed immutable storage, replacing metadata-only CRUD.
 
 ## Report
 
-Publish `oap/reports/069-a-media-binary-upload-immutable-store.md` with SELF
+Publish `oap/reports/070-a-media-binary-upload-immutable-store.md` with SELF
 report commit parenting implementation SHA.

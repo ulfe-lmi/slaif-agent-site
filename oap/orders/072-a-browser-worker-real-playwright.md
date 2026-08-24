@@ -1,4 +1,4 @@
-# OAP Work Order — 071-a
+# OAP Work Order — 072-a
 
 ## Objective
 
@@ -8,7 +8,7 @@ against authorized preview targets.
 
 ## GitHub objective state
 
-- Numeric objective: `071`; round: `071-a`
+- Numeric objective: `072`; round: `072-a`
 - Mode: `CREATE_NEW_PR`; exactly one new PR
 
 ## Verified current state
@@ -53,5 +53,5 @@ against authorized preview targets.
 
 ## Report
 
-Publish `oap/reports/071-a-browser-worker-real-playwright.md` with SELF
+Publish `oap/reports/072-a-browser-worker-real-playwright.md` with SELF
 report commit parenting implementation SHA.

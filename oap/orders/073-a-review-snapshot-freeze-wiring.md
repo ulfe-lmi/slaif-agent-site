@@ -1,4 +1,4 @@
-# OAP Work Order — 072-a
+# OAP Work Order — 073-a
 
 ## Objective
 
@@ -8,7 +8,7 @@ transition workspace to REVIEW state.
 
 ## GitHub objective state
 
-- Numeric objective: `072`; round: `072-a`
+- Numeric objective: `073`; round: `073-a`
 - Mode: `CREATE_NEW_PR`; exactly one new PR
 
 ## Verified current state
@@ -57,5 +57,5 @@ transition workspace to REVIEW state.
 
 ## Report
 
-Publish `oap/reports/072-a-review-snapshot-freeze-wiring.md` with SELF report
+Publish `oap/reports/073-a-review-snapshot-freeze-wiring.md` with SELF report
 commit parenting implementation SHA.

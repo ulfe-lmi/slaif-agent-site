@@ -1,4 +1,4 @@
-# OAP Work Order — 075-a
+# OAP Work Order — 076-a
 
 ## Objective
 
@@ -9,14 +9,14 @@ discard restores clean state.
 
 ## GitHub objective state
 
-- Numeric objective: `075`; round: `075-a`
+- Numeric objective: `076`; round: `076-a`
 - Mode: `CREATE_NEW_PR`; exactly one new PR
 
 ## Verified current state
 
 - Architecture §18 mandates destructive demonstration test.
 - No such test exists.
-- Depends on working COW mutations (067) and accept/discard (073).
+- Depends on working COW mutations (067) and accept/discard (074).
 
 ## Required changes
 
@@ -51,5 +51,5 @@ discard restores clean state.
 
 ## Report
 
-Publish `oap/reports/075-a-destructive-isolation-e2e.md` with SELF report
+Publish `oap/reports/076-a-destructive-isolation-e2e.md` with SELF report
 commit parenting implementation SHA.
