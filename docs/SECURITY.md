@@ -69,3 +69,30 @@ Compose gives Render one isolated, read-only locator file containing only the
 public-reader DSN. It does not mount the master or Control secret volume. Web
 and the edge have no database locator, and readiness fails closed through
 Render→Web→NGINX if the Render locator is missing or invalid.
+
+The Media service is a separate human-authenticated boundary. Its only
+database authority is the fixed `slaif_media_login`/`slaif_media` identity and
+named owner-defined session, workspace, COW metadata, idempotency, and audit
+functions. Upload bytes are streamed to private digest-only storage after
+signature validation; the client MIME and filename never select a filesystem
+path. Authorized reads require metadata visible in the caller's active HUMAN
+workspace and never serve the volume through NGINX/Apache. SVG and anonymous
+media are disabled, and a database failure after private object publication
+leaves only an unreferenced orphan for later Media GC.
+
+Media workspace assertions acquire the same transaction-scoped advisory lock
+used by human/editor mutation envelopes before checking mutable membership,
+workspace, session, site, and permission state. The local store opens the root,
+staging directory, digest ancestors, and final object with directory-relative
+`O_NOFOLLOW` descriptors, verifies private modes/types and content, fsyncs
+staged bytes/object/directories in publication order, and never recursively
+retries a destination race. Global edge request bodies remain strict; the
+larger allowance is confined to `/media/`.
+
+Same-digest publication takes an exclusive advisory lock on the verified
+digest-prefix directory only, with a bounded two-second acquisition timeout.
+The directory itself is the lock primitive, so no lock artifact is exposed or
+left stale after process death; the lock is released before database
+registration. Multipart owns an `O_CREAT|O_EXCL|O_NOFOLLOW` read/write staging
+descriptor from creation through publication and never path-reopens it for
+production writes.

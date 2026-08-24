@@ -61,6 +61,51 @@ AGENT_CONTROL_FUNCTIONS = {
         "p_site_id uuid",
     ): "uuid, uuid, text, text, uuid, integer, jsonb, text, uuid, uuid",
 }
+MEDIA_CONTROL_FUNCTIONS = {
+    (
+        "slaif_media_authorize",
+        "p_public_id text, p_session_digest bytea, p_csrf_digest bytea, "
+        "p_site_id uuid, p_permission text, p_state_changing boolean",
+    ): "text, bytea, bytea, uuid, text, boolean",
+    (
+        "slaif_media_workspace_assert",
+        "p_workspace_id uuid, p_human_user_id uuid, p_site_id uuid, "
+        "p_human_session_id uuid, p_permission text, p_operation_id uuid",
+    ): "uuid, uuid, uuid, uuid, text, uuid",
+    (
+        "slaif_media_idempotency_begin",
+        "p_workspace_id uuid, p_human_user_id uuid, p_site_id uuid, "
+        "p_human_session_id uuid, p_permission text, p_key text, "
+        "p_digest text, p_operation_id uuid",
+    ): "uuid, uuid, uuid, uuid, text, text, text, uuid",
+    (
+        "slaif_media_idempotency_complete",
+        "p_workspace_id uuid, p_human_user_id uuid, p_site_id uuid, "
+        "p_human_session_id uuid, p_permission text, p_key text, "
+        "p_digest text, p_operation_id uuid, p_status integer, p_body jsonb, "
+        "p_action text, p_resource_type text, p_resource_id uuid",
+    ): (
+        "uuid, uuid, uuid, uuid, text, text, text, uuid, integer, jsonb, "
+        "text, text, uuid"
+    ),
+}
+MEDIA_CONTENT_FUNCTIONS = {
+    (
+        "slaif_media_asset_register",
+        "p_site_id uuid, p_uploaded_by uuid, p_session_id uuid, "
+        "p_permission text, p_filename text, p_mime_type text, p_size bigint, "
+        "p_hash text, p_storage_key text, p_alt_text text, p_metadata jsonb, "
+        "p_workspace_id uuid, p_human_user_id uuid",
+    ): (
+        "uuid, uuid, uuid, text, text, text, bigint, text, text, text, "
+        "jsonb, uuid, uuid"
+    ),
+    (
+        "slaif_media_asset_get",
+        "p_site_id uuid, p_media_id uuid, p_human_user_id uuid, "
+        "p_session_id uuid, p_permission text, p_workspace_id uuid",
+    ): "uuid, uuid, uuid, uuid, text, uuid",
+}
 AGENT_CONTENT_FUNCTIONS = {
     (
         "slaif_agent_content_type_list",
@@ -546,6 +591,8 @@ async def apply_product_privileges(
         await connection.execute(
             f'GRANT USAGE ON SCHEMA "control" TO {quote_identifier(role)}'
         )
+    await connection.execute('GRANT USAGE ON SCHEMA "control" TO "slaif_media"')
+    await connection.execute('GRANT USAGE ON SCHEMA "content" TO "slaif_media"')
     for relation in CAPABILITY_READ_RELATIONS:
         for role in CAPABILITY_READ_ROLES:
             await connection.execute(
@@ -564,11 +611,23 @@ async def apply_product_privileges(
             f'"control".{quote_identifier(name)}({signature}) '
             'TO "slaif_agent_runtime"'
         )
+    for (name, _identity), signature in MEDIA_CONTROL_FUNCTIONS.items():
+        await connection.execute(
+            "GRANT EXECUTE ON FUNCTION "
+            f'"control".{quote_identifier(name)}({signature}) '
+            'TO "slaif_media"'
+        )
     for (name, _identity), signature in AGENT_CONTENT_FUNCTIONS.items():
         await connection.execute(
             "GRANT EXECUTE ON FUNCTION "
             f'"content".{quote_identifier(name)}({signature}) '
             'TO "slaif_agent_runtime"'
+        )
+    for (name, _identity), signature in MEDIA_CONTENT_FUNCTIONS.items():
+        await connection.execute(
+            "GRANT EXECUTE ON FUNCTION "
+            f'"content".{quote_identifier(name)}({signature}) '
+            'TO "slaif_media"'
         )
     await connection.execute(
         'GRANT USAGE ON SCHEMA "control" TO "slaif_editor_runtime"'
@@ -698,13 +757,15 @@ async def _schema_violations(
                     *CAPABILITY_READ_ROLES,
                     "slaif_public_reader",
                     "slaif_editor_runtime",
+                    "slaif_media",
                 }
             ) or (
                 readiness_state is ReadinessState.HARDENED
                 and (
                     (
                         schema == "content"
-                        and role in (*RUNTIME_ROLES, *REVIEWER_ROLES, *READ_ROLES)
+                        and role
+                        in (*RUNTIME_ROLES, *REVIEWER_ROLES, *READ_ROLES, "slaif_media")
                     )
                     or (schema == FOUNDATION_SCHEMA and role in REVIEWER_ROLES)
                 )
@@ -873,6 +934,9 @@ async def _function_violations(
         is_agent_function = (
             schema == "control" and control_identity in AGENT_CONTROL_FUNCTIONS
         ) or (schema == "content" and control_identity in AGENT_CONTENT_FUNCTIONS)
+        is_media_function = (
+            schema == "control" and control_identity in MEDIA_CONTROL_FUNCTIONS
+        ) or (schema == "content" and control_identity in MEDIA_CONTENT_FUNCTIONS)
         is_human_editor_function = (
             schema == "control" and control_identity in HUMAN_EDITOR_FUNCTIONS
         )
@@ -883,6 +947,10 @@ async def _function_violations(
             if not security_definer or "search_path=pg_catalog" not in config:
                 violations.append(f"function/{schema}.{name}/unsafe-security-definer")
         elif is_agent_function and (
+            not security_definer or "search_path=pg_catalog" not in config
+        ):
+            violations.append(f"function/{schema}.{name}/unsafe-security-definer")
+        elif is_media_function and (
             not security_definer or "search_path=pg_catalog" not in config
         ):
             violations.append(f"function/{schema}.{name}/unsafe-security-definer")
@@ -924,6 +992,7 @@ async def _function_violations(
             allowed = (
                 (is_control_function and role == CONTROL_ROLE)
                 or (is_agent_function and role == "slaif_agent_runtime")
+                or (is_media_function and role == "slaif_media")
                 or (
                     is_human_editor_function
                     and role
@@ -950,6 +1019,8 @@ async def _function_violations(
             if is_control_function and role == CONTROL_ROLE and not can_execute:
                 violations.append(f"function/{schema}.{name}/{role}/missing-execute")
             if is_agent_function and role == "slaif_agent_runtime" and not can_execute:
+                violations.append(f"function/{schema}.{name}/{role}/missing-execute")
+            if is_media_function and role == "slaif_media" and not can_execute:
                 violations.append(f"function/{schema}.{name}/{role}/missing-execute")
             if (
                 is_human_editor_function
@@ -1031,6 +1102,8 @@ __all__ = [
     "CONTROL_READINESS_FUNCTION",
     "ContentObject",
     "HUMAN_EDITOR_FUNCTIONS",
+    "MEDIA_CONTENT_FUNCTIONS",
+    "MEDIA_CONTROL_FUNCTIONS",
     "PrivilegeValidation",
     "apply_product_privileges",
     "content_inventory_fingerprint",

@@ -111,10 +111,18 @@ output only in an operator-approved secret channel and see
 ## Volumes, backup, and cleanup
 
 The default named volumes are `postgres-data`, `media-data`, `local-secrets`,
-`control-secret`, and `render-secret`, prefixed by the Compose project name.
-PostgreSQL data, master local secrets, and both derived online secrets must be
-backed up and restored together. The media volume is only a placeholder in
-this slice; no media behavior exists.
+`control-secret`, `agent-secret`, `editor-secret`, `media-secret`, and
+`render-secret`, prefixed by the Compose project name. PostgreSQL data, master
+local secrets, derived online secrets, and referenced private media objects
+must be backed up and restored together. Media bytes are immutable digest-keyed
+objects; an unreferenced private object can remain after a database failure and
+is removed only by a later retention-aware Media GC objective.
+
+Media backup/restore must preserve digest paths, regular-file mode `0600`,
+directory confinement, and the metadata digest/MIME/size/key contract. Never
+restore media under a public web alias or substitute bytes under an existing
+digest. A missing or corrupt referenced object blocks authorized reads and
+requires restore/reupload of the matching digest.
 
 There is no automated credential rotation yet. Replacing only password or DSN
 files can desynchronize PostgreSQL principals and make bootstrap fail closed.

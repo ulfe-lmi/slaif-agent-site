@@ -1,11 +1,10 @@
-"""Start the media service process."""
+"""Start the authenticated Media service process."""
 
-from ..application import run_http_process
-from ..authority import ProcessKind
+from .app import run_media_process
 
 
 def main() -> int:
-    return run_http_process(ProcessKind.MEDIA_SERVICE)
+    return run_media_process()
 
 
 if __name__ == "__main__":

@@ -47,6 +47,11 @@ worker remain database-credential-free.
 Agent-facing identity is not authority to accept, publish, mint capabilities,
 run SQL/Alembic, or select site/workspace/operation context from a request.
 
+Media service is human-authenticated and owns only immutable local byte staging,
+content-addressed publication, and the narrow Media metadata/auth functions.
+It never accepts Agent capabilities, chooses a workspace from a request, serves
+anonymous bytes, or receives reviewer/publication authority.
+
 ## Deployment enforcement
 
 Code descriptors do not provide security by themselves. Compose now separates

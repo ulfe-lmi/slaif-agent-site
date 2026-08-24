@@ -46,6 +46,11 @@
       "filter": ["docs/user-manual/**/*.md"],
       "config": { "MD031": false, "MD032": false, "MD040": false, "MD058": false },
       "combine": "merge"
+    },
+    {
+      "filter": ["oap/orders/070-d-media-cross-worker-publication-race-proof.md"],
+      "config": { "MD018": false },
+      "combine": "merge"
     }
   ]
 }

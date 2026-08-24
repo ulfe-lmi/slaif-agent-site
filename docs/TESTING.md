@@ -59,3 +59,30 @@ classes and Editor application factory, and public Editor HTTP routes. It
 proves page CRUD, component add/update/move/delete, replay/mismatch, canonical
 fallback versus overlay, exact audit/idempotency counts, and no direct
 content-base or control-table access by the runtime roles.
+
+The Media integration uses a real `slaif_media_login` pool, ordinary human
+site memberships, real session/CSRF/RBAC state, disposable filesystem
+staging/object directories, and multipart HTTP. It proves signature-bound
+PNG/JPEG upload, digest-only keys, private byte headers, canonical fallback,
+idempotent replay, concurrent same-byte deduplication, mismatch, missing-key,
+ordinary permission/isolation failures, Editor metadata patch/reference
+delete retention, injected post-publish DB-failure orphan behavior, and no
+staging residue. Store unit tests cover ancestor/final symlinks, non-regular
+objects, corrupt reuse, descriptor reads/closure, modes, readiness failure,
+and publication fsync hooks. Multipart tests split adversarial boundaries and
+prove duplicate/length/truncation/oversize/cancellation cleanup. A real
+PostgreSQL two-connection race proves the Media workspace assertion waits on
+the shared workspace lock before revocation is evaluated. Compose/edge tests
+keep `/media/` as a proxy-only route with no volume alias or host mount and
+prove the larger request-body allowance is route-scoped. The lifecycle proof
+also covers the exact filename-bearing `file` part, Viewer upload denial,
+revoked session, revoked/expired workspace, and archived-site outcomes with
+no idempotency/audit residue.
+
+The Media store unit suite additionally runs two independent store instances
+in separate threads, pauses the winner after final-link visibility and before
+staging unlink, proves the loser waits and reuses the one-link object, proves a
+different digest progresses under its own prefix lock, and proves bounded lock
+timeout cleanup. The production parser writes through the pinned staging
+descriptor returned by the store; path replacement is rejected by inode
+comparison.

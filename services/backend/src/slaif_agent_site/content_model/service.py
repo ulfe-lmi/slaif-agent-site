@@ -285,7 +285,7 @@ class MediaMixin:
             content_hash,
             storage_key,
             alt_text,
-            metadata,
+            json.dumps(metadata, sort_keys=True),
         )
         if row is None:
             raise ContentModelServiceError(ContentModelServiceReason.CONFLICT)
@@ -304,7 +304,12 @@ class MediaMixin:
     async def update_media(
         self, media_id: UUID, alt_text: str | None, metadata: dict[str, Any] | None
     ) -> Any:
-        row = await self._fetchrow(MD_UPDATE_SQL, media_id, alt_text, metadata)
+        row = await self._fetchrow(
+            MD_UPDATE_SQL,
+            media_id,
+            alt_text,
+            json.dumps(metadata, sort_keys=True) if metadata is not None else None,
+        )
         if row is None:
             raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
         return _md(row)

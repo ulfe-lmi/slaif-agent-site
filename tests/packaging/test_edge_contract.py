@@ -32,6 +32,24 @@ class EdgeContractTests(unittest.TestCase):
             else:
                 self.assertIn(f"ProxyPass        {prefix} http://{upstream}/", apache)
 
+    def test_large_body_allowance_is_media_scoped(self) -> None:
+        nginx = (ROOT / "infra/nginx/nginx.conf").read_text(encoding="utf-8")
+        apache = (ROOT / "infra/apache/slaif-agent-site.conf").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("client_max_body_size 1m;", nginx)
+        self.assertIn(
+            "location /media/ {\n            client_max_body_size 105119744;",
+            nginx,
+        )
+        self.assertNotIn("client_max_body_size 100m;", nginx)
+        self.assertIn("LimitRequestBody 1048576", apache)
+        self.assertIn(
+            '<Location "/media/">\n        LimitRequestBody 105119744\n    </Location>',
+            apache,
+        )
+        self.assertNotIn("LimitRequestBody 104857600", apache)
+
     def test_control_health_is_adapted_and_v1_path_is_preserved(self) -> None:
         nginx = (ROOT / "infra/nginx/nginx.conf").read_text(encoding="utf-8")
         apache = (ROOT / "infra/apache/slaif-agent-site.conf").read_text(

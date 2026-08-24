@@ -1,5 +1,5 @@
-"""Media service health-only process skeleton."""
+"""Private authenticated Media service."""
 
-from .app import create_app
+from .app import create_app, run_media_process
 
-__all__ = ["create_app"]
+__all__ = ["create_app", "run_media_process"]
