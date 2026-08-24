@@ -31,3 +31,31 @@ behavior, 44 px critical targets, 320 px overflow safety where applicable,
 reduced motion, and logout. Stop/start fingerprints then verify site, domain,
 membership, fixture, setup, and secret persistence. These automated checks are
 bounded executable evidence, not an accessibility or security certification.
+
+The governance Puck scenario creates an empty page through the Editor API only,
+then adds two trusted Sections through the visible drawer. It selects a
+component through the rendered Puck UI and uses the visible accessible `Move up`
+and `Move down` sibling controls, backed by Puck's reorder/history action. The
+controls derive the selected component's exact sibling zone and index, disable
+at the first/last boundary, and are not limited to a particular fixture or
+pair of components. After Move down, the selected component remains selected at
+the destination boundary; visible Undo and Redo restore the prior/moved order
+and selection boundary without backend operations. The scenario saves only the
+final redone state, reloads the composition, and verifies the same stable
+first-component ID moved from order 0 to order 1, the second ID at order 0,
+normalized server records, workspace overlay, HUMAN audit, and idempotency
+evidence. It then explicitly selects the other visible component and verifies
+that deliberate selection remains stable and controls reflect its inverse
+boundary; later moves may bind continuity to a new selection. The final editor
+response must carry only the documented style-only
+CSP exception; scripts remain nonce-bound and the observer fails on any CSP
+console violation, unexpected console/page/network failure, or server error.
+Public and unrelated admin policies remain strict.
+
+The backend production-chain integration uses the fixed
+`slaif_control_login`/`slaif_control` and
+`slaif_editor_login`/`slaif_editor_runtime` identities, the real database
+classes and Editor application factory, and public Editor HTTP routes. It
+proves page CRUD, component add/update/move/delete, replay/mismatch, canonical
+fallback versus overlay, exact audit/idempotency counts, and no direct
+content-base or control-table access by the runtime roles.

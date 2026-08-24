@@ -65,6 +65,9 @@ class FakeControlDatabase:
     async def authorize_platform_administrator(self, _user_id: Any) -> bool:
         raise AssertionError("health-only app cannot invoke authorization")
 
+    async def resolve_human_editor_workspace(self, _site_id: Any, _user_id: Any) -> Any:
+        raise AssertionError("health-only app cannot invoke workspace resolution")
+
     def site_service(self) -> Any:
         raise AssertionError("health-only app cannot invoke site service")
 
@@ -108,13 +111,17 @@ async def test_each_app_has_only_typed_health_routes(
         if process is ProcessKind.AGENT_API
         else FakeControlDatabase()
     )
+    editor_database = FakeAgentDatabase() if process is ProcessKind.EDITOR_API else None
     arguments: dict[str, object] = {"settings": ServiceSettings.for_test()}
     if process in {
         ProcessKind.CONTROL_API,
+        ProcessKind.EDITOR_API,
         ProcessKind.RENDER_API,
         ProcessKind.AGENT_API,
     }:
         arguments["database"] = database
+    if editor_database is not None:
+        arguments["editor_database"] = editor_database
     app = factory(**arguments)
     expected_routes = {"/health/live", "/health/ready"}
     if process is ProcessKind.CONTROL_API:
@@ -207,25 +214,40 @@ async def test_each_app_has_only_typed_health_routes(
             assert ready.json() == {
                 "status": "ready",
                 "service": process.value,
-                "components": (
-                    [{"component": "database", "status": "ok", "reason": None}]
-                    if process
-                    in {
-                        ProcessKind.CONTROL_API,
-                        ProcessKind.RENDER_API,
-                        ProcessKind.AGENT_API,
-                    }
-                    else []
-                ),
+                "components": [
+                    {"component": "database", "status": "ok", "reason": None},
+                    *(
+                        [
+                            {
+                                "component": "editor_database",
+                                "status": "ok",
+                                "reason": None,
+                            }
+                        ]
+                        if process is ProcessKind.EDITOR_API
+                        else []
+                    ),
+                ]
+                if process
+                in {
+                    ProcessKind.CONTROL_API,
+                    ProcessKind.EDITOR_API,
+                    ProcessKind.RENDER_API,
+                    ProcessKind.AGENT_API,
+                }
+                else [],
             }
             for hidden in ("/docs", "/redoc", "/openapi.json"):
                 assert (await client.get(hidden)).status_code == 404
     if process in {
         ProcessKind.CONTROL_API,
+        ProcessKind.EDITOR_API,
         ProcessKind.RENDER_API,
         ProcessKind.AGENT_API,
     }:
         assert database.started == database.stopped == 1
+    if editor_database is not None:
+        assert editor_database.started == editor_database.stopped == 1
 
 
 async def test_readiness_aggregates_success_failure_timeout_and_sanitizes_error() -> (

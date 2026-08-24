@@ -1,4 +1,4 @@
-"""Editor API health-only process skeleton."""
+"""Human-authorized Editor API."""
 
 from .app import create_app
 

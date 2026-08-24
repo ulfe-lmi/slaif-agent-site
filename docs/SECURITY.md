@@ -42,7 +42,10 @@ visible UI controls. Direct request calls are limited to concurrency setup,
 crafted negative requests, and read verification. It proves missing/wrong CSRF,
 self-change, system-scope, ceiling, stale-version, cross-site, unknown, and
 archived-route failures leave state unchanged. NGINX response checks require one
-edge request ID, self-only CSP without unsafe inline/eval or remote origins, and
+edge request ID, strict self-only CSP without unsafe inline/eval or remote
+origins on public rendering and unrelated admin/API routes, and a narrowly
+scoped authenticated Puck editor style exception (`style-src-attr` and
+`style-src-elem` `unsafe-inline` only), and
 private/no-store/noindex API responses. Secret values are absent from URL, DOM,
 storage, observed request URLs, console, and retained artifacts; screenshots,
 traces, videos, and HTML reports are disabled locally.

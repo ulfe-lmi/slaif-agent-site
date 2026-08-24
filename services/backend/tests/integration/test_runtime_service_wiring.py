@@ -22,6 +22,10 @@ async def test_content_model_service_is_reachable_from_runtime_apps() -> None:
         "agent": create_agent_app(settings=ServiceSettings.for_test()),
     }
     for process, app in apps.items():
+        if process == "editor":
+            assert hasattr(app.state, "editor_database")
+            assert not hasattr(app.state, "content_model_service")
+            continue
         service = app.state.content_model_service
         assert isinstance(service, ContentModelService), process
         with pytest.raises(ContentModelServiceError) as unavailable:

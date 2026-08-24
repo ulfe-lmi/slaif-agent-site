@@ -10,6 +10,33 @@ from pydantic import BaseModel, ConfigDict, field_validator
 
 from .models import _bounded_json, _bounded_text
 
+TRUSTED_COMPONENT_TYPES = frozenset(
+    {
+        "Section",
+        "Container",
+        "Columns",
+        "Grid",
+        "Stack",
+        "Spacer",
+        "Heading",
+        "RichText",
+        "Image",
+        "Button",
+        "Quote",
+        "CollectionList",
+        "CollectionGrid",
+        "CollectionDetail",
+        "Hero",
+        "Statistics",
+        "Timeline",
+        "FAQ",
+        "Header",
+        "Footer",
+        "Breadcrumbs",
+        "LanguageSwitcher",
+    }
+)
+
 
 class CreateCompositionNodeRequest(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -23,7 +50,12 @@ class CreateCompositionNodeRequest(BaseModel):
     @field_validator("component_type")
     @classmethod
     def component_type_is_valid(cls, value: str) -> str:
-        if not value or len(value) > 63 or "\x00" in value:
+        if (
+            not value
+            or len(value) > 63
+            or "\x00" in value
+            or value not in TRUSTED_COMPONENT_TYPES
+        ):
             raise ValueError("invalid component type")
         return value
 
@@ -96,6 +128,16 @@ class MoveCompositionNodeRequest(BaseModel):
     new_parent_id: str | None = None
     new_slot_key: str | None = None
     new_order_key: int = 0
+
+    @field_validator("new_parent_id")
+    @classmethod
+    def new_parent_id_is_uuid(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        try:
+            return str(UUID(value))
+        except ValueError:
+            raise ValueError("new_parent_id must be a UUID") from None
 
 
 class CompositionNodeRecord(BaseModel):

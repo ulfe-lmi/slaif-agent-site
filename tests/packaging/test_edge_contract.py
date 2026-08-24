@@ -24,7 +24,13 @@ class EdgeContractTests(unittest.TestCase):
         for prefix, upstream in ROUTES.items():
             self.assertIn(f"location {prefix}", nginx)
             self.assertIn(f"http://{upstream}", nginx)
-            self.assertIn(f"ProxyPass        {prefix} http://{upstream}/", apache)
+            if prefix == "/api/editor/":
+                self.assertIn(
+                    "ProxyPass        /api/editor/v1/ http://editor-api:8000/api/editor/v1/",
+                    apache,
+                )
+            else:
+                self.assertIn(f"ProxyPass        {prefix} http://{upstream}/", apache)
 
     def test_control_health_is_adapted_and_v1_path_is_preserved(self) -> None:
         nginx = (ROOT / "infra/nginx/nginx.conf").read_text(encoding="utf-8")
@@ -56,6 +62,23 @@ class EdgeContractTests(unittest.TestCase):
             nginx,
         )
 
+    def test_editor_health_aliases_and_versioned_prefix_preserving_route(self) -> None:
+        nginx = (ROOT / "infra/nginx/nginx.conf").read_text(encoding="utf-8")
+        apache = (ROOT / "infra/apache/slaif-agent-site.conf").read_text(
+            encoding="utf-8"
+        )
+        for leaf in ("live", "ready"):
+            self.assertIn(f"location = /api/editor/health/{leaf}", nginx)
+            self.assertIn(f"proxy_pass http://editor-api:8000/health/{leaf};", nginx)
+            self.assertIn(f"/api/editor/health/{leaf}", apache)
+        self.assertIn("location /api/editor/v1/", nginx)
+        self.assertIn("proxy_pass http://editor-api:8000;", nginx)
+        self.assertIn(
+            "ProxyPass        /api/editor/v1/ http://editor-api:8000/api/editor/v1/",
+            apache,
+        )
+        self.assertIn("ProxyPass        /api/editor/ !", apache)
+
     def test_browser_and_render_are_not_edge_upstreams(self) -> None:
         for path in (
             ROOT / "infra/nginx/nginx.conf",
@@ -70,14 +93,14 @@ class EdgeContractTests(unittest.TestCase):
         apache = (ROOT / "infra/apache/slaif-agent-site.conf").read_text(
             encoding="utf-8"
         )
-        self.assertEqual(nginx.count("set $slaif_csp"), 1)
-        self.assertEqual(nginx.count("'nonce-$request_id'"), 1)
-        self.assertEqual(apache.count("'nonce-%{UNIQUE_ID}e'"), 2)
+        self.assertEqual(nginx.count("map $uri $slaif_csp"), 1)
+        self.assertEqual(nginx.count("'nonce-$request_id'"), 2)
+        self.assertEqual(apache.count("'nonce-%{UNIQUE_ID}e'"), 3)
         self.assertEqual(nginx.count("add_header Content-Security-Policy"), 1)
         self.assertEqual(nginx.count("proxy_set_header Content-Security-Policy"), 1)
         self.assertEqual(apache.count("RequestHeader set Content-Security-Policy"), 1)
         self.assertEqual(nginx.count("proxy_hide_header Content-Security-Policy;"), 1)
-        self.assertEqual(apache.count("Header always set Content-Security-Policy"), 1)
+        self.assertEqual(apache.count("Header always set Content-Security-Policy"), 2)
         self.assertEqual(apache.count("unset Content-Security-Policy"), 2)
         for content in (nginx, apache):
             csp_lines = "\n".join(
@@ -95,6 +118,11 @@ class EdgeContractTests(unittest.TestCase):
                 "connect-src 'self'",
             ):
                 self.assertIn(directive, csp_lines)
+            policies = csp_lines.splitlines()
+            public_policy = next(
+                line for line in policies if "style-src-attr" not in line
+            )
+            editor_policy = next(line for line in policies if "style-src-attr" in line)
             for forbidden in (
                 "unsafe-inline",
                 "unsafe-eval",
@@ -103,9 +131,12 @@ class EdgeContractTests(unittest.TestCase):
                 "http:",
                 "https:",
                 "wss:",
-                "*",
             ):
-                self.assertNotIn(forbidden, csp_lines)
+                self.assertNotIn(forbidden, public_policy)
+            self.assertNotIn(" * ", public_policy)
+            self.assertIn("style-src-elem 'self' 'unsafe-inline'", editor_policy)
+            self.assertIn("style-src-attr 'unsafe-inline'", editor_policy)
+            self.assertNotIn("unsafe-eval", editor_policy)
 
     def test_one_edge_owned_request_id_replaces_upstream_and_caller_values(
         self,

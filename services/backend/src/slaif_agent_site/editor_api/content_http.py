@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Never, cast
+from typing import Any, Never
 from uuid import UUID
 
 from fastapi import APIRouter, Request, Response
@@ -24,6 +24,7 @@ from slaif_agent_site.control_api.site_authority import (
     SiteRequestAuthority,
     authorize_site_request,
 )
+from slaif_agent_site.editor_api.mutations import request_service
 from slaif_agent_site.errors import (
     ResourceConflictError,
     ResourceNotFoundError,
@@ -33,8 +34,8 @@ from slaif_agent_site.errors import (
 router = APIRouter(prefix="/api/editor/v1/sites/{site_id}/content-model")
 
 
-def _service(database: Any) -> ContentModelService:
-    return cast(ContentModelService, database.content_model_service())
+def _service(request: Request) -> ContentModelService:
+    return request_service(request)
 
 
 def _raise_cm_error(error: ContentModelServiceError) -> Never:
@@ -82,7 +83,7 @@ async def create_content_type(
         state_changing=True,
     )
     try:
-        return await _service(database).create_type(site_id, body)
+        return await _service(request).create_type(site_id, body)
     except ContentModelServiceError as exc:
         _raise_cm_error(exc)
 
@@ -102,7 +103,7 @@ async def list_content_types(
         state_changing=False,
     )
     try:
-        return list(await _service(database).list_types(site_id))
+        return list(await _service(request).list_types(site_id))
     except ContentModelServiceError as exc:
         _raise_cm_error(exc)
 
@@ -122,7 +123,7 @@ async def get_content_type(
         state_changing=False,
     )
     try:
-        record = await _service(database).get_type(type_id)
+        record = await _service(request).get_type(type_id)
     except ContentModelServiceError as exc:
         _raise_cm_error(exc)
     if record.site_id != site_id:
@@ -145,13 +146,13 @@ async def update_content_type(
         state_changing=True,
     )
     try:
-        record = await _service(database).get_type(type_id)
+        record = await _service(request).get_type(type_id)
     except ContentModelServiceError as exc:
         _raise_cm_error(exc)
     if record.site_id != site_id:
         raise ResourceNotFoundError()
     try:
-        return await _service(database).update_type(type_id, body)
+        return await _service(request).update_type(type_id, body)
     except ContentModelServiceError as exc:
         _raise_cm_error(exc)
 
@@ -171,12 +172,12 @@ async def delete_content_type(
         state_changing=True,
     )
     try:
-        record = await _service(database).get_type(type_id)
+        record = await _service(request).get_type(type_id)
     except ContentModelServiceError as exc:
         _raise_cm_error(exc)
     if record.site_id != site_id:
         raise ResourceNotFoundError()
-    await _service(database).delete_type(type_id)
+    await _service(request).delete_type(type_id)
     return Response(status_code=204)
 
 
@@ -198,13 +199,13 @@ async def create_field_definition(
         state_changing=True,
     )
     try:
-        ct = await _service(database).get_type(type_id)
+        ct = await _service(request).get_type(type_id)
     except ContentModelServiceError as exc:
         _raise_cm_error(exc)
     if ct.site_id != site_id:
         raise ResourceNotFoundError()
     try:
-        return await _service(database).create_field(type_id, body)
+        return await _service(request).create_field(type_id, body)
     except ContentModelServiceError as exc:
         _raise_cm_error(exc)
 
@@ -224,13 +225,13 @@ async def list_field_definitions(
         state_changing=False,
     )
     try:
-        ct = await _service(database).get_type(type_id)
+        ct = await _service(request).get_type(type_id)
     except ContentModelServiceError as exc:
         _raise_cm_error(exc)
     if ct.site_id != site_id:
         raise ResourceNotFoundError()
     try:
-        return list(await _service(database).list_fields(type_id))
+        return list(await _service(request).list_fields(type_id))
     except ContentModelServiceError as exc:
         _raise_cm_error(exc)
 
@@ -250,10 +251,10 @@ async def get_field_definition(
         state_changing=False,
     )
     try:
-        record = await _service(database).get_field(field_id)
+        record = await _service(request).get_field(field_id)
     except ContentModelServiceError as exc:
         _raise_cm_error(exc)
-    ct = await _service(database).get_type(record.type_id)
+    ct = await _service(request).get_type(record.type_id)
     if ct.site_id != site_id:
         raise ResourceNotFoundError()
     return record
@@ -274,14 +275,14 @@ async def update_field_definition(
         state_changing=True,
     )
     try:
-        record = await _service(database).get_field(field_id)
+        record = await _service(request).get_field(field_id)
     except ContentModelServiceError as exc:
         _raise_cm_error(exc)
-    ct = await _service(database).get_type(record.type_id)
+    ct = await _service(request).get_type(record.type_id)
     if ct.site_id != site_id:
         raise ResourceNotFoundError()
     try:
-        return await _service(database).update_field(field_id, body)
+        return await _service(request).update_field(field_id, body)
     except ContentModelServiceError as exc:
         _raise_cm_error(exc)
 
@@ -301,11 +302,11 @@ async def delete_field_definition(
         state_changing=True,
     )
     try:
-        record = await _service(database).get_field(field_id)
+        record = await _service(request).get_field(field_id)
     except ContentModelServiceError as exc:
         _raise_cm_error(exc)
-    ct = await _service(database).get_type(record.type_id)
+    ct = await _service(request).get_type(record.type_id)
     if ct.site_id != site_id:
         raise ResourceNotFoundError()
-    await _service(database).delete_field(field_id)
+    await _service(request).delete_field(field_id)
     return Response(status_code=204)

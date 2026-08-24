@@ -59,7 +59,8 @@ requires a separately designed and tested logical process.
 | `/health/live`, `/health/ready` | Web | Bounded Web process health only. |
 | `/s/demo/` and other resolved paths | Web→Render | Routing-context shell for an active trusted site match. |
 | `/api/control/` | Control API | Prefix-stripped health plus authenticated setup/session, site/domain, RBAC catalog, and membership routes; readiness includes one database component. |
-| `/api/editor/` | Editor API | Prefix-stripped health routes only. |
+| `/api/editor/health/` | Editor API | Exact liveness/readiness aliases. |
+| `/api/editor/v1/` | Editor API | Prefix-preserving human Editor API routes. |
 | `/api/agent/` | Agent API | Prefix-stripped health plus capability-authenticated bounded COW create routes; no lifecycle or publication routes. |
 | `/mcp/` | MCP adapter | Prefix-stripped health routes only. |
 | `/media/` | Media service | Prefix-stripped health routes only. |
@@ -76,8 +77,12 @@ the same replace/hide/single-response contract with `mod_unique_id`'s bounded
 safe identifier. Both edges set one self-hosted baseline CSP for page, API, and
 404 responses: scripts, styles, fonts, connections, and ordinary resources are
 limited to self; images additionally permit `data:`; base URIs, objects, and
-framing are denied; forms are limited to self. There is no wildcard, external
-origin, unsafe inline/eval allowance, reporting endpoint, or telemetry.
+framing are denied; forms are limited to self. The authenticated Puck editor
+route is the one documented style-only exception: it adds
+`style-src-attr 'unsafe-inline'` and `style-src-elem 'self' 'unsafe-inline'`
+for Puck's runtime UI styling while retaining nonce-bound self-only scripts.
+There is no wildcard, external origin, unsafe-eval allowance, reporting
+endpoint, or telemetry, and public rendering remains strict.
 
 The current page is server-rendered and has no interactive client behavior.
 The strict `script-src 'self'` deliberately does not authorize Next.js inline
@@ -171,8 +176,8 @@ usable credential or administrator assignment, and are removed with its volumes.
   PostgreSQL, edge, host, filesystem, or Docker-socket path.
 
 The private `local-secrets` volume contains a PostgreSQL administrator password,
-ten distinct fixed-login passwords, provisioner/owner DSNs, and nine future
-service DSNs. Files are mode `0400`; PostgreSQL's password belongs to UID 999
+ten distinct fixed-login passwords, provisioner/owner DSNs, and nine service
+DSNs. Files are mode `0400`; PostgreSQL's password belongs to UID 999
 and bootstrap-readable files to UID 10001. The directory is mode `0710`, owned
 by root and dedicated group 10002; only PostgreSQL and bootstrap receive that
 supplemental traversal group. Only initializer, PostgreSQL, and bootstrap mount
@@ -185,6 +190,13 @@ Its directory is mode `0700` and owned by `10001:10001`; its file is mode
 mounts it read-only at `/run/slaif-control`; every other long-running process
 lacks the mount, and Control cannot see the master secret directory. The DSN
 is never an environment value.
+
+The separate `editor-secret` volume contains exactly one `editor-dsn`, copied
+byte-for-byte from the generated `slaif_editor_login` locator. Editor API mounts
+it read-only at `/run/slaif-editor` and uses the `slaif_editor_runtime` role for
+content COW calls. It also mounts `control-secret` only for human session,
+site, and permission authorization; the two pools and credentials remain
+separate. No Agent capability or publication authority is present.
 
 The separate `render-secret` volume likewise contains exactly one
 `render-dsn`, byte-identical to the generated public-reader locator. Its
@@ -202,7 +214,8 @@ generator is local convenience, not a production secret-management claim.
 ## Apache HTTP Server alternative
 
 NGINX Open Source is the default edge. `infra/apache` supplies a syntax-tested
-Apache HTTP Server 2.4 reference with the same prefix stripping, upstreams,
+Apache HTTP Server 2.4 reference with the same health aliases, preserved
+versioned API prefixes, upstreams,
 request/forwarded headers, response headers, compression, limits, and timeout
 shape. It requires `mod_headers`, `mod_proxy`, `mod_proxy_http`,
 `mod_unique_id`, and `mod_deflate` in addition to the official default modules.

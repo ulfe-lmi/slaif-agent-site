@@ -91,6 +91,51 @@ declarations. HEAD and OPTIONS are not registered handler methods and retain
 their deterministic framework 405 behavior. The registry audits enforcement;
 handlers and database policy remain authoritative.
 
+## Human Editor API and Puck composition editor
+
+Editor routes use the same human session cookie and CSRF proof as Control; they
+never accept Agent capabilities. The server rechecks site membership and the
+required permission on every request, resolves an ACTIVE, unexpired HUMAN
+workspace owned by that human and site, and opens a bounded COW session on the
+separate Editor runtime pool. Every state-changing route also requires a
+bounded `Idempotency-Key`; replay is stable, digest mismatch is rejected, and
+the mutation plus HUMAN audit record commit atomically. Responses and errors
+are private, no-store, noindex, and request-ID correlated.
+
+| Route | Success | Request contract |
+| --- | --- | --- |
+| `POST /api/editor/v1/sites/{site_id}/pages/` | 201 | bounded page model |
+| `GET /api/editor/v1/sites/{site_id}/pages/{page_id}` | 200 | none |
+| `POST /api/editor/v1/sites/{site_id}/pages/{page_id}/composition/components` | 201 | trusted catalog type, bounded props, parent/slot/order |
+| `GET /api/editor/v1/sites/{site_id}/pages/{page_id}/composition/` | 200 | none |
+| `PATCH /api/editor/v1/sites/{site_id}/pages/{page_id}/composition/components/{node_id}` | 200 | bounded props and optional slot/order |
+| `POST /api/editor/v1/sites/{site_id}/pages/{page_id}/composition/components/{node_id}/move` | 200 | same-page parent, slot/order |
+| `DELETE /api/editor/v1/sites/{site_id}/pages/{page_id}/composition/components/{node_id}` | 204 | none |
+
+The admin route `/admin/sites/{siteId}/pages/{pageId}/edit` loads this normalized
+composition through the Editor API, adapts it to the pinned
+`@measured/puck@0.20.2` catalog, and saves a normalized round trip. Component
+IDs, schema versions, parent IDs, slots, order keys, and trusted props remain
+outside Puck metadata and are reconciled against server records. Unknown
+component types, executable prop names, arbitrary code, CSS, packages, and SQL
+are rejected. A selected component can be moved among its current siblings
+with the accessible `Move up`/`Move down` controls; those controls dispatch
+Puck's same-zone reorder action with history recording and never replace the
+controlled data directly. Selection follows the moved component at its
+destination, and the move participates in Puck's visible undo/redo history
+without creating another semantic editor operation. A later deliberate human
+selection always takes precedence and releases that temporary continuity.
+This order does not implement publication, preview authority,
+workspace-management UI, freeze/review/promotion, responsive preview, or new
+catalog/storage types.
+
+Puck 0.20.2 requires runtime inline styling for parts of its editor UI. The
+authenticated editor surface therefore receives the minimum required
+`style-src-attr 'unsafe-inline'` and `style-src-elem 'self' 'unsafe-inline'`
+exceptions. `script-src` remains self-plus-request-nonce, and public renderer,
+Control/Agent API, and unrelated admin surfaces retain the strict self-only
+style policy. No user-controlled raw CSS/style payload is accepted.
+
 ## Capability-bound Agent mutation API
 
 The Agent API authenticates a bearer capability and derives the site and

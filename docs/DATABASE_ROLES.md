@@ -80,10 +80,21 @@ select either relation. The same revision adds five owner-defined
 operation settings and validates site/resource/parent relationships before
 performing one bounded semantic create.
 
-Revision `026_001` places a guarded owner-defined layer over those wrappers.
-It resolves the active workspace from `app.session_id`, requires a valid
-operation UUID and active non-expired workspace, and rejects any supplied
-site UUID that differs from the workspace site before delegation.
+Revision `026_001` places a guarded owner-defined layer over those wrappers;
+revision `027_001` qualifies the page/composition function columns so runtime
+output-variable names cannot make the human Editor API fail closed.
+Revision `028_001` adds the narrow HUMAN Editor workspace assertion and
+Editor-owned idempotency/audit functions; Editor still has no direct Control or
+Audit table DML. Resolution serializes the site-and-human lookup so concurrent
+requests reuse one active HUMAN workspace. Every Editor mutation transaction
+passes its required permission key into the database boundary. The assertion
+validates only immutable COW context before taking the shared workspace
+advisory transaction lock; it then re-reads active membership, site, session,
+workspace, permission, and operation state under that lock before mutation and
+again before audit/idempotency completion. It resolves the active workspace
+from `app.session_id`, requires a valid operation UUID and active non-expired
+workspace, and rejects any supplied site UUID that differs from the workspace
+site before delegation.
 
 ## Login-principal design
 

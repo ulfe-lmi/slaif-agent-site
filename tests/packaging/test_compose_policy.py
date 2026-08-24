@@ -64,7 +64,7 @@ def _configuration() -> dict[str, object]:
                 "SLAIF_MODE": "development",
                 "SLAIF_PUBLIC_URL": "http://localhost:8080",
             }
-        if name == "control-api":
+        if name in {"control-api", "editor-api"}:
             service["environment"].update(
                 {
                     "SLAIF_CONTROL_DSN_FILE": "/run/slaif-control/control-dsn",
@@ -72,6 +72,16 @@ def _configuration() -> dict[str, object]:
                     "SLAIF_CONTROL_EXPECTED_LOGIN": "slaif_control_login",
                     "SLAIF_CONTROL_EXPECTED_PRIVILEGE_ROLE": "slaif_control",
                     "SLAIF_CONTROL_MODE": "development",
+                }
+            )
+        if name == "editor-api":
+            service["environment"].update(
+                {
+                    "SLAIF_EDITOR_DSN_FILE": "/run/slaif-editor/editor-dsn",
+                    "SLAIF_EDITOR_EXPECTED_DATABASE": "slaif",
+                    "SLAIF_EDITOR_EXPECTED_LOGIN": "slaif_editor_login",
+                    "SLAIF_EDITOR_EXPECTED_PRIVILEGE_ROLE": "slaif_editor_runtime",
+                    "SLAIF_EDITOR_MODE": "development",
                 }
             )
         if name == "agent-api":
@@ -127,6 +137,7 @@ def _configuration() -> dict[str, object]:
             for name in (
                 "agent-secret",
                 "control-secret",
+                "editor-secret",
                 "local-secrets",
                 "media-data",
                 "postgres-data",

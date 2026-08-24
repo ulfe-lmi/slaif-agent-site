@@ -1,9 +1,13 @@
 # Online database connection boundary
 
-Control API and Agent API each own a separate online PostgreSQL connection
-boundary. Control reports bootstrap/database readiness and owns the initial
-local-administrator operation. Agent owns one typed lifespan pool and uses it
-only for capability-authenticated semantic COW mutations and their narrow
+Control, Editor, and Agent API each own separate online PostgreSQL connection
+boundaries. Control reports bootstrap/database readiness and owns the initial
+local-administrator operation. Editor uses a separate runtime pool for
+human-authorized content COW calls and a separate Control pool for session/site
+authorization; each Editor request resolves a real HUMAN workspace and uses
+Editor-only workspace, idempotency, and audit functions. Agent owns one typed
+lifespan pool and uses it only for
+capability-authenticated semantic COW mutations and their narrow
 idempotency/audit functions; it does not expose a SQL endpoint or lifecycle,
 review, promotion, or publication authority.
 
@@ -38,6 +42,15 @@ at `/run/slaif-agent/agent-dsn` only by Agent API. Agent validates the fixed
 `slaif_agent_login`/`slaif_agent_runtime` identity on every pooled connection
 and exposes only its typed `cow_pool()` boundary to the mutation executor.
 Control and Agent never share a locator, pool, native connection, or
+credential volume.
+
+Editor follows two bounded credential paths. `secrets-init` copies only
+`service-editor-dsn` into the isolated `editor-secret` volume, mounted
+read-only at `/run/slaif-editor/editor-dsn` by Editor API. Editor validates the
+fixed `slaif_editor_login`/`slaif_editor_runtime` identity for its content pool.
+The same process separately mounts `control-secret` for Control's human session
+and site authorization pool; it never uses the Control pool for content
+functions. Editor and Agent never share a locator, pool, native connection, or
 credential volume.
 
 The master `local-secrets` volume still contains PostgreSQL administrator,

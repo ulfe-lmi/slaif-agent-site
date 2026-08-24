@@ -72,6 +72,9 @@ INITIAL_SETUP_COMPLETE_SQL = (
 PLATFORM_ADMINISTRATOR_SQL = (
     "SELECT control.slaif_platform_administrator_authorized($1)"
 )
+HUMAN_EDITOR_WORKSPACE_RESOLVE_SQL = (
+    "SELECT control.slaif_human_editor_workspace_resolve($1,$2)"
+)
 
 
 class ControlDatabaseReason(StrEnum):
@@ -135,6 +138,10 @@ class ControlDatabaseAdapter(Protocol):
     def human_authorization_service(self) -> HumanAuthorizationService: ...
 
     def content_model_service(self) -> Any: ...
+
+    async def resolve_human_editor_workspace(
+        self, site_id: UUID, human_user_id: UUID
+    ) -> UUID: ...
 
 
 PoolFactory = Callable[..., Awaitable[Any]]
@@ -419,6 +426,40 @@ class ControlDatabase:
             self._pool or _UnstartedPool(),
             acquire_timeout=self._settings.acquire_timeout_seconds,
         )
+
+    async def resolve_human_editor_workspace(
+        self, site_id: UUID, human_user_id: UUID
+    ) -> UUID:
+        pool = self._pool
+        if pool is None:
+            raise ControlDatabaseError(
+                self._failure_reason or ControlDatabaseReason.CONNECTION_UNAVAILABLE
+            )
+        try:
+            async with pool.acquire(
+                timeout=self._settings.acquire_timeout_seconds
+            ) as connection:
+                async with connection.transaction():
+                    workspace_id = await connection.fetchval(
+                        HUMAN_EDITOR_WORKSPACE_RESOLVE_SQL,
+                        site_id,
+                        human_user_id,
+                    )
+            if not isinstance(workspace_id, UUID):
+                raise ControlDatabaseError(ControlDatabaseReason.UNSAFE_MARKER)
+            return workspace_id
+        except asyncio.CancelledError:
+            raise
+        except ControlDatabaseError:
+            raise
+        except (TimeoutError, OSError, asyncpg.PostgresError):
+            raise ControlDatabaseError(
+                ControlDatabaseReason.CONNECTION_UNAVAILABLE
+            ) from None
+        except Exception:
+            raise ControlDatabaseError(
+                ControlDatabaseReason.CONNECTION_UNAVAILABLE
+            ) from None
 
     async def authenticate_agent_capability(self, auth_header: str) -> Any:
         """Validate one bearer capability and return its trusted context."""

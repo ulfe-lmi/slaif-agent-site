@@ -95,6 +95,8 @@ NEW_PACKAGE_FILES = {
     "slaif_agent_site/db/alembic/versions/016_001_content_model_tables.py",
     "slaif_agent_site/db/alembic/versions/025_001_agent_mutation_surface.py",
     "slaif_agent_site/db/alembic/versions/026_001_agent_site_binding.py",
+    "slaif_agent_site/db/alembic/versions/027_001_qualify_content_function_columns.py",
+    "slaif_agent_site/db/alembic/versions/028_001_human_editor_workspace_envelope.py",
     "slaif_agent_site/db/connections.py",
     "slaif_agent_site/db/executor.py",
     "slaif_agent_site/db/migrations.py",
@@ -118,6 +120,9 @@ NEW_PACKAGE_FILES = {
     "slaif_agent_site/editor_api/__init__.py",
     "slaif_agent_site/editor_api/__main__.py",
     "slaif_agent_site/editor_api/app.py",
+    "slaif_agent_site/editor_api/config.py",
+    "slaif_agent_site/editor_api/database.py",
+    "slaif_agent_site/editor_api/mutations.py",
     "slaif_agent_site/errors.py",
     "slaif_agent_site/health.py",
     "slaif_agent_site/logging.py",
@@ -219,6 +224,8 @@ EXPECTED_SDIST_FILES = {
     "services/backend/src/slaif_agent_site/db/alembic/versions/022_001_composition_functions.py",
     "services/backend/src/slaif_agent_site/db/alembic/versions/023_001_media_functions.py",
     "services/backend/src/slaif_agent_site/db/alembic/versions/024_001_workspace_lifecycle.py",
+    "services/backend/src/slaif_agent_site/db/alembic/versions/027_001_qualify_content_function_columns.py",
+    "services/backend/src/slaif_agent_site/db/alembic/versions/028_001_human_editor_workspace_envelope.py",
     "services/backend/src/slaif_agent_site/agent_state/workspace_models.py",
     "services/backend/src/slaif_agent_site/agent_state/audit.py",
     "services/backend/src/slaif_agent_site/agent_state/promotion.py",
@@ -507,8 +514,10 @@ def test_locked_foundation_artifact_hash_constants_are_sha256() -> None:
 
 
 def test_alembic_graph_and_offline_sql_need_no_locator_or_network() -> None:
-    assert migration_heads() == ("026_001",)
+    assert migration_heads() == ("028_001",)
     assert migration_history() == (
+        "028_001",
+        "027_001",
         "026_001",
         "025_001",
         "024_001",

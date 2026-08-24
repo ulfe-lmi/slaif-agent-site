@@ -441,7 +441,7 @@ async def test_agent_create_routes_cover_field_item_page_and_component(
             component_response = await client.post(
                 f"/api/agent/v1/pages/{page_id}/components",
                 json={
-                    "component_type": "Text",
+                    "component_type": "Heading",
                     "slot_key": "default",
                     "order_key": 0,
                     "props": {"text": "bounded"},
@@ -515,7 +515,7 @@ async def test_agent_rejects_wrong_site_scope_and_malformed_mutations(
 
                 wrong_site_component = await client.post(
                     f"/api/agent/v1/pages/{other_page}/components",
-                    json={"component_type": "Text"},
+                    json={"component_type": "Heading"},
                     headers={**headers, "Idempotency-Key": failed_keys[3]},
                 )
                 assert wrong_site_component.status_code == 404
@@ -546,7 +546,7 @@ async def test_agent_rejects_wrong_site_scope_and_malformed_mutations(
 
                 malformed_path = await client.post(
                     "/api/agent/v1/pages/not-a-uuid/components",
-                    json={"component_type": "Text"},
+                    json={"component_type": "Heading"},
                     headers={**headers, "Idempotency-Key": failed_keys[6]},
                 )
                 assert malformed_path.status_code == 422
@@ -587,7 +587,7 @@ async def test_agent_rejects_wrong_site_scope_and_malformed_mutations(
                     ),
                     (
                         f"/api/agent/v1/pages/{other_page}/components",
-                        {"component_type": "Text"},
+                        {"component_type": "Heading"},
                         "scope-component",
                     ),
                 )

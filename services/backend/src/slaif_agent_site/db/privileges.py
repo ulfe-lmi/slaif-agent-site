@@ -90,6 +90,36 @@ AGENT_CONTENT_FUNCTIONS = {
         "p_parent_id uuid, p_slot_key text, p_order_key integer, p_props jsonb",
     ): "uuid, uuid, text, uuid, text, integer, jsonb",
 }
+HUMAN_EDITOR_FUNCTIONS = {
+    (
+        "slaif_human_editor_workspace_resolve",
+        "p_site_id uuid, p_human_user_id uuid",
+    ): "uuid, uuid",
+    (
+        "slaif_human_editor_workspace_assert",
+        "p_workspace_id uuid, p_human_user_id uuid, p_site_id uuid, "
+        "p_human_session_id uuid, p_permission_key text, p_lock boolean",
+    ): "uuid, uuid, uuid, uuid, text, boolean",
+    (
+        "slaif_human_editor_idempotency_begin",
+        "p_workspace_id uuid, p_human_user_id uuid, p_site_id uuid, "
+        "p_human_session_id uuid, p_permission_key text, "
+        "p_idempotency_key text, "
+        "p_request_digest text, p_operation_id uuid",
+    ): "uuid, uuid, uuid, uuid, text, text, text, uuid",
+    (
+        "slaif_human_editor_idempotency_complete",
+        "p_workspace_id uuid, p_human_user_id uuid, p_site_id uuid, "
+        "p_human_session_id uuid, p_permission_key text, "
+        "p_idempotency_key text, "
+        "p_request_digest text, p_operation_id uuid, p_status_code integer, "
+        "p_response_body jsonb, p_action text, p_resource_type text, "
+        "p_resource_id uuid",
+    ): (
+        "uuid, uuid, uuid, uuid, text, text, text, uuid, integer, jsonb, "
+        "text, text, uuid"
+    ),
+}
 PUBLIC_RESOLVER_FUNCTIONS = {
     ("slaif_site_resolve", "p_hostname text, p_path text"): "text, text",
     ("slaif_site_resolve_local", "p_site_key text"): "text",
@@ -512,6 +542,20 @@ async def apply_product_privileges(
             f'"content".{quote_identifier(name)}({signature}) '
             'TO "slaif_agent_runtime"'
         )
+    await connection.execute(
+        'GRANT USAGE ON SCHEMA "control" TO "slaif_editor_runtime"'
+    )
+    for (name, _identity), signature in HUMAN_EDITOR_FUNCTIONS.items():
+        role = (
+            CONTROL_ROLE
+            if name == "slaif_human_editor_workspace_resolve"
+            else "slaif_editor_runtime"
+        )
+        await connection.execute(
+            "GRANT EXECUTE ON FUNCTION "
+            f'"control".{quote_identifier(name)}({signature}) '
+            f"TO {quote_identifier(role)}"
+        )
     await connection.execute('GRANT USAGE ON SCHEMA "control" TO "slaif_public_reader"')
     for (name, _identity), signature in PUBLIC_RESOLVER_FUNCTIONS.items():
         await connection.execute(
@@ -621,7 +665,12 @@ async def _schema_violations(
                 violations.append(f"schema/{schema}/{role}/create")
             expected_usage = (
                 schema == "control"
-                and role in {*CAPABILITY_READ_ROLES, "slaif_public_reader"}
+                and role
+                in {
+                    *CAPABILITY_READ_ROLES,
+                    "slaif_public_reader",
+                    "slaif_editor_runtime",
+                }
             ) or (
                 readiness_state is ReadinessState.HARDENED
                 and (
@@ -796,6 +845,9 @@ async def _function_violations(
         is_agent_function = (
             schema == "control" and control_identity in AGENT_CONTROL_FUNCTIONS
         ) or (schema == "content" and control_identity in AGENT_CONTENT_FUNCTIONS)
+        is_human_editor_function = (
+            schema == "control" and control_identity in HUMAN_EDITOR_FUNCTIONS
+        )
         if schema == FOUNDATION_SCHEMA:
             foundation_functions += 1
         elif is_control_function:
@@ -803,6 +855,10 @@ async def _function_violations(
             if not security_definer or "search_path=pg_catalog" not in config:
                 violations.append(f"function/{schema}.{name}/unsafe-security-definer")
         elif is_agent_function and (
+            not security_definer or "search_path=pg_catalog" not in config
+        ):
+            violations.append(f"function/{schema}.{name}/unsafe-security-definer")
+        elif is_human_editor_function and (
             not security_definer or "search_path=pg_catalog" not in config
         ):
             violations.append(f"function/{schema}.{name}/unsafe-security-definer")
@@ -840,6 +896,15 @@ async def _function_violations(
             allowed = (
                 (is_control_function and role == CONTROL_ROLE)
                 or (is_agent_function and role == "slaif_agent_runtime")
+                or (
+                    is_human_editor_function
+                    and role
+                    == (
+                        CONTROL_ROLE
+                        if name == "slaif_human_editor_workspace_resolve"
+                        else "slaif_editor_runtime"
+                    )
+                )
                 or public_resolver
                 or (
                     readiness_state is ReadinessState.HARDENED
@@ -857,6 +922,17 @@ async def _function_violations(
             if is_control_function and role == CONTROL_ROLE and not can_execute:
                 violations.append(f"function/{schema}.{name}/{role}/missing-execute")
             if is_agent_function and role == "slaif_agent_runtime" and not can_execute:
+                violations.append(f"function/{schema}.{name}/{role}/missing-execute")
+            if (
+                is_human_editor_function
+                and role
+                == (
+                    CONTROL_ROLE
+                    if name == "slaif_human_editor_workspace_resolve"
+                    else "slaif_editor_runtime"
+                )
+                and not can_execute
+            ):
                 violations.append(f"function/{schema}.{name}/{role}/missing-execute")
             if can_execute and allowed and schema == FOUNDATION_SCHEMA:
                 reviewer_exec += 1
@@ -926,6 +1002,7 @@ __all__ = [
     "CONTROL_FUNCTIONS",
     "CONTROL_READINESS_FUNCTION",
     "ContentObject",
+    "HUMAN_EDITOR_FUNCTIONS",
     "PrivilegeValidation",
     "apply_product_privileges",
     "content_inventory_fingerprint",

@@ -18,6 +18,7 @@ from slaif_agent_site.content_model.service import (
     ContentModelServiceReason,
 )
 from slaif_agent_site.control_api.site_authority import authorize_site_request
+from slaif_agent_site.editor_api.mutations import request_service
 from slaif_agent_site.errors import (
     ResourceConflictError,
     ResourceNotFoundError,
@@ -28,7 +29,7 @@ router = APIRouter(prefix="/api/editor/v1/sites/{site_id}/media")
 
 
 def _service(request: Request) -> ContentModelService:
-    return request.app.state.content_model_service  # type: ignore[no-any-return]
+    return request_service(request)
 
 
 async def _auth(

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Request, Response
@@ -18,6 +17,7 @@ from slaif_agent_site.content_model.service import (
     ContentModelServiceReason,
 )
 from slaif_agent_site.control_api.site_authority import authorize_site_request
+from slaif_agent_site.editor_api.mutations import request_service
 from slaif_agent_site.errors import (
     ResourceConflictError,
     ResourceNotFoundError,
@@ -28,7 +28,7 @@ router = APIRouter(prefix="/api/editor/v1/sites/{site_id}/content-items")
 
 
 def _service(request: Request) -> ContentModelService:
-    return request.app.state.content_model_service  # type: ignore[no-any-return]
+    return request_service(request)
 
 
 async def _auth(
@@ -129,13 +129,3 @@ async def delete_item(site_id: UUID, item_id: UUID, request: Request) -> Respons
         raise ResourceNotFoundError()
     await _service(request).delete_item(item_id, expected_row_version=None)
     return Response(status_code=204)
-
-
-def _ensure_service(app: Any) -> None:
-    """Attach ContentModelService to app state at startup."""
-    if not hasattr(app.state, "content_model_service"):
-        object.__setattr__(
-            app.state,
-            "content_model_service",
-            ContentModelService(app.state.database.pool),
-        )
