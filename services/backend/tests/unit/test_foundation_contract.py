@@ -594,6 +594,41 @@ def test_alembic_graph_and_offline_sql_need_no_locator_or_network() -> None:
     assert 'CREATE TABLE "control"."platform_administrator"' in completed.stdout
 
 
+def test_pre_070_migration_history_is_byte_immutable() -> None:
+    base = "76fee6d3e233a3909b8ab303d7f563216d86e468"
+    legacy = (
+        "services/backend/src/slaif_agent_site/db/alembic/versions/"
+        "023_001_media_functions.py"
+    )
+    result = subprocess.run(
+        ["git", "diff", "--exit-code", f"{base}...HEAD", "--", legacy],
+        cwd=REPOSITORY_ROOT,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    base_migrations = subprocess.check_output(
+        [
+            "git",
+            "ls-tree",
+            "-r",
+            "--name-only",
+            base,
+            "services/backend/src/slaif_agent_site/db/alembic/versions",
+        ],
+        cwd=REPOSITORY_ROOT,
+        text=True,
+    ).splitlines()
+    for path in base_migrations:
+        result = subprocess.run(
+            ["git", "diff", "--exit-code", f"{base}...HEAD", "--", path],
+            cwd=REPOSITORY_ROOT,
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0, path
+
+
 def test_database_source_uses_public_foundation_boundary_and_no_domain_ddl() -> None:
     package = REPOSITORY_ROOT / "services/backend/src/slaif_agent_site"
     database_source = "\n".join(

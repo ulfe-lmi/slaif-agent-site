@@ -230,6 +230,8 @@ async def parse_upload(request: Request, store: MediaStore) -> ParsedUpload:
                     if len(filenames) > 1:
                         raise MultipartUploadError("malformed_multipart")
                     filename = filenames[0] if filenames else None
+                    if filename is not None and names[0] != "file":
+                        raise MultipartUploadError("unexpected_field")
                     if filename is not None:
                         if file_stream is not None or file_name is not None:
                             raise MultipartUploadError("duplicate_file")

@@ -137,7 +137,7 @@ removed; no route claims an upload before validated bytes exist.
 
 | Public route | Success | Contract |
 | --- | --- | --- |
-| `POST /media/v1/sites/{site_id}/assets` | 201 | multipart `file`, bounded `alt_text`, optional bounded JSON `metadata`, CSRF-bound human session, `media:upload`, and `Idempotency-Key` |
+| `POST /media/v1/sites/{site_id}/assets` | 201 | exactly one filename-bearing multipart part named `file`, bounded `alt_text`, optional bounded JSON `metadata`, CSRF-bound human session, `media:upload`, and `Idempotency-Key` |
 | `GET /media/v1/sites/{site_id}/assets/{media_id}/content` | 200 | authenticated human session, `media:read`, workspace-aware metadata lookup, immutable byte stream |
 
 Uploads stream into private staging, SHA-256 hash and signature-sniff against

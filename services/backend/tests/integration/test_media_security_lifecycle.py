@@ -228,6 +228,32 @@ async def test_media_ordinary_rbac_isolation_editor_delete_and_orphan(
                     headers={"cookie": _cookie(viewer)},
                 )
                 assert viewer_read.status_code in {403, 404}
+                viewer_upload = await media_client.post(
+                    f"/v1/sites/{ids['site_a']}/assets",
+                    headers=_headers(viewer, "viewer-upload-denied"),
+                    files={"file": ("viewer.png", PNG, "image/png")},
+                )
+                assert viewer_upload.status_code in {403, 404}
+                async with owner_connection(
+                    database.settings.resolved_owner_dsn(),
+                    expected_database=database.name,
+                ) as owner:
+                    assert (
+                        await owner.fetchval(
+                            "SELECT count(*) FROM control.media_idempotency "
+                            "WHERE workspace_id = $1",
+                            ids["workspace_viewer"],
+                        )
+                        == 0
+                    )
+                    assert (
+                        await owner.fetchval(
+                            "SELECT count(*) FROM audit.media_mutation "
+                            "WHERE workspace_id = $1",
+                            ids["workspace_viewer"],
+                        )
+                        == 0
+                    )
 
                 uploaded = await media_client.post(
                     f"/v1/sites/{ids['site_a']}/assets",
@@ -309,6 +335,90 @@ async def test_media_ordinary_rbac_isolation_editor_delete_and_orphan(
                 assert retained.status_code == 200
                 assert retained.content == PNG
 
+                async with owner_connection(
+                    database.settings.resolved_owner_dsn(),
+                    expected_database=database.name,
+                ) as owner:
+                    await owner.execute(
+                        "UPDATE control.workspace SET status = 'REVOKED' WHERE id = $1",
+                        ids["workspace_a"],
+                    )
+                revoked_workspace = await media_client.post(
+                    f"/v1/sites/{ids['site_a']}/assets",
+                    headers=_headers(session_a, "revoked-workspace"),
+                    files={"file": ("revoked.png", PNG, "image/png")},
+                )
+                assert revoked_workspace.status_code in {403, 404}
+                assert list(store.staging_root.iterdir()) == []
+                async with owner_connection(
+                    database.settings.resolved_owner_dsn(),
+                    expected_database=database.name,
+                ) as owner:
+                    assert (
+                        await owner.fetchval(
+                            "SELECT count(*) FROM control.media_idempotency "
+                            "WHERE workspace_id = $1 AND idempotency_key = $2",
+                            ids["workspace_a"],
+                            "revoked-workspace",
+                        )
+                        == 0
+                    )
+                async with owner_connection(
+                    database.settings.resolved_owner_dsn(),
+                    expected_database=database.name,
+                ) as owner:
+                    await owner.execute(
+                        "UPDATE control.workspace SET status = 'ACTIVE' WHERE id = $1",
+                        ids["workspace_a"],
+                    )
+                    await owner.execute(
+                        "UPDATE control.workspace SET expires_at = now() - "
+                        "interval '1 second' "
+                        "WHERE id = $1",
+                        ids["workspace_a"],
+                    )
+                expired_workspace = await media_client.get(
+                    f"/v1/sites/{ids['site_a']}/assets/{media_a}/content",
+                    headers={"cookie": _cookie(session_a)},
+                )
+                assert expired_workspace.status_code in {403, 404}
+                async with owner_connection(
+                    database.settings.resolved_owner_dsn(),
+                    expected_database=database.name,
+                ) as owner:
+                    await owner.execute(
+                        "UPDATE control.workspace SET expires_at = now() + "
+                        "interval '1 hour' "
+                        "WHERE id = $1",
+                        ids["workspace_a"],
+                    )
+                    await owner.execute(
+                        "UPDATE control.site SET status = 'ARCHIVED' WHERE id = $1",
+                        ids["site_a"],
+                    )
+                inactive_site = await media_client.get(
+                    f"/v1/sites/{ids['site_a']}/assets/{media_a}/content",
+                    headers={"cookie": _cookie(session_a)},
+                )
+                assert inactive_site.status_code in {403, 404}
+                async with owner_connection(
+                    database.settings.resolved_owner_dsn(),
+                    expected_database=database.name,
+                ) as owner:
+                    await owner.execute(
+                        "UPDATE control.site SET status = 'ACTIVE' WHERE id = $1",
+                        ids["site_a"],
+                    )
+
+                await control.human_session_service().revoke(
+                    session_b.token, session_b.csrf_token
+                )
+                revoked_session = await media_client.get(
+                    f"/v1/sites/{ids['site_b']}/assets/{media_b}/content",
+                    headers={"cookie": _cookie(session_b)},
+                )
+                assert revoked_session.status_code in {401, 403, 404}
+
                 class FailingRegistrationDatabase(MediaDatabase):
                     async def register(self, **kwargs: object) -> Any:
                         raise RuntimeError("injected_registration_failure")
@@ -325,6 +435,24 @@ async def test_media_ordinary_rbac_isolation_editor_delete_and_orphan(
                 orphan_key = (
                     f"sha256/{orphan_digest[:2]}/{orphan_digest[2:4]}/{orphan_digest}"
                 )
+                async with owner_connection(
+                    database.settings.resolved_owner_dsn(),
+                    expected_database=database.name,
+                ) as owner:
+                    before_orphan_counts = await owner.fetchrow(
+                        "SELECT "
+                        "(SELECT count(*) FROM content.media_asset_base "
+                        " WHERE content_hash = $1), "
+                        "(SELECT count(*) FROM control.media_idempotency "
+                        " WHERE workspace_id = $2), "
+                        "(SELECT count(*) FROM audit.media_mutation "
+                        " WHERE workspace_id = $2)",
+                        orphan_digest,
+                        ids["workspace_a"],
+                    )
+                    before_orphan_operations = await get_session_operations(
+                        AsyncpgExecutor(owner), ids["workspace_a"], schema="content"
+                    )
                 async with failing_app.router.lifespan_context(failing_app):
                     async with httpx.AsyncClient(
                         transport=httpx.ASGITransport(app=failing_app),
@@ -343,13 +471,25 @@ async def test_media_ordinary_rbac_isolation_editor_delete_and_orphan(
                     database.settings.resolved_owner_dsn(),
                     expected_database=database.name,
                 ) as owner:
+                    after_orphan_counts = await owner.fetchrow(
+                        "SELECT "
+                        "(SELECT count(*) FROM content.media_asset_base "
+                        " WHERE content_hash = $1), "
+                        "(SELECT count(*) FROM control.media_idempotency "
+                        " WHERE workspace_id = $2), "
+                        "(SELECT count(*) FROM audit.media_mutation "
+                        " WHERE workspace_id = $2)",
+                        orphan_digest,
+                        ids["workspace_a"],
+                    )
+                    assert tuple(after_orphan_counts) == tuple(before_orphan_counts)
                     assert (
-                        await owner.fetchval(
-                            "SELECT count(*) FROM content.media_asset_base "
-                            "WHERE content_hash = $1",
-                            orphan_digest,
+                        await get_session_operations(
+                            AsyncpgExecutor(owner),
+                            ids["workspace_a"],
+                            schema="content",
                         )
-                        == 0
+                        == before_orphan_operations
                     )
                     assert (
                         await owner.fetchval(
@@ -357,15 +497,6 @@ async def test_media_ordinary_rbac_isolation_editor_delete_and_orphan(
                             "WHERE workspace_id = $1 AND idempotency_key = $2",
                             ids["workspace_a"],
                             "injected-db-failure",
-                        )
-                        == 0
-                    )
-                    assert (
-                        await owner.fetchval(
-                            "SELECT count(*) FROM audit.media_mutation "
-                            "WHERE workspace_id = $1 AND request_digest IS NOT NULL "
-                            "AND resource_id IS NULL",
-                            ids["workspace_a"],
                         )
                         == 0
                     )
@@ -434,56 +565,63 @@ async def test_media_workspace_assertion_waits_for_revoke(
                     )
 
             owner_pool = await database.role_pool("slaif_owner")
-            async with owner_pool.acquire() as owner:
-                async with owner.transaction():
-                    await owner.fetchval(
-                        "SELECT pg_advisory_xact_lock(hashtextextended($1, 280))",
-                        str(ids["workspace_a"]),
-                    )
-                    baseline = await get_session_operations(
-                        AsyncpgExecutor(owner), ids["workspace_a"], schema="content"
-                    )
-                    blocked = asyncio.create_task(blocked_assertion())
-                    await asyncio.sleep(0)
+            try:
+                async with owner_pool.acquire() as owner:
+                    async with owner.transaction():
+                        await owner.fetchval(
+                            "SELECT pg_advisory_xact_lock(hashtextextended($1, 280))",
+                            str(ids["workspace_a"]),
+                        )
+                        baseline = await get_session_operations(
+                            AsyncpgExecutor(owner),
+                            ids["workspace_a"],
+                            schema="content",
+                        )
+                        blocked = asyncio.create_task(blocked_assertion())
+                        await asyncio.sleep(0)
+                        await owner.execute(
+                            "UPDATE control.site_membership SET status = 'INACTIVE' "
+                            "WHERE site_id = $1 AND user_account_id = $2",
+                            ids["site_a"],
+                            ids["user_a"],
+                        )
+                        await _wait_for_advisory_waiter(database, blocked_pid)
+                        assert not blocked.done()
+                with pytest.raises(asyncpg.PostgresError):
+                    await blocked
+                async with owner_pool.acquire() as owner:
                     await owner.execute(
-                        "UPDATE control.site_membership SET status = 'INACTIVE' "
+                        "UPDATE control.site_membership SET status = 'ACTIVE' "
                         "WHERE site_id = $1 AND user_account_id = $2",
                         ids["site_a"],
                         ids["user_a"],
                     )
-                    await _wait_for_advisory_waiter(database, blocked_pid)
-                    assert not blocked.done()
-            with pytest.raises(asyncpg.PostgresError):
-                await blocked
-            async with owner_pool.acquire() as owner:
-                await owner.execute(
-                    "UPDATE control.site_membership SET status = 'ACTIVE' "
-                    "WHERE site_id = $1 AND user_account_id = $2",
-                    ids["site_a"],
-                    ids["user_a"],
-                )
-                assert (
-                    await get_session_operations(
-                        AsyncpgExecutor(owner), ids["workspace_a"], schema="content"
+                    assert (
+                        await get_session_operations(
+                            AsyncpgExecutor(owner),
+                            ids["workspace_a"],
+                            schema="content",
+                        )
+                        == baseline
                     )
-                    == baseline
-                )
-                assert (
-                    await owner.fetchval(
-                        "SELECT count(*) FROM control.media_idempotency "
-                        "WHERE workspace_id = $1",
-                        ids["workspace_a"],
+                    assert (
+                        await owner.fetchval(
+                            "SELECT count(*) FROM control.media_idempotency "
+                            "WHERE workspace_id = $1",
+                            ids["workspace_a"],
+                        )
+                        == 0
                     )
-                    == 0
-                )
-                assert (
-                    await owner.fetchval(
-                        "SELECT count(*) FROM audit.media_mutation "
-                        "WHERE workspace_id = $1",
-                        ids["workspace_a"],
+                    assert (
+                        await owner.fetchval(
+                            "SELECT count(*) FROM audit.media_mutation "
+                            "WHERE workspace_id = $1",
+                            ids["workspace_a"],
+                        )
+                        == 0
                     )
-                    == 0
-                )
+            finally:
+                await owner_pool.close()
     finally:
         await media_database.stop()
         await control.stop()

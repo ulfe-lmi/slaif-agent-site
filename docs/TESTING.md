@@ -74,4 +74,7 @@ prove duplicate/length/truncation/oversize/cancellation cleanup. A real
 PostgreSQL two-connection race proves the Media workspace assertion waits on
 the shared workspace lock before revocation is evaluated. Compose/edge tests
 keep `/media/` as a proxy-only route with no volume alias or host mount and
-prove the larger request-body allowance is route-scoped.
+prove the larger request-body allowance is route-scoped. The lifecycle proof
+also covers the exact filename-bearing `file` part, Viewer upload denial,
+revoked session, revoked/expired workspace, and archived-site outcomes with
+no idempotency/audit residue.

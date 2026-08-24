@@ -17,6 +17,7 @@ PNG = b"\x89PNG\r\n\x1a\nfixture"
 def _body(
     boundary: str,
     *,
+    part_name: str = "file",
     filename: str = "fixture.png",
     file_bytes: bytes = PNG,
     declared: str = "image/png",
@@ -31,7 +32,8 @@ def _body(
             'Content-Disposition: form-data; name="metadata"\r\n\r\n'
             '{"caption":"fixture"}\r\n'
             f"--{boundary}\r\n"
-            f'Content-Disposition: form-data; name="file"; filename="{filename}"\r\n'
+            f'Content-Disposition: form-data; name="{part_name}"; '
+            f'filename="{filename}"\r\n'
             f"Content-Type: {declared}\r\n"
             f"{extra_headers}"
             "\r\n"
@@ -141,6 +143,39 @@ async def test_parser_rejects_ambiguous_length_and_cleans_on_cancellation(
             store,
         )
     assert not store.staging_root.exists() or list(store.staging_root.iterdir()) == []
+
+
+@pytest.mark.asyncio
+async def test_parser_requires_exact_filename_bearing_file_part(tmp_path: Path) -> None:
+    boundary = "media-boundary-070c"
+    valid = _body(boundary)
+    final = f"--{boundary}--\r\n".encode()
+    duplicate = (
+        valid[: -len(final)]
+        + valid[
+            valid.index(
+                f'--{boundary}\r\nContent-Disposition: form-data; name="file"'.encode()
+            ) : -len(final)
+        ]
+        + final
+    )
+    filename_less = valid.replace(
+        b'Content-Disposition: form-data; name="file"; filename="fixture.png"',
+        b'Content-Disposition: form-data; name="file"',
+    )
+    for index, body in enumerate(
+        (
+            _body(boundary, part_name="wrong"),
+            duplicate,
+            filename_less,
+        )
+    ):
+        store = MediaStore(tmp_path / f"reject-{index}")
+        with pytest.raises(MultipartUploadError):
+            await parse_upload(_request(body, boundary), store)
+        assert (
+            not store.staging_root.exists() or list(store.staging_root.iterdir()) == []
+        )
 
     cancellation_store = MediaStore(tmp_path / "cancel")
     first = body[: body.index(PNG) + 2]

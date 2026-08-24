@@ -101,16 +101,15 @@ def upgrade() -> None:
             created_at timestamptz, updated_at timestamptz
         ) LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $fn$
         BEGIN
-            UPDATE content.media_asset AS media_asset SET
+            UPDATE content.media_asset SET
                 alt_text = COALESCE(p_alt_text, alt_text),
                 metadata = COALESCE(p_metadata, metadata),
                 updated_at = CURRENT_TIMESTAMP
-            WHERE media_asset.id = p_media_id;
+            WHERE id = p_media_id;
             IF NOT FOUND THEN
                 RAISE EXCEPTION 'NOT_FOUND' USING ERRCODE = 'P0002';
             END IF;
-            RETURN QUERY SELECT media_asset.* FROM content.media_asset AS media_asset
-            WHERE media_asset.id = p_media_id;
+            RETURN QUERY SELECT * FROM content.media_asset WHERE id = p_media_id;
         END;
         $fn$
     """)
@@ -123,8 +122,7 @@ def upgrade() -> None:
             p_media_id uuid
         ) RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $fn$
         BEGIN
-            DELETE FROM content.media_asset AS media_asset
-            WHERE media_asset.id = p_media_id;
+            DELETE FROM content.media_asset WHERE id = p_media_id;
         END;
         $fn$
     """)
