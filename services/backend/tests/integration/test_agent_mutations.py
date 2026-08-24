@@ -537,13 +537,13 @@ async def test_agent_semantic_reads_use_cow_overlay_fallback_and_isolation(
 ) -> None:
     database = agent_site_database
     token, seeded = await _seed(database)
-    canonical_type_id = uuid4()
-    tombstone_type_id = uuid4()
-    canonical_field_id = uuid4()
-    canonical_item_id = uuid4()
-    canonical_page_id = uuid4()
-    canonical_node_id = uuid4()
-    canonical_media_id = uuid4()
+    canonical_type_id = UUID("00000000-0000-0000-0000-000000000691")
+    tombstone_type_id = UUID("00000000-0000-0000-0000-000000000692")
+    canonical_field_id = UUID("00000000-0000-0000-0000-000000000694")
+    canonical_item_id = UUID("00000000-0000-0000-0000-000000000695")
+    canonical_page_id = UUID("00000000-0000-0000-0000-000000000696")
+    canonical_node_id = UUID("00000000-0000-0000-0000-000000000697")
+    canonical_media_id = UUID("00000000-0000-0000-0000-000000000698")
     async with owner_connection(
         database.settings.resolved_owner_dsn(), expected_database=database.name
     ) as owner:
@@ -875,7 +875,7 @@ async def test_agent_semantic_reads_use_cow_overlay_fallback_and_isolation(
                     assert response.json()["error"]["code"] == "RESOURCE_NOT_FOUND"
                     assert str(seeded["site_b_id"]) not in response.text
 
-                workspace_b_type_id = uuid4()
+                workspace_b_type_id = UUID("00000000-0000-0000-0000-000000000693")
                 async with asyncpg_cow_session(
                     agent_pool, session_id=workspace_b, operation_id=uuid4()
                 ) as cow:
