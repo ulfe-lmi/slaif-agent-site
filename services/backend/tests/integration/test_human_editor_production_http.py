@@ -1,0 +1,380 @@
+"""Fixed-login production wiring and public Editor HTTP evidence."""
+
+from __future__ import annotations
+
+from urllib.parse import quote
+from uuid import UUID, uuid4
+
+import asyncpg
+import httpx
+import pytest
+from conftest import AgentSiteDatabase, AsyncpgExecutor
+from pydantic import SecretStr
+from slaif_agent_site.agent_state.foundation import get_session_operations
+from slaif_agent_site.bootstrap.service import reconcile, upgrade
+from slaif_agent_site.config import EnvironmentMode, ServiceSettings
+from slaif_agent_site.control_api.config import (
+    ControlDatabaseMode,
+    ControlDatabaseSettings,
+)
+from slaif_agent_site.control_api.database import ControlDatabase
+from slaif_agent_site.db.roles import quote_identifier
+from slaif_agent_site.editor_api.app import create_app
+from slaif_agent_site.editor_api.config import (
+    EditorDatabaseMode,
+    EditorDatabaseSettings,
+)
+from slaif_agent_site.editor_api.database import EditorDatabase
+from slaif_agent_site.health import ComponentStatus
+
+CONTROL_LOGIN = "slaif_control_login"
+EDITOR_LOGIN = "slaif_editor_login"
+CONTROL_ROLE = "slaif_control"
+EDITOR_ROLE = "slaif_editor_runtime"
+CONTROL_PASSWORD = "fake-production-control-password-068-d"
+EDITOR_PASSWORD = "fake-production-editor-password-068-d"
+
+
+def _dsn(database: AgentSiteDatabase, login: str, password: str) -> SecretStr:
+    host = quote(str(database.connection_parameters["host"]), safe="[]:.")
+    return SecretStr(
+        f"postgresql://{quote(login, safe='')}:{quote(password, safe='')}@"
+        f"{host}:{database.connection_parameters['port']}/{database.name}"
+    )
+
+
+def _control_settings(database: AgentSiteDatabase) -> ControlDatabaseSettings:
+    return ControlDatabaseSettings(
+        mode=ControlDatabaseMode.TEST,
+        dsn=_dsn(database, CONTROL_LOGIN, CONTROL_PASSWORD),
+        dsn_file=None,
+        expected_database=database.name,
+        expected_login=CONTROL_LOGIN,
+        pool_min_size=1,
+        pool_max_size=2,
+        application_name="slaif-production-control-http-test",
+    )
+
+
+def _editor_settings(database: AgentSiteDatabase) -> EditorDatabaseSettings:
+    return EditorDatabaseSettings(
+        mode=EditorDatabaseMode.TEST,
+        dsn=_dsn(database, EDITOR_LOGIN, EDITOR_PASSWORD),
+        dsn_file=None,
+        expected_database=database.name,
+        expected_login=EDITOR_LOGIN,
+        pool_min_size=1,
+        pool_max_size=2,
+        application_name="slaif-production-editor-http-test",
+    )
+
+
+def _cookie(session: str, csrf: str | None = None) -> str:
+    value = f"slaif_session={session}"
+    return value if csrf is None else f"{value}; slaif_csrf={csrf}"
+
+
+def _assert_private(response: httpx.Response) -> None:
+    assert response.headers["cache-control"] == "private, no-store"
+    assert response.headers["pragma"] == "no-cache"
+    assert response.headers["x-robots-tag"] == "noindex, nofollow, noarchive"
+    assert len(response.headers.get_list("x-request-id")) == 1
+
+
+def _mutation_headers(session: str, csrf: str, key: str) -> dict[str, str]:
+    return {
+        "cookie": _cookie(session, csrf),
+        "x-csrf-token": csrf,
+        "idempotency-key": key,
+    }
+
+
+@pytest.mark.asyncio
+async def test_fixed_production_logins_run_public_editor_http_chain(
+    agent_site_database: AgentSiteDatabase,
+) -> None:
+    database = agent_site_database
+    await upgrade(database.settings)
+    owner_pool = await database.role_pool("slaif_owner")
+    site_id = uuid4()
+    human_id = uuid4()
+    canonical_id = uuid4()
+    site_key = f"production-editor-{uuid4().hex[:12]}"
+    fixed_logins = (
+        (CONTROL_LOGIN, CONTROL_PASSWORD, CONTROL_ROLE),
+        (EDITOR_LOGIN, EDITOR_PASSWORD, EDITOR_ROLE),
+    )
+    control: ControlDatabase | None = None
+    editor: EditorDatabase | None = None
+
+    try:
+        async with owner_pool.acquire() as owner:
+            await owner.execute(
+                "INSERT INTO control.user_account "
+                "(id, identity_kind, oidc_issuer, oidc_subject, display_name) "
+                "VALUES ($1, 'OIDC', 'https://production-editor.test', $2, "
+                "'Production Editor Human')",
+                human_id,
+                str(human_id),
+            )
+            await owner.execute(
+                "INSERT INTO control.platform_administrator (user_account_id) "
+                "VALUES ($1)",
+                human_id,
+            )
+            await owner.execute(
+                "INSERT INTO control.site "
+                "(id, site_key, display_name, default_locale, "
+                "component_catalog_version) VALUES ($1, $2, 'Production Editor', "
+                "'en', 'catalog-v1')",
+                site_id,
+                site_key,
+            )
+            await owner.execute(
+                "INSERT INTO content.page "
+                "(id, site_id, slug, title, status, locale) "
+                "VALUES ($1, $2, 'canonical', 'Canonical title', 'DRAFT', 'en')",
+                canonical_id,
+                site_id,
+            )
+        await reconcile(database.settings)
+
+        for login, password, role in fixed_logins:
+            password_literal = await database.administrator.fetchval(
+                "SELECT pg_catalog.quote_literal($1::text)", password
+            )
+            await database.administrator.execute(
+                f"CREATE ROLE {quote_identifier(login)} LOGIN PASSWORD "
+                f"{password_literal} "
+                "NOSUPERUSER NOCREATEDB NOCREATEROLE INHERIT "
+                "NOREPLICATION NOBYPASSRLS"
+            )
+            await database.administrator.execute(
+                f"GRANT {quote_identifier(role)} TO {quote_identifier(login)}"
+            )
+
+        for login, password, role in fixed_logins:
+            connection = await asyncpg.connect(
+                host=database.connection_parameters["host"],
+                port=database.connection_parameters["port"],
+                database=database.name,
+                user=login,
+                password=password,
+            )
+            try:
+                identity = await connection.fetchrow(
+                    "SELECT session_user::text, current_user::text, "
+                    "pg_has_role(session_user, $1, 'MEMBER')",
+                    role,
+                )
+                assert tuple(identity) == (login, login, True)
+                if login == CONTROL_LOGIN:
+                    with pytest.raises(asyncpg.InsufficientPrivilegeError):
+                        await connection.fetchval("SELECT count(*) FROM content.page")
+                else:
+                    with pytest.raises(asyncpg.InsufficientPrivilegeError):
+                        await connection.fetchval(
+                            "SELECT count(*) FROM control.workspace"
+                        )
+            finally:
+                await connection.close()
+
+        control = ControlDatabase(_control_settings(database))
+        editor = EditorDatabase(_editor_settings(database))
+        app = create_app(
+            settings=ServiceSettings(mode=EnvironmentMode.TEST),
+            database=control,
+            editor_database=editor,
+        )
+
+        async with app.router.lifespan_context(app):
+            assert (await control.readiness()).status is ComponentStatus.OK
+            assert (await editor.readiness()).status is ComponentStatus.OK
+            issued = await control.human_session_service().create(human_id)
+            session = issued.token.get_secret_value()
+            csrf = issued.csrf_token.get_secret_value()
+            pages_path = f"/api/editor/v1/sites/{site_id}/pages/"
+            composition_path = (
+                f"/api/editor/v1/sites/{site_id}/pages/{{page_id}}/composition/"
+            )
+            read_headers = {"cookie": _cookie(session, csrf)}
+
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app),
+                base_url="http://public-editor.test",
+            ) as client:
+                initial = await client.get(pages_path, headers=read_headers)
+                assert initial.status_code == 200
+                _assert_private(initial)
+                assert [row["slug"] for row in initial.json()] == ["canonical"]
+
+                canonical_update = await client.patch(
+                    f"{pages_path}{canonical_id}",
+                    headers=_mutation_headers(session, csrf, "canonical-update"),
+                    json={
+                        "title": "Overlay canonical title",
+                        "expected_row_version": 1,
+                    },
+                )
+                assert canonical_update.status_code == 200
+                _assert_private(canonical_update)
+                assert canonical_update.json()["title"] == "Overlay canonical title"
+                canonical_read = await client.get(
+                    f"{pages_path}{canonical_id}", headers=read_headers
+                )
+                assert canonical_read.status_code == 200
+                assert canonical_read.json()["title"] == "Overlay canonical title"
+
+                created = await client.post(
+                    pages_path,
+                    headers=_mutation_headers(session, csrf, "overlay-create"),
+                    json={
+                        "slug": "overlay",
+                        "title": "Overlay page",
+                        "status": "DRAFT",
+                        "locale": "en",
+                    },
+                )
+                assert created.status_code == 201
+                _assert_private(created)
+                overlay_id = UUID(created.json()["id"])
+                replay = await client.post(
+                    pages_path,
+                    headers=_mutation_headers(session, csrf, "overlay-create"),
+                    json={
+                        "slug": "overlay",
+                        "title": "Overlay page",
+                        "status": "DRAFT",
+                        "locale": "en",
+                    },
+                )
+                assert replay.status_code == 201
+                assert replay.json() == created.json()
+                mismatch = await client.post(
+                    pages_path,
+                    headers=_mutation_headers(session, csrf, "overlay-create"),
+                    json={
+                        "slug": "different",
+                        "title": "Mismatch",
+                        "status": "DRAFT",
+                        "locale": "en",
+                    },
+                )
+                assert mismatch.status_code == 409
+
+                listed = await client.get(pages_path, headers=read_headers)
+                assert {row["slug"] for row in listed.json()} == {
+                    "canonical",
+                    "overlay",
+                }
+                composition = composition_path.format(page_id=overlay_id)
+                first = await client.post(
+                    f"{composition}components",
+                    headers=_mutation_headers(session, csrf, "component-one"),
+                    json={"component_type": "Section", "order_key": 0, "props": {}},
+                )
+                assert first.status_code == 201
+                first_id = UUID(first.json()["id"])
+                second = await client.post(
+                    f"{composition}components",
+                    headers=_mutation_headers(session, csrf, "component-two"),
+                    json={"component_type": "Section", "order_key": 0, "props": {}},
+                )
+                assert second.status_code == 201
+                second_id = UUID(second.json()["id"])
+                update = await client.patch(
+                    f"{composition}components/{first_id}",
+                    headers=_mutation_headers(session, csrf, "component-update"),
+                    json={"props": {"variant": "narrow"}},
+                )
+                assert update.status_code == 200
+                moved = await client.post(
+                    f"{composition}components/{first_id}/move",
+                    headers=_mutation_headers(session, csrf, "component-move"),
+                    json={
+                        "new_parent_id": None,
+                        "new_slot_key": "default",
+                        "new_order_key": 1,
+                    },
+                )
+                assert moved.status_code == 200
+                composition_read = await client.get(composition, headers=read_headers)
+                assert composition_read.status_code == 200
+                nodes = {UUID(row["id"]): row for row in composition_read.json()}
+                assert nodes[first_id]["order_key"] == 1
+                assert nodes[first_id]["props"] == {"variant": "narrow"}
+                assert nodes[second_id]["order_key"] == 0
+
+                delete_second = await client.delete(
+                    f"{composition}components/{second_id}",
+                    headers=_mutation_headers(session, csrf, "component-delete-two"),
+                )
+                assert delete_second.status_code == 204
+                delete_first = await client.delete(
+                    f"{composition}components/{first_id}",
+                    headers=_mutation_headers(session, csrf, "component-delete-one"),
+                )
+                assert delete_first.status_code == 204
+                delete_page = await client.delete(
+                    f"{pages_path}{overlay_id}",
+                    headers=_mutation_headers(session, csrf, "overlay-delete"),
+                )
+                assert delete_page.status_code == 204
+                final = await client.get(pages_path, headers=read_headers)
+                assert [row["slug"] for row in final.json()] == ["canonical"]
+                assert final.json()[0]["title"] == "Overlay canonical title"
+
+                before_get = await client.get(pages_path, headers=read_headers)
+                assert before_get.status_code == 200
+                after_get = await client.get(pages_path, headers=read_headers)
+                assert after_get.status_code == 200
+                assert after_get.json() == before_get.json()
+
+        async with owner_pool.acquire() as owner:
+            canonical = await owner.fetchrow(
+                "SELECT id, slug, title FROM content.page WHERE id = $1",
+                canonical_id,
+            )
+            assert tuple(canonical) == (canonical_id, "canonical", "Canonical title")
+            counts = await owner.fetchrow(
+                "SELECT (SELECT count(*) FROM control.human_editor_idempotency), "
+                "(SELECT count(*) FROM audit.human_editor_mutation), "
+                "(SELECT count(*) FROM control.human_editor_idempotency "
+                "WHERE status_code IS NULL), "
+                "(SELECT count(*) FROM audit.human_editor_mutation "
+                "WHERE response_status NOT BETWEEN 200 AND 299)"
+            )
+            assert tuple(counts) == (9, 9, 0, 0)
+            operations = await get_session_operations(
+                AsyncpgExecutor(owner),
+                await owner.fetchval(
+                    "SELECT id FROM control.workspace WHERE site_id = $1 "
+                    "AND created_by = $2 ORDER BY created_at DESC, id DESC LIMIT 1",
+                    site_id,
+                    human_id,
+                ),
+                schema="content",
+            )
+            assert len(operations) == 9
+
+            grants = await owner.fetch(
+                "SELECT rolname::text, "
+                "has_schema_privilege(rolname, 'content', 'USAGE'), "
+                "has_table_privilege(rolname, 'content.page_base', 'SELECT') "
+                "FROM pg_roles WHERE rolname IN ($1, $2) ORDER BY rolname",
+                CONTROL_LOGIN,
+                EDITOR_LOGIN,
+            )
+            assert [tuple(row) for row in grants] == [
+                (CONTROL_LOGIN, False, False),
+                (EDITOR_LOGIN, True, False),
+            ]
+    finally:
+        await owner_pool.close()
+        for login, _, role in fixed_logins:
+            await database.administrator.execute(
+                f"REVOKE {quote_identifier(role)} FROM {quote_identifier(login)}"
+            )
+            await database.administrator.execute(
+                f"DROP ROLE IF EXISTS {quote_identifier(login)}"
+            )

@@ -146,6 +146,11 @@ def upgrade() -> None:
                 RAISE EXCEPTION 'HUMAN_EDITOR_COW_CONTEXT_INVALID'
                     USING ERRCODE = '22023';
             END IF;
+            IF p_lock THEN
+                PERFORM pg_advisory_xact_lock(
+                    hashtextextended(p_workspace_id::text, 280)
+                );
+            END IF;
             IF NOT EXISTS (
                 SELECT 1
                 FROM control.workspace AS workspace
@@ -161,6 +166,17 @@ def upgrade() -> None:
                   AND workspace.actor_type = 'HUMAN'
                   AND workspace.status = 'ACTIVE'
                   AND workspace.expires_at > CURRENT_TIMESTAMP
+                  AND workspace.id = (
+                      SELECT selected.id
+                      FROM control.workspace AS selected
+                      WHERE selected.site_id = p_site_id
+                        AND selected.created_by = p_human_user_id
+                        AND selected.actor_type = 'HUMAN'
+                        AND selected.status = 'ACTIVE'
+                        AND selected.expires_at > CURRENT_TIMESTAMP
+                      ORDER BY selected.created_at DESC, selected.id DESC
+                      LIMIT 1
+                  )
                   AND account.status = 'ACTIVE'
                   AND site.status = 'ACTIVE'
                   AND session.revoked_at IS NULL
@@ -185,11 +201,6 @@ def upgrade() -> None:
             ) THEN
                 RAISE EXCEPTION 'HUMAN_EDITOR_PERMISSION_REVOKED'
                     USING ERRCODE = 'P0002';
-            END IF;
-            IF p_lock THEN
-                PERFORM pg_advisory_xact_lock(
-                    hashtextextended(p_workspace_id::text, 280)
-                );
             END IF;
         END;
         $fn$

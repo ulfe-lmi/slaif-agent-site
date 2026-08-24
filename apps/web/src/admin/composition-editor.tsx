@@ -125,6 +125,15 @@ function sameJson(left: unknown, right: unknown): boolean {
   return JSON.stringify(left) === JSON.stringify(right);
 }
 
+function moveFirstRootComponent(data: PuckData): PuckData {
+  const [first, second] = data.content;
+  if (!first || !second) return data;
+  return {
+    ...data,
+    content: [second, first, ...data.content.slice(2)],
+  };
+}
+
 function depth(
   node: NormalizedCompositionNode,
   byId: Map<string, NormalizedCompositionNode>,
@@ -216,6 +225,7 @@ export function CompositionEditor({
   const [authority, setAuthority] = useState<CurrentAuthority | null>(null);
   const [nodes, setNodes] = useState<NormalizedCompositionNode[] | null>(null);
   const [data, setData] = useState<PuckData | null>(null);
+  const [puckRenderKey, setPuckRenderKey] = useState(0);
   const metadata = useRef<Record<string, PuckNodeMetadata>>({});
   const latestData = useRef<Data | null>(null);
   const pending = useRef(false);
@@ -233,6 +243,7 @@ export function CompositionEditor({
     metadata.current = converted.metadata ?? {};
     latestData.current = converted;
     setData(converted);
+    setPuckRenderKey((key) => key + 1);
   }
 
   useEffect(() => {
@@ -299,10 +310,36 @@ export function CompositionEditor({
       {error && <StatusPanel>{error}</StatusPanel>}
       <Card>
         <Puck
+          key={puckRenderKey}
           config={PUCK_CONFIG}
           data={data as Data}
+          permissions={{
+            drag: true,
+            edit: true,
+            delete: true,
+            duplicate: true,
+            insert: true,
+          }}
           onChange={(next) => {
             latestData.current = next as Data;
+          }}
+          renderHeaderActions={({ state }) => {
+            const hasMultipleRootComponents = state.data.content.length > 1;
+            return (
+              <button
+                type="button"
+                data-testid="puck-action:move-first-down"
+                disabled={!hasMultipleRootComponents}
+                onClick={() => {
+                  const nextData = moveFirstRootComponent(state.data as PuckData);
+                  latestData.current = nextData;
+                  setData(nextData);
+                  setPuckRenderKey((key) => key + 1);
+                }}
+              >
+                Move first component down
+              </button>
+            );
           }}
           onPublish={(next) => void publish(next)}
           headerTitle="Page composition"

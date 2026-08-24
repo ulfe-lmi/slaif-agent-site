@@ -11,8 +11,11 @@ from typing import Any, cast
 
 import asyncpg
 import pytest
-from conftest import AgentSiteDatabase
-from slaif_agent_site.agent_state.foundation import asyncpg_cow_session
+from conftest import AgentSiteDatabase, AsyncpgExecutor
+from slaif_agent_site.agent_state.foundation import (
+    asyncpg_cow_session,
+    get_session_operations,
+)
 from slaif_agent_site.bootstrap.service import reconcile, upgrade
 from slaif_agent_site.content_model.service import ContentModelService
 
@@ -122,6 +125,21 @@ async def _complete(
         "page",
         resource_id,
     )
+
+
+async def _wait_for_advisory_waiter(
+    administrator: asyncpg.Connection[Any], pid: int
+) -> None:
+    for _ in range(1000):
+        row = await administrator.fetchrow(
+            "SELECT wait_event_type, wait_event, state "
+            "FROM pg_catalog.pg_stat_activity WHERE pid = $1",
+            pid,
+        )
+        if row is not None and tuple(row) == ("Lock", "advisory", "active"):
+            return
+        await asyncio.sleep(0)
+    raise AssertionError("Editor assertion did not wait on the shared workspace lock")
 
 
 async def test_human_editor_envelope_uses_real_control_and_editor_roles(
@@ -317,6 +335,78 @@ async def test_human_editor_envelope_uses_real_control_and_editor_roles(
             )
             assert {row[2] for row in canonical_pages} == {"canonical-page"}
 
+        race_operation = uuid.uuid4()
+        async with owner_pool.acquire() as observer:
+            baseline_counts = await observer.fetchrow(
+                "SELECT (SELECT count(*) FROM content.page), "
+                "(SELECT count(*) FROM content.page_composition), "
+                "(SELECT count(*) FROM control.human_editor_idempotency), "
+                "(SELECT count(*) FROM audit.human_editor_mutation)"
+            )
+            baseline_operations = await get_session_operations(
+                AsyncpgExecutor(observer), workspace_id, schema="content"
+            )
+
+        async def blocked_assert(connection: asyncpg.Connection[Any]) -> None:
+            async with asyncpg_cow_session(
+                connection,
+                session_id=workspace_id,
+                operation_id=race_operation,
+            ) as cow:
+                await _assert_workspace(
+                    cow,
+                    workspace_id=workspace_id,
+                    human_user_id=human_user_id,
+                    site_id=site_id,
+                    human_session_id=human_session_id,
+                )
+
+        async with editor_pool.acquire() as blocked_connection:
+            blocked_pid = blocked_connection.get_server_pid()
+            blocked = asyncio.create_task(blocked_assert(blocked_connection))
+            async with owner_pool.acquire() as owner:
+                async with owner.transaction():
+                    await owner.fetchval(
+                        "SELECT pg_advisory_xact_lock(hashtextextended($1, 280))",
+                        str(workspace_id),
+                    )
+                    await owner.execute(
+                        "UPDATE control.site_membership SET status = 'INACTIVE' "
+                        "WHERE site_id = $1 AND user_account_id = $2",
+                        site_id,
+                        human_user_id,
+                    )
+                    await _wait_for_advisory_waiter(database.administrator, blocked_pid)
+                    assert not blocked.done()
+            with pytest.raises(asyncpg.PostgresError):
+                await blocked
+
+        async with owner_pool.acquire() as owner:
+            await owner.execute(
+                "UPDATE control.site_membership SET status = 'ACTIVE' "
+                "WHERE site_id = $1 AND user_account_id = $2",
+                site_id,
+                human_user_id,
+            )
+            after_counts = await owner.fetchrow(
+                "SELECT (SELECT count(*) FROM content.page), "
+                "(SELECT count(*) FROM content.page_composition), "
+                "(SELECT count(*) FROM control.human_editor_idempotency), "
+                "(SELECT count(*) FROM audit.human_editor_mutation)"
+            )
+            after_operations = await get_session_operations(
+                AsyncpgExecutor(owner), workspace_id, schema="content"
+            )
+            assert tuple(after_counts) == tuple(baseline_counts)
+            assert after_operations == baseline_operations
+            assert not await owner.fetchval(
+                "SELECT EXISTS (SELECT 1 FROM control.human_editor_idempotency "
+                "WHERE operation_id = $1)"
+                " OR EXISTS (SELECT 1 FROM audit.human_editor_mutation "
+                "WHERE operation_id = $1)",
+                race_operation,
+            )
+
         replay_operation = uuid.uuid4()
         async with _cow(
             editor_pool, workspace_id=workspace_id, operation_id=replay_operation
@@ -387,6 +477,84 @@ async def test_human_editor_envelope_uses_real_control_and_editor_roles(
                 )
                 raise RuntimeError("forced rollback")
 
+        completion_operation = uuid.uuid4()
+        completion_key = f"completion-failure-{uuid.uuid4().hex}"
+        with pytest.raises(asyncpg.PostgresError):
+            async with _cow(
+                editor_pool,
+                workspace_id=workspace_id,
+                operation_id=completion_operation,
+            ) as cow:
+                await _assert_workspace(
+                    cow,
+                    workspace_id=workspace_id,
+                    human_user_id=human_user_id,
+                    site_id=site_id,
+                    human_session_id=human_session_id,
+                )
+                assert (
+                    await _begin(
+                        cow,
+                        workspace_id=workspace_id,
+                        human_user_id=human_user_id,
+                        site_id=site_id,
+                        human_session_id=human_session_id,
+                        permission=PERMISSION,
+                        key=completion_key,
+                        digest="e" * 64,
+                        operation_id=completion_operation,
+                    )
+                )[0] == "STARTED"
+                await ContentModelService.for_cow_session(cow).create_page(
+                    site_id,
+                    "completion-failure",
+                    "Completion failure",
+                    "DRAFT",
+                    "en",
+                )
+                await cow.native.fetchrow(
+                    "SELECT control.slaif_human_editor_idempotency_complete("
+                    "$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)",
+                    workspace_id,
+                    human_user_id,
+                    site_id,
+                    human_session_id,
+                    PERMISSION,
+                    completion_key,
+                    "e" * 64,
+                    completion_operation,
+                    500,
+                    json.dumps({"failed": True}),
+                    "POST /api/editor/v1/pages",
+                    "page",
+                    uuid.uuid4(),
+                )
+
+        async with owner_pool.acquire() as owner:
+            assert not await owner.fetchval(
+                "SELECT EXISTS (SELECT 1 FROM control.human_editor_idempotency "
+                "WHERE idempotency_key = $1) "
+                "OR EXISTS (SELECT 1 FROM content.page "
+                "WHERE slug = 'completion-failure')",
+                completion_key,
+            )
+
+        cancellation_operation = uuid.uuid4()
+        with pytest.raises(asyncio.CancelledError):
+            async with asyncpg_cow_session(
+                editor_pool,
+                session_id=workspace_id,
+                operation_id=cancellation_operation,
+            ):
+                raise asyncio.CancelledError()
+        async with editor_pool.acquire() as reusable:
+            assert await reusable.fetchval(
+                "SELECT current_setting('app.session_id', true)"
+            ) in (None, "")
+            assert await reusable.fetchval(
+                "SELECT current_setting('app.operation_id', true)"
+            ) in (None, "")
+
         invalid_contexts = (
             (other_human_id, site_id, human_session_id, PERMISSION),
             (human_user_id, other_site_id, human_session_id, PERMISSION),
@@ -427,6 +595,93 @@ async def test_human_editor_envelope_uses_real_control_and_editor_roles(
                     human_session_id=forged_session_id,
                 )
 
+        with pytest.raises(asyncpg.PostgresError):
+            async with asyncpg_cow_session(
+                editor_pool,
+                session_id=human_session_id,
+                operation_id=uuid.uuid4(),
+            ) as cow:
+                await _assert_workspace(
+                    cow,
+                    workspace_id=workspace_id,
+                    human_user_id=human_user_id,
+                    site_id=site_id,
+                    human_session_id=human_session_id,
+                )
+
+        async with owner_pool.acquire() as owner:
+            alternate_workspace = uuid.uuid4()
+            await owner.execute(
+                "INSERT INTO control.workspace "
+                "(id, site_id, created_by, actor_type, title, task_description, "
+                "delegation_preset, effective_scopes, status, expires_at, created_at) "
+                "VALUES ($1, $2, $3, 'HUMAN', 'Older workspace', '', "
+                "'L2_SITE_EDITOR', '[]'::jsonb, 'ACTIVE', now() + interval '1 hour', "
+                "now() - interval '1 hour')",
+                alternate_workspace,
+                site_id,
+                human_user_id,
+            )
+        with pytest.raises(asyncpg.PostgresError):
+            async with _cow(
+                editor_pool,
+                workspace_id=alternate_workspace,
+                operation_id=uuid.uuid4(),
+            ) as cow:
+                await _assert_workspace(
+                    cow,
+                    workspace_id=alternate_workspace,
+                    human_user_id=human_user_id,
+                    site_id=site_id,
+                    human_session_id=human_session_id,
+                )
+
+        async with owner_pool.acquire() as owner:
+            await owner.execute(
+                "UPDATE control.workspace SET status = 'REVOKED' WHERE id = $1",
+                workspace_id,
+            )
+        with pytest.raises(asyncpg.PostgresError):
+            async with _cow(
+                editor_pool, workspace_id=workspace_id, operation_id=uuid.uuid4()
+            ) as cow:
+                await _assert_workspace(
+                    cow,
+                    workspace_id=workspace_id,
+                    human_user_id=human_user_id,
+                    site_id=site_id,
+                    human_session_id=human_session_id,
+                )
+        async with owner_pool.acquire() as owner:
+            await owner.execute(
+                "UPDATE control.workspace SET status = 'ACTIVE' WHERE id = $1",
+                workspace_id,
+            )
+
+        async with owner_pool.acquire() as owner:
+            await owner.execute(
+                "UPDATE control.user_session SET absolute_expires_at = now() "
+                "- interval '1 second' WHERE id = $1",
+                human_session_id,
+            )
+        with pytest.raises(asyncpg.PostgresError):
+            async with _cow(
+                editor_pool, workspace_id=workspace_id, operation_id=uuid.uuid4()
+            ) as cow:
+                await _assert_workspace(
+                    cow,
+                    workspace_id=workspace_id,
+                    human_user_id=human_user_id,
+                    site_id=site_id,
+                    human_session_id=human_session_id,
+                )
+        async with owner_pool.acquire() as owner:
+            await owner.execute(
+                "UPDATE control.user_session SET absolute_expires_at = now() "
+                "+ interval '1 hour' WHERE id = $1",
+                human_session_id,
+            )
+
         async with owner_pool.acquire() as owner:
             await owner.execute(
                 "UPDATE control.site_membership SET status = 'INACTIVE' "
@@ -448,6 +703,12 @@ async def test_human_editor_envelope_uses_real_control_and_editor_roles(
 
         async with owner_pool.acquire() as owner:
             await owner.execute(
+                "UPDATE control.site_membership SET status = 'ACTIVE' "
+                "WHERE site_id = $1 AND user_account_id = $2",
+                site_id,
+                human_user_id,
+            )
+            await owner.execute(
                 "UPDATE control.user_session SET revoked_at = now() WHERE id = $1",
                 human_session_id,
             )
@@ -464,6 +725,10 @@ async def test_human_editor_envelope_uses_real_control_and_editor_roles(
                 )
 
         async with owner_pool.acquire() as owner:
+            await owner.execute(
+                "UPDATE control.user_session SET revoked_at = NULL WHERE id = $1",
+                human_session_id,
+            )
             await owner.execute(
                 "UPDATE control.workspace SET expires_at = now() - interval '1 second' "
                 "WHERE id = $1",

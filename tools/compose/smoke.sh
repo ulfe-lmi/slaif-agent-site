@@ -121,22 +121,53 @@ test "$(wc -l <"$TOKEN_FILE" | tr -d ' ')" = 1
 tools/compose/e2e.sh "$TOKEN_FILE" "$E2E_SECRET_FILE"
 docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif -Atc \
   "SET ROLE slaif_owner;
-   SELECT count(*) >= 4
+   SELECT count(*) = 4
+      AND count(DISTINCT audit.operation_id) = 4
       AND count(DISTINCT audit.workspace_id) = 1
       AND bool_and(workspace.actor_type = 'HUMAN'
                    AND workspace.status = 'ACTIVE'
                    AND workspace.expires_at > CURRENT_TIMESTAMP
                    AND workspace.site_id = audit.site_id
-                   AND workspace.created_by = audit.human_user_id)
+                   AND workspace.created_by = audit.human_user_id
+                   AND audit.response_status BETWEEN 200 AND 299)
+      AND count(*) FILTER (WHERE
+          CASE
+            WHEN audit.action LIKE 'POST /api/editor/v1/sites/%/pages/'
+              THEN 'page-create'
+            WHEN audit.action LIKE
+              'POST /api/editor/v1/sites/%/pages/%/composition/components'
+              THEN 'component-add'
+            WHEN audit.action LIKE
+              'POST /api/editor/v1/sites/%/pages/%/composition/components/%/move'
+              THEN 'component-move'
+            ELSE 'unexpected'
+          END = 'unexpected') = 0
+      AND array_agg(
+          CASE
+            WHEN audit.action LIKE 'POST /api/editor/v1/sites/%/pages/'
+              THEN 'page-create'
+            WHEN audit.action LIKE
+              'POST /api/editor/v1/sites/%/pages/%/composition/components'
+              THEN 'component-add'
+            WHEN audit.action LIKE
+              'POST /api/editor/v1/sites/%/pages/%/composition/components/%/move'
+              THEN 'component-move'
+            ELSE 'unexpected'
+          END ORDER BY audit.occurred_at, audit.operation_id
+      ) = ARRAY['page-create', 'component-add', 'component-add', 'component-move']
    FROM audit.human_editor_mutation audit
    JOIN control.workspace workspace ON workspace.id = audit.workspace_id
    WHERE audit.action LIKE 'POST /api/editor/v1/sites/%';" | grep -q '^t$'
 docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif -Atc \
   "SET ROLE slaif_owner;
-   SELECT count(*) >= 4
-      AND bool_and(status_code BETWEEN 200 AND 299)
+   SELECT count(*) = 4
+      AND count(DISTINCT operation_id) = 4
+      AND count(*) FILTER (WHERE status_code IS NULL) = 0
+      AND bool_and(status_code BETWEEN 200 AND 299
+                   AND response_body IS NOT NULL
+                   AND completed_at IS NOT NULL)
    FROM control.human_editor_idempotency;" | grep -q '^t$'
-echo "human-editor-envelope: OK workspace=HUMAN active audit=idempotent mutation-count=4-plus"
+echo "human-editor-envelope: OK workspace=HUMAN active audit=idempotent sequence=page-create,component-add,component-add,component-move count=4"
 docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif -v ON_ERROR_STOP=1 -Atc \
   "SET ROLE slaif_owner;
    SELECT string_agg(

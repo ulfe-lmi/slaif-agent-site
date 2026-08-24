@@ -519,6 +519,7 @@ test("puck-editor-round-trip-through-human-editor-api", async ({ page }) => {
     source: Locator,
     target: Locator,
     ready: () => Promise<boolean>,
+    targetPosition: "top" | "bottom" = "bottom",
   ) {
     for (let attempt = 0; attempt < 4; attempt += 1) {
       await source.scrollIntoViewIfNeeded();
@@ -540,7 +541,7 @@ test("puck-editor-round-trip-through-human-editor-api", async ({ page }) => {
       );
       await page.mouse.move(
         targetBounds!.x + targetBounds!.width / 2,
-        targetBounds!.y + targetBounds!.height - 16,
+        targetBounds!.y + (targetPosition === "top" ? 8 : targetBounds!.height - 16),
         { steps: 12 },
       );
       await page.waitForTimeout(150);
@@ -576,6 +577,37 @@ test("puck-editor-round-trip-through-human-editor-api", async ({ page }) => {
     ).toBeVisible();
   }
   await saveComposition();
+  type PersistedNode = {
+    id: string;
+    component_type: string;
+    parent_id: string | null;
+    slot_key: string;
+    order_key: number;
+    props: Record<string, unknown>;
+  };
+  async function loadPersistedNodes(): Promise<PersistedNode[]> {
+    const response = await page.request.get(compositionPath);
+    expect(response.status()).toBe(200);
+    expectPrivateHeaders(response);
+    return (await response.json()) as PersistedNode[];
+  }
+  const firstSavedNodes = await loadPersistedNodes();
+  const firstSavedSection = firstSavedNodes.find(
+    (node) => node.component_type === "Section",
+  );
+  expect(firstSavedSection).toBeDefined();
+  expect(firstSavedNodes).toHaveLength(1);
+  expect(firstSavedSection).toMatchObject({
+    parent_id: null,
+    slot_key: "default",
+    order_key: 0,
+  });
+  const firstSectionId = firstSavedSection!.id;
+  const firstSectionSnapshot = {
+    parent_id: firstSavedSection!.parent_id,
+    slot_key: firstSavedSection!.slot_key,
+    props: firstSavedSection!.props,
+  };
   await page.keyboard.press("Escape");
   await page.waitForTimeout(300);
   await pointerDragUntil(
@@ -584,41 +616,40 @@ test("puck-editor-round-trip-through-human-editor-api", async ({ page }) => {
     async () => (await sectionComponent.count()) === 2,
   );
   await expect(sectionComponent).toHaveCount(2);
-  const firstSection = sectionComponent.first();
-  const secondSection = sectionComponent.nth(1);
-  await dragUntil(
-    firstSection,
-    secondSection,
-    async () => (await sectionComponent.count()) === 2,
-    "bottom",
-  );
+  await page.keyboard.press("Escape");
+  await page.waitForTimeout(300);
+  const moveFirstDown = page.getByTestId("puck-action:move-first-down");
+  await expect(moveFirstDown).toBeEnabled();
+  await moveFirstDown.click();
   await expect(sectionComponent).toHaveCount(2);
   await saveComposition();
 
-  const persisted = await page.request.get(compositionPath);
-  expect(persisted.status()).toBe(200);
-  expectPrivateHeaders(persisted);
-  const persistedNodes = (await persisted.json()) as Array<{
-    id: string;
-    component_type: string;
-    parent_id: string | null;
-    slot_key: string;
-    order_key: number;
-    props: Record<string, unknown>;
-  }>;
+  const persistedNodes = await loadPersistedNodes();
   const persistedSections = persistedNodes.filter(
     (node) => node.component_type === "Section",
   );
+  const movedFirstSection = persistedSections.find(
+    (node) => node.id === firstSectionId,
+  );
+  const secondPersistedSection = persistedSections.find(
+    (node) => node.id !== firstSectionId,
+  );
   expect(persistedSections).toHaveLength(2);
-  expect(persistedSections.every((node) => node.parent_id === null)).toBe(true);
-  expect(persistedSections.map((node) => node.order_key).sort()).toEqual([0, 1]);
-  expect(persistedSections[0]?.props).not.toHaveProperty("id");
-  expect(persistedSections[1]?.props).not.toHaveProperty("id");
-  expect(persistedSections[0]).toMatchObject({
-    slot_key: "default",
+  expect(movedFirstSection).toMatchObject({
+    ...firstSectionSnapshot,
+    id: firstSectionId,
+    order_key: 1,
   });
+  expect(secondPersistedSection).toMatchObject({
+    parent_id: null,
+    slot_key: "default",
+    order_key: 0,
+  });
+  expect(movedFirstSection?.props).not.toHaveProperty("id");
+  expect(secondPersistedSection?.props).not.toHaveProperty("id");
 
   await page.reload();
   await expect(page.locator('[data-puck-component="Section"]')).toHaveCount(2);
+  expect(await loadPersistedNodes()).toEqual(persistedNodes);
   expect(failures(), "unexpected Puck browser failure category").toEqual([]);
 });
