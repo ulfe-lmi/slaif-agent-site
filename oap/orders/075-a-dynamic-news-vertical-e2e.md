@@ -1,4 +1,4 @@
-# OAP Work Order — 074-a
+# OAP Work Order — 075-a
 
 ## Objective
 
@@ -9,14 +9,14 @@ result; accepts; public site shows News.
 
 ## GitHub objective state
 
-- Numeric objective: `074`; round: `074-a`
+- Numeric objective: `075`; round: `075-a`
 - Mode: `CREATE_NEW_PR`; exactly one new PR
 
 ## Verified current state
 
 - Prior objectives deliver: runtime wiring (065), capability auth (066),
-  COW mutations (067), Puck UI (068), media (069), render (070),
-  freeze/snapshot (072), accept/promotion (073).
+  COW mutations (067), Puck UI (068), media (070), render (071),
+  freeze/snapshot (073), accept/promotion (074).
 - No single test exercises this full chain through public APIs.
 
 ## Required changes
@@ -30,10 +30,10 @@ result; accepts; public site shows News.
    - agent creates page `/news`, composition with CollectionList binding;
    - agent creates detail page template with CollectionDetail;
    - agent adds nav link to header navigation;
-   - agent requests browser preview screenshot (from 071);
+   - agent requests browser preview screenshot (from 072);
    - human logs into Puck editor, makes small text edit, saves;
-   - human freezes workspace (072);
-   - human accepts workspace (073);
+   - human freezes workspace (073);
+   - human accepts workspace (074);
    - public GET `/news` returns listing with items;
    - public GET `/news/{slug}` returns detail content;
    - canonical tables contain news data; workspace cleaned up.
@@ -54,5 +54,5 @@ result; accepts; public site shows News.
 
 ## Report
 
-Publish `oap/reports/074-a-dynamic-news-vertical-e2e.md` with SELF report
+Publish `oap/reports/075-a-dynamic-news-vertical-e2e.md` with SELF report
 commit parenting implementation SHA.

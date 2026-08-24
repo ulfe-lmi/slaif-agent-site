@@ -1,4 +1,4 @@
-# OAP Work Order — 076-a
+# OAP Work Order — 077-a
 
 ## Objective
 
@@ -8,13 +8,13 @@ no silent overwrite.
 
 ## GitHub objective state
 
-- Numeric objective: `076`; round: `076-a`
+- Numeric objective: `077`; round: `077-a`
 - Mode: `CREATE_NEW_PR`; exactly one new PR
 
 ## Verified current state
 
 - Architecture §18 mandates two-workspace conflict demonstration.
-- Promotion service handles `CowConflictError` (from 073).
+- Promotion service handles `CowConflictError` (from 074).
 - No dedicated E2E proof exists.
 
 ## Required changes
@@ -48,5 +48,5 @@ no silent overwrite.
 
 ## Report
 
-Publish `oap/reports/076-a-concurrent-conflict-e2e.md` with SELF report
+Publish `oap/reports/077-a-concurrent-conflict-e2e.md` with SELF report
 commit parenting implementation SHA.

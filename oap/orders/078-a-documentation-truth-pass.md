@@ -1,4 +1,4 @@
-# OAP Work Order — 077-a
+# OAP Work Order — 078-a
 
 ## Objective
 
@@ -7,12 +7,12 @@ functionality, replacing overclaimed MVP progress statements.
 
 ## GitHub objective state
 
-- Numeric objective: `077`; round: `077-a`
+- Numeric objective: `078`; round: `078-a`
 - Mode: `CREATE_NEW_PR`; exactly one new PR
 
 ## Verified current state
 
-- After objectives 065–076 merge, most core verticals should be functional.
+- After objectives 065–077 merge, most core verticals should be functional.
 - `MVP-PROGRESS.md` claims "~100%" based on stale interface-presence evidence.
 - README states "All core architectural components are implemented and wired."
 - `CRITICAL.md` queue understates systemic issues found in closure audit.
@@ -48,5 +48,5 @@ functionality, replacing overclaimed MVP progress statements.
 
 ## Report
 
-Publish `oap/reports/077-a-documentation-truth-pass.md` with SELF report
+Publish `oap/reports/078-a-documentation-truth-pass.md` with SELF report
 commit parenting implementation SHA.

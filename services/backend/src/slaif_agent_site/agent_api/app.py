@@ -49,7 +49,6 @@ def create_app(
         lifespan_factory=database_lifespan,
     )
     app.state.database = selected_database
-    app.state.content_model_service = selected_database.content_model_service()
     app.include_router(agent_router)
     app.include_router(browser_router)
     return app

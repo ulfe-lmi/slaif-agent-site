@@ -65,7 +65,10 @@ sandbox and egress enforcement, production TLS automation, and product
 authorization remain later work. Network membership alone is not authority.
 
 The Agent HTTP behavior additionally includes the capability-authenticated
-bounded COW create surface documented in [the API guide](API.md). Control
-readiness includes its database boundary; Control liveness remains
+bounded COW semantic read and create surfaces documented in [the API guide](API.md).
+Agent GETs use the real `slaif_agent_login`/`slaif_agent_runtime` identity,
+workspace overlay precedence, canonical fallback, and narrow read wrappers;
+they do not create mutation/idempotency/audit state. Control readiness includes
+its database boundary; Control liveness remains
 process-only. Health evidence is not product readiness or publication
 authority.

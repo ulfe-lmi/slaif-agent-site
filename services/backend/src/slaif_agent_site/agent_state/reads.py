@@ -1,0 +1,155 @@
+"""Capability-bound Agent semantic reads in one request-scoped COW session.
+
+Agent reads deliberately do not use the ordinary application content service.
+The authenticated capability selects the workspace, the foundation owns the
+request transaction/context, and narrow Agent read wrappers own the database
+site/resource boundary.
+"""
+
+from __future__ import annotations
+
+import asyncio
+from collections.abc import Awaitable, Callable
+from typing import Any
+from uuid import UUID
+
+import asyncpg
+
+from slaif_agent_site.agent_api.models import AgentCapabilityContext
+from slaif_agent_site.agent_state.foundation import CowSession, asyncpg_cow_session
+from slaif_agent_site.content_model.composition_models import CompositionNodeRecord
+from slaif_agent_site.content_model.item_models import ContentItemRecord
+from slaif_agent_site.content_model.media_models import MediaAssetRecord
+from slaif_agent_site.content_model.models import (
+    ContentTypeRecord,
+    FieldDefinitionRecord,
+)
+from slaif_agent_site.content_model.page_models import PageRecord
+from slaif_agent_site.content_model.service import (
+    ContentModelServiceError,
+    ContentModelServiceReason,
+    _ci,
+    _cmp,
+    _ct,
+    _fd,
+    _md,
+    _pg,
+)
+
+AGENT_CONTENT_TYPE_LIST_SQL = "SELECT * FROM content.slaif_agent_content_type_list($1)"
+AGENT_CONTENT_TYPE_GET_SQL = "SELECT * FROM content.slaif_agent_content_type_get($1,$2)"
+AGENT_FIELD_DEFINITION_LIST_SQL = (
+    "SELECT * FROM content.slaif_agent_field_definition_list($1,$2)"
+)
+AGENT_CONTENT_ITEM_LIST_SQL = (
+    "SELECT * FROM content.slaif_agent_content_item_list($1,$2)"
+)
+AGENT_PAGE_LIST_SQL = "SELECT * FROM content.slaif_agent_page_list($1)"
+AGENT_COMPOSITION_LIST_SQL = "SELECT * FROM content.slaif_agent_composition_list($1,$2)"
+AGENT_MEDIA_LIST_SQL = "SELECT * FROM content.slaif_agent_media_list($1)"
+
+AgentRead = Callable[["AgentSemanticReadService"], Awaitable[Any]]
+
+
+class AgentSemanticReadService:
+    """Run only the narrow Agent read wrappers on an existing COW session."""
+
+    def __init__(self, cow_session: CowSession) -> None:
+        self._cow_session = cow_session
+
+    async def _fetch(self, sql: str, *arguments: object) -> list[Any]:
+        try:
+            await self._cow_session.validate_context()
+            return list(await self._cow_session.native.fetch(sql, *arguments))
+        except asyncio.CancelledError:
+            raise
+        except asyncpg.PostgresError as error:
+            if getattr(error, "sqlstate", None) == "P0002":
+                raise ContentModelServiceError(
+                    ContentModelServiceReason.NOT_FOUND
+                ) from None
+            raise ContentModelServiceError(
+                ContentModelServiceReason.UNAVAILABLE
+            ) from None
+        except (OSError, TimeoutError):
+            raise ContentModelServiceError(
+                ContentModelServiceReason.UNAVAILABLE
+            ) from None
+
+    async def _fetchrow(self, sql: str, *arguments: object) -> Any:
+        try:
+            await self._cow_session.validate_context()
+            return await self._cow_session.native.fetchrow(sql, *arguments)
+        except asyncio.CancelledError:
+            raise
+        except asyncpg.PostgresError as error:
+            if getattr(error, "sqlstate", None) == "P0002":
+                raise ContentModelServiceError(
+                    ContentModelServiceReason.NOT_FOUND
+                ) from None
+            raise ContentModelServiceError(
+                ContentModelServiceReason.UNAVAILABLE
+            ) from None
+        except (OSError, TimeoutError):
+            raise ContentModelServiceError(
+                ContentModelServiceReason.UNAVAILABLE
+            ) from None
+
+    async def list_types(self, site_id: UUID) -> tuple[ContentTypeRecord, ...]:
+        rows = await self._fetch(AGENT_CONTENT_TYPE_LIST_SQL, site_id)
+        return tuple(_ct(row) for row in rows)
+
+    async def get_type(self, site_id: UUID, type_id: UUID) -> ContentTypeRecord:
+        row = await self._fetchrow(AGENT_CONTENT_TYPE_GET_SQL, site_id, type_id)
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
+        return _ct(row)
+
+    async def list_fields(
+        self, site_id: UUID, type_id: UUID
+    ) -> tuple[FieldDefinitionRecord, ...]:
+        rows = await self._fetch(AGENT_FIELD_DEFINITION_LIST_SQL, site_id, type_id)
+        return tuple(_fd(row) for row in rows)
+
+    async def list_items(
+        self, site_id: UUID, type_id: UUID
+    ) -> tuple[ContentItemRecord, ...]:
+        rows = await self._fetch(AGENT_CONTENT_ITEM_LIST_SQL, site_id, type_id)
+        return tuple(_ci(row) for row in rows)
+
+    async def list_pages(self, site_id: UUID) -> tuple[PageRecord, ...]:
+        rows = await self._fetch(AGENT_PAGE_LIST_SQL, site_id)
+        return tuple(_pg(row) for row in rows)
+
+    async def list_composition(
+        self, site_id: UUID, page_id: UUID
+    ) -> tuple[CompositionNodeRecord, ...]:
+        rows = await self._fetch(AGENT_COMPOSITION_LIST_SQL, site_id, page_id)
+        return tuple(_cmp(row) for row in rows)
+
+    async def list_media(self, site_id: UUID) -> tuple[MediaAssetRecord, ...]:
+        rows = await self._fetch(AGENT_MEDIA_LIST_SQL, site_id)
+        return tuple(_md(row) for row in rows)
+
+
+async def execute_agent_read(
+    *,
+    database: Any,
+    context: AgentCapabilityContext,
+    read: AgentRead,
+) -> Any:
+    """Execute one read on the Agent pool without durable mutation state."""
+
+    try:
+        pool = database.cow_pool()
+        async with asyncpg_cow_session(pool, session_id=context.workspace_id) as cow:
+            return await read(AgentSemanticReadService(cow))
+    except asyncio.CancelledError:
+        raise
+    except ContentModelServiceError:
+        raise
+    except Exception as error:
+        raise ContentModelServiceError(ContentModelServiceReason.UNAVAILABLE) from error
+
+
+__all__ = ["AgentSemanticReadService", "execute_agent_read"]

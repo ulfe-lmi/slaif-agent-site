@@ -255,6 +255,15 @@ class RepositoryPolicyTestCase(unittest.TestCase):
 
         self.assertEqual(self.errors_from("check_oap"), [])
 
+    def test_oap_accepts_inactive_078_without_report(self) -> None:
+        self.write("oap/active", "001-a\n")
+        self.write("oap/orders/000-a-history.md")
+        self.write("oap/reports/000-a-history.md")
+        self.write("oap/orders/001-a-active.md")
+        self.write("oap/orders/078-a-inert-future.md")
+
+        self.assertEqual(self.errors_from("check_oap"), [])
+
     def test_oap_rejects_missing_historical_report(self) -> None:
         self.write("oap/active", "001-a\n")
         self.write("oap/orders/000-a-history.md")

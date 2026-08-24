@@ -1,4 +1,4 @@
-# OAP Work Order — 070-a
+# OAP Work Order — 071-a
 
 ## Objective
 
@@ -8,7 +8,7 @@ preview pages return fully rendered HTML.
 
 ## GitHub objective state
 
-- Numeric objective: `070`; round: `070-a`
+- Numeric objective: `071`; round: `071-a`
 - Mode: `CREATE_NEW_PR`; exactly one new PR
 
 ## Verified current state
@@ -52,5 +52,5 @@ preview pages return fully rendered HTML.
 
 ## Report
 
-Publish `oap/reports/070-a-render-api-page-preview-rendering.md` with SELF
+Publish `oap/reports/071-a-render-api-page-preview-rendering.md` with SELF
 report commit parenting implementation SHA.
