@@ -26,6 +26,7 @@ from slaif_agent_site.agent_state.mutations import (
     execute_agent_mutation,
     mutation_digest,
 )
+from slaif_agent_site.agent_state.reads import execute_agent_read
 from slaif_agent_site.bootstrap.service import reconcile, upgrade
 from slaif_agent_site.config import ServiceSettings
 from slaif_agent_site.db.connections import owner_connection
@@ -121,7 +122,8 @@ async def _seed(database: AgentSiteDatabase) -> tuple[str, dict[str, UUID]]:
             ) VALUES (
                 $1, $2, 'Agent Mutation Workspace', 'L4',
                 '["site:read","content-model:create","content-model:read",
-                  "content-item:create","page:create",
+                  "content-item:create","content-item:read","page:create",
+                  "page:read","composition:read","media:read",
                   "component-structure:create"]'::jsonb,
                 'ACTIVE', now() + interval '1 hour'
             ) RETURNING id
@@ -139,7 +141,7 @@ async def _seed(database: AgentSiteDatabase) -> tuple[str, dict[str, UUID]]:
             workspace_id,
             public_id,
             digest,
-            '["site:read","content-model:create","content-model:read","content-item:create","page:create","component-structure:create"]',
+            '["site:read","content-model:create","content-model:read","content-item:create","content-item:read","page:create","page:read","composition:read","media:read","component-structure:create"]',
             datetime.now(UTC) + timedelta(minutes=30),
         )
         capability_id = await owner.fetchval(
@@ -147,6 +149,7 @@ async def _seed(database: AgentSiteDatabase) -> tuple[str, dict[str, UUID]]:
         )
     return token, {
         "capability_id": capability_id,
+        "delegator_id": delegator_id,
         "site_id": site_id,
         "workspace_id": workspace_id,
         "site_b_id": site_b_id,
@@ -178,6 +181,43 @@ async def _capability_with_scopes(
             datetime.now(UTC) + timedelta(minutes=30),
         )
     return token
+
+
+async def _workspace_capability(
+    database: AgentSiteDatabase,
+    seeded: dict[str, UUID],
+    scopes: list[str],
+    title: str,
+) -> tuple[str, UUID]:
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        workspace_id = await owner.fetchval(
+            """
+            INSERT INTO control.workspace (
+                site_id, created_by, title, delegation_preset,
+                effective_scopes, status, expires_at
+            ) VALUES ($1, $2, $3, 'L4', $4::jsonb, 'ACTIVE', now() + interval '1 hour')
+            RETURNING id
+            """,
+            seeded["site_id"],
+            seeded["delegator_id"],
+            title,
+            json.dumps(scopes),
+        )
+        token, public_id, digest = generate_capability_token()
+        await owner.execute(
+            """
+            INSERT INTO control.capability (
+                workspace_id, public_id, secret_digest, scopes, expires_at
+            ) VALUES ($1, $2, $3, $4::jsonb, now() + interval '30 minutes')
+            """,
+            workspace_id,
+            public_id,
+            digest,
+            json.dumps(scopes),
+        )
+    return token, workspace_id
 
 
 @pytest.mark.asyncio
@@ -377,7 +417,7 @@ async def test_agent_create_routes_cover_field_item_page_and_component(
     agent_site_database: AgentSiteDatabase,
 ) -> None:
     database = agent_site_database
-    token, _seeded = await _seed(database)
+    token, seeded = await _seed(database)
     app = create_agent_app(
         settings=ServiceSettings.for_test(),
         database_settings=_agent_settings(database),
@@ -450,6 +490,559 @@ async def test_agent_create_routes_cover_field_item_page_and_component(
             )
             assert component_response.status_code == 201, component_response.text
             assert component_response.json()["record"]["page_id"] == page_id
+
+            listed_types = await client.get(
+                "/api/agent/v1/content-model/types", headers=headers
+            )
+            assert listed_types.status_code == 200, listed_types.text
+            assert any(item["id"] == type_id for item in listed_types.json())
+
+            read_type = await client.get(
+                f"/api/agent/v1/content-model/types/{type_id}", headers=headers
+            )
+            assert read_type.status_code == 200, read_type.text
+            assert read_type.json()["key"] == "route-test"
+
+            read_fields = await client.get(
+                f"/api/agent/v1/content-model/types/{type_id}/fields",
+                headers=headers,
+            )
+            assert read_fields.status_code == 200, read_fields.text
+            assert [field["key"] for field in read_fields.json()] == ["title"]
+
+            read_items = await client.get(
+                f"/api/agent/v1/content-items/types/{type_id}", headers=headers
+            )
+            assert read_items.status_code == 200, read_items.text
+            assert [item["slug"] for item in read_items.json()] == ["route-item"]
+
+            read_pages = await client.get("/api/agent/v1/pages/", headers=headers)
+            assert read_pages.status_code == 200, read_pages.text
+            assert any(page["id"] == page_id for page in read_pages.json())
+
+            read_components = await client.get(
+                f"/api/agent/v1/pages/{page_id}/components", headers=headers
+            )
+            assert read_components.status_code == 200, read_components.text
+            assert read_components.json()[0]["page_id"] == page_id
+
+            read_media = await client.get("/api/agent/v1/media/", headers=headers)
+            assert read_media.status_code == 200, read_media.text
+            assert read_media.json() == []
+
+
+@pytest.mark.asyncio
+async def test_agent_semantic_reads_use_cow_overlay_fallback_and_isolation(
+    agent_site_database: AgentSiteDatabase,
+) -> None:
+    database = agent_site_database
+    token, seeded = await _seed(database)
+    canonical_type_id = uuid4()
+    canonical_field_id = uuid4()
+    canonical_item_id = uuid4()
+    canonical_page_id = uuid4()
+    canonical_node_id = uuid4()
+    canonical_media_id = uuid4()
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        await owner.execute(
+            """
+            INSERT INTO content.content_type_base (
+                id, site_id, "key", labels, slug_pattern, status,
+                definition_version, settings
+            ) VALUES ($1, $2, 'canonical-type', $3::jsonb, '/canonical/{slug}',
+                      'ACTIVE', 1, '{}'::jsonb)
+            """,
+            canonical_type_id,
+            seeded["site_id"],
+            json.dumps({"en": "Canonical"}),
+        )
+        await owner.execute(
+            """
+            INSERT INTO content.field_definition_base (
+                id, type_id, "key", label, field_type, required, localized,
+                cardinality, "position", validation, ui_options, definition_version
+            ) VALUES ($1, $2, 'canonical-title', 'Canonical title', 'short_text',
+                      false, false, 1, 0, '{}'::jsonb, '{}'::jsonb, 1)
+            """,
+            canonical_field_id,
+            canonical_type_id,
+        )
+        await owner.execute(
+            """
+            INSERT INTO content.content_item_base (
+                id, site_id, type_id, slug, status, type_definition_version,
+                "values", row_version
+            ) VALUES ($1, $2, $3, 'canonical-item', 'DRAFT', 1,
+                      '{"canonical-title":"Canonical value"}'::jsonb, 1)
+            """,
+            canonical_item_id,
+            seeded["site_id"],
+            canonical_type_id,
+        )
+        await owner.execute(
+            """
+            INSERT INTO content.page_base (
+                id, site_id, slug, title, status, locale, row_version
+            ) VALUES ($1, $2, 'canonical-page', 'Canonical page', 'DRAFT', 'en', 1)
+            """,
+            canonical_page_id,
+            seeded["site_id"],
+        )
+        await owner.execute(
+            """
+            INSERT INTO content.page_composition_base (
+                id, site_id, page_id, component_type, schema_version,
+                parent_id, slot_key, order_key, props
+            ) VALUES ($1, $2, $3, 'Heading', '1', NULL, 'default', 0,
+                      '{"text":"Canonical heading"}'::jsonb)
+            """,
+            canonical_node_id,
+            seeded["site_id"],
+            canonical_page_id,
+        )
+        await owner.execute(
+            """
+            INSERT INTO content.media_asset_base (
+                id, site_id, uploaded_by, filename, mime_type, size_bytes,
+                content_hash, storage_key, alt_text, metadata
+            ) VALUES ($1, $2, NULL, 'canonical.png', 'image/png', 4,
+                      'canonical-hash', 'staging/canonical.png',
+                      'Canonical image', '{}'::jsonb)
+            """,
+            canonical_media_id,
+            seeded["site_id"],
+        )
+
+    read_scopes = [
+        "site:read",
+        "content-model:read",
+        "content-item:read",
+        "page:read",
+        "composition:read",
+        "media:read",
+    ]
+    token_b, workspace_b = await _workspace_capability(
+        database, seeded, read_scopes, "Agent Read Workspace B"
+    )
+    app = create_agent_app(
+        settings=ServiceSettings.for_test(),
+        database_settings=_agent_settings(database),
+    )
+    agent_pool = await database.role_pool("slaif_agent_runtime")
+    reviewer_pool = await database.role_pool("slaif_reviewer")
+    workspace_a = seeded["workspace_id"]
+    try:
+        async with app.router.lifespan_context(app):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://agent.test"
+            ) as client:
+                headers = {"Authorization": f"Bearer {token}"}
+                type_response = await client.post(
+                    "/api/agent/v1/content-model/types",
+                    json={
+                        "key": "workspace-type",
+                        "labels": {"en": "Workspace type"},
+                        "slug_pattern": "/workspace/{slug}",
+                        "settings": {},
+                    },
+                    headers={**headers, "Idempotency-Key": "read-chain-type"},
+                )
+                assert type_response.status_code == 201, type_response.text
+                workspace_type_id = type_response.json()["record"]["id"]
+                field_response = await client.post(
+                    f"/api/agent/v1/content-model/types/{workspace_type_id}/fields",
+                    json={
+                        "key": "title",
+                        "label": "Title",
+                        "field_type": "short_text",
+                    },
+                    headers={**headers, "Idempotency-Key": "read-chain-field"},
+                )
+                assert field_response.status_code == 201, field_response.text
+                item_response = await client.post(
+                    f"/api/agent/v1/content-items/types/{workspace_type_id}",
+                    json={
+                        "type_id": workspace_type_id,
+                        "slug": "workspace-item",
+                        "values": {"title": "Workspace item"},
+                    },
+                    headers={**headers, "Idempotency-Key": "read-chain-item"},
+                )
+                assert item_response.status_code == 201, item_response.text
+                page_response = await client.post(
+                    "/api/agent/v1/pages/",
+                    json={"slug": "workspace-page", "title": "Workspace page"},
+                    headers={**headers, "Idempotency-Key": "read-chain-page"},
+                )
+                assert page_response.status_code == 201, page_response.text
+                workspace_page_id = page_response.json()["record"]["id"]
+                component_response = await client.post(
+                    f"/api/agent/v1/pages/{workspace_page_id}/components",
+                    json={"component_type": "Heading", "props": {"text": "Workspace"}},
+                    headers={
+                        **headers,
+                        "Idempotency-Key": "read-chain-component",
+                    },
+                )
+                assert component_response.status_code == 201, component_response.text
+
+                async with owner_connection(
+                    database.settings.resolved_owner_dsn(),
+                    expected_database=database.name,
+                ) as owner:
+                    durable_before_reads = tuple(
+                        await owner.fetchrow(
+                            "SELECT "
+                            "(SELECT count(*) FROM control.agent_idempotency "
+                            "WHERE workspace_id = $1), "
+                            "(SELECT count(*) FROM audit.agent_mutation "
+                            "WHERE workspace_id = $1)",
+                            workspace_a,
+                        )
+                    )
+
+                async with asyncpg_cow_reviewer(reviewer_pool) as reviewer:
+                    operations_before_reads = await reviewer.operations(
+                        workspace_a, schema="content"
+                    )
+
+                async with asyncpg_cow_session(
+                    agent_pool, session_id=workspace_a, operation_id=uuid4()
+                ) as cow:
+                    await cow.validate_context()
+                    await cow.native.execute(
+                        "UPDATE content.content_type SET labels = $1::jsonb "
+                        "WHERE id = $2",
+                        json.dumps({"en": "Overlay"}),
+                        canonical_type_id,
+                    )
+
+                async with asyncpg_cow_reviewer(reviewer_pool) as reviewer:
+                    operations_after_overlay = await reviewer.operations(
+                        workspace_a, schema="content"
+                    )
+
+                listed_types = await client.get(
+                    "/api/agent/v1/content-model/types", headers=headers
+                )
+                assert listed_types.status_code == 200, listed_types.text
+                listed_type_ids = {item["id"] for item in listed_types.json()}
+                assert str(canonical_type_id) in listed_type_ids
+                assert workspace_type_id in listed_type_ids
+                assert all(
+                    item["site_id"] == str(seeded["site_id"])
+                    for item in listed_types.json()
+                )
+
+                overlay_type = await client.get(
+                    f"/api/agent/v1/content-model/types/{canonical_type_id}",
+                    headers=headers,
+                )
+                assert overlay_type.status_code == 200, overlay_type.text
+                assert overlay_type.json()["labels"] == {"en": "Overlay"}
+
+                fields = await client.get(
+                    f"/api/agent/v1/content-model/types/{canonical_type_id}/fields",
+                    headers=headers,
+                )
+                assert fields.status_code == 200, fields.text
+                assert fields.json()[0]["id"] == str(canonical_field_id)
+
+                items = await client.get(
+                    f"/api/agent/v1/content-items/types/{canonical_type_id}",
+                    headers=headers,
+                )
+                assert items.status_code == 200, items.text
+                assert items.json()[0]["id"] == str(canonical_item_id)
+
+                pages = await client.get("/api/agent/v1/pages/", headers=headers)
+                assert pages.status_code == 200, pages.text
+                assert str(canonical_page_id) in {page["id"] for page in pages.json()}
+
+                components = await client.get(
+                    f"/api/agent/v1/pages/{canonical_page_id}/components",
+                    headers=headers,
+                )
+                assert components.status_code == 200, components.text
+                assert components.json()[0]["id"] == str(canonical_node_id)
+
+                media = await client.get("/api/agent/v1/media/", headers=headers)
+                assert media.status_code == 200, media.text
+                assert media.json()[0]["id"] == str(canonical_media_id)
+
+                async with owner_connection(
+                    database.settings.resolved_owner_dsn(),
+                    expected_database=database.name,
+                ) as owner:
+                    assert await owner.fetchval(
+                        'SELECT labels = \'{"en":"Canonical"}\'::jsonb '
+                        "FROM content.content_type_base WHERE id = $1",
+                        canonical_type_id,
+                    )
+                    durable_after_reads = tuple(
+                        await owner.fetchrow(
+                            "SELECT "
+                            "(SELECT count(*) FROM control.agent_idempotency "
+                            "WHERE workspace_id = $1), "
+                            "(SELECT count(*) FROM audit.agent_mutation "
+                            "WHERE workspace_id = $1)",
+                            workspace_a,
+                        )
+                    )
+                assert durable_after_reads == durable_before_reads
+                async with asyncpg_cow_reviewer(reviewer_pool) as reviewer:
+                    assert (
+                        await reviewer.operations(workspace_a, schema="content")
+                        == operations_after_overlay
+                    )
+                    assert operations_after_overlay != operations_before_reads
+
+                foreign_fields = await client.get(
+                    f"/api/agent/v1/content-model/types/{seeded['type_b_id']}/fields",
+                    headers=headers,
+                )
+                foreign_type = await client.get(
+                    f"/api/agent/v1/content-model/types/{seeded['type_b_id']}",
+                    headers=headers,
+                )
+                foreign_items = await client.get(
+                    f"/api/agent/v1/content-items/types/{seeded['type_b_id']}",
+                    headers=headers,
+                )
+                foreign_components = await client.get(
+                    f"/api/agent/v1/pages/{seeded['page_b_id']}/components",
+                    headers=headers,
+                )
+                for response in (
+                    foreign_type,
+                    foreign_fields,
+                    foreign_items,
+                    foreign_components,
+                ):
+                    assert response.status_code == 404, response.text
+                    assert response.json()["error"]["code"] == "RESOURCE_NOT_FOUND"
+                    assert str(seeded["site_b_id"]) not in response.text
+
+                async with asyncpg_cow_session(
+                    agent_pool, session_id=workspace_b, operation_id=uuid4()
+                ) as cow:
+                    await cow.validate_context()
+                    await cow.native.execute(
+                        "INSERT INTO content.content_type "
+                        '(id, site_id, "key", labels, slug_pattern) '
+                        "VALUES ($1, $2, 'workspace-type', $3::jsonb, '/b/{slug}')",
+                        uuid4(),
+                        seeded["site_id"],
+                        json.dumps({"en": "B only"}),
+                    )
+
+                async with asyncpg_cow_reviewer(reviewer_pool) as reviewer:
+                    workspace_b_operations = await reviewer.operations(
+                        workspace_b, schema="content"
+                    )
+                types_from_a = await client.get(
+                    "/api/agent/v1/content-model/types", headers=headers
+                )
+                assert not any(
+                    item["labels"] == {"en": "B only"} for item in types_from_a.json()
+                )
+                types_from_b = await client.get(
+                    "/api/agent/v1/content-model/types",
+                    headers={"Authorization": f"Bearer {token_b}"},
+                )
+                assert types_from_b.status_code == 200, types_from_b.text
+                workspace_b_type = next(
+                    item
+                    for item in types_from_b.json()
+                    if item["key"] == "workspace-type"
+                )
+                assert workspace_b_type["labels"] == {"en": "B only"}
+                async with asyncpg_cow_reviewer(reviewer_pool) as reviewer:
+                    assert (
+                        await reviewer.operations(workspace_b, schema="content")
+                        == workspace_b_operations
+                    )
+
+                insufficient = await _capability_with_scopes(
+                    database, seeded, ["site:read"]
+                )
+                insufficient_headers = {"Authorization": f"Bearer {insufficient}"}
+                read_paths = (
+                    "/api/agent/v1/content-model/types",
+                    f"/api/agent/v1/content-model/types/{canonical_type_id}",
+                    f"/api/agent/v1/content-model/types/{canonical_type_id}/fields",
+                    f"/api/agent/v1/content-items/types/{canonical_type_id}",
+                    "/api/agent/v1/pages/",
+                    f"/api/agent/v1/pages/{canonical_page_id}/components",
+                    "/api/agent/v1/media/",
+                )
+                for path in read_paths:
+                    denied = await client.get(path, headers=insufficient_headers)
+                    assert denied.status_code == 403, (path, denied.text)
+                    assert denied.json()["error"]["code"] == "AUTHORIZATION_DENIED"
+
+                for path in (
+                    "/api/agent/v1/content-model/types/not-a-uuid/fields",
+                    "/api/agent/v1/pages/not-a-uuid/components",
+                ):
+                    malformed = await client.get(path, headers=headers)
+                    assert malformed.status_code == 422, malformed.text
+
+                async with agent_pool.acquire() as agent:
+                    with pytest.raises(asyncpg.PostgresError):
+                        await agent.fetch(
+                            "SELECT * FROM content.slaif_agent_content_type_list($1)",
+                            seeded["site_id"],
+                        )
+                    assert not await agent.fetchval(
+                        "SELECT has_function_privilege(current_user, "
+                        "'content.slaif_content_type_list(uuid)', 'EXECUTE')"
+                    )
+                    assert not await agent.fetchval(
+                        "SELECT has_function_privilege(current_user, "
+                        "'control.slaif_agent_require_cow_site(uuid)', 'EXECUTE')"
+                    )
+                    with pytest.raises(asyncpg.InsufficientPrivilegeError):
+                        await agent.fetch("SELECT * FROM content.content_type_base")
+
+                async with asyncpg_cow_session(
+                    agent_pool, session_id=workspace_a, operation_id=uuid4()
+                ) as cow:
+                    await cow.validate_context()
+                    with pytest.raises(asyncpg.PostgresError):
+                        await cow.native.fetch(
+                            "SELECT * FROM content.slaif_agent_content_type_list($1)",
+                            seeded["site_b_id"],
+                        )
+                    await cow.rollback()
+
+                grant_signatures = (
+                    "content.slaif_agent_content_type_list(uuid)",
+                    "content.slaif_agent_content_type_get(uuid,uuid)",
+                    "content.slaif_agent_field_definition_list(uuid,uuid)",
+                    "content.slaif_agent_content_item_list(uuid,uuid)",
+                    "content.slaif_agent_page_list(uuid)",
+                    "content.slaif_agent_composition_list(uuid,uuid)",
+                    "content.slaif_agent_media_list(uuid)",
+                )
+                async with owner_connection(
+                    database.settings.resolved_owner_dsn(),
+                    expected_database=database.name,
+                ) as owner:
+                    for signature in grant_signatures:
+                        grant = await owner.fetchrow(
+                            "SELECT pg_get_userbyid(proc.proowner), "
+                            "has_function_privilege("
+                            "'slaif_agent_runtime', proc.oid, 'EXECUTE'), "
+                            "has_function_privilege("
+                            "'slaif_editor_runtime', proc.oid, 'EXECUTE'), "
+                            "has_function_privilege("
+                            "'slaif_control', proc.oid, 'EXECUTE'), "
+                            "EXISTS (SELECT 1 FROM aclexplode(COALESCE(proc.proacl, "
+                            "acldefault('f', proc.proowner))) acl "
+                            "WHERE acl.grantee = 0 AND acl.privilege_type = 'EXECUTE') "
+                            "FROM pg_proc proc WHERE proc.oid = $1::regprocedure",
+                            signature,
+                        )
+                        assert tuple(grant) == (
+                            "slaif_owner",
+                            True,
+                            False,
+                            False,
+                            False,
+                        )
+
+                started = asyncio.Event()
+                keep_open = asyncio.Event()
+
+                async def wait_for_cancellation(_service: Any) -> Any:
+                    started.set()
+                    await keep_open.wait()
+                    return None
+
+                context = await app.state.database.authenticate_agent_capability(
+                    f"Bearer {token}"
+                )
+                assert context is not None
+                read_task = asyncio.create_task(
+                    execute_agent_read(
+                        database=app.state.database,
+                        context=context,
+                        read=wait_for_cancellation,
+                    )
+                )
+                await asyncio.wait_for(started.wait(), timeout=5)
+                read_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await read_task
+
+                revoked_token = await _capability_with_scopes(
+                    database, seeded, read_scopes
+                )
+                async with owner_connection(
+                    database.settings.resolved_owner_dsn(),
+                    expected_database=database.name,
+                ) as owner:
+                    await owner.execute(
+                        "UPDATE control.capability SET revoked_at = now() "
+                        "WHERE public_id = $1",
+                        revoked_token.split("_")[1],
+                    )
+                revoked = await client.get(
+                    "/api/agent/v1/content-model/types",
+                    headers={"Authorization": f"Bearer {revoked_token}"},
+                )
+                assert revoked.status_code == 401, revoked.text
+
+                expired_token = await _capability_with_scopes(
+                    database, seeded, read_scopes
+                )
+                async with owner_connection(
+                    database.settings.resolved_owner_dsn(),
+                    expected_database=database.name,
+                ) as owner:
+                    await owner.execute(
+                        "UPDATE control.capability SET expires_at = "
+                        "now() - interval '1 minute' "
+                        "WHERE public_id = $1",
+                        expired_token.split("_")[1],
+                    )
+                expired = await client.get(
+                    "/api/agent/v1/content-model/types",
+                    headers={"Authorization": f"Bearer {expired_token}"},
+                )
+                assert expired.status_code == 401, expired.text
+
+                async with owner_connection(
+                    database.settings.resolved_owner_dsn(),
+                    expected_database=database.name,
+                ) as owner:
+                    await owner.execute(
+                        "UPDATE control.workspace SET status = 'REVOKED' WHERE id = $1",
+                        workspace_a,
+                    )
+                inactive = await client.get(
+                    "/api/agent/v1/content-model/types", headers=headers
+                )
+                assert inactive.status_code == 404, inactive.text
+
+            async with app.state.database.cow_pool().acquire() as connection:
+                assert not connection.is_in_transaction()
+                context_values = await connection.fetchrow(
+                    "SELECT current_setting('app.session_id', true), "
+                    "current_setting('app.operation_id', true), "
+                    "current_setting('app.visible_operations', true)"
+                )
+                assert all(value in (None, "") for value in context_values)
+    finally:
+        async with asyncpg_cow_reviewer(reviewer_pool) as reviewer:
+            await reviewer.discard_session(workspace_a, schema="content")
+        async with asyncpg_cow_reviewer(reviewer_pool) as reviewer:
+            await reviewer.discard_session(workspace_b, schema="content")
+        await reviewer_pool.close()
+        await agent_pool.close()
 
 
 @pytest.mark.asyncio

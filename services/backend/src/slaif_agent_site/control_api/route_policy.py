@@ -726,8 +726,10 @@ ROUTE_POLICIES: Final[tuple[RoutePolicy, ...]] = (
             ("GET", "/api/agent/v1/permissions"),
             ("GET", "/api/agent/v1/content-model/types"),
             ("GET", "/api/agent/v1/content-model/types/{type_id}"),
+            ("GET", "/api/agent/v1/content-model/types/{type_id}/fields"),
             ("GET", "/api/agent/v1/content-items/types/{type_id}"),
             ("GET", "/api/agent/v1/pages/"),
+            ("GET", "/api/agent/v1/pages/{page_id}/components"),
             ("GET", "/api/agent/v1/media/"),
         )
     ),

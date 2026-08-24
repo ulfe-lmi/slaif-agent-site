@@ -9,7 +9,7 @@ or alter infrastructure.
 
 from __future__ import annotations
 
-from typing import Annotated, Any
+from typing import Annotated, Any, cast
 from uuid import UUID
 
 from fastapi import APIRouter, Header, Request
@@ -30,17 +30,21 @@ from slaif_agent_site.agent_state.mutations import (
 from slaif_agent_site.agent_state.mutations import (
     IdempotencyMismatchError as DurableIdempotencyMismatchError,
 )
+from slaif_agent_site.agent_state.reads import (
+    AgentRead,
+    execute_agent_read,
+)
 from slaif_agent_site.content_model.composition_models import (
     CreateCompositionNodeRequest,
 )
 from slaif_agent_site.content_model.item_models import CreateContentItemRequest
 from slaif_agent_site.content_model.models import (
+    ContentTypeRecord,
     CreateContentTypeRequest,
     CreateFieldDefinitionRequest,
 )
 from slaif_agent_site.content_model.page_models import CreatePageRequest
 from slaif_agent_site.content_model.service import (
-    ContentModelService,
     ContentModelServiceError,
     ContentModelServiceReason,
 )
@@ -56,10 +60,6 @@ from slaif_agent_site.errors import (
 )
 
 router = APIRouter(prefix="/api/agent/v1")
-
-
-def _service(request: Request) -> ContentModelService:
-    return request.app.state.content_model_service  # type: ignore[no-any-return]
 
 
 def _require_scope(context: Any, scope: str) -> None:
@@ -82,6 +82,23 @@ async def _authenticate(request: Request) -> Any:
     if context is None:
         raise AuthenticationError()
     return context
+
+
+async def _execute_read(
+    request: Request,
+    context: Any,
+    read: AgentRead,
+) -> Any:
+    try:
+        return await execute_agent_read(
+            database=request.app.state.database,
+            context=context,
+            read=read,
+        )
+    except ContentModelServiceError as exc:
+        if exc.reason is ContentModelServiceReason.NOT_FOUND:
+            raise ResourceNotFoundError() from None
+        raise ServiceUnavailableError() from None
 
 
 @router.get("/session")
@@ -115,27 +132,36 @@ async def list_content_types(request: Request) -> list[dict[str, Any]]:
     """List all active content types visible to this capability."""
     context = await _authenticate(request)
     _require_scope(context, "content-model:read")
-    try:
-        records = await _service(request).list_types(context.site_id)
-        return [record.model_dump(mode="json") for record in records]
-    except ContentModelServiceError as exc:
-        if exc.reason is ContentModelServiceReason.NOT_FOUND:
-            raise ResourceNotFoundError() from None
-        raise ServiceUnavailableError() from None
+    records = await _execute_read(
+        request, context, lambda service: service.list_types(context.site_id)
+    )
+    return [record.model_dump(mode="json") for record in records]
+
+
+@router.get("/content-model/types/{type_id}/fields")
+async def list_field_definitions(
+    type_id: UUID, request: Request
+) -> list[dict[str, Any]]:
+    context = await _authenticate(request)
+    _require_scope(context, "content-model:read")
+    records = await _execute_read(
+        request,
+        context,
+        lambda service: service.list_fields(context.site_id, type_id),
+    )
+    return [record.model_dump(mode="json") for record in records]
 
 
 @router.get("/content-model/types/{type_id}")
 async def get_content_type(type_id: UUID, request: Request) -> dict[str, Any]:
     context = await _authenticate(request)
     _require_scope(context, "content-model:read")
-    try:
-        record = await _service(request).get_type(type_id)
-    except ContentModelServiceError as exc:
-        if exc.reason is ContentModelServiceReason.NOT_FOUND:
-            raise ResourceNotFoundError() from None
-        raise ServiceUnavailableError() from None
-    if record.site_id != context.site_id:
-        raise ResourceNotFoundError()
+    record = cast(
+        ContentTypeRecord,
+        await _execute_read(
+            request, context, lambda service: service.get_type(context.site_id, type_id)
+        ),
+    )
     return record.model_dump(mode="json")
 
 
@@ -143,33 +169,42 @@ async def get_content_type(type_id: UUID, request: Request) -> dict[str, Any]:
 async def list_content_items(type_id: UUID, request: Request) -> list[dict[str, Any]]:
     context = await _authenticate(request)
     _require_scope(context, "content-item:read")
-    try:
-        records = await _service(request).list_items(context.site_id, type_id)
-        return [record.model_dump(mode="json") for record in records]
-    except ContentModelServiceError:
-        raise ServiceUnavailableError() from None
+    records = await _execute_read(
+        request, context, lambda service: service.list_items(context.site_id, type_id)
+    )
+    return [record.model_dump(mode="json") for record in records]
 
 
 @router.get("/pages/")
 async def list_pages(request: Request) -> list[dict[str, Any]]:
     context = await _authenticate(request)
     _require_scope(context, "page:read")
-    try:
-        records = await _service(request).list_pages(context.site_id)
-        return [record.model_dump(mode="json") for record in records]
-    except ContentModelServiceError:
-        raise ServiceUnavailableError() from None
+    records = await _execute_read(
+        request, context, lambda service: service.list_pages(context.site_id)
+    )
+    return [record.model_dump(mode="json") for record in records]
+
+
+@router.get("/pages/{page_id}/components")
+async def list_components(page_id: UUID, request: Request) -> list[dict[str, Any]]:
+    context = await _authenticate(request)
+    _require_scope(context, "composition:read")
+    records = await _execute_read(
+        request,
+        context,
+        lambda service: service.list_composition(context.site_id, page_id),
+    )
+    return [record.model_dump(mode="json") for record in records]
 
 
 @router.get("/media/")
 async def list_media(request: Request) -> list[dict[str, Any]]:
     context = await _authenticate(request)
     _require_scope(context, "media:read")
-    try:
-        records = await _service(request).list_media(context.site_id)
-        return [record.model_dump(mode="json") for record in records]
-    except ContentModelServiceError:
-        raise ServiceUnavailableError() from None
+    records = await _execute_read(
+        request, context, lambda service: service.list_media(context.site_id)
+    )
+    return [record.model_dump(mode="json") for record in records]
 
 
 IdempotencyHeader = Annotated[str | None, Header(alias="Idempotency-Key")]

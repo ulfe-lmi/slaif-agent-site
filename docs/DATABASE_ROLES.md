@@ -14,7 +14,7 @@ NOREPLICATION NOBYPASSRLS`.
 | `slaif_owner` | One-shot bootstrap only | Own `control`, `content`, `audit`, their objects, and the `agentcow` deployment; run migrations and hardening. |
 | `slaif_control` | Control API and human-session principal | `USAGE` on `control` plus execute on owner-defined readiness, setup, opaque-session, and local-credential lookup/compare-and-set functions; direct relation access, content DML, and reviewer/setup-owner authority remain denied. |
 | `slaif_editor_runtime` | Future Editor API principal | COW-view `SELECT`, `INSERT`, `UPDATE`, and `DELETE` after a table is enabled/hardened; no base/change, reviewer, or setup authority. |
-| `slaif_agent_runtime` | Agent API principal | COW-session semantic create wrappers for five bounded content routes, two narrow durable idempotency/audit functions, and no base/change, direct control-table, reviewer, or setup authority. |
+| `slaif_agent_runtime` | Agent API principal | COW-session semantic read wrappers for the seven bounded GET families, five bounded create wrappers, and two narrow durable idempotency/audit functions; no base/change, direct control-table, reviewer, or setup authority. |
 | `slaif_public_reader` | Canonical Render principal | Exact execute on the two active site resolver functions, plus `SELECT` on present COW views after product grant reconciliation; no site relations, management functions, or DML. |
 | `slaif_preview_reader` | Future preview render principal | Read-only view access; a future trusted session wrapper must establish preview context. |
 | `slaif_reviewer` | Future review-worker principal | Read-only COW views and only the foundation-controlled reviewer function surface; no runtime DML or setup. |
@@ -95,6 +95,15 @@ again before audit/idempotency completion. It resolves the active workspace
 from `app.session_id`, requires a valid operation UUID and active non-expired
 workspace, and rejects any supplied site UUID that differs from the workspace
 site before delegation.
+
+Revision `029_001` adds seven owner-defined `content.slaif_agent_*` read
+wrappers for content types, field definitions, content items, pages,
+composition, and media. Each requires the active COW workspace/site context,
+reads the foundation-managed overlay views with canonical fallback, and grants
+`EXECUTE` only to `slaif_agent_runtime`; PUBLIC and generic Editor/Control
+content functions remain denied. The Agent HTTP read service uses one Agent
+pool connection inside `asyncpg_cow_session`, performs no idempotency or
+mutation-audit work, and clears all transaction-local context before release.
 
 ## Login-principal design
 

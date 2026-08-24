@@ -63,6 +63,34 @@ AGENT_CONTROL_FUNCTIONS = {
 }
 AGENT_CONTENT_FUNCTIONS = {
     (
+        "slaif_agent_content_type_list",
+        "p_site_id uuid",
+    ): "uuid",
+    (
+        "slaif_agent_content_type_get",
+        "p_site_id uuid, p_type_id uuid",
+    ): "uuid, uuid",
+    (
+        "slaif_agent_field_definition_list",
+        "p_site_id uuid, p_type_id uuid",
+    ): "uuid, uuid",
+    (
+        "slaif_agent_content_item_list",
+        "p_site_id uuid, p_type_id uuid",
+    ): "uuid, uuid",
+    (
+        "slaif_agent_page_list",
+        "p_site_id uuid",
+    ): "uuid",
+    (
+        "slaif_agent_composition_list",
+        "p_site_id uuid, p_page_id uuid",
+    ): "uuid, uuid",
+    (
+        "slaif_agent_media_list",
+        "p_site_id uuid",
+    ): "uuid",
+    (
         "slaif_agent_content_type_create",
         "p_site_id uuid, p_key text, p_labels jsonb, "
         "p_slug_pattern text, p_settings jsonb",

@@ -68,6 +68,7 @@ NEW_PACKAGE_FILES = {
     "slaif_agent_site/agent_api/config.py",
     "slaif_agent_site/agent_api/database.py",
     "slaif_agent_site/agent_state/mutations.py",
+    "slaif_agent_site/agent_state/reads.py",
     "slaif_agent_site/application.py",
     "slaif_agent_site/authority.py",
     "slaif_agent_site/bootstrap/__init__.py",
@@ -97,6 +98,7 @@ NEW_PACKAGE_FILES = {
     "slaif_agent_site/db/alembic/versions/026_001_agent_site_binding.py",
     "slaif_agent_site/db/alembic/versions/027_001_qualify_content_function_columns.py",
     "slaif_agent_site/db/alembic/versions/028_001_human_editor_workspace_envelope.py",
+    "slaif_agent_site/db/alembic/versions/029_001_agent_semantic_read_surface.py",
     "slaif_agent_site/db/connections.py",
     "slaif_agent_site/db/executor.py",
     "slaif_agent_site/db/migrations.py",
@@ -226,6 +228,7 @@ EXPECTED_SDIST_FILES = {
     "services/backend/src/slaif_agent_site/db/alembic/versions/024_001_workspace_lifecycle.py",
     "services/backend/src/slaif_agent_site/db/alembic/versions/027_001_qualify_content_function_columns.py",
     "services/backend/src/slaif_agent_site/db/alembic/versions/028_001_human_editor_workspace_envelope.py",
+    "services/backend/src/slaif_agent_site/db/alembic/versions/029_001_agent_semantic_read_surface.py",
     "services/backend/src/slaif_agent_site/agent_state/workspace_models.py",
     "services/backend/src/slaif_agent_site/agent_state/audit.py",
     "services/backend/src/slaif_agent_site/agent_state/promotion.py",
@@ -514,8 +517,9 @@ def test_locked_foundation_artifact_hash_constants_are_sha256() -> None:
 
 
 def test_alembic_graph_and_offline_sql_need_no_locator_or_network() -> None:
-    assert migration_heads() == ("028_001",)
+    assert migration_heads() == ("029_001",)
     assert migration_history() == (
+        "029_001",
         "028_001",
         "027_001",
         "026_001",

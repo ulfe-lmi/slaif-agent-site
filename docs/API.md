@@ -136,11 +136,35 @@ exceptions. `script-src` remains self-plus-request-nonce, and public renderer,
 Control/Agent API, and unrelated admin surfaces retain the strict self-only
 style policy. No user-controlled raw CSS/style payload is accepted.
 
-## Capability-bound Agent mutation API
+## Capability-bound Agent semantic API
 
 The Agent API authenticates a bearer capability and derives the site and
-workspace exclusively from that trusted capability. Its bounded mutation
-surface is:
+workspace exclusively from that trusted capability. Semantic GETs and bounded
+mutations use different server paths: reads enter one request-scoped COW
+session and call only Agent-owned read wrappers; mutations additionally reserve
+and complete durable idempotency/audit state.
+
+The capability-bound read surface is:
+
+| Route | Success | Required scope |
+| --- | --- | --- |
+| `GET /api/agent/v1/content-model/types` | 200 | `content-model:read` |
+| `GET /api/agent/v1/content-model/types/{type_id}` | 200 | `content-model:read` |
+| `GET /api/agent/v1/content-model/types/{type_id}/fields` | 200 | `content-model:read` |
+| `GET /api/agent/v1/content-items/types/{type_id}` | 200 | `content-item:read` |
+| `GET /api/agent/v1/pages/` | 200 | `page:read` |
+| `GET /api/agent/v1/pages/{page_id}/components` | 200 | `composition:read` |
+| `GET /api/agent/v1/media/` | 200 | `media:read` |
+
+Read results use the capability's workspace overlay: workspace-created or
+modified rows shadow canonical rows, unchanged canonical rows remain fallback,
+and COW tombstones remain absent. Site, parent, and resource IDs are checked
+against the trusted workspace context; foreign-site/workspace resources return
+the stable not-found envelope. Reads create no idempotency row, mutation audit
+row, or pending COW operation, and the foundation context is cleared before the
+Agent pool connection is reused.
+
+The bounded mutation surface is:
 
 | Route | Success | Request body |
 | --- | --- | --- |

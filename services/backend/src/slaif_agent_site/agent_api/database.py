@@ -13,7 +13,6 @@ from slaif_agent_site.agent_state.capability_auth import (
     CapabilityAuthenticationUnavailableError,
     authenticate_capability,
 )
-from slaif_agent_site.content_model.service import ContentModelService
 from slaif_agent_site.health import ProbeResult
 
 from .config import AgentDatabaseConfigurationError, AgentDatabaseSettings
@@ -49,22 +48,12 @@ class _Pool(Protocol):
     def acquire(self, *, timeout: float) -> Any: ...
 
 
-class _UnstartedPool:
-    """Fail closed without exposing driver or locator details."""
-
-    def acquire(self, *, timeout: float) -> Any:
-        del timeout
-        raise TimeoutError()
-
-
 class AgentDatabaseAdapter(Protocol):
     async def start(self) -> None: ...
 
     async def stop(self) -> None: ...
 
     async def readiness(self) -> ProbeResult: ...
-
-    def content_model_service(self) -> ContentModelService: ...
 
     def cow_pool(self) -> Any: ...
 
@@ -180,9 +169,6 @@ class AgentDatabase:
             return ProbeResult.unavailable(
                 AgentDatabaseReason.CONNECTION_UNAVAILABLE.value
             )
-
-    def content_model_service(self) -> ContentModelService:
-        return ContentModelService(self._pool or _UnstartedPool())
 
     def cow_pool(self) -> Any:
         """Return the already-owned Agent pool for one COW session."""

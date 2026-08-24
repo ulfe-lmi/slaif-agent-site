@@ -6,10 +6,10 @@ local-administrator operation. Editor uses a separate runtime pool for
 human-authorized content COW calls and a separate Control pool for session/site
 authorization; each Editor request resolves a real HUMAN workspace and uses
 Editor-only workspace, idempotency, and audit functions. Agent owns one typed
-lifespan pool and uses it only for
-capability-authenticated semantic COW mutations and their narrow
-idempotency/audit functions; it does not expose a SQL endpoint or lifecycle,
-review, promotion, or publication authority.
+lifespan pool and uses it only for capability-authenticated semantic COW reads,
+mutations, and their narrow idempotency/audit functions; reads use one
+request-scoped COW connection without durable mutation state. It does not
+expose a SQL endpoint or lifecycle, review, promotion, or publication authority.
 
 ## Authority map
 
@@ -40,7 +40,10 @@ Agent follows a separate credential path. `secrets-init` copies only
 `service-agent-dsn` into the isolated `agent-secret` volume, mounted read-only
 at `/run/slaif-agent/agent-dsn` only by Agent API. Agent validates the fixed
 `slaif_agent_login`/`slaif_agent_runtime` identity on every pooled connection
-and exposes only its typed `cow_pool()` boundary to the mutation executor.
+and exposes only its typed `cow_pool()` boundary to the semantic read and
+mutation executors. The read executor binds all wrapper calls to one
+request-scoped `asyncpg_cow_session` and never falls back to the ordinary
+application content service.
 Control and Agent never share a locator, pool, native connection, or
 credential volume.
 
