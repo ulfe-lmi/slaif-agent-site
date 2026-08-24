@@ -121,7 +121,9 @@ component types, executable prop names, arbitrary code, CSS, packages, and SQL
 are rejected. A selected component can be moved among its current siblings
 with the accessible `Move up`/`Move down` controls; those controls dispatch
 Puck's same-zone reorder action with history recording and never replace the
-controlled data directly. This order does not implement publication, preview authority,
+controlled data directly. Selection follows the moved component at its
+destination, and the move participates in Puck's visible undo/redo history
+without creating another semantic editor operation. This order does not implement publication, preview authority,
 workspace-management UI, freeze/review/promotion, responsive preview, or new
 catalog/storage types.
 

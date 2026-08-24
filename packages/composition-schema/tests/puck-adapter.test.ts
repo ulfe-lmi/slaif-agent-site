@@ -5,7 +5,10 @@ import {
   puckToComposition,
   type NormalizedCompositionNode,
 } from "../src/puck-adapter";
-import { derivePuckSiblingReorderActions } from "../src/puck-reorder";
+import {
+  derivePuckSiblingReorderActions,
+  type PuckReorderPlan,
+} from "../src/puck-reorder";
 
 const nodes: readonly NormalizedCompositionNode[] = [
   {
@@ -36,6 +39,26 @@ const nodes: readonly NormalizedCompositionNode[] = [
     props: { label: "Open", href: "/open" },
   },
 ];
+
+function plan(
+  sourceIndex: number,
+  destinationIndex: number,
+  destinationZone: string,
+): PuckReorderPlan {
+  const reorder = {
+    type: "reorder" as const,
+    sourceIndex,
+    destinationIndex,
+    destinationZone,
+    recordHistory: true as const,
+  };
+  const selection = {
+    type: "setUi" as const,
+    ui: { itemSelector: { index: destinationIndex, zone: destinationZone } },
+    recordHistory: false as const,
+  };
+  return { reorder, selection, actions: [reorder, selection] };
+}
 
 describe("puck adapter", () => {
   it("generates config for all trusted catalog components", () => {
@@ -114,38 +137,14 @@ describe("puck adapter", () => {
       sourceIndex: 0,
       siblingCount: 3,
       moveUp: null,
-      moveDown: {
-        type: "reorder",
-        sourceIndex: 0,
-        destinationIndex: 1,
-        destinationZone: "root:default-zone",
-        recordHistory: true,
-      },
+      moveDown: plan(0, 1, "root:default-zone"),
     });
     expect(derivePuckSiblingReorderActions(puck, { index: 1 })).toMatchObject({
-      moveUp: {
-        type: "reorder",
-        sourceIndex: 1,
-        destinationIndex: 0,
-        destinationZone: "root:default-zone",
-        recordHistory: true,
-      },
-      moveDown: {
-        type: "reorder",
-        sourceIndex: 1,
-        destinationIndex: 2,
-        destinationZone: "root:default-zone",
-        recordHistory: true,
-      },
+      moveUp: plan(1, 0, "root:default-zone"),
+      moveDown: plan(1, 2, "root:default-zone"),
     });
     expect(derivePuckSiblingReorderActions(puck, { index: 2 })).toMatchObject({
-      moveUp: {
-        type: "reorder",
-        sourceIndex: 2,
-        destinationIndex: 1,
-        destinationZone: "root:default-zone",
-        recordHistory: true,
-      },
+      moveUp: plan(2, 1, "root:default-zone"),
       moveDown: null,
     });
     expect(derivePuckSiblingReorderActions(puck, { index: 3 })).toMatchObject({
@@ -167,13 +166,7 @@ describe("puck adapter", () => {
       zone: "root:default",
       sourceIndex: 1,
       siblingCount: 2,
-      moveUp: {
-        type: "reorder",
-        sourceIndex: 1,
-        destinationIndex: 0,
-        destinationZone: "root:default",
-        recordHistory: true,
-      },
+      moveUp: plan(1, 0, "root:default"),
       moveDown: null,
     });
   });

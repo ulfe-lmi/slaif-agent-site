@@ -113,6 +113,9 @@ test("Puck editor remains trusted, same-origin, and normalized", async () => {
   const adapter = await read(
     "../../../packages/composition-schema/src/puck-adapter.ts",
   );
+  const reorder = await read(
+    "../../../packages/composition-schema/src/puck-reorder.ts",
+  );
   assert.equal(manifest.dependencies["@measured/puck"], "0.20.2");
   assert.match(route, /CompositionEditor/);
   assert.match(editor, /from "@measured\/puck"/);
@@ -133,6 +136,7 @@ test("Puck editor remains trusted, same-origin, and normalized", async () => {
   assert.match(adapter, /slotKey/);
   assert.match(adapter, /orderKey/);
   assert.match(adapter, /forbidden-component-prop/);
+  assert.match(reorder, /recordHistory: false/);
   assert.doesNotMatch(
     editor,
     /renderHeaderActions|moveFirstRootComponent|puck-action:move-first-down/,

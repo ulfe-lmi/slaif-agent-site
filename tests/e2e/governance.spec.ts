@@ -618,6 +618,10 @@ test("puck-editor-round-trip-through-human-editor-api", async ({ page }) => {
   await expect(sectionComponent).toHaveCount(2);
   await page.keyboard.press("Escape");
   await page.waitForTimeout(300);
+  const undo = page.getByTitle("undo");
+  const redo = page.getByTitle("redo");
+  await expect(undo).toBeEnabled();
+  await expect(redo).toBeDisabled();
   const firstRenderedComponent = page.locator(".puck-trusted-component").first();
   await expect(firstRenderedComponent).toBeVisible();
   await firstRenderedComponent.click();
@@ -642,6 +646,22 @@ test("puck-editor-round-trip-through-human-editor-api", async ({ page }) => {
   expect(secondVisibleId).toBeTruthy();
   await moveDown.click();
   await expect.poll(visibleComponentOrder).toEqual([secondVisibleId, firstSectionId]);
+  await expect(moveUp).toBeEnabled();
+  await expect(moveDown).toBeDisabled();
+  await page.waitForTimeout(300);
+  await expect(undo).toBeEnabled();
+  await expect(redo).toBeDisabled();
+  await undo.click();
+  await expect.poll(visibleComponentOrder).toEqual([firstSectionId, secondVisibleId]);
+  await expect(moveUp).toBeDisabled();
+  await expect(moveDown).toBeEnabled();
+  await expect(redo).toBeEnabled();
+  await redo.click();
+  await expect.poll(visibleComponentOrder).toEqual([secondVisibleId, firstSectionId]);
+  await expect(moveUp).toBeEnabled();
+  await expect(moveDown).toBeDisabled();
+  await expect(undo).toBeEnabled();
+  await expect(redo).toBeDisabled();
   await saveComposition();
 
   const persistedNodes = await loadPersistedNodes();

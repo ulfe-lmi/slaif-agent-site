@@ -14,6 +14,7 @@ import {
   type PuckComponentConfig,
   type PuckData,
   type PuckNodeMetadata,
+  type PuckReorderPlan,
 } from "@slaif-agent-site/composition-schema";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 
@@ -119,6 +120,8 @@ function PuckSiblingReorderActions({ children }: { children: ReactNode }) {
   const dispatch = usePuckState((state) => state.dispatch);
   const getPermissions = usePuckState((state) => state.getPermissions);
   const getSelectorForId = usePuckState((state) => state.getSelectorForId);
+  const itemSelector = usePuckState((state) => state.appState.ui.itemSelector);
+  const movedComponentId = useRef<string | null>(null);
   const selectedProps = selectedItem?.props as Record<string, unknown> | undefined;
   const selectedId = typeof selectedProps?.id === "string" ? selectedProps.id : null;
   const selector = selectedId ? getSelectorForId(selectedId) : undefined;
@@ -129,25 +132,37 @@ function PuckSiblingReorderActions({ children }: { children: ReactNode }) {
   const moveUp = canDrag ? derived.moveUp : null;
   const moveDown = canDrag ? derived.moveDown : null;
 
+  useEffect(() => {
+    const id = movedComponentId.current;
+    if (!id) return;
+    const selector = getSelectorForId(id);
+    if (!selector) return;
+    const target = {
+      index: selector.index,
+      zone: selector.zone ?? "root:default-zone",
+    };
+    if (itemSelector?.index === target.index && itemSelector.zone === target.zone)
+      return;
+    dispatch({ type: "setUi", ui: { itemSelector: target }, recordHistory: false });
+  }, [data, dispatch, getSelectorForId, itemSelector]);
+
+  const dispatchPlan = (plan: PuckReorderPlan | null) => {
+    if (!plan || !selectedId) return;
+    movedComponentId.current = selectedId;
+    for (const action of plan.actions) dispatch(action);
+  };
+
   return (
     <>
       {children}
       <div className="puck-sibling-reorder-actions" aria-label="Component reorder">
-        <button
-          type="button"
-          disabled={!moveUp}
-          onClick={() => {
-            if (moveUp) dispatch(moveUp);
-          }}
-        >
+        <button type="button" disabled={!moveUp} onClick={() => dispatchPlan(moveUp)}>
           Move up
         </button>
         <button
           type="button"
           disabled={!moveDown}
-          onClick={() => {
-            if (moveDown) dispatch(moveDown);
-          }}
+          onClick={() => dispatchPlan(moveDown)}
         >
           Move down
         </button>

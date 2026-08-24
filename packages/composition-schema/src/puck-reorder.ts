@@ -15,12 +15,30 @@ export interface PuckReorderAction {
   readonly recordHistory: true;
 }
 
+/** Puck's public selection-only action; it must never add history. */
+export interface PuckSelectionAction {
+  readonly type: "setUi";
+  readonly ui: {
+    readonly itemSelector: {
+      readonly index: number;
+      readonly zone: string;
+    };
+  };
+  readonly recordHistory: false;
+}
+
+export interface PuckReorderPlan {
+  readonly reorder: PuckReorderAction;
+  readonly selection: PuckSelectionAction;
+  readonly actions: readonly [PuckReorderAction, PuckSelectionAction];
+}
+
 export interface PuckSiblingReorderActions {
   readonly zone: string | null;
   readonly sourceIndex: number | null;
   readonly siblingCount: number;
-  readonly moveUp: PuckReorderAction | null;
-  readonly moveDown: PuckReorderAction | null;
+  readonly moveUp: PuckReorderPlan | null;
+  readonly moveDown: PuckReorderPlan | null;
 }
 
 export const PUCK_ROOT_ZONE = "root:default-zone";
@@ -52,20 +70,28 @@ export function derivePuckSiblingReorderActions(
     return unavailable();
   }
 
-  const makeAction = (destinationIndex: number): PuckReorderAction => ({
-    type: "reorder",
-    sourceIndex: selector.index,
-    destinationIndex,
-    destinationZone: zone,
-    recordHistory: true,
-  });
+  const makePlan = (destinationIndex: number): PuckReorderPlan => {
+    const reorder: PuckReorderAction = {
+      type: "reorder",
+      sourceIndex: selector.index,
+      destinationIndex,
+      destinationZone: zone,
+      recordHistory: true,
+    };
+    const selection: PuckSelectionAction = {
+      type: "setUi",
+      ui: { itemSelector: { index: destinationIndex, zone } },
+      recordHistory: false,
+    };
+    return { reorder, selection, actions: [reorder, selection] };
+  };
 
   return {
     zone,
     sourceIndex: selector.index,
     siblingCount: siblings.length,
-    moveUp: selector.index > 0 ? makeAction(selector.index - 1) : null,
+    moveUp: selector.index > 0 ? makePlan(selector.index - 1) : null,
     moveDown:
-      selector.index < siblings.length - 1 ? makeAction(selector.index + 1) : null,
+      selector.index < siblings.length - 1 ? makePlan(selector.index + 1) : null,
   };
 }
