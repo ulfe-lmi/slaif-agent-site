@@ -538,6 +538,7 @@ async def test_agent_semantic_reads_use_cow_overlay_fallback_and_isolation(
     database = agent_site_database
     token, seeded = await _seed(database)
     canonical_type_id = uuid4()
+    tombstone_type_id = uuid4()
     canonical_field_id = uuid4()
     canonical_item_id = uuid4()
     canonical_page_id = uuid4()
@@ -557,6 +558,18 @@ async def test_agent_semantic_reads_use_cow_overlay_fallback_and_isolation(
             canonical_type_id,
             seeded["site_id"],
             json.dumps({"en": "Canonical"}),
+        )
+        await owner.execute(
+            """
+            INSERT INTO content.content_type_base (
+                id, site_id, "key", labels, slug_pattern, status,
+                definition_version, settings
+            ) VALUES ($1, $2, 'tombstone-type', $3::jsonb, '/tombstone/{slug}',
+                      'ACTIVE', 1, '{}'::jsonb)
+            """,
+            tombstone_type_id,
+            seeded["site_id"],
+            json.dumps({"en": "Tombstone canonical"}),
         )
         await owner.execute(
             """
@@ -724,6 +737,20 @@ async def test_agent_semantic_reads_use_cow_overlay_fallback_and_isolation(
                         workspace_a, schema="content"
                     )
 
+                async with asyncpg_cow_session(
+                    agent_pool, session_id=workspace_a, operation_id=uuid4()
+                ) as cow:
+                    await cow.validate_context()
+                    await cow.native.execute(
+                        "DELETE FROM content.content_type WHERE id = $1",
+                        tombstone_type_id,
+                    )
+
+                async with asyncpg_cow_reviewer(reviewer_pool) as reviewer:
+                    operations_after_tombstone = await reviewer.operations(
+                        workspace_a, schema="content"
+                    )
+
                 listed_types = await client.get(
                     "/api/agent/v1/content-model/types", headers=headers
                 )
@@ -731,6 +758,7 @@ async def test_agent_semantic_reads_use_cow_overlay_fallback_and_isolation(
                 listed_type_ids = {item["id"] for item in listed_types.json()}
                 assert str(canonical_type_id) in listed_type_ids
                 assert workspace_type_id in listed_type_ids
+                assert str(tombstone_type_id) not in listed_type_ids
                 assert all(
                     item["site_id"] == str(seeded["site_id"])
                     for item in listed_types.json()
@@ -742,6 +770,22 @@ async def test_agent_semantic_reads_use_cow_overlay_fallback_and_isolation(
                 )
                 assert overlay_type.status_code == 200, overlay_type.text
                 assert overlay_type.json()["labels"] == {"en": "Overlay"}
+
+                tombstone_from_a = await client.get(
+                    f"/api/agent/v1/content-model/types/{tombstone_type_id}",
+                    headers=headers,
+                )
+                assert tombstone_from_a.status_code == 404, tombstone_from_a.text
+                assert tombstone_from_a.json()["error"]["code"] == "RESOURCE_NOT_FOUND"
+
+                tombstone_from_b = await client.get(
+                    f"/api/agent/v1/content-model/types/{tombstone_type_id}",
+                    headers={"Authorization": f"Bearer {token_b}"},
+                )
+                assert tombstone_from_b.status_code == 200, tombstone_from_b.text
+                assert tombstone_from_b.json()["labels"] == {
+                    "en": "Tombstone canonical"
+                }
 
                 fields = await client.get(
                     f"/api/agent/v1/content-model/types/{canonical_type_id}/fields",
@@ -781,6 +825,11 @@ async def test_agent_semantic_reads_use_cow_overlay_fallback_and_isolation(
                         "FROM content.content_type_base WHERE id = $1",
                         canonical_type_id,
                     )
+                    assert await owner.fetchval(
+                        'SELECT labels = \'{"en":"Tombstone canonical"}\'::jsonb '
+                        "FROM content.content_type_base WHERE id = $1",
+                        tombstone_type_id,
+                    )
                     durable_after_reads = tuple(
                         await owner.fetchrow(
                             "SELECT "
@@ -795,9 +844,10 @@ async def test_agent_semantic_reads_use_cow_overlay_fallback_and_isolation(
                 async with asyncpg_cow_reviewer(reviewer_pool) as reviewer:
                     assert (
                         await reviewer.operations(workspace_a, schema="content")
-                        == operations_after_overlay
+                        == operations_after_tombstone
                     )
                     assert operations_after_overlay != operations_before_reads
+                    assert operations_after_tombstone != operations_after_overlay
 
                 foreign_fields = await client.get(
                     f"/api/agent/v1/content-model/types/{seeded['type_b_id']}/fields",
@@ -825,6 +875,7 @@ async def test_agent_semantic_reads_use_cow_overlay_fallback_and_isolation(
                     assert response.json()["error"]["code"] == "RESOURCE_NOT_FOUND"
                     assert str(seeded["site_b_id"]) not in response.text
 
+                workspace_b_type_id = uuid4()
                 async with asyncpg_cow_session(
                     agent_pool, session_id=workspace_b, operation_id=uuid4()
                 ) as cow:
@@ -833,7 +884,7 @@ async def test_agent_semantic_reads_use_cow_overlay_fallback_and_isolation(
                         "INSERT INTO content.content_type "
                         '(id, site_id, "key", labels, slug_pattern) '
                         "VALUES ($1, $2, 'workspace-type', $3::jsonb, '/b/{slug}')",
-                        uuid4(),
+                        workspace_b_type_id,
                         seeded["site_id"],
                         json.dumps({"en": "B only"}),
                     )
@@ -859,6 +910,17 @@ async def test_agent_semantic_reads_use_cow_overlay_fallback_and_isolation(
                     if item["key"] == "workspace-type"
                 )
                 assert workspace_b_type["labels"] == {"en": "B only"}
+                workspace_b_from_a = await client.get(
+                    f"/api/agent/v1/content-model/types/{workspace_b_type_id}",
+                    headers=headers,
+                )
+                assert workspace_b_from_a.status_code == 404, workspace_b_from_a.text
+                workspace_b_from_b = await client.get(
+                    f"/api/agent/v1/content-model/types/{workspace_b_type_id}",
+                    headers={"Authorization": f"Bearer {token_b}"},
+                )
+                assert workspace_b_from_b.status_code == 200, workspace_b_from_b.text
+                assert workspace_b_from_b.json()["labels"] == {"en": "B only"}
                 async with asyncpg_cow_reviewer(reviewer_pool) as reviewer:
                     assert (
                         await reviewer.operations(workspace_b, schema="content")
@@ -907,6 +969,25 @@ async def test_agent_semantic_reads_use_cow_overlay_fallback_and_isolation(
                     with pytest.raises(asyncpg.InsufficientPrivilegeError):
                         await agent.fetch("SELECT * FROM content.content_type_base")
 
+                forged_session_id = uuid4()
+                async with asyncpg_cow_session(
+                    agent_pool, session_id=forged_session_id, operation_id=uuid4()
+                ) as cow:
+                    await cow.validate_context()
+                    with pytest.raises(asyncpg.PostgresError):
+                        await cow.native.fetch(
+                            "SELECT * FROM content.slaif_agent_content_type_list($1)",
+                            seeded["site_id"],
+                        )
+                    await cow.rollback()
+                async with agent_pool.acquire() as agent:
+                    forged_context = await agent.fetchrow(
+                        "SELECT current_setting('app.session_id', true), "
+                        "current_setting('app.operation_id', true), "
+                        "current_setting('app.visible_operations', true)"
+                    )
+                    assert all(value in (None, "") for value in forged_context)
+
                 async with asyncpg_cow_session(
                     agent_pool, session_id=workspace_a, operation_id=uuid4()
                 ) as cow:
@@ -953,6 +1034,38 @@ async def test_agent_semantic_reads_use_cow_overlay_fallback_and_isolation(
                             False,
                             False,
                         )
+
+                async with app.state.database.cow_pool().acquire() as connection:
+                    expected_login = database.credentials["slaif_agent_runtime"][0]
+                    authority_roles = [
+                        "slaif_owner",
+                        "slaif_control",
+                        "slaif_editor_runtime",
+                        "slaif_agent_runtime",
+                        "slaif_public_reader",
+                        "slaif_preview_reader",
+                        "slaif_reviewer",
+                        "slaif_scheduler",
+                        "slaif_media",
+                        "slaif_gc",
+                    ]
+                    identity = await connection.fetchrow(
+                        "SELECT current_database()::text, session_user::text, "
+                        "current_user::text, ARRAY(SELECT target.rolname::text "
+                        "FROM pg_catalog.pg_roles target "
+                        "WHERE target.rolname = ANY($1::text[]) "
+                        "AND pg_catalog.pg_has_role("
+                        "session_user, target.oid, 'MEMBER') "
+                        "ORDER BY target.rolname)",
+                        authority_roles,
+                    )
+                    assert tuple(identity) == (
+                        database.name,
+                        expected_login,
+                        expected_login,
+                        ["slaif_agent_runtime"],
+                    )
+                    assert not connection.is_in_transaction()
 
                 started = asyncio.Event()
                 keep_open = asyncio.Event()
