@@ -131,6 +131,7 @@ async def authorize_site_request(
                 human_user_id=session.user_account_id,
                 site_id=site_id,
                 human_session_id=session.session_id,
+                permission_key=permission,
                 state_changing=state_changing,
                 idempotency_key=idempotency_key,
                 request_digest=request_digest,

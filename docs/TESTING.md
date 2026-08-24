@@ -31,3 +31,12 @@ behavior, 44 px critical targets, 320 px overflow safety where applicable,
 reduced motion, and logout. Stop/start fingerprints then verify site, domain,
 membership, fixture, setup, and secret persistence. These automated checks are
 bounded executable evidence, not an accessibility or security certification.
+
+The governance Puck scenario creates an empty page through the Editor API only,
+then adds two trusted Sections and performs a visible drag/reorder in the Puck
+canvas. It saves through the visible button, reloads the composition, and
+verifies the normalized server records, workspace overlay, HUMAN audit, and
+idempotency evidence. The final editor response must carry only the documented
+style-only CSP exception; scripts remain nonce-bound and the observer fails on
+any CSP console violation, unexpected console/page/network failure, or server
+error. Public and unrelated admin policies remain strict.

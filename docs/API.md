@@ -122,11 +122,12 @@ are rejected. This order does not implement publication, preview authority,
 workspace-management UI, freeze/review/promotion, responsive preview, or new
 catalog/storage types.
 
-The package's legacy DropZone editor currently emits a browser CSP console
-violation for dynamic inline style attributes under the strict reference
-`style-src 'self'` policy. This continuation does not weaken the policy or
-claim the Puck gesture proof complete; a CSP-compatible reviewed Puck
-adaptation remains blocked and must be resolved before acceptance.
+Puck 0.20.2 requires runtime inline styling for parts of its editor UI. The
+authenticated editor surface therefore receives the minimum required
+`style-src-attr 'unsafe-inline'` and `style-src-elem 'self' 'unsafe-inline'`
+exceptions. `script-src` remains self-plus-request-nonce, and public renderer,
+Control/Agent API, and unrelated admin surfaces retain the strict self-only
+style policy. No user-controlled raw CSS/style payload is accepted.
 
 ## Capability-bound Agent mutation API
 

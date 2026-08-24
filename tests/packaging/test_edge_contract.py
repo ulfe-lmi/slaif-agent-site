@@ -93,14 +93,14 @@ class EdgeContractTests(unittest.TestCase):
         apache = (ROOT / "infra/apache/slaif-agent-site.conf").read_text(
             encoding="utf-8"
         )
-        self.assertEqual(nginx.count("set $slaif_csp"), 1)
-        self.assertEqual(nginx.count("'nonce-$request_id'"), 1)
-        self.assertEqual(apache.count("'nonce-%{UNIQUE_ID}e'"), 2)
+        self.assertEqual(nginx.count("map $uri $slaif_csp"), 1)
+        self.assertEqual(nginx.count("'nonce-$request_id'"), 2)
+        self.assertEqual(apache.count("'nonce-%{UNIQUE_ID}e'"), 3)
         self.assertEqual(nginx.count("add_header Content-Security-Policy"), 1)
         self.assertEqual(nginx.count("proxy_set_header Content-Security-Policy"), 1)
         self.assertEqual(apache.count("RequestHeader set Content-Security-Policy"), 1)
         self.assertEqual(nginx.count("proxy_hide_header Content-Security-Policy;"), 1)
-        self.assertEqual(apache.count("Header always set Content-Security-Policy"), 1)
+        self.assertEqual(apache.count("Header always set Content-Security-Policy"), 2)
         self.assertEqual(apache.count("unset Content-Security-Policy"), 2)
         for content in (nginx, apache):
             csp_lines = "\n".join(
@@ -118,6 +118,11 @@ class EdgeContractTests(unittest.TestCase):
                 "connect-src 'self'",
             ):
                 self.assertIn(directive, csp_lines)
+            policies = csp_lines.splitlines()
+            public_policy = next(
+                line for line in policies if "style-src-attr" not in line
+            )
+            editor_policy = next(line for line in policies if "style-src-attr" in line)
             for forbidden in (
                 "unsafe-inline",
                 "unsafe-eval",
@@ -126,9 +131,12 @@ class EdgeContractTests(unittest.TestCase):
                 "http:",
                 "https:",
                 "wss:",
-                "*",
             ):
-                self.assertNotIn(forbidden, csp_lines)
+                self.assertNotIn(forbidden, public_policy)
+            self.assertNotIn(" * ", public_policy)
+            self.assertIn("style-src-elem 'self' 'unsafe-inline'", editor_policy)
+            self.assertIn("style-src-attr 'unsafe-inline'", editor_policy)
+            self.assertNotIn("unsafe-eval", editor_policy)
 
     def test_one_edge_owned_request_id_replaces_upstream_and_caller_values(
         self,

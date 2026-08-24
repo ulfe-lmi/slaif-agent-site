@@ -98,22 +98,27 @@ HUMAN_EDITOR_FUNCTIONS = {
     (
         "slaif_human_editor_workspace_assert",
         "p_workspace_id uuid, p_human_user_id uuid, p_site_id uuid, "
-        "p_human_session_id uuid, p_lock boolean",
-    ): "uuid, uuid, uuid, uuid, boolean",
+        "p_human_session_id uuid, p_permission_key text, p_lock boolean",
+    ): "uuid, uuid, uuid, uuid, text, boolean",
     (
         "slaif_human_editor_idempotency_begin",
         "p_workspace_id uuid, p_human_user_id uuid, p_site_id uuid, "
-        "p_human_session_id uuid, p_idempotency_key text, "
+        "p_human_session_id uuid, p_permission_key text, "
+        "p_idempotency_key text, "
         "p_request_digest text, p_operation_id uuid",
-    ): "uuid, uuid, uuid, uuid, text, text, uuid",
+    ): "uuid, uuid, uuid, uuid, text, text, text, uuid",
     (
         "slaif_human_editor_idempotency_complete",
         "p_workspace_id uuid, p_human_user_id uuid, p_site_id uuid, "
-        "p_human_session_id uuid, p_idempotency_key text, "
+        "p_human_session_id uuid, p_permission_key text, "
+        "p_idempotency_key text, "
         "p_request_digest text, p_operation_id uuid, p_status_code integer, "
         "p_response_body jsonb, p_action text, p_resource_type text, "
         "p_resource_id uuid",
-    ): "uuid, uuid, uuid, uuid, text, text, uuid, integer, jsonb, text, text, uuid",
+    ): (
+        "uuid, uuid, uuid, uuid, text, text, text, uuid, integer, jsonb, "
+        "text, text, uuid"
+    ),
 }
 PUBLIC_RESOLVER_FUNCTIONS = {
     ("slaif_site_resolve", "p_hostname text, p_path text"): "text, text",

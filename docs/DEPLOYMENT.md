@@ -77,8 +77,12 @@ the same replace/hide/single-response contract with `mod_unique_id`'s bounded
 safe identifier. Both edges set one self-hosted baseline CSP for page, API, and
 404 responses: scripts, styles, fonts, connections, and ordinary resources are
 limited to self; images additionally permit `data:`; base URIs, objects, and
-framing are denied; forms are limited to self. There is no wildcard, external
-origin, unsafe inline/eval allowance, reporting endpoint, or telemetry.
+framing are denied; forms are limited to self. The authenticated Puck editor
+route is the one documented style-only exception: it adds
+`style-src-attr 'unsafe-inline'` and `style-src-elem 'self' 'unsafe-inline'`
+for Puck's runtime UI styling while retaining nonce-bound self-only scripts.
+There is no wildcard, external origin, unsafe-eval allowance, reporting
+endpoint, or telemetry, and public rendering remains strict.
 
 The current page is server-rendered and has no interactive client behavior.
 The strict `script-src 'self'` deliberately does not authorize Next.js inline

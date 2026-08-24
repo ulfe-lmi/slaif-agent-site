@@ -77,6 +77,11 @@ def upgrade() -> None:
         DECLARE
             resolved_workspace uuid;
         BEGIN
+            PERFORM pg_advisory_xact_lock(
+                hashtextextended(
+                    p_site_id::text || ':' || p_human_user_id::text, 281
+                )
+            );
             SELECT workspace.id
             INTO resolved_workspace
             FROM control.workspace AS workspace
@@ -117,7 +122,7 @@ def upgrade() -> None:
         """
         CREATE FUNCTION control.slaif_human_editor_workspace_assert(
             p_workspace_id uuid, p_human_user_id uuid, p_site_id uuid,
-            p_human_session_id uuid, p_lock boolean
+            p_human_session_id uuid, p_permission_key text, p_lock boolean
         ) RETURNS void LANGUAGE plpgsql SECURITY DEFINER
         SET search_path = pg_catalog AS $fn$
         DECLARE
@@ -164,6 +169,23 @@ def upgrade() -> None:
                 RAISE EXCEPTION 'HUMAN_EDITOR_WORKSPACE_NOT_ACTIVE'
                     USING ERRCODE = 'P0002';
             END IF;
+            IF NOT (
+                EXISTS (
+                    SELECT 1
+                    FROM control.platform_administrator AS administrator
+                    WHERE administrator.user_account_id = p_human_user_id
+                )
+                OR EXISTS (
+                    SELECT 1
+                    FROM control.slaif_effective_human_membership(
+                        p_human_user_id, p_site_id
+                    ) AS membership
+                    WHERE p_permission_key = ANY(membership.effective_permissions)
+                )
+            ) THEN
+                RAISE EXCEPTION 'HUMAN_EDITOR_PERMISSION_REVOKED'
+                    USING ERRCODE = 'P0002';
+            END IF;
             IF p_lock THEN
                 PERFORM pg_advisory_xact_lock(
                     hashtextextended(p_workspace_id::text, 280)
@@ -177,7 +199,8 @@ def upgrade() -> None:
         """
         CREATE FUNCTION control.slaif_human_editor_idempotency_begin(
             p_workspace_id uuid, p_human_user_id uuid, p_site_id uuid,
-            p_human_session_id uuid, p_idempotency_key text,
+            p_human_session_id uuid, p_permission_key text,
+            p_idempotency_key text,
             p_request_digest text, p_operation_id uuid
         ) RETURNS TABLE (
             state text, operation_id uuid, status_code integer,
@@ -189,7 +212,7 @@ def upgrade() -> None:
         BEGIN
             PERFORM control.slaif_human_editor_workspace_assert(
                 p_workspace_id, p_human_user_id, p_site_id,
-                p_human_session_id, true
+                p_human_session_id, p_permission_key, true
             );
             IF p_idempotency_key IS NULL
                OR p_idempotency_key !~ '^[A-Za-z0-9._~-]{1,128}$'
@@ -241,7 +264,8 @@ def upgrade() -> None:
         """
         CREATE FUNCTION control.slaif_human_editor_idempotency_complete(
             p_workspace_id uuid, p_human_user_id uuid, p_site_id uuid,
-            p_human_session_id uuid, p_idempotency_key text,
+            p_human_session_id uuid, p_permission_key text,
+            p_idempotency_key text,
             p_request_digest text, p_operation_id uuid, p_status_code integer,
             p_response_body jsonb, p_action text, p_resource_type text,
             p_resource_id uuid
@@ -250,7 +274,7 @@ def upgrade() -> None:
         BEGIN
             PERFORM control.slaif_human_editor_workspace_assert(
                 p_workspace_id, p_human_user_id, p_site_id,
-                p_human_session_id, true
+                p_human_session_id, p_permission_key, true
             );
             IF p_status_code NOT BETWEEN 200 AND 299
                OR p_resource_id IS NULL
@@ -293,9 +317,9 @@ def upgrade() -> None:
     op.execute("REVOKE ALL ON TABLE audit.human_editor_mutation FROM PUBLIC")
     for function in (
         "control.slaif_human_editor_workspace_resolve(uuid,uuid)",
-        "control.slaif_human_editor_workspace_assert(uuid,uuid,uuid,uuid,boolean)",
-        "control.slaif_human_editor_idempotency_begin(uuid,uuid,uuid,uuid,text,text,uuid)",
-        "control.slaif_human_editor_idempotency_complete(uuid,uuid,uuid,uuid,text,text,uuid,integer,jsonb,text,text,uuid)",
+        "control.slaif_human_editor_workspace_assert(uuid,uuid,uuid,uuid,text,boolean)",
+        "control.slaif_human_editor_idempotency_begin(uuid,uuid,uuid,uuid,text,text,text,uuid)",
+        "control.slaif_human_editor_idempotency_complete(uuid,uuid,uuid,uuid,text,text,text,uuid,integer,jsonb,text,text,uuid)",
     ):
         op.execute(f"ALTER FUNCTION {function} OWNER TO slaif_owner")
         op.execute(f"REVOKE ALL ON FUNCTION {function} FROM PUBLIC")
@@ -304,18 +328,18 @@ def upgrade() -> None:
         "GRANT EXECUTE ON FUNCTION control.slaif_human_editor_workspace_resolve(uuid,uuid) TO slaif_control"
     )
     for function in (
-        "control.slaif_human_editor_workspace_assert(uuid,uuid,uuid,uuid,boolean)",
-        "control.slaif_human_editor_idempotency_begin(uuid,uuid,uuid,uuid,text,text,uuid)",
-        "control.slaif_human_editor_idempotency_complete(uuid,uuid,uuid,uuid,text,text,uuid,integer,jsonb,text,text,uuid)",
+        "control.slaif_human_editor_workspace_assert(uuid,uuid,uuid,uuid,text,boolean)",
+        "control.slaif_human_editor_idempotency_begin(uuid,uuid,uuid,uuid,text,text,text,uuid)",
+        "control.slaif_human_editor_idempotency_complete(uuid,uuid,uuid,uuid,text,text,text,uuid,integer,jsonb,text,text,uuid)",
     ):
         op.execute(f"GRANT EXECUTE ON FUNCTION {function} TO slaif_editor_runtime")
 
 
 def downgrade() -> None:
     for function in (
-        "slaif_human_editor_idempotency_complete(uuid,uuid,uuid,uuid,text,text,uuid,integer,jsonb,text,text,uuid)",
-        "slaif_human_editor_idempotency_begin(uuid,uuid,uuid,uuid,text,text,uuid)",
-        "slaif_human_editor_workspace_assert(uuid,uuid,uuid,uuid,boolean)",
+        "slaif_human_editor_idempotency_complete(uuid,uuid,uuid,uuid,text,text,text,uuid,integer,jsonb,text,text,uuid)",
+        "slaif_human_editor_idempotency_begin(uuid,uuid,uuid,uuid,text,text,text,uuid)",
+        "slaif_human_editor_workspace_assert(uuid,uuid,uuid,uuid,text,boolean)",
         "slaif_human_editor_workspace_resolve(uuid,uuid)",
     ):
         op.execute(f"DROP FUNCTION IF EXISTS control.{function} CASCADE")

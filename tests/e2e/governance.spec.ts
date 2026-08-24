@@ -473,67 +473,127 @@ test("puck-editor-round-trip-through-human-editor-api", async ({ page }) => {
   );
   expect(pageMismatch.status()).toBe(409);
 
-  const initialComponent = await page.request.post(
-    `/api/editor/v1/sites/${siteId}/pages/${pageRecord.id}/composition/components`,
-    {
-      headers: editorHeaders(),
-      data: {
-        component_type: "Section",
-        slot_key: "default",
-        order_key: 0,
-        props: { variant: "narrow" },
-      },
-    },
-  );
-  expect(initialComponent.status()).toBe(201);
-  expectPrivateHeaders(initialComponent);
-  const section = (await initialComponent.json()) as { id: string };
-
-  const initialHeading = await page.request.post(
-    `/api/editor/v1/sites/${siteId}/pages/${pageRecord.id}/composition/components`,
-    {
-      headers: editorHeaders(),
-      data: {
-        component_type: "Heading",
-        slot_key: "default",
-        order_key: 0,
-        props: { text: "Puck heading", level: 2 },
-      },
-    },
-  );
-  expect(initialHeading.status()).toBe(201);
-  expectPrivateHeaders(initialHeading);
-  const headingRecord = (await initialHeading.json()) as { id: string };
-  expect(headingRecord.id).toMatch(/^[0-9a-f-]{36}$/i);
-  const movedHeading = await page.request.post(
-    `/api/editor/v1/sites/${siteId}/pages/${pageRecord.id}/composition/components/${headingRecord.id}/move`,
-    {
-      headers: editorHeaders(),
-      data: {
-        new_parent_id: section.id,
-        new_slot_key: "default",
-        new_order_key: 0,
-      },
-    },
-  );
-  expect(movedHeading.status()).toBe(200);
-  expectPrivateHeaders(movedHeading);
-
   const compositionPath = `/api/editor/v1/sites/${siteId}/pages/${pageRecord.id}/composition/`;
   const initialComposition = await page.request.get(compositionPath);
   expect(initialComposition.status()).toBe(200);
   expectPrivateHeaders(initialComposition);
 
-  await page.goto(`/admin/sites/${siteId}/pages/${pageRecord.id}/edit`);
+  const editorPageResponse = await page.goto(
+    `/admin/sites/${siteId}/pages/${pageRecord.id}/edit`,
+  );
+  const editorCsp = editorPageResponse?.headers()["content-security-policy"] ?? "";
+  expect(editorCsp).toContain("style-src-attr 'unsafe-inline'");
+  expect(editorCsp).toContain("style-src-elem 'self' 'unsafe-inline'");
+  expect(editorCsp).not.toMatch(/script-src[^;]*(unsafe-inline|unsafe-eval)/);
   await expect(
     page.getByRole("heading", { name: "Page composition", exact: true }).first(),
   ).toBeVisible();
-  const headingComponent = page.locator('[data-puck-component="Heading"]');
-  await expect(headingComponent).toHaveCount(1);
-  await page.getByRole("button", { name: "Save composition" }).click();
-  await expect(
-    page.getByText("Composition saved and reloaded from the server.", { exact: true }),
-  ).toBeVisible();
+  const rootDropZone = page.getByTestId("dropzone:root:default-zone");
+  await expect(rootDropZone).toBeVisible();
+  async function dragUntil(
+    source: Locator,
+    target: Locator,
+    ready: () => Promise<boolean>,
+    targetPosition: "top" | "bottom" | undefined = undefined,
+  ) {
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      const bounds = targetPosition === "bottom" ? await target.boundingBox() : null;
+      const topBounds = targetPosition === "top" ? await target.boundingBox() : null;
+      const targetBounds = bounds ?? topBounds;
+      await source.dragTo(
+        target,
+        targetBounds
+          ? {
+              targetPosition: {
+                x: Math.min(16, Math.max(1, targetBounds.width - 1)),
+                y: bounds ? Math.max(1, bounds.height - 8) : 8,
+              },
+            }
+          : undefined,
+      );
+      await page.waitForTimeout(300);
+      if (await ready()) return;
+    }
+  }
+  async function pointerDragUntil(
+    source: Locator,
+    target: Locator,
+    ready: () => Promise<boolean>,
+  ) {
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      await source.scrollIntoViewIfNeeded();
+      await target.scrollIntoViewIfNeeded();
+      const sourceBounds = await source.boundingBox();
+      const targetBounds = await target.boundingBox();
+      expect(sourceBounds).toBeTruthy();
+      expect(targetBounds).toBeTruthy();
+      await page.mouse.move(
+        sourceBounds!.x + sourceBounds!.width / 2,
+        sourceBounds!.y + sourceBounds!.height / 2,
+      );
+      await page.mouse.down();
+      await page.waitForTimeout(100);
+      await page.mouse.move(
+        sourceBounds!.x + sourceBounds!.width / 2 + 8,
+        sourceBounds!.y + sourceBounds!.height / 2 + 8,
+        { steps: 4 },
+      );
+      await page.mouse.move(
+        targetBounds!.x + targetBounds!.width / 2,
+        targetBounds!.y + targetBounds!.height - 16,
+        { steps: 12 },
+      );
+      await page.waitForTimeout(150);
+      await page.mouse.up();
+      await page.waitForTimeout(300);
+      if (await ready()) return;
+    }
+  }
+  const sectionDrawerItem = page.getByTestId("drawer-item:Section");
+  await expect(sectionDrawerItem).toBeVisible();
+  const sectionComponent = page.locator('[data-puck-component="Section"]');
+  await dragUntil(
+    sectionDrawerItem,
+    rootDropZone,
+    async () => (await sectionComponent.count()) === 1,
+  );
+  await expect(sectionComponent).toHaveCount(1);
+  async function saveComposition() {
+    const saved = page.waitForResponse(
+      (response) =>
+        response.request().method() !== "GET" &&
+        response.url().includes(`/api/editor/v1/sites/${siteId}/pages/`) &&
+        response.url().includes("/composition/"),
+    );
+    await page.getByRole("button", { name: "Save composition" }).click();
+    const response = await saved;
+    expect(response.ok()).toBe(true);
+    expectPrivateHeaders(response);
+    await expect(
+      page.getByText("Composition saved and reloaded from the server.", {
+        exact: true,
+      }),
+    ).toBeVisible();
+  }
+  await saveComposition();
+  await page.keyboard.press("Escape");
+  await page.waitForTimeout(300);
+  await pointerDragUntil(
+    sectionDrawerItem,
+    rootDropZone,
+    async () => (await sectionComponent.count()) === 2,
+  );
+  await expect(sectionComponent).toHaveCount(2);
+  const firstSection = sectionComponent.first();
+  const secondSection = sectionComponent.nth(1);
+  await dragUntil(
+    firstSection,
+    secondSection,
+    async () => (await sectionComponent.count()) === 2,
+    "bottom",
+  );
+  await expect(sectionComponent).toHaveCount(2);
+  await saveComposition();
 
   const persisted = await page.request.get(compositionPath);
   expect(persisted.status()).toBe(200);
@@ -546,17 +606,19 @@ test("puck-editor-round-trip-through-human-editor-api", async ({ page }) => {
     order_key: number;
     props: Record<string, unknown>;
   }>;
-  const persistedHeading = persistedNodes.find(
-    (node) => node.component_type === "Heading",
+  const persistedSections = persistedNodes.filter(
+    (node) => node.component_type === "Section",
   );
-  expect(persistedHeading).toMatchObject({
-    parent_id: section.id,
+  expect(persistedSections).toHaveLength(2);
+  expect(persistedSections.every((node) => node.parent_id === null)).toBe(true);
+  expect(persistedSections.map((node) => node.order_key).sort()).toEqual([0, 1]);
+  expect(persistedSections[0]?.props).not.toHaveProperty("id");
+  expect(persistedSections[1]?.props).not.toHaveProperty("id");
+  expect(persistedSections[0]).toMatchObject({
     slot_key: "default",
-    order_key: 0,
   });
-  expect(persistedHeading?.props).not.toHaveProperty("id");
 
   await page.reload();
-  await expect(page.locator('[data-puck-component="Heading"]')).toHaveCount(1);
+  await expect(page.locator('[data-puck-component="Section"]')).toHaveCount(2);
   expect(failures(), "unexpected Puck browser failure category").toEqual([]);
 });

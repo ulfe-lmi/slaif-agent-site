@@ -27,14 +27,15 @@ IDENTITY_SQL = (
 )
 READINESS_SQL = "SELECT * FROM content.slaif_page_list($1)"
 WORKSPACE_ASSERT_SQL = (
-    "SELECT control.slaif_human_editor_workspace_assert($1,$2,$3,$4,$5)"
+    "SELECT control.slaif_human_editor_workspace_assert($1,$2,$3,$4,$5,$6)"
 )
 IDEMPOTENCY_BEGIN_SQL = (
-    "SELECT * FROM control.slaif_human_editor_idempotency_begin($1,$2,$3,$4,$5,$6,$7)"
+    "SELECT * FROM control.slaif_human_editor_idempotency_begin("
+    "$1,$2,$3,$4,$5,$6,$7,$8)"
 )
 IDEMPOTENCY_COMPLETE_SQL = (
     "SELECT control.slaif_human_editor_idempotency_complete("
-    "$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)"
+    "$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)"
 )
 
 
@@ -59,6 +60,7 @@ class EditorRequestContext:
     human_user_id: UUID
     site_id: UUID
     human_session_id: UUID
+    permission_key: str
     operation_id: UUID
     idempotency_key: str | None
     request_digest: str | None
@@ -174,6 +176,7 @@ class EditorDatabase:
         human_user_id: UUID,
         site_id: UUID,
         human_session_id: UUID,
+        permission_key: str,
         state_changing: bool,
         idempotency_key: str | None,
         request_digest: str | None,
@@ -192,6 +195,7 @@ class EditorDatabase:
                 human_user_id,
                 site_id,
                 human_session_id,
+                permission_key,
                 state_changing,
             )
             if state_changing:
@@ -203,6 +207,7 @@ class EditorDatabase:
                     human_user_id,
                     site_id,
                     human_session_id,
+                    permission_key,
                     idempotency_key,
                     request_digest,
                     operation_id,
@@ -228,6 +233,7 @@ class EditorDatabase:
                 human_user_id=human_user_id,
                 site_id=site_id,
                 human_session_id=human_session_id,
+                permission_key=permission_key,
                 operation_id=operation_id,
                 idempotency_key=idempotency_key,
                 request_digest=request_digest,
@@ -251,6 +257,7 @@ class EditorDatabase:
             context.human_user_id,
             context.site_id,
             context.human_session_id,
+            context.permission_key,
             context.idempotency_key,
             context.request_digest,
             context.operation_id,
