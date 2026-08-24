@@ -78,3 +78,11 @@ prove the larger request-body allowance is route-scoped. The lifecycle proof
 also covers the exact filename-bearing `file` part, Viewer upload denial,
 revoked session, revoked/expired workspace, and archived-site outcomes with
 no idempotency/audit residue.
+
+The Media store unit suite additionally runs two independent store instances
+in separate threads, pauses the winner after final-link visibility and before
+staging unlink, proves the loser waits and reuses the one-link object, proves a
+different digest progresses under its own prefix lock, and proves bounded lock
+timeout cleanup. The production parser writes through the pinned staging
+descriptor returned by the store; path replacement is rejected by inode
+comparison.

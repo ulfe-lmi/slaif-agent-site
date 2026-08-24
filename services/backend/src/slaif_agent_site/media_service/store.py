@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import asyncio
 import errno
+import fcntl
 import hashlib
 import os
 import stat
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import BinaryIO
 
 
 class MediaStoreError(RuntimeError):
@@ -22,6 +25,13 @@ class StagedMedia:
     digest: str
     size_bytes: int
     mime_type: str
+    stream: BinaryIO | None = None
+
+
+@dataclass(slots=True)
+class StagingFile:
+    path: Path
+    stream: BinaryIO
 
 
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
@@ -51,13 +61,19 @@ class MediaStore:
         *,
         max_upload_bytes: int = 100 * 1024 * 1024,
         fsync: Callable[[int], None] = os.fsync,
+        lock_timeout_seconds: float = 2.0,
     ) -> None:
-        if not root.is_absolute() or max_upload_bytes < 1:
+        if (
+            not root.is_absolute()
+            or max_upload_bytes < 1
+            or not 0.01 <= lock_timeout_seconds <= 10
+        ):
             raise ValueError("invalid media store configuration")
         self.root = root
         self.max_upload_bytes = max_upload_bytes
         self.staging_root = root / ".staging"
         self._fsync = fsync
+        self.lock_timeout_seconds = lock_timeout_seconds
 
     @staticmethod
     def _check_directory(descriptor: int) -> None:
@@ -189,6 +205,27 @@ class MediaStore:
                 return digest.hexdigest()
             digest.update(chunk)
 
+    def _acquire_directory_lock(self, directory: int) -> None:
+        deadline = time.monotonic() + self.lock_timeout_seconds
+        while True:
+            try:
+                fcntl.flock(directory, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                return
+            except BlockingIOError:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise MediaStoreError("storage_unavailable") from None
+                time.sleep(min(0.01, remaining))
+            except OSError:
+                raise MediaStoreError("storage_unavailable") from None
+
+    @staticmethod
+    def _release_directory_lock(directory: int) -> None:
+        try:
+            fcntl.flock(directory, fcntl.LOCK_UN)
+        except OSError:
+            pass
+
     async def readiness(self) -> bool:
         root = -1
         staging = -1
@@ -205,7 +242,7 @@ class MediaStore:
             if root >= 0:
                 os.close(root)
 
-    def create_staging_path(self) -> Path:
+    def create_staging_writer(self) -> StagingFile:
         root = -1
         staging = -1
         descriptor = -1
@@ -217,11 +254,13 @@ class MediaStore:
                 try:
                     descriptor = os.open(
                         name,
-                        os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                        os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
                         _OBJECT_MODE,
                         dir_fd=staging,
                     )
-                    return self.staging_root / name
+                    stream = os.fdopen(descriptor, "wb")
+                    descriptor = -1
+                    return StagingFile(self.staging_root / name, stream)
                 except FileExistsError:
                     continue
             raise MediaStoreError("storage_unavailable")
@@ -234,6 +273,19 @@ class MediaStore:
                 os.close(staging)
             if root >= 0:
                 os.close(root)
+
+    def create_staging_path(self) -> Path:
+        staged = self.create_staging_writer()
+        staged.stream.close()
+        return staged.path
+
+    def discard_staged(self, staged: StagedMedia) -> None:
+        if staged.stream is not None:
+            try:
+                staged.stream.close()
+            except OSError:
+                pass
+        self.remove_staging(staged.staging_path)
 
     def remove_staging(self, path: Path) -> None:
         root = -1
@@ -266,15 +318,36 @@ class MediaStore:
         staging = -1
         objects = -1
         stage_descriptor = -1
+        stage_stream = staged.stream
+        lock_acquired = False
         try:
             root = self._open_root(create=False)
             staging = self._open_staging_directory(root)
             objects = self._open_object_directory(root, digest, create=True)
-            stage_descriptor = os.open(
-                staging_name,
-                os.O_RDONLY | os.O_NOFOLLOW,
-                dir_fd=staging,
-            )
+            if stage_stream is not None:
+                stage_stream.flush()
+                stage_descriptor = stage_stream.fileno()
+                path_descriptor = os.open(
+                    staging_name,
+                    os.O_RDONLY | os.O_NOFOLLOW,
+                    dir_fd=staging,
+                )
+                try:
+                    pinned_info = os.fstat(stage_descriptor)
+                    path_info = os.fstat(path_descriptor)
+                    if (
+                        pinned_info.st_dev != path_info.st_dev
+                        or pinned_info.st_ino != path_info.st_ino
+                    ):
+                        raise MediaStoreError("storage_corrupt")
+                finally:
+                    os.close(path_descriptor)
+            else:
+                stage_descriptor = os.open(
+                    staging_name,
+                    os.O_RDONLY | os.O_NOFOLLOW,
+                    dir_fd=staging,
+                )
             stage_info = os.fstat(stage_descriptor)
             if (
                 not stat.S_ISREG(stage_info.st_mode)
@@ -283,22 +356,17 @@ class MediaStore:
                 or stage_info.st_size != staged.size_bytes
             ):
                 raise MediaStoreError("storage_corrupt")
+            os.lseek(stage_descriptor, 0, os.SEEK_SET)
             if self._digest_descriptor(stage_descriptor) != digest:
                 raise MediaStoreError("storage_corrupt")
             os.lseek(stage_descriptor, 0, os.SEEK_SET)
             self._sync(stage_descriptor)
-
-            for _ in range(2):
+            self._acquire_directory_lock(objects)
+            lock_acquired = True
+            try:
                 try:
-                    try:
-                        os.stat(digest, dir_fd=objects, follow_symlinks=False)
-                    except FileNotFoundError:
-                        pass
-                    else:
-                        self._verify_object(objects, digest, digest, staged.size_bytes)
-                        os.unlink(staging_name, dir_fd=staging)
-                        self._sync(staging)
-                        return key
+                    os.stat(digest, dir_fd=objects, follow_symlinks=False)
+                except FileNotFoundError:
                     os.link(
                         staging_name,
                         digest,
@@ -317,23 +385,27 @@ class MediaStore:
                     finally:
                         os.close(object_descriptor)
                     self._sync(objects)
-                    os.unlink(staging_name, dir_fd=staging)
-                    self._sync(staging)
-                    return key
-                except FileExistsError:
+                else:
                     self._verify_object(objects, digest, digest, staged.size_bytes)
-                    os.unlink(staging_name, dir_fd=staging)
-                    self._sync(staging)
-                    return key
-            raise MediaStoreError("storage_unavailable")
+                os.unlink(staging_name, dir_fd=staging)
+                self._sync(staging)
+                return key
+            finally:
+                if lock_acquired:
+                    self._release_directory_lock(objects)
         except MediaStoreError:
-            self.remove_staging(staged.staging_path)
+            self.discard_staged(staged)
             raise
         except OSError:
-            self.remove_staging(staged.staging_path)
+            self.discard_staged(staged)
             raise MediaStoreError("storage_unavailable") from None
         finally:
-            if stage_descriptor >= 0:
+            if stage_stream is not None:
+                try:
+                    stage_stream.close()
+                except OSError:
+                    pass
+            elif stage_descriptor >= 0:
                 os.close(stage_descriptor)
             if objects >= 0:
                 os.close(objects)
@@ -396,6 +468,7 @@ __all__ = [
     "MediaStoreError",
     "PNG_SIGNATURE",
     "SUPPORTED_MIME",
+    "StagingFile",
     "StagedMedia",
     "sniff_mime",
 ]

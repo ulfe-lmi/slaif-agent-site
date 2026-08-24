@@ -109,7 +109,9 @@ async def parse_upload(request: Request, store: MediaStore) -> ParsedUpload:
     if content_length is not None and content_length > max_request:
         raise MultipartUploadError("upload_too_large")
 
-    staging_path = store.create_staging_path()
+    staging_file = store.create_staging_writer()
+    staging_path = staging_file.path
+    writer_stream = staging_file.stream
     buffer = bytearray()
     marker = b"\r\n--" + boundary
     opening = b"--" + boundary + b"\r\n"
@@ -136,7 +138,6 @@ async def parse_upload(request: Request, store: MediaStore) -> ParsedUpload:
                 raise MultipartUploadError("duplicate_file")
             file_name = _filename(current["filename"])
             file_declared = current["content_type"]
-            file_stream.close()
             file_stream = None
         else:
             value = bytes(current["value"])
@@ -235,7 +236,7 @@ async def parse_upload(request: Request, store: MediaStore) -> ParsedUpload:
                     if filename is not None:
                         if file_stream is not None or file_name is not None:
                             raise MultipartUploadError("duplicate_file")
-                        file_stream = staging_path.open("wb")
+                        file_stream = writer_stream
                     current = {
                         "name": names[0],
                         "filename": filename,
@@ -293,6 +294,7 @@ async def parse_upload(request: Request, store: MediaStore) -> ParsedUpload:
                 digest=file_digest.hexdigest(),
                 size_bytes=file_size,
                 mime_type=mime_type,
+                stream=writer_stream,
             ),
             filename=file_name,
             alt_text=alt_text,
@@ -305,9 +307,11 @@ async def parse_upload(request: Request, store: MediaStore) -> ParsedUpload:
     except BaseException:
         raise MultipartUploadError("malformed_multipart") from None
     finally:
-        if file_stream is not None:
-            file_stream.close()
         if not transferred:
+            try:
+                writer_stream.close()
+            except OSError:
+                pass
             store.remove_staging(staging_path)
 
 

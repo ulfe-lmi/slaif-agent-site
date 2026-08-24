@@ -119,7 +119,7 @@ async def upload_asset(site_id: UUID, request: Request) -> JSONResponse:
         raise ServiceUnavailableError() from None
     finally:
         if parsed is not None and not published:
-            _store(request).remove_staging(parsed.staged.staging_path)
+            _store(request).discard_staged(parsed.staged)
 
 
 @router.get("/sites/{site_id}/assets/{media_id}/content")

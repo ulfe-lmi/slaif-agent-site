@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import os
+import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -168,3 +170,138 @@ def test_store_records_durable_publication_fsyncs(tmp_path: Path) -> None:
     assert len(events) >= 5
     assert any(".staging" in event for event in events)
     assert any(digest[2:4] in event for event in events)
+
+
+def test_independent_store_instances_serialize_winner_in_progress(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "media"
+    digest = hashlib.sha256(PNG).hexdigest()
+    other = b"\x89PNG\r\n\x1a\nother-digest"
+    other_digest = hashlib.sha256(other).hexdigest()
+    assert digest[:4] != other_digest[:4]
+    store_a = MediaStore(root)
+    store_b = MediaStore(root)
+    stage_a = store_a.create_staging_path()
+    stage_a.write_bytes(PNG)
+    stage_b = store_b.create_staging_path()
+    stage_b.write_bytes(PNG)
+    other_store = MediaStore(root)
+    other_stage = other_store.create_staging_path()
+    other_stage.write_bytes(other)
+    key = f"sha256/{digest[:2]}/{digest[2:4]}/{digest}"
+    linked = threading.Event()
+    release = threading.Event()
+    results: dict[str, str] = {}
+    errors: list[BaseException] = []
+
+    def fsync_a(descriptor: int) -> None:
+        os.fsync(descriptor)
+        if store_a.object_path(key).exists() and stage_a.exists():
+            linked.set()
+            if not release.wait(3):
+                raise OSError("test winner pause timed out")
+
+    def publish_a() -> None:
+        try:
+            results["a"] = store_a.publish(
+                StagedMedia(stage_a, digest, len(PNG), "image/png")
+            )
+        except BaseException as error:
+            errors.append(error)
+
+    def publish_b() -> None:
+        try:
+            results["b"] = store_b.publish(
+                StagedMedia(stage_b, digest, len(PNG), "image/png")
+            )
+        except BaseException as error:
+            errors.append(error)
+
+    store_a._fsync = fsync_a
+    first = threading.Thread(target=publish_a)
+    second = threading.Thread(target=publish_b)
+    first.start()
+    assert linked.wait(3)
+    second.start()
+    time.sleep(0.05)
+    assert second.is_alive()
+
+    other_result: list[str] = []
+
+    def publish_other() -> None:
+        other_result.append(
+            other_store.publish(
+                StagedMedia(other_stage, other_digest, len(other), "image/png")
+            )
+        )
+
+    unrelated = threading.Thread(target=publish_other)
+    unrelated.start()
+    unrelated.join(2)
+    assert not unrelated.is_alive()
+    release.set()
+    first.join(3)
+    second.join(3)
+    assert not first.is_alive() and not second.is_alive()
+    assert errors == []
+    assert results == {"a": key, "b": key}
+    assert other_result == [
+        f"sha256/{other_digest[:2]}/{other_digest[2:4]}/{other_digest}"
+    ]
+    assert store_a.object_path(key).read_bytes() == PNG
+    assert store_a.object_path(key).stat().st_nlink == 1
+    assert not stage_a.exists() and not stage_b.exists() and not other_stage.exists()
+
+
+def test_store_lock_timeout_is_bounded_and_cleans_only_loser_stage(
+    tmp_path: Path,
+) -> None:
+    store = MediaStore(tmp_path / "media", lock_timeout_seconds=0.05)
+    stage = store.create_staging_path()
+    stage.write_bytes(PNG)
+    digest = hashlib.sha256(PNG).hexdigest()
+    destination = store.object_path(f"sha256/{digest[:2]}/{digest[2:4]}/{digest}")
+    destination.parent.mkdir(parents=True, mode=0o700)
+    for directory in (
+        store.root,
+        store.root / "sha256",
+        store.root / "sha256" / digest[:2],
+        destination.parent,
+    ):
+        directory.chmod(0o700)
+    holder = os.open(destination.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    import fcntl
+
+    fcntl.flock(holder, fcntl.LOCK_EX)
+    started = time.monotonic()
+    try:
+        with pytest.raises(MediaStoreError, match="storage_unavailable"):
+            store.publish(StagedMedia(stage, digest, len(PNG), "image/png"))
+    finally:
+        fcntl.flock(holder, fcntl.LOCK_UN)
+        os.close(holder)
+    assert time.monotonic() - started < 1
+    assert not stage.exists()
+
+
+def test_staging_writer_rejects_replaced_path_without_following(
+    tmp_path: Path,
+) -> None:
+    store = MediaStore(tmp_path / "media")
+    staged_file = store.create_staging_writer()
+    staged_file.stream.write(PNG)
+    staged_file.stream.flush()
+    staged_file.path.unlink()
+    staged_file.path.symlink_to(store.root / "outside")
+    digest = hashlib.sha256(PNG).hexdigest()
+    staged = StagedMedia(
+        staged_file.path,
+        digest,
+        len(PNG),
+        "image/png",
+        stream=staged_file.stream,
+    )
+    with pytest.raises(MediaStoreError):
+        store.publish(staged)
+    assert not store.object_path(f"sha256/{digest[:2]}/{digest[2:4]}/{digest}").exists()

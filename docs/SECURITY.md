@@ -88,3 +88,11 @@ staging directory, digest ancestors, and final object with directory-relative
 staged bytes/object/directories in publication order, and never recursively
 retries a destination race. Global edge request bodies remain strict; the
 larger allowance is confined to `/media/`.
+
+Same-digest publication takes an exclusive advisory lock on the verified
+digest-prefix directory only, with a bounded two-second acquisition timeout.
+The directory itself is the lock primitive, so no lock artifact is exposed or
+left stale after process death; the lock is released before database
+registration. Multipart owns an `O_CREAT|O_EXCL|O_NOFOLLOW` read/write staging
+descriptor from creation through publication and never path-reopens it for
+production writes.

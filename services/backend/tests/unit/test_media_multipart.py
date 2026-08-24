@@ -101,7 +101,7 @@ async def test_parser_accepts_adversarial_chunk_boundaries(tmp_path: Path) -> No
         assert parsed.filename == "fixture.png"
         assert parsed.staged.size_bytes == len(PNG)
         assert parsed.metadata == {"caption": "fixture"}
-        store.remove_staging(parsed.staged.staging_path)
+        store.discard_staged(parsed.staged)
 
 
 @pytest.mark.asyncio
