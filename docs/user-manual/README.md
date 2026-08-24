@@ -197,6 +197,21 @@ erDiagram
 Content types are workspace data — they never require database migrations.
 An agent or human with Level 4 delegation can create them dynamically.
 
+## Private Media
+
+Human editors upload images through the authenticated Media service, not by
+registering metadata alone. The service validates the actual PNG/JPEG bytes,
+stores them under an immutable SHA-256 digest in the private local Media Store,
+and records the metadata reference in the current HUMAN workspace. The upload
+requires the active human session, CSRF proof, `media:upload`, and an
+`Idempotency-Key`.
+
+Authorized reads use the workspace-aware metadata lookup and return a private,
+no-store byte stream with the trusted MIME, exact length, `nosniff`, and digest
+ETag. Workspace reference deletion never deletes the bytes. Public/anonymous
+media, SVG, transcoding, thumbnails, Media GC, and Agent upload are not part of
+this slice.
+
 ---
 
 ## Workspaces

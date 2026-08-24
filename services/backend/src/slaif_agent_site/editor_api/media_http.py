@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-import hashlib
 from uuid import UUID
 
 from fastapi import APIRouter, Request, Response
 
 from slaif_agent_site.content_model.media_models import (
-    CreateMediaRequest,
     MediaAssetRecord,
     UpdateMediaRequest,
 )
@@ -20,7 +18,6 @@ from slaif_agent_site.content_model.service import (
 from slaif_agent_site.control_api.site_authority import authorize_site_request
 from slaif_agent_site.editor_api.mutations import request_service
 from slaif_agent_site.errors import (
-    ResourceConflictError,
     ResourceNotFoundError,
     ServiceUnavailableError,
 )
@@ -43,32 +40,6 @@ async def _auth(
         permission,
         state_changing=state_changing,
     )
-
-
-@router.post("/register", status_code=201)
-async def register_media(
-    site_id: UUID, request: Request, body: CreateMediaRequest
-) -> MediaAssetRecord:
-    """Register a media asset. The actual bytes are uploaded separately to storage."""
-    await _auth(request, site_id, permission="media:upload", state_changing=True)
-    content_hash = hashlib.sha256(body.filename.encode()).hexdigest()
-    storage_key = f"{site_id}/{content_hash}/{body.filename}"
-    try:
-        return await _service(request).create_media(  # type: ignore[no-any-return]
-            site_id=site_id,
-            uploaded_by=None,
-            filename=body.filename,
-            mime_type=body.mime_type,
-            size_bytes=body.size_bytes,
-            content_hash=content_hash,
-            storage_key=storage_key,
-            alt_text=body.alt_text,
-            metadata=body.metadata,
-        )
-    except ContentModelServiceError as exc:
-        if exc.reason is ContentModelServiceReason.CONFLICT:
-            raise ResourceConflictError() from None
-        raise ServiceUnavailableError() from None
 
 
 @router.get("/")

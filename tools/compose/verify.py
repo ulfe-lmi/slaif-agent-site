@@ -94,6 +94,8 @@ EXPECTED_COMMANDS = {
         "/run/slaif-render",
         "--editor-directory",
         "/run/slaif-editor",
+        "--media-directory",
+        "/run/slaif-media",
     ],
 }
 EXPECTED_BUILD_FILES = {
@@ -119,7 +121,10 @@ EXPECTED_MOUNTS = {
     },
     "render-api": {("render-secret", "/run/slaif-render", True)},
     "media-gc": {("media-data", "/var/lib/slaif/media", False)},
-    "media-service": {("media-data", "/var/lib/slaif/media", False)},
+    "media-service": {
+        ("media-data", "/var/lib/slaif/media", False),
+        ("media-secret", "/run/slaif-media", True),
+    },
     "postgres": {
         ("local-secrets", "/run/slaif-secrets", True),
         ("postgres-data", "/var/lib/postgresql/data", False),
@@ -130,6 +135,7 @@ EXPECTED_MOUNTS = {
         ("local-secrets", "/run/slaif-secrets", False),
         ("render-secret", "/run/slaif-render", False),
         ("editor-secret", "/run/slaif-editor", False),
+        ("media-secret", "/run/slaif-media", False),
     },
 }
 EXPECTED_CAP_ADD = {
@@ -145,6 +151,7 @@ CONTROL_SECRET_MOUNT_SERVICES = {"control-api", "editor-api", "secrets-init"}
 EDITOR_SECRET_MOUNT_SERVICES = {"editor-api", "secrets-init"}
 AGENT_SECRET_MOUNT_SERVICES = {"agent-api", "secrets-init"}
 RENDER_SECRET_MOUNT_SERVICES = {"render-api", "secrets-init"}
+MEDIA_SECRET_MOUNT_SERVICES = {"media-service", "secrets-init"}
 LONG_RUNNING_APPLICATIONS = REQUIRED_SERVICES - {
     "bootstrap",
     "postgres",
@@ -199,6 +206,7 @@ def validate_config(config: dict[str, Any]) -> None:
             "editor-secret",
             "local-secrets",
             "media-data",
+            "media-secret",
             "postgres-data",
             "render-secret",
         },
@@ -302,6 +310,13 @@ def validate_config(config: dict[str, Any]) -> None:
             has_render_secret == (name in RENDER_SECRET_MOUNT_SERVICES),
             f"{name}: Render secret mount policy mismatch",
         )
+        has_media_secret = any(
+            mount.get("source") == "media-secret" for mount in mounts
+        )
+        _fail(
+            has_media_secret == (name in MEDIA_SECRET_MOUNT_SERVICES),
+            f"{name}: Media secret mount policy mismatch",
+        )
         environment = service.get("environment", {})
         if name in LONG_RUNNING_APPLICATIONS:
             safe_environment = {
@@ -315,6 +330,7 @@ def validate_config(config: dict[str, Any]) -> None:
                     or (key == "SLAIF_EDITOR_DSN_FILE" and name == "editor-api")
                     or (key == "SLAIF_AGENT_DSN_FILE" and name == "agent-api")
                     or (key == "SLAIF_RENDER_DSN_FILE" and name == "render-api")
+                    or (key == "SLAIF_MEDIA_DSN_FILE" and name == "media-service")
                 )
             }
             serialized = json.dumps(
@@ -352,6 +368,14 @@ def validate_config(config: dict[str, Any]) -> None:
                 ),
                 f"{name}: foreign Editor setting present",
             )
+            _fail(
+                not any(
+                    key.startswith("SLAIF_MEDIA_")
+                    for key in environment
+                    if name != "media-service"
+                ),
+                f"{name}: foreign Media setting present",
+            )
         if name == "agent-api":
             _fail(
                 {
@@ -372,6 +396,29 @@ def validate_config(config: dict[str, Any]) -> None:
                     "SLAIF_AGENT_MODE": "development",
                 },
                 "agent-api: database configuration mismatch",
+            )
+        if name == "media-service":
+            _fail(
+                {
+                    key: environment.get(key)
+                    for key in (
+                        "SLAIF_MEDIA_DSN_FILE",
+                        "SLAIF_MEDIA_EXPECTED_DATABASE",
+                        "SLAIF_MEDIA_EXPECTED_LOGIN",
+                        "SLAIF_MEDIA_EXPECTED_PRIVILEGE_ROLE",
+                        "SLAIF_MEDIA_MODE",
+                        "SLAIF_MEDIA_ROOT",
+                    )
+                }
+                == {
+                    "SLAIF_MEDIA_DSN_FILE": "/run/slaif-media/media-dsn",
+                    "SLAIF_MEDIA_EXPECTED_DATABASE": "slaif",
+                    "SLAIF_MEDIA_EXPECTED_LOGIN": "slaif_media_login",
+                    "SLAIF_MEDIA_EXPECTED_PRIVILEGE_ROLE": "slaif_media",
+                    "SLAIF_MEDIA_MODE": "development",
+                    "SLAIF_MEDIA_ROOT": "/var/lib/slaif/media",
+                },
+                "media-service: database configuration mismatch",
             )
         if name in {"control-api", "editor-api"}:
             _fail(

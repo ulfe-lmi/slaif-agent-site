@@ -203,6 +203,34 @@ class LocalSecretTests(unittest.TestCase):
             self.assertEqual(stat.S_IMODE(editor_directory.stat().st_mode), 0o700)
             self.assertEqual(stat.S_IMODE(editor_file.stat().st_mode), 0o400)
 
+    def test_media_locator_is_exactly_isolated_and_idempotent(self) -> None:
+        INITIALIZER.POSTGRES_UID = os.getuid()
+        INITIALIZER.APPLICATION_UID = os.getuid()
+        INITIALIZER.CONTROL_DIRECTORY_UID = os.getuid()
+        INITIALIZER.CONTROL_DIRECTORY_GID = os.getgid()
+        INITIALIZER.MARKER_UID = os.getuid()
+        INITIALIZER.DIRECTORY_UID = os.getuid()
+        INITIALIZER.SECRET_DIRECTORY_GID = os.getgid()
+        with tempfile.TemporaryDirectory() as parent:
+            directory = Path(parent) / "secrets"
+            media_directory = Path(parent) / "media"
+            media_directory.mkdir()
+            count = INITIALIZER.initialize(directory, media_directory=media_directory)
+            self.assertEqual(count, 24)
+            media_file = media_directory / "media-dsn"
+            first = media_file.read_bytes()
+            self.assertEqual(first, (directory / "service-media-dsn").read_bytes())
+            self.assertEqual(
+                INITIALIZER.initialize(directory, media_directory=media_directory),
+                count,
+            )
+            self.assertEqual(media_file.read_bytes(), first)
+            self.assertEqual(
+                {path.name for path in media_directory.iterdir()}, {"media-dsn"}
+            )
+            self.assertEqual(stat.S_IMODE(media_directory.stat().st_mode), 0o700)
+            self.assertEqual(stat.S_IMODE(media_file.stat().st_mode), 0o400)
+
 
 if __name__ == "__main__":
     unittest.main()

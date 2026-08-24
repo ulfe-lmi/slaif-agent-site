@@ -104,6 +104,17 @@ def _configuration() -> dict[str, object]:
                     "SLAIF_RENDER_MODE": "development",
                 }
             )
+        if name == "media-service":
+            service["environment"].update(
+                {
+                    "SLAIF_MEDIA_DSN_FILE": "/run/slaif-media/media-dsn",
+                    "SLAIF_MEDIA_EXPECTED_DATABASE": "slaif",
+                    "SLAIF_MEDIA_EXPECTED_LOGIN": "slaif_media_login",
+                    "SLAIF_MEDIA_EXPECTED_PRIVILEGE_ROLE": "slaif_media",
+                    "SLAIF_MEDIA_MODE": "development",
+                    "SLAIF_MEDIA_ROOT": "/var/lib/slaif/media",
+                }
+            )
         if name == "bootstrap":
             service["environment"]["SLAIF_BOOTSTRAP_DEMO_SEED"] = "true"
         if name in VERIFY.EXPECTED_CAP_ADD:
@@ -140,6 +151,7 @@ def _configuration() -> dict[str, object]:
                 "editor-secret",
                 "local-secrets",
                 "media-data",
+                "media-secret",
                 "postgres-data",
                 "render-secret",
             )

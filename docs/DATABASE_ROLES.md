@@ -19,7 +19,7 @@ NOREPLICATION NOBYPASSRLS`.
 | `slaif_preview_reader` | Future preview render principal | Read-only view access; a future trusted session wrapper must establish preview context. |
 | `slaif_reviewer` | Future review-worker principal | Read-only COW views and only the foundation-controlled reviewer function surface; no runtime DML or setup. |
 | `slaif_scheduler` | Future scheduler principal | No object grant yet; content and reviewer authority remain denied. |
-| `slaif_media` | Future media-service principal | No object grant yet; content and reviewer authority remain denied. |
+| `slaif_media` | Media service principal | Exact owner-defined human-session/auth, COW media-reference, idempotency, and media-audit functions; no generic content DML, base/change, reviewer, Control-table, or setup authority. |
 | `slaif_gc` | Future media-GC principal | No object grant yet; content and reviewer authority remain denied. |
 
 MCP adapter, Web, and browser worker have no database privilege role. Render
@@ -104,6 +104,14 @@ reads the foundation-managed overlay views with canonical fallback, and grants
 content functions remain denied. The Agent HTTP read service uses one Agent
 pool connection inside `asyncpg_cow_session`, performs no idempotency or
 mutation-audit work, and clears all transaction-local context before release.
+
+Revision `030_001` adds the private Media service's exact auth/workspace,
+idempotency/audit, metadata-register, and metadata-lookup functions. The Media
+role receives only those named EXECUTEs plus schema USAGE needed to call them;
+it receives no direct relation DML, generic content function, COW base/change
+access, reviewer authority, or publication capability. The metadata wrapper
+serializes same-site/digest registration and stores only trusted server-derived
+digest/MIME/size/key/uploader values.
 
 ## Login-principal design
 

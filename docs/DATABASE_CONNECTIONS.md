@@ -56,6 +56,15 @@ and site authorization pool; it never uses the Control pool for content
 functions. Editor and Agent never share a locator, pool, native connection, or
 credential volume.
 
+Media follows a third isolated credential path. `secrets-init` copies only
+`service-media-dsn` into `media-secret`, mounted read-only at
+`/run/slaif-media/media-dsn` by Media service. The fixed
+`slaif_media_login`/`slaif_media` pool validates database identity on every
+connection and performs human session/site authorization, COW metadata
+registration, and authorized metadata lookup only through named owner-defined
+functions. Media bytes are held in the private `media-data` volume, shared only
+with Media GC; NGINX and Apache never mount or alias it.
+
 The master `local-secrets` volume still contains PostgreSQL administrator,
 bootstrap owner, login-password, and future-service files. Control does not
 mount that volume. Its isolated directory is mode `0700`, owned by

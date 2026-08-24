@@ -59,3 +59,12 @@ classes and Editor application factory, and public Editor HTTP routes. It
 proves page CRUD, component add/update/move/delete, replay/mismatch, canonical
 fallback versus overlay, exact audit/idempotency counts, and no direct
 content-base or control-table access by the runtime roles.
+
+The Media integration uses a real `slaif_media_login` pool, real human session
+and CSRF/RBAC state, disposable filesystem staging/object directories, and
+multipart HTTP. It proves signature-bound PNG/JPEG upload, digest-only keys,
+private byte headers, canonical fallback, idempotent replay and same-byte
+deduplication, mismatch, missing-key, SVG/spoof/traversal rejection, metadata
+workspace isolation, and no staging residue. Store unit tests cover corrupt
+object and mode/confinement behavior; Compose/edge tests keep `/media/` as a
+proxy-only route with no volume alias or host mount.

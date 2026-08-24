@@ -63,7 +63,7 @@ requires a separately designed and tested logical process.
 | `/api/editor/v1/` | Editor API | Prefix-preserving human Editor API routes. |
 | `/api/agent/` | Agent API | Prefix-stripped health plus capability-authenticated bounded COW create routes; no lifecycle or publication routes. |
 | `/mcp/` | MCP adapter | Prefix-stripped health routes only. |
-| `/media/` | Media service | Prefix-stripped health routes only. |
+| `/media/` | Media service | Prefix-stripped health plus authenticated private upload/immutable-byte routes; no direct volume serving. |
 
 Unknown product and API paths return 404. `/internal/` is explicitly rejected
 at both supported edges. Render, PostgreSQL, bootstrap,
@@ -97,7 +97,9 @@ design rather than weaken this baseline.
 | `postgres` | PostgreSQL | official entrypoint drops to PostgreSQL user | database | PostgreSQL data; local secrets read-only |
 | `bootstrap` | Backend | `10001:10001` | database | local secrets read-only |
 | `control-api` | Backend | `10001:10001` | edge, database | isolated Control secret, read-only |
-| Five other Python HTTP services | Backend | `10001:10001` | exact edge/application/database memberships | media volume on Media only |
+| Control/Agent/Render/MCP HTTP services | Backend | `10001:10001` | exact edge/application/database memberships | no media volume |
+| Editor HTTP service | Backend | `10001:10001` | edge/database plus isolated Control/Editor secrets | no media volume |
+| Media HTTP service | Backend | `10001:10001` | edge/database plus isolated Media secret | private `media-data` only |
 | Three Python workers | Backend | `10001:10001` | database | media volume on media-GC only |
 | `browser-worker` | Browser placeholder | `10001:10001` | browser only | none |
 | `web` | Next.js | `10001:10001` | edge, application | none |

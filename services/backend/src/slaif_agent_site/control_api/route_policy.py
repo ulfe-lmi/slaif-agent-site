@@ -679,13 +679,6 @@ ROUTE_POLICIES: Final[tuple[RoutePolicy, ...]] = (
             permission,
         )
         for method, path, mutation, csrf, permission in (
-            (
-                "POST",
-                "/api/editor/v1/sites/{site_id}/media/register",
-                _M,
-                True,
-                "media:upload",
-            ),
             ("GET", "/api/editor/v1/sites/{site_id}/media/", _R, False, "media:read"),
             (
                 "GET",

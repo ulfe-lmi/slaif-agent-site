@@ -45,12 +45,22 @@ HEADER_FILE=
 TOKEN_FILE=
 E2E_SECRET_FILE=
 NEGATIVE_OUTPUT_FILE=
+MEDIA_COOKIE_FILE=
+MEDIA_LOGIN_FILE=
+MEDIA_SITES_FILE=
+MEDIA_UPLOAD_FILE=
+MEDIA_CONTENT_FILE=
 
 cleanup() {
   test -z "$HEADER_FILE" || rm -f "$HEADER_FILE"
   test -z "$TOKEN_FILE" || rm -f "$TOKEN_FILE"
   test -z "$E2E_SECRET_FILE" || rm -f "$E2E_SECRET_FILE"
   test -z "$NEGATIVE_OUTPUT_FILE" || rm -f "$NEGATIVE_OUTPUT_FILE"
+  test -z "$MEDIA_COOKIE_FILE" || rm -f "$MEDIA_COOKIE_FILE"
+  test -z "$MEDIA_LOGIN_FILE" || rm -f "$MEDIA_LOGIN_FILE"
+  test -z "$MEDIA_SITES_FILE" || rm -f "$MEDIA_SITES_FILE"
+  test -z "$MEDIA_UPLOAD_FILE" || rm -f "$MEDIA_UPLOAD_FILE"
+  test -z "$MEDIA_CONTENT_FILE" || rm -f "$MEDIA_CONTENT_FILE"
   docker compose -p "$NEGATIVE_PROJECT" -f "$ROOT/compose.yaml" \
     -f "$ROOT/tests/packaging/compose.broken-bootstrap.yaml" \
     down --volumes --remove-orphans >/dev/null 2>&1 || true
@@ -64,6 +74,11 @@ HEADER_FILE=$(mktemp)
 TOKEN_FILE=$(mktemp)
 E2E_SECRET_FILE=$(mktemp)
 NEGATIVE_OUTPUT_FILE=$(mktemp)
+MEDIA_COOKIE_FILE=$(mktemp)
+MEDIA_LOGIN_FILE=$(mktemp)
+MEDIA_SITES_FILE=$(mktemp)
+MEDIA_UPLOAD_FILE=$(mktemp)
+MEDIA_CONTENT_FILE=$(mktemp)
 chmod 600 "$TOKEN_FILE" "$E2E_SECRET_FILE"
 
 cd "$ROOT"
@@ -119,6 +134,32 @@ docker compose -p "$PROJECT" logs --no-color bootstrap 2>/dev/null \
   | sed -n 's/^.*setup-token-secret: //p' >"$TOKEN_FILE"
 test "$(wc -l <"$TOKEN_FILE" | tr -d ' ')" = 1
 tools/compose/e2e.sh "$TOKEN_FILE" "$E2E_SECRET_FILE"
+
+media_login_status=$(curl --silent --show-error --cookie-jar "$MEDIA_COOKIE_FILE" \
+  --output "$MEDIA_LOGIN_FILE" --write-out '%{http_code}' \
+  -H 'Content-Type: application/json' \
+  --data '{"username":"compose.admin","password":"fixture-compose-auth-password-123"}' \
+  http://localhost:8080/api/control/v1/login)
+test "$media_login_status" = 200
+media_csrf=$(awk '$6 == "slaif_csrf" { print $7 }' "$MEDIA_COOKIE_FILE")
+test -n "$media_csrf"
+curl --fail --show-error --silent --cookie "$MEDIA_COOKIE_FILE" \
+  --output "$MEDIA_SITES_FILE" http://localhost:8080/api/control/v1/me/sites
+media_site_id=$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))[0]["site_id"])' "$MEDIA_SITES_FILE")
+media_upload_status=$(curl --silent --show-error --cookie "$MEDIA_COOKIE_FILE" \
+  -H "X-CSRF-Token: $media_csrf" -H 'Idempotency-Key: compose-media-upload' \
+  --form 'alt_text=Compose fixture image' \
+  --form 'metadata={"source":"compose"}' \
+  --form "file=@$ROOT/docs/screenshots/01-landing-page.png;type=image/png" \
+  --output "$MEDIA_UPLOAD_FILE" --write-out '%{http_code}' \
+  "http://localhost:8080/media/v1/sites/$media_site_id/assets")
+test "$media_upload_status" = 201
+media_id=$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["record"]["id"])' "$MEDIA_UPLOAD_FILE")
+curl --fail --show-error --silent --cookie "$MEDIA_COOKIE_FILE" \
+  --output "$MEDIA_CONTENT_FILE" \
+  "http://localhost:8080/media/v1/sites/$media_site_id/assets/$media_id/content"
+cmp "$ROOT/docs/screenshots/01-landing-page.png" "$MEDIA_CONTENT_FILE"
+echo "media-e2e: OK edge=nginx upload=validated-private-read=byte-identical"
 docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif -Atc \
   "SET ROLE slaif_owner;
    SELECT count(*) = 4
@@ -347,6 +388,21 @@ if docker run --rm --network none --read-only --cap-drop ALL \
   >/dev/null 2>&1
 then
   echo "compose-smoke: unrelated uid unexpectedly read Render locator" >&2
+  exit 1
+fi
+
+docker run --rm --network none --read-only --cap-drop ALL --cap-add DAC_READ_SEARCH \
+  --user 0:0 --volume "${PROJECT}_local-secrets:/master:ro" \
+  --volume "${PROJECT}_media-secret:/media:ro" \
+  --entrypoint python slaif-agent-site-backend:local -c \
+  "import pathlib,secrets,stat; root=pathlib.Path('/media'); files=list(root.iterdir()); assert len(files)==1 and files[0].name=='media-dsn'; info=root.stat(); file=files[0]; assert stat.S_IMODE(info.st_mode)==0o700 and info.st_uid==10001 and info.st_gid==10001; assert stat.S_IMODE(file.stat().st_mode)==0o400 and file.stat().st_uid==10001; assert secrets.compare_digest(file.read_bytes(), pathlib.Path('/master/service-media-dsn').read_bytes()); print('media-secret-policy: OK files=1 mode=0400 owner=10001')"
+if docker run --rm --network none --read-only --cap-drop ALL \
+  --user 10003:10003 --volume "${PROJECT}_media-secret:/media:ro" \
+  --entrypoint python slaif-agent-site-backend:local -c \
+  "import pathlib; pathlib.Path('/media/media-dsn').read_bytes()" \
+  >/dev/null 2>&1
+then
+  echo "compose-smoke: unrelated uid unexpectedly read Media locator" >&2
   exit 1
 fi
 

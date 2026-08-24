@@ -129,6 +129,32 @@ This order does not implement publication, preview authority,
 workspace-management UI, freeze/review/promotion, responsive preview, or new
 catalog/storage types.
 
+## Private human Media API
+
+The edge-routed Media service owns immutable bytes and human workspace metadata
+references. The former metadata-only Editor `POST .../media/register` route is
+removed; no route claims an upload before validated bytes exist.
+
+| Public route | Success | Contract |
+| --- | --- | --- |
+| `POST /media/v1/sites/{site_id}/assets` | 201 | multipart `file`, bounded `alt_text`, optional bounded JSON `metadata`, CSRF-bound human session, `media:upload`, and `Idempotency-Key` |
+| `GET /media/v1/sites/{site_id}/assets/{media_id}/content` | 200 | authenticated human session, `media:read`, workspace-aware metadata lookup, immutable byte stream |
+
+Uploads stream into private staging, SHA-256 hash and signature-sniff against
+the declared MIME, then publish under a digest-only key before the metadata
+reference is recorded in the server-selected HUMAN workspace via COW and the
+exact media idempotency/HUMAN-audit envelope. A database failure after object
+publication may leave an unreferenced private object for later Media GC; it is
+not public or described as transactionally rolled back.
+
+Only PNG and JPEG are enabled in this slice. SVG, empty/unknown/spoofed
+content, traversal names, oversized/truncated bodies, foreign sites, and
+missing/corrupt/symlink objects fail closed. Byte responses are private,
+no-store, `nosniff`, digest ETagged, exact-length, and never expose a path or
+anonymous URL. Metadata reference deletion remains a workspace tombstone and
+never unlinks bytes. Agent upload, public media, thumbnails, GC, transcoding,
+object storage, and publication are later work.
+
 Puck 0.20.2 requires runtime inline styling for parts of its editor UI. The
 authenticated editor surface therefore receives the minimum required
 `style-src-attr 'unsafe-inline'` and `style-src-elem 'self' 'unsafe-inline'`

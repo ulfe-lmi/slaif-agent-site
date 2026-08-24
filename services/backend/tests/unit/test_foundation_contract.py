@@ -99,6 +99,7 @@ NEW_PACKAGE_FILES = {
     "slaif_agent_site/db/alembic/versions/027_001_qualify_content_function_columns.py",
     "slaif_agent_site/db/alembic/versions/028_001_human_editor_workspace_envelope.py",
     "slaif_agent_site/db/alembic/versions/029_001_agent_semantic_read_surface.py",
+    "slaif_agent_site/db/alembic/versions/030_001_media_service_surface.py",
     "slaif_agent_site/db/connections.py",
     "slaif_agent_site/db/executor.py",
     "slaif_agent_site/db/migrations.py",
@@ -136,6 +137,12 @@ NEW_PACKAGE_FILES = {
     "slaif_agent_site/media_service/__init__.py",
     "slaif_agent_site/media_service/__main__.py",
     "slaif_agent_site/media_service/app.py",
+    "slaif_agent_site/media_service/auth.py",
+    "slaif_agent_site/media_service/config.py",
+    "slaif_agent_site/media_service/database.py",
+    "slaif_agent_site/media_service/media_http.py",
+    "slaif_agent_site/media_service/multipart.py",
+    "slaif_agent_site/media_service/store.py",
     "slaif_agent_site/render_api/__init__.py",
     "slaif_agent_site/render_api/__main__.py",
     "slaif_agent_site/render_api/app.py",
@@ -229,6 +236,7 @@ EXPECTED_SDIST_FILES = {
     "services/backend/src/slaif_agent_site/db/alembic/versions/027_001_qualify_content_function_columns.py",
     "services/backend/src/slaif_agent_site/db/alembic/versions/028_001_human_editor_workspace_envelope.py",
     "services/backend/src/slaif_agent_site/db/alembic/versions/029_001_agent_semantic_read_surface.py",
+    "services/backend/src/slaif_agent_site/db/alembic/versions/030_001_media_service_surface.py",
     "services/backend/src/slaif_agent_site/agent_state/workspace_models.py",
     "services/backend/src/slaif_agent_site/agent_state/audit.py",
     "services/backend/src/slaif_agent_site/agent_state/promotion.py",
@@ -517,8 +525,9 @@ def test_locked_foundation_artifact_hash_constants_are_sha256() -> None:
 
 
 def test_alembic_graph_and_offline_sql_need_no_locator_or_network() -> None:
-    assert migration_heads() == ("029_001",)
+    assert migration_heads() == ("030_001",)
     assert migration_history() == (
+        "030_001",
         "029_001",
         "028_001",
         "027_001",

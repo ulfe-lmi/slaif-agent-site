@@ -13,11 +13,10 @@ primitives and exact Radix primitive dependency require no CDN, font host,
 telemetry endpoint, hosted account, or runtime package service.
 
 The current Python backend has shared typed configuration for long-running
-services, separate Control and Render online database models, and
-separate typed configuration for explicit one-shot database bootstrap. Control
-Control and Render are the only online processes that connect to PostgreSQL. The initial-local-
-administrator operation exists only as a semantic code/test boundary; no
-process authenticates a caller, exposes a product API, or runs a product job.
+services, separate Control, Editor, Agent, Render, and Media online database
+models, and separate typed configuration for explicit one-shot database
+bootstrap. Each service owns its fixed database login and pool; Media also
+owns a validated absolute local store root and bounded upload limit.
 
 ## Loading rules
 
@@ -40,6 +39,23 @@ environment variable or request.
 | `SLAIF_SECURE_COOKIES` | `false` | Must be `true` in production. No session behavior exists yet. |
 | `SLAIF_SHUTDOWN_TIMEOUT_SECONDS` | `15` | Bounded integer from 1 through 120. |
 | `SLAIF_READINESS_TIMEOUT_SECONDS` | `2.0` | Per-probe bound from 0.05 through 30 seconds. |
+
+## Media service configuration
+
+`MediaSettings` uses the `SLAIF_MEDIA_` prefix. Outside explicit test mode its
+DSN must be the mounted mode-`0400` `/run/slaif-media/media-dsn` file and the
+identity is fixed to `slaif_media_login`/`slaif_media`. The local store root
+defaults to `/var/lib/slaif/media` and must be absolute; invalid or unwritable
+storage makes Media readiness unavailable without exposing the path.
+
+| Variable | Local value/default | Contract |
+| --- | --- | --- |
+| `SLAIF_MEDIA_DSN_FILE` | `/run/slaif-media/media-dsn` | Dedicated Media-owned locator file. |
+| `SLAIF_MEDIA_EXPECTED_DATABASE` | `slaif` | Fixed target outside tests. |
+| `SLAIF_MEDIA_EXPECTED_LOGIN` | `slaif_media_login` | Fixed Media login outside tests. |
+| `SLAIF_MEDIA_EXPECTED_PRIVILEGE_ROLE` | `slaif_media` | Fixed sole product role. |
+| `SLAIF_MEDIA_ROOT` | `/var/lib/slaif/media` | Absolute private content-addressed root; never an HTTP alias. |
+| `SLAIF_MEDIA_MAX_UPLOAD_BYTES` | `104857600` | Bounded 1–500 MiB upload limit. |
 
 An environment file is never loaded implicitly. Setting `SLAIF_ENV_FILE`
 opts in to one absolute file only in `development`; `test` and `production`
@@ -222,13 +238,12 @@ locales, hostnames, and path prefixes are normalized by trusted Control code;
 there is no wildcard-domain, trusted-proxy, or forwarded-header setting in
 this round.
 
-The default initializer generates future service DSN files. It copies only the
-exact Control DSN and public-reader Render DSN into separate one-file mounted
-volumes; neither online process sees the master volume. All other online
-service database locators/pools, identity providers, browser sources,
-media stores, service authentication, trusted proxies, CORS, sessions, jobs,
-metrics, and product feature settings are not implemented. They must be added
-later under their process-specific authority and architecture work orders.
+The default initializer generates service DSN files and copies only each
+process's exact locator into its separate one-file mounted volume; online
+processes never see the master volume. Media storage is local and private by
+default. Identity providers, browser sources, service-to-service authentication,
+trusted proxies, CORS, jobs, metrics, and later distributed media backends
+remain deferred under their process-specific architecture work orders.
 Server-side session persistence, expiry, recent-auth, CSRF credential policy,
 and cookie value objects are implemented in 010-e. HTTP authentication routes,
 OIDC, MFA, rate limiting, durable auth audit, and runtime agent browser tooling

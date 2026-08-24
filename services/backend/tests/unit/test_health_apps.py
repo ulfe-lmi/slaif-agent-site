@@ -91,6 +91,11 @@ class FakeAgentDatabase(FakeControlDatabase):
         raise AssertionError("health-only app cannot invoke capability auth")
 
 
+class FakeMediaStore:
+    async def readiness(self) -> bool:
+        return True
+
+
 def _route_paths(app: FastAPI) -> set[str]:
     paths = {route.path for route in app.routes if isinstance(route, APIRoute)}
     for route in app.routes:
@@ -118,8 +123,12 @@ async def test_each_app_has_only_typed_health_routes(
         ProcessKind.EDITOR_API,
         ProcessKind.RENDER_API,
         ProcessKind.AGENT_API,
+        ProcessKind.MEDIA_SERVICE,
     }:
         arguments["database"] = database
+    if process is ProcessKind.MEDIA_SERVICE:
+        arguments["database"] = database
+        arguments["store"] = FakeMediaStore()
     if editor_database is not None:
         arguments["editor_database"] = editor_database
     app = factory(**arguments)
@@ -163,9 +172,13 @@ async def test_each_app_has_only_typed_health_routes(
             "/api/editor/v1/sites/{site_id}/pages/{page_id}/composition/",
             "/api/editor/v1/sites/{site_id}/pages/{page_id}/composition/components/{node_id}",
             "/api/editor/v1/sites/{site_id}/pages/{page_id}/composition/components/{node_id}/move",
-            "/api/editor/v1/sites/{site_id}/media/register",
             "/api/editor/v1/sites/{site_id}/media/",
             "/api/editor/v1/sites/{site_id}/media/{media_id}",
+        }
+    if process is ProcessKind.MEDIA_SERVICE:
+        expected_routes |= {
+            "/v1/sites/{site_id}/assets",
+            "/v1/sites/{site_id}/assets/{media_id}/content",
         }
     if process is ProcessKind.MCP_ADAPTER:
         expected_routes |= {
@@ -219,6 +232,17 @@ async def test_each_app_has_only_typed_health_routes(
                     *(
                         [
                             {
+                                "component": "media_store",
+                                "status": "ok",
+                                "reason": None,
+                            }
+                        ]
+                        if process is ProcessKind.MEDIA_SERVICE
+                        else []
+                    ),
+                    *(
+                        [
+                            {
                                 "component": "editor_database",
                                 "status": "ok",
                                 "reason": None,
@@ -234,6 +258,7 @@ async def test_each_app_has_only_typed_health_routes(
                     ProcessKind.EDITOR_API,
                     ProcessKind.RENDER_API,
                     ProcessKind.AGENT_API,
+                    ProcessKind.MEDIA_SERVICE,
                 }
                 else [],
             }
@@ -244,6 +269,7 @@ async def test_each_app_has_only_typed_health_routes(
         ProcessKind.EDITOR_API,
         ProcessKind.RENDER_API,
         ProcessKind.AGENT_API,
+        ProcessKind.MEDIA_SERVICE,
     }:
         assert database.started == database.stopped == 1
     if editor_database is not None:

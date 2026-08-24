@@ -69,3 +69,13 @@ Compose gives Render one isolated, read-only locator file containing only the
 public-reader DSN. It does not mount the master or Control secret volume. Web
 and the edge have no database locator, and readiness fails closed through
 Render→Web→NGINX if the Render locator is missing or invalid.
+
+The Media service is a separate human-authenticated boundary. Its only
+database authority is the fixed `slaif_media_login`/`slaif_media` identity and
+named owner-defined session, workspace, COW metadata, idempotency, and audit
+functions. Upload bytes are streamed to private digest-only storage after
+signature validation; the client MIME and filename never select a filesystem
+path. Authorized reads require metadata visible in the caller's active HUMAN
+workspace and never serve the volume through NGINX/Apache. SVG and anonymous
+media are disabled, and a database failure after private object publication
+leaves only an unreferenced orphan for later Media GC.
