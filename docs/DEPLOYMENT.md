@@ -111,6 +111,11 @@ runtime scratch paths. PostgreSQL and the initializer add only the capabilities
 needed for initialization and file ownership. There is no source bind mount,
 Docker socket, host network, or privileged container.
 
+The reference edge keeps a 1 MiB global request-body limit. Only `/media/`
+receives the bounded 105119744-byte allowance needed for a 100 MiB file plus
+256 KiB multipart overhead; Control, Editor, Agent, MCP, Web, and unrelated
+paths retain the strict global limit.
+
 The long-running Python processes use truthful `development` mode and the
 loopback public URL. `test` is not the shipped default, and the stack does not
 claim production mode without its fail-closed HTTPS, cookie, and secret

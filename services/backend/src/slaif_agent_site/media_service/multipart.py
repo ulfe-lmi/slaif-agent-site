@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import re
@@ -30,15 +31,9 @@ _BOUNDARY = re.compile(r"(?:^|;)\s*boundary=(?:\"([^\"]+)\"|([^;\s]+))")
 _DISPOSITION = re.compile(r'(?:^|;)\s*name="([^"]+)"')
 _FILENAME = re.compile(r'(?:^|;)\s*filename="([^"]*)"')
 _CONTROL = re.compile(r"[\x00-\x1f\x7f]")
-
-
-def _header_value(headers: list[bytes], name: str) -> str:
-    if len(headers) != 1:
-        raise MultipartUploadError("malformed_multipart")
-    try:
-        return headers[0].decode("ascii")
-    except UnicodeDecodeError:
-        raise MultipartUploadError("malformed_multipart") from None
+_PART_HEADERS = frozenset({"content-disposition", "content-type"})
+_FIELD_LIMIT = 16 * 1024
+_REQUEST_OVERHEAD = 256 * 1024
 
 
 def _filename(value: str) -> str:
@@ -73,6 +68,26 @@ def _bounded_json(value: Any, depth: int = 8) -> Any:
     raise MultipartUploadError("invalid_metadata")
 
 
+def _content_length(request: Request) -> int | None:
+    values = [
+        value
+        for name, value in request.scope.get("headers", [])
+        if name.lower() == b"content-length"
+    ]
+    if len(values) > 1:
+        raise MultipartUploadError("malformed_multipart")
+    if not values:
+        return None
+    try:
+        value = values[0].decode("ascii")
+        length = int(value, 10)
+    except (UnicodeDecodeError, ValueError):
+        raise MultipartUploadError("malformed_multipart") from None
+    if length < 0:
+        raise MultipartUploadError("malformed_multipart")
+    return length
+
+
 async def parse_upload(request: Request, store: MediaStore) -> ParsedUpload:
     raw_content_type = request.headers.get("content-type", "")
     if not raw_content_type.lower().startswith("multipart/form-data"):
@@ -80,26 +95,24 @@ async def parse_upload(request: Request, store: MediaStore) -> ParsedUpload:
     boundary_match = _BOUNDARY.search(raw_content_type)
     if boundary_match is None:
         raise MultipartUploadError("malformed_multipart")
-    boundary = (boundary_match.group(1) or boundary_match.group(2)).encode("ascii")
+    try:
+        boundary = (boundary_match.group(1) or boundary_match.group(2)).encode("ascii")
+    except UnicodeEncodeError:
+        raise MultipartUploadError("malformed_multipart") from None
     if not 1 <= len(boundary) <= 70 or any(
         byte < 33 or byte > 126 for byte in boundary
     ):
         raise MultipartUploadError("malformed_multipart")
 
-    content_length = request.headers.get("content-length")
-    max_request = store.max_upload_bytes + 256 * 1024
-    if content_length is not None:
-        try:
-            if int(content_length) > max_request:
-                raise MultipartUploadError("upload_too_large")
-        except ValueError:
-            raise MultipartUploadError("malformed_multipart") from None
+    content_length = _content_length(request)
+    max_request = store.max_upload_bytes + _REQUEST_OVERHEAD
+    if content_length is not None and content_length > max_request:
+        raise MultipartUploadError("upload_too_large")
 
     staging_path = store.create_staging_path()
     buffer = bytearray()
     marker = b"\r\n--" + boundary
     opening = b"--" + boundary + b"\r\n"
-    final = b"--" + boundary + b"--"
     started = False
     finished = False
     total = 0
@@ -112,6 +125,7 @@ async def parse_upload(request: Request, store: MediaStore) -> ParsedUpload:
     file_prefix = bytearray()
     file_stream: BinaryIO | None = None
     headers_pending = True
+    transferred = False
 
     def finish_part() -> None:
         nonlocal current, file_stream, file_name, file_declared
@@ -133,8 +147,6 @@ async def parse_upload(request: Request, store: MediaStore) -> ParsedUpload:
             name = current["name"]
             if name not in {"alt_text", "metadata"} or name in fields:
                 raise MultipartUploadError("unexpected_field")
-            if len(decoded) > 16384:
-                raise MultipartUploadError("field_too_large")
             fields[name] = decoded
         current = None
 
@@ -153,6 +165,8 @@ async def parse_upload(request: Request, store: MediaStore) -> ParsedUpload:
                 raise MultipartUploadError("malformed_multipart")
             file_stream.write(data)
         else:
+            if len(current["value"]) + len(data) > _FIELD_LIMIT:
+                raise MultipartUploadError("field_too_large")
             current["value"].extend(data)
 
     try:
@@ -175,6 +189,7 @@ async def parse_upload(request: Request, store: MediaStore) -> ParsedUpload:
                         del buffer[: len(opening)]
                         started = True
                     elif not headers_pending:
+                        final = b"--" + boundary + b"--"
                         if len(buffer) < len(final) and final.startswith(buffer):
                             break
                         if not buffer.startswith(final):
@@ -204,19 +219,23 @@ async def parse_upload(request: Request, store: MediaStore) -> ParsedUpload:
                             text = value.decode("ascii").strip()
                         except UnicodeDecodeError:
                             raise MultipartUploadError("malformed_multipart") from None
+                        if not key or key in parsed or key not in _PART_HEADERS:
+                            raise MultipartUploadError("malformed_multipart")
                         parsed[key] = text
                     disposition = parsed.get("content-disposition", "")
-                    name_match = _DISPOSITION.search(disposition)
-                    if name_match is None:
+                    names = _DISPOSITION.findall(disposition)
+                    if len(names) != 1:
                         raise MultipartUploadError("malformed_multipart")
-                    filename_match = _FILENAME.search(disposition)
-                    filename = filename_match.group(1) if filename_match else None
+                    filenames = _FILENAME.findall(disposition)
+                    if len(filenames) > 1:
+                        raise MultipartUploadError("malformed_multipart")
+                    filename = filenames[0] if filenames else None
                     if filename is not None:
                         if file_stream is not None or file_name is not None:
                             raise MultipartUploadError("duplicate_file")
                         file_stream = staging_path.open("wb")
                     current = {
-                        "name": name_match.group(1),
+                        "name": names[0],
                         "filename": filename,
                         "content_type": parsed.get("content-type", ""),
                         "value": bytearray(),
@@ -231,7 +250,10 @@ async def parse_upload(request: Request, store: MediaStore) -> ParsedUpload:
                             del buffer[:safe]
                         break
                     emit(bytes(buffer[:boundary_index]))
-                    del buffer[: boundary_index + len(marker)]
+                    del buffer[:boundary_index]
+                    if len(buffer) < len(marker) + 2:
+                        break
+                    del buffer[: len(marker)]
                     if buffer.startswith(b"--"):
                         del buffer[:2]
                         finished = True
@@ -242,6 +264,8 @@ async def parse_upload(request: Request, store: MediaStore) -> ParsedUpload:
                     del buffer[:2]
                     headers_pending = True
                     finish_part()
+        if bytes(buffer) not in {b"", b"\r\n"}:
+            raise MultipartUploadError("malformed_multipart")
         if (
             not finished
             or current is not None
@@ -259,8 +283,8 @@ async def parse_upload(request: Request, store: MediaStore) -> ParsedUpload:
                 raise MultipartUploadError("invalid_metadata")
         except json.JSONDecodeError:
             raise MultipartUploadError("invalid_metadata") from None
-        declared = file_declared or ""
-        mime_type = sniff_mime(bytes(file_prefix), declared)
+        mime_type = sniff_mime(bytes(file_prefix), file_declared or "")
+        transferred = True
         return ParsedUpload(
             staged=StagedMedia(
                 staging_path=staging_path,
@@ -273,15 +297,16 @@ async def parse_upload(request: Request, store: MediaStore) -> ParsedUpload:
             metadata=metadata,
         )
     except (MultipartUploadError, MediaStoreError):
-        if file_stream is not None:
-            file_stream.close()
-        store.remove_staging(staging_path)
         raise
-    except Exception:
+    except asyncio.CancelledError:
+        raise
+    except BaseException:
+        raise MultipartUploadError("malformed_multipart") from None
+    finally:
         if file_stream is not None:
             file_stream.close()
-        store.remove_staging(staging_path)
-        raise MultipartUploadError("malformed_multipart") from None
+        if not transferred:
+            store.remove_staging(staging_path)
 
 
 __all__ = ["MultipartUploadError", "ParsedUpload", "parse_upload"]

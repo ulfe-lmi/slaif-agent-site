@@ -60,11 +60,18 @@ proves page CRUD, component add/update/move/delete, replay/mismatch, canonical
 fallback versus overlay, exact audit/idempotency counts, and no direct
 content-base or control-table access by the runtime roles.
 
-The Media integration uses a real `slaif_media_login` pool, real human session
-and CSRF/RBAC state, disposable filesystem staging/object directories, and
-multipart HTTP. It proves signature-bound PNG/JPEG upload, digest-only keys,
-private byte headers, canonical fallback, idempotent replay and same-byte
-deduplication, mismatch, missing-key, SVG/spoof/traversal rejection, metadata
-workspace isolation, and no staging residue. Store unit tests cover corrupt
-object and mode/confinement behavior; Compose/edge tests keep `/media/` as a
-proxy-only route with no volume alias or host mount.
+The Media integration uses a real `slaif_media_login` pool, ordinary human
+site memberships, real session/CSRF/RBAC state, disposable filesystem
+staging/object directories, and multipart HTTP. It proves signature-bound
+PNG/JPEG upload, digest-only keys, private byte headers, canonical fallback,
+idempotent replay, concurrent same-byte deduplication, mismatch, missing-key,
+ordinary permission/isolation failures, Editor metadata patch/reference
+delete retention, injected post-publish DB-failure orphan behavior, and no
+staging residue. Store unit tests cover ancestor/final symlinks, non-regular
+objects, corrupt reuse, descriptor reads/closure, modes, readiness failure,
+and publication fsync hooks. Multipart tests split adversarial boundaries and
+prove duplicate/length/truncation/oversize/cancellation cleanup. A real
+PostgreSQL two-connection race proves the Media workspace assertion waits on
+the shared workspace lock before revocation is evaluated. Compose/edge tests
+keep `/media/` as a proxy-only route with no volume alias or host mount and
+prove the larger request-body allowance is route-scoped.

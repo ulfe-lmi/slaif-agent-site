@@ -149,7 +149,10 @@ not public or described as transactionally rolled back.
 
 Only PNG and JPEG are enabled in this slice. SVG, empty/unknown/spoofed
 content, traversal names, oversized/truncated bodies, foreign sites, and
-missing/corrupt/symlink objects fail closed. Byte responses are private,
+missing/corrupt/symlink objects fail closed. Missing/invalid idempotency is
+400, authentication is 401, CSRF/permission failures are non-leaking 403/404,
+malformed content is 422, edge/application size failures are 413, and only
+storage/database failures are 503. Byte responses are private,
 no-store, `nosniff`, digest ETagged, exact-length, and never expose a path or
 anonymous URL. Metadata reference deletion remains a workspace tombstone and
 never unlinks bytes. Agent upload, public media, thumbnails, GC, transcoding,

@@ -142,15 +142,26 @@ def upgrade() -> None:
         SET search_path = pg_catalog AS $fn$
         DECLARE session_text text;
         DECLARE operation_text text;
+        DECLARE session_uuid uuid;
+        DECLARE operation_uuid uuid;
         BEGIN
             session_text := NULLIF(current_setting('app.session_id', true), '');
             operation_text := NULLIF(current_setting('app.operation_id', true), '');
-            IF session_text IS NULL OR operation_text IS NULL
-               OR session_text::uuid IS DISTINCT FROM p_workspace_id
-               OR operation_text::uuid IS DISTINCT FROM p_operation_id
+            BEGIN
+                session_uuid := session_text::uuid;
+                operation_uuid := operation_text::uuid;
+            EXCEPTION WHEN invalid_text_representation THEN
+                RAISE EXCEPTION 'MEDIA_COW_CONTEXT_INVALID'
+                    USING ERRCODE = '22023';
+            END;
+            IF session_uuid IS DISTINCT FROM p_workspace_id
+               OR operation_uuid IS DISTINCT FROM p_operation_id
             THEN
                 RAISE EXCEPTION 'MEDIA_COW_CONTEXT_INVALID' USING ERRCODE = '22023';
             END IF;
+            PERFORM pg_advisory_xact_lock(
+                hashtextextended(p_workspace_id::text, 280)
+            );
             IF NOT EXISTS (
                 SELECT 1
                 FROM control.workspace AS workspace

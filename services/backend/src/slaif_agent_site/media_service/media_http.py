@@ -76,9 +76,12 @@ async def upload_asset(site_id: UUID, request: Request) -> JSONResponse:
         state_changing=True,
     )
     key = _key(request)
+    parsed = None
+    published = False
     try:
         parsed = await parse_upload(request, _store(request))
         storage_key = _store(request).publish(parsed.staged)
+        published = True
         record, operation_id, replay = await _database(request).register(
             context=context,
             idempotency_key=key,
@@ -114,6 +117,9 @@ async def upload_asset(site_id: UUID, request: Request) -> JSONResponse:
         raise
     except Exception:
         raise ServiceUnavailableError() from None
+    finally:
+        if parsed is not None and not published:
+            _store(request).remove_staging(parsed.staged.staging_path)
 
 
 @router.get("/sites/{site_id}/assets/{media_id}/content")

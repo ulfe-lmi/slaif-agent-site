@@ -113,6 +113,12 @@ access, reviewer authority, or publication capability. The metadata wrapper
 serializes same-site/digest registration and stores only trusted server-derived
 digest/MIME/size/key/uploader values.
 
+Revision `031_001` makes the Media workspace assertion acquire the shared
+workspace advisory lock before mutable authorization checks and repairs the
+existing Editor media update/delete wrappers so COW metadata patch/delete
+operations remain unambiguous. The lock is transaction-scoped and the fixed
+Media role receives no additional authority.
+
 ## Login-principal design
 
 Privilege roles never contain passwords. The local deployment provisions this

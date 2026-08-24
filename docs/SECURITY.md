@@ -79,3 +79,12 @@ path. Authorized reads require metadata visible in the caller's active HUMAN
 workspace and never serve the volume through NGINX/Apache. SVG and anonymous
 media are disabled, and a database failure after private object publication
 leaves only an unreferenced orphan for later Media GC.
+
+Media workspace assertions acquire the same transaction-scoped advisory lock
+used by human/editor mutation envelopes before checking mutable membership,
+workspace, session, site, and permission state. The local store opens the root,
+staging directory, digest ancestors, and final object with directory-relative
+`O_NOFOLLOW` descriptors, verifies private modes/types and content, fsyncs
+staged bytes/object/directories in publication order, and never recursively
+retries a destination race. Global edge request bodies remain strict; the
+larger allowance is confined to `/media/`.

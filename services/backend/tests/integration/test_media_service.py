@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 from pathlib import Path
@@ -94,14 +95,17 @@ async def test_media_upload_store_read_dedupe_and_canonical_fallback(
             str(user_id),
         )
         await owner.execute(
-            "INSERT INTO control.platform_administrator (user_account_id) VALUES ($1)",
-            user_id,
-        )
-        await owner.execute(
             "INSERT INTO control.site "
             "(id, site_key, display_name, default_locale, component_catalog_version) "
             "VALUES ($1, 'media-site', 'Media Site', 'en', 'catalog-v1')",
             site_id,
+        )
+        await owner.execute(
+            "INSERT INTO control.site_membership "
+            "(site_id, user_account_id, role_key, delegation_ceiling) "
+            "VALUES ($1, $2, 'SITE_EDITOR', 2)",
+            site_id,
+            user_id,
         )
         workspace_id = await owner.fetchval(
             "INSERT INTO control.workspace "
@@ -293,6 +297,31 @@ async def test_media_upload_store_read_dedupe_and_canonical_fallback(
                 assert replay.status_code == 201
                 assert replay.json()["record"]["id"] == str(media_id)
 
+                concurrent = await asyncio.gather(
+                    *(
+                        client.post(
+                            f"/v1/sites/{site_id}/assets",
+                            headers={
+                                **headers,
+                                "Idempotency-Key": f"media-concurrent-{index}",
+                            },
+                            data={
+                                "alt_text": f"Concurrent {index}",
+                                "metadata": json.dumps({"index": index}),
+                            },
+                            files={"file": ("concurrent.png", PNG, "image/png")},
+                        )
+                        for index in range(2)
+                    )
+                )
+                assert [response.status_code for response in concurrent] == [201, 201]
+                assert {response.json()["record"]["id"] for response in concurrent} == {
+                    str(media_id)
+                }
+                assert {
+                    response.json()["record"]["storage_key"] for response in concurrent
+                } == {upload_key}
+
                 mismatch = await client.post(
                     f"/v1/sites/{site_id}/assets",
                     headers=headers,
@@ -363,7 +392,7 @@ async def test_media_upload_store_read_dedupe_and_canonical_fallback(
                             "WHERE workspace_id = $1",
                             workspace_id,
                         )
-                        == 2
+                        == 4
                     )
                     assert (
                         await owner.fetchval(
@@ -371,7 +400,7 @@ async def test_media_upload_store_read_dedupe_and_canonical_fallback(
                             "WHERE workspace_id = $1",
                             workspace_id,
                         )
-                        == 2
+                        == 4
                     )
     finally:
         await media_database.stop()

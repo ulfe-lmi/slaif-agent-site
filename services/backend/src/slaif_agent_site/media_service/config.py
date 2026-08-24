@@ -18,6 +18,11 @@ MEDIA_PRIVILEGE_ROLE = "slaif_media"
 MEDIA_DSN_FILE = Path("/run/slaif-media/media-dsn")
 MEDIA_APPLICATION_NAME = "slaif-media-service"
 MEDIA_ROOT = Path("/var/lib/slaif/media")
+MEDIA_MAX_UPLOAD_BYTES_DEFAULT = 100 * 1024 * 1024
+MEDIA_MULTIPART_OVERHEAD_BYTES = 256 * 1024
+MEDIA_EDGE_BODY_LIMIT_BYTES = (
+    MEDIA_MAX_UPLOAD_BYTES_DEFAULT + MEDIA_MULTIPART_OVERHEAD_BYTES
+)
 _ERROR = "Invalid SLAIF Media configuration."
 
 
@@ -58,7 +63,9 @@ class MediaSettings(BaseSettings):
     lock_timeout_ms: int = Field(default=1000, ge=10, le=10000)
     idle_transaction_timeout_ms: int = Field(default=5000, ge=50, le=30000)
     media_root: Path = MEDIA_ROOT
-    max_upload_bytes: int = Field(default=100 * 1024 * 1024, ge=1, le=500 * 1024 * 1024)
+    max_upload_bytes: int = Field(
+        default=MEDIA_MAX_UPLOAD_BYTES_DEFAULT, ge=1, le=500 * 1024 * 1024
+    )
     application_name: str = MEDIA_APPLICATION_NAME
 
     @field_validator("dsn_file", "media_root")
@@ -195,6 +202,9 @@ class MediaSettings(BaseSettings):
 
 __all__ = [
     "MEDIA_APPLICATION_NAME",
+    "MEDIA_EDGE_BODY_LIMIT_BYTES",
+    "MEDIA_MAX_UPLOAD_BYTES_DEFAULT",
+    "MEDIA_MULTIPART_OVERHEAD_BYTES",
     "MEDIA_DSN_FILE",
     "MEDIA_LOGIN",
     "MEDIA_PRIVILEGE_ROLE",

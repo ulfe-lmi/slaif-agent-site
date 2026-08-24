@@ -50,6 +50,7 @@ MEDIA_LOGIN_FILE=
 MEDIA_SITES_FILE=
 MEDIA_UPLOAD_FILE=
 MEDIA_CONTENT_FILE=
+EDGE_LIMIT_BODY_FILE=
 
 cleanup() {
   test -z "$HEADER_FILE" || rm -f "$HEADER_FILE"
@@ -61,6 +62,7 @@ cleanup() {
   test -z "$MEDIA_SITES_FILE" || rm -f "$MEDIA_SITES_FILE"
   test -z "$MEDIA_UPLOAD_FILE" || rm -f "$MEDIA_UPLOAD_FILE"
   test -z "$MEDIA_CONTENT_FILE" || rm -f "$MEDIA_CONTENT_FILE"
+  test -z "$EDGE_LIMIT_BODY_FILE" || rm -f "$EDGE_LIMIT_BODY_FILE"
   docker compose -p "$NEGATIVE_PROJECT" -f "$ROOT/compose.yaml" \
     -f "$ROOT/tests/packaging/compose.broken-bootstrap.yaml" \
     down --volumes --remove-orphans >/dev/null 2>&1 || true
@@ -79,6 +81,7 @@ MEDIA_LOGIN_FILE=$(mktemp)
 MEDIA_SITES_FILE=$(mktemp)
 MEDIA_UPLOAD_FILE=$(mktemp)
 MEDIA_CONTENT_FILE=$(mktemp)
+EDGE_LIMIT_BODY_FILE=$(mktemp)
 chmod 600 "$TOKEN_FILE" "$E2E_SECRET_FILE"
 
 cd "$ROOT"
@@ -319,6 +322,24 @@ assert_edge_headers / 200
 assert_edge_headers /api/agent/health/live 200
 assert_edge_headers /definitely-not-a-product-route 404
 echo "edge-header-policy: OK page/api/404 request-id-count=1 request-id-format=32hex csp-count=1"
+
+dd if=/dev/zero of="$EDGE_LIMIT_BODY_FILE" bs=1048577 count=1 2>/dev/null
+edge_body_status() {
+  curl --silent --show-error --max-time 30 -o /dev/null -w '%{http_code}' \
+    -X POST -H 'Content-Type: application/octet-stream' \
+    --data-binary "@$EDGE_LIMIT_BODY_FILE" "$1"
+}
+test "$(edge_body_status http://localhost:8080/media/v1/sites/00000000-0000-0000-0000-000000000000/assets)" = 401
+for edge_rejected_path in \
+  /api/control/v1/me/sites \
+  /api/editor/v1/sites/00000000-0000-0000-0000-000000000000/media/ \
+  /api/agent/health/live \
+  /mcp/ \
+  /
+do
+  test "$(edge_body_status "http://localhost:8080$edge_rejected_path")" = 413
+done
+echo "edge-body-limit: OK media=route-allowance non-media=413 global=1MiB"
 
 docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif -Atc \
   "SELECT readiness_state || ' safe=' || safe FROM control.bootstrap_readiness WHERE singleton" \

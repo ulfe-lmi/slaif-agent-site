@@ -57,6 +57,12 @@ storage makes Media readiness unavailable without exposing the path.
 | `SLAIF_MEDIA_ROOT` | `/var/lib/slaif/media` | Absolute private content-addressed root; never an HTTP alias. |
 | `SLAIF_MEDIA_MAX_UPLOAD_BYTES` | `104857600` | Bounded 1–500 MiB upload limit. |
 
+The reference NGINX and Apache adapters keep the global request-body limit at
+1 MiB and scope the larger `104857600 + 262144` byte allowance to `/media/`.
+The extra 256 KiB is bounded multipart framing/metadata overhead for the
+default 100 MiB file limit; deployments changing the Media file limit must
+review the corresponding edge limit rather than relaxing unrelated routes.
+
 An environment file is never loaded implicitly. Setting `SLAIF_ENV_FILE`
 opts in to one absolute file only in `development`; `test` and `production`
 reject it. Normal production deployments should use a mounted secret file.
