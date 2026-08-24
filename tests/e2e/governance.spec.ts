@@ -662,6 +662,12 @@ test("puck-editor-round-trip-through-human-editor-api", async ({ page }) => {
   await expect(moveDown).toBeDisabled();
   await expect(undo).toBeEnabled();
   await expect(redo).toBeDisabled();
+  const otherPuckComponent = page.locator(`[data-puck-component="${secondVisibleId}"]`);
+  const otherPuckOverlay = otherPuckComponent.first();
+  await expect(otherPuckOverlay).toBeAttached();
+  await otherPuckOverlay.click({ force: true });
+  await expect(moveUp).toBeDisabled();
+  await expect(moveDown).toBeEnabled();
   await saveComposition();
 
   const persistedNodes = await loadPersistedNodes();

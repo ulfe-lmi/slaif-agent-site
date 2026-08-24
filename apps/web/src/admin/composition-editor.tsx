@@ -10,6 +10,7 @@ import {
   compositionToPuck,
   derivePuckSiblingReorderActions,
   puckToComposition,
+  shouldReleasePuckMovedSelection,
   type NormalizedCompositionNode,
   type PuckComponentConfig,
   type PuckData,
@@ -119,9 +120,11 @@ function PuckSiblingReorderActions({ children }: { children: ReactNode }) {
   const data = usePuckState((state) => state.appState.data as PuckData);
   const dispatch = usePuckState((state) => state.dispatch);
   const getPermissions = usePuckState((state) => state.getPermissions);
+  const getItemBySelector = usePuckState((state) => state.getItemBySelector);
   const getSelectorForId = usePuckState((state) => state.getSelectorForId);
   const itemSelector = usePuckState((state) => state.appState.ui.itemSelector);
   const movedComponentId = useRef<string | null>(null);
+  const lastData = useRef<PuckData | null>(null);
   const selectedProps = selectedItem?.props as Record<string, unknown> | undefined;
   const selectedId = typeof selectedProps?.id === "string" ? selectedProps.id : null;
   const selector = selectedId ? getSelectorForId(selectedId) : undefined;
@@ -133,8 +136,23 @@ function PuckSiblingReorderActions({ children }: { children: ReactNode }) {
   const moveDown = canDrag ? derived.moveDown : null;
 
   useEffect(() => {
+    const dataChanged = lastData.current !== data;
+    lastData.current = data;
     const id = movedComponentId.current;
     if (!id) return;
+    const currentItem = itemSelector ? getItemBySelector(itemSelector) : undefined;
+    const currentProps = currentItem?.props as Record<string, unknown> | undefined;
+    const currentId = typeof currentProps?.id === "string" ? currentProps.id : null;
+    if (
+      shouldReleasePuckMovedSelection({
+        movedComponentId: id,
+        selectedComponentId: currentId,
+        dataChanged,
+      })
+    ) {
+      movedComponentId.current = null;
+      return;
+    }
     const selector = getSelectorForId(id);
     if (!selector) return;
     const target = {
@@ -144,7 +162,7 @@ function PuckSiblingReorderActions({ children }: { children: ReactNode }) {
     if (itemSelector?.index === target.index && itemSelector.zone === target.zone)
       return;
     dispatch({ type: "setUi", ui: { itemSelector: target }, recordHistory: false });
-  }, [data, dispatch, getSelectorForId, itemSelector]);
+  }, [data, dispatch, getItemBySelector, getSelectorForId, itemSelector]);
 
   const dispatchPlan = (plan: PuckReorderPlan | null) => {
     if (!plan || !selectedId) return;

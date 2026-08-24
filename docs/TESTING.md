@@ -44,7 +44,10 @@ and selection boundary without backend operations. The scenario saves only the
 final redone state, reloads the composition, and verifies the same stable
 first-component ID moved from order 0 to order 1, the second ID at order 0,
 normalized server records, workspace overlay, HUMAN audit, and idempotency
-evidence. The final editor response must carry only the documented style-only
+evidence. It then explicitly selects the other visible component and verifies
+that deliberate selection remains stable and controls reflect its inverse
+boundary; later moves may bind continuity to a new selection. The final editor
+response must carry only the documented style-only
 CSP exception; scripts remain nonce-bound and the observer fails on any CSP
 console violation, unexpected console/page/network failure, or server error.
 Public and unrelated admin policies remain strict.

@@ -33,6 +33,18 @@ export interface PuckReorderPlan {
   readonly actions: readonly [PuckReorderAction, PuckSelectionAction];
 }
 
+export function shouldReleasePuckMovedSelection(input: {
+  readonly movedComponentId: string | null;
+  readonly selectedComponentId: string | null;
+  readonly dataChanged: boolean;
+}): boolean {
+  return Boolean(
+    input.movedComponentId &&
+    !input.dataChanged &&
+    input.selectedComponentId !== input.movedComponentId,
+  );
+}
+
 export interface PuckSiblingReorderActions {
   readonly zone: string | null;
   readonly sourceIndex: number | null;

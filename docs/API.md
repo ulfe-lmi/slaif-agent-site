@@ -123,7 +123,9 @@ with the accessible `Move up`/`Move down` controls; those controls dispatch
 Puck's same-zone reorder action with history recording and never replace the
 controlled data directly. Selection follows the moved component at its
 destination, and the move participates in Puck's visible undo/redo history
-without creating another semantic editor operation. This order does not implement publication, preview authority,
+without creating another semantic editor operation. A later deliberate human
+selection always takes precedence and releases that temporary continuity.
+This order does not implement publication, preview authority,
 workspace-management UI, freeze/review/promotion, responsive preview, or new
 catalog/storage types.
 

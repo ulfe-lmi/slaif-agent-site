@@ -7,6 +7,7 @@ import {
 } from "../src/puck-adapter";
 import {
   derivePuckSiblingReorderActions,
+  shouldReleasePuckMovedSelection,
   type PuckReorderPlan,
 } from "../src/puck-reorder";
 
@@ -169,6 +170,37 @@ describe("puck adapter", () => {
       moveUp: plan(1, 0, "root:default"),
       moveDown: null,
     });
+  });
+
+  it("releases continuity only for deliberate selection without a data transition", () => {
+    expect(
+      shouldReleasePuckMovedSelection({
+        movedComponentId: "moved",
+        selectedComponentId: "other",
+        dataChanged: false,
+      }),
+    ).toBe(true);
+    expect(
+      shouldReleasePuckMovedSelection({
+        movedComponentId: "moved",
+        selectedComponentId: "moved",
+        dataChanged: false,
+      }),
+    ).toBe(false);
+    expect(
+      shouldReleasePuckMovedSelection({
+        movedComponentId: "moved",
+        selectedComponentId: "other",
+        dataChanged: true,
+      }),
+    ).toBe(false);
+    expect(
+      shouldReleasePuckMovedSelection({
+        movedComponentId: null,
+        selectedComponentId: "other",
+        dataChanged: false,
+      }),
+    ).toBe(false);
   });
 
   it("rejects unknown component types and executable/bookkeeping props", () => {
