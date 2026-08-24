@@ -643,7 +643,7 @@ test("puck-editor-round-trip-through-human-editor-api", async ({ page }) => {
   expect(beforeVisibleOrder).toHaveLength(2);
   expect(beforeVisibleOrder[0]).toBe(firstSectionId);
   const secondVisibleId = beforeVisibleOrder[1];
-  expect(secondVisibleId).toBeTruthy();
+  if (!secondVisibleId) throw new Error("missing-second-visible-component-id");
   await moveDown.click();
   await expect.poll(visibleComponentOrder).toEqual([secondVisibleId, firstSectionId]);
   await expect(moveUp).toBeEnabled();
