@@ -202,6 +202,10 @@ async def test_each_app_has_only_typed_health_routes(
         }
     if process is ProcessKind.RENDER_API:
         expected_routes.add("/internal/render/v1/site-context")
+        expected_routes |= {
+            "/internal/render/v1/page",
+            "/internal/render/v1/preview",
+        }
     assert _route_paths(app) == expected_routes
     assert app.docs_url is None
     assert app.redoc_url is None

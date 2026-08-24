@@ -1,4 +1,12 @@
 import type { SiteContext } from "./render";
+import type { PageProjection } from "./render";
+import { renderProjection } from "../renderer/components";
+
+export function PageProjectionShell({
+  projection,
+}: Readonly<{ projection: PageProjection }>) {
+  return renderProjection(projection);
+}
 
 export function SiteContextShell({ context }: Readonly<{ context: SiteContext }>) {
   return (
@@ -18,8 +26,8 @@ export function SiteContextShell({ context }: Readonly<{ context: SiteContext }>
           <span className="badge">Trusted routing context</span>
           <h1 id="site-title">Site: {context.site_key}</h1>
           <p className="lead">
-            This shell proves active site routing only. Editorial content and
-            publication are not implemented.
+            This routing shell is available when a site has no published page projection
+            for the requested path.
           </p>
           <dl>
             <dt>Canonical revision</dt>

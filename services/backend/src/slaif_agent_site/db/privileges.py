@@ -197,6 +197,12 @@ PUBLIC_RESOLVER_FUNCTIONS = {
     ("slaif_site_resolve", "p_hostname text, p_path text"): "text, text",
     ("slaif_site_resolve_local", "p_site_key text"): "text",
 }
+PREVIEW_RENDER_FUNCTIONS = {
+    (
+        "slaif_render_preview_authorize",
+        "p_public_id text, p_secret_digest bytea, p_workspace_id uuid, p_site_id uuid",
+    ): "text, bytea, uuid, uuid",
+}
 CONTROL_FUNCTIONS = {
     (CONTROL_READINESS_FUNCTION, ""): "",
     (CONTROL_SETUP_STATUS_FUNCTION, ""): "",
@@ -650,6 +656,15 @@ async def apply_product_privileges(
             f'"control".{quote_identifier(name)}({signature}) '
             'TO "slaif_public_reader"'
         )
+    await connection.execute(
+        'GRANT USAGE ON SCHEMA "control" TO "slaif_preview_reader"'
+    )
+    for (name, _identity), signature in PREVIEW_RENDER_FUNCTIONS.items():
+        await connection.execute(
+            "GRANT EXECUTE ON FUNCTION "
+            f'"control".{quote_identifier(name)}({signature}) '
+            'TO "slaif_preview_reader"'
+        )
 
 
 async def _role_violations(connection: asyncpg.Connection[Any]) -> list[str]:
@@ -756,6 +771,7 @@ async def _schema_violations(
                 in {
                     *CAPABILITY_READ_ROLES,
                     "slaif_public_reader",
+                    "slaif_preview_reader",
                     "slaif_editor_runtime",
                     "slaif_media",
                 }
@@ -977,6 +993,11 @@ async def _function_violations(
                 and (name, arguments) in PUBLIC_RESOLVER_FUNCTIONS
                 and role == "slaif_public_reader"
             )
+            preview_render = (
+                schema == "control"
+                and (name, arguments) in PREVIEW_RENDER_FUNCTIONS
+                and role == "slaif_preview_reader"
+            )
             is_content_model_function = (
                 schema == "content"
                 and name.startswith("slaif_content_type_")
@@ -1003,6 +1024,7 @@ async def _function_violations(
                     )
                 )
                 or public_resolver
+                or preview_render
                 or (
                     readiness_state is ReadinessState.HARDENED
                     and schema == FOUNDATION_SCHEMA
@@ -1019,6 +1041,8 @@ async def _function_violations(
             if is_control_function and role == CONTROL_ROLE and not can_execute:
                 violations.append(f"function/{schema}.{name}/{role}/missing-execute")
             if is_agent_function and role == "slaif_agent_runtime" and not can_execute:
+                violations.append(f"function/{schema}.{name}/{role}/missing-execute")
+            if preview_render and not can_execute:
                 violations.append(f"function/{schema}.{name}/{role}/missing-execute")
             if is_media_function and role == "slaif_media" and not can_execute:
                 violations.append(f"function/{schema}.{name}/{role}/missing-execute")

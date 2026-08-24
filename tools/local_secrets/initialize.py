@@ -25,6 +25,8 @@ CONTROL_DIRECTORY_MODE = 0o700
 CONTROL_DSN_FILE = "control-dsn"
 AGENT_DSN_FILE = "agent-dsn"
 RENDER_DSN_FILE = "render-dsn"
+PREVIEW_DSN_FILE = "preview-dsn"
+RENDER_TOKEN_FILE = "render-token"
 EDITOR_DSN_FILE = "editor-dsn"
 MEDIA_DSN_FILE = "media-dsn"
 MEDIA_ROOT_MODE = 0o700
@@ -125,6 +127,8 @@ def initialize(
     control_directory: Path | None = None,
     agent_directory: Path | None = None,
     render_directory: Path | None = None,
+    preview_directory: Path | None = None,
+    render_auth_directory: Path | None = None,
     editor_directory: Path | None = None,
     media_directory: Path | None = None,
     media_root: Path | None = None,
@@ -138,6 +142,10 @@ def initialize(
         raise SecretInitializationError("Agent secret directory must be absolute")
     if render_directory is not None and not render_directory.is_absolute():
         raise SecretInitializationError("Render secret directory must be absolute")
+    if preview_directory is not None and not preview_directory.is_absolute():
+        raise SecretInitializationError("Render preview directory must be absolute")
+    if render_auth_directory is not None and not render_auth_directory.is_absolute():
+        raise SecretInitializationError("Render auth directory must be absolute")
     if editor_directory is not None and not editor_directory.is_absolute():
         raise SecretInitializationError("Editor secret directory must be absolute")
     if media_directory is not None and not media_directory.is_absolute():
@@ -351,6 +359,91 @@ def initialize(
             os.close(render_fd)
         isolated_files += 1
 
+    if preview_directory is not None:
+        preview_file = preview_directory / PREVIEW_DSN_FILE
+        expected_preview_dsn = dsn_files["service-preview-dsn"]
+        initialize_preview_file = not preview_file.exists()
+        if initialize_preview_file:
+            if validate_only:
+                raise SecretInitializationError(
+                    "Render preview secret directory is unavailable"
+                )
+            if preview_directory.exists() and any(preview_directory.iterdir()):
+                raise SecretInitializationError(
+                    "Render preview secret directory policy mismatch"
+                )
+            _prepare_directory(
+                preview_directory,
+                mode=CONTROL_DIRECTORY_MODE,
+                uid=DIRECTORY_UID,
+                gid=DIRECTORY_UID,
+            )
+            _write_once(preview_file, expected_preview_dsn, uid=APPLICATION_UID)
+        _prepare_directory(
+            preview_directory,
+            mode=CONTROL_DIRECTORY_MODE,
+            uid=APPLICATION_UID,
+            gid=APPLICATION_UID,
+        )
+        if {path.name for path in preview_directory.iterdir()} != {PREVIEW_DSN_FILE}:
+            raise SecretInitializationError(
+                "Render preview secret directory policy mismatch"
+            )
+        actual_preview_dsn = _read_secret(preview_file, uid=APPLICATION_UID)
+        if not secrets.compare_digest(actual_preview_dsn, expected_preview_dsn):
+            raise SecretInitializationError("isolated Render preview locator mismatch")
+        preview_fd = os.open(
+            preview_directory,
+            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+        )
+        try:
+            os.fsync(preview_fd)
+        finally:
+            os.close(preview_fd)
+        isolated_files += 1
+
+    if render_auth_directory is not None:
+        token_file = render_auth_directory / RENDER_TOKEN_FILE
+        initialize_token_file = not token_file.exists()
+        if initialize_token_file:
+            if validate_only:
+                raise SecretInitializationError(
+                    "Render auth secret directory is unavailable"
+                )
+            if render_auth_directory.exists() and any(render_auth_directory.iterdir()):
+                raise SecretInitializationError(
+                    "Render auth secret directory policy mismatch"
+                )
+            _prepare_directory(
+                render_auth_directory,
+                mode=CONTROL_DIRECTORY_MODE,
+                uid=DIRECTORY_UID,
+                gid=DIRECTORY_UID,
+            )
+            _write_once(token_file, secrets.token_urlsafe(48), uid=APPLICATION_UID)
+        _prepare_directory(
+            render_auth_directory,
+            mode=CONTROL_DIRECTORY_MODE,
+            uid=APPLICATION_UID,
+            gid=APPLICATION_UID,
+        )
+        if {path.name for path in render_auth_directory.iterdir()} != {
+            RENDER_TOKEN_FILE
+        }:
+            raise SecretInitializationError(
+                "Render auth secret directory policy mismatch"
+            )
+        _read_secret(token_file, uid=APPLICATION_UID)
+        auth_fd = os.open(
+            render_auth_directory,
+            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+        )
+        try:
+            os.fsync(auth_fd)
+        finally:
+            os.close(auth_fd)
+        isolated_files += 1
+
     if media_directory is not None:
         media_file = media_directory / MEDIA_DSN_FILE
         expected_media_dsn = dsn_files["service-media-dsn"]
@@ -429,6 +522,16 @@ def main() -> int:
         default=Path("/run/slaif-render"),
     )
     parser.add_argument(
+        "--preview-directory",
+        type=Path,
+        default=Path("/run/slaif-render-preview"),
+    )
+    parser.add_argument(
+        "--render-auth-directory",
+        type=Path,
+        default=Path("/run/slaif-render-auth"),
+    )
+    parser.add_argument(
         "--editor-directory",
         type=Path,
         default=Path("/run/slaif-editor"),
@@ -447,6 +550,8 @@ def main() -> int:
             control_directory=arguments.control_directory,
             agent_directory=arguments.agent_directory,
             render_directory=arguments.render_directory,
+            preview_directory=arguments.preview_directory,
+            render_auth_directory=arguments.render_auth_directory,
             editor_directory=arguments.editor_directory,
             media_directory=arguments.media_directory,
             media_root=arguments.media_root,

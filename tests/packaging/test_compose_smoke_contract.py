@@ -21,7 +21,12 @@ class ComposeSmokeContractTests(unittest.TestCase):
         )
 
     def test_established_safe_project_families_are_accepted(self) -> None:
-        for project in ("slaif007ci", "slaif009fixture", "slaif010rsmoke"):
+        for project in (
+            "slaif007ci",
+            "slaif009fixture",
+            "slaif010rsmoke",
+            "slaif071a",
+        ):
             with self.subTest(project=project):
                 result = self.validate(project)
                 self.assertEqual(result.returncode, 0)

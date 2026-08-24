@@ -1,10 +1,11 @@
 # Local Compose deployment skeleton
 
-The implemented default deployment is a pre-alpha status and authority
-skeleton. It starts every planned process identity, establishes the empty-safe
-database foundation, and exposes bounded services through NGINX. It implements
-local setup/authentication and a trusted multi-site routing shell, but not site
-content, workspaces, editing, browser automation, review, or publication.
+The implemented default deployment starts every planned process identity,
+establishes the database foundation, and exposes bounded services through
+NGINX. It implements local setup/authentication, canonical page projection,
+authenticated active-workspace preview, and trusted SSR rendering; review,
+promotion, publication, browser-worker automation, and public media finalization
+remain separate objectives.
 
 ## Prerequisites and startup
 
@@ -36,11 +37,12 @@ docker compose up --build --wait
 docker compose ps
 ```
 
-The first start creates five named volumes, generates private local database
-files, isolates the Control and Render DSNs, initializes PostgreSQL, seeds the
-exact fresh `demo` site, and runs the one-shot bootstrap. A returning start
-validates and reuses credentials and data, does not reissue the setup token,
-skips seed enforcement after setup, and starts the same service graph.
+The first start creates the named volumes, generates private local database
+files plus separate public/preview Render locators and a Web-to-Render
+credential, initializes PostgreSQL, seeds the exact fresh `demo` site, and runs
+the one-shot bootstrap. A returning start validates and reuses credentials and
+data, does not reissue the setup token, skips seed enforcement after setup, and
+starts the same service graph.
 
 ### PostgreSQL baseline
 
@@ -57,7 +59,8 @@ requires a separately designed and tested logical process.
 | --- | --- | --- |
 | `/` | Web | Accessible pre-alpha deployment-status page. |
 | `/health/live`, `/health/ready` | Web | Bounded Web process health only. |
-| `/s/demo/` and other resolved paths | Web→Render | Routing-context shell for an active trusted site match. |
+| `/s/demo/` and other resolved paths | Web→Render | Canonical published page HTML from a typed Render projection, with a safe routing shell when no page exists. |
+| `/preview/{workspace_id}/...` | Web→Render | Authenticated HUMAN workspace-overlay HTML; private/no-store/noindex and never public cacheable. |
 | `/api/control/` | Control API | Prefix-stripped health plus authenticated setup/session, site/domain, RBAC catalog, and membership routes; readiness includes one database component. |
 | `/api/editor/health/` | Editor API | Exact liveness/readiness aliases. |
 | `/api/editor/v1/` | Editor API | Prefix-preserving human Editor API routes. |
@@ -102,7 +105,7 @@ design rather than weaken this baseline.
 | Media HTTP service | Backend | `10001:10001` | edge/database plus isolated Media secret | private `media-data` only; initialized `0700` for UID 10001 |
 | Three Python workers | Backend | `10001:10001` | database | media volume on media-GC only |
 | `browser-worker` | Browser placeholder | `10001:10001` | browser only | none |
-| `web` | Next.js | `10001:10001` | edge, application | none |
+| `web` | Next.js | `10001:10001` | edge, application | read-only `render-auth-secret` credential |
 | `nginx` | NGINX Open Source | `101:101` | edge only | none |
 
 All Compose containers use a read-only root filesystem, drop all default Linux
@@ -205,13 +208,15 @@ content COW calls. It also mounts `control-secret` only for human session,
 site, and permission authorization; the two pools and credentials remain
 separate. No Agent capability or publication authority is present.
 
-The separate `render-secret` volume likewise contains exactly one
-`render-dsn`, byte-identical to the generated public-reader locator. Its
-directory is mode `0700`, its file is mode `0400`, and both belong to
-`10001:10001`. Only the initializer mounts it read/write; Render mounts it
-read-only. Web reaches Render over the application network and has no database
-credential. NGINX, Control, agents, browser, and workers receive no Render
-locator.
+The separate `render-secret` volume contains exactly one `render-dsn`, and
+`render-preview-secret` contains exactly one `preview-dsn`; each is byte-
+identical to its fixed generated reader locator. Their directories are mode
+`0700`, files are mode `0400`, and both belong to `10001:10001`. Only the
+initializer mounts them read/write; Render mounts both read-only. The separate
+`render-auth-secret` volume contains exactly one high-entropy `render-token`
+file and is mounted read-only to Web and Render. Web reaches Render over the
+application network and has no database credential. NGINX, Control, agents,
+browser, and workers receive no Render locator or service credential.
 
 Institutional deployments may replace the generator with externally managed
 files that use the same names and fixed principal model. They must preserve

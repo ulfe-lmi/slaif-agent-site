@@ -19,7 +19,7 @@ test("setup-desktop-phone-and-initialize", async ({ page }) => {
 
   stage("demo-routing-before-setup");
   await page.goto("/s/demo/");
-  await expect(page.getByRole("heading", { level: 1 })).toHaveText("Site: demo");
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText("SLAIF Demo Site");
   await page.setViewportSize({ width: 320, height: 720 });
   await expectUsable(page);
 

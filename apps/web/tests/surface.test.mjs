@@ -279,7 +279,10 @@ test("site shell uses only the fixed server-side Render resolver", async () => {
   assert.doesNotMatch(client, /process\.env|cookie|authorization|forwarded/i);
   assert.match(shell, /requestHeaders\.get\("host"\)/);
   assert.match(shellView, /Trusted routing context/);
-  assert.match(shellView, /Editorial content and\s+publication are not implemented/);
+  assert.match(
+    shellView,
+    /routing shell is available when a site has no published page/,
+  );
   assert.match(landing, /isLoopbackAuthority/);
   assert.match(landing, /resolveSiteContext\(authority, "\/"\)/);
   assert.doesNotMatch(shell, /site_id.*params|x-forwarded-host/i);

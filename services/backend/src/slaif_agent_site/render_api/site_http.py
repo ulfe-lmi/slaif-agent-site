@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
-from typing import Any
+import os
+import secrets
+from pathlib import Path
+from typing import Any, Never
 from uuid import UUID
 
-from fastapi import APIRouter, FastAPI, Response
+from fastapi import APIRouter, FastAPI, Header, Response
 from pydantic import BaseModel, ConfigDict
+from starlette.responses import JSONResponse
 
 from slaif_agent_site.errors import (
     ResourceConflictError,
@@ -14,6 +18,14 @@ from slaif_agent_site.errors import (
     ServiceUnavailableError,
 )
 from slaif_agent_site.sites.resolver import SiteResolverError, SiteResolverReason
+
+from .projection import (
+    ProjectionError,
+    RenderPageProjection,
+    RenderPageRequest,
+    RenderPreviewRequest,
+    RenderProjectionService,
+)
 
 
 class RenderSiteContextRequest(BaseModel):
@@ -70,16 +82,98 @@ def install_render_site_route(app: FastAPI, database: Any) -> None:
     app.include_router(router)
 
 
+def _projection_error(error: ProjectionError) -> Never:
+    if error.reason == "not_found":
+        raise ResourceNotFoundError() from None
+    if error.reason == "unavailable":
+        raise ServiceUnavailableError() from None
+    raise ResourceNotFoundError() from None
+
+
+def install_render_projection_routes(app: FastAPI, database: Any) -> None:
+    router = APIRouter(prefix="/internal/render/v1")
+    service = RenderProjectionService(database)
+
+    @router.post("/page", response_model=RenderPageProjection)
+    async def canonical_page(
+        payload: RenderPageRequest, response: Response
+    ) -> RenderPageProjection:
+        _headers(response)
+        try:
+            return await service.canonical(payload)
+        except ProjectionError as error:
+            _projection_error(error)
+
+    @router.post("/preview", response_model=RenderPageProjection)
+    async def preview_page(
+        payload: RenderPreviewRequest,
+        response: Response,
+        human_session: str | None = Header(default=None, alias="X-SLAIF-Human-Session"),
+    ) -> RenderPageProjection:
+        _headers(response)
+        selected = payload
+        if human_session is not None:
+            selected = payload.model_copy(update={"session_token": human_session})
+        try:
+            return await service.preview(selected)
+        except ProjectionError as error:
+            _projection_error(error)
+
+    app.include_router(router)
+
+
+class RenderServiceAuthenticationMiddleware:
+    """Authenticate Web-to-Render calls before any projection body is used."""
+
+    def __init__(self, app: Any, *, allow_test: bool = False) -> None:
+        self.app = app
+        self.allow_test = allow_test
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        path = scope.get("path", "")
+        if scope.get("type") != "http" or not path.startswith("/internal/render/v1/"):
+            await self.app(scope, receive, send)
+            return
+        mode = os.environ.get("SLAIF_MODE", "development").casefold()
+        if self.allow_test:
+            mode = "test"
+        token = None
+        if mode == "test":
+            await self.app(scope, receive, send)
+            return
+        try:
+            token_path = Path(
+                os.environ.get(
+                    "SLAIF_RENDER_SERVICE_TOKEN_FILE",
+                    "/run/slaif-render-auth/render-token",
+                )
+            )
+            token = token_path.read_text(encoding="ascii")
+            if not token or "\n" in token or "\r" in token:
+                token = None
+        except (OSError, UnicodeError):
+            token = None
+        headers = scope.get("headers", [])
+        values = [
+            value for name, value in headers if name.lower() == b"x-slaif-render-token"
+        ]
+        expected = token.encode("ascii") if token else b""
+        if len(values) != 1 or not secrets.compare_digest(values[0], expected):
+            response = JSONResponse({"error": "authentication_error"}, status_code=401)
+            await response(scope, receive, send)
+            return
+        await self.app(scope, receive, send)
+
+
 class RenderPrivateHeadersMiddleware:
     def __init__(self, app: Any) -> None:
         self.app = app
 
     async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
         async def secured(message: Any) -> None:
-            if (
-                message["type"] == "http.response.start"
-                and scope.get("path") == "/internal/render/v1/site-context"
-            ):
+            if message["type"] == "http.response.start" and scope.get(
+                "path", ""
+            ).startswith("/internal/render/v1/"):
                 protected = {b"cache-control", b"pragma", b"x-robots-tag"}
                 headers = [
                     item

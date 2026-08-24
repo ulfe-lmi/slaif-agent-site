@@ -313,14 +313,33 @@ async def ensure_demo_site(settings: BootstrapSettings) -> None:
             )
             expected = ("demo", "SLAIF Demo Site", "en", "ACTIVE", 0, 0, "catalog-v0")
             if not rows:
-                await connection.execute(
+                site_id = await connection.fetchval(
                     "INSERT INTO control.site "
                     "(site_key, display_name, default_locale, "
-                    "component_catalog_version) VALUES ($1, $2, $3, $4)",
+                    "component_catalog_version) VALUES ($1, $2, $3, $4) "
+                    "RETURNING id",
                     expected[0],
                     expected[1],
                     expected[2],
                     expected[6],
+                )
+                page_id = await connection.fetchval(
+                    "INSERT INTO content.page_base "
+                    "(site_id, slug, title, status, locale) VALUES "
+                    "($1, 'home', 'SLAIF Demo Site', 'PUBLISHED', 'en') "
+                    "RETURNING id",
+                    site_id,
+                )
+                await connection.execute(
+                    "INSERT INTO content.page_composition_base "
+                    "(site_id, page_id, component_type, schema_version, "
+                    "slot_key, order_key, props) VALUES "
+                    "($1, $2, 'Heading', '1', 'default', 0, $3::jsonb), "
+                    "($1, $2, 'RichText', '1', 'default', 1, $4::jsonb)",
+                    site_id,
+                    page_id,
+                    '{"text":"SLAIF Demo Site","level":2}',
+                    '{"content":"A trusted canonical page projection."}',
                 )
                 return
             if len(rows) != 1 or tuple(rows[0]) != expected:

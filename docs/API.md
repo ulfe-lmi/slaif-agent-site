@@ -254,21 +254,35 @@ archived state 409; validation 422; persistence unavailability 503. Every
 success and error is `private, no-store`, `noindex`, and carries one request ID.
 Errors use the stable envelope and reveal no credential or cross-site detail.
 
-## Internal Render resolution API
+## Internal Render projection API
 
-Render exposes exactly one non-health route on its internal listener:
-`POST /internal/render/v1/site-context`. Its extra-forbid body contains only
-`authority` and `path`. The response contains the resolved active site UUID,
-key, canonical revision, default locale, and matched hostname/path prefix; it
-contains no lifecycle, user, workspace, capability, preview, or publication
-authority. Invalid, reserved, unknown, and archived inputs share 404; ambiguity
-is 409 and persistence failure is 503. All responses are private/no-store,
-noindex, and request-ID correlated. No edge or public route targets it.
+Render exposes typed, private projection routes on its internal listener:
 
-The database-free Web server is its only routing-shell client. It calls the
-fixed `http://render-api:8000/internal/render/v1/site-context` URL with a short
-timeout, `no-store`, no cookies or authorization, and only the actual request
-Host/path. The browser never receives the internal URL. Successful resolution
-renders routing facts only; failure returns 404, while Render unavailability
-makes Web readiness fail with 503. NGINX and Apache reject direct `/internal/`
-requests.
+| Route | Contract |
+| --- | --- |
+| `POST /internal/render/v1/site-context` | bounded authority/path routing context |
+| `POST /internal/render/v1/page` | published canonical page projection |
+| `POST /internal/render/v1/preview` | authorized HUMAN workspace overlay projection |
+
+Page responses contain site/revision, normalized route/locale, page metadata,
+a bounded normalized composition tree, catalog/schema versions,
+theme/navigation data, and same-site bounded collection bindings. Render
+returns JSON only; Web owns HTML and uses the trusted React catalog renderer.
+Unknown, archived, unpublished, wrong-site, ambiguous, malformed, or
+cross-workspace resources fail closed without partial data.
+
+The preview route accepts an untrusted workspace UUID only after the internal
+Web request is authenticated with the file-backed service credential and the
+human session proof is authorized by the fixed `preview:inspect` database
+function. Canonical and preview use separate read-only pools. Preview opens
+one COW session using the authorized workspace UUID and leaves no mutation,
+idempotency, or audit residue. Every internal response is private/no-store,
+noindex, and request-ID correlated. NGINX and Apache reject direct
+`/internal/` requests.
+
+Web calls the fixed internal URLs server-side with a short timeout. The
+service credential and human session proof never enter browser JavaScript,
+HTML, query strings, storage, logs, or artifacts. Public catch-all pages and
+`/preview/{workspace_id}/{site_path...}` render the same trusted React
+component implementation; preview responses are additionally private,
+no-store, and `noindex`.

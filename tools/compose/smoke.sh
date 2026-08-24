@@ -7,7 +7,7 @@ NEGATIVE_PROJECT="${PROJECT}negative"
 
 validate_project() {
   case "$1" in
-    slaif007[a-z0-9]*|slaif009[a-z0-9]*|slaif010[a-z0-9]*) return 0 ;;
+    slaif007[a-z0-9]*|slaif009[a-z0-9]*|slaif010[a-z0-9]*|slaif071[a-z0-9]*) return 0 ;;
     *) echo "compose-smoke: unsafe project name" >&2; return 2 ;;
   esac
 }
@@ -409,6 +409,35 @@ if docker run --rm --network none --read-only --cap-drop ALL \
   >/dev/null 2>&1
 then
   echo "compose-smoke: unrelated uid unexpectedly read Render locator" >&2
+  exit 1
+fi
+
+docker run --rm --network none --read-only --cap-drop ALL --cap-add DAC_READ_SEARCH \
+  --user 0:0 --volume "${PROJECT}_local-secrets:/master:ro" \
+  --volume "${PROJECT}_render-preview-secret:/preview:ro" \
+  --entrypoint python slaif-agent-site-backend:local -c \
+  "import pathlib,secrets,stat; root=pathlib.Path('/preview'); files=list(root.iterdir()); assert len(files)==1 and files[0].name=='preview-dsn'; info=root.stat(); file=files[0]; assert stat.S_IMODE(info.st_mode)==0o700 and info.st_uid==10001 and info.st_gid==10001; assert stat.S_IMODE(file.stat().st_mode)==0o400 and file.stat().st_uid==10001; assert secrets.compare_digest(file.read_bytes(), pathlib.Path('/master/service-preview-dsn').read_bytes()); print('render-preview-secret-policy: OK files=1 mode=0400 owner=10001')"
+if docker run --rm --network none --read-only --cap-drop ALL \
+  --user 10003:10003 --volume "${PROJECT}_render-preview-secret:/preview:ro" \
+  --entrypoint python slaif-agent-site-backend:local -c \
+  "import pathlib; pathlib.Path('/preview/preview-dsn').read_bytes()" \
+  >/dev/null 2>&1
+then
+  echo "compose-smoke: unrelated uid unexpectedly read Render preview locator" >&2
+  exit 1
+fi
+
+docker run --rm --network none --read-only --cap-drop ALL --cap-add DAC_READ_SEARCH \
+  --user 0:0 --volume "${PROJECT}_render-auth-secret:/auth:ro" \
+  --entrypoint python slaif-agent-site-backend:local -c \
+  "import pathlib,stat; root=pathlib.Path('/auth'); files=list(root.iterdir()); assert len(files)==1 and files[0].name=='render-token'; info=root.stat(); file=files[0]; assert stat.S_IMODE(info.st_mode)==0o700 and info.st_uid==10001 and info.st_gid==10001; assert stat.S_IMODE(file.stat().st_mode)==0o400 and file.stat().st_uid==10001 and len(file.read_bytes())>=43; print('render-auth-secret-policy: OK files=1 mode=0400 owner=10001')"
+if docker run --rm --network none --read-only --cap-drop ALL \
+  --user 10003:10003 --volume "${PROJECT}_render-auth-secret:/auth:ro" \
+  --entrypoint python slaif-agent-site-backend:local -c \
+  "import pathlib; pathlib.Path('/auth/render-token').read_bytes()" \
+  >/dev/null 2>&1
+then
+  echo "compose-smoke: unrelated uid unexpectedly read Render service credential" >&2
   exit 1
 fi
 

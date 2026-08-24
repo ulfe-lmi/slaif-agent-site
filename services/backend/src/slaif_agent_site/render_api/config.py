@@ -16,6 +16,10 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 RENDER_LOGIN = "slaif_public_login"
 RENDER_PRIVILEGE_ROLE = "slaif_public_reader"
 RENDER_DSN_FILE = Path("/run/slaif-render/render-dsn")
+RENDER_PREVIEW_LOGIN = "slaif_preview_login"
+RENDER_PREVIEW_PRIVILEGE_ROLE = "slaif_preview_reader"
+RENDER_PREVIEW_DSN_FILE = Path("/run/slaif-render-preview/preview-dsn")
+RENDER_SERVICE_TOKEN_FILE = Path("/run/slaif-render-auth/render-token")
 RENDER_APPLICATION_NAME = "slaif-render-api"
 _ERROR = "Invalid SLAIF Render database configuration."
 
@@ -43,9 +47,15 @@ class RenderDatabaseSettings(BaseSettings):
     mode: RenderDatabaseMode = RenderDatabaseMode.DEVELOPMENT
     dsn: SecretStr | None = None
     dsn_file: Path | None = RENDER_DSN_FILE
+    preview_dsn: SecretStr | None = None
+    preview_dsn_file: Path | None = RENDER_PREVIEW_DSN_FILE
+    service_token: SecretStr | None = None
+    service_token_file: Path | None = RENDER_SERVICE_TOKEN_FILE
     expected_database: str = "slaif"
     expected_login: str = RENDER_LOGIN
     expected_privilege_role: str = RENDER_PRIVILEGE_ROLE
+    preview_expected_login: str = RENDER_PREVIEW_LOGIN
+    preview_expected_privilege_role: str = RENDER_PREVIEW_PRIVILEGE_ROLE
     pool_min_size: int = Field(default=1, ge=1, le=4)
     pool_max_size: int = Field(default=4, ge=1, le=16)
     acquire_timeout_seconds: float = Field(default=1.5, ge=0.05, le=10)
@@ -58,14 +68,20 @@ class RenderDatabaseSettings(BaseSettings):
     idle_transaction_timeout_ms: int = Field(default=2000, ge=50, le=30000)
     application_name: str = RENDER_APPLICATION_NAME
 
-    @field_validator("dsn_file")
+    @field_validator("dsn_file", "preview_dsn_file", "service_token_file")
     @classmethod
     def absolute_file(cls, value: Path | None) -> Path | None:
         if value is not None and not value.is_absolute():
             raise ValueError("Render database file must be absolute")
         return value
 
-    @field_validator("expected_database", "expected_login", "expected_privilege_role")
+    @field_validator(
+        "expected_database",
+        "expected_login",
+        "expected_privilege_role",
+        "preview_expected_login",
+        "preview_expected_privilege_role",
+    )
     @classmethod
     def identity(cls, value: str) -> str:
         if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{0,62}", value):
@@ -90,8 +106,33 @@ class RenderDatabaseSettings(BaseSettings):
                 raise ValueError("test mode requires one Render database locator")
         elif self.dsn is not None or self.dsn_file is None:
             raise ValueError("Render database locator must use a mounted file")
+        if self.preview_dsn is not None and self.preview_dsn_file is not None:
+            if not (
+                self.mode is RenderDatabaseMode.TEST
+                and self.preview_dsn_file == RENDER_PREVIEW_DSN_FILE
+            ):
+                raise ValueError("configure one preview database locator source")
+        if self.mode is RenderDatabaseMode.TEST:
+            if self.preview_dsn is not None and self.preview_dsn_file is None:
+                raise ValueError("preview test locator must use one source")
+        elif self.preview_dsn is not None or self.preview_dsn_file is None:
+            raise ValueError("preview database locator must use a mounted file")
+        if self.service_token is not None and self.service_token_file is not None:
+            if not (
+                self.mode is RenderDatabaseMode.TEST
+                and self.service_token_file == RENDER_SERVICE_TOKEN_FILE
+            ):
+                raise ValueError("configure one Render service credential source")
+        if self.mode is RenderDatabaseMode.PRODUCTION and (
+            self.service_token is None and self.service_token_file is None
+        ):
+            raise ValueError("Render service credential must use a mounted file")
         if self.expected_privilege_role != RENDER_PRIVILEGE_ROLE:
             raise ValueError("Render privilege role is fixed")
+        if self.preview_expected_login != RENDER_PREVIEW_LOGIN:
+            raise ValueError("Render preview identity is fixed")
+        if self.preview_expected_privilege_role != RENDER_PREVIEW_PRIVILEGE_ROLE:
+            raise ValueError("Render preview role is fixed")
         if (
             self.mode is not RenderDatabaseMode.TEST
             and self.expected_login != RENDER_LOGIN
@@ -115,7 +156,10 @@ class RenderDatabaseSettings(BaseSettings):
             raise RenderDatabaseConfigurationError(_ERROR)
         return value
 
-    def _validate_locator(self, value: str) -> SecretStr:
+    def _validate_locator(
+        self, value: str, *, expected_login: str | None = None
+    ) -> SecretStr:
+        login = expected_login or self.expected_login
         try:
             parsed = urlsplit(value)
             pairs = parse_qsl(parsed.query, keep_blank_values=True)
@@ -123,7 +167,7 @@ class RenderDatabaseSettings(BaseSettings):
             if (
                 parsed.scheme not in {"postgres", "postgresql"}
                 or not parsed.hostname
-                or unquote(parsed.username or "") != self.expected_login
+                or unquote(parsed.username or "") != login
                 or not parsed.password
                 or unquote(parsed.path.removeprefix("/")) != self.expected_database
                 or parsed.fragment
@@ -166,6 +210,26 @@ class RenderDatabaseSettings(BaseSettings):
                 raise RenderDatabaseConfigurationError(_ERROR)
             value = self._read_file(self.dsn_file)
         return self._validate_locator(value)
+
+    def resolved_preview_dsn(self) -> SecretStr:
+        if self.preview_dsn is not None:
+            value = self.preview_dsn.get_secret_value()
+        else:
+            if self.preview_dsn_file is None:
+                raise RenderDatabaseConfigurationError(_ERROR)
+            value = self._read_file(self.preview_dsn_file)
+        return self._validate_locator(value, expected_login=RENDER_PREVIEW_LOGIN)
+
+    def resolved_service_token(self) -> SecretStr | None:
+        if self.service_token is not None:
+            value = self.service_token.get_secret_value()
+        elif self.service_token_file is not None:
+            value = self._read_file(self.service_token_file)
+        else:
+            return None
+        if len(value) < 32 or any(char.isspace() for char in value):
+            raise RenderDatabaseConfigurationError(_ERROR)
+        return SecretStr(value)
 
     @property
     def server_settings(self) -> dict[str, str]:

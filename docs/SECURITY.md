@@ -50,10 +50,13 @@ private/no-store/noindex API responses. Secret values are absent from URL, DOM,
 storage, observed request URLs, console, and retained artifacts; screenshots,
 traces, videos, and HTML reports are disabled locally.
 
-The internal Render API owns one `slaif_public_login` connection pool with the
-sole `slaif_public_reader` membership. Pool initialization verifies database,
-login/current-user, and exact membership before readiness succeeds. Locator and
-driver details are never returned or logged.
+The internal Render API owns separate canonical and preview connection pools.
+The canonical pool uses only `slaif_public_login`/`slaif_public_reader`; the
+preview pool uses only `slaif_preview_login`/`slaif_preview_reader`. Both pool
+initializers verify database, login/current-user, and exact membership before
+readiness succeeds. Preview additionally has only the owner-defined
+`slaif_render_preview_authorize` function. Locator and driver details are
+never returned or logged.
 
 The role has no direct `control` relation access and no site management,
 administrator, session, setup, migration, or publication function. It can call
@@ -65,10 +68,12 @@ the actual request Host and path, no cookies, authorization, forwarded
 identity, or caller-selected base URL. NGINX and Apache explicitly reject
 `/internal/`; Control, Agent, Editor, and MCP expose no route to it.
 
-Compose gives Render one isolated, read-only locator file containing only the
-public-reader DSN. It does not mount the master or Control secret volume. Web
-and the edge have no database locator, and readiness fails closed through
-Render→Web→NGINX if the Render locator is missing or invalid.
+Compose gives Render two isolated read-only locator files containing only the
+public-reader and preview-reader DSNs. A third isolated file contains only the
+high-entropy Web-to-Render credential and is mounted read-only to Web and
+Render. Render does not mount the master or Control secret volume; Web and the
+edge have no database locator. Missing/invalid locators or service credentials
+fail closed through Render→Web→NGINX.
 
 The Media service is a separate human-authenticated boundary. Its only
 database authority is the fixed `slaif_media_login`/`slaif_media` identity and

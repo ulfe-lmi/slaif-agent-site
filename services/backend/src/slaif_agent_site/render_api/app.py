@@ -14,7 +14,12 @@ from ..config import ServiceSettings
 from ..health import ReadinessProbe
 from .config import RenderDatabaseSettings
 from .database import RenderDatabase
-from .site_http import RenderPrivateHeadersMiddleware, install_render_site_route
+from .site_http import (
+    RenderPrivateHeadersMiddleware,
+    RenderServiceAuthenticationMiddleware,
+    install_render_projection_routes,
+    install_render_site_route,
+)
 
 
 class RenderDatabaseAdapter(Protocol):
@@ -54,6 +59,12 @@ def create_app(
     )
     app.state.render_database = selected_database
     install_render_site_route(app, selected_database)
+    install_render_projection_routes(app, selected_database)
+    selected_settings = settings or app.state.settings
+    app.add_middleware(
+        RenderServiceAuthenticationMiddleware,
+        allow_test=(selected_settings.mode.value == "test"),
+    )
     app.add_middleware(RenderPrivateHeadersMiddleware)
     return app
 
