@@ -92,6 +92,10 @@ EXPECTED_COMMANDS = {
         "/run/slaif-agent",
         "--render-directory",
         "/run/slaif-render",
+        "--preview-directory",
+        "/run/slaif-render-preview",
+        "--render-auth-directory",
+        "/run/slaif-render-auth",
         "--editor-directory",
         "/run/slaif-editor",
         "--media-directory",
@@ -121,7 +125,11 @@ EXPECTED_MOUNTS = {
         ("control-secret", "/run/slaif-control", True),
         ("editor-secret", "/run/slaif-editor", True),
     },
-    "render-api": {("render-secret", "/run/slaif-render", True)},
+    "render-api": {
+        ("render-secret", "/run/slaif-render", True),
+        ("render-preview-secret", "/run/slaif-render-preview", True),
+        ("render-auth-secret", "/run/slaif-render-auth", True),
+    },
     "media-gc": {("media-data", "/var/lib/slaif/media", False)},
     "media-service": {
         ("media-data", "/var/lib/slaif/media", False),
@@ -139,7 +147,10 @@ EXPECTED_MOUNTS = {
         ("editor-secret", "/run/slaif-editor", False),
         ("media-secret", "/run/slaif-media", False),
         ("media-data", "/var/lib/slaif/media", False),
+        ("render-preview-secret", "/run/slaif-render-preview", False),
+        ("render-auth-secret", "/run/slaif-render-auth", False),
     },
+    "web": {("render-auth-secret", "/run/slaif-render-auth", True)},
 }
 EXPECTED_CAP_ADD = {
     "postgres": {"CHOWN", "DAC_OVERRIDE", "FOWNER", "SETGID", "SETUID"},
@@ -154,6 +165,8 @@ CONTROL_SECRET_MOUNT_SERVICES = {"control-api", "editor-api", "secrets-init"}
 EDITOR_SECRET_MOUNT_SERVICES = {"editor-api", "secrets-init"}
 AGENT_SECRET_MOUNT_SERVICES = {"agent-api", "secrets-init"}
 RENDER_SECRET_MOUNT_SERVICES = {"render-api", "secrets-init"}
+RENDER_PREVIEW_SECRET_MOUNT_SERVICES = {"render-api", "secrets-init"}
+RENDER_AUTH_SECRET_MOUNT_SERVICES = {"render-api", "secrets-init", "web"}
 MEDIA_SECRET_MOUNT_SERVICES = {"media-service", "secrets-init"}
 LONG_RUNNING_APPLICATIONS = REQUIRED_SERVICES - {
     "bootstrap",
@@ -212,6 +225,8 @@ def validate_config(config: dict[str, Any]) -> None:
             "media-secret",
             "postgres-data",
             "render-secret",
+            "render-preview-secret",
+            "render-auth-secret",
         },
         "volume inventory mismatch",
     )
@@ -313,6 +328,20 @@ def validate_config(config: dict[str, Any]) -> None:
             has_render_secret == (name in RENDER_SECRET_MOUNT_SERVICES),
             f"{name}: Render secret mount policy mismatch",
         )
+        has_render_preview_secret = any(
+            mount.get("source") == "render-preview-secret" for mount in mounts
+        )
+        _fail(
+            has_render_preview_secret == (name in RENDER_PREVIEW_SECRET_MOUNT_SERVICES),
+            f"{name}: Render preview secret mount policy mismatch",
+        )
+        has_render_auth_secret = any(
+            mount.get("source") == "render-auth-secret" for mount in mounts
+        )
+        _fail(
+            has_render_auth_secret == (name in RENDER_AUTH_SECRET_MOUNT_SERVICES),
+            f"{name}: Render auth secret mount policy mismatch",
+        )
         has_media_secret = any(
             mount.get("source") == "media-secret" for mount in mounts
         )
@@ -333,6 +362,11 @@ def validate_config(config: dict[str, Any]) -> None:
                     or (key == "SLAIF_EDITOR_DSN_FILE" and name == "editor-api")
                     or (key == "SLAIF_AGENT_DSN_FILE" and name == "agent-api")
                     or (key == "SLAIF_RENDER_DSN_FILE" and name == "render-api")
+                    or (key == "SLAIF_RENDER_PREVIEW_DSN_FILE" and name == "render-api")
+                    or (
+                        key == "SLAIF_RENDER_SERVICE_TOKEN_FILE"
+                        and name in {"render-api", "web"}
+                    )
                     or (key == "SLAIF_MEDIA_DSN_FILE" and name == "media-service")
                 )
             }

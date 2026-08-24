@@ -16,16 +16,15 @@ NOREPLICATION NOBYPASSRLS`.
 | `slaif_editor_runtime` | Future Editor API principal | COW-view `SELECT`, `INSERT`, `UPDATE`, and `DELETE` after a table is enabled/hardened; no base/change, reviewer, or setup authority. |
 | `slaif_agent_runtime` | Agent API principal | COW-session semantic read wrappers for the seven bounded GET families, five bounded create wrappers, and two narrow durable idempotency/audit functions; no base/change, direct control-table, reviewer, or setup authority. |
 | `slaif_public_reader` | Canonical Render principal | Exact execute on the two active site resolver functions, plus `SELECT` on present COW views after product grant reconciliation; no site relations, management functions, or DML. |
-| `slaif_preview_reader` | Future preview render principal | Read-only view access; a future trusted session wrapper must establish preview context. |
+| `slaif_preview_reader` | Render workspace-preview principal | Read-only COW-view access plus exact execution of `slaif_render_preview_authorize`; no base/change tables, DML, lifecycle, reviewer, or setup authority. |
 | `slaif_reviewer` | Future review-worker principal | Read-only COW views and only the foundation-controlled reviewer function surface; no runtime DML or setup. |
 | `slaif_scheduler` | Future scheduler principal | No object grant yet; content and reviewer authority remain denied. |
 | `slaif_media` | Media service principal | Exact owner-defined human-session/auth, COW media-reference, idempotency, and media-audit functions; no generic content DML, base/change, reviewer, Control-table, or setup authority. |
 | `slaif_gc` | Future media-GC principal | No object grant yet; content and reviewer authority remain denied. |
 
 MCP adapter, Web, and browser worker have no database privilege role. Render
-uses the canonical public-reader credential; future preview access remains a
-separate credential rather than a combined writer. No generic all-authority
-role exists.
+uses separate public and preview pools/credentials; the Web service receives
+neither database locator. No generic all-authority role exists.
 
 The clean revision has no `content` object. In `EMPTY_SAFE`, every non-owner
 role also lacks content schema `USAGE`/`CREATE`, and Reviewer has no foundation

@@ -12,9 +12,14 @@ from ..application import create_http_application
 from ..authority import ProcessKind
 from ..config import ServiceSettings
 from ..health import ReadinessProbe
-from .config import RenderDatabaseSettings
+from .config import RenderDatabaseConfigurationError, RenderDatabaseSettings
 from .database import RenderDatabase
-from .site_http import RenderPrivateHeadersMiddleware, install_render_site_route
+from .site_http import (
+    RenderPrivateHeadersMiddleware,
+    RenderServiceAuthenticationMiddleware,
+    install_render_projection_routes,
+    install_render_site_route,
+)
 
 
 class RenderDatabaseAdapter(Protocol):
@@ -31,12 +36,28 @@ def create_app(
     database: RenderDatabaseAdapter | None = None,
     readiness_probes: Sequence[ReadinessProbe] = (),
 ) -> FastAPI:
-    selected_database = database or RenderDatabase(
-        database_settings or RenderDatabaseSettings.load()
+    selected_render_settings = database_settings or RenderDatabaseSettings.load()
+    selected_database = database or RenderDatabase(selected_render_settings)
+    test_mode = (
+        getattr(getattr(settings, "mode", None), "value", None) == "test"
+        or selected_render_settings.mode.value == "test"
     )
+    service_token: bytes | None = None
+    if not test_mode:
+        try:
+            resolved_token = selected_render_settings.resolved_service_token()
+            service_token = (
+                resolved_token.get_secret_value().encode("ascii")
+                if resolved_token is not None
+                else None
+            )
+        except RenderDatabaseConfigurationError:
+            service_token = None
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+        if not test_mode and service_token is None:
+            raise RenderDatabaseConfigurationError("Invalid Render service credential.")
         await selected_database.start()
         try:
             yield
@@ -54,6 +75,12 @@ def create_app(
     )
     app.state.render_database = selected_database
     install_render_site_route(app, selected_database)
+    install_render_projection_routes(app, selected_database)
+    app.add_middleware(
+        RenderServiceAuthenticationMiddleware,
+        allow_test=test_mode,
+        service_token=service_token,
+    )
     app.add_middleware(RenderPrivateHeadersMiddleware)
     return app
 

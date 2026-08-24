@@ -90,6 +90,10 @@ services:
       - /run/slaif-agent
       - --render-directory
       - /run/slaif-render
+      - --preview-directory
+      - /run/slaif-render-preview
+      - --render-auth-directory
+      - /run/slaif-render-auth
       - --editor-directory
       - /run/slaif-editor
       - --media-directory
@@ -103,6 +107,8 @@ services:
       - agent-secret:/run/slaif-agent
       - local-secrets:/run/slaif-secrets
       - render-secret:/run/slaif-render
+      - render-preview-secret:/run/slaif-render-preview
+      - render-auth-secret:/run/slaif-render-auth
       - editor-secret:/run/slaif-editor
       - media-secret:/run/slaif-media
       - media-data:/var/lib/slaif/media
@@ -245,12 +251,18 @@ services:
       SLAIF_MODE: development
       SLAIF_PUBLIC_URL: http://localhost:8080
       SLAIF_RENDER_DSN_FILE: /run/slaif-render/render-dsn
+      SLAIF_RENDER_PREVIEW_DSN_FILE: /run/slaif-render-preview/preview-dsn
+      SLAIF_RENDER_SERVICE_TOKEN_FILE: /run/slaif-render-auth/render-token
       SLAIF_RENDER_EXPECTED_DATABASE: slaif
       SLAIF_RENDER_EXPECTED_LOGIN: slaif_public_login
       SLAIF_RENDER_EXPECTED_PRIVILEGE_ROLE: slaif_public_reader
+      SLAIF_RENDER_PREVIEW_EXPECTED_LOGIN: slaif_preview_login
+      SLAIF_RENDER_PREVIEW_EXPECTED_PRIVILEGE_ROLE: slaif_preview_reader
       SLAIF_RENDER_MODE: development
     volumes:
       - render-secret:/run/slaif-render:ro
+      - render-preview-secret:/run/slaif-render-preview:ro
+      - render-auth-secret:/run/slaif-render-auth:ro
     networks: [application, database]
 
   mcp-adapter:
@@ -337,8 +349,12 @@ services:
     init: true
     expose:
       - "3000"
+    environment:
+      SLAIF_RENDER_SERVICE_TOKEN_FILE: /run/slaif-render-auth/render-token
     tmpfs:
       - /tmp:mode=1777,nosuid,nodev,noexec,size=16m
+    volumes:
+      - render-auth-secret:/run/slaif-render-auth:ro
     networks: [edge, application]
     depends_on:
       bootstrap:
@@ -414,3 +430,5 @@ volumes:
   media-secret: {}
   postgres-data: {}
   render-secret: {}
+  render-preview-secret: {}
+  render-auth-secret: {}

@@ -112,11 +112,15 @@ test("governance-visible-workflows-negatives-and-privacy", async ({ page }) => {
   stage("domain-routes-visible");
   await page.goto("/s/governance/");
   await expect(page.getByRole("heading", { level: 1 })).toHaveText("Site: governance");
+  const customRoot = await page.request.get("http://localhost:8080/secondary", {
+    headers: { Host: "routes.test" },
+  });
+  expect(customRoot.status()).toBe(200);
+  expect(await customRoot.text()).toMatch(/Site:.*governance/s);
   const customRoute = await page.request.get("http://localhost:8080/secondary/page", {
     headers: { Host: "routes.test" },
   });
-  expect(customRoute.status()).toBe(200);
-  expect(await customRoute.text()).toMatch(/Site:.*governance/s);
+  expect(customRoute.status()).toBe(404);
 
   stage("membership-catalog-visible");
   await page.goto(`/admin/sites/${siteId}/memberships`);

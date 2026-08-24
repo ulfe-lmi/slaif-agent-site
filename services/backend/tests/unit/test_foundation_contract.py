@@ -101,6 +101,9 @@ NEW_PACKAGE_FILES = {
     "slaif_agent_site/db/alembic/versions/029_001_agent_semantic_read_surface.py",
     "slaif_agent_site/db/alembic/versions/030_001_media_service_surface.py",
     "slaif_agent_site/db/alembic/versions/031_001_media_security_hardening.py",
+    "slaif_agent_site/db/alembic/versions/032_001_render_preview_authorization.py",
+    "slaif_agent_site/db/alembic/versions/033_001_render_preview_recheck.py",
+    "slaif_agent_site/db/alembic/versions/034_001_render_preview_lock_order.py",
     "slaif_agent_site/db/connections.py",
     "slaif_agent_site/db/executor.py",
     "slaif_agent_site/db/migrations.py",
@@ -149,6 +152,7 @@ NEW_PACKAGE_FILES = {
     "slaif_agent_site/render_api/app.py",
     "slaif_agent_site/render_api/config.py",
     "slaif_agent_site/render_api/database.py",
+    "slaif_agent_site/render_api/projection.py",
     "slaif_agent_site/render_api/site_http.py",
     "slaif_agent_site/review_worker/__init__.py",
     "slaif_agent_site/review_worker/__main__.py",
@@ -239,6 +243,10 @@ EXPECTED_SDIST_FILES = {
     "services/backend/src/slaif_agent_site/db/alembic/versions/029_001_agent_semantic_read_surface.py",
     "services/backend/src/slaif_agent_site/db/alembic/versions/030_001_media_service_surface.py",
     "services/backend/src/slaif_agent_site/db/alembic/versions/031_001_media_security_hardening.py",
+    "services/backend/src/slaif_agent_site/db/alembic/versions/032_001_render_preview_authorization.py",
+    "services/backend/src/slaif_agent_site/db/alembic/versions/033_001_render_preview_recheck.py",
+    "services/backend/src/slaif_agent_site/db/alembic/versions/034_001_render_preview_lock_order.py",
+    "services/backend/src/slaif_agent_site/render_api/projection.py",
     "services/backend/src/slaif_agent_site/agent_state/workspace_models.py",
     "services/backend/src/slaif_agent_site/agent_state/audit.py",
     "services/backend/src/slaif_agent_site/agent_state/promotion.py",
@@ -527,8 +535,11 @@ def test_locked_foundation_artifact_hash_constants_are_sha256() -> None:
 
 
 def test_alembic_graph_and_offline_sql_need_no_locator_or_network() -> None:
-    assert migration_heads() == ("031_001",)
+    assert migration_heads() == ("034_001",)
     assert migration_history() == (
+        "034_001",
+        "033_001",
+        "032_001",
         "031_001",
         "030_001",
         "029_001",

@@ -163,7 +163,7 @@ def _run(
 
 class ControlReadinessFixture:
     def __init__(self, project: str, *, existing: bool) -> None:
-        if not re.fullmatch(r"slaif(?:007|009)[a-z0-9]+", project):
+        if not re.fullmatch(r"slaif(?:007|009|071)[a-z0-9]+", project):
             raise FixtureError("state-mismatch")
         self.project = project
         self.existing = existing

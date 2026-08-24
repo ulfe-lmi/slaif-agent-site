@@ -86,3 +86,21 @@ different digest progresses under its own prefix lock, and proves bounded lock
 timeout cleanup. The production parser writes through the pinned staging
 descriptor returned by the store; path replacement is rejected by inode
 comparison.
+
+## Canonical and active-preview rendering
+
+Render projection tests validate normalized site-prefix routing, published
+canonical selection, bounded composition trees, catalogue/schema/slot checks,
+safe same-origin props/URLs, explicit collection projection fields, reserved
+metadata isolation, and same-site binding limits. PostgreSQL integration
+provisions the separate public and preview roles, validates the exact preview
+authorization function and denied direct relation/DML paths, and proves that
+a HUMAN workspace COW overlay is visible only through authenticated preview
+while canonical output remains unchanged. Preview authorization also covers
+idle/absolute expiry and revocation, with the in-transaction recheck held
+under the workspace shared lock. Unit and Compose policy tests cover missing,
+empty, duplicate, wrong, correct, symlinked, mode-invalid, and owner-invalid
+Render credentials. Web tests preserve 401/404/503 distinctions for the
+server-only client, exact-root shell fallback, canonical-first non-loopback
+root resolution, strict public CSP, and absence of session/service credentials
+from client-visible output or artifacts.

@@ -157,8 +157,8 @@ migration/privilege/docs gates; clean Compose/NGINX Media E2E; PostgreSQL
 all failures, controlled old-code proof, retries, skips, and not-run items
 honestly.
 
-Commit/push the exact strategic 070-d order and active bytes unchanged on PR
-#61, then the bounded implementation and verification. Publish exactly
+Commit/push the exact strategic 070-d order and active bytes unchanged on
+PR #61, then the bounded implementation and verification. Publish exactly
 `oap/reports/070-d-media-cross-worker-publication-race-proof.md` as one
 report-only child with `Report publication commit: SELF`; verify its literal
 parent is the reported implementation head and remote path/blob/head match.

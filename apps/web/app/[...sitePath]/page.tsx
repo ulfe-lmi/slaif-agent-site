@@ -1,8 +1,8 @@
 import { headers } from "next/headers";
 import { notFound } from "next/navigation";
 
-import { resolveSiteContext } from "../../src/sites/render";
-import { SiteContextShell } from "../../src/sites/shell";
+import { resolveCanonicalPage, resolveSiteContext } from "../../src/sites/render";
+import { PageProjectionShell, SiteContextShell } from "../../src/sites/shell";
 
 export const dynamic = "force-dynamic";
 
@@ -12,8 +12,15 @@ export default async function SiteShell({
   const [{ sitePath }, requestHeaders] = await Promise.all([params, headers()]);
   const authority = requestHeaders.get("host") ?? "";
   const path = `/${sitePath.join("/")}`;
-  const context = await resolveSiteContext(authority, path);
-  if (!context) notFound();
+  const projection = await resolveCanonicalPage(authority, path);
+  if (!projection) {
+    const context = await resolveSiteContext(authority, path);
+    if (!context) notFound();
+    const matchedRoot = (context.matched_path_prefix || "/").replace(/\/$/, "") || "/";
+    const requestedPath = path.replace(/\/$/, "") || "/";
+    if (matchedRoot !== requestedPath) notFound();
+    return <SiteContextShell context={context} />;
+  }
 
-  return <SiteContextShell context={context} />;
+  return <PageProjectionShell projection={projection} />;
 }

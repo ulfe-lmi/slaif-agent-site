@@ -66,6 +66,20 @@ functions. Media bytes are held in the private `media-data` volume, initialized
 by the networkless secrets process for UID 10001 and shared only with Media GC;
 NGINX and Apache never mount or alias it.
 
+Render follows two isolated read paths. `secrets-init` copies only the fixed
+public-reader locator into `render-secret` and the fixed preview-reader locator
+into `render-preview-secret`. Render validates both identities on pooled
+connections: canonical requests use `slaif_public_login`/`slaif_public_reader`
+and preview requests use `slaif_preview_login`/`slaif_preview_reader`. Preview
+also receives exact `EXECUTE` on the owner-defined human-session/workspace
+authorization function and opens one COW session only after that function
+returns trusted workspace/site values. The wrapper takes the shared workspace
+advisory lock before inspecting mutable session/workspace authority and keeps
+it through the COW projection; ordinary preview touch updates only
+`last_seen_at`, never `recent_auth_at`. Web receives no database locator; it
+and Render share only a separate high-entropy file-backed Render-call
+credential mounted read-only from `render-auth-secret`.
+
 The master `local-secrets` volume still contains PostgreSQL administrator,
 bootstrap owner, login-password, and future-service files. Control does not
 mount that volume. Its isolated directory is mode `0700`, owned by

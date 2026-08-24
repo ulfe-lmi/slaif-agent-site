@@ -18,19 +18,21 @@ the real responsive result, and publish only after human review.
 ## Current status
 
 The authenticated administration surface provides responsive site lists,
-details, creation, profile/domain settings, recent-auth-protected archive, and
-existing-user UUID membership management. Invitations, custom roles,
-content/Puck, workspaces/capabilities, review, and publication execution remain
-absent. See [site administration](docs/ADMIN.md).
+details, creation, profile/domain settings, recent-auth-protected archive,
+existing-user UUID membership management, bounded pages/compositions, and Puck
+editing in HUMAN workspaces. Canonical page projection and authenticated active-
+workspace preview now share one trusted React renderer. Review snapshots,
+promotion, and publication execution remain separate. See [site
+administration](docs/ADMIN.md).
 
 The backend includes authenticated Control HTTP for immutable role/permission
 catalogs and site-scoped human membership lifecycle, with seven built-in roles,
 exact permissions, bounded delegation, explicit overrides, optimistic versions,
-and transactional authority locking. The responsive client uses these exact
-contracts; custom roles, workspaces/capabilities, content editing, review, and
-publication execution remain unimplemented.
+and transactional authority locking. Render projects only typed, site-confined
+canonical or authorized COW-preview data; Web alone returns HTML. Review,
+promotion, and publication execution remain unimplemented.
 
-> **Pre-alpha / deployable skeleton.** This
+> **Pre-alpha / bounded deployable product.** This
 > repository contains the normative architecture, coding-agent governance,
 > reproducible Python/TypeScript toolchains, the qualified
 > `agent-cow-postgresql==0.2.0` dependency, ten backend process boundaries,
@@ -43,22 +45,14 @@ publication execution remain unimplemented.
 > exposes an honest Next.js status surface, health routes, and bounded backend
 > Control authentication and Platform Administrator site endpoints through NGINX
 > on <http://localhost:8080/>.
-> The database now includes non-COW Control-owned site and domain records plus
-> a typed internal site service and trusted host/path resolver. Its clean
-> zero-object content state remains explicitly `EMPTY_SAFE` without
-> claiming foundation table hardening. Any real content object requires the
-> fully validated `HARDENED` state. A local human authentication/setup UI is
-> implemented and qualified through ordered setup, single-writer governance,
-> and six read-only self-hosted Playwright browser/device projects. A fresh
-> reference stack seeds one demo site and serves a small
-> Web→Render routing-context shell for active local or custom-host mappings;
-> this is routing evidence, not site content or publication. Invitations,
-> custom roles, workspaces, editing/Puck, content tables and APIs,
-> runtime browser commands, review, publication, and product behavior are
-> not implemented yet. Control API alone owns one isolated file-backed login,
-> bounded asyncpg pool, readiness/authentication adapters, and the bounded site
-> semantic service. Render alone receives a separate fixed public-reader
-> locator; Web and every other online process remain database-credential-free.
+> The database includes non-COW Control-owned site/domain and human-authority
+> records plus bounded COW content tables. A fresh reference stack seeds one
+> published demo page. Web calls Render only server-side: Render returns typed
+> canonical or authorized workspace projection JSON, while the shared trusted
+> React catalogue returns escaped HTML through public NGINX. Canonical and
+> preview use separate read-only database identities and preview is private,
+> no-store, and noindex. Review snapshots, promotion, publication, browser
+> worker automation, and public media finalization remain separate work.
 
 The current automation also migrates/rebuilds disposable databases, verifies
 the exact role/ownership/grant matrix, exercises COW runtime/reviewer paths,
@@ -189,7 +183,7 @@ first-run administrator or website-management product. See the
 | Completed preparation | Normative architecture, coding governance, versioned OAP transcript, professional project guidance, deterministic repository policy, and initial CI/CodeQL configuration. |
 | Completed foundation baseline | Exact PyPI dependency and artifact hashes, public API adapter boundary, Python packaging, and downstream PostgreSQL 14–18 adoption gate. |
 | Completed contract-toolchain baseline | Reproducible Node 24/pnpm 11 workspace, strict TypeScript tooling, and seven private scaffold-only package boundaries. |
-| Backend process boundary | Five health-only FastAPI apps, one internal Render resolver API, four non-listening process entrypoints, typed local configuration, authority mapping, safe errors/correlation/logging, and readiness probes. |
+| Backend process boundary | Five FastAPI HTTP apps, typed canonical/preview Render projection API, four non-listening process entrypoints, typed local configuration, authority mapping, safe errors/correlation/logging, and readiness probes. |
 | Completed database boundary baseline | Exact password-free roles, packaged Alembic head, three empty product schemas, constrained `PENDING`/`EMPTY_SAFE`/`HARDENED` readiness, public-API COW reconciliation, and independent privilege validation. |
 | Completed deployable skeleton | One-command Compose, generated local database principals, safe-empty bootstrap, digest-pinned OCI images, isolated browser placeholder, Next setup/login/admin UI, NGINX edge, and Apache reference. |
 | Completed supply-chain baseline | Reproducible Python/Web artifacts, exact source/action/base/scanner policy, deterministic notices, six-image SPDX SBOMs, fresh Grype scans, and checksummed retained CI evidence. |
@@ -198,7 +192,7 @@ first-run administrator or website-management product. See the
 | Completed site foundation | Control-owned sites and domain mappings, bounded installation quota, strict identifier normalization, immutable site context, and trusted longest-prefix/local-development resolution. |
 | Completed human RBAC HTTP boundary | Immutable role/permission catalogs, site membership list/get/create/update/deactivate, strict session/CSRF policy, optimistic concurrency, and complete Control/Editor route declarations. |
 | Responsive site and membership administration | Permission-driven site/profile/domain workflows plus existing-user UUID membership cards, built-in roles, bounded ceilings, separate publication overrides, complete override replacement, version refresh, and semantic deactivation. |
-| Planned product work | Add workspaces, configurable content, normalized composition/Puck, semantic tools, runtime browser feedback, review/promotion, reconstruction, and hardening. |
+| Planned product work | Add review snapshots, freeze/accept/discard/promotion, runtime browser feedback, reconstruction, public media finalization, and remaining hardening. |
 
 See [Architecture Section 50](ARCHITECTURE.md#50-implementation-phases) for
 the normative phase plan.

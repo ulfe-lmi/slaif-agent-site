@@ -98,12 +98,26 @@ def _configuration() -> dict[str, object]:
             service["environment"].update(
                 {
                     "SLAIF_RENDER_DSN_FILE": "/run/slaif-render/render-dsn",
+                    "SLAIF_RENDER_PREVIEW_DSN_FILE": (
+                        "/run/slaif-render-preview/preview-dsn"
+                    ),
+                    "SLAIF_RENDER_SERVICE_TOKEN_FILE": (
+                        "/run/slaif-render-auth/render-token"
+                    ),
                     "SLAIF_RENDER_EXPECTED_DATABASE": "slaif",
                     "SLAIF_RENDER_EXPECTED_LOGIN": "slaif_public_login",
                     "SLAIF_RENDER_EXPECTED_PRIVILEGE_ROLE": "slaif_public_reader",
+                    "SLAIF_RENDER_PREVIEW_EXPECTED_LOGIN": "slaif_preview_login",
+                    "SLAIF_RENDER_PREVIEW_EXPECTED_PRIVILEGE_ROLE": (
+                        "slaif_preview_reader"
+                    ),
                     "SLAIF_RENDER_MODE": "development",
                 }
             )
+        if name == "web":
+            service["environment"] = {
+                "SLAIF_RENDER_SERVICE_TOKEN_FILE": "/run/slaif-render-auth/render-token"
+            }
         if name == "media-service":
             service["environment"].update(
                 {
@@ -154,6 +168,8 @@ def _configuration() -> dict[str, object]:
                 "media-secret",
                 "postgres-data",
                 "render-secret",
+                "render-preview-secret",
+                "render-auth-secret",
             )
         },
     }

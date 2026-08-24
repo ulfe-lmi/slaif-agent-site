@@ -75,15 +75,20 @@ function trustedPuckComponent(
       className="puck-trusted-zone"
     />
   ));
-  const rendered = renderComponent(
-    { componentType: definition.type, props: componentProps, children: zones },
-    "en",
-  ) ?? (
-    <div className="puck-trusted-fallback">
-      <strong>{definition.type}</strong>
-      {zones}
-    </div>
-  );
+  let rendered: ReactNode;
+  try {
+    rendered = renderComponent(
+      { componentType: definition.type, props: componentProps, children: zones },
+      "en",
+    );
+  } catch {
+    rendered = (
+      <div className="puck-trusted-fallback">
+        <strong>{definition.type}</strong>
+        {zones}
+      </div>
+    );
+  }
   return (
     <div
       data-puck-component={typeof id === "string" ? id : undefined}
