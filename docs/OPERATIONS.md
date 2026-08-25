@@ -19,7 +19,9 @@ and compare-and-set password rehash. It uses fixed-cost Argon2id and an
 equal-cost dummy verification path for unknown or disabled identities. Budget
 roughly 64 MiB per concurrent Argon2 operation. Backend HTTP login and session
 issuance and the local setup/login/admin UI exist; rate limiting, durable login
-audit, OIDC, MFA, and runtime agent browser tooling remain absent. Local
+audit, OIDC, MFA, and browser worker execution remain absent. Capability-bound
+Agent preview-run queue/status metadata and run-token Render verification are
+implemented without a dispatcher or artifact bytes. Local
 authentication and administration are qualified by one setup project, one
 single-writer governance project, and six read-only Playwright browser/device
 projects.

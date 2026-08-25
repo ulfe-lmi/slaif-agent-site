@@ -337,6 +337,24 @@ async def _counts_for_capability(
     return int(row[0]), int(row[1]), int(row[2])
 
 
+async def _wait_for_lease_expiry(
+    database: AgentSiteDatabase, run_id: uuid.UUID
+) -> None:
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        for _ in range(200):
+            expired = await owner.fetchval(
+                "SELECT lease_expires_at <= CURRENT_TIMESTAMP "
+                "FROM control.browser_run WHERE id=$1",
+                run_id,
+            )
+            if expired:
+                return
+            await asyncio.sleep(0.02)
+    raise AssertionError("browser lease did not expire within the bounded wait")
+
+
 @pytest.mark.asyncio
 async def test_browser_begin_idempotency_quotas_isolation_and_lock_recheck(
     agent_site_database: AgentSiteDatabase,
@@ -674,13 +692,13 @@ async def test_browser_leases_artifacts_terminal_state_and_exact_privileges(
                 )
                 assert second_claimed["state"] == "RUNNING"
 
-        await asyncio.sleep(1.1)
+        await _wait_for_lease_expiry(database, retry["run_id"])
         second_lease = uuid.uuid4()
         async with pool_a.acquire() as agent:
             retried = await agent.fetchrow(CLAIM_SQL, second_lease, 1)
             assert retried["run_id"] == retry["run_id"]
             assert retried["attempt"] == 2
-        await asyncio.sleep(1.1)
+        await _wait_for_lease_expiry(database, retry["run_id"])
         async with pool_a.acquire() as agent:
             next_claim = await agent.fetchrow(CLAIM_SQL, uuid.uuid4(), 30)
             assert next_claim["run_id"] == release["run_id"]

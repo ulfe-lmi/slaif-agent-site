@@ -96,6 +96,8 @@ EXPECTED_COMMANDS = {
         "/run/slaif-render-preview",
         "--render-auth-directory",
         "/run/slaif-render-auth",
+        "--browser-signing-directory",
+        "/run/slaif-browser-signing",
         "--editor-directory",
         "/run/slaif-editor",
         "--media-directory",
@@ -119,7 +121,10 @@ EXPECTED_BUILD_ARGS = {
 EXPECTED_MOUNTS = {
     **{name: set() for name in REQUIRED_SERVICES},
     "bootstrap": {("local-secrets", "/run/slaif-secrets", True)},
-    "agent-api": {("agent-secret", "/run/slaif-agent", True)},
+    "agent-api": {
+        ("agent-secret", "/run/slaif-agent", True),
+        ("browser-signing-secret", "/run/slaif-browser-signing", True),
+    },
     "control-api": {("control-secret", "/run/slaif-control", True)},
     "editor-api": {
         ("control-secret", "/run/slaif-control", True),
@@ -129,6 +134,7 @@ EXPECTED_MOUNTS = {
         ("render-secret", "/run/slaif-render", True),
         ("render-preview-secret", "/run/slaif-render-preview", True),
         ("render-auth-secret", "/run/slaif-render-auth", True),
+        ("browser-signing-secret", "/run/slaif-browser-signing", True),
     },
     "media-gc": {("media-data", "/var/lib/slaif/media", False)},
     "media-service": {
@@ -149,6 +155,7 @@ EXPECTED_MOUNTS = {
         ("media-data", "/var/lib/slaif/media", False),
         ("render-preview-secret", "/run/slaif-render-preview", False),
         ("render-auth-secret", "/run/slaif-render-auth", False),
+        ("browser-signing-secret", "/run/slaif-browser-signing", False),
     },
     "web": {("render-auth-secret", "/run/slaif-render-auth", True)},
 }
@@ -167,6 +174,11 @@ AGENT_SECRET_MOUNT_SERVICES = {"agent-api", "secrets-init"}
 RENDER_SECRET_MOUNT_SERVICES = {"render-api", "secrets-init"}
 RENDER_PREVIEW_SECRET_MOUNT_SERVICES = {"render-api", "secrets-init"}
 RENDER_AUTH_SECRET_MOUNT_SERVICES = {"render-api", "secrets-init", "web"}
+BROWSER_SIGNING_SECRET_MOUNT_SERVICES = {
+    "agent-api",
+    "render-api",
+    "secrets-init",
+}
 MEDIA_SECRET_MOUNT_SERVICES = {"media-service", "secrets-init"}
 LONG_RUNNING_APPLICATIONS = REQUIRED_SERVICES - {
     "bootstrap",
@@ -218,6 +230,7 @@ def validate_config(config: dict[str, Any]) -> None:
         set(config.get("volumes", {}))
         == {
             "agent-secret",
+            "browser-signing-secret",
             "control-secret",
             "editor-secret",
             "local-secrets",
@@ -342,6 +355,14 @@ def validate_config(config: dict[str, Any]) -> None:
             has_render_auth_secret == (name in RENDER_AUTH_SECRET_MOUNT_SERVICES),
             f"{name}: Render auth secret mount policy mismatch",
         )
+        has_browser_signing_secret = any(
+            mount.get("source") == "browser-signing-secret" for mount in mounts
+        )
+        _fail(
+            has_browser_signing_secret
+            == (name in BROWSER_SIGNING_SECRET_MOUNT_SERVICES),
+            f"{name}: browser signing secret mount policy mismatch",
+        )
         has_media_secret = any(
             mount.get("source") == "media-secret" for mount in mounts
         )
@@ -361,11 +382,19 @@ def validate_config(config: dict[str, Any]) -> None:
                     )
                     or (key == "SLAIF_EDITOR_DSN_FILE" and name == "editor-api")
                     or (key == "SLAIF_AGENT_DSN_FILE" and name == "agent-api")
+                    or (
+                        key == "SLAIF_AGENT_BROWSER_SIGNING_KEY_FILE"
+                        and name == "agent-api"
+                    )
                     or (key == "SLAIF_RENDER_DSN_FILE" and name == "render-api")
                     or (key == "SLAIF_RENDER_PREVIEW_DSN_FILE" and name == "render-api")
                     or (
                         key == "SLAIF_RENDER_SERVICE_TOKEN_FILE"
                         and name in {"render-api", "web"}
+                    )
+                    or (
+                        key == "SLAIF_RENDER_BROWSER_SIGNING_KEY_FILE"
+                        and name == "render-api"
                     )
                     or (key == "SLAIF_MEDIA_DSN_FILE" and name == "media-service")
                 )
@@ -419,6 +448,7 @@ def validate_config(config: dict[str, Any]) -> None:
                     key: environment.get(key)
                     for key in (
                         "SLAIF_AGENT_DSN_FILE",
+                        "SLAIF_AGENT_BROWSER_SIGNING_KEY_FILE",
                         "SLAIF_AGENT_EXPECTED_DATABASE",
                         "SLAIF_AGENT_EXPECTED_LOGIN",
                         "SLAIF_AGENT_EXPECTED_PRIVILEGE_ROLE",
@@ -427,6 +457,9 @@ def validate_config(config: dict[str, Any]) -> None:
                 }
                 == {
                     "SLAIF_AGENT_DSN_FILE": "/run/slaif-agent/agent-dsn",
+                    "SLAIF_AGENT_BROWSER_SIGNING_KEY_FILE": (
+                        "/run/slaif-browser-signing/signing-key"
+                    ),
                     "SLAIF_AGENT_EXPECTED_DATABASE": "slaif",
                     "SLAIF_AGENT_EXPECTED_LOGIN": "slaif_agent_login",
                     "SLAIF_AGENT_EXPECTED_PRIVILEGE_ROLE": "slaif_agent_runtime",
@@ -505,6 +538,7 @@ def validate_config(config: dict[str, Any]) -> None:
                     key: environment.get(key)
                     for key in (
                         "SLAIF_RENDER_DSN_FILE",
+                        "SLAIF_RENDER_BROWSER_SIGNING_KEY_FILE",
                         "SLAIF_RENDER_EXPECTED_DATABASE",
                         "SLAIF_RENDER_EXPECTED_LOGIN",
                         "SLAIF_RENDER_EXPECTED_PRIVILEGE_ROLE",
@@ -513,6 +547,9 @@ def validate_config(config: dict[str, Any]) -> None:
                 }
                 == {
                     "SLAIF_RENDER_DSN_FILE": "/run/slaif-render/render-dsn",
+                    "SLAIF_RENDER_BROWSER_SIGNING_KEY_FILE": (
+                        "/run/slaif-browser-signing/signing-key"
+                    ),
                     "SLAIF_RENDER_EXPECTED_DATABASE": "slaif",
                     "SLAIF_RENDER_EXPECTED_LOGIN": "slaif_public_login",
                     "SLAIF_RENDER_EXPECTED_PRIVILEGE_ROLE": "slaif_public_reader",

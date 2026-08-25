@@ -128,3 +128,24 @@ idempotent terminal completion, revoked visibility denial, read-only audit/COW
 silence, exact function ownership/search path, and direct-relation/other-role
 denials. Owner connections seed inputs and inspect counts only; every claimed
 browser mutation executes through the Agent functions.
+
+Public Agent HTTP integration proves 202 create, exact same-body replay,
+mismatch, missing/invalid key, schema denial, scope, quota, two-site/two-
+workspace/capability isolation, random IDs, empty artifact metadata, byte 404,
+restart durability, revocation, fake-route absence, shared-lock race recheck,
+exact `(run,idempotency,artifact,event)` counts, and no COW operation.
+
+Credential unit tests fix one deterministic token SHA-256 vector and cover
+descriptor-confined key reads, modes/owner/symlink/format, duplicate JSON keys,
+unknown algorithm/version/key/audience/contract, wrong signature, future/
+expiry, oversize, and every changed binding. Real Render PostgreSQL/HTTP tests
+prove the dedicated header, one-time nonce, exact preview-role function grant,
+overlay-only projection, unchanged canonical output, tamper/expiry/foreign/
+route/target/evidence/artifact/duration denial, replay denial, and revocation
+between consumption and the under-lock COW recheck. Existing human preview
+tests remain unchanged and green.
+
+Compose policy and smoke prove only Agent/Render/initializer mount the signing
+volume, unrelated UID denial, real NGINX Agent create/poll plus Agent restart,
+missing-key readiness failure with canonical rendering still available, key
+restoration, and the unchanged DB-less/key-less health-only worker.

@@ -58,6 +58,36 @@ export const BROWSER_CONTRACT_BOUNDS = Object.freeze({
   attempts: 5,
 } as const);
 
+export const BROWSER_PREVIEW_CREDENTIAL_FACTS = Object.freeze({
+  tokenVersion: "sbp1",
+  algorithm: "HS256",
+  type: "SLAIF-BROWSER-PREVIEW",
+  audience: "slaif-render-browser-preview",
+  deployment: "slaif-agent-site",
+  browserHeader: "X-SLAIF-Browser-Preview",
+  renderHeader: "X-SLAIF-Browser-Run-Token",
+  maxTokenBytes: 4096,
+  maxTtlSeconds: 60,
+  claims: Object.freeze([
+    "deployment",
+    "audience",
+    "contract_version",
+    "capability_id",
+    "site_id",
+    "workspace_id",
+    "run_id",
+    "route",
+    "target",
+    "evidence",
+    "artifact_bytes_limit",
+    "duration_seconds",
+    "issued_at",
+    "expires_at",
+    "nonce",
+    "key_id",
+  ]),
+} as const);
+
 const targetSet = new Set<string>(BROWSER_TARGETS);
 const evidenceSet = new Set<string>(BROWSER_EVIDENCE);
 const evidenceOrder = new Map<string, number>(
@@ -228,7 +258,22 @@ function validateRoute(route: unknown): string {
       throw new BrowserContractError("route query contains credential-shaped data");
     }
   }
-  return route;
+  const encoded = (value: string) =>
+    encodeURIComponent(value)
+      .replaceAll(
+        /[!'()*]/gu,
+        (character) => `%${character.codePointAt(0)?.toString(16).toUpperCase() ?? ""}`,
+      )
+      .replaceAll("%20", "+");
+  const query = [...parsed.searchParams]
+    .sort(([leftKey, leftValue], [rightKey, rightValue]) =>
+      leftKey === rightKey
+        ? leftValue.localeCompare(rightValue)
+        : leftKey.localeCompare(rightKey),
+    )
+    .map(([key, value]) => `${encoded(key)}=${encoded(value)}`)
+    .join("&");
+  return rawPath + (query ? `?${query}` : "");
 }
 
 export function parsePreviewRunCreateRequest(value: unknown): PreviewRunCreateRequest {

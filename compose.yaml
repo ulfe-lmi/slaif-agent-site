@@ -94,6 +94,8 @@ services:
       - /run/slaif-render-preview
       - --render-auth-directory
       - /run/slaif-render-auth
+      - --browser-signing-directory
+      - /run/slaif-browser-signing
       - --editor-directory
       - /run/slaif-editor
       - --media-directory
@@ -109,6 +111,7 @@ services:
       - render-secret:/run/slaif-render
       - render-preview-secret:/run/slaif-render-preview
       - render-auth-secret:/run/slaif-render-auth
+      - browser-signing-secret:/run/slaif-browser-signing
       - editor-secret:/run/slaif-editor
       - media-secret:/run/slaif-media
       - media-data:/var/lib/slaif/media
@@ -228,6 +231,7 @@ services:
       SLAIF_BIND_HOST: 0.0.0.0
       SLAIF_BIND_PORT: "8000"
       SLAIF_AGENT_DSN_FILE: /run/slaif-agent/agent-dsn
+      SLAIF_AGENT_BROWSER_SIGNING_KEY_FILE: /run/slaif-browser-signing/signing-key
       SLAIF_AGENT_EXPECTED_DATABASE: slaif
       SLAIF_AGENT_EXPECTED_LOGIN: slaif_agent_login
       SLAIF_AGENT_EXPECTED_PRIVILEGE_ROLE: slaif_agent_runtime
@@ -238,6 +242,7 @@ services:
       SLAIF_PUBLIC_URL: http://localhost:8080
     volumes:
       - agent-secret:/run/slaif-agent:ro
+      - browser-signing-secret:/run/slaif-browser-signing:ro
     networks: [edge, database, browser]
 
   render-api:
@@ -253,6 +258,7 @@ services:
       SLAIF_RENDER_DSN_FILE: /run/slaif-render/render-dsn
       SLAIF_RENDER_PREVIEW_DSN_FILE: /run/slaif-render-preview/preview-dsn
       SLAIF_RENDER_SERVICE_TOKEN_FILE: /run/slaif-render-auth/render-token
+      SLAIF_RENDER_BROWSER_SIGNING_KEY_FILE: /run/slaif-browser-signing/signing-key
       SLAIF_RENDER_EXPECTED_DATABASE: slaif
       SLAIF_RENDER_EXPECTED_LOGIN: slaif_public_login
       SLAIF_RENDER_EXPECTED_PRIVILEGE_ROLE: slaif_public_reader
@@ -263,6 +269,7 @@ services:
       - render-secret:/run/slaif-render:ro
       - render-preview-secret:/run/slaif-render-preview:ro
       - render-auth-secret:/run/slaif-render-auth:ro
+      - browser-signing-secret:/run/slaif-browser-signing:ro
     networks: [application, database]
 
   mcp-adapter:
@@ -423,6 +430,7 @@ networks:
 
 volumes:
   agent-secret: {}
+  browser-signing-secret: {}
   control-secret: {}
   editor-secret: {}
   local-secrets: {}

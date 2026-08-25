@@ -88,6 +88,9 @@ def _configuration() -> dict[str, object]:
             service["environment"].update(
                 {
                     "SLAIF_AGENT_DSN_FILE": "/run/slaif-agent/agent-dsn",
+                    "SLAIF_AGENT_BROWSER_SIGNING_KEY_FILE": (
+                        "/run/slaif-browser-signing/signing-key"
+                    ),
                     "SLAIF_AGENT_EXPECTED_DATABASE": "slaif",
                     "SLAIF_AGENT_EXPECTED_LOGIN": "slaif_agent_login",
                     "SLAIF_AGENT_EXPECTED_PRIVILEGE_ROLE": "slaif_agent_runtime",
@@ -98,6 +101,9 @@ def _configuration() -> dict[str, object]:
             service["environment"].update(
                 {
                     "SLAIF_RENDER_DSN_FILE": "/run/slaif-render/render-dsn",
+                    "SLAIF_RENDER_BROWSER_SIGNING_KEY_FILE": (
+                        "/run/slaif-browser-signing/signing-key"
+                    ),
                     "SLAIF_RENDER_PREVIEW_DSN_FILE": (
                         "/run/slaif-render-preview/preview-dsn"
                     ),
@@ -161,6 +167,7 @@ def _configuration() -> dict[str, object]:
             name: {}
             for name in (
                 "agent-secret",
+                "browser-signing-secret",
                 "control-secret",
                 "editor-secret",
                 "local-secrets",

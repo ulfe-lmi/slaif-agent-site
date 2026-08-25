@@ -12,7 +12,7 @@ import re
 from datetime import datetime
 from enum import StrEnum
 from typing import Annotated, Any, Literal
-from urllib.parse import parse_qsl, unquote, urlsplit
+from urllib.parse import parse_qsl, unquote, urlencode, urlsplit
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -116,13 +116,15 @@ def normalize_preview_route(value: str) -> str:
     segments = decoded_path.split("/")
     if any(segment in {".", ".."} for segment in segments) or "//" in decoded_path:
         raise ValueError("route contains traversal or duplicate separators")
-    for key, query_value in parse_qsl(parsed.query, keep_blank_values=True):
+    query_pairs = parse_qsl(parsed.query, keep_blank_values=True)
+    for key, query_value in query_pairs:
         normalized_key = re.sub(r"[^a-z0-9]", "", key.casefold())
         if _QUERY_CREDENTIAL.search(normalized_key) or _CAPABILITY_SHAPE.search(
             query_value
         ):
             raise ValueError("route query contains credential-shaped data")
-    return value
+    canonical_query = urlencode(sorted(query_pairs))
+    return parsed.path + (f"?{canonical_query}" if canonical_query else "")
 
 
 def _validate_evidence(

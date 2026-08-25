@@ -11,11 +11,17 @@ from fastapi import FastAPI
 
 from ..application import create_http_application
 from ..authority import ProcessKind
-from ..browser_worker.browser_http import router as browser_router
+from ..browser_preview_credentials import (
+    BrowserPreviewCredentialError,
+    BrowserPreviewCredentialSigner,
+    load_browser_signing_key,
+)
 from ..config import ConfigurationError, ServiceSettings
-from ..health import ReadinessProbe
+from ..health import ProbeResult, ReadinessProbe
 from ..logging import configure_json_logging
 from .agent_http import router as agent_router
+from .browser_http import router as browser_router
+from .browser_service import AgentBrowserRunService
 from .config import AgentDatabaseConfigurationError, AgentDatabaseSettings
 from .database import AgentDatabase, AgentDatabaseAdapter
 
@@ -25,11 +31,30 @@ def create_app(
     settings: ServiceSettings | None = None,
     database_settings: AgentDatabaseSettings | None = None,
     database: AgentDatabaseAdapter | None = None,
+    browser_signer: BrowserPreviewCredentialSigner | None = None,
     readiness_probes: Sequence[ReadinessProbe] = (),
 ) -> FastAPI:
-    selected_database = database or AgentDatabase(
-        settings=database_settings or AgentDatabaseSettings.load()
+    selected_database_settings = database_settings or AgentDatabaseSettings.load()
+    selected_database = database or AgentDatabase(settings=selected_database_settings)
+    test_mode = (
+        getattr(getattr(settings, "mode", None), "value", None) == "test"
+        or selected_database_settings.mode.value == "test"
     )
+    selected_signer = browser_signer
+    if selected_signer is None and not test_mode:
+        try:
+            selected_signer = BrowserPreviewCredentialSigner(
+                load_browser_signing_key(
+                    selected_database_settings.browser_signing_key_file
+                )
+            )
+        except BrowserPreviewCredentialError:
+            selected_signer = None
+
+    async def browser_signing_readiness() -> ProbeResult:
+        if selected_signer is None:
+            return ProbeResult.unavailable("signing_key_unavailable")
+        return ProbeResult.ready()
 
     @asynccontextmanager
     async def database_lifespan(_app: FastAPI) -> AsyncIterator[None]:
@@ -44,11 +69,18 @@ def create_app(
         settings=settings,
         readiness_probes=(
             ReadinessProbe("database", selected_database.readiness),
+            *(
+                (ReadinessProbe("browser-signing-key", browser_signing_readiness),)
+                if not test_mode or browser_signer is not None
+                else ()
+            ),
             *readiness_probes,
         ),
         lifespan_factory=database_lifespan,
     )
     app.state.database = selected_database
+    app.state.browser_run_service = AgentBrowserRunService(selected_database)
+    app.state.browser_preview_signer = selected_signer
     app.include_router(agent_router)
     app.include_router(browser_router)
     return app

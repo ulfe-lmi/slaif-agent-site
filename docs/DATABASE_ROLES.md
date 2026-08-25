@@ -130,6 +130,16 @@ Editor, public/preview readers, Reviewer, Scheduler, Media, and GC receive no
 browser function or relation authority. The browser worker still has no
 database principal.
 
+Revision `036_001` gives only `slaif_preview_reader` execution on
+`control.slaif_render_browser_preview_authorize(...)`. It has no direct browser
+relation DML. The owner function takes the shared workspace lock; requires the
+exact capability/site/workspace/run/route/target/evidence/artifact-byte/duration
+binding, active unexpired `preview:inspect` authority, and QUEUED/RUNNING run;
+atomically stores one nonce digest/consumption time and audit event; and supports
+one same-digest in-transaction recheck without a second consumption. Agent,
+Control, Editor, public reader, Reviewer, Scheduler, Media, GC, and PUBLIC have
+no execution grant.
+
 ## Login-principal design
 
 Privilege roles never contain passwords. The local deployment provisions this
@@ -204,6 +214,8 @@ The product and local-login verifiers read PostgreSQL's effective truth through
 - effective function execution and locked-down reviewer functions;
 - exact browser function owner/signature/search-path/Agent-only execution and
   browser-relation denials;
+- exact Render browser-preview function ownership, preview-only execution,
+  nonce-consumption shape, and all other-role denials;
 - exact empty-schema inventory and generic content/foundation object
   fingerprints;
 - state-specific schema usage and Reviewer foundation authority;

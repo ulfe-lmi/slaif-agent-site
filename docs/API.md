@@ -219,16 +219,41 @@ the workspace overlay and remain absent from canonical content until a later
 human-only lifecycle order; this round does not implement freeze, accept,
 discard, review, or publication routes.
 
-### Browser preview contract foundation (no public route)
+### Capability-bound browser preview runs
 
-The shared `browser-preview/v1` contract now defines one external create shape,
-public status/result and private artifact metadata, and internal run/lease/
-completion metadata. Capability authentication carries validated browser limits
-inside the trusted server context, and PostgreSQL has exact Agent-only
-reservation/read/lease/completion/artifact-metadata functions. No Agent HTTP or
-MCP browser endpoint calls this surface yet. There is no preview credential
-dispatch, worker execution, Playwright, artifact byte storage, source browsing,
-public artifact URL, or publication behavior in this revision.
+The public Agent surface now wires the shared `browser-preview/v1` contract to
+the durable browser-run functions. Every route requires the same bearer
+capability and `preview:inspect`; create also requires `Idempotency-Key`.
+
+| Route | Success | Contract |
+| --- | --- | --- |
+| `POST /api/agent/v1/preview-runs` | 202 | exactly `version`, normalized `route`, one approved target, and unique bounded evidence |
+| `GET /api/agent/v1/preview-runs/{run_id}` | 200 | current capability-bound status or terminal result |
+| `GET /api/agent/v1/preview-runs/{run_id}/artifacts` | 200 | retained private metadata only |
+| `GET /api/agent/v1/preview-runs/{run_id}/artifacts/{artifact_id}` | 404 | byte contract reserved; no byte store exists |
+
+Create derives all site/workspace/delegator/run/operation/quota/digest facts on
+the server. `STARTED` and same-digest `REPLAY` return the same durable QUEUED
+body without double reservation. Mismatch is 409, enforced quota 429, missing
+scope 403, current authentication failure 401, malformed key 400, schema/route
+validation 422, invisible binding 404, and database failure 503. Responses are
+private/no-store and contain no capability, request digest, worker URL, lease,
+SQL, role, or preview credential. The former unauthenticated
+`/internal/browser/v1` Agent routes were removed.
+
+The shared signer can issue a short-lived opaque `sbp1` HMAC-SHA256 credential
+for a future dispatcher from exact durable run facts. Public create never mints
+or returns it. A browser navigation may carry it only in
+`X-SLAIF-Browser-Preview`; Web forwards it server-side only in
+`X-SLAIF-Browser-Run-Token`. Render verifies signature/lifetime and all
+bindings, then migration 036 consumes the nonce and rechecks the active
+capability/workspace/site/QUEUED-or-RUNNING run under the shared workspace lock
+before COW projection. Human preview remains cookie-bound and mutually
+exclusive with browser-token mode.
+
+There is still no dispatcher, worker execution, Playwright, artifact byte
+storage/retrieval, source browsing, public artifact URL, or publication
+behavior.
 
 ## Site governance API
 

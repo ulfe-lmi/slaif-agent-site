@@ -65,6 +65,8 @@ NEW_PACKAGE_FILES = {
     "slaif_agent_site/agent_api/__init__.py",
     "slaif_agent_site/agent_api/__main__.py",
     "slaif_agent_site/agent_api/app.py",
+    "slaif_agent_site/agent_api/browser_http.py",
+    "slaif_agent_site/agent_api/browser_service.py",
     "slaif_agent_site/agent_api/config.py",
     "slaif_agent_site/agent_api/database.py",
     "slaif_agent_site/agent_state/mutations.py",
@@ -76,6 +78,7 @@ NEW_PACKAGE_FILES = {
     "slaif_agent_site/bootstrap/config.py",
     "slaif_agent_site/bootstrap/service.py",
     "slaif_agent_site/bootstrap/setup_token.py",
+    "slaif_agent_site/browser_preview_credentials.py",
     "slaif_agent_site/browser_contracts.py",
     "slaif_agent_site/config.py",
     "slaif_agent_site/control_api/__init__.py",
@@ -106,6 +109,7 @@ NEW_PACKAGE_FILES = {
     "slaif_agent_site/db/alembic/versions/033_001_render_preview_recheck.py",
     "slaif_agent_site/db/alembic/versions/034_001_render_preview_lock_order.py",
     "slaif_agent_site/db/alembic/versions/035_001_browser_run_control_plane.py",
+    "slaif_agent_site/db/alembic/versions/036_001_render_browser_preview_authority.py",
     "slaif_agent_site/db/connections.py",
     "slaif_agent_site/db/executor.py",
     "slaif_agent_site/db/migrations.py",
@@ -183,7 +187,6 @@ EXPECTED_PACKAGE_FILES = NEW_PACKAGE_FILES | {
     "slaif_agent_site/agent_state/capability.py",
     "slaif_agent_site/agent_state/capability_auth.py",
     "slaif_agent_site/browser_worker/__init__.py",
-    "slaif_agent_site/browser_worker/browser_http.py",
     "slaif_agent_site/mcp_adapter/mcp_http.py",
     "slaif_agent_site/mcp_adapter/app.py",
     "slaif_agent_site/control_api/workspace_http.py",
@@ -258,7 +261,10 @@ EXPECTED_SDIST_FILES = {
     "services/backend/src/slaif_agent_site/agent_state/capability.py",
     "services/backend/src/slaif_agent_site/agent_state/capability_auth.py",
     "services/backend/src/slaif_agent_site/browser_worker/__init__.py",
-    "services/backend/src/slaif_agent_site/browser_worker/browser_http.py",
+    "services/backend/src/slaif_agent_site/browser_preview_credentials.py",
+    "services/backend/src/slaif_agent_site/agent_api/browser_http.py",
+    "services/backend/src/slaif_agent_site/agent_api/browser_service.py",
+    "services/backend/src/slaif_agent_site/db/alembic/versions/036_001_render_browser_preview_authority.py",
     "services/backend/src/slaif_agent_site/mcp_adapter/mcp_http.py",
     "services/backend/src/slaif_agent_site/mcp_adapter/app.py",
     "services/backend/src/slaif_agent_site/control_api/workspace_http.py",
@@ -539,8 +545,9 @@ def test_locked_foundation_artifact_hash_constants_are_sha256() -> None:
 
 
 def test_alembic_graph_and_offline_sql_need_no_locator_or_network() -> None:
-    assert migration_heads() == ("035_001",)
+    assert migration_heads() == ("036_001",)
     assert migration_history() == (
+        "036_001",
         "035_001",
         "034_001",
         "033_001",

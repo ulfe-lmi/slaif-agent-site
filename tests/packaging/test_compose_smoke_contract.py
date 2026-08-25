@@ -80,7 +80,9 @@ class ComposeSmokeContractTests(unittest.TestCase):
         precondition, _insert = source.split(
             "INSERT INTO control.user_account", maxsplit=1
         )
-        self.assertEqual(source.count("INSERT INTO control.user_account"), 1)
+        self.assertEqual(source.count("INSERT INTO control.user_account"), 2)
+        self.assertIn("agent-browser-http: OK", source)
+        self.assertIn("14000000-0000-4000-8000-000000000004", source)
         self.assertIn("unexpected fixture precondition", source)
         self.assertIn("OR EXISTS (SELECT 1 FROM control.user_account)", precondition)
         self.assertNotIn(

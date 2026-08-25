@@ -177,6 +177,50 @@ class LocalSecretTests(unittest.TestCase):
             self.assertEqual(stat.S_IMODE(agent_directory.stat().st_mode), 0o700)
             self.assertEqual(stat.S_IMODE(agent_file.stat().st_mode), 0o400)
 
+    def test_browser_signing_key_is_isolated_exact_and_idempotent(self) -> None:
+        INITIALIZER.POSTGRES_UID = os.getuid()
+        INITIALIZER.APPLICATION_UID = os.getuid()
+        INITIALIZER.CONTROL_DIRECTORY_UID = os.getuid()
+        INITIALIZER.CONTROL_DIRECTORY_GID = os.getgid()
+        INITIALIZER.MARKER_UID = os.getuid()
+        INITIALIZER.DIRECTORY_UID = os.getuid()
+        INITIALIZER.SECRET_DIRECTORY_GID = os.getgid()
+        with tempfile.TemporaryDirectory() as parent:
+            directory = Path(parent) / "secrets"
+            signing_directory = Path(parent) / "browser-signing"
+            signing_directory.mkdir()
+            count = INITIALIZER.initialize(
+                directory, browser_signing_directory=signing_directory
+            )
+            self.assertEqual(count, 24)
+            signing_file = signing_directory / "signing-key"
+            first = signing_file.read_bytes()
+            self.assertRegex(
+                first.decode("ascii"), r"^sbk1:[0-9a-f]{16}:[A-Za-z0-9_-]{43}$"
+            )
+            self.assertEqual(
+                INITIALIZER.initialize(
+                    directory, browser_signing_directory=signing_directory
+                ),
+                count,
+            )
+            self.assertEqual(signing_file.read_bytes(), first)
+            self.assertEqual(
+                {path.name for path in signing_directory.iterdir()}, {"signing-key"}
+            )
+            self.assertEqual(stat.S_IMODE(signing_directory.stat().st_mode), 0o700)
+            self.assertEqual(stat.S_IMODE(signing_file.stat().st_mode), 0o400)
+            signing_file.chmod(0o600)
+            signing_file.write_text("x" * len(first), encoding="ascii")
+            signing_file.chmod(0o400)
+            with self.assertRaisesRegex(
+                INITIALIZER.SecretInitializationError,
+                "Browser signing key format mismatch",
+            ):
+                INITIALIZER.initialize(
+                    directory, browser_signing_directory=signing_directory
+                )
+
     def test_editor_locator_is_exactly_isolated_and_idempotent(self) -> None:
         INITIALIZER.POSTGRES_UID = os.getuid()
         INITIALIZER.APPLICATION_UID = os.getuid()

@@ -8,23 +8,55 @@ export const dynamic = "force-dynamic";
 
 export default async function WorkspacePreview({
   params,
+  searchParams,
 }: Readonly<{
   params: Promise<{ workspaceId: string; sitePath?: string[] }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }>) {
-  const [{ workspaceId, sitePath }, requestHeaders, requestCookies] = await Promise.all(
-    [params, headers(), cookies()],
-  );
+  const [{ workspaceId, sitePath }, query, requestHeaders, requestCookies] =
+    await Promise.all([params, searchParams, headers(), cookies()]);
   const session =
     requestCookies.get("__Host-slaif_session")?.value ??
     requestCookies.get("slaif_session")?.value;
-  if (!session) redirect("/login");
+  const browserToken = requestHeaders.get("x-slaif-browser-preview");
+  if (session && browserToken) notFound();
+  if (!session && !browserToken) redirect("/login");
+  if (
+    browserToken &&
+    (browserToken.length > 4096 || !/^sbp1(?:\.[A-Za-z0-9_-]+){3}$/u.test(browserToken))
+  )
+    notFound();
   if (!/^[0-9a-f-]{36}$/i.test(workspaceId)) notFound();
   const path = `/${(sitePath ?? []).join("/")}`;
+  const queryEntries = Object.entries(query)
+    .flatMap(([key, value]) =>
+      Array.isArray(value)
+        ? value.map((item) => [key, item] as const)
+        : value === undefined
+          ? []
+          : ([[key, value]] as const),
+    )
+    .sort(([leftKey, leftValue], [rightKey, rightValue]) =>
+      leftKey === rightKey
+        ? leftValue.localeCompare(rightValue)
+        : leftKey.localeCompare(rightKey),
+    );
+  const encoded = (value: string) =>
+    encodeURIComponent(value)
+      .replace(
+        /[!'()*]/gu,
+        (character) => `%${character.codePointAt(0)?.toString(16).toUpperCase() ?? ""}`,
+      )
+      .replace(/%20/gu, "+");
+  const normalizedQuery = queryEntries
+    .map(([key, value]) => `${encoded(key)}=${encoded(value)}`)
+    .join("&");
+  const browserRoute = normalizedQuery ? `${path}?${normalizedQuery}` : path;
   const projection = await resolvePreviewPage(
     requestHeaders.get("host") ?? "",
     path,
     workspaceId,
-    session,
+    browserToken ? { browserToken, browserRoute } : { humanSessionToken: session! },
   );
   if (!projection) notFound();
   return <PageProjectionShell projection={projection} />;

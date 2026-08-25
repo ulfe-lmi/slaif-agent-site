@@ -260,6 +260,13 @@ PREVIEW_RENDER_FUNCTIONS = {
         "p_idle_seconds integer, p_touch_interval_seconds integer, "
         "p_recent_auth_seconds integer",
     ): "text, bytea, uuid, uuid, integer, integer, integer",
+    (
+        "slaif_render_browser_preview_authorize",
+        "p_capability_id uuid, p_site_id uuid, p_workspace_id uuid, "
+        "p_run_id uuid, p_route text, p_target text, p_evidence text[], "
+        "p_artifact_bytes bigint, p_duration_seconds integer, "
+        "p_nonce_digest text, p_consume boolean",
+    ): "uuid, uuid, uuid, uuid, text, text, text[], bigint, integer, text, boolean",
 }
 RENDER_METADATA_FUNCTIONS = {
     ("slaif_site_render_catalog", "p_site_id uuid"): "uuid",

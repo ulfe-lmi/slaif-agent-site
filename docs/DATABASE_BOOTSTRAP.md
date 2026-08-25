@@ -3,9 +3,10 @@
 The implemented database path is an explicit one-shot maintenance boundary.
 The default Compose stack invokes it before application health can become
 ready. Migration `035_001` adds durable browser-run Control/audit state and
-narrow Agent functions, but no public browser route, worker database role,
-credential dispatcher, artifact filesystem, or browser execution. Online
-services never run Alembic.
+narrow Agent functions. Migration `036_001` adds only one-time nonce digest
+state and one narrow preview-role Render authorization function. Neither adds a
+worker database role, artifact filesystem, dispatcher, or browser execution.
+Online services never run Alembic.
 
 ## Dependencies and migration graph
 
@@ -25,9 +26,9 @@ There is one head:
   |
  ...
   |
-034_001
+035_001
   |
-035_001 (head)
+036_001 (head)
 ```
 
 The baseline creates `control`, `content`, and `audit`, owned by `slaif_owner`.
@@ -47,6 +48,14 @@ capability browser-limit fields, `control.browser_run`,
 schema, table, sequence, and function privileges are revoked. The foundation
 creates its public `agentcow` objects only when reconciliation is explicitly
 requested.
+
+Revision `036_001` adds nullable paired `preview_nonce_digest` and
+`preview_token_used_at` run columns, the append-only
+`PREVIEW_TOKEN_CONSUMED` event kind, and
+`control.slaif_render_browser_preview_authorize(...)`. The function is owned by
+`slaif_owner`, fixed-search-path, executable only by `slaif_preview_reader`, and
+rechecks the complete run binding/current authority under the workspace shared
+advisory lock. It stores no plaintext token or nonce.
 
 ## Configuration
 
@@ -148,7 +157,7 @@ grants, validation, and final marker publication share a transaction, so an
 injected failure rolls them back. A repeat repairs safely and a successful
 repeat does not add objects or change migration head.
 
-The marker records revision `035_001`, distribution
+The marker records revision `036_001`, distribution
 `agent-cow-postgresql`, version `0.2.0`, state-specific evidence flags, generic
 content/foundation object counts and SHA-256 fingerprints, overall safety, and
 update time. Database constraints admit exactly these combinations:

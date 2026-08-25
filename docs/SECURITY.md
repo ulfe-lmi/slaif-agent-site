@@ -127,5 +127,30 @@ online roles are denied. Begin takes the shared workspace advisory lock before
 authority recheck and quota reservation. Claim/renew/release/completion and
 artifact registration recheck current authority and exact leases. Revocation
 therefore prevents later artifact registration and visibility. The worker
-remains DB-less, and no HTTP route, credential exchange, Playwright execution,
-artifact filesystem, source browsing, or publication behavior is implemented.
+remains DB-less, and no dispatcher, worker credential delivery, Playwright
+execution, artifact filesystem, source browsing, or publication behavior is
+implemented.
+
+Public Agent preview-run routes now use this durable boundary and remain
+truthfully QUEUED without a dispatcher. Public bodies cannot select authority,
+run IDs, viewports, origins, credentials, headers, cookies, or commands.
+Create/replay is transactional; status/artifact metadata reads are non-mutating;
+byte retrieval is always a non-leaking 404 until a later store exists. The old
+unauthenticated fabricated browser router is absent.
+
+The `sbp1` preview credential uses fixed HMAC-SHA256, type, deployment, audience,
+contract version, key ID, and canonical payload. It binds capability/site/
+workspace/run, normalized route, target, evidence/artifact/duration limits,
+issued/short expiry, and a 128-bit nonce. Verification computes the signature
+with `hmac.compare_digest`, rejects duplicate/unknown/oversized/future/expired/
+changed facts, and stores only the nonce SHA-256 digest. Migration 036 consumes
+the nonce once and rechecks current authority/run state under the shared lock.
+The token is accepted only in dedicated Web/Render headers and never in URL,
+cookie, DOM, storage, response, log, database, report, or screenshot.
+
+The signing file is generated once as `sbk1:<key-id>:<256-bit-secret>`, in a
+mode-`0700` UID-10001 directory with one mode-`0400` file. Agent and Render mount
+that volume read-only. Web, worker, NGINX, Control, Editor, Media, MCP,
+Scheduler, Reviewer, and GC do not mount it. Missing/bad key makes the Agent and
+Render browser-signing readiness component unavailable; canonical and human
+preview code paths retain their separate authorization semantics.

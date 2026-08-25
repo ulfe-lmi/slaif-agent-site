@@ -51,6 +51,9 @@ MEDIA_SITES_FILE=
 MEDIA_UPLOAD_FILE=
 MEDIA_CONTENT_FILE=
 EDGE_LIMIT_BODY_FILE=
+AGENT_CAPABILITY_CONFIG_FILE=
+AGENT_CAPABILITY_META_FILE=
+AGENT_RUN_FILE=
 
 cleanup() {
   test -z "$HEADER_FILE" || rm -f "$HEADER_FILE"
@@ -63,6 +66,9 @@ cleanup() {
   test -z "$MEDIA_UPLOAD_FILE" || rm -f "$MEDIA_UPLOAD_FILE"
   test -z "$MEDIA_CONTENT_FILE" || rm -f "$MEDIA_CONTENT_FILE"
   test -z "$EDGE_LIMIT_BODY_FILE" || rm -f "$EDGE_LIMIT_BODY_FILE"
+  test -z "$AGENT_CAPABILITY_CONFIG_FILE" || rm -f "$AGENT_CAPABILITY_CONFIG_FILE"
+  test -z "$AGENT_CAPABILITY_META_FILE" || rm -f "$AGENT_CAPABILITY_META_FILE"
+  test -z "$AGENT_RUN_FILE" || rm -f "$AGENT_RUN_FILE"
   docker compose -p "$NEGATIVE_PROJECT" -f "$ROOT/compose.yaml" \
     -f "$ROOT/tests/packaging/compose.broken-bootstrap.yaml" \
     down --volumes --remove-orphans >/dev/null 2>&1 || true
@@ -82,7 +88,11 @@ MEDIA_SITES_FILE=$(mktemp)
 MEDIA_UPLOAD_FILE=$(mktemp)
 MEDIA_CONTENT_FILE=$(mktemp)
 EDGE_LIMIT_BODY_FILE=$(mktemp)
-chmod 600 "$TOKEN_FILE" "$E2E_SECRET_FILE"
+AGENT_CAPABILITY_CONFIG_FILE=$(mktemp)
+AGENT_CAPABILITY_META_FILE=$(mktemp)
+AGENT_RUN_FILE=$(mktemp)
+chmod 600 "$TOKEN_FILE" "$E2E_SECRET_FILE" "$AGENT_CAPABILITY_CONFIG_FILE" \
+  "$AGENT_CAPABILITY_META_FILE" "$AGENT_RUN_FILE"
 
 cd "$ROOT"
 docker compose config --quiet
@@ -442,6 +452,20 @@ then
 fi
 
 docker run --rm --network none --read-only --cap-drop ALL --cap-add DAC_READ_SEARCH \
+  --user 0:0 --volume "${PROJECT}_browser-signing-secret:/signing:ro" \
+  --entrypoint python slaif-agent-site-backend:local -c \
+  "import pathlib,re,stat; root=pathlib.Path('/signing'); files=list(root.iterdir()); assert len(files)==1 and files[0].name=='signing-key'; info=root.stat(); file=files[0]; assert stat.S_IMODE(info.st_mode)==0o700 and info.st_uid==10001 and info.st_gid==10001; assert stat.S_IMODE(file.stat().st_mode)==0o400 and file.stat().st_uid==10001; value=file.read_text('ascii'); assert re.fullmatch(r'sbk1:[0-9a-f]{16}:[A-Za-z0-9_-]{43}', value); print('browser-signing-secret-policy: OK files=1 mode=0400 owner=10001')"
+if docker run --rm --network none --read-only --cap-drop ALL \
+  --user 10003:10003 --volume "${PROJECT}_browser-signing-secret:/signing:ro" \
+  --entrypoint python slaif-agent-site-backend:local -c \
+  "import pathlib; pathlib.Path('/signing/signing-key').read_bytes()" \
+  >/dev/null 2>&1
+then
+  echo "compose-smoke: unrelated uid unexpectedly read browser signing key" >&2
+  exit 1
+fi
+
+docker run --rm --network none --read-only --cap-drop ALL --cap-add DAC_READ_SEARCH \
   --user 0:0 --volume "${PROJECT}_local-secrets:/master:ro" \
   --volume "${PROJECT}_media-secret:/media:ro" \
   --entrypoint python slaif-agent-site-backend:local -c \
@@ -455,6 +479,138 @@ then
   echo "compose-smoke: unrelated uid unexpectedly read Media locator" >&2
   exit 1
 fi
+
+python - "$AGENT_CAPABILITY_CONFIG_FILE" "$AGENT_CAPABILITY_META_FILE" <<'PY'
+import hashlib
+import pathlib
+import secrets
+import sys
+
+token = f"sas2_{secrets.token_hex(8)}_{secrets.token_hex(32)}"
+pathlib.Path(sys.argv[1]).write_text(
+    f'header = "Authorization: Bearer {token}"\n', encoding="ascii"
+)
+pathlib.Path(sys.argv[2]).write_text(
+    f"{token.split('_')[1]} {hashlib.sha256(token.encode()).hexdigest()}\n",
+    encoding="ascii",
+)
+PY
+read -r agent_capability_public agent_capability_digest < "$AGENT_CAPABILITY_META_FILE"
+docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif \
+  -v ON_ERROR_STOP=1 -c \
+  "BEGIN;
+   INSERT INTO control.user_account
+     (id,identity_kind,oidc_issuer,oidc_subject,display_name,status)
+   VALUES
+     ('14000000-0000-4000-8000-000000000001','OIDC','https://browser-smoke.test',
+      'browser-smoke-subject','Browser Smoke Agent','ACTIVE');
+   INSERT INTO control.site
+     (id,site_key,display_name,default_locale,component_catalog_version,status)
+   VALUES
+     ('14000000-0000-4000-8000-000000000002','agent-browser-smoke',
+      'Agent Browser Smoke','en-US','catalog-v1','ACTIVE');
+   INSERT INTO control.workspace
+     (id,site_id,created_by,actor_type,title,delegation_preset,effective_scopes,
+      status,expires_at)
+   VALUES
+     ('14000000-0000-4000-8000-000000000003',
+      '14000000-0000-4000-8000-000000000002',
+      '14000000-0000-4000-8000-000000000001','AGENT','Agent browser smoke',
+      'L1','[\"preview:inspect\"]'::jsonb,'ACTIVE',
+      CURRENT_TIMESTAMP + interval '1 hour');
+   INSERT INTO control.capability
+     (id,workspace_id,public_id,secret_digest,scopes,expires_at)
+   VALUES
+     ('14000000-0000-4000-8000-000000000004',
+      '14000000-0000-4000-8000-000000000003','$agent_capability_public',
+      '$agent_capability_digest','[\"preview:inspect\"]'::jsonb,
+      CURRENT_TIMESTAMP + interval '1 hour');
+   COMMIT;" >/dev/null
+agent_create_status=$(curl --silent --show-error \
+  --config "$AGENT_CAPABILITY_CONFIG_FILE" \
+  --output "$AGENT_RUN_FILE" --write-out '%{http_code}' \
+  --request POST --header 'Content-Type: application/json' \
+  --header 'Idempotency-Key: compose-browser-create' \
+  --data '{"version":"browser-preview/v1","route":"/","target":"desktop-chromium","evidence":["heading-summary"]}' \
+  http://localhost:8080/api/agent/v1/preview-runs)
+test "$agent_create_status" = 202
+AGENT_RUN_ID=$(python - "$AGENT_RUN_FILE" "$AGENT_CAPABILITY_CONFIG_FILE" <<'PY'
+import json
+import pathlib
+import sys
+
+body = pathlib.Path(sys.argv[1]).read_text("utf-8")
+document = json.loads(body)
+token = pathlib.Path(sys.argv[2]).read_text("ascii").split("Bearer ", 1)[1].strip('"\n')
+assert document["state"] == "QUEUED"
+assert document["route"] == "/"
+assert "workspace_id" not in document and "capability_id" not in document
+assert token not in body
+print(document["run_id"])
+PY
+)
+test -n "$AGENT_RUN_ID"
+test "$(curl --silent --show-error --config "$AGENT_CAPABILITY_CONFIG_FILE" \
+  --output "$AGENT_RUN_FILE" --write-out '%{http_code}' \
+  "http://localhost:8080/api/agent/v1/preview-runs/$AGENT_RUN_ID")" = 200
+python - "$AGENT_RUN_FILE" <<'PY'
+import json
+import pathlib
+import sys
+
+document = json.loads(pathlib.Path(sys.argv[1]).read_text("utf-8"))
+assert document["state"] == "QUEUED"
+PY
+docker compose -p "$PROJECT" restart agent-api >/dev/null
+wait_healthy agent-api
+test "$(curl --silent --show-error --config "$AGENT_CAPABILITY_CONFIG_FILE" \
+  --output "$AGENT_RUN_FILE" --write-out '%{http_code}' \
+  "http://localhost:8080/api/agent/v1/preview-runs/$AGENT_RUN_ID")" = 200
+docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif -Atc \
+  "SELECT (SELECT count(*) FROM control.browser_run
+             WHERE capability_id='14000000-0000-4000-8000-000000000004') || ':' ||
+          (SELECT count(*) FROM control.browser_idempotency
+             WHERE capability_id='14000000-0000-4000-8000-000000000004') || ':' ||
+          (SELECT count(*) FROM audit.browser_event
+             WHERE capability_id='14000000-0000-4000-8000-000000000004') || ':' ||
+          (SELECT state FROM control.browser_run
+             WHERE capability_id='14000000-0000-4000-8000-000000000004');" \
+  | grep -q '^1:1:1:QUEUED$'
+echo "agent-browser-http: OK create=202 replay-counts=1:1:1 restart=durable state=QUEUED artifacts=none"
+
+docker run --rm --network none --volume \
+  "${PROJECT}_browser-signing-secret:/signing" \
+  --entrypoint sh slaif-agent-site-backend:local -c \
+  'mv /signing/signing-key /signing/signing-key.hidden'
+docker compose -p "$PROJECT" restart agent-api render-api >/dev/null
+wait_signing_unready() {
+  service_path=$1
+  attempt=0
+  status=000
+  while test "$attempt" -lt 30 && test "$status" != 503
+  do
+    attempt=$((attempt + 1))
+    sleep 1
+    status=$(curl --silent --output /dev/null --write-out '%{http_code}' \
+      "http://localhost:8080$service_path" || true)
+  done
+  test "$status" = 503
+}
+wait_signing_unready /api/agent/health/ready
+test "$(docker exec "${PROJECT}-render-api-1" python -c \
+  "import urllib.error,urllib.request; u='http://127.0.0.1:8000/health/ready';
+try: urllib.request.urlopen(u,timeout=2)
+except urllib.error.HTTPError as e: print(e.code)")" = 503
+test "$(curl --silent --output /dev/null --write-out '%{http_code}' \
+  http://localhost:8080/)" = 200
+docker run --rm --network none --volume \
+  "${PROJECT}_browser-signing-secret:/signing" \
+  --entrypoint sh slaif-agent-site-backend:local -c \
+  'mv /signing/signing-key.hidden /signing/signing-key'
+docker compose -p "$PROJECT" restart agent-api render-api >/dev/null
+wait_healthy agent-api
+wait_healthy render-api
+echo "browser-signing-recovery: OK missing=not-ready canonical=available restored=healthy"
 
 python tools/compose/control_readiness.py "$PROJECT" --existing
 

@@ -20,6 +20,7 @@ _CONTROL_AUTH_PATHS = {
     "/api/control/v1/session",
     "/api/control/v1/logout",
 }
+_PRIVATE_API_PREFIXES = ("/api/agent/v1/preview-runs",)
 
 
 class ErrorBody(BaseModel):
@@ -157,7 +158,9 @@ def _response(
     response = JSONResponse(
         status_code=status_code, content=envelope.model_dump(mode="json")
     )
-    if request.url.path in _CONTROL_AUTH_PATHS:
+    if request.url.path in _CONTROL_AUTH_PATHS or request.url.path.startswith(
+        _PRIVATE_API_PREFIXES
+    ):
         response.headers["Cache-Control"] = "private, no-store"
         response.headers["Pragma"] = "no-cache"
         response.headers["X-Robots-Tag"] = "noindex, nofollow, noarchive"

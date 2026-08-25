@@ -39,10 +39,11 @@ docker compose ps
 
 The first start creates the named volumes, generates private local database
 files plus separate public/preview Render locators and a Web-to-Render
-credential, initializes PostgreSQL, seeds the exact fresh `demo` site, and runs
-the one-shot bootstrap. A returning start validates and reuses credentials and
-data, does not reissue the setup token, skips seed enforcement after setup, and
-starts the same service graph.
+credential, plus one browser signing key isolated to Agent and Render,
+initializes PostgreSQL, seeds the exact fresh `demo` site, and runs the one-shot
+bootstrap. A returning start validates and reuses credentials and data, does
+not reissue the setup token, skips seed enforcement after setup, and starts the
+same service graph.
 
 ### PostgreSQL baseline
 
@@ -60,11 +61,11 @@ requires a separately designed and tested logical process.
 | `/` | Web | Accessible pre-alpha deployment-status page. |
 | `/health/live`, `/health/ready` | Web | Bounded Web process health only. |
 | `/s/demo/` and other resolved paths | Web→Render | Canonical published page HTML from a typed Render projection; only an exact matched site root without a page uses the routing shell, while deeper unknown/unpublished paths return 404. |
-| `/preview/{workspace_id}/...` | Web→Render | Authenticated human-authorized HUMAN/AGENT/IMPORT workspace-overlay HTML; private/no-store/noindex and never public cacheable. |
+| `/preview/{workspace_id}/...` | Web→Render | Mutually exclusive human-session or run-bound signed-browser-header workspace overlay; private/no-store/noindex and never public cacheable. |
 | `/api/control/` | Control API | Prefix-stripped health plus authenticated setup/session, site/domain, RBAC catalog, and membership routes; readiness includes one database component. |
 | `/api/editor/health/` | Editor API | Exact liveness/readiness aliases. |
 | `/api/editor/v1/` | Editor API | Prefix-preserving human Editor API routes. |
-| `/api/agent/` | Agent API | Prefix-stripped health plus capability-authenticated bounded COW create routes; no lifecycle or publication routes. |
+| `/api/agent/` | Agent API | Prefix-stripped health, bounded COW routes, and capability-authenticated preview-run create/status/private-metadata routes; byte retrieval remains 404 and no lifecycle/publication route exists. |
 | `/mcp/` | MCP adapter | Prefix-stripped health routes only. |
 | `/media/` | Media service | Prefix-stripped health plus authenticated private upload/immutable-byte routes; no direct volume serving. |
 
@@ -100,7 +101,7 @@ design rather than weaken this baseline.
 | `postgres` | PostgreSQL | official entrypoint drops to PostgreSQL user | database | PostgreSQL data; local secrets read-only |
 | `bootstrap` | Backend | `10001:10001` | database | local secrets read-only |
 | `control-api` | Backend | `10001:10001` | edge, database | isolated Control secret, read-only |
-| Control/Agent/Render/MCP HTTP services | Backend | `10001:10001` | exact edge/application/database memberships | no media volume |
+| Control/Agent/Render/MCP HTTP services | Backend | `10001:10001` | exact edge/application/database memberships | no media volume; Agent and Render alone mount browser signing key read-only |
 | Editor HTTP service | Backend | `10001:10001` | edge/database plus isolated Control/Editor secrets | no media volume |
 | Media HTTP service | Backend | `10001:10001` | edge/database plus isolated Media secret | private `media-data` only; initialized `0700` for UID 10001 |
 | Three Python workers | Backend | `10001:10001` | database | media volume on media-GC only |
@@ -180,8 +181,9 @@ usable credential or administrator assignment, and are removed with its volumes.
 - `edge`: NGINX, Web, and the five externally routed API processes.
 - `application`: Web to Render, plus MCP internal HTTP access.
 - `database`: PostgreSQL and only processes whose architecture may later use a
-  database. Control alone currently opens an online pool; network membership
-  gives every other process no credential or database authority.
+  database. Implemented Control, Editor, Agent, Render, and Media processes open
+  only their isolated least-privilege pools; network membership gives every
+  other process no credential or database authority.
 - `browser`: only Agent API and browser worker. It is internal and has no
   PostgreSQL, edge, host, filesystem, or Docker-socket path.
 
@@ -217,6 +219,15 @@ initializer mounts them read/write; Render mounts both read-only. The separate
 file and is mounted read-only to Web and Render. Web reaches Render over the
 application network and has no database credential. NGINX, Control, agents,
 browser, and workers receive no Render locator or service credential.
+
+The separate `browser-signing-secret` volume contains exactly one generated
+`signing-key` file in the fixed `sbk1` format. Its directory is mode `0700` and
+file mode `0400`, both owned by `10001:10001`. Initializer alone writes it;
+Agent and Render mount it read-only. Web receives a signed run token only in one
+incoming request header and forwards it to Render in a different dedicated
+server-side header, but Web cannot sign or verify it. Browser worker, NGINX,
+Control, Editor, Media, MCP, Scheduler, Reviewer, GC, PostgreSQL, and bootstrap
+do not mount the signing volume.
 
 Institutional deployments may replace the generator with externally managed
 files that use the same names and fixed principal model. They must preserve

@@ -6,6 +6,7 @@ import {
   BROWSER_CONTRACT_SCHEMAS,
   BROWSER_CONTRACT_VERSION,
   BROWSER_EVIDENCE,
+  BROWSER_PREVIEW_CREDENTIAL_FACTS,
   BROWSER_RUN_STATES,
   BROWSER_TARGETS,
   BROWSER_TERMINAL_STATES,
@@ -46,6 +47,16 @@ describe("browser preview contracts", () => {
     });
   });
 
+  it("matches the neutral run-token verifier facts exactly", () => {
+    const facts = JSON.parse(
+      readFileSync(
+        resolve(import.meta.dirname, "../src/browser-preview-credential-v1.json"),
+        "utf8",
+      ),
+    ) as Record<string, unknown>;
+    expect(facts).toEqual(BROWSER_PREVIEW_CREDENTIAL_FACTS);
+  });
+
   it("normalizes only the fixed request shape and canonicalizes evidence order", async () => {
     const parsed = parsePreviewRunCreateRequest(validRequest);
     expect(Object.isFrozen(parsed)).toBe(true);
@@ -61,6 +72,12 @@ describe("browser preview contracts", () => {
     expect(await previewRunRequestDigest(validRequest)).toBe(
       "6ee9d361a4433878c18c6aa645c6872afae8bd31ac0e628e88f3d0eefa3405f4",
     );
+    expect(
+      parsePreviewRunCreateRequest({
+        ...validRequest,
+        route: "/news?z=hello%20world&a=~",
+      }).route,
+    ).toBe("/news?a=~&z=hello+world");
   });
 
   it("keeps every exported object schema extra-forbid and state-bounded", () => {

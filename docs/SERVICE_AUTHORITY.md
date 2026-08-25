@@ -69,14 +69,19 @@ Internal service authentication, pools for non-Editor/Agent processes, browser
 sandbox and egress enforcement, production TLS automation, and product
 authorization remain later work. Network membership alone is not authority.
 
-The Agent database role now has an internal durable browser-run function
-surface for a later Agent-owned dispatcher. It can authenticate bounded browser
-limits; atomically begin/replay a preview run; read exact capability-bound run
-and private artifact metadata; claim, renew, or release a bounded lease;
-complete a run; and register artifact metadata. It has no direct Control/audit
-table grant. This is durable foundation only: the Agent app exposes no browser
-route using it, and the browser worker still has no database credential,
-dispatcher credential, Playwright package, browser binary, or artifact mount.
+The Agent database role has an exact durable browser-run function surface. The
+public capability-authenticated Agent routes now use only authenticate, begin,
+get, and artifact-list; byte retrieval remains an honest 404. Claim, renew,
+release, complete, and artifact-register remain internal adapter primitives for
+a later Agent-owned dispatcher. Agent has no direct Control/audit table grant,
+and public create never receives a worker or signing credential.
+
+Agent and Render alone load the same isolated file-backed browser signing key.
+Agent owns signing; Render owns verification plus one exact preview-reader DB
+function that consumes/rechecks a nonce digest under the workspace lock. Web
+sees only a request-scoped signed token header and forwards it server-side; it
+does not have the key. The browser worker still has no database credential,
+signing key, Playwright package, browser binary, or artifact mount.
 
 The Agent HTTP behavior additionally includes the capability-authenticated
 bounded COW semantic read and create surfaces documented in [the API guide](API.md).

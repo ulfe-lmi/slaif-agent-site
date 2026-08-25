@@ -8,6 +8,7 @@ import pytest
 from pydantic import SecretStr, ValidationError
 from slaif_agent_site.agent_api.config import (
     AGENT_APPLICATION_NAME,
+    AGENT_BROWSER_SIGNING_KEY_FILE,
     AGENT_DSN_FILE,
     AGENT_LOGIN,
     AGENT_PRIVILEGE_ROLE,
@@ -35,6 +36,9 @@ def test_agent_settings_are_fixed_and_secret_safe() -> None:
     assert settings.expected_privilege_role == AGENT_PRIVILEGE_ROLE
     assert settings.application_name == AGENT_APPLICATION_NAME
     assert AGENT_DSN_FILE == Path("/run/slaif-agent/agent-dsn")
+    assert AGENT_BROWSER_SIGNING_KEY_FILE == Path(
+        "/run/slaif-browser-signing/signing-key"
+    )
     assert locator not in repr(settings)
     assert locator not in settings.model_dump_json()
 
@@ -42,6 +46,8 @@ def test_agent_settings_are_fixed_and_secret_safe() -> None:
         AgentDatabaseSettings(expected_login="slaif_control_login")
     with pytest.raises(ValidationError, match="privilege role is fixed"):
         AgentDatabaseSettings(expected_privilege_role="slaif_control")
+    with pytest.raises(ValidationError, match="absolute"):
+        AgentDatabaseSettings(browser_signing_key_file=Path("relative-key"))
 
 
 def test_agent_production_requires_secure_mounted_locator(tmp_path: Path) -> None:

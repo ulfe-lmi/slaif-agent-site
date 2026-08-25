@@ -6,10 +6,11 @@ import secrets
 from typing import Any, Never
 from uuid import UUID
 
-from fastapi import APIRouter, FastAPI, Header, Response
-from pydantic import BaseModel, ConfigDict
+from fastapi import APIRouter, FastAPI, Request, Response
+from pydantic import BaseModel, ConfigDict, SecretStr
 from starlette.responses import JSONResponse
 
+from slaif_agent_site.browser_preview_credentials import BROWSER_RENDER_HEADER
 from slaif_agent_site.errors import (
     ResourceConflictError,
     ResourceNotFoundError,
@@ -88,9 +89,11 @@ def _projection_error(error: ProjectionError) -> Never:
     raise ResourceNotFoundError() from None
 
 
-def install_render_projection_routes(app: FastAPI, database: Any) -> None:
+def install_render_projection_routes(
+    app: FastAPI, database: Any, *, browser_verifier: Any = None
+) -> None:
     router = APIRouter(prefix="/internal/render/v1")
-    service = RenderProjectionService(database)
+    service = RenderProjectionService(database, browser_verifier=browser_verifier)
 
     @router.post("/page", response_model=RenderPageProjection)
     async def canonical_page(
@@ -106,12 +109,42 @@ def install_render_projection_routes(app: FastAPI, database: Any) -> None:
     async def preview_page(
         payload: RenderPreviewRequest,
         response: Response,
-        human_session: str | None = Header(default=None, alias="X-SLAIF-Human-Session"),
+        request: Request,
     ) -> RenderPageProjection:
         _headers(response)
+        headers = request.scope.get("headers", [])
+        human_values = [
+            value for name, value in headers if name.lower() == b"x-slaif-human-session"
+        ]
+        browser_header = BROWSER_RENDER_HEADER.casefold().encode("ascii")
+        browser_values = [
+            value for name, value in headers if name.lower() == browser_header
+        ]
+        if (
+            len(human_values) > 1
+            or len(browser_values) > 1
+            or bool(human_values and browser_values)
+        ):
+            raise ResourceNotFoundError()
         selected = payload
-        if human_session is not None:
-            selected = payload.model_copy(update={"session_token": human_session})
+        try:
+            if human_values:
+                selected = payload.model_copy(
+                    update={"session_token": SecretStr(human_values[0].decode("ascii"))}
+                )
+            elif browser_values:
+                token = browser_values[0].decode("ascii")
+                if (
+                    not token
+                    or len(token) > 4096
+                    or any(character.isspace() for character in token)
+                ):
+                    raise ValueError
+                selected = payload.model_copy(
+                    update={"browser_token": SecretStr(token)}
+                )
+        except (UnicodeError, ValueError):
+            raise ResourceNotFoundError() from None
         try:
             return await service.preview(selected)
         except ProjectionError as error:
