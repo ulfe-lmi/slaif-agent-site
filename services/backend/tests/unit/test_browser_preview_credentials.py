@@ -40,7 +40,12 @@ def _signer() -> BrowserPreviewCredentialSigner:
     return BrowserPreviewCredentialSigner(BrowserSigningKey(KEY_ID, KEY_BYTES))
 
 
-def _issue(*, now: int = 1_800_000_000, ttl: int = 30) -> str:
+def _issue(
+    *,
+    now: int = 1_800_000_000,
+    ttl: int = 30,
+    nonce: str = "00112233445566778899aabbccddeeff",
+) -> str:
     return _signer().issue(
         capability_id=CAPABILITY_ID,
         site_id=SITE_ID,
@@ -53,7 +58,7 @@ def _issue(*, now: int = 1_800_000_000, ttl: int = 30) -> str:
         duration_seconds=120,
         now=now,
         ttl_seconds=ttl,
-        nonce="00112233445566778899aabbccddeeff",
+        nonce=nonce,
     )
 
 
@@ -61,9 +66,35 @@ def _b64(value: bytes) -> str:
     return base64.urlsafe_b64encode(value).rstrip(b"=").decode("ascii")
 
 
-def _signed_token(header: str, payload: str) -> str:
-    signed = f"sbp1.{_b64(header.encode())}.{_b64(payload.encode())}"
+def _b64decode(value: str) -> bytes:
+    return base64.b64decode(
+        value + "=" * (-len(value) % 4), altchars=b"-_", validate=True
+    )
+
+
+def _resign_components(header_part: str, payload_part: str) -> str:
+    signed = f"sbp1.{header_part}.{payload_part}"
     return f"{signed}.{_b64(hmac.digest(KEY_BYTES, signed.encode(), 'sha256'))}"
+
+
+def _noncanonical_pad_alias(value: str) -> str:
+    decoded = _b64decode(value)
+    alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+    for character in alphabet:
+        candidate = value[:-1] + character
+        if candidate != value and _b64decode(candidate) == decoded:
+            return candidate
+    raise AssertionError("component has no discarded base64url pad bits")
+
+
+def _signed_token(header: str, payload: str) -> str:
+    return _resign_components(_b64(header.encode()), _b64(payload.encode()))
+
+
+def _assert_invalid(token: str) -> None:
+    with pytest.raises(BrowserPreviewCredentialError) as caught:
+        _signer().verify(token, now=1_800_000_010)
+    assert str(caught.value) == "browser credential is invalid"
 
 
 def test_deterministic_vector_and_exact_binding() -> None:
@@ -167,6 +198,35 @@ def test_signature_lifetime_and_malformed_tokens_fail_closed() -> None:
     )
     with pytest.raises(BrowserPreviewCredentialError):
         other.verify(token, now=1_800_000_010)
+
+
+def test_noncanonical_signature_pad_bits_are_rejected() -> None:
+    token = _issue(nonce="00000000000000000000000000000005")
+    parts = token.split(".")
+    assert parts[3][-1] == "0"
+    signature = _b64decode(parts[3])
+
+    for final_character in "123":
+        aliased_signature = parts[3][:-1] + final_character
+        assert aliased_signature != parts[3]
+        assert _b64decode(aliased_signature) == signature
+        _assert_invalid(".".join([*parts[:3], aliased_signature]))
+
+    significant_tamper = parts[3][:-2] + ("A" if parts[3][-2] != "A" else "B") + "0"
+    assert _b64decode(significant_tamper) != signature
+    _assert_invalid(".".join([*parts[:3], significant_tamper]))
+
+
+def test_noncanonical_header_and_payload_components_are_rejected() -> None:
+    parts = _issue().split(".")
+    header_with_trailing_space = _b64(_b64decode(parts[1]) + b" ")
+    aliased_header = _noncanonical_pad_alias(header_with_trailing_space)
+    aliased_payload = _noncanonical_pad_alias(parts[2])
+
+    assert _b64decode(aliased_header) == _b64decode(header_with_trailing_space)
+    assert _b64decode(aliased_payload) == _b64decode(parts[2])
+    _assert_invalid(_resign_components(aliased_header, parts[2]))
+    _assert_invalid(_resign_components(parts[1], aliased_payload))
 
 
 def test_signed_unknown_and_duplicate_facts_are_rejected() -> None:

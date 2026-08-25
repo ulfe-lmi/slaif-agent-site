@@ -166,6 +166,13 @@ def _b64decode(value: str, *, maximum: int) -> bytes:
     return decoded
 
 
+def _b64decode_canonical(value: str, *, maximum: int) -> bytes:
+    decoded = _b64decode(value, maximum=maximum)
+    if _b64encode(decoded) != value:
+        raise BrowserPreviewCredentialError("browser credential is invalid")
+    return decoded
+
+
 def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     result: dict[str, Any] = {}
     for key, value in pairs:
@@ -321,14 +328,14 @@ class BrowserPreviewCredentialSigner:
         if len(parts) != 4 or parts[0] != BROWSER_PREVIEW_TOKEN_PREFIX:
             raise BrowserPreviewCredentialError("browser credential is invalid")
         header_part, payload_part, signature_part = parts[1:]
-        signature = _b64decode(signature_part, maximum=64)
+        signature = _b64decode_canonical(signature_part, maximum=64)
         signed = ".".join(parts[:3]).encode("ascii")
         expected_signature = hmac.digest(self._key.secret, signed, "sha256")
         if len(signature) != 32 or not hmac.compare_digest(
             signature, expected_signature
         ):
             raise BrowserPreviewCredentialError("browser credential is invalid")
-        header = _json_object(_b64decode(header_part, maximum=512))
+        header = _json_object(_b64decode_canonical(header_part, maximum=512))
         if header != {
             "alg": BROWSER_PREVIEW_TOKEN_ALGORITHM,
             "kid": self._key.key_id,
@@ -338,7 +345,7 @@ class BrowserPreviewCredentialSigner:
             raise BrowserPreviewCredentialError("browser credential is invalid")
         try:
             claims = BrowserPreviewCredentialClaims.model_validate(
-                _json_object(_b64decode(payload_part, maximum=3072))
+                _json_object(_b64decode_canonical(payload_part, maximum=3072))
             )
         except (BrowserPreviewCredentialError, ValueError):
             raise BrowserPreviewCredentialError(
