@@ -91,6 +91,12 @@ def _configuration() -> dict[str, object]:
                     "SLAIF_AGENT_BROWSER_SIGNING_KEY_FILE": (
                         "/run/slaif-browser-signing/signing-key"
                     ),
+                    "SLAIF_AGENT_BROWSER_WORKER_ENDPOINT": (
+                        "http://browser-worker:3100"
+                    ),
+                    "SLAIF_AGENT_BROWSER_WORKER_SERVICE_CREDENTIAL_FILE": (
+                        "/run/slaif-browser-worker/worker-token"
+                    ),
                     "SLAIF_AGENT_EXPECTED_DATABASE": "slaif",
                     "SLAIF_AGENT_EXPECTED_LOGIN": "slaif_agent_login",
                     "SLAIF_AGENT_EXPECTED_PRIVILEGE_ROLE": "slaif_agent_runtime",
@@ -122,7 +128,34 @@ def _configuration() -> dict[str, object]:
             )
         if name == "web":
             service["environment"] = {
-                "SLAIF_RENDER_SERVICE_TOKEN_FILE": "/run/slaif-render-auth/render-token"
+                "SLAIF_BROWSER_PREVIEW_AUTHORITY": "localhost:8080",
+                "SLAIF_RENDER_SERVICE_TOKEN_FILE": (
+                    "/run/slaif-render-auth/render-token"
+                ),
+            }
+        if name == "browser-worker":
+            service.update(
+                {
+                    "cpus": 1.0,
+                    "mem_limit": 805306368,
+                    "pids_limit": 256,
+                    "security_opt": [
+                        "no-new-privileges:true",
+                        "seccomp=services/browser-worker/seccomp_profile.json",
+                    ],
+                    "shm_size": 134217728,
+                    "tmpfs": [
+                        "/tmp:uid=10001,gid=10001,mode=700,nosuid,nodev,noexec,size=64m"
+                    ],
+                    "user": "10001:10001",
+                }
+            )
+            service["environment"] = {
+                "BROWSER_WORKER_ARTIFACT_ROOT": "/var/lib/slaif/browser-artifacts",
+                "BROWSER_WORKER_PREVIEW_ORIGIN": "http://web:3000",
+                "BROWSER_WORKER_SERVICE_CREDENTIAL_FILE": (
+                    "/run/slaif-browser-worker/worker-token"
+                ),
             }
         if name == "media-service":
             service["environment"].update(
@@ -168,6 +201,8 @@ def _configuration() -> dict[str, object]:
             for name in (
                 "agent-secret",
                 "browser-signing-secret",
+                "browser-worker-secret",
+                "browser-artifacts",
                 "control-secret",
                 "editor-secret",
                 "local-secrets",

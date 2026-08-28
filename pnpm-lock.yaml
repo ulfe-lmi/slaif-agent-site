@@ -113,7 +113,21 @@ importers:
 
   packages/test-fixtures: {}
 
-  services/browser-worker: {}
+  services/browser-worker:
+    dependencies:
+      '@slaif-agent-site/browser-tool-contracts':
+        specifier: workspace:0.0.0
+        version: link:../../packages/browser-tool-contracts
+      playwright-core:
+        specifier: 1.62.1
+        version: 1.62.1
+    devDependencies:
+      '@types/node':
+        specifier: 24.13.3
+        version: 24.13.3
+      typescript:
+        specifier: 6.0.3
+        version: 6.0.3
 
 packages:
 

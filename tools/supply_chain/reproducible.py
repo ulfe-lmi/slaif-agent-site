@@ -39,8 +39,16 @@ NODE_OUTPUTS = (
     "apps/web/public",
 )
 BROWSER_RUNTIME = (
+    "packages/browser-tool-contracts/package.json",
+    "packages/browser-tool-contracts/src",
+    "pnpm-lock.yaml",
+    "services/browser-worker/Dockerfile",
+    "services/browser-worker/extract-zip.mjs",
     "services/browser-worker/package.json",
     "services/browser-worker/src",
+    "services/browser-worker/seccomp_profile.json",
+    "services/browser-worker/tsconfig.build.json",
+    "services/browser-worker/tsconfig.json",
 )
 IGNORED_PARTS = {
     ".git",

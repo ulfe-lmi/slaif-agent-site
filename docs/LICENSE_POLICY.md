@@ -20,8 +20,13 @@ source, and required attribution note.
 | Container OS/runtime aggregation | Inventory every package and preserve reported licenses or unknowns for legal review; do not apply the application allowlist as though normal aggregation changed package grants. | Alpine packages, NGINX, Apache, PostgreSQL, Node, and Python runtime contents. |
 
 Fonts will use the attribution-review class when they enter scope. No font
-package is currently present. Browser binaries are also absent from the current
-browser-worker image.
+package is currently present. The browser-worker image contains the exact
+Apache-2.0 `playwright-core==1.62.1` application dependency and Chromium for
+Testing `151.0.7922.72` from Google's exact SHA-256-verified archive over the
+reviewed official Playwright dependency image. Firefox
+and WebKit product binaries are absent. Browser/Ubuntu runtime metadata and
+license facts remain fully inventoried in the container SBOM for human legal
+review; passing the application allowlist does not reclassify that aggregation.
 
 ## Application allow and review policy
 

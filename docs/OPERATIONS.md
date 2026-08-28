@@ -19,12 +19,36 @@ and compare-and-set password rehash. It uses fixed-cost Argon2id and an
 equal-cost dummy verification path for unknown or disabled identities. Budget
 roughly 64 MiB per concurrent Argon2 operation. Backend HTTP login and session
 issuance and the local setup/login/admin UI exist; rate limiting, durable login
-audit, OIDC, MFA, and browser worker execution remain absent. Capability-bound
-Agent preview-run queue/status metadata and run-token Render verification are
-implemented without a dispatcher or artifact bytes. Local
+audit, OIDC, and MFA remain absent. Capability-bound Agent preview-run queue/
+status metadata, run-token Render verification, and direct confined worker
+execution/private artifact retrieval are implemented. There is still no
+dispatcher, durable completion/artifact registration, public artifact bytes,
+or artifact GC. Local
 authentication and administration are qualified by one setup project, one
 single-writer governance project, and six read-only Playwright browser/device
 projects.
+
+## Browser worker
+
+Browser-worker readiness validates the descriptor-confined service credential
+and artifact root, fixed Web origin, immutable target table, exact Chromium
+executable/version, real sandboxed launch, and hostile-origin interception
+self-check. A 503 means the worker must not receive attempts. Restore the exact
+secret/root/image/network/security policy; do not add `--no-sandbox`, a fallback
+origin, a plaintext credential, or a broader network.
+
+Each accepted direct attempt owns one fresh Chromium/browser context/page and
+closes it on success, failure, timeout, disconnect, cancellation, or SIGTERM.
+The fixed runtime admits one active attempt and no queue. Overload is therefore
+an immediate internal 429. The Agent client is intentionally dormant until a
+later dispatcher order.
+
+Private artifacts live only in the `browser-artifacts` volume. Files are mode
+`0600`, immutable, digest-checked, and internally retrievable by exact signed
+metadata after worker restart. No physical GC exists. Operators may inspect
+counts/modes with an offline, read-only UID-0 maintenance container, but must
+not edit, rename, relink, or expose files. `docker compose down --volumes`
+removes the local store; ordinary `down` preserves it.
 
 Revision `014_001` upgrades and downgrades deterministically with its complete
 built-in authorization catalogs. Catalog defaults change only through
@@ -241,8 +265,11 @@ wrong-login/role/secret/marker/migration/database failure behavior, restart
 idempotence, fail-closed bootstrap, Apache syntax, single
 request-ID and CSP headers on page/API/404 responses, secret absence in
 configuration/history/logs, the implemented visible governance lifecycle, and
-exact-project cleanup. It does not claim identity provisioning, content editing,
-or publication execution.
+exact-project cleanup. It also runs the real sandboxed product Chromium against
+the COW preview, verifies signed results/private artifacts/restart retrieval,
+hostile-token denial, worker-secret recovery, and continued public `QUEUED`
+state. It does not claim durable dispatch, DB artifact registration, source
+browsing, review, or publication execution.
 
 ## Supply-chain evidence
 

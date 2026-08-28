@@ -52,8 +52,14 @@ export default async function WorkspacePreview({
     .map(([key, value]) => `${encoded(key)}=${encoded(value)}`)
     .join("&");
   const browserRoute = normalizedQuery ? `${path}?${normalizedQuery}` : path;
+  const browserAuthority = process.env.SLAIF_BROWSER_PREVIEW_AUTHORITY;
+  if (
+    browserToken &&
+    (!browserAuthority || !/^[a-z0-9.-]+(?::[1-9][0-9]{0,4})?$/u.test(browserAuthority))
+  )
+    notFound();
   const projection = await resolvePreviewPage(
-    requestHeaders.get("host") ?? "",
+    browserToken ? browserAuthority! : (requestHeaders.get("host") ?? ""),
     path,
     workspaceId,
     browserToken ? { browserToken, browserRoute } : { humanSessionToken: session! },

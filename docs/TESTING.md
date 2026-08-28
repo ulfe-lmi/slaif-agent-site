@@ -148,4 +148,28 @@ tests remain unchanged and green.
 Compose policy and smoke prove only Agent/Render/initializer mount the signing
 volume, unrelated UID denial, real NGINX Agent create/poll plus Agent restart,
 missing-key readiness failure with canonical rendering still available, key
-restoration, and the unchanged DB-less/key-less health-only worker.
+restoration, and the DB-less/key-less worker boundary.
+
+The shared `browser-worker/v1` tests cover exact Python/TypeScript facts,
+canonical request digest parity, three immutable target descriptors, raw-header
+constant-time service authentication before body parsing, canonical framing,
+signed result binding, first-document-only preview-header forwarding,
+redirect/subresource stripping, hostile URL policy, sanitization, overload,
+active inspection, disconnect cancellation, and slot cleanup.
+
+Artifact-store tests cover exclusive bounded staging, fsync and no-replace
+publication, deterministic reuse, concurrent publication, exact restart
+retrieval, descriptor anchoring across root replacement, mode/owner/link/
+digest/size/MIME/expiry checks, symlink/hardlink/traversal/corruption/quota
+denial, and absence of partial staging state.
+
+Clean Compose additionally launches the actual production image's sandboxed
+Chromium against the real PostgreSQL COW preview. Two sequential direct Agent-
+client attempts produce six artifacts including decodable PNG and heading/
+structure summaries, observe the overlay, preserve canonical output, verify
+signed results and byte retrieval after worker restart, and reject replay,
+forgery, expiry, wrong route, and wrong target without artifact publication.
+Runtime proof checks the exact seccomp/capability/resource/network/mount/image
+inventory, no credential/log/artifact leakage, zero residual Chromium children,
+worker-secret failure/recovery, and continued public `QUEUED` runs with zero DB
+artifact rows.

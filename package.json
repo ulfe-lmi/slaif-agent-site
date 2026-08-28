@@ -12,7 +12,7 @@
     "lint": "eslint . --max-warnings 0 --ignore-pattern '**/.next/**' --ignore-pattern 'playwright.config.ts' && pnpm --filter @slaif-agent-site/web lint",
     "format:check": "prettier --check package.json pnpm-workspace.yaml tsconfig.base.json tsconfig.json eslint.config.mjs prettier.config.mjs playwright.config.ts \"apps/web/**/*.{json,mjs,ts,tsx,css}\" \"packages/*/package.json\" \"packages/*/src/**/*.ts\" \"packages/*/tsconfig.json\" \"services/browser-worker/**/*.{json,mjs,ts}\" \"tests/contracts/**/*.ts\" \"tests/e2e/**/*.{mjs,ts}\"",
     "typecheck": "pnpm --recursive run typecheck && tsc --project tsconfig.json --noEmit && tsc --project tests/e2e/tsconfig.json --noEmit",
-    "test": "pnpm build && pnpm --recursive run test && vitest run tests/contracts",
+    "test": "pnpm build && pnpm --recursive run test && vitest run tests/contracts/*.test.ts",
     "build": "pnpm --recursive run build",
     "licenses": "pnpm licenses list --json",
     "inventory": "pnpm list --recursive --depth Infinity",

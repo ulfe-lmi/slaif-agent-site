@@ -16,6 +16,11 @@ from ..browser_preview_credentials import (
     BrowserPreviewCredentialSigner,
     load_browser_signing_key,
 )
+from ..browser_worker_client import (
+    BrowserWorkerClient,
+    BrowserWorkerClientError,
+    load_browser_worker_credential,
+)
 from ..config import ConfigurationError, ServiceSettings
 from ..health import ProbeResult, ReadinessProbe
 from ..logging import configure_json_logging
@@ -32,6 +37,7 @@ def create_app(
     database_settings: AgentDatabaseSettings | None = None,
     database: AgentDatabaseAdapter | None = None,
     browser_signer: BrowserPreviewCredentialSigner | None = None,
+    browser_worker_client: BrowserWorkerClient | None = None,
     readiness_probes: Sequence[ReadinessProbe] = (),
 ) -> FastAPI:
     selected_database_settings = database_settings or AgentDatabaseSettings.load()
@@ -50,10 +56,26 @@ def create_app(
             )
         except BrowserPreviewCredentialError:
             selected_signer = None
+    selected_worker_client = browser_worker_client
+    if selected_worker_client is None and not test_mode:
+        try:
+            selected_worker_client = BrowserWorkerClient(
+                endpoint=selected_database_settings.browser_worker_endpoint,
+                credential=load_browser_worker_credential(
+                    selected_database_settings.browser_worker_service_credential_file
+                ),
+            )
+        except BrowserWorkerClientError:
+            selected_worker_client = None
 
     async def browser_signing_readiness() -> ProbeResult:
         if selected_signer is None:
             return ProbeResult.unavailable("signing_key_unavailable")
+        return ProbeResult.ready()
+
+    async def browser_worker_client_readiness() -> ProbeResult:
+        if selected_worker_client is None:
+            return ProbeResult.unavailable("worker_credential_unavailable")
         return ProbeResult.ready()
 
     @asynccontextmanager
@@ -74,6 +96,15 @@ def create_app(
                 if not test_mode or browser_signer is not None
                 else ()
             ),
+            *(
+                (
+                    ReadinessProbe(
+                        "browser-worker-client", browser_worker_client_readiness
+                    ),
+                )
+                if not test_mode or browser_worker_client is not None
+                else ()
+            ),
             *readiness_probes,
         ),
         lifespan_factory=database_lifespan,
@@ -81,6 +112,7 @@ def create_app(
     app.state.database = selected_database
     app.state.browser_run_service = AgentBrowserRunService(selected_database)
     app.state.browser_preview_signer = selected_signer
+    app.state.browser_worker_client = selected_worker_client
     app.include_router(agent_router)
     app.include_router(browser_router)
     return app

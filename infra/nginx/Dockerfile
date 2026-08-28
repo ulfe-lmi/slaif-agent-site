@@ -13,8 +13,8 @@ LABEL org.opencontainers.image.title="SLAIF Agent-Site NGINX edge" \
       org.opencontainers.image.created="${SLAIF_IMAGE_CREATED}"
 ENV SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH}
 RUN apk --timeout 30 add --no-cache \
-      'libcrypto3=3.5.7-r0' \
-      'libssl3=3.5.7-r0' \
+      'libcrypto3=3.5.8-r0' \
+      'libssl3=3.5.8-r0' \
     && apk del curl
 COPY infra/nginx/nginx.conf /etc/nginx/nginx.conf
 USER 101:101

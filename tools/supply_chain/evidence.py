@@ -33,7 +33,7 @@ SPDX_ID = re.compile(r"SPDXRef-[A-Za-z0-9.-]+")
 IMAGE_PREFIXES = {
     "apache": ("usr/local/apache2/conf/",),
     "backend": ("opt/slaif/",),
-    "browser-worker": ("opt/slaif/",),
+    "browser-worker": ("opt/slaif/", "ms-playwright/chromium-1234/"),
     "nginx": ("etc/nginx/nginx.conf",),
     "web": ("opt/slaif/",),
 }
@@ -609,13 +609,13 @@ def validate_expected_components(
                 f"sample={sample}"
             )
     if image_name == "browser-worker":
-        forbidden = {"chromium", "firefox", "playwright", "webkit"}
+        forbidden = {"firefox", "webkit"}
         found = sorted(
             name for name in names if any(item in name for item in forbidden)
         )
         if found:
             raise PolicyError(
-                "browser-worker: browser binary inventory must remain empty: "
+                "browser-worker: forbidden product browser inventory present: "
                 + ", ".join(found)
             )
 

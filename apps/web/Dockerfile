@@ -4,7 +4,7 @@ ARG SOURCE_DATE_EPOCH=1704067200
 ENV NEXT_TELEMETRY_DISABLED=1 \
     SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH}
 WORKDIR /build
-RUN apk --timeout 30 add --no-cache 'libcrypto3=3.5.7-r0' 'libssl3=3.5.7-r0' \
+RUN apk --timeout 30 add --no-cache 'libcrypto3=3.5.8-r0' 'libssl3=3.5.8-r0' \
     && corepack enable
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json tsconfig.json ./
 COPY packages ./packages
@@ -33,7 +33,7 @@ ENV HOSTNAME=0.0.0.0 \
     PORT=3000 \
     SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH}
 WORKDIR /opt/slaif
-RUN apk --timeout 30 add --no-cache 'libcrypto3=3.5.7-r0' 'libssl3=3.5.7-r0' \
+RUN apk --timeout 30 add --no-cache 'libcrypto3=3.5.8-r0' 'libssl3=3.5.8-r0' \
     && find /usr/local/lib/node_modules/npm -depth -delete \
     && rm /usr/local/bin/npm /usr/local/bin/npx \
     && addgroup -g 10001 -S slaif \

@@ -88,8 +88,10 @@ The gate proves the following bounded contracts:
 - Next.js receives a stable 32-hex build ID derived from sorted, versioned Web,
   package, configuration, lock, and logo inputs. Two clean Web builds must have
   identical distributed path, mode, size, link-target, and content digests.
-- The browser worker currently has no compiled output or browser binary. Its
-  normalized runtime source manifest must reproduce exactly.
+- The browser worker compiles its frozen TypeScript source and declares exact
+  `playwright-core==1.62.1`. Its normalized source/security-profile manifest,
+  deployed production package closure, and retained Chromium revision-1234
+  runtime tree must reproduce exactly.
 - Every project image is built twice with the same exact inputs and without a
   Docker build cache. Normalized package inventories and application runtime
   files must match.
@@ -124,11 +126,16 @@ source revision. A second normalized Syft JSON document under `scan-sboms/`
 retains Go standard-library symbol evidence needed for accurate Grype matches.
 Grype scans that checksummed document; the index links both forms.
 
-The runtime browser-worker validation requires an empty Chromium, Firefox,
-WebKit, and Playwright inventory. The separate test-only Playwright 1.62.1
-runner installs browser builds on the CI/local host and never enters a product
-image. A later runtime browser implementation must deliberately change that
-contract rather than inheriting an unexamined binary.
+The browser worker uses the digest-pinned official Playwright 1.62.1 Noble
+image, Node 24.18.1, exact `playwright-core==1.62.1`, and Chromium revision 1234
+(`151.0.7922.72`). The exact linux/amd64 archive is SHA-256 verified before
+extraction by the bounded source-controlled parser. Its runtime removes
+Firefox, WebKit, the duplicate Chromium
+headless shell, ffmpeg, npm, and Corepack. Evidence requires the worker package
+and `playwright-core`, rejects Firefox/WebKit inventory, and hashes the retained
+`/ms-playwright/chromium-1234` tree during both clean image builds. The separate
+root E2E runner still installs all three test-only browser families outside the
+product image.
 
 ## Vulnerability gate and database freshness
 

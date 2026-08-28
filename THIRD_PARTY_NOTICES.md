@@ -41,7 +41,7 @@ CI SBOM evidence bundle.
 | `@nodelib/fs.scandir` | `2.1.5` | npm / development | `MIT` | <https://github.com/nodelib/nodelib/tree/master#readme> | — |
 | `@nodelib/fs.stat` | `2.0.5` | npm / development | `MIT` | <https://github.com/nodelib/nodelib/tree/master#readme> | — |
 | `@nodelib/fs.walk` | `1.2.8` | npm / development | `MIT` | <https://github.com/nodelib/nodelib/tree/master#readme> | — |
-| `@playwright/test` | `1.62.1` | npm / production | `Apache-2.0` | <https://playwright.dev> | Apache-2.0 test-only browser automation; matching browser builds remain outside product images. |
+| `@playwright/test` | `1.62.1` | npm / production | `Apache-2.0` | <https://playwright.dev> | Apache-2.0 test automation; the separately declared playwright-core runtime drives only the confined product Chromium worker. |
 | `@preact/signals-core` | `1.14.4` | npm / production | `MIT` | <https://preactjs.com> | — |
 | `@radix-ui/primitive` | `1.1.7` | npm / production | `MIT` | <https://radix-ui.com/primitives> | — |
 | `@radix-ui/react-compose-refs` | `1.1.5` | npm / production | `MIT` | <https://radix-ui.com/primitives> | — |
@@ -197,7 +197,7 @@ CI SBOM evidence bundle.
 | `picomatch` | `4.0.5` | npm / development | `MIT` | <https://github.com/micromatch/picomatch> | — |
 | `pirates` | `4.0.7` | npm / development | `MIT` | <https://github.com/danez/pirates#readme> | — |
 | `playwright` | `1.62.1` | npm / production | `Apache-2.0` | <https://playwright.dev> | — |
-| `playwright-core` | `1.62.1` | npm / production | `Apache-2.0` | <https://playwright.dev> | — |
+| `playwright-core` | `1.62.1` | npm / production | `Apache-2.0` | <https://playwright.dev> | Apache-2.0 exact product runtime for the confined Chromium worker; no hosted browser or telemetry service. |
 | `postcss` | `8.5.23` | npm / production | `MIT` | <https://postcss.org/> | — |
 | `postcss` | `8.5.26` | npm / development | `MIT` | <https://postcss.org/> | — |
 | `postcss-import` | `15.1.0` | npm / development | `MIT` | <https://github.com/postcss/postcss-import#readme> | — |

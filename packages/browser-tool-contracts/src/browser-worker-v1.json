@@ -1,0 +1,27 @@
+{
+  "contractVersion": "browser-worker/v1",
+  "deployment": "slaif-agent-site",
+  "authenticationHeader": "X-SLAIF-Browser-Worker-Token",
+  "responseAlgorithm": "HS256",
+  "responseType": "SLAIF-BROWSER-WORKER-RESULT",
+  "routes": {
+    "submit": "/internal/browser/v1/attempts",
+    "inspect": "/internal/browser/v1/attempts/inspect",
+    "retrieve": "/internal/browser/v1/artifacts/retrieve"
+  },
+  "bounds": {
+    "requestBytes": 32768,
+    "resultBytes": 262144,
+    "artifactBytes": 8388608,
+    "totalArtifactBytes": 16777216,
+    "summaryBytes": 65536,
+    "outputItems": 64,
+    "outputStringCharacters": 512,
+    "activeAttempts": 1,
+    "queueDepth": 0,
+    "durationSeconds": 120,
+    "previewCredentialBytes": 4096,
+    "responseTtlSeconds": 60,
+    "artifactRetentionSeconds": 3600
+  }
+}

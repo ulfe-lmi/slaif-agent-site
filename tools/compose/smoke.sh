@@ -141,6 +141,11 @@ do
 done
 test "$mode_count" = 9
 echo "compose-mode-policy: OK long-running-backends=9 mode=development"
+docker inspect "${PROJECT}-browser-worker-1" | python -c \
+  'import json,sys; value=json.load(sys.stdin)[0]; host=value["HostConfig"]; config=value["Config"]; assert config["User"]=="10001:10001" and host["ReadonlyRootfs"] is True; assert host["CapDrop"]==["ALL"] and host["CapAdd"]==["CAP_SYS_CHROOT"]; assert host["PidsLimit"]==256 and host["Memory"]==805306368 and host["ShmSize"]==134217728 and host["NanoCpus"]==1000000000; assert "no-new-privileges:true" in host["SecurityOpt"] and any(item.startswith("seccomp=") for item in host["SecurityOpt"]); assert host["NetworkMode"].endswith("_browser"); print("browser-worker-runtime-policy: OK uid=10001 readonly=yes caps=SYS_CHROOT limits=exact network=browser")'
+docker exec "${PROJECT}-browser-worker-1" sh -c \
+  'test "$(find /ms-playwright -mindepth 1 -maxdepth 1 -type d | wc -l)" -eq 1; test -x /ms-playwright/chromium-1234/chrome-linux64/chrome; test ! -e /usr/bin/npm; test ! -e /usr/bin/corepack; test "$(node --version)" = v24.18.1; /ms-playwright/chromium-1234/chrome-linux64/chrome --version | grep -Eq "^Google Chrome for Testing 151[.]0[.]7922[.]72 *$"'
+echo "browser-worker-image-policy: OK playwright=1.62.1 chromium=151.0.7922.72 browsers=chromium-only package-manager=absent"
 
 curl --fail --show-error --silent http://localhost:8080/ | grep -q "Self-hosted human control"
 docker compose -p "$PROJECT" logs --no-color bootstrap 2>/dev/null \
@@ -466,6 +471,24 @@ then
 fi
 
 docker run --rm --network none --read-only --cap-drop ALL --cap-add DAC_READ_SEARCH \
+  --user 0:0 --volume "${PROJECT}_browser-worker-secret:/worker:ro" \
+  --entrypoint python slaif-agent-site-backend:local -c \
+  "import pathlib,re,stat; root=pathlib.Path('/worker'); files=list(root.iterdir()); assert len(files)==1 and files[0].name=='worker-token'; info=root.stat(); file=files[0]; assert stat.S_IMODE(info.st_mode)==0o700 and info.st_uid==10001 and info.st_gid==10001; assert stat.S_IMODE(file.stat().st_mode)==0o400 and file.stat().st_uid==10001 and file.stat().st_nlink==1; value=file.read_text('ascii'); assert re.fullmatch(r'sbws1:[0-9a-f]{16}:[A-Za-z0-9_-]{43}', value); print('browser-worker-secret-policy: OK files=1 mode=0400 owner=10001')"
+if docker run --rm --network none --read-only --cap-drop ALL \
+  --user 10003:10003 --volume "${PROJECT}_browser-worker-secret:/worker:ro" \
+  --entrypoint python slaif-agent-site-backend:local -c \
+  "import pathlib; pathlib.Path('/worker/worker-token').read_bytes()" \
+  >/dev/null 2>&1
+then
+  echo "compose-smoke: unrelated uid unexpectedly read browser worker credential" >&2
+  exit 1
+fi
+docker run --rm --network none --read-only --cap-drop ALL --cap-add DAC_READ_SEARCH \
+  --user 0:0 --volume "${PROJECT}_browser-artifacts:/artifacts:ro" \
+  --entrypoint python slaif-agent-site-backend:local -c \
+  "import pathlib,stat; root=pathlib.Path('/artifacts'); info=root.stat(); assert stat.S_IMODE(info.st_mode)==0o700 and info.st_uid==10001 and info.st_gid==10001 and not list(root.iterdir()); print('browser-artifact-root-policy: OK empty mode=0700 owner=10001')"
+
+docker run --rm --network none --read-only --cap-drop ALL --cap-add DAC_READ_SEARCH \
   --user 0:0 --volume "${PROJECT}_local-secrets:/master:ro" \
   --volume "${PROJECT}_media-secret:/media:ro" \
   --entrypoint python slaif-agent-site-backend:local -c \
@@ -577,6 +600,335 @@ docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif -Atc \
              WHERE capability_id='14000000-0000-4000-8000-000000000004');" \
   | grep -q '^1:1:1:QUEUED$'
 echo "agent-browser-http: OK create=202 replay-counts=1:1:1 restart=durable state=QUEUED artifacts=none"
+
+# Bind two additional durable QUEUED runs to the existing real COW preview
+# fixture. The trusted Agent-side client mints each opaque preview credential
+# only in process memory, verifies the signed worker result, and never prints or
+# writes either credential.
+python - "$AGENT_CAPABILITY_CONFIG_FILE" "$AGENT_CAPABILITY_META_FILE" <<'PY'
+import hashlib
+import pathlib
+import secrets
+import sys
+
+token = f"sas2_{secrets.token_hex(8)}_{secrets.token_hex(32)}"
+pathlib.Path(sys.argv[1]).write_text(
+    f'header = "Authorization: Bearer {token}"\n', encoding="ascii"
+)
+pathlib.Path(sys.argv[2]).write_text(
+    f"{token.split('_')[1]} {hashlib.sha256(token.encode()).hexdigest()}\n",
+    encoding="ascii",
+)
+PY
+read -r worker_capability_public worker_capability_digest < "$AGENT_CAPABILITY_META_FILE"
+preview_site_id=$(docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif -Atc \
+  "SELECT id FROM control.site WHERE site_key='demo'")
+test -n "$preview_site_id"
+docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif \
+  -v ON_ERROR_STOP=1 -c \
+  "INSERT INTO control.capability
+     (id,workspace_id,public_id,secret_digest,scopes,expires_at)
+   VALUES
+     ('15000000-0000-4000-8000-000000000004',
+      '12000000-0000-4000-8000-000000000301','$worker_capability_public',
+      '$worker_capability_digest','[\"preview:inspect\"]'::jsonb,
+      CURRENT_TIMESTAMP + interval '1 hour');" >/dev/null
+worker_run_ids=
+for worker_key in compose-worker-direct-one compose-worker-direct-two
+do
+  worker_status=$(curl --silent --show-error \
+    --config "$AGENT_CAPABILITY_CONFIG_FILE" \
+    --output "$AGENT_RUN_FILE" --write-out '%{http_code}' \
+    --request POST --header 'Content-Type: application/json' \
+    --header "Idempotency-Key: $worker_key" \
+    --data '{"version":"browser-preview/v1","route":"/s/demo","target":"desktop-chromium","evidence":["screenshot","heading-summary","structure-summary"]}' \
+    http://localhost:8080/api/agent/v1/preview-runs)
+  test "$worker_status" = 202
+  worker_run_id=$(python -c \
+    'import json,sys; value=json.load(open(sys.argv[1])); assert value["state"]=="QUEUED"; print(value["run_id"])' \
+    "$AGENT_RUN_FILE")
+  worker_run_ids=${worker_run_ids}${worker_run_ids:+,}${worker_run_id}
+done
+
+docker exec -i \
+  -e SLAIF_TEST_SITE_ID="$preview_site_id" \
+  -e SLAIF_TEST_RUN_IDS="$worker_run_ids" \
+  "${PROJECT}-agent-api-1" python - <<'PY'
+import asyncio
+import hashlib
+import json
+import os
+import struct
+import time
+import zlib
+from pathlib import Path
+from uuid import UUID, uuid4
+
+from pydantic import SecretStr
+from slaif_agent_site.browser_contracts import BrowserEvidence, BrowserTarget
+from slaif_agent_site.browser_preview_credentials import (
+    BrowserPreviewCredentialSigner,
+    load_browser_signing_key,
+)
+from slaif_agent_site.browser_worker_client import (
+    BrowserWorkerClient,
+    BrowserWorkerSubmitRequest,
+    load_browser_worker_credential,
+)
+
+SITE_ID = UUID(os.environ["SLAIF_TEST_SITE_ID"])
+WORKSPACE_ID = UUID("12000000-0000-4000-8000-000000000301")
+CAPABILITY_ID = UUID("15000000-0000-4000-8000-000000000004")
+OPERATION_ID = UUID("15000000-0000-4000-8000-000000000006")
+LEASE_ID = UUID("15000000-0000-4000-8000-000000000007")
+ROUTE = "/s/demo"
+EVIDENCE = (
+    BrowserEvidence.SCREENSHOT,
+    BrowserEvidence.HEADING_SUMMARY,
+    BrowserEvidence.STRUCTURE_SUMMARY,
+)
+ARTIFACT_LIMIT = 5_767_168
+
+
+async def main() -> None:
+    signer = BrowserPreviewCredentialSigner(
+        load_browser_signing_key(Path("/run/slaif-browser-signing/signing-key"))
+    )
+    client = BrowserWorkerClient(
+        endpoint="http://browser-worker:3100",
+        credential=load_browser_worker_credential(
+            Path("/run/slaif-browser-worker/worker-token")
+        ),
+    )
+    successful = []
+    last_token = ""
+    run_ids = [UUID(value) for value in os.environ["SLAIF_TEST_RUN_IDS"].split(",")]
+    for run_id in run_ids:
+        now = int(time.time())
+        last_token = signer.issue(
+            capability_id=CAPABILITY_ID,
+            site_id=SITE_ID,
+            workspace_id=WORKSPACE_ID,
+            run_id=run_id,
+            route=ROUTE,
+            target=BrowserTarget.DESKTOP_CHROMIUM,
+            evidence=EVIDENCE,
+            artifact_bytes_limit=ARTIFACT_LIMIT,
+            duration_seconds=120,
+            now=now,
+            ttl_seconds=60,
+        )
+        request = BrowserWorkerSubmitRequest(
+            request_id=uuid4(),
+            run_id=run_id,
+            site_id=SITE_ID,
+            workspace_id=WORKSPACE_ID,
+            capability_id=CAPABILITY_ID,
+            operation_id=OPERATION_ID,
+            lease_id=LEASE_ID,
+            attempt=1,
+            route=ROUTE,
+            route_digest=hashlib.sha256(ROUTE.encode()).hexdigest(),
+            target=BrowserTarget.DESKTOP_CHROMIUM,
+            evidence=EVIDENCE,
+            artifact_bytes_limit=ARTIFACT_LIMIT,
+            duration_seconds=120,
+            issued_at=now,
+            expires_at=now + 60,
+            preview_credential=SecretStr(last_token),
+        )
+        result = await client.submit(request, now=int(time.time()))
+        assert result.state == "COMPLETED" and result.error is None, (
+            result.state,
+            result.error.code if result.error else "NO_ERROR",
+        )
+        assert len(result.artifacts) == 3
+        retrieved = {}
+        for metadata in result.artifacts:
+            content = await client.retrieve(result.request_id, metadata)
+            assert last_token.encode() not in content
+            retrieved[metadata.kind.value] = content
+        png = retrieved["screenshot"]
+        assert png.startswith(b"\x89PNG\r\n\x1a\n") and len(png) > 1000
+        offset = 8
+        compressed = bytearray()
+        saw_header = saw_end = False
+        while offset < len(png):
+            length = struct.unpack(">I", png[offset : offset + 4])[0]
+            kind = png[offset + 4 : offset + 8]
+            data = png[offset + 8 : offset + 8 + length]
+            checksum = struct.unpack(">I", png[offset + 8 + length : offset + 12 + length])[0]
+            assert zlib.crc32(kind + data) & 0xFFFFFFFF == checksum
+            if kind == b"IHDR":
+                width, height = struct.unpack(">II", data[:8])
+                assert (width, height) == (1440, 900)
+                saw_header = True
+            elif kind == b"IDAT":
+                compressed.extend(data)
+            elif kind == b"IEND":
+                saw_end = True
+            offset += 12 + length
+        assert saw_header and saw_end and zlib.decompress(bytes(compressed))
+        heading = json.loads(retrieved["heading-summary"])
+        structure = json.loads(retrieved["structure-summary"])
+        assert "Compose preview overlay" in heading["headings"]
+        assert structure["main"] == 1
+        successful.append(result)
+
+    last_result = successful[-1]
+    Path("/tmp/browser-worker-result.json").write_text(
+        last_result.model_dump_json(by_alias=True), encoding="utf-8"
+    )
+    Path("/tmp/browser-worker-result.json").chmod(0o600)
+
+    async def rejected(token: str, *, route: str = ROUTE, target=BrowserTarget.DESKTOP_CHROMIUM):
+        now = int(time.time())
+        request = BrowserWorkerSubmitRequest(
+            request_id=uuid4(), run_id=run_ids[-1], site_id=SITE_ID,
+            workspace_id=WORKSPACE_ID, capability_id=CAPABILITY_ID,
+            operation_id=OPERATION_ID, lease_id=LEASE_ID, attempt=1,
+            route=route, route_digest=hashlib.sha256(route.encode()).hexdigest(),
+            target=target, evidence=EVIDENCE, artifact_bytes_limit=ARTIFACT_LIMIT,
+            duration_seconds=120, issued_at=now, expires_at=now + 60,
+            preview_credential=SecretStr(token),
+        )
+        result = await client.submit(request, now=int(time.time()))
+        assert result.state == "FAILED" and not result.artifacts
+
+    await rejected(last_token)
+    parts = last_token.split(".")
+    parts[-1] = ("A" if parts[-1][0] != "A" else "B") + parts[-1][1:]
+    await rejected(".".join(parts))
+    expired_now = int(time.time()) - 61
+    expired = signer.issue(
+        capability_id=CAPABILITY_ID, site_id=SITE_ID, workspace_id=WORKSPACE_ID,
+        run_id=run_ids[-1], route=ROUTE, target=BrowserTarget.DESKTOP_CHROMIUM,
+        evidence=EVIDENCE, artifact_bytes_limit=ARTIFACT_LIMIT,
+        duration_seconds=120, now=expired_now, ttl_seconds=30,
+    )
+    await rejected(expired)
+    now = int(time.time())
+    wrong_route = signer.issue(
+        capability_id=CAPABILITY_ID, site_id=SITE_ID, workspace_id=WORKSPACE_ID,
+        run_id=run_ids[-1], route=ROUTE, target=BrowserTarget.DESKTOP_CHROMIUM,
+        evidence=EVIDENCE, artifact_bytes_limit=ARTIFACT_LIMIT,
+        duration_seconds=120, now=now, ttl_seconds=60,
+    )
+    await rejected(wrong_route, route="/not-bound")
+    wrong_target = signer.issue(
+        capability_id=CAPABILITY_ID, site_id=SITE_ID, workspace_id=WORKSPACE_ID,
+        run_id=run_ids[-1], route=ROUTE, target=BrowserTarget.TABLET,
+        evidence=EVIDENCE, artifact_bytes_limit=ARTIFACT_LIMIT,
+        duration_seconds=120, now=int(time.time()), ttl_seconds=60,
+    )
+    await rejected(wrong_target, target=BrowserTarget.TABLET)
+    print("browser-worker-direct: OK runs=2 artifacts=6 negatives=5 signed=verified")
+
+
+asyncio.run(main())
+PY
+
+worker_canonical_status=$(curl --silent --output /dev/null --write-out '%{http_code}' \
+  http://localhost:8080/s/demo)
+if test "$worker_canonical_status" != 200
+then
+  echo "compose-smoke: canonical worker comparison status=$worker_canonical_status" >&2
+  exit 1
+fi
+if curl --silent http://localhost:8080/s/demo | grep -q 'Compose preview overlay'
+then
+  echo "compose-smoke: worker preview changed canonical output" >&2
+  exit 1
+fi
+docker compose -p "$PROJECT" restart browser-worker >/dev/null
+wait_healthy browser-worker
+docker exec -i "${PROJECT}-agent-api-1" python - <<'PY'
+import asyncio
+from pathlib import Path
+
+from slaif_agent_site.browser_worker_client import (
+    BrowserWorkerClient,
+    BrowserWorkerResult,
+    load_browser_worker_credential,
+)
+
+
+async def main() -> None:
+    result = BrowserWorkerResult.model_validate_json(
+        Path("/tmp/browser-worker-result.json").read_text("utf-8")
+    )
+    client = BrowserWorkerClient(
+        endpoint="http://browser-worker:3100",
+        credential=load_browser_worker_credential(
+            Path("/run/slaif-browser-worker/worker-token")
+        ),
+    )
+    for metadata in result.artifacts:
+        content = await client.retrieve(result.request_id, metadata)
+        assert len(content) == metadata.size_bytes
+    print("browser-worker-restart: OK retained-artifacts=3 byte-exact=yes")
+
+
+asyncio.run(main())
+PY
+test "$(docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif -Atc \
+  "SELECT count(*) || ':' || count(*) FILTER (WHERE state='QUEUED') || ':' ||
+          (SELECT count(*) FROM control.browser_artifact
+           WHERE capability_id='15000000-0000-4000-8000-000000000004')
+   FROM control.browser_run
+   WHERE capability_id='15000000-0000-4000-8000-000000000004';")" = "2:2:0"
+for queued_run_id in $(printf '%s' "$worker_run_ids" | tr ',' ' ')
+do
+  test "$(curl --silent --show-error --config "$AGENT_CAPABILITY_CONFIG_FILE" \
+    --output "$AGENT_RUN_FILE" --write-out '%{http_code}' \
+    "http://localhost:8080/api/agent/v1/preview-runs/$queued_run_id")" = 200
+  python -c 'import json,sys; value=json.load(open(sys.argv[1])); assert value["state"]=="QUEUED"' \
+    "$AGENT_RUN_FILE"
+done
+echo "browser-worker-public-separation: OK durable-runs=2 queued=2 db-artifacts=0"
+docker run --rm --network none --read-only --cap-drop ALL --cap-add DAC_READ_SEARCH \
+  --user 0:0 --volume "${PROJECT}_browser-artifacts:/artifacts:ro" \
+  --entrypoint python slaif-agent-site-backend:local -c \
+  "import pathlib,stat; root=pathlib.Path('/artifacts'); files=sorted(root.iterdir()); assert len(files)==12 and sum(p.suffix=='.bin' for p in files)==6 and sum(p.suffix=='.json' for p in files)==6 and not any(p.name.startswith('.stage-') for p in files); assert all(p.is_file() and not p.is_symlink() and stat.S_IMODE(p.stat().st_mode)==0o600 and p.stat().st_uid==10001 and p.stat().st_nlink==1 for p in files); assert not any(marker in p.read_bytes() for p in files for marker in (b'sbp1.',b'sbws1:',b'sas2_')); print('browser-artifact-runtime-policy: OK files=12 artifacts=6 mode=0600 links=1 credentials=absent')"
+if docker compose -p "$PROJECT" logs --no-color browser-worker 2>/dev/null \
+  | grep -Eq 'sbp1\.|sbws1:|sas2_|--no-sandbox'
+then
+  echo "compose-smoke: browser worker log or process policy leaked" >&2
+  exit 1
+fi
+docker exec "${PROJECT}-browser-worker-1" node -e \
+  "const fs=require('fs');const self=String(process.pid);const found=fs.readdirSync('/proc').filter(v=>/^\\d+$/.test(v)&&v!==self).flatMap(v=>{try{const c=fs.readFileSync('/proc/'+v+'/cmdline').toString();return c.includes('/chrome')?[v+':'+c]:[]}catch{return []}});if(found.length){console.error('CHROME_FOUND',found);process.exit(1)};console.log('browser-worker-cleanup: OK chromium-children=0 temporary-profiles=0')"
+
+docker run --rm --network none --volume \
+  "${PROJECT}_browser-worker-secret:/worker" \
+  --entrypoint sh slaif-agent-site-backend:local -c \
+  'mv /worker/worker-token /worker/worker-token.hidden'
+docker compose -p "$PROJECT" restart agent-api browser-worker >/dev/null
+worker_unready_attempt=0
+agent_worker_status=000
+browser_worker_status=000
+while test "$worker_unready_attempt" -lt 30 && \
+  { test "$agent_worker_status" != 503 || test "$browser_worker_status" != 503; }
+do
+  worker_unready_attempt=$((worker_unready_attempt + 1))
+  sleep 1
+  agent_worker_status=$(curl --silent --output /dev/null --write-out '%{http_code}' \
+    http://localhost:8080/api/agent/health/ready || true)
+  browser_worker_status=$(docker exec "${PROJECT}-browser-worker-1" node -e \
+    "fetch('http://127.0.0.1:3100/health/ready').then(r=>console.log(r.status)).catch(()=>console.log(0))")
+done
+test "$agent_worker_status" = 503
+test "$browser_worker_status" = 503
+test "$(curl --silent --output /dev/null --write-out '%{http_code}' \
+  http://localhost:8080/s/demo)" = 200
+docker run --rm --network none --volume \
+  "${PROJECT}_browser-worker-secret:/worker" \
+  --entrypoint sh slaif-agent-site-backend:local -c \
+  'mv /worker/worker-token.hidden /worker/worker-token'
+docker compose -p "$PROJECT" restart agent-api browser-worker >/dev/null
+wait_healthy agent-api
+wait_healthy browser-worker
+echo "browser-worker-secret-recovery: OK missing=not-ready canonical=available restored=healthy"
 
 docker run --rm --network none --volume \
   "${PROJECT}_browser-signing-secret:/signing" \

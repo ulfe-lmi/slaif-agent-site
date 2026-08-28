@@ -127,9 +127,12 @@ online roles are denied. Begin takes the shared workspace advisory lock before
 authority recheck and quota reservation. Claim/renew/release/completion and
 artifact registration recheck current authority and exact leases. Revocation
 therefore prevents later artifact registration and visibility. The worker
-remains DB-less, and no dispatcher, worker credential delivery, Playwright
-execution, artifact filesystem, source browsing, or publication behavior is
-implemented.
+remains DB-less. Direct internal execution is implemented with an isolated
+service credential, exact Playwright/Chromium runtime, fixed target descriptors,
+sandboxed fresh contexts, default-deny request interception, and a private
+immutable artifact filesystem. No durable dispatcher, database completion/
+registration, public bytes, source browsing, artifact GC, review, or
+publication behavior is implemented.
 
 Public Agent preview-run routes now use this durable boundary and remain
 truthfully QUEUED without a dispatcher. Public bodies cannot select authority,
@@ -154,3 +157,26 @@ that volume read-only. Web, worker, NGINX, Control, Editor, Media, MCP,
 Scheduler, Reviewer, and GC do not mount it. Missing/bad key makes the Agent and
 Render browser-signing readiness component unavailable; canonical and human
 preview code paths retain their separate authorization semantics.
+
+Worker authentication is checked in constant time from exact raw headers before
+the body is read. Duplicate/missing/malformed credentials, ambiguous transfer
+framing, non-canonical JSON, unknown fields, overload, and changed bindings fail
+closed. Signed results bind request/run/site/workspace/capability/operation/
+lease/attempt/route/target and expire within 60 seconds. Neither response nor
+stable error includes a credential, token, nonce, query, path, SQL, role, or
+foreign identifier.
+
+Chromium runs non-root with its sandbox enabled. Compose drops all capabilities
+then adds only `SYS_CHROOT`, applies the exact upstream Playwright seccomp
+profile, no-new-privileges, read-only root, 64 MiB scratch tmpfs, 128 MiB shm,
+256 PIDs, 768 MiB memory, and one CPU. Each attempt uses a fresh browser,
+context, page, and temporary profile with cookies, permissions, storage,
+service workers, downloads, trace, video, and extensions disabled. The preview
+credential is attached only to the first exact document request and stripped
+from assets, redirects, results, logs, and artifacts.
+
+The worker artifact root is descriptor-anchored and mode `0700`. Files are
+server-named, mode `0600`, single-link, SHA-256-addressed, exclusively staged,
+fsynced, and published without replacement. Sidecar metadata contains exact
+non-secret bindings and no absolute path. Retrieval revalidates metadata,
+owner/mode/link count/size/digest/expiry and is internal only.

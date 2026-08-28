@@ -9,7 +9,16 @@ import {
   BROWSER_PREVIEW_CREDENTIAL_FACTS,
   BROWSER_RUN_STATES,
   BROWSER_TARGETS,
+  BROWSER_TARGET_DESCRIPTORS,
   BROWSER_TERMINAL_STATES,
+  BROWSER_WORKER_AUTHENTICATION_HEADER,
+  BROWSER_WORKER_BOUNDS,
+  BROWSER_WORKER_CONTRACT_VERSION,
+  BROWSER_WORKER_DEPLOYMENT,
+  BROWSER_WORKER_RESPONSE_ALGORITHM,
+  BROWSER_WORKER_RESPONSE_TYPE,
+  BROWSER_WORKER_ROUTES,
+  canonicalJson,
   canonicalSerializePreviewRunRequest,
   packageMetadata,
   parsePreviewRunCreateRequest,
@@ -55,6 +64,32 @@ describe("browser preview contracts", () => {
       ),
     ) as Record<string, unknown>;
     expect(facts).toEqual(BROWSER_PREVIEW_CREDENTIAL_FACTS);
+  });
+
+  it("matches the neutral worker protocol and immutable target facts", () => {
+    const facts = JSON.parse(
+      readFileSync(
+        resolve(import.meta.dirname, "../src/browser-worker-v1.json"),
+        "utf8",
+      ),
+    ) as Record<string, unknown>;
+    expect(facts).toEqual({
+      contractVersion: BROWSER_WORKER_CONTRACT_VERSION,
+      deployment: BROWSER_WORKER_DEPLOYMENT,
+      authenticationHeader: BROWSER_WORKER_AUTHENTICATION_HEADER,
+      responseAlgorithm: BROWSER_WORKER_RESPONSE_ALGORITHM,
+      responseType: BROWSER_WORKER_RESPONSE_TYPE,
+      routes: BROWSER_WORKER_ROUTES,
+      bounds: BROWSER_WORKER_BOUNDS,
+    });
+    expect(Object.keys(BROWSER_TARGET_DESCRIPTORS)).toEqual(BROWSER_TARGETS);
+    expect(BROWSER_TARGET_DESCRIPTORS["desktop-chromium"].viewport).toEqual({
+      width: 1440,
+      height: 900,
+    });
+    expect(canonicalJson({ z: [2, { b: true, a: null }], a: "value" })).toBe(
+      '{"a":"value","z":[2,{"a":null,"b":true}]}',
+    );
   });
 
   it("normalizes only the fixed request shape and canonicalizes evidence order", async () => {

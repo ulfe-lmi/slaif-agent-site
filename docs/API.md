@@ -251,9 +251,21 @@ capability/workspace/site/QUEUED-or-RUNNING run under the shared workspace lock
 before COW projection. Human preview remains cookie-bound and mutually
 exclusive with browser-token mode.
 
-There is still no dispatcher, worker execution, Playwright, artifact byte
-storage/retrieval, source browsing, public artifact URL, or publication
-behavior.
+The internal browser worker now implements three non-edge POST routes:
+`/internal/browser/v1/attempts`, `/internal/browser/v1/attempts/inspect`, and
+`/internal/browser/v1/artifacts/retrieve`. They require the isolated
+`X-SLAIF-Browser-Worker-Token` service credential before body parsing and use
+extra-forbid `browser-worker/v1` contracts. Submit returns a signed typed
+result; retrieval requires every exact artifact binding and returns private
+bytes only to the trusted Agent-side client. The client exists but no public
+route, lifespan task, timer, or dispatcher invokes it.
+
+There is still no durable dispatcher/claim/completion/registration wiring,
+public artifact byte retrieval, source browsing, public artifact URL, artifact
+GC, review integration, or publication behavior. Public runs therefore remain
+truthfully `QUEUED`, public artifact metadata remains empty, and the reserved
+public byte route remains 404 even though direct internal worker execution is
+qualified.
 
 ## Site governance API
 

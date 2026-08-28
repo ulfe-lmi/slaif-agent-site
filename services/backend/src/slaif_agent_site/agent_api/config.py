@@ -17,6 +17,9 @@ AGENT_LOGIN = "slaif_agent_login"
 AGENT_PRIVILEGE_ROLE = "slaif_agent_runtime"
 AGENT_DSN_FILE = Path("/run/slaif-agent/agent-dsn")
 AGENT_BROWSER_SIGNING_KEY_FILE = Path("/run/slaif-browser-signing/signing-key")
+AGENT_BROWSER_WORKER_SERVICE_CREDENTIAL_FILE = Path(
+    "/run/slaif-browser-worker/worker-token"
+)
 AGENT_APPLICATION_NAME = "slaif-agent-api"
 _ERROR = "Invalid SLAIF Agent database configuration."
 
@@ -45,6 +48,10 @@ class AgentDatabaseSettings(BaseSettings):
     dsn: SecretStr | None = None
     dsn_file: Path | None = AGENT_DSN_FILE
     browser_signing_key_file: Path = AGENT_BROWSER_SIGNING_KEY_FILE
+    browser_worker_service_credential_file: Path = (
+        AGENT_BROWSER_WORKER_SERVICE_CREDENTIAL_FILE
+    )
+    browser_worker_endpoint: str = "http://browser-worker:3100"
     expected_database: str = "slaif"
     expected_login: str = AGENT_LOGIN
     expected_privilege_role: str = AGENT_PRIVILEGE_ROLE
@@ -60,7 +67,11 @@ class AgentDatabaseSettings(BaseSettings):
     idle_transaction_timeout_ms: int = Field(default=2000, ge=50, le=30000)
     application_name: str = AGENT_APPLICATION_NAME
 
-    @field_validator("dsn_file", "browser_signing_key_file")
+    @field_validator(
+        "dsn_file",
+        "browser_signing_key_file",
+        "browser_worker_service_credential_file",
+    )
     @classmethod
     def absolute_file(cls, value: Path | None) -> Path | None:
         if value is not None and not value.is_absolute():
@@ -103,6 +114,23 @@ class AgentDatabaseSettings(BaseSettings):
             and self.expected_login != AGENT_LOGIN
         ):
             raise ValueError("Agent database identity must use the fixed authority")
+        endpoint = urlsplit(self.browser_worker_endpoint)
+        if (
+            endpoint.scheme != "http"
+            or endpoint.username
+            or endpoint.password
+            or endpoint.path not in {"", "/"}
+            or endpoint.query
+            or endpoint.fragment
+            or endpoint.port != 3100
+            or endpoint.hostname is None
+            or self.mode is not AgentDatabaseMode.TEST
+            and endpoint.hostname != "browser-worker"
+            or self.mode is AgentDatabaseMode.TEST
+            and endpoint.hostname != "browser-worker"
+            and not endpoint.hostname.endswith(".test")
+        ):
+            raise ValueError("Agent browser worker endpoint is fixed")
         return self
 
     def _read_file(self, path: Path) -> str:
@@ -194,6 +222,7 @@ class AgentDatabaseSettings(BaseSettings):
 __all__ = [
     "AGENT_APPLICATION_NAME",
     "AGENT_BROWSER_SIGNING_KEY_FILE",
+    "AGENT_BROWSER_WORKER_SERVICE_CREDENTIAL_FILE",
     "AGENT_DSN_FILE",
     "AGENT_LOGIN",
     "AGENT_PRIVILEGE_ROLE",

@@ -88,6 +88,54 @@ export const BROWSER_PREVIEW_CREDENTIAL_FACTS = Object.freeze({
   ]),
 } as const);
 
+export const BROWSER_TARGET_DESCRIPTORS = Object.freeze({
+  "desktop-chromium": Object.freeze({
+    viewport: Object.freeze({ width: 1440, height: 900 }),
+    deviceScaleFactor: 1,
+    hasTouch: false,
+    isMobile: false,
+  }),
+  tablet: Object.freeze({
+    viewport: Object.freeze({ width: 834, height: 1112 }),
+    deviceScaleFactor: 2,
+    hasTouch: true,
+    isMobile: false,
+  }),
+  "mobile-chromium": Object.freeze({
+    viewport: Object.freeze({ width: 390, height: 844 }),
+    deviceScaleFactor: 2,
+    hasTouch: true,
+    isMobile: true,
+  }),
+} as const);
+
+export const BROWSER_WORKER_CONTRACT_VERSION = "browser-worker/v1" as const;
+export const BROWSER_WORKER_DEPLOYMENT = "slaif-agent-site" as const;
+export const BROWSER_WORKER_AUTHENTICATION_HEADER =
+  "X-SLAIF-Browser-Worker-Token" as const;
+export const BROWSER_WORKER_RESPONSE_ALGORITHM = "HS256" as const;
+export const BROWSER_WORKER_RESPONSE_TYPE = "SLAIF-BROWSER-WORKER-RESULT" as const;
+export const BROWSER_WORKER_ROUTES = Object.freeze({
+  submit: "/internal/browser/v1/attempts",
+  inspect: "/internal/browser/v1/attempts/inspect",
+  retrieve: "/internal/browser/v1/artifacts/retrieve",
+} as const);
+export const BROWSER_WORKER_BOUNDS = Object.freeze({
+  requestBytes: 32_768,
+  resultBytes: 262_144,
+  artifactBytes: 8_388_608,
+  totalArtifactBytes: 16_777_216,
+  summaryBytes: 65_536,
+  outputItems: 64,
+  outputStringCharacters: 512,
+  activeAttempts: 1,
+  queueDepth: 0,
+  durationSeconds: 120,
+  previewCredentialBytes: 4096,
+  responseTtlSeconds: 60,
+  artifactRetentionSeconds: 3600,
+} as const);
+
 const targetSet = new Set<string>(BROWSER_TARGETS);
 const evidenceSet = new Set<string>(BROWSER_EVIDENCE);
 const evidenceOrder = new Map<string, number>(
@@ -179,6 +227,108 @@ export interface BrowserRunCompletion {
   readonly error: BrowserRunError | null;
 }
 
+export type BrowserWorkerAttemptState =
+  "COMPLETED" | "FAILED" | "TIMED_OUT" | "CANCELLED";
+
+export interface BrowserWorkerSubmitRequest {
+  readonly version: typeof BROWSER_WORKER_CONTRACT_VERSION;
+  readonly deployment: typeof BROWSER_WORKER_DEPLOYMENT;
+  readonly requestId: string;
+  readonly runId: string;
+  readonly siteId: string;
+  readonly workspaceId: string;
+  readonly capabilityId: string;
+  readonly operationId: string;
+  readonly leaseId: string;
+  readonly attempt: number;
+  readonly route: string;
+  readonly routeDigest: string;
+  readonly target: BrowserTarget;
+  readonly evidence: readonly BrowserEvidence[];
+  readonly artifactBytesLimit: number;
+  readonly durationSeconds: number;
+  readonly issuedAt: number;
+  readonly expiresAt: number;
+  readonly previewCredential: string;
+}
+
+export interface BrowserWorkerArtifactMetadata {
+  readonly version: typeof BROWSER_WORKER_CONTRACT_VERSION;
+  readonly artifactId: string;
+  readonly runId: string;
+  readonly siteId: string;
+  readonly workspaceId: string;
+  readonly kind: BrowserEvidence;
+  readonly mimeType: "image/png" | "application/json" | "text/plain";
+  readonly sha256: string;
+  readonly sizeBytes: number;
+  readonly target: BrowserTarget;
+  readonly routeDigest: string;
+  readonly createdAt: number;
+  readonly expiresAt: number;
+  readonly visibility: "PRIVATE";
+}
+
+export interface BrowserWorkerResult {
+  readonly version: typeof BROWSER_WORKER_CONTRACT_VERSION;
+  readonly deployment: typeof BROWSER_WORKER_DEPLOYMENT;
+  readonly requestId: string;
+  readonly requestDigest: string;
+  readonly runId: string;
+  readonly siteId: string;
+  readonly workspaceId: string;
+  readonly capabilityId: string;
+  readonly operationId: string;
+  readonly leaseId: string;
+  readonly attempt: number;
+  readonly routeDigest: string;
+  readonly target: BrowserTarget;
+  readonly state: BrowserWorkerAttemptState;
+  readonly summary: Readonly<Record<string, unknown>>;
+  readonly error: BrowserRunError | null;
+  readonly artifacts: readonly BrowserWorkerArtifactMetadata[];
+  readonly startedAt: number;
+  readonly completedAt: number;
+  readonly expiresAt: number;
+}
+
+export interface SignedBrowserWorkerResult {
+  readonly version: typeof BROWSER_WORKER_CONTRACT_VERSION;
+  readonly algorithm: typeof BROWSER_WORKER_RESPONSE_ALGORITHM;
+  readonly type: typeof BROWSER_WORKER_RESPONSE_TYPE;
+  readonly keyId: string;
+  readonly result: BrowserWorkerResult;
+  readonly signature: string;
+}
+
+export interface BrowserWorkerInspectionRequest {
+  readonly version: typeof BROWSER_WORKER_CONTRACT_VERSION;
+  readonly deployment: typeof BROWSER_WORKER_DEPLOYMENT;
+  readonly requestId: string;
+}
+
+export interface BrowserWorkerInspection {
+  readonly version: typeof BROWSER_WORKER_CONTRACT_VERSION;
+  readonly requestId: string;
+  readonly state: "RUNNING";
+  readonly startedAt: number;
+}
+
+export interface BrowserWorkerArtifactRetrievalRequest {
+  readonly version: typeof BROWSER_WORKER_CONTRACT_VERSION;
+  readonly deployment: typeof BROWSER_WORKER_DEPLOYMENT;
+  readonly requestId: string;
+  readonly runId: string;
+  readonly siteId: string;
+  readonly workspaceId: string;
+  readonly artifactId: string;
+  readonly kind: BrowserEvidence;
+  readonly target: BrowserTarget;
+  readonly routeDigest: string;
+  readonly sha256: string;
+  readonly sizeBytes: number;
+}
+
 export class BrowserContractError extends Error {
   public constructor(message: string) {
     super(message);
@@ -202,7 +352,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function validateRoute(route: unknown): string {
+export function normalizeBrowserPreviewRoute(route: unknown): string {
   if (typeof route !== "string") {
     throw new BrowserContractError("route must be a string");
   }
@@ -304,10 +454,30 @@ export function parsePreviewRunCreateRequest(value: unknown): PreviewRunCreateRe
   }
   return Object.freeze({
     version: BROWSER_CONTRACT_VERSION,
-    route: validateRoute(value.route),
+    route: normalizeBrowserPreviewRoute(value.route),
     target: value.target as BrowserTarget,
     evidence: Object.freeze([...(value.evidence as BrowserEvidence[])]),
   });
+}
+
+export function canonicalJson(value: unknown): string {
+  if (value === null || typeof value === "boolean" || typeof value === "string") {
+    return JSON.stringify(value);
+  }
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) throw new BrowserContractError("number is invalid");
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => canonicalJson(item)).join(",")}]`;
+  }
+  if (isRecord(value)) {
+    return `{${Object.keys(value)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`)
+      .join(",")}}`;
+  }
+  throw new BrowserContractError("value is not canonical JSON data");
 }
 
 export function canonicalSerializePreviewRunRequest(value: unknown): string {

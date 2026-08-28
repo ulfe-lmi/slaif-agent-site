@@ -32,7 +32,7 @@ class SupplyChainPolicyTests(unittest.TestCase):
         validate_policy(self.policy)
         inventory = validate_dependency_sources(ROOT, self.policy)
         self.assertEqual(len(inventory["github_actions"]), 10)
-        self.assertEqual(len(inventory["oci_sources"]), 6)
+        self.assertEqual(len(inventory["oci_sources"]), 7)
 
     def test_image_reference_canonicalization_is_structural(self) -> None:
         cases = {

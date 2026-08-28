@@ -306,6 +306,8 @@ test("site shell uses only the fixed server-side Render resolver", async () => {
   assert.match(previewPage, /x-slaif-browser-preview/);
   assert.match(previewPage, /session && browserToken/);
   assert.match(previewPage, /browserToken, browserRoute/);
+  assert.match(previewPage, /SLAIF_BROWSER_PREVIEW_AUTHORITY/);
+  assert.match(previewPage, /browserToken \? browserAuthority!/);
   assert.doesNotMatch(
     `${client}${previewPage}`,
     /localStorage|sessionStorage|[?&](?:token|credential)=/i,
