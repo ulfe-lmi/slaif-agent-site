@@ -327,6 +327,43 @@ class EvidenceTests(unittest.TestCase):
         with self.assertRaisesRegex(PolicyError, "forbidden evidence marker"):
             finalize_bundle(self.root, "local")
 
+    def test_exception_set_is_retained_and_synthetic_thirty_second_finding_fails(
+        self,
+    ) -> None:
+        self.populate()
+        index = finalize_bundle(self.root, "local")
+        browser = next(
+            image for image in index["images"] if image["image"] == "browser-worker"
+        )
+        self.assertEqual(len(browser["critical_findings"]), 31)
+        self.assertEqual(
+            index["exception_counts"]["vulnerability"],
+            31,
+        )
+        self.assertEqual(
+            {item["status"] for item in browser["critical_findings"]},
+            {"excepted"},
+        )
+
+        scan_path = self.root / "scans/browser-worker.grype.json"
+        scan = load_json(scan_path)
+        scan["matches"].append(
+            {
+                "artifact": {
+                    "name": "chrome",
+                    "purl": "pkg:generic/chrome@152.0.7977.64",
+                    "version": "152.0.7977.64",
+                },
+                "vulnerability": {
+                    "id": "CVE-2026-79999",
+                    "severity": "Critical",
+                },
+            }
+        )
+        write_json(scan_path, scan)
+        with self.assertRaisesRegex(PolicyError, "unexcepted Critical"):
+            finalize_bundle(self.root, "local")
+
     def test_critical_and_missing_image_fail_closed(self) -> None:
         self.populate(critical=True)
         with self.assertRaisesRegex(PolicyError, "unexcepted Critical"):

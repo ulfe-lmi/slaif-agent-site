@@ -184,7 +184,43 @@ class SupplyChainPolicyTests(unittest.TestCase):
 
         vulnerability = load_json(ROOT / "supply-chain/vulnerability-exceptions.json")
         validate_exceptions(vulnerability, "vulnerability", 90, date(2026, 8, 17))
-        self.assertEqual(len(vulnerability["exceptions"]), 19)
+        expected = {
+            "CVE-2026-78900",
+            "CVE-2026-78904",
+            "CVE-2026-78909",
+            "CVE-2026-78935",
+            "CVE-2026-78937",
+            "CVE-2026-78939",
+            "CVE-2026-78945",
+            "CVE-2026-78948",
+            "CVE-2026-78951",
+            "CVE-2026-78964",
+            "CVE-2026-78985",
+            "CVE-2026-79012",
+            "CVE-2026-79026",
+            "CVE-2026-79043",
+            "CVE-2026-79047",
+            "CVE-2026-79052",
+            "CVE-2026-79056",
+            "CVE-2026-79064",
+            "CVE-2026-79078",
+            "CVE-2026-79091",
+            "CVE-2026-79111",
+            "CVE-2026-79128",
+            "CVE-2026-79129",
+            "CVE-2026-79130",
+            "CVE-2026-79131",
+            "CVE-2026-79140",
+            "CVE-2026-79149",
+            "CVE-2026-79150",
+            "CVE-2026-79152",
+            "CVE-2026-79188",
+            "CVE-2026-79189",
+        }
+        self.assertEqual(
+            {entry["identifier"] for entry in vulnerability["exceptions"]}, expected
+        )
+        self.assertEqual(len(vulnerability["exceptions"]), 31)
 
     def test_notice_generation_is_sorted_and_deterministic(self) -> None:
         component = {

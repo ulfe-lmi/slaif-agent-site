@@ -199,8 +199,8 @@ only on that artifact.
 ## Exceptions and updates
 
 Both exception lists are empty by default; the only current vulnerability
-exception is the owner-approved, seven-day Chrome 152.0.7977.64 entry set
-tracked by [issue #67](https://github.com/ulfe-lmi/slaif-agent-site/issues/67).
+exception is the owner-approved, seven-day Chrome 152.0.7977.64 entry set of
+31 current findings tracked by [issue #67](https://github.com/ulfe-lmi/slaif-agent-site/issues/67).
 An entry requires all of:
 
 - exact vulnerability ID or license expression in `identifier`;
