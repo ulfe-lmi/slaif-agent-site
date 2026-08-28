@@ -10,6 +10,7 @@ from pathlib import Path
 from tools.supply_chain.reproducible import (
     artifact_manifest,
     clean_node_outputs,
+    describe_manifest_difference,
     find_generated_contracts,
     tree_manifest,
 )
@@ -97,6 +98,26 @@ class ReproducibilityHelperTests(unittest.TestCase):
         self.assertFalse((self.root / "apps/web/.next").exists())
         self.assertFalse((self.root / "packages/example/dist").exists())
         self.assertTrue(retained.is_file())
+
+    def test_manifest_difference_is_bounded_and_hash_only(self) -> None:
+        first = {
+            "browser_runtime": [],
+            "web_distribution": [
+                {"path": "opt/slaif/a.js", "sha256": "a" * 64, "size": 1}
+            ],
+            "workspace_outputs": [],
+        }
+        second = {
+            "browser_runtime": [],
+            "web_distribution": [
+                {"path": "opt/slaif/a.js", "sha256": "b" * 64, "size": 1}
+            ],
+            "workspace_outputs": [],
+        }
+        difference = describe_manifest_difference(first, second)
+        self.assertIn("path=opt/slaif/a.js", difference)
+        self.assertIn("sha256=", difference)
+        self.assertNotIn("data", difference)
 
 
 if __name__ == "__main__":

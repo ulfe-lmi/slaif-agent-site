@@ -163,6 +163,42 @@ def workspace_output_paths(root: Path) -> tuple[str, ...]:
     )
 
 
+def describe_manifest_difference(first: dict[str, Any], second: dict[str, Any]) -> str:
+    """Return one bounded, content-free difference for reproducibility failures."""
+
+    for section in ("browser_runtime", "web_distribution", "workspace_outputs"):
+        left = {entry["path"]: entry for entry in first[section]}
+        right = {entry["path"]: entry for entry in second[section]}
+        for path in sorted(set(left) | set(right)):
+            if path not in left or path not in right:
+                first_state = "present" if path in left else "missing"
+                second_state = "present" if path in right else "missing"
+                return (
+                    f"section={section} path={path} "
+                    f"first={first_state} second={second_state}"
+                )
+            if left[path] != right[path]:
+                return (
+                    f"section={section} path={path} "
+                    f"first={_manifest_fingerprint(left[path])} "
+                    f"second={_manifest_fingerprint(right[path])}"
+                )
+    return "unclassified normalized manifest difference"
+
+
+def _manifest_fingerprint(entry: dict[str, Any]) -> str:
+    fields = [f"type={entry.get('type')}", f"mode={entry.get('mode')}"]
+    if "size" in entry:
+        fields.append(f"size={entry['size']}")
+    if "sha256" in entry:
+        fields.append(f"sha256={entry['sha256']}")
+    if "target" in entry:
+        fields.append(f"target={entry['target']}")
+    if "normalized_fields" in entry:
+        fields.append(f"normalized_fields={entry['normalized_fields']}")
+    return ",".join(fields)
+
+
 def find_generated_contracts(root: Path) -> list[str]:
     found: list[str] = []
     for path in root.rglob("*"):
@@ -238,7 +274,10 @@ def reproduce(root: Path, output: Path) -> dict[str, Any]:
                 }
             )
         if node_attempts[0] != node_attempts[1]:
-            raise PolicyError("Web/browser normalized output manifests differ")
+            raise PolicyError(
+                "Web/browser normalized output manifests differ: "
+                + describe_manifest_difference(node_attempts[0], node_attempts[1])
+            )
 
     generated_contracts = find_generated_contracts(root)
     if generated_contracts:
