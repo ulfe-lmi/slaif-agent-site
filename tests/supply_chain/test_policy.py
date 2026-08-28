@@ -177,10 +177,14 @@ class SupplyChainPolicyTests(unittest.TestCase):
                     validate_application_licenses([entry], self.policy, [near_miss])
 
     def test_empty_exception_files_are_valid(self) -> None:
-        for name in ("license-exceptions.json", "vulnerability-exceptions.json"):
+        for name in ("license-exceptions.json",):
             document = load_json(ROOT / "supply-chain" / name)
             validate_exceptions(document, name, 90, date(2026, 8, 17))
             self.assertEqual(document["exceptions"], [])
+
+        vulnerability = load_json(ROOT / "supply-chain/vulnerability-exceptions.json")
+        validate_exceptions(vulnerability, "vulnerability", 90, date(2026, 8, 17))
+        self.assertEqual(len(vulnerability["exceptions"]), 19)
 
     def test_notice_generation_is_sorted_and_deterministic(self) -> None:
         component = {

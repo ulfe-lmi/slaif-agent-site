@@ -290,7 +290,9 @@ old or partial bundle cannot be mistaken for current evidence.
 Registry and database access are external availability dependencies of this
 CI/build check, not runtime services. Exact image pulls and builds retry at most
 three times with 30-second delays. A failed or stale vulnerability database is
-a failed gate; operators must not substitute an old result or exception.
+a failed gate; operators must not substitute an old result. The narrowly
+scoped Chrome exception is governed by the exact current exception file,
+issue #67, and its 2026-09-04 removal deadline.
 
 CI retains the checksummed directory for 14 days. It contains package and
 vulnerability metadata and should remain CI-private even though it is scanned

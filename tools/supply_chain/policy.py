@@ -320,16 +320,16 @@ def validate_policy(policy: dict[str, Any]) -> None:
     if (
         browser_runtime["base_image"] != "playwright"
         or browser_runtime["playwright_core_version"] != "1.62.1"
-        or browser_runtime["chromium_revision"] != "1234"
-        or browser_runtime["chromium_version"] != "151.0.7922.72"
+        or browser_runtime["chromium_revision"] != "1669021"
+        or browser_runtime["chromium_version"] != "152.0.7977.64"
         or browser_runtime["chromium_archive_url"]
-        != "https://storage.googleapis.com/chrome-for-testing-public/151.0.7922.72/linux64/chrome-linux64.zip"
+        != "https://storage.googleapis.com/chrome-for-testing-public/152.0.7977.64/linux64/chrome-linux64.zip"
         or browser_runtime["chromium_archive_sha256"]
-        != "08254455dc5154fefa0165dc1dea16e496c8298f98c14d89bf38463810d21649"
+        != "8b592f066af71f054aab2cc80fc26f73c775c6d44ebb99d16ade924b24756c2e"
         or browser_runtime["platform"] != "linux/amd64"
         or browser_runtime["node_version"] != "24.18.1"
         or browser_runtime["chromium_executable"]
-        != "/ms-playwright/chromium-1234/chrome-linux64/chrome"
+        != "/ms-playwright/chromium-1669021/chrome-linux64/chrome"
         or browser_runtime["allowed_capabilities"] != ["SYS_CHROOT"]
         or browser_runtime["forbidden_product_browsers"] != ["firefox", "webkit"]
         or not SHA256.fullmatch(str(browser_runtime["seccomp_profile_sha256"]))

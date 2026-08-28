@@ -9,8 +9,8 @@ The authoritative machine-readable contract is
 [`supply-chain/policy.json`](../supply-chain/policy.json). It records exact
 registries, GitHub Action commits, readable OCI tags with top-level digests,
 scanner versions and digests, license categories, vulnerability thresholds,
-evidence formats, and retention. The empty exception files are governed inputs,
-not an invitation for an automated agent to suppress a failure.
+evidence formats, and retention. Exception files are governed inputs, not an
+invitation for an automated agent to suppress a failure.
 
 ## Trust and network model
 
@@ -127,13 +127,13 @@ retains Go standard-library symbol evidence needed for accurate Grype matches.
 Grype scans that checksummed document; the index links both forms.
 
 The browser worker uses the digest-pinned official Playwright 1.62.1 Noble
-image, Node 24.18.1, exact `playwright-core==1.62.1`, and Chromium revision 1234
-(`151.0.7922.72`). The exact linux/amd64 archive is SHA-256 verified before
+image, Node 24.18.1, exact `playwright-core==1.62.1`, and Chromium revision 1669021
+(`152.0.7977.64`). The exact linux/amd64 archive is SHA-256 verified before
 extraction by the bounded source-controlled parser. Its runtime removes
 Firefox, WebKit, the duplicate Chromium
 headless shell, ffmpeg, npm, and Corepack. Evidence requires the worker package
 and `playwright-core`, rejects Firefox/WebKit inventory, and hashes the retained
-`/ms-playwright/chromium-1234` tree during both clean image builds. The separate
+`/ms-playwright/chromium-1669021` tree during both clean image builds. The separate
 root E2E runner still installs all three test-only browser families outside the
 product image.
 
@@ -149,7 +149,14 @@ findings do not pass silently: per-image and total counts remain in JSON,
 `SUMMARY.txt`, and human-readable scan summaries as review evidence. Lower and
 unknown severity counts also remain visible. A pass means zero unexcepted
 Critical findings in that time-bounded database; it does not mean zero
-vulnerabilities.
+vulnerabilities. The temporary 2026-08-28 human-approved exception for the
+19 unavoidable Chrome 152.0.7977.64 Critical findings is recorded in
+[`supply-chain/vulnerability-exceptions.json`](../supply-chain/vulnerability-exceptions.json)
+and tracked at [issue #67](https://github.com/ulfe-lmi/slaif-agent-site/issues/67).
+It expires 2026-09-04, applies only to `browser-worker`, and must be removed
+when official stable 152.0.7977.65 or newer is available. Validation requires
+every entry to match a current Critical finding's exact ID, PURL, and scope;
+unused, stale, near-match, duplicate, or wrong-severity entries fail closed.
 
 ## Evidence bundle
 
@@ -191,7 +198,10 @@ only on that artifact.
 
 ## Exceptions and updates
 
-Both exception lists are empty by default. An entry requires all of:
+Both exception lists are empty by default; the only current vulnerability
+exception is the owner-approved, seven-day Chrome 152.0.7977.64 entry set
+tracked by [issue #67](https://github.com/ulfe-lmi/slaif-agent-site/issues/67).
+An entry requires all of:
 
 - exact vulnerability ID or license expression in `identifier`;
 - exact package PURL in `affected`;
@@ -202,10 +212,14 @@ Both exception lists are empty by default. An entry requires all of:
 - creation and expiry dates no more than 90 days apart.
 
 Wildcards, duplicates, expired entries, missing fields, non-human approvers,
-and broader lifetimes fail. A valid exception changes only the conclusion for
-the exact identifier, PURL, and scope; it never removes the component or
-finding from evidence. Coding agents must not author an exception merely to
-make a gate green.
+and broader lifetimes fail. Vulnerability entries must also match an actual
+current Critical finding with the exact identifier, PURL, and scope; unused,
+stale, near-match, and wrong-severity entries fail closed. A valid exception
+changes only the conclusion for that exact finding; it never removes the
+component or finding from evidence. Coding agents must not author an exception
+merely to make a gate green. The owner removes this exception or upgrades to
+official stable Chrome 152.0.7977.65+ immediately when available and no later
+than its 2026-09-04 expiry.
 
 An authorized update must preserve readable tags plus top-level digests,
 review source/license/signature metadata, update the machine policy and narrow

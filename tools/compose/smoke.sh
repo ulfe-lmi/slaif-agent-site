@@ -144,8 +144,8 @@ echo "compose-mode-policy: OK long-running-backends=9 mode=development"
 docker inspect "${PROJECT}-browser-worker-1" | python -c \
   'import json,sys; value=json.load(sys.stdin)[0]; host=value["HostConfig"]; config=value["Config"]; assert config["User"]=="10001:10001" and host["ReadonlyRootfs"] is True; assert host["CapDrop"]==["ALL"] and host["CapAdd"]==["CAP_SYS_CHROOT"]; assert host["PidsLimit"]==256 and host["Memory"]==805306368 and host["ShmSize"]==134217728 and host["NanoCpus"]==1000000000; assert "no-new-privileges:true" in host["SecurityOpt"] and any(item.startswith("seccomp=") for item in host["SecurityOpt"]); assert host["NetworkMode"].endswith("_browser"); print("browser-worker-runtime-policy: OK uid=10001 readonly=yes caps=SYS_CHROOT limits=exact network=browser")'
 docker exec "${PROJECT}-browser-worker-1" sh -c \
-  'test "$(find /ms-playwright -mindepth 1 -maxdepth 1 -type d | wc -l)" -eq 1; test -x /ms-playwright/chromium-1234/chrome-linux64/chrome; test ! -e /usr/bin/npm; test ! -e /usr/bin/corepack; test "$(node --version)" = v24.18.1; /ms-playwright/chromium-1234/chrome-linux64/chrome --version | grep -Eq "^Google Chrome for Testing 151[.]0[.]7922[.]72 *$"'
-echo "browser-worker-image-policy: OK playwright=1.62.1 chromium=151.0.7922.72 browsers=chromium-only package-manager=absent"
+  'test "$(find /ms-playwright -mindepth 1 -maxdepth 1 -type d | wc -l)" -eq 1; test -x /ms-playwright/chromium-1669021/chrome-linux64/chrome; test ! -e /usr/bin/npm; test ! -e /usr/bin/corepack; test "$(node --version)" = v24.18.1; /ms-playwright/chromium-1669021/chrome-linux64/chrome --version | grep -Eq "^Google Chrome for Testing 152[.]0[.]7977[.]64 *$"'
+echo "browser-worker-image-policy: OK playwright=1.62.1 chromium=152.0.7977.64 browsers=chromium-only package-manager=absent"
 
 curl --fail --show-error --silent http://localhost:8080/ | grep -q "Self-hosted human control"
 docker compose -p "$PROJECT" logs --no-color bootstrap 2>/dev/null \

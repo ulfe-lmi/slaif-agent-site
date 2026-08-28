@@ -33,7 +33,7 @@ SPDX_ID = re.compile(r"SPDXRef-[A-Za-z0-9.-]+")
 IMAGE_PREFIXES = {
     "apache": ("usr/local/apache2/conf/",),
     "backend": ("opt/slaif/",),
-    "browser-worker": ("opt/slaif/", "ms-playwright/chromium-1234/"),
+    "browser-worker": ("opt/slaif/", "ms-playwright/chromium-1669021/"),
     "nginx": ("etc/nginx/nginx.conf",),
     "web": ("opt/slaif/",),
 }
@@ -655,6 +655,8 @@ def finalize_bundle(root: Path, revision: str) -> dict[str, Any]:
     )
     images: list[dict[str, Any]] = []
     total_severities: Counter[str] = Counter()
+    actual_critical: set[tuple[str, str, str]] = set()
+    matched_critical: set[tuple[str, str, str]] = set()
     for image_name, configured in sorted(policy["required_images"].items()):
         metadata = load_json(root / f"images/{image_name}.json")
         validate_labels(image_name, metadata, revision)
@@ -676,15 +678,31 @@ def finalize_bundle(root: Path, revision: str) -> dict[str, Any]:
         )
         severities: Counter[str] = Counter()
         unexcepted_critical: list[str] = []
+        critical_findings: list[dict[str, str]] = []
         for match in scan.get("matches", []):
             severity = str(match.get("vulnerability", {}).get("severity", "Unknown"))
             severities[severity] += 1
             total_severities[severity] += 1
-            if severity == "Critical" and not match_is_excepted(
-                match, image_name, vulnerability_document["exceptions"]
-            ):
-                unexcepted_critical.append(
-                    str(match.get("vulnerability", {}).get("id", "UNKNOWN"))
+            if severity == "Critical":
+                identifier = str(match.get("vulnerability", {}).get("id", "UNKNOWN"))
+                artifact = match.get("artifact", {})
+                affected = str(artifact.get("purl") or "")
+                key = (identifier, affected, image_name)
+                actual_critical.add(key)
+                excepted = match_is_excepted(
+                    match, image_name, vulnerability_document["exceptions"]
+                )
+                if excepted:
+                    matched_critical.add(key)
+                else:
+                    unexcepted_critical.append(identifier)
+                critical_findings.append(
+                    {
+                        "affected": affected,
+                        "identifier": identifier,
+                        "scope": image_name,
+                        "status": "excepted" if excepted else "unexcepted",
+                    }
                 )
         if unexcepted_critical:
             raise PolicyError(
@@ -697,6 +715,8 @@ def finalize_bundle(root: Path, revision: str) -> dict[str, Any]:
                     f"image: {image_name}",
                     "gate: PASS (zero unexcepted Critical)",
                     f"Critical: {severities.get('Critical', 0)}",
+                    "Critical exceptions: "
+                    f"{len(critical_findings) - len(unexcepted_critical)}",
                     f"High: {severities.get('High', 0)} (review evidence)",
                     f"Medium: {severities.get('Medium', 0)}",
                     f"Low: {severities.get('Low', 0)}",
@@ -715,6 +735,7 @@ def finalize_bundle(root: Path, revision: str) -> dict[str, Any]:
         images.append(
             {
                 "base_reference": policy["oci_sources"][configured["base"]],
+                "critical_findings": critical_findings,
                 "image": image_name,
                 "image_id": metadata["image_id"],
                 "local_reference": configured["local_reference"],
@@ -730,6 +751,22 @@ def finalize_bundle(root: Path, revision: str) -> dict[str, Any]:
                 "severity_counts": dict(sorted(severities.items())),
                 "unexcepted_critical": 0,
             }
+        )
+    exception_keys = {
+        (entry["identifier"], entry["affected"], entry["scope"])
+        for entry in vulnerability_document["exceptions"]
+    }
+    unused = sorted(exception_keys - actual_critical)
+    if unused:
+        details = ", ".join("/".join(item) for item in unused)
+        raise PolicyError(
+            "vulnerability exceptions: unused or stale exception(s): " + details
+        )
+    if matched_critical != actual_critical:
+        missing = sorted(actual_critical - matched_critical)
+        details = ", ".join("/".join(item) for item in missing)
+        raise PolicyError(
+            "vulnerability exceptions: unexcepted Critical finding(s): " + details
         )
     index = {
         "database": database,

@@ -102,8 +102,8 @@ key, Render token, or human session. Reference Compose uses:
 | `BROWSER_WORKER_ARTIFACT_ROOT` | `/var/lib/slaif/browser-artifacts` | Absolute private worker-only store |
 | `BROWSER_WORKER_PREVIEW_ORIGIN` | `http://web:3000` | Fixed operator-owned internal navigation origin |
 | `SLAIF_BROWSER_PREVIEW_AUTHORITY` | `localhost:8080` | Web-only trusted site-resolution authority for browser-token mode |
-| `BROWSER_WORKER_CHROMIUM_EXECUTABLE` | `/ms-playwright/chromium-1234/chrome-linux64/chrome` | Image-fixed executable |
-| `BROWSER_WORKER_EXPECTED_CHROMIUM_VERSION` | `151.0.7922.72` | Readiness version assertion |
+| `BROWSER_WORKER_CHROMIUM_EXECUTABLE` | `/ms-playwright/chromium-1669021/chrome-linux64/chrome` | Image-fixed executable |
+| `BROWSER_WORKER_EXPECTED_CHROMIUM_VERSION` | `152.0.7977.64` | Readiness version assertion |
 
 The one-shot initializer writes exactly
 `sbws1:<16-hex-key-id>:<43-base64url-secret>` into a mode-`0700`

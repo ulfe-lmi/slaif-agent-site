@@ -26,7 +26,13 @@ from tools.supply_chain.evidence import (
     validate_bundle,
     validate_database_status,
 )
-from tools.supply_chain.policy import POLICY_PATH, PolicyError, load_json, write_json
+from tools.supply_chain.policy import (
+    POLICY_PATH,
+    ROOT,
+    PolicyError,
+    load_json,
+    write_json,
+)
 
 
 def spdx_package(name: str, index: int) -> dict[str, object]:
@@ -117,6 +123,23 @@ class EvidenceTests(unittest.TestCase):
                 {"slaifEvidence": {"image_id": "sha256:" + "a" * 64}},
             )
             matches: list[dict[str, object]] = []
+            if image == "browser-worker":
+                for exception in load_json(
+                    ROOT / "supply-chain/vulnerability-exceptions.json"
+                )["exceptions"]:
+                    matches.append(
+                        {
+                            "artifact": {
+                                "name": "chrome",
+                                "purl": exception["affected"],
+                                "version": "152.0.7977.64",
+                            },
+                            "vulnerability": {
+                                "id": exception["identifier"],
+                                "severity": "Critical",
+                            },
+                        }
+                    )
             if critical and image == "backend":
                 matches.append(
                     {
