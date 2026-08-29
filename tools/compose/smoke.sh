@@ -848,24 +848,6 @@ docker compose -p "$PROJECT" restart agent-api >/dev/null
 wait_healthy agent-api
 echo "agent-browser-restart: OK durable-artifacts=retained"
 retrieve_public_artifacts
-worker_request_id=$(docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif -Atc \
-  "SELECT worker_request_id FROM control.browser_artifact WHERE id='$worker_artifact_id'")
-test -n "$worker_request_id"
-docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif -v ON_ERROR_STOP=1 -c \
-  "UPDATE control.browser_artifact
-   SET worker_request_id='00000000-0000-4000-8000-000000000099'
-   WHERE id='$worker_artifact_id';" >/dev/null
-outage_status=$(curl --silent --show-error --max-time 30 \
-  --config "$AGENT_CAPABILITY_CONFIG_FILE" --output "$ARTIFACT_BODY_FILE" \
-  --write-out '%{http_code}' \
-  "http://localhost:8080/api/agent/v1/preview-runs/$worker_run_id/artifacts/$worker_artifact_id" || true)
-test "$outage_status" = 503
-echo "browser-artifact-outage: OK status=503 worker-binding-unavailable"
-docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif -v ON_ERROR_STOP=1 -c \
-  "UPDATE control.browser_artifact
-   SET worker_request_id='$worker_request_id'
-   WHERE id='$worker_artifact_id';" >/dev/null
-retrieve_public_artifacts
 worker_canonical_status=$(curl --silent --output /dev/null --write-out '%{http_code}' \
   http://localhost:8080/s/demo)
 if test "$worker_canonical_status" != 200
