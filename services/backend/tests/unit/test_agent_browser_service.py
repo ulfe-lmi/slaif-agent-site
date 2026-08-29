@@ -6,9 +6,13 @@ import hashlib
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
+import httpx
 import pytest
+from fastapi import FastAPI, Request
+from slaif_agent_site.agent_api import browser_http
 from slaif_agent_site.agent_api.browser_service import (
     AgentBrowserRunService,
+    BrowserArtifactRetrieval,
     BrowserRunServiceError,
     BrowserRunServiceReason,
 )
@@ -173,3 +177,46 @@ async def test_retrieval_worker_failure_is_unavailable_and_digest_is_verified() 
             context=_context(), run_id=IDS["run_id"], artifact_id=IDS["artifact_id"]
         )
     assert bad_error.value.reason is BrowserRunServiceReason.UNAVAILABLE
+
+
+class _PublicService:
+    async def retrieve_artifact(self, **_kwargs: object) -> BrowserArtifactRetrieval:
+        content = b"private-png"
+        return BrowserArtifactRetrieval(
+            content=content,
+            mime_type="image/png",
+            sha256=hashlib.sha256(content).hexdigest(),
+            size_bytes=len(content),
+        )
+
+
+@pytest.mark.asyncio
+async def test_public_artifact_response_is_exact_private_bytes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = FastAPI()
+    app.state.browser_run_service = _PublicService()
+    app.include_router(browser_http.router)
+
+    async def authenticate(_request: Request) -> object:
+        return object()
+
+    monkeypatch.setattr(browser_http, "_authenticate", authenticate)
+    monkeypatch.setattr(browser_http, "_require_scope", lambda *_args: None)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://agent.test"
+    ) as client:
+        response = await client.get(
+            f"/api/agent/v1/preview-runs/{IDS['run_id']}/artifacts/{IDS['artifact_id']}"
+        )
+    assert response.status_code == 200
+    assert response.content == b"private-png"
+    assert response.headers["content-type"] == "image/png"
+    assert response.headers["content-length"] == str(len(response.content))
+    assert (
+        response.headers["etag"] == f'"{hashlib.sha256(response.content).hexdigest()}"'
+    )
+    assert response.headers["cache-control"] == "private, no-store"
+    assert response.headers["pragma"] == "no-cache"
+    assert response.headers["x-robots-tag"] == "noindex, nofollow, noarchive"
+    assert response.headers["x-content-type-options"] == "nosniff"

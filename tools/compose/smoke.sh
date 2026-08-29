@@ -54,6 +54,87 @@ EDGE_LIMIT_BODY_FILE=
 AGENT_CAPABILITY_CONFIG_FILE=
 AGENT_CAPABILITY_META_FILE=
 AGENT_RUN_FILE=
+ARTIFACT_IDS_FILE=
+ARTIFACT_HEADERS_FILE=
+ARTIFACT_BODY_FILE=
+FOREIGN_CAPABILITY_CONFIG_FILE=
+FOREIGN_CAPABILITY_META_FILE=
+
+retrieve_public_artifacts() {
+  for worker_run_id in $(printf '%s' "$worker_run_ids" | tr ',' ' ')
+  do
+    test "$(curl --silent --show-error --config "$AGENT_CAPABILITY_CONFIG_FILE" \
+      --output "$AGENT_RUN_FILE" --write-out '%{http_code}' \
+      "http://localhost:8080/api/agent/v1/preview-runs/$worker_run_id/artifacts")" = 200
+    python - "$AGENT_RUN_FILE" >"$ARTIFACT_IDS_FILE" <<'PY'
+import json
+import pathlib
+import sys
+
+artifacts = json.loads(pathlib.Path(sys.argv[1]).read_text("utf-8"))
+assert len(artifacts) == 3
+assert {item["kind"] for item in artifacts} == {
+    "screenshot", "heading-summary", "structure-summary"
+}
+for item in artifacts:
+    assert set(item) == {
+        "version", "artifact_id", "run_id", "kind", "mime_type", "sha256",
+        "size_bytes", "target", "route_digest", "created_at", "expires_at",
+        "visibility"
+    }
+    assert item["visibility"] == "PRIVATE"
+    print(item["artifact_id"], item["kind"])
+PY
+    while read -r artifact_id artifact_kind
+    do
+      status_code=$(curl --silent --show-error --config "$AGENT_CAPABILITY_CONFIG_FILE" \
+        --dump-header "$ARTIFACT_HEADERS_FILE" --output "$ARTIFACT_BODY_FILE" \
+        --write-out '%{http_code}' \
+        "http://localhost:8080/api/agent/v1/preview-runs/$worker_run_id/artifacts/$artifact_id")
+      test "$status_code" = 200
+      python - "$ARTIFACT_HEADERS_FILE" "$ARTIFACT_BODY_FILE" "$artifact_kind" <<'PY'
+import hashlib
+import json
+import pathlib
+import struct
+import sys
+
+headers = {}
+for line in pathlib.Path(sys.argv[1]).read_text("latin-1").splitlines():
+    if ":" in line:
+        key, value = line.split(":", 1)
+        headers[key.casefold()] = value.strip()
+body = pathlib.Path(sys.argv[2]).read_bytes()
+kind = sys.argv[3]
+digest = hashlib.sha256(body).hexdigest()
+expected_mime = "image/png" if kind == "screenshot" else "application/json"
+assert headers.get("content-type") == expected_mime
+assert headers.get("content-length") == str(len(body))
+assert headers.get("etag") == f'"{digest}"'
+assert headers.get("cache-control") == "private, no-store"
+assert headers.get("pragma") == "no-cache"
+assert headers.get("x-robots-tag") == "noindex, nofollow, noarchive"
+assert headers.get("x-content-type-options") == "nosniff"
+assert len(body) > 0
+if kind == "screenshot":
+    assert body[:8] == b"\x89PNG\r\n\x1a\n"
+    width, height = struct.unpack(">II", body[16:24])
+    assert (width, height) == (1440, 900)
+else:
+    document = json.loads(body)
+    if kind == "heading-summary":
+        assert "Compose overlay heading" in document["headings"]
+    else:
+        assert document["main"] == 1
+        assert all(
+            isinstance(document[key], int) and document[key] >= 0
+            for key in ("articles", "components", "navigation", "sections")
+        )
+PY
+    done <"$ARTIFACT_IDS_FILE"
+  done
+  echo "browser-artifact-public: OK runs=2 artifacts=6 bytes=verified"
+}
 
 cleanup() {
   test -z "$HEADER_FILE" || rm -f "$HEADER_FILE"
@@ -69,6 +150,11 @@ cleanup() {
   test -z "$AGENT_CAPABILITY_CONFIG_FILE" || rm -f "$AGENT_CAPABILITY_CONFIG_FILE"
   test -z "$AGENT_CAPABILITY_META_FILE" || rm -f "$AGENT_CAPABILITY_META_FILE"
   test -z "$AGENT_RUN_FILE" || rm -f "$AGENT_RUN_FILE"
+  test -z "$ARTIFACT_IDS_FILE" || rm -f "$ARTIFACT_IDS_FILE"
+  test -z "$ARTIFACT_HEADERS_FILE" || rm -f "$ARTIFACT_HEADERS_FILE"
+  test -z "$ARTIFACT_BODY_FILE" || rm -f "$ARTIFACT_BODY_FILE"
+  test -z "$FOREIGN_CAPABILITY_CONFIG_FILE" || rm -f "$FOREIGN_CAPABILITY_CONFIG_FILE"
+  test -z "$FOREIGN_CAPABILITY_META_FILE" || rm -f "$FOREIGN_CAPABILITY_META_FILE"
   docker compose -p "$NEGATIVE_PROJECT" -f "$ROOT/compose.yaml" \
     -f "$ROOT/tests/packaging/compose.broken-bootstrap.yaml" \
     down --volumes --remove-orphans >/dev/null 2>&1 || true
@@ -91,6 +177,11 @@ EDGE_LIMIT_BODY_FILE=$(mktemp)
 AGENT_CAPABILITY_CONFIG_FILE=$(mktemp)
 AGENT_CAPABILITY_META_FILE=$(mktemp)
 AGENT_RUN_FILE=$(mktemp)
+ARTIFACT_IDS_FILE=$(mktemp)
+ARTIFACT_HEADERS_FILE=$(mktemp)
+ARTIFACT_BODY_FILE=$(mktemp)
+FOREIGN_CAPABILITY_CONFIG_FILE=$(mktemp)
+FOREIGN_CAPABILITY_META_FILE=$(mktemp)
 chmod 600 "$TOKEN_FILE" "$E2E_SECRET_FILE" "$AGENT_CAPABILITY_CONFIG_FILE" \
   "$AGENT_CAPABILITY_META_FILE" "$AGENT_RUN_FILE"
 
@@ -638,6 +729,22 @@ pathlib.Path(sys.argv[2]).write_text(
 )
 PY
 read -r worker_capability_public worker_capability_digest < "$AGENT_CAPABILITY_META_FILE"
+python - "$FOREIGN_CAPABILITY_CONFIG_FILE" "$FOREIGN_CAPABILITY_META_FILE" <<'PY'
+import hashlib
+import pathlib
+import secrets
+import sys
+
+token = f"sas2_{secrets.token_hex(8)}_{secrets.token_hex(32)}"
+pathlib.Path(sys.argv[1]).write_text(
+    f'header = "Authorization: Bearer {token}"\n', encoding="ascii"
+)
+pathlib.Path(sys.argv[2]).write_text(
+    f"{token.split('_')[1]} {hashlib.sha256(token.encode()).hexdigest()}\n",
+    encoding="ascii",
+)
+PY
+read -r foreign_capability_public foreign_capability_digest < "$FOREIGN_CAPABILITY_META_FILE"
 preview_site_id=$(docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif -Atc \
   "SELECT id FROM control.site WHERE site_key='demo'")
 test -n "$preview_site_id"
@@ -649,6 +756,10 @@ docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif \
      ('15000000-0000-4000-8000-000000000004',
       '12000000-0000-4000-8000-000000000301','$worker_capability_public',
       '$worker_capability_digest','[\"preview:inspect\"]'::jsonb,
+      CURRENT_TIMESTAMP + interval '1 hour'),
+     ('15000000-0000-4000-8000-000000000005',
+      '12000000-0000-4000-8000-000000000301','$foreign_capability_public',
+      '$foreign_capability_digest','[\"preview:inspect\"]'::jsonb,
       CURRENT_TIMESTAMP + interval '1 hour');" >/dev/null
 worker_run_ids=
 for worker_key in compose-worker-direct-one compose-worker-direct-two
@@ -720,6 +831,42 @@ Path("/tmp/browser-worker-result.json").write_text(
 Path("/tmp/browser-worker-result.json").chmod(0o600)
 print("browser-worker-dispatch: OK durable-runs=2 artifacts=agent-owned")
 PY
+retrieve_public_artifacts
+worker_artifact_id=$(docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif -Atc \
+  "SELECT id FROM control.browser_artifact
+   WHERE capability_id='15000000-0000-4000-8000-000000000004'
+   ORDER BY created_at, id LIMIT 1")
+test -n "$worker_artifact_id"
+test "$(curl --silent --show-error --config "$AGENT_CAPABILITY_CONFIG_FILE" \
+  --output "$ARTIFACT_BODY_FILE" --write-out '%{http_code}' \
+  "http://localhost:8080/api/agent/v1/preview-runs/$worker_run_id/artifacts/00000000-0000-4000-8000-000000000099")" = 404
+test "$(curl --silent --show-error --config "$FOREIGN_CAPABILITY_CONFIG_FILE" \
+  --output "$ARTIFACT_BODY_FILE" --write-out '%{http_code}' \
+  "http://localhost:8080/api/agent/v1/preview-runs/$worker_run_id/artifacts/$worker_artifact_id")" = 404
+echo "browser-artifact-negative: OK random=404 foreign-capability=404"
+docker compose -p "$PROJECT" restart agent-api >/dev/null
+wait_healthy agent-api
+echo "agent-browser-restart: OK durable-artifacts=retained"
+retrieve_public_artifacts
+docker run --rm --network none \
+  --volume "${PROJECT}_browser-worker-secret:/worker" \
+  --entrypoint sh slaif-agent-site-backend:local -c \
+  'mv /worker/worker-token /worker/worker-token.outage'
+docker compose -p "$PROJECT" restart browser-worker >/dev/null || true
+sleep 2
+outage_status=$(curl --silent --show-error --max-time 30 \
+  --config "$AGENT_CAPABILITY_CONFIG_FILE" --output "$ARTIFACT_BODY_FILE" \
+  --write-out '%{http_code}' \
+  "http://localhost:8080/api/agent/v1/preview-runs/$worker_run_id/artifacts/$worker_artifact_id" || true)
+test "$outage_status" = 503
+echo "browser-artifact-outage: OK status=503 worker-secret-unavailable"
+docker run --rm --network none \
+  --volume "${PROJECT}_browser-worker-secret:/worker" \
+  --entrypoint sh slaif-agent-site-backend:local -c \
+  'mv /worker/worker-token.outage /worker/worker-token'
+docker compose -p "$PROJECT" up -d browser-worker >/dev/null
+wait_healthy browser-worker
+retrieve_public_artifacts
 worker_canonical_status=$(curl --silent --output /dev/null --write-out '%{http_code}' \
   http://localhost:8080/s/demo)
 if test "$worker_canonical_status" != 200
@@ -735,6 +882,7 @@ fi
 docker compose -p "$PROJECT" restart browser-worker >/dev/null
 wait_healthy browser-worker
 echo "browser-worker-restart: OK durable-dispatch-artifacts=retained"
+retrieve_public_artifacts
 
 test "$(docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif -Atc \
   "SELECT count(*) || ':' || count(*) FILTER (WHERE state='QUEUED') || ':' ||

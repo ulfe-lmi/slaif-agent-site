@@ -26,7 +26,9 @@ bounded durable dispatcher: it claims migration-035 leases, mints run-bound
 preview credentials, submits and renews attempts, verifies signed results,
 retrieves bytes, and atomically registers private artifact metadata with
 terminal completion. Restart and transient failures remain safely retryable;
-public artifact bytes and artifact GC remain absent. Local
+public artifact GC remains absent. Public artifact bytes are served only through
+the capability-authenticated Agent route after exact retained PRIVATE binding
+and worker digest verification. Local
 authentication and administration are qualified by one setup project, one
 single-writer governance project, and six read-only Playwright browser/device
 projects.
@@ -275,8 +277,8 @@ configuration/history/logs, the implemented visible governance lifecycle, and
 exact-project cleanup. It also runs the real sandboxed product Chromium against
 the COW preview, verifies signed results/private artifacts/restart retrieval,
 hostile-token denial, worker-secret recovery, and continued public `QUEUED`
-state. It does not claim durable dispatch, DB artifact registration, source
-browsing, review, or publication execution.
+state. It does not claim source browsing, review, artifact GC, or publication
+execution.
 
 ## Supply-chain evidence
 

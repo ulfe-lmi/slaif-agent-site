@@ -230,7 +230,7 @@ capability and `preview:inspect`; create also requires `Idempotency-Key`.
 | `POST /api/agent/v1/preview-runs` | 202 | exactly `version`, normalized `route`, one approved target, and unique bounded evidence |
 | `GET /api/agent/v1/preview-runs/{run_id}` | 200 | current capability-bound status or terminal result |
 | `GET /api/agent/v1/preview-runs/{run_id}/artifacts` | 200 | retained private metadata only |
-| `GET /api/agent/v1/preview-runs/{run_id}/artifacts/{artifact_id}` | 404 | byte contract reserved; no byte store exists |
+| `GET /api/agent/v1/preview-runs/{run_id}/artifacts/{artifact_id}` | 200 | retained PRIVATE bytes with exact MIME, length, digest ETag, and private/no-store/noindex headers; invisible bindings are 404 and worker/storage failures are 503 |
 
 Create derives all site/workspace/delegator/run/operation/quota/digest facts on
 the server. `STARTED` and same-digest `REPLAY` return the same durable QUEUED
@@ -241,8 +241,8 @@ private/no-store and contain no capability, request digest, worker URL, lease,
 SQL, role, or preview credential. The former unauthenticated
 `/internal/browser/v1` Agent routes were removed.
 
-The shared signer can issue a short-lived opaque `sbp1` HMAC-SHA256 credential
-for a future dispatcher from exact durable run facts. Public create never mints
+The shared signer issues a short-lived opaque `sbp1` HMAC-SHA256 credential for
+the durable dispatcher from exact durable run facts. Public create never mints
 or returns it. A browser navigation may carry it only in
 `X-SLAIF-Browser-Preview`; Web forwards it server-side only in
 `X-SLAIF-Browser-Run-Token`. Render verifies signature/lifetime and all
@@ -257,15 +257,13 @@ The internal browser worker now implements three non-edge POST routes:
 `X-SLAIF-Browser-Worker-Token` service credential before body parsing and use
 extra-forbid `browser-worker/v1` contracts. Submit returns a signed typed
 result; retrieval requires every exact artifact binding and returns private
-bytes only to the trusted Agent-side client. The client exists but no public
-route, lifespan task, timer, or dispatcher invokes it.
-
-There is still no durable dispatcher/claim/completion/registration wiring,
-public artifact byte retrieval, source browsing, public artifact URL, artifact
-GC, review integration, or publication behavior. Public runs therefore remain
-truthfully `QUEUED`, public artifact metadata remains empty, and the reserved
-public byte route remains 404 even though direct internal worker execution is
-qualified.
+bytes only to the trusted Agent-side client. The durable Agent dispatcher binds
+the worker request UUID and atomically completes the run. The capability-
+authenticated public artifact route proxies only retained PRIVATE bindings with
+bounded bytes, allowlisted MIME, exact length, digest ETag, `nosniff`, and
+private/no-store/noindex headers. Missing or foreign bindings are 404; worker,
+storage, or digest failures are 503. Range, redirects, public URLs, source
+browsing, GC, review integration, and publication remain absent.
 
 ## Site governance API
 

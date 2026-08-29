@@ -115,6 +115,6 @@ return non-leaking absence.
 This remains trusted institutional multi-site tenancy, not hostile public SaaS
 isolation or RLS. The membership UI does not provision identities or implement
 invitations or custom roles. Capability-bound browser run reservation/status/
-metadata HTTP and run-bound Render verification are implemented. Dispatcher,
-worker execution, artifact bytes, and publication execution remain
-unimplemented.
+metadata HTTP, retained PRIVATE artifact-byte retrieval, and run-bound Render
+verification are implemented. Artifact GC, source browsing, review, and
+publication execution remain unimplemented.

@@ -66,7 +66,7 @@ requires a separately designed and tested logical process.
 | `/api/control/` | Control API | Prefix-stripped health plus authenticated setup/session, site/domain, RBAC catalog, and membership routes; readiness includes one database component. |
 | `/api/editor/health/` | Editor API | Exact liveness/readiness aliases. |
 | `/api/editor/v1/` | Editor API | Prefix-preserving human Editor API routes. |
-| `/api/agent/` | Agent API | Prefix-stripped health, bounded COW routes, and capability-authenticated preview-run create/status/private-metadata routes; byte retrieval remains 404 and no lifecycle/publication route exists. |
+| `/api/agent/` | Agent API | Prefix-stripped health, bounded COW routes, capability-authenticated preview-run create/status/private-metadata routes, and retained PRIVATE artifact-byte retrieval; no lifecycle/publication route exists. |
 | `/mcp/` | MCP adapter | Prefix-stripped health routes only. |
 | `/media/` | Media service | Prefix-stripped health plus authenticated private upload/immutable-byte routes; no direct volume serving. |
 

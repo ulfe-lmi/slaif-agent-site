@@ -72,8 +72,8 @@ unimplemented product authorization remain later work. Network membership
 alone is not authority.
 
 The Agent database role has an exact durable browser-run function surface. The
-public capability-authenticated Agent routes now use only authenticate, begin,
-get, and artifact-list; byte retrieval remains an honest 404. Claim, renew,
+public capability-authenticated Agent routes use authenticate, begin, get,
+artifact-list, and the exact retained PRIVATE artifact retrieval binding. Claim, renew,
 release, complete, and artifact-register remain internal adapter primitives for
 a later Agent-owned dispatcher. Agent has no direct Control/audit table grant,
 and public create never receives a worker or signing credential.

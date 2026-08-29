@@ -322,8 +322,8 @@ specific architecture work orders.
 Server-side session persistence, expiry, recent-auth, CSRF credential policy,
 and cookie value objects are implemented in 010-e. HTTP authentication routes,
 OIDC, MFA, rate limiting, and durable auth audit remain deferred. Capability-
-bound preview-run HTTP, run-token Render verification, and direct authenticated
-worker execution are implemented without a dispatcher. Authentication E2E uses the
+bound preview-run HTTP, run-token Render verification, durable dispatch, and
+direct authenticated worker execution are implemented. Authentication E2E uses the
 fixed localhost deployment URL and a mode-0600 temporary secret file; it adds no
 product runtime setting.
 

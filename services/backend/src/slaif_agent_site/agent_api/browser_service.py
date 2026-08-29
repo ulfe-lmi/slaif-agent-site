@@ -49,6 +49,7 @@ ARTIFACT_RETRIEVE_SQL = (
 )
 SCREENSHOT_RESERVATION_BYTES = 5 * 1024 * 1024
 SUMMARY_RESERVATION_BYTES = 256 * 1024
+WORKER_RETRIEVAL_TIMEOUT_SECONDS = 10.0
 
 type BrowserPublicRun = PreviewRunStatus | PreviewRunResult
 
@@ -311,8 +312,6 @@ class AgentBrowserRunService:
     ) -> BrowserArtifactRetrieval:
         """Retrieve a completed private artifact through its exact worker binding."""
 
-        if self._worker_client is None:
-            raise BrowserRunServiceError(BrowserRunServiceReason.UNAVAILABLE)
         try:
             async with self._pool().acquire(
                 timeout=self._acquire_timeout
@@ -332,6 +331,8 @@ class AgentBrowserRunService:
             raise BrowserRunServiceError(BrowserRunServiceReason.UNAVAILABLE) from None
         if row is None:
             raise BrowserRunServiceError(BrowserRunServiceReason.NOT_FOUND)
+        if self._worker_client is None:
+            raise BrowserRunServiceError(BrowserRunServiceReason.UNAVAILABLE)
         try:
             metadata = BrowserWorkerArtifactMetadata(
                 version="browser-worker/v1",
@@ -352,7 +353,10 @@ class AgentBrowserRunService:
             request_id = row["worker_request_id"]
             if not isinstance(request_id, UUID):
                 raise ValueError("worker request binding is invalid")
-            content = await self._worker_client.retrieve(request_id, metadata)
+            content = await asyncio.wait_for(
+                self._worker_client.retrieve(request_id, metadata),
+                timeout=WORKER_RETRIEVAL_TIMEOUT_SECONDS,
+            )
             if (
                 len(content) != metadata.size_bytes
                 or hashlib.sha256(content).hexdigest() != metadata.sha256

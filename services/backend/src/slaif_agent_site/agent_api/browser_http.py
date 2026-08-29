@@ -133,18 +133,28 @@ async def get_preview_run_artifact_bytes(
     run_id: UUID,
     artifact_id: UUID,
     request: Request,
-) -> None:
+) -> Response:
     context = await _authenticate(request)
     _require_scope(context, "preview:inspect")
     try:
-        artifacts = await _service(request).artifacts(context=context, run_id=run_id)
+        artifact = await _service(request).retrieve_artifact(
+            context=context, run_id=run_id, artifact_id=artifact_id
+        )
     except BrowserRunServiceError as error:
         _map_error(error)
-    # Artifact-byte storage/retrieval is deliberately absent. Checking the
-    # metadata list first preserves exact capability/run confinement; both an
-    # existing metadata ID and a random/foreign ID remain the same 404.
-    _ = any(item.artifact_id == artifact_id for item in artifacts)
-    raise ResourceNotFoundError()
+    result = Response(
+        content=artifact.content,
+        media_type=None,
+        headers={
+            "Content-Type": artifact.mime_type,
+            "Content-Length": str(artifact.size_bytes),
+            "ETag": f'"{artifact.sha256}"',
+            "Content-Disposition": "inline",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+    _private(result)
+    return result
 
 
 __all__ = ["router"]

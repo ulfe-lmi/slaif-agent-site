@@ -24,4 +24,6 @@ database, publication, or artifact visibility authority.
 
 Until those pieces are ordered and proven, supported operation is one worker,
 one active attempt, no queue, one fixed Web origin, three Chromium target
-descriptors, private local artifacts, and no public dispatch or retrieval.
+descriptors, private local artifacts, and capability-authenticated private
+artifact retrieval; public dispatch, source browsing, and publication remain
+absent.

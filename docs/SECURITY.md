@@ -130,16 +130,19 @@ therefore prevents later artifact registration and visibility. The worker
 remains DB-less. Direct internal execution is implemented with an isolated
 service credential, exact Playwright/Chromium runtime, fixed target descriptors,
 sandboxed fresh contexts, default-deny request interception, and a private
-immutable artifact filesystem. No durable dispatcher, database completion/
-registration, public bytes, source browsing, artifact GC, review, or
-publication behavior is implemented.
+immutable artifact filesystem. Durable dispatch, database completion/
+registration, and capability-authenticated private artifact bytes are
+implemented. Source browsing, artifact GC, review, and publication behavior
+remain unimplemented.
 
-Public Agent preview-run routes now use this durable boundary and remain
-truthfully QUEUED without a dispatcher. Public bodies cannot select authority,
+Public Agent preview-run routes now use this durable boundary. Public bodies
+cannot select authority,
 run IDs, viewports, origins, credentials, headers, cookies, or commands.
 Create/replay is transactional; status/artifact metadata reads are non-mutating;
-byte retrieval is always a non-leaking 404 until a later store exists. The old
-unauthenticated fabricated browser router is absent.
+byte retrieval is capability-authenticated and remains a non-leaking 404 for
+missing, foreign, expired, revoked, nonterminal, or cross-site bindings. Only
+retained PRIVATE artifacts are proxied after worker size/MIME/digest
+verification; the old unauthenticated fabricated browser router is absent.
 
 The `sbp1` preview credential uses fixed HMAC-SHA256, type, deployment, audience,
 contract version, key ID, and canonical payload. It binds capability/site/
