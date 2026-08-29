@@ -20,6 +20,7 @@ import {
   BROWSER_WORKER_ROUTES,
   canonicalJson,
   canonicalSerializePreviewRunRequest,
+  normalizeBrowserPreviewRoute,
   packageMetadata,
   parsePreviewRunCreateRequest,
   previewRunRequestDigest,
@@ -127,6 +128,15 @@ describe("browser preview contracts", () => {
       BROWSER_TERMINAL_STATES,
     );
     expect(BROWSER_RUN_STATES).not.toContain("UNKNOWN");
+  });
+
+  it("canonicalizes route aliases identically", () => {
+    expect(normalizeBrowserPreviewRoute("/")).toBe("/");
+    expect(normalizeBrowserPreviewRoute("/s/demo/")).toBe("/s/demo");
+    expect(normalizeBrowserPreviewRoute("/s/demo/?b=2&a=1")).toBe(
+      "/s/demo?a=1&b=2",
+    );
+    expect(normalizeBrowserPreviewRoute("/%E2%9C%93/")).toBe("/%E2%9C%93");
   });
 
   it.each([

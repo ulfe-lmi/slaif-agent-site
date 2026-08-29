@@ -1,5 +1,6 @@
 import { cookies, headers } from "next/headers";
 import { notFound, redirect } from "next/navigation";
+import { normalizeBrowserPreviewRoute } from "@slaif-agent-site/browser-tool-contracts";
 
 import { resolvePreviewPage } from "../../../../src/sites/render";
 import { PageProjectionShell } from "../../../../src/sites/shell";
@@ -51,7 +52,9 @@ export default async function WorkspacePreview({
   const normalizedQuery = queryEntries
     .map(([key, value]) => `${encoded(key)}=${encoded(value)}`)
     .join("&");
-  const browserRoute = normalizedQuery ? `${path}?${normalizedQuery}` : path;
+  const browserRoute = normalizeBrowserPreviewRoute(
+    normalizedQuery ? `${path}?${normalizedQuery}` : path,
+  );
   const browserAuthority = process.env.SLAIF_BROWSER_PREVIEW_AUTHORITY;
   if (
     browserToken &&
@@ -60,7 +63,7 @@ export default async function WorkspacePreview({
     notFound();
   const projection = await resolvePreviewPage(
     browserToken ? browserAuthority! : (requestHeaders.get("host") ?? ""),
-    path,
+    browserRoute.split("?", 1)[0] ?? browserRoute,
     workspaceId,
     browserToken ? { browserToken, browserRoute } : { humanSessionToken: session! },
   );

@@ -423,7 +423,8 @@ export function normalizeBrowserPreviewRoute(route: unknown): string {
     )
     .map(([key, value]) => `${encoded(key)}=${encoded(value)}`)
     .join("&");
-  return rawPath + (query ? `?${query}` : "");
+  const canonicalPath = rawPath.length > 1 ? rawPath.replace(/\/+$/u, "") : "/";
+  return canonicalPath + (query ? `?${query}` : "");
 }
 
 export function parsePreviewRunCreateRequest(value: unknown): PreviewRunCreateRequest {

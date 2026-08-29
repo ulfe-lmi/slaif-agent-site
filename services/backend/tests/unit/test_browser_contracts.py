@@ -27,6 +27,7 @@ from slaif_agent_site.browser_contracts import (
     PreviewRunCreateRequest,
     PreviewRunStatus,
     canonical_serialize_preview_run_request,
+    normalize_preview_route,
     preview_run_request_digest,
 )
 
@@ -104,6 +105,21 @@ def test_external_create_rejects_unsafe_or_authority_bearing_input(
 ) -> None:
     with pytest.raises(ValidationError):
         PreviewRunCreateRequest.model_validate({**_valid_request(), **update})
+
+
+@pytest.mark.parametrize(
+    ("route", "expected"),
+    (
+        ("/", "/"),
+        ("/s/demo/", "/s/demo"),
+        ("/s/demo/?b=2&a=1", "/s/demo?a=1&b=2"),
+        ("/%E2%9C%93/", "/%E2%9C%93"),
+    ),
+)
+def test_preview_route_canonicalizes_trailing_slash_and_query(
+    route: str, expected: str
+) -> None:
+    assert normalize_preview_route(route) == expected
 
 
 def test_capability_limits_and_completion_are_frozen_extra_forbid() -> None:

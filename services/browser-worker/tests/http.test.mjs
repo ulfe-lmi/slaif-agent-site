@@ -32,7 +32,7 @@ function request(now, requestId = "00000000-0000-4000-8000-000000000001") {
     leaseId: "00000000-0000-4000-8000-000000000007",
     attempt: 1,
     route,
-    routeDigest: createHash("sha256").update(route).digest("hex"),
+    routeDigest: createHash("sha256").update("/s/demo").digest("hex"),
     target: "desktop-chromium",
     evidence: ["heading-summary"],
     artifactBytesLimit: 1_048_576,
@@ -129,7 +129,10 @@ test("worker authenticates before body framing and returns signed exact results"
     assert.equal(response.status, 200);
     const envelope = await response.json();
     assert.equal(verifyWorkerResultSignature(envelope, credential), true);
-    assert.equal(envelope.result.requestDigest, workerRequestDigest(submit));
+    assert.equal(
+      envelope.result.requestDigest,
+      workerRequestDigest({ ...submit, route: "/s/demo" }),
+    );
     assert.doesNotMatch(JSON.stringify(envelope), /sbp1\.|sbws1:/u);
 
     const unknown = canonicalJson({ ...submit, javascript: "document.body" });

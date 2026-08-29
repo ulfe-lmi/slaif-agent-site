@@ -37,7 +37,7 @@ const binding = {
   leaseId: "00000000-0000-4000-8000-000000000007",
   attempt: 1,
   route,
-  routeDigest: createHash("sha256").update(route).digest("hex"),
+  routeDigest: createHash("sha256").update("/s/demo").digest("hex"),
   target: "desktop-chromium",
   evidence: ["heading-summary"],
   artifactBytesLimit: 1_048_576,

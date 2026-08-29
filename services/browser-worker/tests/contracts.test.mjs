@@ -46,7 +46,7 @@ function request(now = 1_800_000_000) {
     ...ids,
     attempt: 1,
     route,
-    routeDigest: createHash("sha256").update(route).digest("hex"),
+    routeDigest: createHash("sha256").update("/s/demo?a=1&b=2").digest("hex"),
     target: "desktop-chromium",
     evidence: ["screenshot", "heading-summary"],
     artifactBytesLimit: 8_388_608,
@@ -59,10 +59,10 @@ function request(now = 1_800_000_000) {
 
 test("worker submit/inspection/retrieval contracts are exact and fully bound", () => {
   const parsed = parseWorkerSubmitRequest(request(), 1_800_000_010);
-  assert.equal(parsed.route, "/s/demo/?a=1&b=2");
+  assert.equal(parsed.route, "/s/demo?a=1&b=2");
   assert.equal(
     workerRequestDigest(parsed),
-    "3fbd4b9094738aed2e17ddbf961c776a58c59d13c5e2aae763a2888e815c2051",
+    "86ec03e223b2e44355162480d18f87666cf871f10d6e3021860a2bc667d6c8c1",
   );
   assert.throws(() =>
     parseWorkerSubmitRequest({ ...request(), viewport: { width: 1 } }, 1_800_000_010),

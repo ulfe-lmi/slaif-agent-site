@@ -123,8 +123,9 @@ def normalize_preview_route(value: str) -> str:
             query_value
         ):
             raise ValueError("route query contains credential-shaped data")
+    canonical_path = parsed.path.rstrip("/") or "/"
     canonical_query = urlencode(sorted(query_pairs))
-    return parsed.path + (f"?{canonical_query}" if canonical_query else "")
+    return canonical_path + (f"?{canonical_query}" if canonical_query else "")
 
 
 def _validate_evidence(
