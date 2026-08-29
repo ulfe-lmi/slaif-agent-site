@@ -170,7 +170,9 @@ class ComposeSmokeContractTests(unittest.TestCase):
         self.assertNotIn("slaif_agent_browser_run_complete", source)
         self.assertNotIn("slaif_agent_browser_artifact_register", source)
 
-    def test_dispatch_fixture_uses_seeded_route_and_reports_terminal_failures(self) -> None:
+    def test_dispatch_fixture_uses_seeded_route_and_reports_terminal_failures(
+        self,
+    ) -> None:
         source = SMOKE.read_text(encoding="utf-8")
         self.assertIn('"route":"/s/demo/"', source)
         self.assertIn('ROUTE = "/s/demo/"', source)
