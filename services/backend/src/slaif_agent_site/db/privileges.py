@@ -110,12 +110,18 @@ AGENT_CONTROL_FUNCTIONS = {
     (
         "slaif_agent_browser_artifact_register",
         "p_run_id uuid, p_lease_id uuid, p_artifact_id uuid, p_kind text, "
-        "p_mime_type text, p_sha256 text, p_size_bytes bigint, p_target text, "
-        "p_route_digest text, p_expires_at timestamp with time zone",
+        "p_worker_request_id uuid, p_mime_type text, p_sha256 text, "
+        "p_size_bytes bigint, p_target text, p_route_digest text, "
+        "p_expires_at timestamp with time zone",
     ): (
-        "uuid, uuid, uuid, text, text, text, bigint, text, text, "
+        "uuid, uuid, uuid, text, uuid, text, text, bigint, text, text, "
         "timestamp with time zone"
     ),
+    (
+        "slaif_agent_browser_artifact_retrieve",
+        "p_capability_id uuid, p_site_id uuid, p_workspace_id uuid, "
+        "p_delegator_id uuid, p_run_id uuid, p_artifact_id uuid",
+    ): "uuid, uuid, uuid, uuid, uuid, uuid",
 }
 MEDIA_CONTROL_FUNCTIONS = {
     (

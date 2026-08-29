@@ -28,6 +28,11 @@ from ..browser_contracts import (
     PrivateBrowserArtifactMetadata,
     preview_run_request_digest,
 )
+from ..browser_worker_client import (
+    BrowserWorkerArtifactMetadata,
+    BrowserWorkerClient,
+    BrowserWorkerClientError,
+)
 from .models import AgentCapabilityContext
 
 BEGIN_SQL = """
@@ -38,6 +43,9 @@ SELECT * FROM control.slaif_agent_browser_run_begin(
 GET_SQL = "SELECT * FROM control.slaif_agent_browser_run_get($1,$2,$3,$4,$5)"
 ARTIFACT_LIST_SQL = (
     "SELECT * FROM control.slaif_agent_browser_artifact_list($1,$2,$3,$4,$5)"
+)
+ARTIFACT_RETRIEVE_SQL = (
+    "SELECT * FROM control.slaif_agent_browser_artifact_retrieve($1,$2,$3,$4,$5,$6)"
 )
 SCREENSHOT_RESERVATION_BYTES = 5 * 1024 * 1024
 SUMMARY_RESERVATION_BYTES = 256 * 1024
@@ -63,6 +71,14 @@ class BrowserRunServiceError(RuntimeError):
 class BrowserRunCreation:
     outcome: str
     run: BrowserPublicRun
+
+
+@dataclass(frozen=True, slots=True)
+class BrowserArtifactRetrieval:
+    content: bytes
+    mime_type: str
+    sha256: str
+    size_bytes: int
 
 
 def _artifact_reservation(evidence: tuple[BrowserEvidence, ...]) -> int:
@@ -113,8 +129,14 @@ def _artifact(row: Any) -> PrivateBrowserArtifactMetadata:
 
 
 class AgentBrowserRunService:
-    def __init__(self, database: Any) -> None:
+    def __init__(
+        self,
+        database: Any,
+        *,
+        worker_client: BrowserWorkerClient | None = None,
+    ) -> None:
         self._database = database
+        self._worker_client = worker_client
 
     @property
     def _acquire_timeout(self) -> float:
@@ -280,6 +302,73 @@ class AgentBrowserRunService:
             raise BrowserRunServiceError(BrowserRunServiceReason.UNAVAILABLE) from None
         return tuple(_artifact(row) for row in rows)
 
+    async def retrieve_artifact(
+        self,
+        *,
+        context: AgentCapabilityContext,
+        run_id: UUID,
+        artifact_id: UUID,
+    ) -> BrowserArtifactRetrieval:
+        """Retrieve a completed private artifact through its exact worker binding."""
+
+        if self._worker_client is None:
+            raise BrowserRunServiceError(BrowserRunServiceReason.UNAVAILABLE)
+        try:
+            async with self._pool().acquire(
+                timeout=self._acquire_timeout
+            ) as connection:
+                row = await connection.fetchrow(
+                    ARTIFACT_RETRIEVE_SQL,
+                    context.capability_id,
+                    context.site_id,
+                    context.workspace_id,
+                    context.delegator_id,
+                    run_id,
+                    artifact_id,
+                )
+        except asyncio.CancelledError:
+            raise
+        except (asyncpg.PostgresError, OSError, TimeoutError):
+            raise BrowserRunServiceError(BrowserRunServiceReason.UNAVAILABLE) from None
+        if row is None:
+            raise BrowserRunServiceError(BrowserRunServiceReason.NOT_FOUND)
+        try:
+            metadata = BrowserWorkerArtifactMetadata(
+                version="browser-worker/v1",
+                artifact_id=row["artifact_id"],
+                run_id=row["run_id"],
+                site_id=row["site_id"],
+                workspace_id=row["workspace_id"],
+                kind=row["kind"],
+                mime_type=row["mime_type"],
+                sha256=row["sha256"],
+                size_bytes=row["size_bytes"],
+                target=row["target"],
+                route_digest=row["route_digest"],
+                created_at=int(row["created_at"].timestamp()),
+                expires_at=int(row["expires_at"].timestamp()),
+                visibility=row["visibility"],
+            )
+            request_id = row["worker_request_id"]
+            if not isinstance(request_id, UUID):
+                raise ValueError("worker request binding is invalid")
+            content = await self._worker_client.retrieve(request_id, metadata)
+            if (
+                len(content) != metadata.size_bytes
+                or hashlib.sha256(content).hexdigest() != metadata.sha256
+            ):
+                raise BrowserWorkerClientError("browser artifact is unavailable")
+        except asyncio.CancelledError:
+            raise
+        except (BrowserWorkerClientError, OSError, TimeoutError, TypeError, ValueError):
+            raise BrowserRunServiceError(BrowserRunServiceReason.UNAVAILABLE) from None
+        return BrowserArtifactRetrieval(
+            content=content,
+            mime_type=metadata.mime_type,
+            sha256=metadata.sha256,
+            size_bytes=metadata.size_bytes,
+        )
+
 
 __all__ = [
     "AgentBrowserRunService",
@@ -287,4 +376,5 @@ __all__ = [
     "BrowserRunCreation",
     "BrowserRunServiceError",
     "BrowserRunServiceReason",
+    "BrowserArtifactRetrieval",
 ]

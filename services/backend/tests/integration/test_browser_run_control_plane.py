@@ -28,13 +28,16 @@ GET_SQL = "SELECT * FROM control.slaif_agent_browser_run_get($1,$2,$3,$4,$5)"
 ARTIFACT_LIST_SQL = (
     "SELECT * FROM control.slaif_agent_browser_artifact_list($1,$2,$3,$4,$5)"
 )
+ARTIFACT_RETRIEVE_SQL = (
+    "SELECT * FROM control.slaif_agent_browser_artifact_retrieve($1,$2,$3,$4,$5,$6)"
+)
 CLAIM_SQL = "SELECT * FROM control.slaif_agent_browser_run_claim($1,$2)"
 RENEW_SQL = "SELECT control.slaif_agent_browser_run_renew($1,$2,$3)"
 RELEASE_SQL = "SELECT control.slaif_agent_browser_run_release($1,$2)"
 COMPLETE_SQL = "SELECT control.slaif_agent_browser_run_complete($1,$2,$3,$4,$5,$6)"
 REGISTER_SQL = (
     "SELECT control.slaif_agent_browser_artifact_register("
-    "$1,$2,$3,$4,$5,$6,$7,$8,$9,$10)"
+    "$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)"
 )
 
 
@@ -743,6 +746,7 @@ async def test_browser_leases_artifacts_terminal_state_and_exact_privileges(
             )
             assert completion_lease is not None
         artifact_id = uuid.uuid4()
+        worker_request_id = uuid.uuid4()
         artifact_expiry = datetime.now(UTC) + timedelta(minutes=10)
         route = "/news?locale=en"
         route_digest = hashlib.sha256(route.encode()).hexdigest()
@@ -764,6 +768,7 @@ async def test_browser_leases_artifacts_terminal_state_and_exact_privileges(
                     completion_lease,
                     artifact_id,
                     "screenshot",
+                    worker_request_id,
                     "image/png",
                     "c" * 64,
                     100,
@@ -778,6 +783,7 @@ async def test_browser_leases_artifacts_terminal_state_and_exact_privileges(
                     completion_lease,
                     artifact_id,
                     "screenshot",
+                    worker_request_id,
                     "image/png",
                     "c" * 64,
                     100,
@@ -794,6 +800,7 @@ async def test_browser_leases_artifacts_terminal_state_and_exact_privileges(
                     completion_lease,
                     artifact_id,
                     "screenshot",
+                    worker_request_id,
                     "image/png",
                     "c" * 64,
                     100,
@@ -840,6 +847,17 @@ async def test_browser_leases_artifacts_terminal_state_and_exact_privileges(
                 artifacts[0][key]
                 for key in ("artifact_id", "kind", "mime_type", "visibility")
             ) == (artifact_id, "screenshot", "image/png", "PRIVATE")
+            retrieved = await agent.fetchrow(
+                ARTIFACT_RETRIEVE_SQL,
+                binding.capability_id,
+                binding.site_id,
+                binding.workspace_id,
+                binding.delegator_id,
+                completion["run_id"],
+                artifact_id,
+            )
+            assert retrieved["worker_request_id"] == worker_request_id
+            assert retrieved["artifact_id"] == artifact_id
             event_count = await _counts_for_capability(database, binding.capability_id)
             await agent.fetch(
                 GET_SQL,
@@ -906,6 +924,7 @@ async def test_browser_leases_artifacts_terminal_state_and_exact_privileges(
                     completion_lease,
                     uuid.uuid4(),
                     "heading-summary",
+                    uuid.uuid4(),
                     "application/json",
                     "d" * 64,
                     10,
@@ -974,7 +993,7 @@ async def test_browser_leases_artifacts_terminal_state_and_exact_privileges(
                 "AND proc.proname LIKE 'slaif_agent_browser_%' "
                 "ORDER BY proc.proname"
             )
-            assert len(functions) == 9
+            assert len(functions) == 10
             for row in functions:
                 is_private_helper = row["proname"] == "slaif_agent_browser_authorized"
                 assert row["rolname"] == "slaif_owner"

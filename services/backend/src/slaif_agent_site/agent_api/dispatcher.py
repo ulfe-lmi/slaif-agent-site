@@ -37,7 +37,7 @@ RELEASE_SQL = "SELECT control.slaif_agent_browser_run_release($1,$2)"
 COMPLETE_SQL = "SELECT control.slaif_agent_browser_run_complete($1,$2,$3,$4,$5,$6)"
 ARTIFACT_REGISTER_SQL = (
     "SELECT control.slaif_agent_browser_artifact_register("
-    "$1,$2,$3,$4,$5,$6,$7,$8,$9,$10)"
+    "$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)"
 )
 
 
@@ -414,7 +414,13 @@ class AgentBrowserDispatcher:
         if active.lease_lost.is_set() or self._stop.is_set():
             return
         await self._complete(
-            active, result.state, result.summary, None, None, artifacts
+            active,
+            result.state,
+            result.summary,
+            None,
+            None,
+            artifacts,
+            worker_request_id=request.request_id,
         )
 
     async def _complete(
@@ -425,6 +431,7 @@ class AgentBrowserDispatcher:
         error_code: str | None,
         error_message: str | None,
         artifacts: tuple[Any, ...] = (),
+        worker_request_id: UUID | None = None,
     ) -> None:
         if active.lease_lost is not None and active.lease_lost.is_set():
             return
@@ -439,6 +446,7 @@ class AgentBrowserDispatcher:
                         artifact.run_id,
                         active.claim.lease_id,
                         artifact.artifact_id,
+                        worker_request_id,
                         artifact.kind.value,
                         artifact.mime_type,
                         artifact.sha256,

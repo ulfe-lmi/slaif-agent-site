@@ -125,7 +125,9 @@ def create_app(
         lifespan_factory=database_lifespan,
     )
     app.state.database = selected_database
-    app.state.browser_run_service = AgentBrowserRunService(selected_database)
+    app.state.browser_run_service = AgentBrowserRunService(
+        selected_database, worker_client=selected_worker_client
+    )
     app.state.browser_preview_signer = selected_signer
     app.state.browser_worker_client = selected_worker_client
     app.state.browser_dispatcher = dispatcher
