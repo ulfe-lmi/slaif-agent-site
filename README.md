@@ -313,7 +313,14 @@ Ministry of Higher Education, Science and Innovation for SLAIF grant
 
 ## Implementation Status
 
-All core architectural components are implemented. See `oap/MVP-PROGRESS.md` for details.
+The merged Objectives 065–072 prove only the narrow, bounded slices recorded
+in [`oap/MVP-CONTRACT-AUDIT.md`](oap/MVP-CONTRACT-AUDIT.md). The contractual MVP
+remains incomplete: human Agent workspace/capability control, complete Agent
+semantic REST and MCP, immutable review snapshots, accept/discard promotion,
+conflict-safe publication, source reconstruction, lifecycle cleanup, and
+backup/restore evidence are planned in the 074–091 sequence. See
+[`oap/MVP-PROGRESS.md`](oap/MVP-PROGRESS.md) for the current status vocabulary
+and evidence boundaries.
 
 ## Security Review Queue
 

@@ -475,6 +475,7 @@ USES_LINE = re.compile(r"^\s*-?\s*uses:\s*([^\s#]+)(?:\s+#\s*(\S.*))?\s*$")
 FULL_SHA = re.compile(r"[0-9a-f]{40}")
 OAP_IDENTIFIER = re.compile(r"\d{3}-[a-z]")
 OAP_ARTIFACT = re.compile(r"^(\d{3}-[a-z])(?:-.+)?\.md$")
+INERT_PLANNED_OAP_IDENTIFIERS = {f"{number:03d}-a" for number in range(74, 92)}
 MARKDOWN_LINK = re.compile(r"!?\[[^\]]*\]\(([^)\s]+)(?:\s+['\"][^)]*['\"])?\)")
 HTML_LINK = re.compile(r"(?:href|src)\s*=\s*['\"]([^'\"]+)['\"]", re.IGNORECASE)
 MANIFEST_NAMES = {
@@ -813,7 +814,7 @@ class RepositoryPolicy:
                         reports_dir,
                         f"active identifier {identifier} has more than one report",
                     )
-            elif int(identifier[:3]) in range(66, 79) and count == 0:
+            elif identifier in INERT_PLANNED_OAP_IDENTIFIERS and count == 0:
                 continue
             elif count != 1:
                 self.error(
