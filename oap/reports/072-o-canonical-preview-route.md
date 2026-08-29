@@ -8,8 +8,8 @@
 - Base: `main` at `082f2359b0c4d59b692580d17992c35d46183b12`
 - Branch: `oap/072-browser-worker-real-playwright`
 - Starting remote SHA: `92d385c70321cf09eb2beb561860c2a211560d5f`
-- Implementation SHA: `d8489d1a56a80ecc78b0b152040e04a2df297cb5`
-- Report publication parent: `d8489d1a56a80ecc78b0b152040e04a2df297cb5`
+- Implementation SHA: `9c6662c7f15d55b1a2097d5c3f1aedfee325da37`
+- Report publication parent: `9c6662c7f15d55b1a2097d5c3f1aedfee325da37`
 
 ## Delivered
 
@@ -21,7 +21,9 @@ workspace contract package and canonicalizes reconstructed Next paths before
 Render binding. Worker and Python digest vectors were updated accordingly. The
 internal Web workspace dependency is pinned as `workspace:0.0.0`, satisfying
 the repository supply-chain policy without introducing a hosted or mutable
-package source.
+package source. The repository checker now records this pinned internal
+workspace dependency as an approved deployment boundary, and lockfile metadata
+is kept free of unapproved external URL notices.
 
 Added parity coverage for root, trailing-slash, query-order, Unicode/encoding,
 and hostile-route behavior. The 072-m immediate terminal diagnostics remain
