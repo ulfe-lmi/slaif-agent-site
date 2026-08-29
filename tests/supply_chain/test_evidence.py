@@ -26,7 +26,13 @@ from tools.supply_chain.evidence import (
     validate_bundle,
     validate_database_status,
 )
-from tools.supply_chain.policy import POLICY_PATH, PolicyError, load_json, write_json
+from tools.supply_chain.policy import (
+    POLICY_PATH,
+    ROOT,
+    PolicyError,
+    load_json,
+    write_json,
+)
 
 
 def spdx_package(name: str, index: int) -> dict[str, object]:
@@ -117,6 +123,23 @@ class EvidenceTests(unittest.TestCase):
                 {"slaifEvidence": {"image_id": "sha256:" + "a" * 64}},
             )
             matches: list[dict[str, object]] = []
+            if image == "browser-worker":
+                for exception in load_json(
+                    ROOT / "supply-chain/vulnerability-exceptions.json"
+                )["exceptions"]:
+                    matches.append(
+                        {
+                            "artifact": {
+                                "name": "chrome",
+                                "purl": exception["affected"],
+                                "version": "152.0.7977.64",
+                            },
+                            "vulnerability": {
+                                "id": exception["identifier"],
+                                "severity": "Critical",
+                            },
+                        }
+                    )
             if critical and image == "backend":
                 matches.append(
                     {
@@ -302,6 +325,43 @@ class EvidenceTests(unittest.TestCase):
             b"\xff\xfe\x00-----BEGIN PRIVATE KEY-----\n"
         )
         with self.assertRaisesRegex(PolicyError, "forbidden evidence marker"):
+            finalize_bundle(self.root, "local")
+
+    def test_exception_set_is_retained_and_synthetic_forty_second_finding_fails(
+        self,
+    ) -> None:
+        self.populate()
+        index = finalize_bundle(self.root, "local")
+        browser = next(
+            image for image in index["images"] if image["image"] == "browser-worker"
+        )
+        self.assertEqual(len(browser["critical_findings"]), 41)
+        self.assertEqual(
+            index["exception_counts"]["vulnerability"],
+            41,
+        )
+        self.assertEqual(
+            {item["status"] for item in browser["critical_findings"]},
+            {"excepted"},
+        )
+
+        scan_path = self.root / "scans/browser-worker.grype.json"
+        scan = load_json(scan_path)
+        scan["matches"].append(
+            {
+                "artifact": {
+                    "name": "chrome",
+                    "purl": "pkg:generic/chrome@152.0.7977.64",
+                    "version": "152.0.7977.64",
+                },
+                "vulnerability": {
+                    "id": "CVE-2026-79999",
+                    "severity": "Critical",
+                },
+            }
+        )
+        write_json(scan_path, scan)
+        with self.assertRaisesRegex(PolicyError, "unexcepted Critical"):
             finalize_bundle(self.root, "local")
 
     def test_critical_and_missing_image_fail_closed(self) -> None:

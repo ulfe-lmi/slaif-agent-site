@@ -80,7 +80,9 @@ class ComposeSmokeContractTests(unittest.TestCase):
         precondition, _insert = source.split(
             "INSERT INTO control.user_account", maxsplit=1
         )
-        self.assertEqual(source.count("INSERT INTO control.user_account"), 1)
+        self.assertEqual(source.count("INSERT INTO control.user_account"), 2)
+        self.assertIn("agent-browser-http: OK", source)
+        self.assertIn("14000000-0000-4000-8000-000000000004", source)
         self.assertIn("unexpected fixture precondition", source)
         self.assertIn("OR EXISTS (SELECT 1 FROM control.user_account)", precondition)
         self.assertNotIn(
@@ -139,6 +141,34 @@ class ComposeSmokeContractTests(unittest.TestCase):
         smoke = SMOKE.read_text(encoding="utf-8")
         self.assertIn("governance-restart: OK", smoke)
         self.assertIn("domain_fingerprint", smoke)
+
+    def test_browser_worker_proof_is_durable_and_private(self) -> None:
+        source = SMOKE.read_text(encoding="utf-8")
+        for marker in (
+            "browser-worker-runtime-policy: OK",
+            "browser-worker-image-policy: OK",
+            "browser-worker-dispatch: OK durable-runs=2 artifacts=agent-owned",
+            "browser-worker-restart: OK durable-dispatch-artifacts=retained",
+            "browser-worker-public-separation: OK durable-runs=2 completed=2",
+            "browser-artifact-runtime-policy: OK files=12 artifacts=6",
+            "browser-worker-cleanup: OK chromium-children=0",
+            "browser-worker-secret-recovery: OK",
+        ):
+            self.assertEqual(source.count(marker), 1, marker)
+        self.assertNotIn("slaif_agent_browser_run_claim", source)
+        self.assertNotIn("slaif_agent_browser_run_complete", source)
+        self.assertNotIn("slaif_agent_browser_artifact_register", source)
+
+    def test_dispatch_fixture_uses_seeded_route_and_reports_terminal_failures(
+        self,
+    ) -> None:
+        source = SMOKE.read_text(encoding="utf-8")
+        self.assertIn('"route":"/s/demo/"', source)
+        self.assertIn('ROUTE = "/s/demo/"', source)
+        self.assertNotIn('"route":"/s/demo/home"', source)
+        self.assertNotIn('ROUTE = "/s/demo/home"', source)
+        self.assertIn("agent-browser-dispatch: terminal run=", source)
+        self.assertIn('state in {"FAILED", "TIMED_OUT", "CANCELLED"}', source)
 
 
 if __name__ == "__main__":

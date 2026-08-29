@@ -58,16 +58,37 @@ Code descriptors do not provide security by themselves. Compose now separates
 edge, application, database, and browser networks. Initializer/PostgreSQL/
 bootstrap use the private master secret volume; initializer copies only the
 Control and Editor DSNs into their separate volumes, mounted read-only only by
-their owning processes. Only NGINX publishes loopback port 8080. Browser
-worker is on an internal network shared only with Agent API and has no
-database, edge, host, mount, Docker-socket, Playwright, or browser-command
-authority. See [deployment](DEPLOYMENT.md),
+their owning processes. Only NGINX publishes loopback port 8080. The internal
+browser network contains Agent API, Web, and the browser worker. Agent can call
+the authenticated worker control API; Chromium can reach only the fixed Web
+origin under default-deny interception. The worker has no database, edge,
+host, repository, or Docker-socket path. See [deployment](DEPLOYMENT.md),
 [database connections](DATABASE_CONNECTIONS.md), and
 [database roles](DATABASE_ROLES.md).
 
-Internal service authentication, pools for non-Editor/Agent processes, browser
-sandbox and egress enforcement, production TLS automation, and product
-authorization remain later work. Network membership alone is not authority.
+The browser worker has internal service authentication, sandbox and egress
+enforcement, and immutable private artifacts. Production TLS automation and
+unimplemented product authorization remain later work. Network membership
+alone is not authority.
+
+The Agent database role has an exact durable browser-run function surface. The
+public capability-authenticated Agent routes use authenticate, begin, get,
+artifact-list, and the exact retained PRIVATE artifact retrieval binding. Claim, renew,
+release, complete, and artifact-register remain internal adapter primitives for
+a later Agent-owned dispatcher. Agent has no direct Control/audit table grant,
+and public create never receives a worker or signing credential.
+
+Agent and Render alone load the same isolated file-backed browser signing key.
+Agent owns signing; Render owns verification plus one exact preview-reader DB
+function that consumes/rechecks a nonce digest under the workspace lock. Web
+sees only a request-scoped signed token header and forwards it server-side; it
+does not have the key. The browser worker has exact `playwright-core==1.62.1`,
+pinned Chromium, one read-only worker credential, and one writable private
+artifact volume. It has no database credential, preview signing key, Agent
+capability, human cookie/session, Render/Media/reviewer/setup secret,
+publication authority, or caller-controlled origin/header/command. The
+Agent-side client verifies signed results but is not called by a public route,
+startup hook, timer, dispatcher, or lifespan task in this round.
 
 The Agent HTTP behavior additionally includes the capability-authenticated
 bounded COW semantic read and create surfaces documented in [the API guide](API.md).

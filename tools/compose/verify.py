@@ -43,7 +43,7 @@ EXPECTED_NETWORKS = {
     "render-api": {"application", "database"},
     "review-worker": {"database"},
     "scheduler": {"database"},
-    "web": {"application", "edge"},
+    "web": {"application", "browser", "edge"},
 }
 EXPECTED_IMAGES = {
     **{
@@ -96,12 +96,18 @@ EXPECTED_COMMANDS = {
         "/run/slaif-render-preview",
         "--render-auth-directory",
         "/run/slaif-render-auth",
+        "--browser-signing-directory",
+        "/run/slaif-browser-signing",
+        "--browser-worker-directory",
+        "/run/slaif-browser-worker",
         "--editor-directory",
         "/run/slaif-editor",
         "--media-directory",
         "/run/slaif-media",
         "--media-root",
         "/var/lib/slaif/media",
+        "--browser-artifact-root",
+        "/var/lib/slaif/browser-artifacts",
     ],
 }
 EXPECTED_BUILD_FILES = {
@@ -119,7 +125,15 @@ EXPECTED_BUILD_ARGS = {
 EXPECTED_MOUNTS = {
     **{name: set() for name in REQUIRED_SERVICES},
     "bootstrap": {("local-secrets", "/run/slaif-secrets", True)},
-    "agent-api": {("agent-secret", "/run/slaif-agent", True)},
+    "agent-api": {
+        ("agent-secret", "/run/slaif-agent", True),
+        ("browser-signing-secret", "/run/slaif-browser-signing", True),
+        ("browser-worker-secret", "/run/slaif-browser-worker", True),
+    },
+    "browser-worker": {
+        ("browser-worker-secret", "/run/slaif-browser-worker", True),
+        ("browser-artifacts", "/var/lib/slaif/browser-artifacts", False),
+    },
     "control-api": {("control-secret", "/run/slaif-control", True)},
     "editor-api": {
         ("control-secret", "/run/slaif-control", True),
@@ -129,6 +143,7 @@ EXPECTED_MOUNTS = {
         ("render-secret", "/run/slaif-render", True),
         ("render-preview-secret", "/run/slaif-render-preview", True),
         ("render-auth-secret", "/run/slaif-render-auth", True),
+        ("browser-signing-secret", "/run/slaif-browser-signing", True),
     },
     "media-gc": {("media-data", "/var/lib/slaif/media", False)},
     "media-service": {
@@ -149,10 +164,14 @@ EXPECTED_MOUNTS = {
         ("media-data", "/var/lib/slaif/media", False),
         ("render-preview-secret", "/run/slaif-render-preview", False),
         ("render-auth-secret", "/run/slaif-render-auth", False),
+        ("browser-signing-secret", "/run/slaif-browser-signing", False),
+        ("browser-worker-secret", "/run/slaif-browser-worker", False),
+        ("browser-artifacts", "/var/lib/slaif/browser-artifacts", False),
     },
     "web": {("render-auth-secret", "/run/slaif-render-auth", True)},
 }
 EXPECTED_CAP_ADD = {
+    "browser-worker": {"SYS_CHROOT"},
     "postgres": {"CHOWN", "DAC_OVERRIDE", "FOWNER", "SETGID", "SETUID"},
     "secrets-init": {"CHOWN", "DAC_READ_SEARCH"},
 }
@@ -167,6 +186,17 @@ AGENT_SECRET_MOUNT_SERVICES = {"agent-api", "secrets-init"}
 RENDER_SECRET_MOUNT_SERVICES = {"render-api", "secrets-init"}
 RENDER_PREVIEW_SECRET_MOUNT_SERVICES = {"render-api", "secrets-init"}
 RENDER_AUTH_SECRET_MOUNT_SERVICES = {"render-api", "secrets-init", "web"}
+BROWSER_SIGNING_SECRET_MOUNT_SERVICES = {
+    "agent-api",
+    "render-api",
+    "secrets-init",
+}
+BROWSER_WORKER_SECRET_MOUNT_SERVICES = {
+    "agent-api",
+    "browser-worker",
+    "secrets-init",
+}
+BROWSER_ARTIFACT_MOUNT_SERVICES = {"browser-worker", "secrets-init"}
 MEDIA_SECRET_MOUNT_SERVICES = {"media-service", "secrets-init"}
 LONG_RUNNING_APPLICATIONS = REQUIRED_SERVICES - {
     "bootstrap",
@@ -218,6 +248,9 @@ def validate_config(config: dict[str, Any]) -> None:
         set(config.get("volumes", {}))
         == {
             "agent-secret",
+            "browser-signing-secret",
+            "browser-worker-secret",
+            "browser-artifacts",
             "control-secret",
             "editor-secret",
             "local-secrets",
@@ -342,6 +375,28 @@ def validate_config(config: dict[str, Any]) -> None:
             has_render_auth_secret == (name in RENDER_AUTH_SECRET_MOUNT_SERVICES),
             f"{name}: Render auth secret mount policy mismatch",
         )
+        has_browser_signing_secret = any(
+            mount.get("source") == "browser-signing-secret" for mount in mounts
+        )
+        _fail(
+            has_browser_signing_secret
+            == (name in BROWSER_SIGNING_SECRET_MOUNT_SERVICES),
+            f"{name}: browser signing secret mount policy mismatch",
+        )
+        has_browser_worker_secret = any(
+            mount.get("source") == "browser-worker-secret" for mount in mounts
+        )
+        _fail(
+            has_browser_worker_secret == (name in BROWSER_WORKER_SECRET_MOUNT_SERVICES),
+            f"{name}: browser worker secret mount policy mismatch",
+        )
+        has_browser_artifacts = any(
+            mount.get("source") == "browser-artifacts" for mount in mounts
+        )
+        _fail(
+            has_browser_artifacts == (name in BROWSER_ARTIFACT_MOUNT_SERVICES),
+            f"{name}: browser artifact mount policy mismatch",
+        )
         has_media_secret = any(
             mount.get("source") == "media-secret" for mount in mounts
         )
@@ -361,11 +416,36 @@ def validate_config(config: dict[str, Any]) -> None:
                     )
                     or (key == "SLAIF_EDITOR_DSN_FILE" and name == "editor-api")
                     or (key == "SLAIF_AGENT_DSN_FILE" and name == "agent-api")
+                    or (
+                        key == "SLAIF_AGENT_BROWSER_SIGNING_KEY_FILE"
+                        and name == "agent-api"
+                    )
+                    or (
+                        key
+                        in {
+                            "SLAIF_AGENT_BROWSER_WORKER_ENDPOINT",
+                            "SLAIF_AGENT_BROWSER_WORKER_SERVICE_CREDENTIAL_FILE",
+                        }
+                        and name == "agent-api"
+                    )
+                    or (
+                        key
+                        in {
+                            "BROWSER_WORKER_ARTIFACT_ROOT",
+                            "BROWSER_WORKER_PREVIEW_ORIGIN",
+                            "BROWSER_WORKER_SERVICE_CREDENTIAL_FILE",
+                        }
+                        and name == "browser-worker"
+                    )
                     or (key == "SLAIF_RENDER_DSN_FILE" and name == "render-api")
                     or (key == "SLAIF_RENDER_PREVIEW_DSN_FILE" and name == "render-api")
                     or (
                         key == "SLAIF_RENDER_SERVICE_TOKEN_FILE"
                         and name in {"render-api", "web"}
+                    )
+                    or (
+                        key == "SLAIF_RENDER_BROWSER_SIGNING_KEY_FILE"
+                        and name == "render-api"
                     )
                     or (key == "SLAIF_MEDIA_DSN_FILE" and name == "media-service")
                 )
@@ -419,6 +499,9 @@ def validate_config(config: dict[str, Any]) -> None:
                     key: environment.get(key)
                     for key in (
                         "SLAIF_AGENT_DSN_FILE",
+                        "SLAIF_AGENT_BROWSER_SIGNING_KEY_FILE",
+                        "SLAIF_AGENT_BROWSER_WORKER_ENDPOINT",
+                        "SLAIF_AGENT_BROWSER_WORKER_SERVICE_CREDENTIAL_FILE",
                         "SLAIF_AGENT_EXPECTED_DATABASE",
                         "SLAIF_AGENT_EXPECTED_LOGIN",
                         "SLAIF_AGENT_EXPECTED_PRIVILEGE_ROLE",
@@ -427,6 +510,15 @@ def validate_config(config: dict[str, Any]) -> None:
                 }
                 == {
                     "SLAIF_AGENT_DSN_FILE": "/run/slaif-agent/agent-dsn",
+                    "SLAIF_AGENT_BROWSER_SIGNING_KEY_FILE": (
+                        "/run/slaif-browser-signing/signing-key"
+                    ),
+                    "SLAIF_AGENT_BROWSER_WORKER_ENDPOINT": (
+                        "http://browser-worker:3100"
+                    ),
+                    "SLAIF_AGENT_BROWSER_WORKER_SERVICE_CREDENTIAL_FILE": (
+                        "/run/slaif-browser-worker/worker-token"
+                    ),
                     "SLAIF_AGENT_EXPECTED_DATABASE": "slaif",
                     "SLAIF_AGENT_EXPECTED_LOGIN": "slaif_agent_login",
                     "SLAIF_AGENT_EXPECTED_PRIVILEGE_ROLE": "slaif_agent_runtime",
@@ -505,6 +597,7 @@ def validate_config(config: dict[str, Any]) -> None:
                     key: environment.get(key)
                     for key in (
                         "SLAIF_RENDER_DSN_FILE",
+                        "SLAIF_RENDER_BROWSER_SIGNING_KEY_FILE",
                         "SLAIF_RENDER_EXPECTED_DATABASE",
                         "SLAIF_RENDER_EXPECTED_LOGIN",
                         "SLAIF_RENDER_EXPECTED_PRIVILEGE_ROLE",
@@ -513,6 +606,9 @@ def validate_config(config: dict[str, Any]) -> None:
                 }
                 == {
                     "SLAIF_RENDER_DSN_FILE": "/run/slaif-render/render-dsn",
+                    "SLAIF_RENDER_BROWSER_SIGNING_KEY_FILE": (
+                        "/run/slaif-browser-signing/signing-key"
+                    ),
                     "SLAIF_RENDER_EXPECTED_DATABASE": "slaif",
                     "SLAIF_RENDER_EXPECTED_LOGIN": "slaif_public_login",
                     "SLAIF_RENDER_EXPECTED_PRIVILEGE_ROLE": "slaif_public_reader",
@@ -561,6 +657,48 @@ def validate_config(config: dict[str, Any]) -> None:
     _fail(
         "ports" not in services["browser-worker"],
         "browser worker is externally published",
+    )
+    browser_worker = services["browser-worker"]
+    _fail(browser_worker.get("user") == "10001:10001", "browser worker UID mismatch")
+    _fail(browser_worker.get("read_only") is True, "browser worker root is writable")
+    _fail(
+        set(browser_worker.get("cap_drop", [])) == {"ALL"}
+        and set(browser_worker.get("cap_add", [])) == {"SYS_CHROOT"},
+        "browser worker capability policy mismatch",
+    )
+    _fail(
+        set(browser_worker.get("security_opt", []))
+        == {
+            "no-new-privileges:true",
+            "seccomp=services/browser-worker/seccomp_profile.json",
+        },
+        "browser worker security profile mismatch",
+    )
+    _fail(
+        browser_worker.get("pids_limit") == 256
+        and str(browser_worker.get("mem_limit")) in {"805306368", "768m"}
+        and float(browser_worker.get("cpus", 0)) == 1.0
+        and str(browser_worker.get("shm_size")) in {"134217728", "128m"},
+        "browser worker resource policy mismatch",
+    )
+    _fail(
+        browser_worker.get("environment", {})
+        == {
+            "BROWSER_WORKER_ARTIFACT_ROOT": "/var/lib/slaif/browser-artifacts",
+            "BROWSER_WORKER_PREVIEW_ORIGIN": "http://web:3000",
+            "BROWSER_WORKER_SERVICE_CREDENTIAL_FILE": (
+                "/run/slaif-browser-worker/worker-token"
+            ),
+        },
+        "browser worker configuration mismatch",
+    )
+    _fail(
+        services["web"].get("environment", {})
+        == {
+            "SLAIF_BROWSER_PREVIEW_AUTHORITY": "localhost:8080",
+            "SLAIF_RENDER_SERVICE_TOKEN_FILE": "/run/slaif-render-auth/render-token",
+        },
+        "web internal preview authority mismatch",
     )
     nginx_health = " ".join(services["nginx"]["healthcheck"]["test"])
     _fail(

@@ -104,3 +104,77 @@ Render credentials. Web tests preserve 401/404/503 distinctions for the
 server-only client, exact-root shell fallback, canonical-first non-loopback
 root resolution, strict public CSP, and absence of session/service credentials
 from client-visible output or artifacts.
+
+## Browser-run contract and durable control-plane proof
+
+Python and TypeScript tests compare one committed language-neutral
+`browser-preview/v1` fact document, exact targets/evidence/states/bounds, one
+canonical serialization vector, and its SHA-256 digest. Extra-field and unsafe
+route cases cover foreign versions/targets/states, duplicate evidence,
+absolute/scheme-relative origins, traversal, fragments, credential query data,
+viewport/ID/header/cookie/JavaScript/browser-command input, and malformed or
+out-of-policy stored capability limits.
+
+Real PostgreSQL tests use `slaif_agent_login`/`slaif_agent_runtime`, two sites,
+two workspaces, and multiple capabilities. They prove concurrent same-key
+serialization produces exactly one run/idempotency/enqueue event; replay and
+mismatch are stable; total/concurrent/screenshot/artifact/target/route/evidence/
+duration limits leave zero residue; authority and cross-site substitutions fail
+closed; freeze/revocation waits behind the shared lock and rechecks; and
+cancellation rolls back with a reusable pool connection. Separate lease tests
+prove `SKIP LOCKED`, expiry retry, maximum-attempt termination, renew/release,
+invalid transition/metadata denial, one private artifact registration event,
+idempotent terminal completion, revoked visibility denial, read-only audit/COW
+silence, exact function ownership/search path, and direct-relation/other-role
+denials. Owner connections seed inputs and inspect counts only; every claimed
+browser mutation executes through the Agent functions.
+
+Public Agent HTTP integration proves 202 create, exact same-body replay,
+mismatch, missing/invalid key, schema denial, scope, quota, two-site/two-
+workspace/capability isolation, random IDs, empty artifact metadata, byte 404,
+restart durability, revocation, fake-route absence, shared-lock race recheck,
+exact `(run,idempotency,artifact,event)` counts, and no COW operation.
+Dispatcher unit coverage proves bounded settings, run/lease/site/workspace
+bindings, short-lived preview credentials, and disabled lifecycle behavior.
+The clean Compose smoke additionally proves queued-to-terminal dispatch,
+restart durability, atomic artifact registration, and real Chromium COW
+preview completion before the direct worker artifact/replay checks.
+
+Credential unit tests fix one deterministic token SHA-256 vector and cover
+descriptor-confined key reads, modes/owner/symlink/format, duplicate JSON keys,
+unknown algorithm/version/key/audience/contract, wrong signature, future/
+expiry, oversize, and every changed binding. Real Render PostgreSQL/HTTP tests
+prove the dedicated header, one-time nonce, exact preview-role function grant,
+overlay-only projection, unchanged canonical output, tamper/expiry/foreign/
+route/target/evidence/artifact/duration denial, replay denial, and revocation
+between consumption and the under-lock COW recheck. Existing human preview
+tests remain unchanged and green.
+
+Compose policy and smoke prove only Agent/Render/initializer mount the signing
+volume, unrelated UID denial, real NGINX Agent create/poll plus Agent restart,
+missing-key readiness failure with canonical rendering still available, key
+restoration, and the DB-less/key-less worker boundary.
+
+The shared `browser-worker/v1` tests cover exact Python/TypeScript facts,
+canonical request digest parity, three immutable target descriptors, raw-header
+constant-time service authentication before body parsing, canonical framing,
+signed result binding, first-document-only preview-header forwarding,
+redirect/subresource stripping, hostile URL policy, sanitization, overload,
+active inspection, disconnect cancellation, and slot cleanup.
+
+Artifact-store tests cover exclusive bounded staging, fsync and no-replace
+publication, deterministic reuse, concurrent publication, exact restart
+retrieval, descriptor anchoring across root replacement, mode/owner/link/
+digest/size/MIME/expiry checks, symlink/hardlink/traversal/corruption/quota
+denial, and absence of partial staging state.
+
+Clean Compose additionally launches the actual production image's sandboxed
+Chromium against the real PostgreSQL COW preview. Two sequential direct Agent-
+client attempts produce six artifacts including decodable PNG and heading/
+structure summaries, observe the overlay, preserve canonical output, verify
+signed results and byte retrieval after worker restart, and reject replay,
+forgery, expiry, wrong route, and wrong target without artifact publication.
+Runtime proof checks the exact seccomp/capability/resource/network/mount/image
+inventory, no credential/log/artifact leakage, zero residual Chromium children,
+worker-secret failure/recovery, and continued public `QUEUED` runs with zero DB
+artifact rows.

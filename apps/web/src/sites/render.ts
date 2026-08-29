@@ -109,14 +109,20 @@ export async function renderReady(): Promise<boolean> {
 async function resolveProjection(
   url: string,
   body: Record<string, unknown>,
-  sessionToken?: string,
+  credentials?: Readonly<{
+    humanSessionToken?: string;
+    browserToken?: string;
+  }>,
 ): Promise<PageProjection | null> {
   try {
     const headers: Record<string, string> = {
       "content-type": "application/json",
       ...(await renderServiceHeaders()),
     };
-    if (sessionToken) headers["x-slaif-human-session"] = sessionToken;
+    if (credentials?.humanSessionToken)
+      headers["x-slaif-human-session"] = credentials.humanSessionToken;
+    if (credentials?.browserToken)
+      headers["x-slaif-browser-run-token"] = credentials.browserToken;
     const response = await fetch(url, {
       method: "POST",
       cache: "no-store",
@@ -146,12 +152,22 @@ export function resolvePreviewPage(
   authority: string,
   path: string,
   workspaceId: string,
-  sessionToken: string,
+  credentials: Readonly<{
+    humanSessionToken?: string;
+    browserToken?: string;
+    browserRoute?: string;
+  }>,
   locale?: string,
 ): Promise<PageProjection | null> {
   return resolveProjection(
     RENDER_PREVIEW_URL,
-    { authority, path, workspace_id: workspaceId, locale },
-    sessionToken,
+    {
+      authority,
+      path,
+      workspace_id: workspaceId,
+      locale,
+      ...(credentials.browserRoute ? { browser_route: credentials.browserRoute } : {}),
+    },
+    credentials,
   );
 }

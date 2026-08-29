@@ -2,9 +2,11 @@
 
 The implemented database path is an explicit one-shot maintenance boundary.
 The default Compose stack invokes it before application health can become
-ready. It does not add an online pool, product route, authentication, or
-product-domain table. Control's separate online pool consumes only the narrow
-readiness function created by the latest migration.
+ready. Migration `035_001` adds durable browser-run Control/audit state and
+narrow Agent functions. Migration `036_001` adds only one-time nonce digest
+state and one narrow preview-role Render authorization function. Neither adds a
+worker database role, artifact filesystem, dispatcher, or browser execution.
+Online services never run Alembic.
 
 ## Dependencies and migration graph
 
@@ -22,11 +24,11 @@ There is one head:
 ```text
 006_001
   |
-007_001
+ ...
   |
-008_001
+035_001
   |
-009_001 (head)
+036_001 (head)
 ```
 
 The baseline creates `control`, `content`, and `audit`, owned by `slaif_owner`.
@@ -37,9 +39,23 @@ Alembic state is `control.alembic_version`. Product-owned Control tables include
 `control.slaif_control_readiness()`, and `008_001` adds only the installation
 state. Revision `009_001` adds the constrained `control.user_account` and
 `control.platform_administrator` tables plus two narrow setup functions.
-`content` and `audit` are empty. Unsafe default schema, table, sequence, and
-function privileges are revoked. The foundation creates its public
-`agentcow` objects only when reconciliation is explicitly requested.
+The linear history through `034_001` supplies the implemented identity, site,
+RBAC, COW content, Agent/Editor/Media, and Render-preview boundaries described
+in the corresponding migrations. Revision `035_001` adds nine non-null
+capability browser-limit fields, `control.browser_run`,
+`control.browser_idempotency`, `control.browser_artifact`, and append-only
+`audit.browser_event`. Those relations are not COW content. Unsafe default
+schema, table, sequence, and function privileges are revoked. The foundation
+creates its public `agentcow` objects only when reconciliation is explicitly
+requested.
+
+Revision `036_001` adds nullable paired `preview_nonce_digest` and
+`preview_token_used_at` run columns, the append-only
+`PREVIEW_TOKEN_CONSUMED` event kind, and
+`control.slaif_render_browser_preview_authorize(...)`. The function is owned by
+`slaif_owner`, fixed-search-path, executable only by `slaif_preview_reader`, and
+rechecks the complete run binding/current authority under the workspace shared
+advisory lock. It stores no plaintext token or nonce.
 
 ## Configuration
 
@@ -141,7 +157,7 @@ grants, validation, and final marker publication share a transaction, so an
 injected failure rolls them back. A repeat repairs safely and a successful
 repeat does not add objects or change migration head.
 
-The marker records revision `009_001`, distribution
+The marker records revision `036_001`, distribution
 `agent-cow-postgresql`, version `0.2.0`, state-specific evidence flags, generic
 content/foundation object counts and SHA-256 fingerprints, overall safety, and
 update time. Database constraints admit exactly these combinations:

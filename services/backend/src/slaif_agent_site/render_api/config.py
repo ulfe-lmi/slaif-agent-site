@@ -20,6 +20,7 @@ RENDER_PREVIEW_LOGIN = "slaif_preview_login"
 RENDER_PREVIEW_PRIVILEGE_ROLE = "slaif_preview_reader"
 RENDER_PREVIEW_DSN_FILE = Path("/run/slaif-render-preview/preview-dsn")
 RENDER_SERVICE_TOKEN_FILE = Path("/run/slaif-render-auth/render-token")
+RENDER_BROWSER_SIGNING_KEY_FILE = Path("/run/slaif-browser-signing/signing-key")
 RENDER_APPLICATION_NAME = "slaif-render-api"
 _ERROR = "Invalid SLAIF Render database configuration."
 
@@ -51,6 +52,7 @@ class RenderDatabaseSettings(BaseSettings):
     preview_dsn_file: Path | None = RENDER_PREVIEW_DSN_FILE
     service_token: SecretStr | None = None
     service_token_file: Path | None = RENDER_SERVICE_TOKEN_FILE
+    browser_signing_key_file: Path = RENDER_BROWSER_SIGNING_KEY_FILE
     expected_database: str = "slaif"
     expected_login: str = RENDER_LOGIN
     expected_privilege_role: str = RENDER_PRIVILEGE_ROLE
@@ -71,7 +73,12 @@ class RenderDatabaseSettings(BaseSettings):
     preview_recent_auth_seconds: int = Field(default=900, ge=1, le=604800)
     application_name: str = RENDER_APPLICATION_NAME
 
-    @field_validator("dsn_file", "preview_dsn_file", "service_token_file")
+    @field_validator(
+        "dsn_file",
+        "preview_dsn_file",
+        "service_token_file",
+        "browser_signing_key_file",
+    )
     @classmethod
     def absolute_file(cls, value: Path | None) -> Path | None:
         if value is not None and not value.is_absolute():

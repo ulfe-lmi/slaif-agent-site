@@ -29,3 +29,16 @@ Application services never invoke
 Alembic; only the one-shot
 bootstrap authority supplies the owner connection used by migration commands
 and setup-token lifecycle operations.
+
+The current single head is `036_001`. Revisions `015_001` through `034_001`
+extend the same linear graph with current-human reads, COW content models and
+semantic functions, workspace/capability state, Agent/Editor/Media boundaries,
+and Render preview authorization. Revision `035_001` adds non-COW browser
+limits, run/idempotency/lease/private-artifact metadata, append-only audit, and
+nine exact Agent functions. It adds no HTTP route, worker database role,
+artifact bytes, or browser execution.
+
+Revision `036_001` adds only the digested one-time browser-preview nonce state,
+its append-only consumption event, and one exact preview-reader authorization
+function. It does not add a worker role, token plaintext, artifact bytes,
+dispatcher, or browser execution.

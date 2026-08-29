@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+import time
 from collections import defaultdict
 from typing import Any, Protocol, cast
 from uuid import UUID
@@ -11,9 +13,50 @@ import asyncpg
 from agentcow.postgres import asyncpg_cow_session
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
 
+from slaif_agent_site.browser_contracts import normalize_preview_route
+from slaif_agent_site.browser_preview_credentials import (
+    BrowserPreviewCredentialError,
+    BrowserPreviewCredentialSigner,
+    BrowserPreviewExpectedBinding,
+)
 from slaif_agent_site.identity.sessions import digest_secret, parse_session_token
 from slaif_agent_site.sites.models import SiteContext
 from slaif_agent_site.sites.normalization import normalize_request_path
+
+LOGGER = logging.getLogger(__name__)
+
+_BROWSER_STAGES = frozenset(
+    {
+        "context",
+        "token-binding",
+        "authorize-consume",
+        "cow-context",
+        "authorize-recheck",
+        "projection-query",
+        "success",
+    }
+)
+
+
+def _browser_stage(stage: str, outcome: str) -> None:
+    """Emit only the fixed-vocabulary browser-preview diagnosis signal."""
+
+    if stage not in _BROWSER_STAGES or outcome not in {
+        "ok",
+        "not_found",
+        "unavailable",
+        "error",
+    }:
+        return
+    LOGGER.info(
+        "browser preview stage",
+        extra={"event_fields": {"stage": stage, "outcome": outcome}},
+    )
+
+
+def _browser_outcome(error: ProjectionError) -> str:
+    return "unavailable" if error.reason == "unavailable" else "not_found"
+
 
 CATALOG_TYPES = frozenset(
     {
@@ -161,6 +204,13 @@ class RenderPageRequest(BaseModel):
 class RenderPreviewRequest(RenderPageRequest):
     workspace_id: UUID
     session_token: SecretStr | None = Field(default=None, exclude=True, repr=False)
+    browser_token: SecretStr | None = Field(default=None, exclude=True, repr=False)
+    browser_route: str | None = None
+
+    @field_validator("browser_route")
+    @classmethod
+    def browser_route_is_normalized(cls, value: str | None) -> str | None:
+        return normalize_preview_route(value) if value is not None else None
 
 
 class ProjectionNode(BaseModel):
@@ -572,8 +622,14 @@ async def _collection_bindings(
 class RenderProjectionService:
     """Project only trusted bounded page data from one Render pool."""
 
-    def __init__(self, database: Any) -> None:
+    def __init__(
+        self,
+        database: Any,
+        *,
+        browser_verifier: BrowserPreviewCredentialSigner | None = None,
+    ) -> None:
         self._database = database
+        self._browser_verifier = browser_verifier
 
     async def _context(self, request: RenderPageRequest) -> SiteContext:
         try:
@@ -715,6 +771,21 @@ class RenderProjectionService:
             raise ProjectionError("unavailable") from None
 
     async def preview(self, request: RenderPreviewRequest) -> RenderPageProjection:
+        if (request.session_token is None) == (request.browser_token is None):
+            raise ProjectionError("not_found")
+        if request.browser_token is not None:
+            try:
+                context = await self._context(request)
+            except ProjectionError as error:
+                _browser_stage("context", _browser_outcome(error))
+                raise
+            _browser_stage("context", "ok")
+            return await self._browser_preview(request, context=context)
+        return await self._human_preview(request)
+
+    async def _human_preview(
+        self, request: RenderPreviewRequest
+    ) -> RenderPageProjection:
         context = await self._context(request)
         try:
             if request.session_token is None:
@@ -776,6 +847,131 @@ class RenderProjectionService:
         except asyncio.CancelledError:
             raise
         except (asyncpg.PostgresError, OSError, TimeoutError):
+            raise ProjectionError("unavailable") from None
+
+    async def _browser_preview(
+        self, request: RenderPreviewRequest, *, context: SiteContext
+    ) -> RenderPageProjection:
+        verifier = self._browser_verifier
+        if (
+            verifier is None
+            or request.browser_token is None
+            or request.browser_route is None
+        ):
+            _browser_stage("token-binding", "not_found")
+            raise ProjectionError("not_found")
+        try:
+            claims = verifier.verify(
+                request.browser_token.get_secret_value(),
+                now=int(time.time()),
+                expected=BrowserPreviewExpectedBinding(
+                    site_id=context.site_id,
+                    workspace_id=request.workspace_id,
+                    route=request.browser_route,
+                ),
+            )
+        except (BrowserPreviewCredentialError, ValueError):
+            _browser_stage("token-binding", "not_found")
+            raise ProjectionError("not_found") from None
+        _browser_stage("token-binding", "ok")
+        try:
+            pool = self._database.preview_pool()
+            async with pool.acquire(
+                timeout=self._database.acquire_timeout
+            ) as connection:
+                authorized = await connection.fetchrow(
+                    "SELECT * FROM control.slaif_render_browser_preview_authorize("
+                    "$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)",
+                    claims.capability_id,
+                    claims.site_id,
+                    claims.workspace_id,
+                    claims.run_id,
+                    claims.route,
+                    claims.target.value,
+                    [item.value for item in claims.evidence],
+                    claims.artifact_bytes_limit,
+                    claims.duration_seconds,
+                    claims.nonce_digest,
+                    True,
+                )
+        except asyncio.CancelledError:
+            raise
+        except (asyncpg.PostgresError, OSError, TimeoutError):
+            _browser_stage("authorize-consume", "unavailable")
+            raise ProjectionError("unavailable") from None
+        except Exception:
+            _browser_stage("authorize-consume", "error")
+            raise ProjectionError("unavailable") from None
+        _browser_stage(
+            "authorize-consume", "ok" if authorized is not None else "not_found"
+        )
+        if (
+            authorized is None
+            or authorized[0] != claims.workspace_id
+            or authorized[1] != claims.site_id
+            or authorized[2] != claims.run_id
+        ):
+            raise ProjectionError("not_found")
+        try:
+            async with asyncpg_cow_session(pool, session_id=claims.workspace_id) as cow:
+                await cow.validate_context()
+                _browser_stage("cow-context", "ok")
+                reauthorized = await cow.native.fetchrow(
+                    "SELECT * FROM control.slaif_render_browser_preview_authorize("
+                    "$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)",
+                    claims.capability_id,
+                    claims.site_id,
+                    claims.workspace_id,
+                    claims.run_id,
+                    claims.route,
+                    claims.target.value,
+                    [item.value for item in claims.evidence],
+                    claims.artifact_bytes_limit,
+                    claims.duration_seconds,
+                    claims.nonce_digest,
+                    False,
+                )
+                _browser_stage(
+                    "authorize-recheck",
+                    "ok" if reauthorized is not None else "not_found",
+                )
+                if (
+                    reauthorized is None
+                    or reauthorized[0] != claims.workspace_id
+                    or reauthorized[1] != claims.site_id
+                    or reauthorized[2] != claims.run_id
+                ):
+                    raise ProjectionError("not_found")
+                try:
+                    projection = await self._query(
+                        cow.native,
+                        context=context,
+                        request=request,
+                        render_mode="preview",
+                    )
+                except ProjectionError as error:
+                    _browser_stage("projection-query", _browser_outcome(error))
+                    raise
+                except asyncio.CancelledError:
+                    raise
+                except (asyncpg.PostgresError, OSError, TimeoutError):
+                    _browser_stage("projection-query", "unavailable")
+                    raise ProjectionError("unavailable") from None
+                except Exception:
+                    _browser_stage("projection-query", "error")
+                    raise ProjectionError("unavailable") from None
+                _browser_stage("projection-query", "ok")
+                _browser_stage("success", "ok")
+                return projection
+        except ProjectionError:
+            raise
+        except asyncio.CancelledError:
+            raise
+        except (asyncpg.PostgresError, OSError, TimeoutError):
+            _browser_stage("cow-context", "unavailable")
+            raise ProjectionError("unavailable") from None
+        except Exception:
+            _browser_stage("cow-context", "error")
             raise ProjectionError("unavailable") from None
 
 

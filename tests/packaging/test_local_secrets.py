@@ -177,6 +177,50 @@ class LocalSecretTests(unittest.TestCase):
             self.assertEqual(stat.S_IMODE(agent_directory.stat().st_mode), 0o700)
             self.assertEqual(stat.S_IMODE(agent_file.stat().st_mode), 0o400)
 
+    def test_browser_signing_key_is_isolated_exact_and_idempotent(self) -> None:
+        INITIALIZER.POSTGRES_UID = os.getuid()
+        INITIALIZER.APPLICATION_UID = os.getuid()
+        INITIALIZER.CONTROL_DIRECTORY_UID = os.getuid()
+        INITIALIZER.CONTROL_DIRECTORY_GID = os.getgid()
+        INITIALIZER.MARKER_UID = os.getuid()
+        INITIALIZER.DIRECTORY_UID = os.getuid()
+        INITIALIZER.SECRET_DIRECTORY_GID = os.getgid()
+        with tempfile.TemporaryDirectory() as parent:
+            directory = Path(parent) / "secrets"
+            signing_directory = Path(parent) / "browser-signing"
+            signing_directory.mkdir()
+            count = INITIALIZER.initialize(
+                directory, browser_signing_directory=signing_directory
+            )
+            self.assertEqual(count, 24)
+            signing_file = signing_directory / "signing-key"
+            first = signing_file.read_bytes()
+            self.assertRegex(
+                first.decode("ascii"), r"^sbk1:[0-9a-f]{16}:[A-Za-z0-9_-]{43}$"
+            )
+            self.assertEqual(
+                INITIALIZER.initialize(
+                    directory, browser_signing_directory=signing_directory
+                ),
+                count,
+            )
+            self.assertEqual(signing_file.read_bytes(), first)
+            self.assertEqual(
+                {path.name for path in signing_directory.iterdir()}, {"signing-key"}
+            )
+            self.assertEqual(stat.S_IMODE(signing_directory.stat().st_mode), 0o700)
+            self.assertEqual(stat.S_IMODE(signing_file.stat().st_mode), 0o400)
+            signing_file.chmod(0o600)
+            signing_file.write_text("x" * len(first), encoding="ascii")
+            signing_file.chmod(0o400)
+            with self.assertRaisesRegex(
+                INITIALIZER.SecretInitializationError,
+                "Browser signing key format mismatch",
+            ):
+                INITIALIZER.initialize(
+                    directory, browser_signing_directory=signing_directory
+                )
+
     def test_editor_locator_is_exactly_isolated_and_idempotent(self) -> None:
         INITIALIZER.POSTGRES_UID = os.getuid()
         INITIALIZER.APPLICATION_UID = os.getuid()
@@ -204,6 +248,59 @@ class LocalSecretTests(unittest.TestCase):
             )
             self.assertEqual(stat.S_IMODE(editor_directory.stat().st_mode), 0o700)
             self.assertEqual(stat.S_IMODE(editor_file.stat().st_mode), 0o400)
+
+    def test_browser_worker_secret_and_artifact_root_are_exact(self) -> None:
+        INITIALIZER.POSTGRES_UID = os.getuid()
+        INITIALIZER.APPLICATION_UID = os.getuid()
+        INITIALIZER.CONTROL_DIRECTORY_UID = os.getuid()
+        INITIALIZER.CONTROL_DIRECTORY_GID = os.getgid()
+        INITIALIZER.MARKER_UID = os.getuid()
+        INITIALIZER.DIRECTORY_UID = os.getuid()
+        INITIALIZER.SECRET_DIRECTORY_GID = os.getgid()
+        with tempfile.TemporaryDirectory() as parent:
+            directory = Path(parent) / "secrets"
+            worker_directory = Path(parent) / "browser-worker"
+            artifact_root = Path(parent) / "browser-artifacts"
+            worker_directory.mkdir()
+            count = INITIALIZER.initialize(
+                directory,
+                browser_worker_directory=worker_directory,
+                browser_artifact_root=artifact_root,
+            )
+            self.assertEqual(count, 24)
+            token_file = worker_directory / "worker-token"
+            first = token_file.read_bytes()
+            self.assertRegex(
+                first.decode("ascii"),
+                r"^sbws1:[0-9a-f]{16}:[A-Za-z0-9_-]{43}$",
+            )
+            self.assertEqual(
+                INITIALIZER.initialize(
+                    directory,
+                    browser_worker_directory=worker_directory,
+                    browser_artifact_root=artifact_root,
+                ),
+                count,
+            )
+            self.assertEqual(token_file.read_bytes(), first)
+            self.assertEqual(
+                {path.name for path in worker_directory.iterdir()}, {"worker-token"}
+            )
+            self.assertEqual(stat.S_IMODE(worker_directory.stat().st_mode), 0o700)
+            self.assertEqual(stat.S_IMODE(token_file.stat().st_mode), 0o400)
+            self.assertEqual(stat.S_IMODE(artifact_root.stat().st_mode), 0o700)
+            token_file.chmod(0o600)
+            token_file.write_text("x" * len(first), encoding="ascii")
+            token_file.chmod(0o400)
+            with self.assertRaisesRegex(
+                INITIALIZER.SecretInitializationError,
+                "Browser worker token format mismatch",
+            ):
+                INITIALIZER.initialize(
+                    directory,
+                    browser_worker_directory=worker_directory,
+                    browser_artifact_root=artifact_root,
+                )
 
     def test_media_locator_is_exactly_isolated_and_idempotent(self) -> None:
         INITIALIZER.POSTGRES_UID = os.getuid()

@@ -275,9 +275,13 @@ test("site shell uses only the fixed server-side Render resolver", async () => {
   const landing = await read("../app/page.tsx");
   const renderer = await read("../src/renderer/components.tsx");
   const serviceAuth = await read("../src/sites/service-auth.ts");
+  const previewPage = await read(
+    "../app/preview/[workspaceId]/[[...sitePath]]/page.tsx",
+  );
   assert.match(client, /http:\/\/render-api:8000\/internal\/render\/v1\/site-context/);
   assert.match(client, /internal\/render\/v1\/page/);
   assert.match(client, /internal\/render\/v1\/preview/);
+  assert.match(client, /x-slaif-browser-run-token/);
   assert.match(client, /RenderResolutionError/);
   assert.match(client, /response\.status === 404/);
   assert.match(client, /credentials: "omit"/);
@@ -299,4 +303,13 @@ test("site shell uses only the fixed server-side Render resolver", async () => {
   assert.doesNotMatch(serviceAuth, /readFile\(file, "ascii"\)\)\.trim/);
   assert.match(landing, /resolveSiteContext\(authority, "\/"\)/);
   assert.doesNotMatch(shell, /site_id.*params|x-forwarded-host/i);
+  assert.match(previewPage, /x-slaif-browser-preview/);
+  assert.match(previewPage, /session && browserToken/);
+  assert.match(previewPage, /browserToken, browserRoute/);
+  assert.match(previewPage, /SLAIF_BROWSER_PREVIEW_AUTHORITY/);
+  assert.match(previewPage, /browserToken \? browserAuthority!/);
+  assert.doesNotMatch(
+    `${client}${previewPage}`,
+    /localStorage|sessionStorage|[?&](?:token|credential)=/i,
+  );
 });

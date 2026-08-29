@@ -110,3 +110,76 @@ left stale after process death; the lock is released before database
 registration. Multipart owns an `O_CREAT|O_EXCL|O_NOFOLLOW` read/write staging
 descriptor from creation through publication and never path-reopens it for
 production writes.
+
+Browser preview-run contracts now have one immutable `browser-preview/v1`
+version shared by Python and TypeScript. External create data is extra-forbid:
+it accepts only a bounded normalized route, one approved Chromium target, and
+a unique allowlisted evidence list. Absolute/scheme-relative origins,
+traversal, fragments, credential-shaped query data, identifiers, viewport
+overrides, headers/cookies, JavaScript, and browser commands are rejected.
+Canonical serialization fixes evidence order before SHA-256 request digesting.
+
+Migration `035_001` persists only capability limits, run/idempotency/lease
+state, private artifact metadata, and append-only browser events. It stores no
+artifact path, URL, credential, cookie, header, command, or bytes. Agent runtime
+has exact owner-function execution and no direct relation access; all other
+online roles are denied. Begin takes the shared workspace advisory lock before
+authority recheck and quota reservation. Claim/renew/release/completion and
+artifact registration recheck current authority and exact leases. Revocation
+therefore prevents later artifact registration and visibility. The worker
+remains DB-less. Direct internal execution is implemented with an isolated
+service credential, exact Playwright/Chromium runtime, fixed target descriptors,
+sandboxed fresh contexts, default-deny request interception, and a private
+immutable artifact filesystem. Durable dispatch, database completion/
+registration, and capability-authenticated private artifact bytes are
+implemented. Source browsing, artifact GC, review, and publication behavior
+remain unimplemented.
+
+Public Agent preview-run routes now use this durable boundary. Public bodies
+cannot select authority,
+run IDs, viewports, origins, credentials, headers, cookies, or commands.
+Create/replay is transactional; status/artifact metadata reads are non-mutating;
+byte retrieval is capability-authenticated and remains a non-leaking 404 for
+missing, foreign, expired, revoked, nonterminal, or cross-site bindings. Only
+retained PRIVATE artifacts are proxied after worker size/MIME/digest
+verification; the old unauthenticated fabricated browser router is absent.
+
+The `sbp1` preview credential uses fixed HMAC-SHA256, type, deployment, audience,
+contract version, key ID, and canonical payload. It binds capability/site/
+workspace/run, normalized route, target, evidence/artifact/duration limits,
+issued/short expiry, and a 128-bit nonce. Verification computes the signature
+with `hmac.compare_digest`, rejects duplicate/unknown/oversized/future/expired/
+changed facts, and stores only the nonce SHA-256 digest. Migration 036 consumes
+the nonce once and rechecks current authority/run state under the shared lock.
+The token is accepted only in dedicated Web/Render headers and never in URL,
+cookie, DOM, storage, response, log, database, report, or screenshot.
+
+The signing file is generated once as `sbk1:<key-id>:<256-bit-secret>`, in a
+mode-`0700` UID-10001 directory with one mode-`0400` file. Agent and Render mount
+that volume read-only. Web, worker, NGINX, Control, Editor, Media, MCP,
+Scheduler, Reviewer, and GC do not mount it. Missing/bad key makes the Agent and
+Render browser-signing readiness component unavailable; canonical and human
+preview code paths retain their separate authorization semantics.
+
+Worker authentication is checked in constant time from exact raw headers before
+the body is read. Duplicate/missing/malformed credentials, ambiguous transfer
+framing, non-canonical JSON, unknown fields, overload, and changed bindings fail
+closed. Signed results bind request/run/site/workspace/capability/operation/
+lease/attempt/route/target and expire within 60 seconds. Neither response nor
+stable error includes a credential, token, nonce, query, path, SQL, role, or
+foreign identifier.
+
+Chromium runs non-root with its sandbox enabled. Compose drops all capabilities
+then adds only `SYS_CHROOT`, applies the exact upstream Playwright seccomp
+profile, no-new-privileges, read-only root, 64 MiB scratch tmpfs, 128 MiB shm,
+256 PIDs, 768 MiB memory, and one CPU. Each attempt uses a fresh browser,
+context, page, and temporary profile with cookies, permissions, storage,
+service workers, downloads, trace, video, and extensions disabled. The preview
+credential is attached only to the first exact document request and stripped
+from assets, redirects, results, logs, and artifacts.
+
+The worker artifact root is descriptor-anchored and mode `0700`. Files are
+server-named, mode `0600`, single-link, SHA-256-addressed, exclusively staged,
+fsynced, and published without replacement. Sidecar metadata contains exact
+non-secret bindings and no absolute path. Retrieval revalidates metadata,
+owner/mode/link count/size/digest/expiry and is internal only.

@@ -1,0 +1,921 @@
+{
+  "schema_version": 1,
+  "scanner": {
+    "name": "grype",
+    "version": "0.117.0",
+    "database": "v6.1.9",
+    "database_built": "2026-08-27T09:17:14Z"
+  },
+  "entries": [
+    {
+      "candidate": "baseline: 151.0.7922.72",
+      "id": "CVE-2026-19149",
+      "artifact": "chrome",
+      "installed": "151.0.7922.72",
+      "ecosystem": "binary",
+      "namespace": "nvd:cpe",
+      "fixed": [
+        "151.0.7922.109"
+      ],
+      "match_type": "stock-matcher",
+      "location": "/ms-playwright/chromium-1234/chrome-linux64/chrome",
+      "component": "chrome/Chromium bytes"
+    },
+    {
+      "candidate": "baseline: 151.0.7922.72",
+      "id": "CVE-2026-19157",
+      "artifact": "chrome",
+      "installed": "151.0.7922.72",
+      "ecosystem": "binary",
+      "namespace": "nvd:cpe",
+      "fixed": [
+        "151.0.7922.109"
+      ],
+      "match_type": "stock-matcher",
+      "location": "/ms-playwright/chromium-1234/chrome-linux64/chrome",
+      "component": "chrome/Chromium bytes"
+    },
+    {
+      "candidate": "baseline: 151.0.7922.72",
+      "id": "CVE-2026-19164",
+      "artifact": "chrome",
+      "installed": "151.0.7922.72",
+      "ecosystem": "binary",
+      "namespace": "nvd:cpe",
+      "fixed": [
+        "151.0.7922.109"
+      ],
+      "match_type": "stock-matcher",
+      "location": "/ms-playwright/chromium-1234/chrome-linux64/chrome",
+      "component": "chrome/Chromium bytes"
+    },
+    {
+      "candidate": "baseline: 151.0.7922.72",
+      "id": "CVE-2026-19166",
+      "artifact": "chrome",
+      "installed": "151.0.7922.72",
+      "ecosystem": "binary",
+      "namespace": "nvd:cpe",
+      "fixed": [
+        "151.0.7922.109"
+      ],
+      "match_type": "stock-matcher",
+      "location": "/ms-playwright/chromium-1234/chrome-linux64/chrome",
+      "component": "chrome/Chromium bytes"
+    },
+    {
+      "candidate": "baseline: 151.0.7922.72",
+      "id": "CVE-2026-19170",
+      "artifact": "chrome",
+      "installed": "151.0.7922.72",
+      "ecosystem": "binary",
+      "namespace": "nvd:cpe",
+      "fixed": [
+        "151.0.7922.109"
+      ],
+      "match_type": "stock-matcher",
+      "location": "/ms-playwright/chromium-1234/chrome-linux64/chrome",
+      "component": "chrome/Chromium bytes"
+    },
+    {
+      "candidate": "baseline: 151.0.7922.72",
+      "id": "CVE-2026-19175",
+      "artifact": "chrome",
+      "installed": "151.0.7922.72",
+      "ecosystem": "binary",
+      "namespace": "nvd:cpe",
+      "fixed": [
+        "151.0.7922.109"
+      ],
+      "match_type": "stock-matcher",
+      "location": "/ms-playwright/chromium-1234/chrome-linux64/chrome",
+      "component": "chrome/Chromium bytes"
+    },
+    {
+      "candidate": "baseline: 151.0.7922.72",
+      "id": "CVE-2026-76035",
+      "artifact": "chrome",
+      "installed": "151.0.7922.72",
+      "ecosystem": "binary",
+      "namespace": "nvd:cpe",
+      "fixed": [
+        "151.0.7922.169"
+      ],
+      "match_type": "stock-matcher",
+      "location": "/ms-playwright/chromium-1234/chrome-linux64/chrome",
+      "component": "chrome/Chromium bytes"
+    },
+    {
+      "candidate": "baseline: 151.0.7922.72",
+      "id": "CVE-2026-76036",
+      "artifact": "chrome",
+      "installed": "151.0.7922.72",
+      "ecosystem": "binary",
+      "namespace": "nvd:cpe",
+      "fixed": [
+        "151.0.7922.169"
+      ],
+      "match_type": "stock-matcher",
+      "location": "/ms-playwright/chromium-1234/chrome-linux64/chrome",
+      "component": "chrome/Chromium bytes"
+    },
+    {
+      "candidate": "baseline: 151.0.7922.72",
+      "id": "CVE-2026-78909",
+      "artifact": "chrome",
+      "installed": "151.0.7922.72",
+      "ecosystem": "binary",
+      "namespace": "nvd:cpe",
+      "fixed": [
+        "152.0.7977.65"
+      ],
+      "match_type": "stock-matcher",
+      "location": "/ms-playwright/chromium-1234/chrome-linux64/chrome",
+      "component": "chrome/Chromium bytes"
+    },
+    {
+      "candidate": "baseline: 151.0.7922.72",
+      "id": "CVE-2026-78935",
+      "artifact": "chrome",
+      "installed": "151.0.7922.72",
+      "ecosystem": "binary",
+      "namespace": "nvd:cpe",
+      "fixed": [
+        "152.0.7977.65"
+      ],
+      "match_type": "stock-matcher",
+      "location": "/ms-playwright/chromium-1234/chrome-linux64/chrome",
+      "component": "chrome/Chromium bytes"
+    },
+    {
+      "candidate": "baseline: 151.0.7922.72",
+      "id": "CVE-2026-78937",
+      "artifact": "chrome",
+      "installed": "151.0.7922.72",
+      "ecosystem": "binary",
+      "namespace": "nvd:cpe",
+      "fixed": [
+        "152.0.7977.65"
+      ],
+      "match_type": "stock-matcher",
+      "location": "/ms-playwright/chromium-1234/chrome-linux64/chrome",
+      "component": "chrome/Chromium bytes"
+    },
+    {
+      "candidate": "baseline: 151.0.7922.72",
+      "id": "CVE-2026-78939",
+      "artifact": "chrome",
+      "installed": "151.0.7922.72",
+      "ecosystem": "binary",
+      "namespace": "nvd:cpe",
+      "fixed": [
+        "152.0.7977.65"
+      ],
+      "match_type": "stock-matcher",
+      "location": "/ms-playwright/chromium-1234/chrome-linux64/chrome",
+      "component": "chrome/Chromium bytes"
+    },
+    {
+      "candidate": "baseline: 151.0.7922.72",
+      "id": "CVE-2026-78945",
+      "artifact": "chrome",
+      "installed": "151.0.7922.72",
+      "ecosystem": "binary",
+      "namespace": "nvd:cpe",
+      "fixed": [
+        "152.0.7977.65"
+      ],
+      "match_type": "stock-matcher",
+      "location": "/ms-playwright/chromium-1234/chrome-linux64/chrome",
+      "component": "chrome/Chromium bytes"
+    },
+    {
+      "candidate": "baseline: 151.0.7922.72",
+      "id": "CVE-2026-78948",
+      "artifact": "chrome",
+      "installed": "151.0.7922.72",
+      "ecosystem": "binary",
+      "namespace": "nvd:cpe",
+      "fixed": [
+        "152.0.7977.65"
+      ],
+      "match_type": "stock-matcher",
+      "location": "/ms-playwright/chromium-1234/chrome-linux64/chrome",
+      "component": "chrome/Chromium bytes"
+    },
+    {
+      "candidate": "baseline: 151.0.7922.72",
+      "id": "CVE-2026-78951",
+      "artifact": "chrome",
+      "installed": "151.0.7922.72",
+      "ecosystem": "binary",
+      "namespace": "nvd:cpe",
+      "fixed": [
+        "152.0.7977.65"
+      ],
+      "match_type": "stock-matcher",
+      "location": "/ms-playwright/chromium-1234/chrome-linux64/chrome",
+      "component": "chrome/Chromium bytes"
+    },
+    {
+      "candidate": "baseline: 151.0.7922.72",
+      "id": "CVE-2026-78964",
+      "artifact": "chrome",
+      "installed": "151.0.7922.72",
+      "ecosystem": "binary",
+      "namespace": "nvd:cpe",
+      "fixed": [
+        "152.0.7977.65"
+      ],
+      "match_type": "stock-matcher",
+      "location": "/ms-playwright/chromium-1234/chrome-linux64/chrome",
+      "component": "chrome/Chromium bytes"
+    },
+    {
+      "candidate": "baseline: 151.0.7922.72",
+      "id": "CVE-2026-79012",
+      "artifact": "chrome",
+      "installed": "151.0.7922.72",
+      "ecosystem": "binary",
+      "namespace": "nvd:cpe",
+      "fixed": [
+        "152.0.7977.65"
+      ],
+      "match_type": "stock-matcher",
+      "location": "/ms-playwright/chromium-1234/chrome-linux64/chrome",
+      "component": "chrome/Chromium bytes"
+    },
+    {
+      "candidate": "baseline: 151.0.7922.72",
+      "id": "CVE-2026-79026",
+      "artifact": "chrome",
+      "installed": "151.0.7922.72",
+      "ecosystem": "binary",
+      "namespace": "nvd:cpe",
+      "fixed": [
+        "152.0.7977.65"
+      ],
+      "match_type": "stock-matcher",
+      "location": "/ms-playwright/chromium-1234/chrome-linux64/chrome",
+      "component": "chrome/Chromium bytes"
+    },
+    {
+      "candidate": "baseline: 151.0.7922.72",
+      "id": "CVE-2026-79043",
+      "artifact": "chrome",
+      "installed": "151.0.7922.72",
+      "ecosystem": "binary",
+      "namespace": "nvd:cpe",
+      "fixed": [
+        "152.0.7977.65"
+      ],
+      "match_type": "stock-matcher",
+      "location": "/ms-playwright/chromium-1234/chrome-linux64/chrome",
+      "component": "chrome/Chromium bytes"
+    },
+    {
+      "candidate": "baseline: 151.0.7922.72",
+      "id": "CVE-2026-79047",
+      "artifact": "chrome",
+      "installed": "151.0.7922.72",
+      "ecosystem": "binary",
+      "namespace": "nvd:cpe",
+      "fixed": [
+        "152.0.7977.65"
+      ],
+      "match_type": "stock-matcher",
+      "location": "/ms-playwright/chromium-1234/chrome-linux64/chrome",
+      "component": "chrome/Chromium bytes"
+    },
+    {
+      "candidate": "baseline: 151.0.7922.72",
+      "id": "CVE-2026-79052",
+      "artifact": "chrome",
+      "installed": "151.0.7922.72",
+      "ecosystem": "binary",
+      "namespace": "nvd:cpe",
+      "fixed": [
+        "152.0.7977.65"
+      ],
+      "match_type": "stock-matcher",
+      "location": "/ms-playwright/chromium-1234/chrome-linux64/chrome",
+      "component": "chrome/Chromium bytes"
+    },
+    {
+      "candidate": "baseline: 151.0.7922.72",
+      "id": "CVE-2026-79056",
+      "artifact": "chrome",
+      "installed": "151.0.7922.72",
+      "ecosystem": "binary",
+      "namespace": "nvd:cpe",
+      "fixed": [
+        "152.0.7977.65"
+      ],
+      "match_type": "stock-matcher",
+      "location": "/ms-playwright/chromium-1234/chrome-linux64/chrome",
+      "component": "chrome/Chromium bytes"
+    },
+    {
+      "candidate": "baseline: 151.0.7922.72",
+      "id": "CVE-2026-79064",
+      "artifact": "chrome",
+      "installed": "151.0.7922.72",
+      "ecosystem": "binary",
+      "namespace": "nvd:cpe",
+      "fixed": [
+        "152.0.7977.65"
+      ],
+      "match_type": "stock-matcher",
+      "location": "/ms-playwright/chromium-1234/chrome-linux64/chrome",
+      "component": "chrome/Chromium bytes"
+    },
+    {
+      "candidate": "baseline: 151.0.7922.72",
+      "id": "CVE-2026-79078",
+      "artifact": "chrome",
+      "installed": "151.0.7922.72",
+      "ecosystem": "binary",
+      "namespace": "nvd:cpe",
+      "fixed": [
+        "152.0.7977.65"
+      ],
+      "match_type": "stock-matcher",
+      "location": "/ms-playwright/chromium-1234/chrome-linux64/chrome",
+      "component": "chrome/Chromium bytes"
+    },
+    {
+      "candidate": "baseline: 151.0.7922.72",
+      "id": "CVE-2026-79091",
+      "artifact": "chrome",
+      "installed": "151.0.7922.72",
+      "ecosystem": "binary",
+      "namespace": "nvd:cpe",
+      "fixed": [
+        "152.0.7977.65"
+      ],
+      "match_type": "stock-matcher",
+      "location": "/ms-playwright/chromium-1234/chrome-linux64/chrome",
+      "component": "chrome/Chromium bytes"
+    },
+    {
+      "candidate": "baseline: 151.0.7922.72",
+      "id": "CVE-2026-79111",
+      "artifact": "chrome",
+      "installed": "151.0.7922.72",
+      "ecosystem": "binary",
+      "namespace": "nvd:cpe",
+      "fixed": [
+        "152.0.7977.65"
+      ],
+      "match_type": "stock-matcher",
+      "location": "/ms-playwright/chromium-1234/chrome-linux64/chrome",
+      "component": "chrome/Chromium bytes"
+    },
+    {
+      "candidate": "baseline: 151.0.7922.72",
+      "id": "CVE-2026-79189",
+      "artifact": "chrome",
+      "installed": "151.0.7922.72",
+      "ecosystem": "binary",
+      "namespace": "nvd:cpe",
+      "fixed": [
+        "152.0.7977.65"
+      ],
+      "match_type": "stock-matcher",
+      "location": "/ms-playwright/chromium-1234/chrome-linux64/chrome",
+      "component": "chrome/Chromium bytes"
+    },
+    {
+      "candidate": "candidate-1 CfT: 152.0.7977.64",
+      "id": "CVE-2026-78909",
+      "artifact": "chrome",
+      "installed": "152.0.7977.64",
+      "ecosystem": "binary",
+      "namespace": "nvd:cpe",
+      "fixed": [
+        "152.0.7977.65"
+      ],
+      "match_type": "stock-matcher",
+      "location": "/ms-playwright/chromium-1234/chrome-linux64/chrome",
+      "component": "chrome/Chromium bytes"
+    },
+    {
+      "candidate": "candidate-1 CfT: 152.0.7977.64",
+      "id": "CVE-2026-78935",
+      "artifact": "chrome",
+      "installed": "152.0.7977.64",
+      "ecosystem": "binary",
+      "namespace": "nvd:cpe",
+      "fixed": [
+        "152.0.7977.65"
+      ],
+      "match_type": "stock-matcher",
+      "location": "/ms-playwright/chromium-1234/chrome-linux64/chrome",
+      "component": "chrome/Chromium bytes"
+    },
+    {
+      "candidate": "candidate-1 CfT: 152.0.7977.64",
+      "id": "CVE-2026-78937",
+      "artifact": "chrome",
+      "installed": "152.0.7977.64",
+      "ecosystem": "binary",
+      "namespace": "nvd:cpe",
+      "fixed": [
+        "152.0.7977.65"
+      ],
+      "match_type": "stock-matcher",
+      "location": "/ms-playwright/chromium-1234/chrome-linux64/chrome",
+      "component": "chrome/Chromium bytes"
+    },
+    {
+      "candidate": "candidate-1 CfT: 152.0.7977.64",
+      "id": "CVE-2026-78939",
+      "artifact": "chrome",
+      "installed": "152.0.7977.64",
+      "ecosystem": "binary",
+      "namespace": "nvd:cpe",
+      "fixed": [
+        "152.0.7977.65"
+      ],
+      "match_type": "stock-matcher",
+      "location": "/ms-playwright/chromium-1234/chrome-linux64/chrome",
+      "component": "chrome/Chromium bytes"
+    },
+    {
+      "candidate": "candidate-1 CfT: 152.0.7977.64",
+      "id": "CVE-2026-78945",
+      "artifact": "chrome",
+      "installed": "152.0.7977.64",
+      "ecosystem": "binary",
+      "namespace": "nvd:cpe",
+      "fixed": [
+        "152.0.7977.65"
+      ],
+      "match_type": "stock-matcher",
+      "location": "/ms-playwright/chromium-1234/chrome-linux64/chrome",
+      "component": "chrome/Chromium bytes"
+    },
+    {
+      "candidate": "candidate-1 CfT: 152.0.7977.64",
+      "id": "CVE-2026-78948",
+      "artifact": "chrome",
+      "installed": "152.0.7977.64",
+      "ecosystem": "binary",
+      "namespace": "nvd:cpe",
+      "fixed": [
+        "152.0.7977.65"
+      ],
+      "match_type": "stock-matcher",
+      "location": "/ms-playwright/chromium-1234/chrome-linux64/chrome",
+      "component": "chrome/Chromium bytes"
+    },
+    {
+      "candidate": "candidate-1 CfT: 152.0.7977.64",
+      "id": "CVE-2026-78951",
+      "artifact": "chrome",
+      "installed": "152.0.7977.64",
+      "ecosystem": "binary",
+      "namespace": "nvd:cpe",
+      "fixed": [
+        "152.0.7977.65"
+      ],
+      "match_type": "stock-matcher",
+      "location": "/ms-playwright/chromium-1234/chrome-linux64/chrome",
+      "component": "chrome/Chromium bytes"
+    },
+    {
+      "candidate": "candidate-1 CfT: 152.0.7977.64",
+      "id": "CVE-2026-78964",
+      "artifact": "chrome",
+      "installed": "152.0.7977.64",
+      "ecosystem": "binary",
+      "namespace": "nvd:cpe",
+      "fixed": [
+        "152.0.7977.65"
+      ],
+      "match_type": "stock-matcher",
+      "location": "/ms-playwright/chromium-1234/chrome-linux64/chrome",
+      "component": "chrome/Chromium bytes"
+    },
+    {
+      "candidate": "candidate-1 CfT: 152.0.7977.64",
+      "id": "CVE-2026-79012",
+      "artifact": "chrome",
+      "installed": "152.0.7977.64",
+      "ecosystem": "binary",
+      "namespace": "nvd:cpe",
+      "fixed": [
+        "152.0.7977.65"
+      ],
+      "match_type": "stock-matcher",
+      "location": "/ms-playwright/chromium-1234/chrome-linux64/chrome",
+      "component": "chrome/Chromium bytes"
+    },
+    {
+      "candidate": "candidate-1 CfT: 152.0.7977.64",
+      "id": "CVE-2026-79026",
+      "artifact": "chrome",
+      "installed": "152.0.7977.64",
+      "ecosystem": "binary",
+      "namespace": "nvd:cpe",
+      "fixed": [
+        "152.0.7977.65"
+      ],
+      "match_type": "stock-matcher",
+      "location": "/ms-playwright/chromium-1234/chrome-linux64/chrome",
+      "component": "chrome/Chromium bytes"
+    },
+    {
+      "candidate": "candidate-1 CfT: 152.0.7977.64",
+      "id": "CVE-2026-79043",
+      "artifact": "chrome",
+      "installed": "152.0.7977.64",
+      "ecosystem": "binary",
+      "namespace": "nvd:cpe",
+      "fixed": [
+        "152.0.7977.65"
+      ],
+      "match_type": "stock-matcher",
+      "location": "/ms-playwright/chromium-1234/chrome-linux64/chrome",
+      "component": "chrome/Chromium bytes"
+    },
+    {
+      "candidate": "candidate-1 CfT: 152.0.7977.64",
+      "id": "CVE-2026-79047",
+      "artifact": "chrome",
+      "installed": "152.0.7977.64",
+      "ecosystem": "binary",
+      "namespace": "nvd:cpe",
+      "fixed": [
+        "152.0.7977.65"
+      ],
+      "match_type": "stock-matcher",
+      "location": "/ms-playwright/chromium-1234/chrome-linux64/chrome",
+      "component": "chrome/Chromium bytes"
+    },
+    {
+      "candidate": "candidate-1 CfT: 152.0.7977.64",
+      "id": "CVE-2026-79052",
+      "artifact": "chrome",
+      "installed": "152.0.7977.64",
+      "ecosystem": "binary",
+      "namespace": "nvd:cpe",
+      "fixed": [
+        "152.0.7977.65"
+      ],
+      "match_type": "stock-matcher",
+      "location": "/ms-playwright/chromium-1234/chrome-linux64/chrome",
+      "component": "chrome/Chromium bytes"
+    },
+    {
+      "candidate": "candidate-1 CfT: 152.0.7977.64",
+      "id": "CVE-2026-79056",
+      "artifact": "chrome",
+      "installed": "152.0.7977.64",
+      "ecosystem": "binary",
+      "namespace": "nvd:cpe",
+      "fixed": [
+        "152.0.7977.65"
+      ],
+      "match_type": "stock-matcher",
+      "location": "/ms-playwright/chromium-1234/chrome-linux64/chrome",
+      "component": "chrome/Chromium bytes"
+    },
+    {
+      "candidate": "candidate-1 CfT: 152.0.7977.64",
+      "id": "CVE-2026-79064",
+      "artifact": "chrome",
+      "installed": "152.0.7977.64",
+      "ecosystem": "binary",
+      "namespace": "nvd:cpe",
+      "fixed": [
+        "152.0.7977.65"
+      ],
+      "match_type": "stock-matcher",
+      "location": "/ms-playwright/chromium-1234/chrome-linux64/chrome",
+      "component": "chrome/Chromium bytes"
+    },
+    {
+      "candidate": "candidate-1 CfT: 152.0.7977.64",
+      "id": "CVE-2026-79078",
+      "artifact": "chrome",
+      "installed": "152.0.7977.64",
+      "ecosystem": "binary",
+      "namespace": "nvd:cpe",
+      "fixed": [
+        "152.0.7977.65"
+      ],
+      "match_type": "stock-matcher",
+      "location": "/ms-playwright/chromium-1234/chrome-linux64/chrome",
+      "component": "chrome/Chromium bytes"
+    },
+    {
+      "candidate": "candidate-1 CfT: 152.0.7977.64",
+      "id": "CVE-2026-79091",
+      "artifact": "chrome",
+      "installed": "152.0.7977.64",
+      "ecosystem": "binary",
+      "namespace": "nvd:cpe",
+      "fixed": [
+        "152.0.7977.65"
+      ],
+      "match_type": "stock-matcher",
+      "location": "/ms-playwright/chromium-1234/chrome-linux64/chrome",
+      "component": "chrome/Chromium bytes"
+    },
+    {
+      "candidate": "candidate-1 CfT: 152.0.7977.64",
+      "id": "CVE-2026-79111",
+      "artifact": "chrome",
+      "installed": "152.0.7977.64",
+      "ecosystem": "binary",
+      "namespace": "nvd:cpe",
+      "fixed": [
+        "152.0.7977.65"
+      ],
+      "match_type": "stock-matcher",
+      "location": "/ms-playwright/chromium-1234/chrome-linux64/chrome",
+      "component": "chrome/Chromium bytes"
+    },
+    {
+      "candidate": "candidate-1 CfT: 152.0.7977.64",
+      "id": "CVE-2026-79189",
+      "artifact": "chrome",
+      "installed": "152.0.7977.64",
+      "ecosystem": "binary",
+      "namespace": "nvd:cpe",
+      "fixed": [
+        "152.0.7977.65"
+      ],
+      "match_type": "stock-matcher",
+      "location": "/ms-playwright/chromium-1234/chrome-linux64/chrome",
+      "component": "chrome/Chromium bytes"
+    },
+    {
+      "candidate": "candidate-2 Google Chrome Stable: 152.0.7977.64-1",
+      "id": "CVE-2026-78909",
+      "artifact": "chrome",
+      "installed": "152.0.7977.64",
+      "ecosystem": "binary",
+      "namespace": "nvd:cpe",
+      "fixed": [
+        "152.0.7977.65"
+      ],
+      "match_type": "stock-matcher",
+      "location": "/ms-playwright/chromium-1234/chrome-linux64/chrome",
+      "component": "chrome/Chromium bytes"
+    },
+    {
+      "candidate": "candidate-2 Google Chrome Stable: 152.0.7977.64-1",
+      "id": "CVE-2026-78935",
+      "artifact": "chrome",
+      "installed": "152.0.7977.64",
+      "ecosystem": "binary",
+      "namespace": "nvd:cpe",
+      "fixed": [
+        "152.0.7977.65"
+      ],
+      "match_type": "stock-matcher",
+      "location": "/ms-playwright/chromium-1234/chrome-linux64/chrome",
+      "component": "chrome/Chromium bytes"
+    },
+    {
+      "candidate": "candidate-2 Google Chrome Stable: 152.0.7977.64-1",
+      "id": "CVE-2026-78937",
+      "artifact": "chrome",
+      "installed": "152.0.7977.64",
+      "ecosystem": "binary",
+      "namespace": "nvd:cpe",
+      "fixed": [
+        "152.0.7977.65"
+      ],
+      "match_type": "stock-matcher",
+      "location": "/ms-playwright/chromium-1234/chrome-linux64/chrome",
+      "component": "chrome/Chromium bytes"
+    },
+    {
+      "candidate": "candidate-2 Google Chrome Stable: 152.0.7977.64-1",
+      "id": "CVE-2026-78939",
+      "artifact": "chrome",
+      "installed": "152.0.7977.64",
+      "ecosystem": "binary",
+      "namespace": "nvd:cpe",
+      "fixed": [
+        "152.0.7977.65"
+      ],
+      "match_type": "stock-matcher",
+      "location": "/ms-playwright/chromium-1234/chrome-linux64/chrome",
+      "component": "chrome/Chromium bytes"
+    },
+    {
+      "candidate": "candidate-2 Google Chrome Stable: 152.0.7977.64-1",
+      "id": "CVE-2026-78945",
+      "artifact": "chrome",
+      "installed": "152.0.7977.64",
+      "ecosystem": "binary",
+      "namespace": "nvd:cpe",
+      "fixed": [
+        "152.0.7977.65"
+      ],
+      "match_type": "stock-matcher",
+      "location": "/ms-playwright/chromium-1234/chrome-linux64/chrome",
+      "component": "chrome/Chromium bytes"
+    },
+    {
+      "candidate": "candidate-2 Google Chrome Stable: 152.0.7977.64-1",
+      "id": "CVE-2026-78948",
+      "artifact": "chrome",
+      "installed": "152.0.7977.64",
+      "ecosystem": "binary",
+      "namespace": "nvd:cpe",
+      "fixed": [
+        "152.0.7977.65"
+      ],
+      "match_type": "stock-matcher",
+      "location": "/ms-playwright/chromium-1234/chrome-linux64/chrome",
+      "component": "chrome/Chromium bytes"
+    },
+    {
+      "candidate": "candidate-2 Google Chrome Stable: 152.0.7977.64-1",
+      "id": "CVE-2026-78951",
+      "artifact": "chrome",
+      "installed": "152.0.7977.64",
+      "ecosystem": "binary",
+      "namespace": "nvd:cpe",
+      "fixed": [
+        "152.0.7977.65"
+      ],
+      "match_type": "stock-matcher",
+      "location": "/ms-playwright/chromium-1234/chrome-linux64/chrome",
+      "component": "chrome/Chromium bytes"
+    },
+    {
+      "candidate": "candidate-2 Google Chrome Stable: 152.0.7977.64-1",
+      "id": "CVE-2026-78964",
+      "artifact": "chrome",
+      "installed": "152.0.7977.64",
+      "ecosystem": "binary",
+      "namespace": "nvd:cpe",
+      "fixed": [
+        "152.0.7977.65"
+      ],
+      "match_type": "stock-matcher",
+      "location": "/ms-playwright/chromium-1234/chrome-linux64/chrome",
+      "component": "chrome/Chromium bytes"
+    },
+    {
+      "candidate": "candidate-2 Google Chrome Stable: 152.0.7977.64-1",
+      "id": "CVE-2026-79012",
+      "artifact": "chrome",
+      "installed": "152.0.7977.64",
+      "ecosystem": "binary",
+      "namespace": "nvd:cpe",
+      "fixed": [
+        "152.0.7977.65"
+      ],
+      "match_type": "stock-matcher",
+      "location": "/ms-playwright/chromium-1234/chrome-linux64/chrome",
+      "component": "chrome/Chromium bytes"
+    },
+    {
+      "candidate": "candidate-2 Google Chrome Stable: 152.0.7977.64-1",
+      "id": "CVE-2026-79026",
+      "artifact": "chrome",
+      "installed": "152.0.7977.64",
+      "ecosystem": "binary",
+      "namespace": "nvd:cpe",
+      "fixed": [
+        "152.0.7977.65"
+      ],
+      "match_type": "stock-matcher",
+      "location": "/ms-playwright/chromium-1234/chrome-linux64/chrome",
+      "component": "chrome/Chromium bytes"
+    },
+    {
+      "candidate": "candidate-2 Google Chrome Stable: 152.0.7977.64-1",
+      "id": "CVE-2026-79043",
+      "artifact": "chrome",
+      "installed": "152.0.7977.64",
+      "ecosystem": "binary",
+      "namespace": "nvd:cpe",
+      "fixed": [
+        "152.0.7977.65"
+      ],
+      "match_type": "stock-matcher",
+      "location": "/ms-playwright/chromium-1234/chrome-linux64/chrome",
+      "component": "chrome/Chromium bytes"
+    },
+    {
+      "candidate": "candidate-2 Google Chrome Stable: 152.0.7977.64-1",
+      "id": "CVE-2026-79047",
+      "artifact": "chrome",
+      "installed": "152.0.7977.64",
+      "ecosystem": "binary",
+      "namespace": "nvd:cpe",
+      "fixed": [
+        "152.0.7977.65"
+      ],
+      "match_type": "stock-matcher",
+      "location": "/ms-playwright/chromium-1234/chrome-linux64/chrome",
+      "component": "chrome/Chromium bytes"
+    },
+    {
+      "candidate": "candidate-2 Google Chrome Stable: 152.0.7977.64-1",
+      "id": "CVE-2026-79052",
+      "artifact": "chrome",
+      "installed": "152.0.7977.64",
+      "ecosystem": "binary",
+      "namespace": "nvd:cpe",
+      "fixed": [
+        "152.0.7977.65"
+      ],
+      "match_type": "stock-matcher",
+      "location": "/ms-playwright/chromium-1234/chrome-linux64/chrome",
+      "component": "chrome/Chromium bytes"
+    },
+    {
+      "candidate": "candidate-2 Google Chrome Stable: 152.0.7977.64-1",
+      "id": "CVE-2026-79056",
+      "artifact": "chrome",
+      "installed": "152.0.7977.64",
+      "ecosystem": "binary",
+      "namespace": "nvd:cpe",
+      "fixed": [
+        "152.0.7977.65"
+      ],
+      "match_type": "stock-matcher",
+      "location": "/ms-playwright/chromium-1234/chrome-linux64/chrome",
+      "component": "chrome/Chromium bytes"
+    },
+    {
+      "candidate": "candidate-2 Google Chrome Stable: 152.0.7977.64-1",
+      "id": "CVE-2026-79064",
+      "artifact": "chrome",
+      "installed": "152.0.7977.64",
+      "ecosystem": "binary",
+      "namespace": "nvd:cpe",
+      "fixed": [
+        "152.0.7977.65"
+      ],
+      "match_type": "stock-matcher",
+      "location": "/ms-playwright/chromium-1234/chrome-linux64/chrome",
+      "component": "chrome/Chromium bytes"
+    },
+    {
+      "candidate": "candidate-2 Google Chrome Stable: 152.0.7977.64-1",
+      "id": "CVE-2026-79078",
+      "artifact": "chrome",
+      "installed": "152.0.7977.64",
+      "ecosystem": "binary",
+      "namespace": "nvd:cpe",
+      "fixed": [
+        "152.0.7977.65"
+      ],
+      "match_type": "stock-matcher",
+      "location": "/ms-playwright/chromium-1234/chrome-linux64/chrome",
+      "component": "chrome/Chromium bytes"
+    },
+    {
+      "candidate": "candidate-2 Google Chrome Stable: 152.0.7977.64-1",
+      "id": "CVE-2026-79091",
+      "artifact": "chrome",
+      "installed": "152.0.7977.64",
+      "ecosystem": "binary",
+      "namespace": "nvd:cpe",
+      "fixed": [
+        "152.0.7977.65"
+      ],
+      "match_type": "stock-matcher",
+      "location": "/ms-playwright/chromium-1234/chrome-linux64/chrome",
+      "component": "chrome/Chromium bytes"
+    },
+    {
+      "candidate": "candidate-2 Google Chrome Stable: 152.0.7977.64-1",
+      "id": "CVE-2026-79111",
+      "artifact": "chrome",
+      "installed": "152.0.7977.64",
+      "ecosystem": "binary",
+      "namespace": "nvd:cpe",
+      "fixed": [
+        "152.0.7977.65"
+      ],
+      "match_type": "stock-matcher",
+      "location": "/ms-playwright/chromium-1234/chrome-linux64/chrome",
+      "component": "chrome/Chromium bytes"
+    },
+    {
+      "candidate": "candidate-2 Google Chrome Stable: 152.0.7977.64-1",
+      "id": "CVE-2026-79189",
+      "artifact": "chrome",
+      "installed": "152.0.7977.64",
+      "ecosystem": "binary",
+      "namespace": "nvd:cpe",
+      "fixed": [
+        "152.0.7977.65"
+      ],
+      "match_type": "stock-matcher",
+      "location": "/ms-playwright/chromium-1234/chrome-linux64/chrome",
+      "component": "chrome/Chromium bytes"
+    }
+  ]
+}

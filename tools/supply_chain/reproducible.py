@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 import os
 import shutil
 import stat
@@ -14,7 +15,11 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from tools.supply_chain.evidence import normalize_runtime_file, sha256_bytes
+from tools.supply_chain.evidence import (
+    NEXT_APP_PATH_ROUTES_MANIFEST,
+    normalize_runtime_file,
+    sha256_bytes,
+)
 from tools.supply_chain.policy import (
     POLICY_PATH,
     ROOT,
@@ -39,8 +44,16 @@ NODE_OUTPUTS = (
     "apps/web/public",
 )
 BROWSER_RUNTIME = (
+    "packages/browser-tool-contracts/package.json",
+    "packages/browser-tool-contracts/src",
+    "pnpm-lock.yaml",
+    "services/browser-worker/Dockerfile",
+    "services/browser-worker/extract-zip.mjs",
     "services/browser-worker/package.json",
     "services/browser-worker/src",
+    "services/browser-worker/seccomp_profile.json",
+    "services/browser-worker/tsconfig.build.json",
+    "services/browser-worker/tsconfig.json",
 )
 IGNORED_PARTS = {
     ".git",
@@ -142,6 +155,14 @@ def tree_manifest(root: Path, relative_paths: tuple[str, ...]) -> list[dict[str,
                 )
                 entry["normalized_fields"] = normalized_fields
                 entry["sha256"] = sha256_bytes(content)
+                if runtime_name == NEXT_APP_PATH_ROUTES_MANIFEST:
+                    try:
+                        document = json.loads(content)
+                    except json.JSONDecodeError as exc:
+                        raise PolicyError(
+                            "web: cannot parse canonical app route manifest"
+                        ) from exc
+                    entry["json_value_hashes"] = _json_value_hashes(document)
             else:
                 raise PolicyError(f"unsupported build output type: {path_relative}")
             entries.append(entry)
@@ -153,6 +174,87 @@ def workspace_output_paths(root: Path) -> tuple[str, ...]:
         path.relative_to(root).as_posix()
         for path in sorted((root / "packages").glob("*/dist"))
     )
+
+
+def describe_manifest_difference(first: dict[str, Any], second: dict[str, Any]) -> str:
+    """Return one bounded, content-free difference for reproducibility failures."""
+
+    for section in ("browser_runtime", "web_distribution", "workspace_outputs"):
+        left = {entry["path"]: entry for entry in first[section]}
+        right = {entry["path"]: entry for entry in second[section]}
+        for path in sorted(set(left) | set(right)):
+            if path not in left or path not in right:
+                first_state = "present" if path in left else "missing"
+                second_state = "present" if path in right else "missing"
+                return (
+                    f"section={section} path={path} "
+                    f"first={first_state} second={second_state}"
+                )
+            if left[path] != right[path]:
+                json_difference = _json_manifest_difference(left[path], right[path])
+                if json_difference is not None:
+                    return f"section={section} path={path} json-path={json_difference}"
+                return (
+                    f"section={section} path={path} "
+                    f"first={_manifest_fingerprint(left[path])} "
+                    f"second={_manifest_fingerprint(right[path])}"
+                )
+    return "unclassified normalized manifest difference"
+
+
+def _json_value_hashes(
+    value: Any, *, path: str = "$", limit: int = 256
+) -> dict[str, str]:
+    """Return bounded content-free hashes for semantic JSON comparison evidence."""
+
+    result: dict[str, str] = {}
+
+    def visit(item: Any, item_path: str) -> None:
+        if len(result) >= limit:
+            return
+        encoded = json.dumps(
+            item, ensure_ascii=True, sort_keys=True, separators=(",", ":")
+        )
+        result[item_path] = sha256_bytes(encoded.encode("utf-8"))
+        if isinstance(item, dict):
+            for key in sorted(item):
+                visit(item[key], f"{item_path}.{key}")
+        elif isinstance(item, list):
+            for index, child in enumerate(item):
+                visit(child, f"{item_path}[{index}]")
+
+    visit(value, path)
+    return result
+
+
+def _json_manifest_difference(
+    first: dict[str, Any], second: dict[str, Any]
+) -> str | None:
+    left = first.get("json_value_hashes")
+    right = second.get("json_value_hashes")
+    if not isinstance(left, dict) or not isinstance(right, dict):
+        return None
+    paths = sorted(
+        set(left) | set(right),
+        key=lambda value: (-value.count(".") - value.count("["), value),
+    )
+    for path in paths:
+        if left.get(path) != right.get(path):
+            return path
+    return None
+
+
+def _manifest_fingerprint(entry: dict[str, Any]) -> str:
+    fields = [f"type={entry.get('type')}", f"mode={entry.get('mode')}"]
+    if "size" in entry:
+        fields.append(f"size={entry['size']}")
+    if "sha256" in entry:
+        fields.append(f"sha256={entry['sha256']}")
+    if "target" in entry:
+        fields.append(f"target={entry['target']}")
+    if "normalized_fields" in entry:
+        fields.append(f"normalized_fields={entry['normalized_fields']}")
+    return ",".join(fields)
 
 
 def find_generated_contracts(root: Path) -> list[str]:
@@ -230,7 +332,10 @@ def reproduce(root: Path, output: Path) -> dict[str, Any]:
                 }
             )
         if node_attempts[0] != node_attempts[1]:
-            raise PolicyError("Web/browser normalized output manifests differ")
+            raise PolicyError(
+                "Web/browser normalized output manifests differ: "
+                + describe_manifest_difference(node_attempts[0], node_attempts[1])
+            )
 
     generated_contracts = find_generated_contracts(root)
     if generated_contracts:

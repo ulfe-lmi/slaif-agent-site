@@ -44,6 +44,10 @@ and exposes only its typed `cow_pool()` boundary to the semantic read and
 mutation executors. The read executor binds all wrapper calls to one
 request-scoped `asyncpg_cow_session` and never falls back to the ordinary
 application content service.
+Capability-bound preview-run routes use only the exact Agent owner functions to
+reserve/replay and read durable browser state; Agent still has no direct
+Control/audit relation access. Status and artifact metadata reads do not enter
+COW or create audit/idempotency state.
 Control and Agent never share a locator, pool, native connection, or
 credential volume.
 
@@ -79,6 +83,14 @@ it through the COW projection; ordinary preview touch updates only
 `last_seen_at`, never `recent_auth_at`. Web receives no database locator; it
 and Render share only a separate high-entropy file-backed Render-call
 credential mounted read-only from `render-auth-secret`.
+
+Browser-token preview adds no database credential to Web or worker. Agent and
+Render share one separate file-backed HMAC signing key, but only Render's
+existing preview DB identity receives execution on
+`slaif_render_browser_preview_authorize`. That function consumes/rechecks only
+a nonce digest and exact active run binding under the workspace lock before
+Render opens the same preview COW context. It grants no table DML, canonical
+write, Agent capability, human session, or reviewer authority.
 
 The master `local-secrets` volume still contains PostgreSQL administrator,
 bootstrap owner, login-password, and future-service files. Control does not
@@ -224,5 +236,7 @@ architecture/work order that repeats, rather than shares, this pattern:
 
 Network membership, a generated future DSN, or a conceptual role in
 `authority.py` is not permission to connect. In particular, Editor, Render,
-MCP, Media, Review, Scheduler, GC, Web, and browser processes remain
-database-credential-free in this implementation.
+MCP, Media, Review, Scheduler, GC, Web, and browser worker cannot infer or share
+another process's database credential. Implemented Editor/Render/Media use only
+their documented isolated credentials; MCP, Review, Scheduler, GC, Web, and
+browser worker remain database-credential-free.

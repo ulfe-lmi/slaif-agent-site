@@ -99,24 +99,39 @@ class OciContractTests(unittest.TestCase):
         )[0]
         self.assertNotIn("      '@playwright/test':", web_importer)
 
-    def test_browser_placeholder_has_no_package_or_browser_install(self) -> None:
+    def test_browser_runtime_is_exact_and_runtime_install_free(self) -> None:
         content = (ROOT / "services/browser-worker/Dockerfile").read_text(
             encoding="utf-8"
         )
-        self.assertNotIn("pnpm install", content)
-        self.assertNotIn("npm install", content)
+        self.assertIn(
+            "mcr.microsoft.com/playwright:v1.62.1-noble@sha256:"
+            "dcc5531e97840b9b5e794f2814476b21571c5124a3fca2267d73041f56e7580e",
+            content,
+        )
+        self.assertIn("pnpm install --frozen-lockfile", content)
+        self.assertNotRegex(content, r"(?:^|\n)RUN npm install")
         self.assertNotIn("playwright install", content.casefold())
+        runtime = content.split(" AS runtime", maxsplit=1)[1]
+        self.assertNotIn("pnpm install", runtime)
+        self.assertIn("rm -rf /ms-playwright/*", runtime)
+        self.assertIn("BROWSER_WORKER_EXPECTED_CHROMIUM_VERSION=152.0.7977.64", runtime)
+        self.assertIn(
+            "8b592f066af71f054aab2cc80fc26f73c775c6d44ebb99d16ade924b24756c2e",
+            content,
+        )
         self.assertIn("USER 10001:10001", content)
 
     def test_unused_vulnerable_runtime_tools_are_removed(self) -> None:
         nginx = (ROOT / "infra/nginx/Dockerfile").read_text(encoding="utf-8")
         self.assertIn("apk del curl", nginx)
-        for relative in ("apps/web/Dockerfile", "services/browser-worker/Dockerfile"):
-            content = (ROOT / relative).read_text(encoding="utf-8")
-            self.assertIn(
-                "find /usr/local/lib/node_modules/npm -depth -delete", content
-            )
-            self.assertIn("rm /usr/local/bin/npm /usr/local/bin/npx", content)
+        web = (ROOT / "apps/web/Dockerfile").read_text(encoding="utf-8")
+        self.assertIn("find /usr/local/lib/node_modules/npm -depth -delete", web)
+        self.assertIn("rm /usr/local/bin/npm /usr/local/bin/npx", web)
+        worker = (ROOT / "services/browser-worker/Dockerfile").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("/usr/lib/node_modules/npm", worker)
+        self.assertIn("rm -f /usr/bin/npm /usr/bin/npx /usr/bin/corepack", worker)
 
 
 if __name__ == "__main__":

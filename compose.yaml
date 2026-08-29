@@ -94,12 +94,18 @@ services:
       - /run/slaif-render-preview
       - --render-auth-directory
       - /run/slaif-render-auth
+      - --browser-signing-directory
+      - /run/slaif-browser-signing
+      - --browser-worker-directory
+      - /run/slaif-browser-worker
       - --editor-directory
       - /run/slaif-editor
       - --media-directory
       - /run/slaif-media
       - --media-root
       - /var/lib/slaif/media
+      - --browser-artifact-root
+      - /var/lib/slaif/browser-artifacts
     restart: "no"
     network_mode: none
     volumes:
@@ -109,6 +115,9 @@ services:
       - render-secret:/run/slaif-render
       - render-preview-secret:/run/slaif-render-preview
       - render-auth-secret:/run/slaif-render-auth
+      - browser-signing-secret:/run/slaif-browser-signing
+      - browser-worker-secret:/run/slaif-browser-worker
+      - browser-artifacts:/var/lib/slaif/browser-artifacts
       - editor-secret:/run/slaif-editor
       - media-secret:/run/slaif-media
       - media-data:/var/lib/slaif/media
@@ -228,16 +237,29 @@ services:
       SLAIF_BIND_HOST: 0.0.0.0
       SLAIF_BIND_PORT: "8000"
       SLAIF_AGENT_DSN_FILE: /run/slaif-agent/agent-dsn
+      SLAIF_AGENT_BROWSER_SIGNING_KEY_FILE: /run/slaif-browser-signing/signing-key
+      SLAIF_AGENT_BROWSER_WORKER_ENDPOINT: http://browser-worker:3100
+      SLAIF_AGENT_BROWSER_WORKER_SERVICE_CREDENTIAL_FILE: /run/slaif-browser-worker/worker-token
       SLAIF_AGENT_EXPECTED_DATABASE: slaif
       SLAIF_AGENT_EXPECTED_LOGIN: slaif_agent_login
       SLAIF_AGENT_EXPECTED_PRIVILEGE_ROLE: slaif_agent_runtime
       SLAIF_AGENT_MODE: development
+      SLAIF_AGENT_DISPATCHER_ENABLED: "true"
+      SLAIF_AGENT_DISPATCHER_POLL_INTERVAL_SECONDS: "0.5"
+      SLAIF_AGENT_DISPATCHER_BACKOFF_SECONDS: "2"
+      SLAIF_AGENT_DISPATCHER_LEASE_SECONDS: "30"
+      SLAIF_AGENT_DISPATCHER_RENEWAL_INTERVAL_SECONDS: "10"
+      SLAIF_AGENT_DISPATCHER_WORKER_TIMEOUT_SECONDS: "120"
+      SLAIF_AGENT_DISPATCHER_CONCURRENCY: "1"
+      SLAIF_AGENT_DISPATCHER_SHUTDOWN_TIMEOUT_SECONDS: "5"
       SLAIF_LOG_FORMAT: json
       SLAIF_LOG_LEVEL: INFO
       SLAIF_MODE: development
       SLAIF_PUBLIC_URL: http://localhost:8080
     volumes:
       - agent-secret:/run/slaif-agent:ro
+      - browser-signing-secret:/run/slaif-browser-signing:ro
+      - browser-worker-secret:/run/slaif-browser-worker:ro
     networks: [edge, database, browser]
 
   render-api:
@@ -253,6 +275,7 @@ services:
       SLAIF_RENDER_DSN_FILE: /run/slaif-render/render-dsn
       SLAIF_RENDER_PREVIEW_DSN_FILE: /run/slaif-render-preview/preview-dsn
       SLAIF_RENDER_SERVICE_TOKEN_FILE: /run/slaif-render-auth/render-token
+      SLAIF_RENDER_BROWSER_SIGNING_KEY_FILE: /run/slaif-browser-signing/signing-key
       SLAIF_RENDER_EXPECTED_DATABASE: slaif
       SLAIF_RENDER_EXPECTED_LOGIN: slaif_public_login
       SLAIF_RENDER_EXPECTED_PRIVILEGE_ROLE: slaif_public_reader
@@ -263,6 +286,7 @@ services:
       - render-secret:/run/slaif-render:ro
       - render-preview-secret:/run/slaif-render-preview:ro
       - render-auth-secret:/run/slaif-render-auth:ro
+      - browser-signing-secret:/run/slaif-browser-signing:ro
     networks: [application, database]
 
   mcp-adapter:
@@ -317,14 +341,33 @@ services:
       args: *image-build-args
     restart: unless-stopped
     init: true
+    user: "10001:10001"
+    cap_add:
+      - SYS_CHROOT
+    security_opt:
+      - no-new-privileges:true
+      - seccomp=services/browser-worker/seccomp_profile.json
+    cpus: "1.0"
+    mem_limit: 768m
+    pids_limit: 256
+    shm_size: 128m
     expose:
       - "3100"
+    environment:
+      BROWSER_WORKER_ARTIFACT_ROOT: /var/lib/slaif/browser-artifacts
+      BROWSER_WORKER_PREVIEW_ORIGIN: http://web:3000
+      BROWSER_WORKER_SERVICE_CREDENTIAL_FILE: /run/slaif-browser-worker/worker-token
     tmpfs:
-      - /tmp:mode=1777,nosuid,nodev,noexec,size=16m
+      - /tmp:uid=10001,gid=10001,mode=700,nosuid,nodev,noexec,size=64m
+    volumes:
+      - browser-worker-secret:/run/slaif-browser-worker:ro
+      - browser-artifacts:/var/lib/slaif/browser-artifacts
     networks: [browser]
     depends_on:
-      bootstrap:
+      secrets-init:
         condition: service_completed_successfully
+      web:
+        condition: service_healthy
     healthcheck:
       test:
         - CMD
@@ -350,12 +393,13 @@ services:
     expose:
       - "3000"
     environment:
+      SLAIF_BROWSER_PREVIEW_AUTHORITY: localhost:8080
       SLAIF_RENDER_SERVICE_TOKEN_FILE: /run/slaif-render-auth/render-token
     tmpfs:
       - /tmp:mode=1777,nosuid,nodev,noexec,size=16m
     volumes:
       - render-auth-secret:/run/slaif-render-auth:ro
-    networks: [edge, application]
+    networks: [edge, application, browser]
     depends_on:
       bootstrap:
         condition: service_completed_successfully
@@ -423,6 +467,9 @@ networks:
 
 volumes:
   agent-secret: {}
+  browser-artifacts: {}
+  browser-signing-secret: {}
+  browser-worker-secret: {}
   control-secret: {}
   editor-secret: {}
   local-secrets: {}

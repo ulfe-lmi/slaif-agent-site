@@ -101,7 +101,20 @@ no direct relation access and receives only named function execution. Agent,
 editor, public/preview reader, reviewer, scheduler, media, and GC roles have
 neither relation access nor RBAC function execution.
 
+Capability-authenticated browser reservation is a separate Agent boundary. The
+trusted capability fixes site, workspace, delegator, scopes, expiry, approved
+Chromium targets, total/concurrent run limits, screenshot and artifact-byte
+budgets, route/evidence bounds, duration, and attempts. External create input
+contains only contract version, normalized route, one target, and unique
+allowlisted evidence. The database obtains the shared workspace lock and then
+rechecks `preview:inspect`, capability, workspace, site, and immutable binding
+before reserving a run. Caller-supplied site/workspace/delegator facts cannot
+widen authority. Run and retained artifact reads repeat the exact binding and
+return non-leaking absence.
+
 This remains trusted institutional multi-site tenancy, not hostile public SaaS
 isolation or RLS. The membership UI does not provision identities or implement
-invitations or custom roles. Workspaces, capabilities, content, and publication
-execution are not implemented yet.
+invitations or custom roles. Capability-bound browser run reservation/status/
+metadata HTTP, retained PRIVATE artifact-byte retrieval, and run-bound Render
+verification are implemented. Artifact GC, source browsing, review, and
+publication execution remain unimplemented.

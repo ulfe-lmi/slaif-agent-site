@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import importlib.metadata
 import json
 import re
@@ -93,6 +94,7 @@ def validate_policy(policy: dict[str, Any]) -> None:
         "application_licenses",
         "alpine_package_overrides",
         "attribution_notes",
+        "browser_runtime",
         "container_license_policy",
         "evidence",
         "github_actions",
@@ -257,7 +259,7 @@ def validate_policy(policy: dict[str, Any]) -> None:
         raise PolicyError("policy: Alpine package overrides are malformed")
     if overrides["registry"] != "https://dl-cdn.alpinelinux.org/alpine/v3.23":
         raise PolicyError("policy: Alpine package registry is not exact and approved")
-    expected_override_images = {"apache", "backend", "browser-worker", "nginx", "web"}
+    expected_override_images = {"apache", "backend", "nginx", "web"}
     if (
         not isinstance(overrides["images"], dict)
         or set(overrides["images"]) != expected_override_images
@@ -293,6 +295,46 @@ def validate_policy(policy: dict[str, Any]) -> None:
             raise PolicyError(
                 f"policy: Alpine package removals for {name} are malformed"
             )
+
+    browser_runtime = policy["browser_runtime"]
+    if not isinstance(browser_runtime, dict):
+        raise PolicyError("policy: browser runtime must be an object")
+    require_keys(
+        browser_runtime,
+        {
+            "allowed_capabilities",
+            "base_image",
+            "chromium_archive_sha256",
+            "chromium_archive_url",
+            "chromium_executable",
+            "chromium_revision",
+            "chromium_version",
+            "forbidden_product_browsers",
+            "node_version",
+            "platform",
+            "playwright_core_version",
+            "seccomp_profile_sha256",
+        },
+        "policy.browser_runtime",
+    )
+    if (
+        browser_runtime["base_image"] != "playwright"
+        or browser_runtime["playwright_core_version"] != "1.62.1"
+        or browser_runtime["chromium_revision"] != "1669021"
+        or browser_runtime["chromium_version"] != "152.0.7977.64"
+        or browser_runtime["chromium_archive_url"]
+        != "https://storage.googleapis.com/chrome-for-testing-public/152.0.7977.64/linux64/chrome-linux64.zip"
+        or browser_runtime["chromium_archive_sha256"]
+        != "8b592f066af71f054aab2cc80fc26f73c775c6d44ebb99d16ade924b24756c2e"
+        or browser_runtime["platform"] != "linux/amd64"
+        or browser_runtime["node_version"] != "24.18.1"
+        or browser_runtime["chromium_executable"]
+        != "/ms-playwright/chromium-1669021/chrome-linux64/chrome"
+        or browser_runtime["allowed_capabilities"] != ["SYS_CHROOT"]
+        or browser_runtime["forbidden_product_browsers"] != ["firefox", "webkit"]
+        or not SHA256.fullmatch(str(browser_runtime["seccomp_profile_sha256"]))
+    ):
+        raise PolicyError("policy: browser runtime facts are invalid")
 
     scanners = policy["scanner_tools"]
     if not isinstance(scanners, dict) or set(scanners) != {"grype", "syft"}:
@@ -603,8 +645,9 @@ def validate_dependency_sources(root: Path, policy: dict[str, Any]) -> dict[str,
     for line in pnpm_text.splitlines():
         if re.search(r"(?:specifier|version):\s*(?:file:|https?:|git\+)", line):
             raise PolicyError("pnpm-lock.yaml: forbidden direct package source")
-        if "link:" in line and not re.fullmatch(
-            r"\s+version: link:packages/[a-z0-9-]+", line
+        if "link:" in line and not (
+            re.fullmatch(r"\s+version: link:packages/[a-z0-9-]+", line)
+            or line == "        version: link:../../packages/browser-tool-contracts"
         ):
             raise PolicyError(
                 "pnpm-lock.yaml: workspace link escapes approved packages"
@@ -672,7 +715,6 @@ def validate_dependency_sources(root: Path, policy: dict[str, Any]) -> dict[str,
     override_paths = {
         "apache": root / "infra/apache/Dockerfile",
         "backend": root / "services/backend/Dockerfile",
-        "browser-worker": root / "services/browser-worker/Dockerfile",
         "nginx": root / "infra/nginx/Dockerfile",
         "web": root / "apps/web/Dockerfile",
     }
@@ -688,6 +730,33 @@ def validate_dependency_sources(root: Path, policy: dict[str, Any]) -> dict[str,
                 marker = f"apk del {package}"
             if marker not in dockerfile_text:
                 raise PolicyError(f"{name}: missing Alpine package removal {package}")
+
+    browser_runtime = policy["browser_runtime"]
+    worker_dockerfile = (root / "services/browser-worker/Dockerfile").read_text(
+        encoding="utf-8"
+    )
+    worker_manifest = (root / "services/browser-worker/package.json").read_text(
+        encoding="utf-8"
+    )
+    for fact, content in (
+        (browser_runtime["chromium_executable"], worker_dockerfile),
+        (browser_runtime["chromium_version"], worker_dockerfile),
+        (browser_runtime["chromium_archive_url"], worker_dockerfile),
+        (browser_runtime["chromium_archive_sha256"], worker_dockerfile),
+        (
+            f'"playwright-core": "{browser_runtime["playwright_core_version"]}"',
+            worker_manifest,
+        ),
+    ):
+        if fact not in content:
+            raise PolicyError(f"browser-worker: missing runtime fact {fact}")
+    profile = root / "services/browser-worker/seccomp_profile.json"
+    if (
+        not profile.is_file()
+        or hashlib.sha256(profile.read_bytes()).hexdigest()
+        != browser_runtime["seccomp_profile_sha256"]
+    ):
+        raise PolicyError("browser-worker: seccomp profile drift")
 
     return {
         "github_actions": [

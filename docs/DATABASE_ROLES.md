@@ -14,7 +14,7 @@ NOREPLICATION NOBYPASSRLS`.
 | `slaif_owner` | One-shot bootstrap only | Own `control`, `content`, `audit`, their objects, and the `agentcow` deployment; run migrations and hardening. |
 | `slaif_control` | Control API and human-session principal | `USAGE` on `control` plus execute on owner-defined readiness, setup, opaque-session, and local-credential lookup/compare-and-set functions; direct relation access, content DML, and reviewer/setup-owner authority remain denied. |
 | `slaif_editor_runtime` | Future Editor API principal | COW-view `SELECT`, `INSERT`, `UPDATE`, and `DELETE` after a table is enabled/hardened; no base/change, reviewer, or setup authority. |
-| `slaif_agent_runtime` | Agent API principal | COW-session semantic read wrappers for the seven bounded GET families, five bounded create wrappers, and two narrow durable idempotency/audit functions; no base/change, direct control-table, reviewer, or setup authority. |
+| `slaif_agent_runtime` | Agent API principal | COW semantic wrappers plus nine exact browser/capability functions: authenticate, begin, get, artifact list, claim, renew, release, complete, and artifact-register; no direct Control/audit/browser relation, base/change, reviewer, or setup authority. |
 | `slaif_public_reader` | Canonical Render principal | Exact execute on the two active site resolver functions, plus `SELECT` on present COW views after product grant reconciliation; no site relations, management functions, or DML. |
 | `slaif_preview_reader` | Render workspace-preview principal | Read-only COW-view access plus exact execution of `slaif_render_preview_authorize`; no base/change tables, DML, lifecycle, reviewer, or setup authority. |
 | `slaif_reviewer` | Future review-worker principal | Read-only COW views and only the foundation-controlled reviewer function surface; no runtime DML or setup. |
@@ -118,6 +118,28 @@ existing Editor media update/delete wrappers so COW metadata patch/delete
 operations remain unambiguous. The lock is transaction-scoped and the fixed
 Media role receives no additional authority.
 
+Revision `035_001` removes Agent's former direct `SELECT` on
+`control.workspace` and `control.capability`. Capability authentication now
+returns the existing trusted identity/scope facts plus validated browser limits
+through one fixed-search-path owner function. Eight further Agent-only
+functions create/replay browser runs, read run/private artifact metadata, claim
+and manage bounded leases, complete a run, and register metadata. The three
+Control relations and append-only audit relation grant no direct runtime DML or
+read. Control retains its existing workspace/capability management reads;
+Editor, public/preview readers, Reviewer, Scheduler, Media, and GC receive no
+browser function or relation authority. The browser worker still has no
+database principal.
+
+Revision `036_001` gives only `slaif_preview_reader` execution on
+`control.slaif_render_browser_preview_authorize(...)`. It has no direct browser
+relation DML. The owner function takes the shared workspace lock; requires the
+exact capability/site/workspace/run/route/target/evidence/artifact-byte/duration
+binding, active unexpired `preview:inspect` authority, and QUEUED/RUNNING run;
+atomically stores one nonce digest/consumption time and audit event; and supports
+one same-digest in-transaction recheck without a second consumption. Agent,
+Control, Editor, public reader, Reviewer, Scheduler, Media, GC, and PUBLIC have
+no execution grant.
+
 ## Login-principal design
 
 Privilege roles never contain passwords. The local deployment provisions this
@@ -190,6 +212,10 @@ The product and local-login verifiers read PostgreSQL's effective truth through
 - `PUBLIC` and non-owner schema creation;
 - effective relation DML, including inherited grants;
 - effective function execution and locked-down reviewer functions;
+- exact browser function owner/signature/search-path/Agent-only execution and
+  browser-relation denials;
+- exact Render browser-preview function ownership, preview-only execution,
+  nonce-consumption shape, and all other-role denials;
 - exact empty-schema inventory and generic content/foundation object
   fingerprints;
 - state-specific schema usage and Reviewer foundation authority;

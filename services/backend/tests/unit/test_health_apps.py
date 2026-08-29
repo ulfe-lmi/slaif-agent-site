@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -11,6 +12,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.routing import APIRoute
 from slaif_agent_site.agent_api import create_app as create_agent_app
+from slaif_agent_site.agent_api.config import AgentDatabaseSettings
 from slaif_agent_site.authority import ProcessKind, authority_for
 from slaif_agent_site.config import ServiceSettings
 from slaif_agent_site.control_api import create_app as create_control_app
@@ -197,8 +199,10 @@ async def test_each_app_has_only_typed_health_routes(
             "/api/agent/v1/pages/",
             "/api/agent/v1/pages/{page_id}/components",
             "/api/agent/v1/media/",
-            "/internal/browser/v1/preview-runs",
-            "/internal/browser/v1/runs/{run_id}",
+            "/api/agent/v1/preview-runs",
+            "/api/agent/v1/preview-runs/{run_id}",
+            "/api/agent/v1/preview-runs/{run_id}/artifacts",
+            "/api/agent/v1/preview-runs/{run_id}/artifacts/{artifact_id}",
         }
     if process is ProcessKind.RENDER_API:
         expected_routes.add("/internal/render/v1/site-context")
@@ -371,6 +375,48 @@ async def test_control_liveness_is_independent_of_database_readiness() -> None:
             }
         ],
     }
+
+
+async def test_agent_bad_browser_signing_key_blocks_only_readiness(
+    tmp_path: Path,
+) -> None:
+    directory = tmp_path / "browser-signing"
+    directory.mkdir(mode=0o700)
+    key_file = directory / "signing-key"
+    key_file.write_text("invalid-browser-key", encoding="ascii")
+    key_file.chmod(0o400)
+    database = FakeAgentDatabase()
+    app = create_agent_app(
+        settings=ServiceSettings(),
+        database_settings=AgentDatabaseSettings(browser_signing_key_file=key_file),
+        database=database,
+    )
+    async with app.router.lifespan_context(app):
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://testserver"
+        ) as client:
+            live = await client.get("/health/live")
+            ready = await client.get("/health/ready")
+    assert live.status_code == 200
+    assert ready.status_code == 503
+    assert ready.json()["components"] == [
+        {"component": "database", "status": "ok", "reason": None},
+        {
+            "component": "browser-signing-key",
+            "status": "unavailable",
+            "reason": "signing_key_unavailable",
+        },
+        {
+            "component": "browser-worker-client",
+            "status": "unavailable",
+            "reason": "worker_credential_unavailable",
+        },
+        {
+            "component": "browser-dispatcher",
+            "status": "unavailable",
+            "reason": "dispatcher_dependency_unavailable",
+        },
+    ]
 
 
 def test_probe_component_and_reason_are_bounded_codes() -> None:

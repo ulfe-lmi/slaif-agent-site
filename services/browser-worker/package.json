@@ -4,9 +4,20 @@
   "private": true,
   "license": "Apache-2.0",
   "type": "module",
+  "files": [
+    "dist"
+  ],
   "scripts": {
-    "build": "tsc --project tsconfig.json --noEmit",
+    "build": "tsc --project tsconfig.build.json",
     "typecheck": "tsc --project tsconfig.json --noEmit",
-    "test": "node --test tests/*.test.mjs"
+    "test": "pnpm --filter @slaif-agent-site/browser-tool-contracts build && pnpm run build && node --test tests/*.test.mjs"
+  },
+  "dependencies": {
+    "@slaif-agent-site/browser-tool-contracts": "workspace:0.0.0",
+    "playwright-core": "1.62.1"
+  },
+  "devDependencies": {
+    "@types/node": "24.13.3",
+    "typescript": "6.0.3"
   }
 }

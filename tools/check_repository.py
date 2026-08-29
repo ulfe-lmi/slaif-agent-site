@@ -113,7 +113,10 @@ NODE_SCRIPTS = {
         "pnpm --recursive run typecheck && tsc --project tsconfig.json --noEmit "
         "&& tsc --project tests/e2e/tsconfig.json --noEmit"
     ),
-    "test": "pnpm build && pnpm --recursive run test && vitest run tests/contracts",
+    "test": (
+        "pnpm build && pnpm --recursive run test && "
+        "vitest run tests/contracts/*.test.ts"
+    ),
     "build": "pnpm --recursive run build",
     "licenses": "pnpm licenses list --json",
     "inventory": "pnpm list --recursive --depth Infinity",
@@ -122,7 +125,12 @@ NODE_SCRIPTS = {
     ),
     "test:e2e": "playwright test",
 }
-SCAFFOLD_EXEMPT_PACKAGES = {"scope-catalog", "component-catalog", "composition-schema"}
+SCAFFOLD_EXEMPT_PACKAGES = {
+    "browser-tool-contracts",
+    "component-catalog",
+    "composition-schema",
+    "scope-catalog",
+}
 
 WORKSPACE_PACKAGES = {
     "api-client": "@slaif-agent-site/api-client",
@@ -184,8 +192,19 @@ NODE_REQUIRED_FILES = (
     "prettier.config.mjs",
     "tests/contracts/workspace-contracts.test.ts",
     "services/browser-worker/Dockerfile",
+    "services/browser-worker/extract-zip.mjs",
     "services/browser-worker/package.json",
+    "services/browser-worker/seccomp_profile.json",
+    "services/browser-worker/src/artifact-store.ts",
+    "services/browser-worker/src/auth.ts",
+    "services/browser-worker/src/contracts.ts",
+    "services/browser-worker/src/evidence.ts",
+    "services/browser-worker/src/execution.ts",
+    "services/browser-worker/src/http.ts",
     "services/browser-worker/src/server.ts",
+    "services/browser-worker/src/targets.ts",
+    "services/browser-worker/src/url-policy.ts",
+    "services/browser-worker/tsconfig.build.json",
     "services/browser-worker/tsconfig.json",
     "tsconfig.base.json",
     "tsconfig.json",
@@ -1223,6 +1242,7 @@ class RepositoryPolicy:
                     "test": "node --test tests/*.test.mjs",
                 },
                 "dependencies": {
+                    "@slaif-agent-site/browser-tool-contracts": "workspace:0.0.0",
                     "@measured/puck": "0.20.2",
                     "@radix-ui/react-dialog": "1.1.23",
                     "next": "16.3.1",
@@ -1245,10 +1265,22 @@ class RepositoryPolicy:
                 "private": True,
                 "license": "Apache-2.0",
                 "type": "module",
+                "files": ["dist"],
                 "scripts": {
-                    "build": "tsc --project tsconfig.json --noEmit",
+                    "build": "tsc --project tsconfig.build.json",
                     "typecheck": "tsc --project tsconfig.json --noEmit",
-                    "test": "node --test tests/*.test.mjs",
+                    "test": (
+                        "pnpm --filter @slaif-agent-site/browser-tool-contracts "
+                        "build && pnpm run build && node --test tests/*.test.mjs"
+                    ),
+                },
+                "dependencies": {
+                    "@slaif-agent-site/browser-tool-contracts": "workspace:0.0.0",
+                    "playwright-core": "1.62.1",
+                },
+                "devDependencies": {
+                    "@types/node": "24.13.3",
+                    "typescript": "6.0.3",
                 },
             },
         }
@@ -1454,6 +1486,10 @@ class RepositoryPolicy:
             audited_text = audited_text.replace(
                 f"version: link:packages/{slug}", "version: internal-workspace"
             )
+        worker_link = "version: link:../../packages/browser-tool-contracts"
+        if worker_link not in audited_text:
+            self.error(path, "browser worker lacks its exact internal contract link")
+        audited_text = audited_text.replace(worker_link, "version: internal-workspace")
 
         forbidden_source = re.search(
             r"(?:^|[\s'\"{[(,])(?:git\+https?|git|github|gitlab|bitbucket|file|"

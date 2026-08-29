@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import secrets
 import stat
 from pathlib import Path
@@ -27,11 +28,14 @@ AGENT_DSN_FILE = "agent-dsn"
 RENDER_DSN_FILE = "render-dsn"
 PREVIEW_DSN_FILE = "preview-dsn"
 RENDER_TOKEN_FILE = "render-token"
+BROWSER_SIGNING_KEY_FILE = "signing-key"
+BROWSER_WORKER_TOKEN_FILE = "worker-token"
 EDITOR_DSN_FILE = "editor-dsn"
 MEDIA_DSN_FILE = "media-dsn"
 MEDIA_ROOT_MODE = 0o700
 MEDIA_ROOT_UID = APPLICATION_UID
 MEDIA_ROOT_GID = APPLICATION_UID
+BROWSER_ARTIFACT_ROOT_MODE = 0o700
 MARKER = ".initialized-v1"
 LOGINS = (
     ("bootstrap", "slaif_bootstrap_login"),
@@ -129,9 +133,12 @@ def initialize(
     render_directory: Path | None = None,
     preview_directory: Path | None = None,
     render_auth_directory: Path | None = None,
+    browser_signing_directory: Path | None = None,
+    browser_worker_directory: Path | None = None,
     editor_directory: Path | None = None,
     media_directory: Path | None = None,
     media_root: Path | None = None,
+    browser_artifact_root: Path | None = None,
     validate_only: bool = False,
 ) -> int:
     if not directory.is_absolute():
@@ -146,12 +153,24 @@ def initialize(
         raise SecretInitializationError("Render preview directory must be absolute")
     if render_auth_directory is not None and not render_auth_directory.is_absolute():
         raise SecretInitializationError("Render auth directory must be absolute")
+    if (
+        browser_signing_directory is not None
+        and not browser_signing_directory.is_absolute()
+    ):
+        raise SecretInitializationError("Browser signing directory must be absolute")
+    if (
+        browser_worker_directory is not None
+        and not browser_worker_directory.is_absolute()
+    ):
+        raise SecretInitializationError("Browser worker directory must be absolute")
     if editor_directory is not None and not editor_directory.is_absolute():
         raise SecretInitializationError("Editor secret directory must be absolute")
     if media_directory is not None and not media_directory.is_absolute():
         raise SecretInitializationError("Media secret directory must be absolute")
     if media_root is not None and not media_root.is_absolute():
         raise SecretInitializationError("Media root must be absolute")
+    if browser_artifact_root is not None and not browser_artifact_root.is_absolute():
+        raise SecretInitializationError("Browser artifact root must be absolute")
     if not directory.exists():
         if validate_only:
             raise SecretInitializationError("secret directory is unavailable")
@@ -444,6 +463,100 @@ def initialize(
             os.close(auth_fd)
         isolated_files += 1
 
+    if browser_signing_directory is not None:
+        signing_file = browser_signing_directory / BROWSER_SIGNING_KEY_FILE
+        initialize_signing_file = not signing_file.exists()
+        if initialize_signing_file:
+            if validate_only:
+                raise SecretInitializationError(
+                    "Browser signing secret directory is unavailable"
+                )
+            if browser_signing_directory.exists() and any(
+                browser_signing_directory.iterdir()
+            ):
+                raise SecretInitializationError(
+                    "Browser signing secret directory policy mismatch"
+                )
+            _prepare_directory(
+                browser_signing_directory,
+                mode=CONTROL_DIRECTORY_MODE,
+                uid=DIRECTORY_UID,
+                gid=DIRECTORY_UID,
+            )
+            value = f"sbk1:{secrets.token_hex(8)}:{secrets.token_urlsafe(32)}"
+            _write_once(signing_file, value, uid=APPLICATION_UID)
+        _prepare_directory(
+            browser_signing_directory,
+            mode=CONTROL_DIRECTORY_MODE,
+            uid=APPLICATION_UID,
+            gid=APPLICATION_UID,
+        )
+        if {path.name for path in browser_signing_directory.iterdir()} != {
+            BROWSER_SIGNING_KEY_FILE
+        }:
+            raise SecretInitializationError(
+                "Browser signing secret directory policy mismatch"
+            )
+        value = _read_secret(signing_file, uid=APPLICATION_UID)
+        if re.fullmatch(r"sbk1:[0-9a-f]{16}:[A-Za-z0-9_-]{43}", value) is None:
+            raise SecretInitializationError("Browser signing key format mismatch")
+        signing_fd = os.open(
+            browser_signing_directory,
+            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+        )
+        try:
+            os.fsync(signing_fd)
+        finally:
+            os.close(signing_fd)
+        isolated_files += 1
+
+    if browser_worker_directory is not None:
+        worker_file = browser_worker_directory / BROWSER_WORKER_TOKEN_FILE
+        initialize_worker_file = not worker_file.exists()
+        if initialize_worker_file:
+            if validate_only:
+                raise SecretInitializationError(
+                    "Browser worker secret directory is unavailable"
+                )
+            if browser_worker_directory.exists() and any(
+                browser_worker_directory.iterdir()
+            ):
+                raise SecretInitializationError(
+                    "Browser worker secret directory policy mismatch"
+                )
+            _prepare_directory(
+                browser_worker_directory,
+                mode=CONTROL_DIRECTORY_MODE,
+                uid=DIRECTORY_UID,
+                gid=DIRECTORY_UID,
+            )
+            value = f"sbws1:{secrets.token_hex(8)}:{secrets.token_urlsafe(32)}"
+            _write_once(worker_file, value, uid=APPLICATION_UID)
+        _prepare_directory(
+            browser_worker_directory,
+            mode=CONTROL_DIRECTORY_MODE,
+            uid=APPLICATION_UID,
+            gid=APPLICATION_UID,
+        )
+        if {path.name for path in browser_worker_directory.iterdir()} != {
+            BROWSER_WORKER_TOKEN_FILE
+        }:
+            raise SecretInitializationError(
+                "Browser worker secret directory policy mismatch"
+            )
+        value = _read_secret(worker_file, uid=APPLICATION_UID)
+        if re.fullmatch(r"sbws1:[0-9a-f]{16}:[A-Za-z0-9_-]{43}", value) is None:
+            raise SecretInitializationError("Browser worker token format mismatch")
+        worker_fd = os.open(
+            browser_worker_directory,
+            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+        )
+        try:
+            os.fsync(worker_fd)
+        finally:
+            os.close(worker_fd)
+        isolated_files += 1
+
     if media_directory is not None:
         media_file = media_directory / MEDIA_DSN_FILE
         expected_media_dsn = dsn_files["service-media-dsn"]
@@ -490,6 +603,13 @@ def initialize(
             uid=MEDIA_ROOT_UID,
             gid=MEDIA_ROOT_GID,
         )
+    if browser_artifact_root is not None:
+        _prepare_directory(
+            browser_artifact_root,
+            mode=BROWSER_ARTIFACT_ROOT_MODE,
+            uid=APPLICATION_UID,
+            gid=APPLICATION_UID,
+        )
 
     marker = directory / MARKER
     if not validate_only and not marker.exists():
@@ -532,6 +652,16 @@ def main() -> int:
         default=Path("/run/slaif-render-auth"),
     )
     parser.add_argument(
+        "--browser-signing-directory",
+        type=Path,
+        default=Path("/run/slaif-browser-signing"),
+    )
+    parser.add_argument(
+        "--browser-worker-directory",
+        type=Path,
+        default=Path("/run/slaif-browser-worker"),
+    )
+    parser.add_argument(
         "--editor-directory",
         type=Path,
         default=Path("/run/slaif-editor"),
@@ -542,6 +672,7 @@ def main() -> int:
         default=Path("/run/slaif-media"),
     )
     parser.add_argument("--media-root", type=Path)
+    parser.add_argument("--browser-artifact-root", type=Path)
     parser.add_argument("--validate-only", action="store_true")
     arguments = parser.parse_args()
     try:
@@ -552,9 +683,12 @@ def main() -> int:
             render_directory=arguments.render_directory,
             preview_directory=arguments.preview_directory,
             render_auth_directory=arguments.render_auth_directory,
+            browser_signing_directory=arguments.browser_signing_directory,
+            browser_worker_directory=arguments.browser_worker_directory,
             editor_directory=arguments.editor_directory,
             media_directory=arguments.media_directory,
             media_root=arguments.media_root,
+            browser_artifact_root=arguments.browser_artifact_root,
             validate_only=arguments.validate_only,
         )
     except (OSError, SecretInitializationError):

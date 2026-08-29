@@ -19,10 +19,45 @@ and compare-and-set password rehash. It uses fixed-cost Argon2id and an
 equal-cost dummy verification path for unknown or disabled identities. Budget
 roughly 64 MiB per concurrent Argon2 operation. Backend HTTP login and session
 issuance and the local setup/login/admin UI exist; rate limiting, durable login
-audit, OIDC, MFA, and runtime agent browser tooling remain absent. Local
+audit, OIDC, and MFA remain absent. Capability-bound Agent preview-run queue/
+status metadata, run-token Render verification, and direct confined worker
+execution/private artifact retrieval are implemented. The Agent API now owns a
+bounded durable dispatcher: it claims migration-035 leases, mints run-bound
+preview credentials, submits and renews attempts, verifies signed results,
+retrieves bytes, and atomically registers private artifact metadata with
+terminal completion. Restart and transient failures remain safely retryable;
+public artifact GC remains absent. Public artifact bytes are served only through
+the capability-authenticated Agent route after exact retained PRIVATE binding
+and worker digest verification. Local
 authentication and administration are qualified by one setup project, one
 single-writer governance project, and six read-only Playwright browser/device
 projects.
+
+## Browser worker
+
+Browser-worker readiness validates the descriptor-confined service credential
+and artifact root, fixed Web origin, immutable target table, exact Chromium
+executable/version, real sandboxed launch, and hostile-origin interception
+self-check. A 503 means the worker must not receive attempts. Restore the exact
+secret/root/image/network/security policy; do not add `--no-sandbox`, a fallback
+origin, a plaintext credential, or a broader network.
+
+Each accepted direct attempt owns one fresh Chromium/browser context/page and
+closes it on success, failure, timeout, disconnect, cancellation, or SIGTERM.
+The fixed runtime admits one active attempt and no queue. Overload is therefore
+an immediate internal 429. The Agent dispatcher starts and stops with the
+Agent API lifespan, uses the existing Agent pool and fixed worker credential,
+and is bounded by the dispatcher settings in `docs/CONFIGURATION.md`. It never
+exposes worker credentials or artifact bytes through public HTTP. Lease loss,
+cancellation, shutdown, and worker/database failures fail closed; expired
+leases are recovered by the control-plane claim function.
+
+Private artifacts live only in the `browser-artifacts` volume. Files are mode
+`0600`, immutable, digest-checked, and internally retrievable by exact signed
+metadata after worker restart. No physical GC exists. Operators may inspect
+counts/modes with an offline, read-only UID-0 maintenance container, but must
+not edit, rename, relink, or expose files. `docker compose down --volumes`
+removes the local store; ordinary `down` preserves it.
 
 Revision `014_001` upgrades and downgrades deterministically with its complete
 built-in authorization catalogs. Catalog defaults change only through
@@ -239,8 +274,11 @@ wrong-login/role/secret/marker/migration/database failure behavior, restart
 idempotence, fail-closed bootstrap, Apache syntax, single
 request-ID and CSP headers on page/API/404 responses, secret absence in
 configuration/history/logs, the implemented visible governance lifecycle, and
-exact-project cleanup. It does not claim identity provisioning, content editing,
-or publication execution.
+exact-project cleanup. It also runs the real sandboxed product Chromium against
+the COW preview, verifies signed results/private artifacts/restart retrieval,
+hostile-token denial, worker-secret recovery, and continued public `QUEUED`
+state. It does not claim source browsing, review, artifact GC, or publication
+execution.
 
 ## Supply-chain evidence
 
@@ -261,7 +299,9 @@ old or partial bundle cannot be mistaken for current evidence.
 Registry and database access are external availability dependencies of this
 CI/build check, not runtime services. Exact image pulls and builds retry at most
 three times with 30-second delays. A failed or stale vulnerability database is
-a failed gate; operators must not substitute an old result or exception.
+a failed gate; operators must not substitute an old result. The narrowly
+scoped Chrome exception is governed by the exact current exception file,
+issue #67, and its 2026-09-04 removal deadline.
 
 CI retains the checksummed directory for 14 days. It contains package and
 vulnerability metadata and should remain CI-private even though it is scanned

@@ -85,6 +85,15 @@ describe("workspace contract package boundaries", () => {
       if (boundary.slug === "scope-catalog") continue;
       if (boundary.slug === "component-catalog") continue;
       if (boundary.slug === "composition-schema") continue;
+      if (boundary.slug === "browser-tool-contracts") {
+        expect(module_.packageMetadata).toEqual({
+          name: boundary.expectedName,
+          status: "typed-preview-contracts",
+          version: "browser-preview/v1",
+        });
+        names.push(boundary.expectedName);
+        continue;
+      }
       expect(Object.keys(module_)).toEqual(["packageMetadata"]);
       const metadata = module_.packageMetadata as {
         name: string;
@@ -115,7 +124,8 @@ describe("workspace contract package boundaries", () => {
       const buildScript =
         slug === "scope-catalog" ||
         slug === "component-catalog" ||
-        slug === "composition-schema"
+        slug === "composition-schema" ||
+        slug === "browser-tool-contracts"
           ? "tsc --project tsconfig.build.json"
           : PACKAGE_SCRIPTS_BUILD;
       expect(manifest).toMatchObject({

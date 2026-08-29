@@ -5,7 +5,9 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
+
+from ..browser_contracts import BrowserCapabilityLimits
 
 
 class AgentCapabilityContext(BaseModel):
@@ -18,6 +20,9 @@ class AgentCapabilityContext(BaseModel):
     scopes: frozenset[str]
     created_at: datetime
     expires_at: datetime
+    browser_limits: BrowserCapabilityLimits = Field(
+        default_factory=BrowserCapabilityLimits
+    )
 
 
 class AgentDiscoveryResponse(BaseModel):

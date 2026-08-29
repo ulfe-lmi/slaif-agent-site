@@ -32,7 +32,7 @@ class SupplyChainPolicyTests(unittest.TestCase):
         validate_policy(self.policy)
         inventory = validate_dependency_sources(ROOT, self.policy)
         self.assertEqual(len(inventory["github_actions"]), 10)
-        self.assertEqual(len(inventory["oci_sources"]), 6)
+        self.assertEqual(len(inventory["oci_sources"]), 7)
 
     def test_image_reference_canonicalization_is_structural(self) -> None:
         cases = {
@@ -177,10 +177,60 @@ class SupplyChainPolicyTests(unittest.TestCase):
                     validate_application_licenses([entry], self.policy, [near_miss])
 
     def test_empty_exception_files_are_valid(self) -> None:
-        for name in ("license-exceptions.json", "vulnerability-exceptions.json"):
+        for name in ("license-exceptions.json",):
             document = load_json(ROOT / "supply-chain" / name)
             validate_exceptions(document, name, 90, date(2026, 8, 17))
             self.assertEqual(document["exceptions"], [])
+
+        vulnerability = load_json(ROOT / "supply-chain/vulnerability-exceptions.json")
+        validate_exceptions(vulnerability, "vulnerability", 90, date(2026, 8, 17))
+        expected = {
+            "CVE-2026-78900",
+            "CVE-2026-78904",
+            "CVE-2026-78909",
+            "CVE-2026-78935",
+            "CVE-2026-78937",
+            "CVE-2026-78939",
+            "CVE-2026-78945",
+            "CVE-2026-78948",
+            "CVE-2026-78951",
+            "CVE-2026-78964",
+            "CVE-2026-78985",
+            "CVE-2026-79012",
+            "CVE-2026-79026",
+            "CVE-2026-79043",
+            "CVE-2026-79047",
+            "CVE-2026-79052",
+            "CVE-2026-79056",
+            "CVE-2026-79064",
+            "CVE-2026-79078",
+            "CVE-2026-79091",
+            "CVE-2026-79111",
+            "CVE-2026-79128",
+            "CVE-2026-79129",
+            "CVE-2026-79130",
+            "CVE-2026-79131",
+            "CVE-2026-79140",
+            "CVE-2026-79149",
+            "CVE-2026-79150",
+            "CVE-2026-79152",
+            "CVE-2026-79188",
+            "CVE-2026-79189",
+            "CVE-2026-79058",
+            "CVE-2026-79090",
+            "CVE-2026-79148",
+            "CVE-2026-79200",
+            "CVE-2026-79232",
+            "CVE-2026-79235",
+            "CVE-2026-79257",
+            "CVE-2026-79275",
+            "CVE-2026-79282",
+            "CVE-2026-79290",
+        }
+        self.assertEqual(
+            {entry["identifier"] for entry in vulnerability["exceptions"]}, expected
+        )
+        self.assertEqual(len(vulnerability["exceptions"]), 41)
 
     def test_notice_generation_is_sorted_and_deterministic(self) -> None:
         component = {

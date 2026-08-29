@@ -177,6 +177,12 @@ class AgentDatabase:
             raise AgentDatabaseError(AgentDatabaseReason.CONNECTION_UNAVAILABLE)
         return self._pool
 
+    @property
+    def acquire_timeout(self) -> float:
+        if self._settings is None:
+            return 1.5
+        return self._settings.acquire_timeout_seconds
+
     async def authenticate_agent_capability(
         self, auth_header: str
     ) -> AgentCapabilityContext | None:
@@ -203,6 +209,7 @@ class AgentDatabase:
             scopes=record.scopes,
             created_at=record.created_at,
             expires_at=record.expires_at,
+            browser_limits=record.browser_limits,
         )
 
 

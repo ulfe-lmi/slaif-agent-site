@@ -10,12 +10,24 @@ from pathlib import Path
 from typing import Self
 from urllib.parse import parse_qsl, unquote, urlsplit
 
-from pydantic import Field, SecretStr, ValidationError, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SecretStr,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 AGENT_LOGIN = "slaif_agent_login"
 AGENT_PRIVILEGE_ROLE = "slaif_agent_runtime"
 AGENT_DSN_FILE = Path("/run/slaif-agent/agent-dsn")
+AGENT_BROWSER_SIGNING_KEY_FILE = Path("/run/slaif-browser-signing/signing-key")
+AGENT_BROWSER_WORKER_SERVICE_CREDENTIAL_FILE = Path(
+    "/run/slaif-browser-worker/worker-token"
+)
 AGENT_APPLICATION_NAME = "slaif-agent-api"
 _ERROR = "Invalid SLAIF Agent database configuration."
 
@@ -28,6 +40,27 @@ class AgentDatabaseMode(StrEnum):
 
 class AgentDatabaseConfigurationError(RuntimeError):
     """A constant failure which never contains database locator material."""
+
+
+class AgentDispatcherSettings(BaseModel):
+    """Bounded settings for the Agent-owned browser dispatcher."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    enabled: bool = True
+    poll_interval_seconds: float = Field(default=0.5, ge=0.05, le=10)
+    backoff_seconds: float = Field(default=2, ge=0.1, le=30)
+    lease_seconds: int = Field(default=30, ge=1, le=60)
+    renewal_interval_seconds: float = Field(default=10, ge=0.1, le=59)
+    worker_timeout_seconds: float = Field(default=120, ge=5, le=120)
+    concurrency: int = Field(default=1, ge=1, le=2)
+    shutdown_timeout_seconds: float = Field(default=5, ge=0.1, le=30)
+
+    @model_validator(mode="after")
+    def bounded_lifecycle(self) -> Self:
+        if self.renewal_interval_seconds >= self.lease_seconds:
+            raise ValueError("Agent dispatcher renewal interval must be below lease")
+        return self
 
 
 class AgentDatabaseSettings(BaseSettings):
@@ -43,6 +76,11 @@ class AgentDatabaseSettings(BaseSettings):
     mode: AgentDatabaseMode = AgentDatabaseMode.DEVELOPMENT
     dsn: SecretStr | None = None
     dsn_file: Path | None = AGENT_DSN_FILE
+    browser_signing_key_file: Path = AGENT_BROWSER_SIGNING_KEY_FILE
+    browser_worker_service_credential_file: Path = (
+        AGENT_BROWSER_WORKER_SERVICE_CREDENTIAL_FILE
+    )
+    browser_worker_endpoint: str = "http://browser-worker:3100"
     expected_database: str = "slaif"
     expected_login: str = AGENT_LOGIN
     expected_privilege_role: str = AGENT_PRIVILEGE_ROLE
@@ -57,8 +95,20 @@ class AgentDatabaseSettings(BaseSettings):
     lock_timeout_ms: int = Field(default=500, ge=10, le=10000)
     idle_transaction_timeout_ms: int = Field(default=2000, ge=50, le=30000)
     application_name: str = AGENT_APPLICATION_NAME
+    dispatcher_enabled: bool = True
+    dispatcher_poll_interval_seconds: float = Field(default=0.5, ge=0.05, le=10)
+    dispatcher_backoff_seconds: float = Field(default=2, ge=0.1, le=30)
+    dispatcher_lease_seconds: int = Field(default=30, ge=1, le=60)
+    dispatcher_renewal_interval_seconds: float = Field(default=10, ge=0.1, le=59)
+    dispatcher_worker_timeout_seconds: float = Field(default=120, ge=5, le=120)
+    dispatcher_concurrency: int = Field(default=1, ge=1, le=2)
+    dispatcher_shutdown_timeout_seconds: float = Field(default=5, ge=0.1, le=30)
 
-    @field_validator("dsn_file")
+    @field_validator(
+        "dsn_file",
+        "browser_signing_key_file",
+        "browser_worker_service_credential_file",
+    )
     @classmethod
     def absolute_file(cls, value: Path | None) -> Path | None:
         if value is not None and not value.is_absolute():
@@ -101,6 +151,23 @@ class AgentDatabaseSettings(BaseSettings):
             and self.expected_login != AGENT_LOGIN
         ):
             raise ValueError("Agent database identity must use the fixed authority")
+        endpoint = urlsplit(self.browser_worker_endpoint)
+        if (
+            endpoint.scheme != "http"
+            or endpoint.username
+            or endpoint.password
+            or endpoint.path not in {"", "/"}
+            or endpoint.query
+            or endpoint.fragment
+            or endpoint.port != 3100
+            or endpoint.hostname is None
+            or self.mode is not AgentDatabaseMode.TEST
+            and endpoint.hostname != "browser-worker"
+            or self.mode is AgentDatabaseMode.TEST
+            and endpoint.hostname != "browser-worker"
+            and not endpoint.hostname.endswith(".test")
+        ):
+            raise ValueError("Agent browser worker endpoint is fixed")
         return self
 
     def _read_file(self, path: Path) -> str:
@@ -181,6 +248,19 @@ class AgentDatabaseSettings(BaseSettings):
             ),
         }
 
+    @property
+    def dispatcher_settings(self) -> AgentDispatcherSettings:
+        return AgentDispatcherSettings(
+            enabled=self.dispatcher_enabled,
+            poll_interval_seconds=self.dispatcher_poll_interval_seconds,
+            backoff_seconds=self.dispatcher_backoff_seconds,
+            lease_seconds=self.dispatcher_lease_seconds,
+            renewal_interval_seconds=self.dispatcher_renewal_interval_seconds,
+            worker_timeout_seconds=self.dispatcher_worker_timeout_seconds,
+            concurrency=self.dispatcher_concurrency,
+            shutdown_timeout_seconds=self.dispatcher_shutdown_timeout_seconds,
+        )
+
     @classmethod
     def load(cls) -> Self:
         try:
@@ -191,10 +271,13 @@ class AgentDatabaseSettings(BaseSettings):
 
 __all__ = [
     "AGENT_APPLICATION_NAME",
+    "AGENT_BROWSER_SIGNING_KEY_FILE",
+    "AGENT_BROWSER_WORKER_SERVICE_CREDENTIAL_FILE",
     "AGENT_DSN_FILE",
     "AGENT_LOGIN",
     "AGENT_PRIVILEGE_ROLE",
     "AgentDatabaseConfigurationError",
     "AgentDatabaseMode",
     "AgentDatabaseSettings",
+    "AgentDispatcherSettings",
 ]

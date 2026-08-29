@@ -133,10 +133,3 @@ class TestFullStackWiring:
 
         digest = compute_request_digest({"op": "test"})
         assert len(digest) == 64
-
-    def test_browser_confinement_rejects_dangerous_urls(self) -> None:
-        from slaif_agent_site.browser_worker.browser_http import _validate_target_url
-
-        assert not _validate_target_url("file:///etc/passwd")
-        assert not _validate_target_url("http://localhost/admin")
-        assert not _validate_target_url("http://169.254.169.254/metadata")

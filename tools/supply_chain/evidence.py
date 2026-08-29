@@ -33,11 +33,12 @@ SPDX_ID = re.compile(r"SPDXRef-[A-Za-z0-9.-]+")
 IMAGE_PREFIXES = {
     "apache": ("usr/local/apache2/conf/",),
     "backend": ("opt/slaif/",),
-    "browser-worker": ("opt/slaif/",),
+    "browser-worker": ("opt/slaif/", "ms-playwright/chromium-1669021/"),
     "nginx": ("etc/nginx/nginx.conf",),
     "web": ("opt/slaif/",),
 }
 NEXT_PRERENDER_MANIFEST = "opt/slaif/apps/web/.next/prerender-manifest.json"
+NEXT_APP_PATH_ROUTES_MANIFEST = "opt/slaif/apps/web/.next/app-path-routes-manifest.json"
 NEXT_SERVER_REFERENCE_JSON = (
     "opt/slaif/apps/web/.next/server/server-reference-manifest.json"
 )
@@ -345,6 +346,7 @@ def normalize_runtime_file(
     image_name: str, name: str, content: bytes
 ) -> tuple[bytes, list[str]]:
     if image_name != "web" or name not in {
+        NEXT_APP_PATH_ROUTES_MANIFEST,
         NEXT_PRERENDER_MANIFEST,
         NEXT_SERVER_REFERENCE_JSON,
         NEXT_SERVER_REFERENCE_JS,
@@ -359,7 +361,12 @@ def normalize_runtime_file(
             manifest = json.loads(json.loads(source.removeprefix(prefix)))
         else:
             manifest = json.loads(content)
-        if not isinstance(manifest, dict):
+        if not isinstance(manifest, (dict, list)):
+            raise ValueError("manifest is not an object or array")
+        if name in {
+            NEXT_PRERENDER_MANIFEST,
+            NEXT_SERVER_REFERENCE_JSON,
+        } and not isinstance(manifest, dict):
             raise ValueError("manifest is not an object")
         if name == NEXT_PRERENDER_MANIFEST:
             preview = manifest.get("preview")
@@ -375,7 +382,7 @@ def normalize_runtime_file(
                     raise ValueError(f"{field} is missing")
                 preview[field] = NORMALIZED_SECRET
             normalized = [f"preview.{field}" for field in fields]
-        else:
+        elif name != NEXT_APP_PATH_ROUTES_MANIFEST:
             if (
                 not isinstance(manifest.get("encryptionKey"), str)
                 or not manifest["encryptionKey"]
@@ -383,6 +390,8 @@ def normalize_runtime_file(
                 raise ValueError("encryptionKey is missing")
             manifest["encryptionKey"] = NORMALIZED_SECRET
             normalized = ["encryptionKey"]
+        else:
+            normalized = []
         canonical = json.dumps(manifest, sort_keys=True, separators=(",", ":"))
         if name == NEXT_SERVER_REFERENCE_JS:
             canonical = prefix + json.dumps(canonical)
@@ -609,13 +618,13 @@ def validate_expected_components(
                 f"sample={sample}"
             )
     if image_name == "browser-worker":
-        forbidden = {"chromium", "firefox", "playwright", "webkit"}
+        forbidden = {"firefox", "webkit"}
         found = sorted(
             name for name in names if any(item in name for item in forbidden)
         )
         if found:
             raise PolicyError(
-                "browser-worker: browser binary inventory must remain empty: "
+                "browser-worker: forbidden product browser inventory present: "
                 + ", ".join(found)
             )
 
@@ -655,6 +664,8 @@ def finalize_bundle(root: Path, revision: str) -> dict[str, Any]:
     )
     images: list[dict[str, Any]] = []
     total_severities: Counter[str] = Counter()
+    actual_critical: set[tuple[str, str, str]] = set()
+    matched_critical: set[tuple[str, str, str]] = set()
     for image_name, configured in sorted(policy["required_images"].items()):
         metadata = load_json(root / f"images/{image_name}.json")
         validate_labels(image_name, metadata, revision)
@@ -676,15 +687,31 @@ def finalize_bundle(root: Path, revision: str) -> dict[str, Any]:
         )
         severities: Counter[str] = Counter()
         unexcepted_critical: list[str] = []
+        critical_findings: list[dict[str, str]] = []
         for match in scan.get("matches", []):
             severity = str(match.get("vulnerability", {}).get("severity", "Unknown"))
             severities[severity] += 1
             total_severities[severity] += 1
-            if severity == "Critical" and not match_is_excepted(
-                match, image_name, vulnerability_document["exceptions"]
-            ):
-                unexcepted_critical.append(
-                    str(match.get("vulnerability", {}).get("id", "UNKNOWN"))
+            if severity == "Critical":
+                identifier = str(match.get("vulnerability", {}).get("id", "UNKNOWN"))
+                artifact = match.get("artifact", {})
+                affected = str(artifact.get("purl") or "")
+                key = (identifier, affected, image_name)
+                actual_critical.add(key)
+                excepted = match_is_excepted(
+                    match, image_name, vulnerability_document["exceptions"]
+                )
+                if excepted:
+                    matched_critical.add(key)
+                else:
+                    unexcepted_critical.append(identifier)
+                critical_findings.append(
+                    {
+                        "affected": affected,
+                        "identifier": identifier,
+                        "scope": image_name,
+                        "status": "excepted" if excepted else "unexcepted",
+                    }
                 )
         if unexcepted_critical:
             raise PolicyError(
@@ -697,6 +724,8 @@ def finalize_bundle(root: Path, revision: str) -> dict[str, Any]:
                     f"image: {image_name}",
                     "gate: PASS (zero unexcepted Critical)",
                     f"Critical: {severities.get('Critical', 0)}",
+                    "Critical exceptions: "
+                    f"{len(critical_findings) - len(unexcepted_critical)}",
                     f"High: {severities.get('High', 0)} (review evidence)",
                     f"Medium: {severities.get('Medium', 0)}",
                     f"Low: {severities.get('Low', 0)}",
@@ -715,6 +744,7 @@ def finalize_bundle(root: Path, revision: str) -> dict[str, Any]:
         images.append(
             {
                 "base_reference": policy["oci_sources"][configured["base"]],
+                "critical_findings": critical_findings,
                 "image": image_name,
                 "image_id": metadata["image_id"],
                 "local_reference": configured["local_reference"],
@@ -730,6 +760,22 @@ def finalize_bundle(root: Path, revision: str) -> dict[str, Any]:
                 "severity_counts": dict(sorted(severities.items())),
                 "unexcepted_critical": 0,
             }
+        )
+    exception_keys = {
+        (entry["identifier"], entry["affected"], entry["scope"])
+        for entry in vulnerability_document["exceptions"]
+    }
+    unused = sorted(exception_keys - actual_critical)
+    if unused:
+        details = ", ".join("/".join(item) for item in unused)
+        raise PolicyError(
+            "vulnerability exceptions: unused or stale exception(s): " + details
+        )
+    if matched_critical != actual_critical:
+        missing = sorted(actual_critical - matched_critical)
+        details = ", ".join("/".join(item) for item in missing)
+        raise PolicyError(
+            "vulnerability exceptions: unexcepted Critical finding(s): " + details
         )
     index = {
         "database": database,

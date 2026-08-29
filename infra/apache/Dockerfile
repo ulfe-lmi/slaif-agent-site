@@ -15,8 +15,8 @@ ENV SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH}
 RUN apk --timeout 30 add --no-cache \
       'apr-util=1.6.4-r0' \
       'apr-util-ldap=1.6.4-r0' \
-      'libcrypto3=3.5.7-r0' \
-      'libssl3=3.5.7-r0' \
+      'libcrypto3=3.5.8-r0' \
+      'libssl3=3.5.8-r0' \
     && apk del perl \
     && sed -i \
       -e 's/^#LoadModule headers_module/LoadModule headers_module/' \

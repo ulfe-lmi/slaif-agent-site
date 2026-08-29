@@ -6,13 +6,16 @@ import asyncio
 import json
 import logging
 import sys
+from typing import Any, cast
 
 import httpx
+import pytest
 from fastapi import Request
 from slaif_agent_site.agent_api import create_app
 from slaif_agent_site.config import ServiceSettings
 from slaif_agent_site.correlation import current_request_id, current_trace_id
 from slaif_agent_site.logging import JsonLogFormatter, redact_log_value
+from slaif_agent_site.render_api.projection import _browser_stage
 
 
 async def test_request_id_validation_generation_echo_and_context_reset() -> None:
@@ -155,3 +158,15 @@ def test_json_formatter_excludes_exception_and_payload_details() -> None:
     assert document["exception"] == "[REDACTED_EXCEPTION]"
     assert document["fields"]["cookie"] == "[REDACTED]"
     assert document["fields"]["request_payload"] == "[REDACTED]"
+
+
+def test_browser_stage_logging_is_fixed_vocabulary_and_secret_free(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.INFO)
+    _browser_stage("context", "ok")
+    _browser_stage("not-a-stage", "route-with-secret-token")
+    assert len(caplog.records) == 1
+    record = caplog.records[0]
+    assert record.getMessage() == "browser preview stage"
+    assert cast(Any, record).event_fields == {"stage": "context", "outcome": "ok"}

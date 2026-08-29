@@ -3,9 +3,10 @@
 The implemented default deployment starts every planned process identity,
 establishes the database foundation, and exposes bounded services through
 NGINX. It implements local setup/authentication, canonical page projection,
-authenticated active-workspace preview, and trusted SSR rendering; review,
-promotion, publication, browser-worker automation, and public media finalization
-remain separate objectives.
+authenticated active-workspace preview, trusted SSR rendering, and direct
+confined browser-worker evidence execution; review, promotion, publication,
+durable browser dispatch/registration, and public media finalization remain
+separate objectives.
 
 ## Prerequisites and startup
 
@@ -39,10 +40,11 @@ docker compose ps
 
 The first start creates the named volumes, generates private local database
 files plus separate public/preview Render locators and a Web-to-Render
-credential, initializes PostgreSQL, seeds the exact fresh `demo` site, and runs
-the one-shot bootstrap. A returning start validates and reuses credentials and
-data, does not reissue the setup token, skips seed enforcement after setup, and
-starts the same service graph.
+credential, plus one browser signing key isolated to Agent and Render,
+initializes PostgreSQL, seeds the exact fresh `demo` site, and runs the one-shot
+bootstrap. A returning start validates and reuses credentials and data, does
+not reissue the setup token, skips seed enforcement after setup, and starts the
+same service graph.
 
 ### PostgreSQL baseline
 
@@ -60,11 +62,11 @@ requires a separately designed and tested logical process.
 | `/` | Web | Accessible pre-alpha deployment-status page. |
 | `/health/live`, `/health/ready` | Web | Bounded Web process health only. |
 | `/s/demo/` and other resolved paths | Web→Render | Canonical published page HTML from a typed Render projection; only an exact matched site root without a page uses the routing shell, while deeper unknown/unpublished paths return 404. |
-| `/preview/{workspace_id}/...` | Web→Render | Authenticated human-authorized HUMAN/AGENT/IMPORT workspace-overlay HTML; private/no-store/noindex and never public cacheable. |
+| `/preview/{workspace_id}/...` | Web→Render | Mutually exclusive human-session or run-bound signed-browser-header workspace overlay; private/no-store/noindex and never public cacheable. |
 | `/api/control/` | Control API | Prefix-stripped health plus authenticated setup/session, site/domain, RBAC catalog, and membership routes; readiness includes one database component. |
 | `/api/editor/health/` | Editor API | Exact liveness/readiness aliases. |
 | `/api/editor/v1/` | Editor API | Prefix-preserving human Editor API routes. |
-| `/api/agent/` | Agent API | Prefix-stripped health plus capability-authenticated bounded COW create routes; no lifecycle or publication routes. |
+| `/api/agent/` | Agent API | Prefix-stripped health, bounded COW routes, capability-authenticated preview-run create/status/private-metadata routes, and retained PRIVATE artifact-byte retrieval; no lifecycle/publication route exists. |
 | `/mcp/` | MCP adapter | Prefix-stripped health routes only. |
 | `/media/` | Media service | Prefix-stripped health plus authenticated private upload/immutable-byte routes; no direct volume serving. |
 
@@ -96,16 +98,16 @@ design rather than weaken this baseline.
 
 | Services | Image | Runtime user | Networks | Persistent/private mount |
 | --- | --- | --- | --- | --- |
-| `secrets-init` | Backend | root with only `CHOWN` and `DAC_READ_SEARCH` added | none | master local secrets, isolated service secrets, and Media store ownership handoff, read/write |
+| `secrets-init` | Backend | root with only `CHOWN` and `DAC_READ_SEARCH` added | none | master/isolated secrets plus Media/browser-artifact ownership handoff, read/write |
 | `postgres` | PostgreSQL | official entrypoint drops to PostgreSQL user | database | PostgreSQL data; local secrets read-only |
 | `bootstrap` | Backend | `10001:10001` | database | local secrets read-only |
 | `control-api` | Backend | `10001:10001` | edge, database | isolated Control secret, read-only |
-| Control/Agent/Render/MCP HTTP services | Backend | `10001:10001` | exact edge/application/database memberships | no media volume |
+| Control/Agent/Render/MCP HTTP services | Backend | `10001:10001` | exact edge/application/database/browser memberships | no artifact mount; Agent/Render alone mount signing key, Agent alone also mounts worker credential |
 | Editor HTTP service | Backend | `10001:10001` | edge/database plus isolated Control/Editor secrets | no media volume |
 | Media HTTP service | Backend | `10001:10001` | edge/database plus isolated Media secret | private `media-data` only; initialized `0700` for UID 10001 |
 | Three Python workers | Backend | `10001:10001` | database | media volume on media-GC only |
-| `browser-worker` | Browser placeholder | `10001:10001` | browser only | none |
-| `web` | Next.js | `10001:10001` | edge, application | read-only `render-auth-secret` credential |
+| `browser-worker` | Playwright 1.62.1 / Chromium 152.0.7977.64 | `10001:10001` | browser only | read-only worker credential; writable private browser artifacts |
+| `web` | Next.js | `10001:10001` | edge, application, browser | read-only `render-auth-secret` credential |
 | `nginx` | NGINX Open Source | `101:101` | edge only | none |
 
 All Compose containers use a read-only root filesystem, drop all default Linux
@@ -113,6 +115,12 @@ capabilities, and enable `no-new-privileges`. Narrow tmpfs mounts support
 runtime scratch paths. PostgreSQL and the initializer add only the capabilities
 needed for initialization and file ownership. There is no source bind mount,
 Docker socket, host network, or privileged container.
+
+The browser worker additionally uses the exact Playwright seccomp profile and
+adds only `SYS_CHROOT` after dropping all capabilities so Chromium's user-
+namespace sandbox can chroot. It is limited to one CPU, 768 MiB memory, 256
+PIDs, 128 MiB shm, and a private 64 MiB tmpfs. Weakening to `--no-sandbox`,
+seccomp-unconfined, privileged mode, or broad capabilities is unsupported.
 
 The reference edge keeps a 1 MiB global request-body limit. Only `/media/`
 receives the bounded 105119744-byte allowance needed for a 100 MiB file plus
@@ -131,6 +139,7 @@ The reviewed OCI inputs are:
 | `python:3.12.12-alpine3.23` | `sha256:2d91681153dd4b8cdb52d4fd34a17b9edbafa4dd3086143cfd4b6c3a84c1acb0` | PSF | official multi-platform index |
 | `ghcr.io/astral-sh/uv:0.12.5` | `sha256:e85be844203885286c60ffad8a858d48afb6c5a5c237ca0e67f12e74b8f174b1` | Apache-2.0 or MIT | amd64, arm64 |
 | `node:24.14.1-alpine3.23` | `sha256:8510330d3eb72c804231a834b1a8ebb55cb3796c3e4431297a24d246b8add4d5` | MIT | official multi-platform index |
+| `mcr.microsoft.com/playwright:v1.62.1-noble` | `sha256:dcc5531e97840b9b5e794f2814476b21571c5124a3fca2267d73041f56e7580e` | Apache-2.0 application package plus inventoried Ubuntu/runtime aggregation | amd64, arm64 |
 | `postgres:18.6-alpine3.23` | `sha256:697c180dbf244d3ce4a8f4cbc0156cde840af055c1bf8b76aebe422a4822086f` | PostgreSQL | official multi-platform index |
 | `nginx:1.29.7-alpine3.23` | `sha256:e7257f1ef28ba17cf7c248cb8ccf6f0c6e0228ab9c315c152f9c203cd34cf6d1` | two-clause BSD | official multi-platform index |
 | `httpd:2.4.68-alpine3.23` | `sha256:4a15e9c73f25334bc03cfb3c692c9adfc103bb46ca89cee1f0b9a5fcbc7b21f6` | Apache-2.0 | official multi-platform index |
@@ -158,8 +167,13 @@ metadata remains in the frozen install. The unused `sharp` image-optimization
 optional dependency is denied by pnpm policy, and the status surface sets
 unoptimized local images, so its LGPL libvips bundle is neither locked nor
 installed in product images. `@playwright/test==1.62.1` is an Apache-2.0
-development-only dependency; CI/local verification installs its matching
-Chromium, Firefox, and WebKit builds outside every product image.
+test runner. The product worker declares exact Apache-2.0
+`playwright-core==1.62.1` and bakes only Chromium revision 1234
+(`152.0.7977.64`). The exact amd64 Chrome-for-Testing archive SHA-256 is
+`8b592f066af71f054aab2cc80fc26f73c775c6d44ebb99d16ade924b24756c2e`.
+Firefox, WebKit, the headless-shell duplicate, npm, and Corepack are removed
+from the runtime image. The product worker is currently qualified only on
+`linux/amd64`; an arm64 browser payload is not claimed.
 
 Updates require a scoped work order, registry/version/license/platform review,
 replacement top-level digest, clean builds, the complete packaging test, and
@@ -180,10 +194,12 @@ usable credential or administrator assignment, and are removed with its volumes.
 - `edge`: NGINX, Web, and the five externally routed API processes.
 - `application`: Web to Render, plus MCP internal HTTP access.
 - `database`: PostgreSQL and only processes whose architecture may later use a
-  database. Control alone currently opens an online pool; network membership
-  gives every other process no credential or database authority.
-- `browser`: only Agent API and browser worker. It is internal and has no
-  PostgreSQL, edge, host, filesystem, or Docker-socket path.
+  database. Implemented Control, Editor, Agent, Render, and Media processes open
+  only their isolated least-privilege pools; network membership gives every
+  other process no credential or database authority.
+- `browser`: Agent API, Web, and browser worker. It is internal; Web is the
+  worker's only browser origin. The worker has no PostgreSQL, edge, host,
+  repository, or Docker-socket path.
 
 The private `local-secrets` volume contains a PostgreSQL administrator password,
 ten distinct fixed-login passwords, provisioner/owner DSNs, and nine service
@@ -217,6 +233,15 @@ initializer mounts them read/write; Render mounts both read-only. The separate
 file and is mounted read-only to Web and Render. Web reaches Render over the
 application network and has no database credential. NGINX, Control, agents,
 browser, and workers receive no Render locator or service credential.
+
+The separate `browser-signing-secret` volume contains exactly one generated
+`signing-key` file in the fixed `sbk1` format. Its directory is mode `0700` and
+file mode `0400`, both owned by `10001:10001`. Initializer alone writes it;
+Agent and Render mount it read-only. Web receives a signed run token only in one
+incoming request header and forwards it to Render in a different dedicated
+server-side header, but Web cannot sign or verify it. Browser worker, NGINX,
+Control, Editor, Media, MCP, Scheduler, Reviewer, GC, PostgreSQL, and bootstrap
+do not mount the signing volume.
 
 Institutional deployments may replace the generator with externally managed
 files that use the same names and fixed principal model. They must preserve

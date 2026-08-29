@@ -131,7 +131,9 @@ async def test_capability_authentication_positive_negative_and_expiry_paths(
             "SELECT current_database(), session_user, current_user, "
             "pg_has_role(current_user, $1, 'MEMBER'), "
             "has_table_privilege(current_user, 'control.capability', 'SELECT'), "
-            "has_table_privilege(current_user, 'control.capability', 'INSERT')",
+            "has_table_privilege(current_user, 'control.capability', 'INSERT'), "
+            "has_function_privilege(current_user, "
+            "'control.slaif_agent_capability_authenticate(text)', 'EXECUTE')",
             "slaif_agent_runtime",
         )
         assert tuple(identity) == (
@@ -139,8 +141,9 @@ async def test_capability_authentication_positive_negative_and_expiry_paths(
             database.credentials["slaif_agent_runtime"][0],
             database.credentials["slaif_agent_runtime"][0],
             True,
-            True,
             False,
+            False,
+            True,
         )
         with pytest.raises(asyncpg.InsufficientPrivilegeError):
             await agent_connection.fetchval("SELECT control.slaif_setup_status()")
@@ -156,6 +159,18 @@ async def test_capability_authentication_positive_negative_and_expiry_paths(
         database_settings=agent_settings,
     )
     async with app.router.lifespan_context(app):
+        trusted_context = await app.state.database.authenticate_agent_capability(
+            f"Bearer {valid_token}"
+        )
+        assert trusted_context is not None
+        assert trusted_context.browser_limits.max_runs == 20
+        assert {
+            target.value for target in trusted_context.browser_limits.allowed_targets
+        } == {
+            "desktop-chromium",
+            "tablet",
+            "mobile-chromium",
+        }
         wrong_secret = valid_token[:-4] + ("0" * 4)
         app_transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(

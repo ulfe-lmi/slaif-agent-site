@@ -10,11 +10,13 @@ from uuid import UUID
 import httpx
 import pytest
 from pydantic import SecretStr, ValidationError
+from slaif_agent_site.browser_preview_credentials import generate_browser_signing_key
 from slaif_agent_site.config import ServiceSettings
 from slaif_agent_site.health import ProbeResult
 from slaif_agent_site.render_api import create_app
 from slaif_agent_site.render_api.config import (
     RENDER_APPLICATION_NAME,
+    RENDER_BROWSER_SIGNING_KEY_FILE,
     RENDER_DSN_FILE,
     RENDER_LOGIN,
     RENDER_PRIVILEGE_ROLE,
@@ -94,6 +96,9 @@ def test_fixed_render_identity_and_test_locator_boundary() -> None:
     assert settings.expected_privilege_role == RENDER_PRIVILEGE_ROLE
     assert settings.application_name == RENDER_APPLICATION_NAME
     assert RENDER_DSN_FILE == Path("/run/slaif-render/render-dsn")
+    assert RENDER_BROWSER_SIGNING_KEY_FILE == Path(
+        "/run/slaif-browser-signing/signing-key"
+    )
     assert "fake" not in repr(settings)
 
     with pytest.raises(RenderDatabaseConfigurationError):
@@ -187,6 +192,99 @@ async def test_render_service_auth_rejects_invalid_tokens() -> None:
             content=b"{}",
         )
         assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_browser_preview_header_is_dedicated_nonmixing_and_private() -> None:
+    app = create_app(settings=ServiceSettings.for_test(), database=_Database())
+    payload = {
+        "authority": "example.test",
+        "path": "/docs",
+        "workspace_id": "00000000-0000-4000-8000-000000000001",
+        "browser_route": "/docs",
+    }
+    async with app.router.lifespan_context(app):
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://render.test",
+        ) as client:
+            for headers in (
+                [("X-SLAIF-Browser-Run-Token", "invalid")],
+                [
+                    ("X-SLAIF-Browser-Run-Token", "first"),
+                    ("X-SLAIF-Browser-Run-Token", "second"),
+                ],
+                [
+                    ("X-SLAIF-Browser-Run-Token", "invalid"),
+                    ("X-SLAIF-Human-Session", "sas2_human_secret"),
+                ],
+            ):
+                response = await client.post(
+                    "/internal/render/v1/preview", headers=headers, json=payload
+                )
+                assert response.status_code == 404
+                assert response.headers["cache-control"] == "private, no-store"
+                assert "invalid" not in response.text
+
+
+@pytest.mark.asyncio
+async def test_render_bad_browser_key_blocks_readiness_not_canonical_resolution(
+    tmp_path: Path,
+) -> None:
+    auth_directory = tmp_path / "render-auth"
+    auth_directory.mkdir(mode=0o700)
+    render_token = auth_directory / "render-token"
+    render_token.write_text("t" * 43, encoding="ascii")
+    render_token.chmod(0o400)
+    signing_directory = tmp_path / "browser-signing"
+    signing_directory.mkdir(mode=0o700)
+    signing_key = signing_directory / "signing-key"
+    signing_key.write_text("invalid", encoding="ascii")
+    signing_key.chmod(0o400)
+    settings = RenderDatabaseSettings(
+        mode=RenderDatabaseMode.DEVELOPMENT,
+        service_token_file=render_token,
+        browser_signing_key_file=signing_key,
+    )
+    database = _Database()
+    app = create_app(
+        settings=ServiceSettings(),
+        database_settings=settings,
+        database=database,
+    )
+    async with app.router.lifespan_context(app):
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://render.test"
+        ) as client:
+            ready = await client.get("/health/ready")
+            canonical = await client.post(
+                "/internal/render/v1/site-context",
+                headers={"X-SLAIF-Render-Token": "t" * 43},
+                json={"authority": "example.test", "path": "/docs"},
+            )
+    assert ready.status_code == 503
+    assert ready.json()["components"][1] == {
+        "component": "browser-signing-key",
+        "status": "unavailable",
+        "reason": "signing_key_unavailable",
+    }
+    assert canonical.status_code == 200
+
+    signing_key.chmod(0o600)
+    signing_key.write_text(generate_browser_signing_key(), encoding="ascii")
+    signing_key.chmod(0o400)
+    healthy = create_app(
+        settings=ServiceSettings(),
+        database_settings=settings,
+        database=_Database(),
+    )
+    async with healthy.router.lifespan_context(healthy):
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=healthy),
+            base_url="http://render.test",
+        ) as client:
+            restored = await client.get("/health/ready")
+    assert restored.status_code == 200
 
 
 @pytest.mark.asyncio

@@ -47,7 +47,8 @@
     "legal_advice": false
   },
   "attribution_notes": {
-    "pkg:npm/%40playwright/test@1.62.1": "Apache-2.0 test-only browser automation; matching browser builds remain outside product images.",
+    "pkg:npm/%40playwright/test@1.62.1": "Apache-2.0 test automation; the separately declared playwright-core runtime drives only the confined product Chromium worker.",
+    "pkg:npm/playwright-core@1.62.1": "Apache-2.0 exact product runtime for the confined Chromium worker; no hosted browser or telemetry service.",
     "pkg:npm/caniuse-lite@1.0.30001809": "CC-BY-4.0 browser compatibility data; retain attribution and source link.",
     "pkg:pypi/agent-cow-postgresql@0.2.0": "MIT foundation derived from agent-cow-python; retain upstream and downstream attribution."
   },
@@ -114,6 +115,7 @@
     "apache": "docker.io/library/httpd:2.4.68-alpine3.23@sha256:4a15e9c73f25334bc03cfb3c692c9adfc103bb46ca89cee1f0b9a5fcbc7b21f6",
     "nginx": "docker.io/library/nginx:1.29.7-alpine3.23@sha256:e7257f1ef28ba17cf7c248cb8ccf6f0c6e0228ab9c315c152f9c203cd34cf6d1",
     "node": "docker.io/library/node:24.14.1-alpine3.23@sha256:8510330d3eb72c804231a834b1a8ebb55cb3796c3e4431297a24d246b8add4d5",
+    "playwright": "mcr.microsoft.com/playwright:v1.62.1-noble@sha256:dcc5531e97840b9b5e794f2814476b21571c5124a3fca2267d73041f56e7580e",
     "postgres": "docker.io/library/postgres:18.6-alpine3.23@sha256:697c180dbf244d3ce4a8f4cbc0156cde840af055c1bf8b76aebe422a4822086f",
     "python": "docker.io/library/python:3.12.12-alpine3.23@sha256:2d91681153dd4b8cdb52d4fd34a17b9edbafa4dd3086143cfd4b6c3a84c1acb0",
     "uv": "ghcr.io/astral-sh/uv:0.12.5@sha256:e85be844203885286c60ffad8a858d48afb6c5a5c237ca0e67f12e74b8f174b1"
@@ -122,26 +124,36 @@
     "registry": "https://dl-cdn.alpinelinux.org/alpine/v3.23",
     "images": {
       "apache": {
-        "install": ["apr-util-ldap=1.6.4-r0", "apr-util=1.6.4-r0", "libcrypto3=3.5.7-r0", "libssl3=3.5.7-r0"],
+        "install": ["apr-util-ldap=1.6.4-r0", "apr-util=1.6.4-r0", "libcrypto3=3.5.8-r0", "libssl3=3.5.8-r0"],
         "remove": ["perl"]
       },
       "backend": {
-        "install": ["libcrypto3=3.5.7-r0", "libssl3=3.5.7-r0"],
+        "install": ["libcrypto3=3.5.8-r0", "libssl3=3.5.8-r0"],
         "remove": []
       },
-      "browser-worker": {
-        "install": ["libcrypto3=3.5.7-r0", "libssl3=3.5.7-r0"],
-        "remove": ["npm"]
-      },
       "nginx": {
-        "install": ["libcrypto3=3.5.7-r0", "libssl3=3.5.7-r0"],
+        "install": ["libcrypto3=3.5.8-r0", "libssl3=3.5.8-r0"],
         "remove": ["curl"]
       },
       "web": {
-        "install": ["libcrypto3=3.5.7-r0", "libssl3=3.5.7-r0"],
+        "install": ["libcrypto3=3.5.8-r0", "libssl3=3.5.8-r0"],
         "remove": ["npm"]
       }
     }
+  },
+  "browser_runtime": {
+    "base_image": "playwright",
+    "node_version": "24.18.1",
+    "playwright_core_version": "1.62.1",
+    "chromium_revision": "1669021",
+    "chromium_version": "152.0.7977.64",
+    "chromium_executable": "/ms-playwright/chromium-1669021/chrome-linux64/chrome",
+    "chromium_archive_url": "https://storage.googleapis.com/chrome-for-testing-public/152.0.7977.64/linux64/chrome-linux64.zip",
+    "chromium_archive_sha256": "8b592f066af71f054aab2cc80fc26f73c775c6d44ebb99d16ade924b24756c2e",
+    "platform": "linux/amd64",
+    "seccomp_profile_sha256": "294a5523dd03c8dad52215d7970d38711b03f7e6624e09f2ff109ea3628a645c",
+    "allowed_capabilities": ["SYS_CHROOT"],
+    "forbidden_product_browsers": ["firefox", "webkit"]
   },
   "scanner_tools": {
     "syft": {
@@ -178,8 +190,8 @@
     },
     "browser-worker": {
       "local_reference": "slaif-agent-site-browser-worker:local",
-      "base": "node",
-      "expected_components": ["@slaif-agent-site/browser-worker"]
+      "base": "playwright",
+      "expected_components": ["@slaif-agent-site/browser-worker", "playwright-core"]
     },
     "nginx": {
       "local_reference": "slaif-agent-site-nginx:local",

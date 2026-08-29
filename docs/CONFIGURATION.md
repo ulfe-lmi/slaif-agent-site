@@ -63,6 +63,74 @@ The extra 256 KiB is bounded multipart framing/metadata overhead for the
 default 100 MiB file limit; deployments changing the Media file limit must
 review the corresponding edge limit rather than relaxing unrelated routes.
 
+## Browser preview credential configuration
+
+Agent and Render each have one absolute reference to the same isolated signing
+file; the secret value itself is never an environment variable. Reference
+Compose uses:
+
+| Variable | Local value | Consumer/contract |
+| --- | --- | --- |
+| `SLAIF_AGENT_BROWSER_SIGNING_KEY_FILE` | `/run/slaif-browser-signing/signing-key` | Agent signer only |
+| `SLAIF_RENDER_BROWSER_SIGNING_KEY_FILE` | `/run/slaif-browser-signing/signing-key` | Render verifier only |
+
+The networkless one-shot initializer creates exactly one
+`sbk1:<16-hex-key-id>:<43-base64url-secret>` value. The directory must be a
+non-symlink mode-`0700` directory owned by the process UID and the file a
+regular non-symlink mode-`0400` file with that same owner. Reads use a directory
+descriptor plus relative `O_NOFOLLOW` open and bounded ASCII size. Missing,
+wrong-mode, wrong-owner, symlinked, malformed, or extra-file state fails the
+browser-signing readiness probe. `--check` validates only the absolute reference
+and does not read or create a key.
+
+The algorithm (`HS256`), token/type/deployment/audience/contract versions,
+60-second maximum TTL, 4,096-byte token maximum, claims, and dedicated Web and
+Render header names are fixed trusted code/contract facts, not environment
+settings. Web and the browser worker have no key setting or mount.
+
+## Browser worker configuration
+
+The browser worker and dormant Agent-side client share one independently
+generated service credential; it is not the Agent capability, preview signing
+key, Render token, or human session. Reference Compose uses:
+
+| Variable | Local value | Consumer/contract |
+| --- | --- | --- |
+| `SLAIF_AGENT_BROWSER_WORKER_SERVICE_CREDENTIAL_FILE` | `/run/slaif-browser-worker/worker-token` | Agent client, read-only |
+| `SLAIF_AGENT_BROWSER_WORKER_ENDPOINT` | `http://browser-worker:3100` | Fixed internal Agent client origin |
+| `BROWSER_WORKER_SERVICE_CREDENTIAL_FILE` | `/run/slaif-browser-worker/worker-token` | Worker verifier, read-only |
+| `BROWSER_WORKER_ARTIFACT_ROOT` | `/var/lib/slaif/browser-artifacts` | Absolute private worker-only store |
+| `BROWSER_WORKER_PREVIEW_ORIGIN` | `http://web:3000` | Fixed operator-owned internal navigation origin |
+| `SLAIF_BROWSER_PREVIEW_AUTHORITY` | `localhost:8080` | Web-only trusted site-resolution authority for browser-token mode |
+| `BROWSER_WORKER_CHROMIUM_EXECUTABLE` | `/ms-playwright/chromium-1669021/chrome-linux64/chrome` | Image-fixed executable |
+| `BROWSER_WORKER_EXPECTED_CHROMIUM_VERSION` | `152.0.7977.64` | Readiness version assertion |
+
+The Agent API's durable browser dispatcher is enabled by default in the
+development Compose profile. Its bounded settings are `SLAIF_AGENT_DISPATCHER_ENABLED`,
+`SLAIF_AGENT_DISPATCHER_POLL_INTERVAL_SECONDS` (0.05–10),
+`SLAIF_AGENT_DISPATCHER_BACKOFF_SECONDS` (0.1–30),
+`SLAIF_AGENT_DISPATCHER_LEASE_SECONDS` (1–60),
+`SLAIF_AGENT_DISPATCHER_RENEWAL_INTERVAL_SECONDS` (below the lease),
+`SLAIF_AGENT_DISPATCHER_WORKER_TIMEOUT_SECONDS` (5–120),
+`SLAIF_AGENT_DISPATCHER_CONCURRENCY` (1–2), and
+`SLAIF_AGENT_DISPATCHER_SHUTDOWN_TIMEOUT_SECONDS` (0.1–30). The dispatcher
+uses only the Agent pool, signing key, and internal worker credential; it does
+not expose these values or any run payload in readiness output.
+
+The one-shot initializer writes exactly
+`sbws1:<16-hex-key-id>:<43-base64url-secret>` into a mode-`0700`
+UID-10001 directory with one mode-`0400`, single-link regular file. Both
+runtimes use descriptor-confined no-follow reads. Missing, malformed,
+symlinked, broad-mode, wrong-owner, or extra-link state makes Agent client or
+worker readiness unavailable. No plaintext worker secret is accepted from an
+environment variable.
+
+Target descriptors, request/result/artifact bounds, routes, result HMAC facts,
+active-attempt limit, zero queue depth, and retention interval are fixed shared
+contract data rather than caller settings. Web and Render do not mount the
+worker credential or artifact root; the worker does not mount the preview
+signing key.
+
 An environment file is never loaded implicitly. Setting `SLAIF_ENV_FILE`
 opts in to one absolute file only in `development`; `test` and `production`
 reject it. Normal production deployments should use a mounted secret file.
@@ -216,7 +284,7 @@ Production accepts only absolute mounted secret files:
   it to create the exact fresh active `demo` site before token output.
 
 The local stack uses bootstrap `production` mode because both database locators
-are mounted files. Its health-only long-running services use `development` mode
+are mounted files. Its long-running services use `development` mode
 with the loopback HTTP URL. `test` remains restricted to automated tests and
 explicit test overlays; the pre-alpha stack does not falsely claim production
 configuration while authentication, application secrets, secure cookies, and
@@ -246,15 +314,18 @@ this round.
 
 The default initializer generates service DSN files and copies only each
 process's exact locator into its separate one-file mounted volume; online
-processes never see the master volume. Media storage is local and private by
-default. Identity providers, browser sources, service-to-service authentication,
-trusted proxies, CORS, jobs, metrics, and later distributed media backends
-remain deferred under their process-specific architecture work orders.
+processes never see the master volume. Media and browser-artifact storage are
+local and private by default. Identity providers, browser source origins,
+durable dispatcher/lease wiring, trusted proxies, CORS, jobs, metrics, and
+later distributed storage backends remain deferred under their process-
+specific architecture work orders.
 Server-side session persistence, expiry, recent-auth, CSRF credential policy,
 and cookie value objects are implemented in 010-e. HTTP authentication routes,
-OIDC, MFA, rate limiting, durable auth audit, and runtime agent browser tooling
-remain deferred. Authentication E2E uses the fixed localhost deployment URL
-and a mode-0600 temporary secret file; it adds no product runtime setting.
+OIDC, MFA, rate limiting, and durable auth audit remain deferred. Capability-
+bound preview-run HTTP, run-token Render verification, durable dispatch, and
+direct authenticated worker execution are implemented. Authentication E2E uses the
+fixed localhost deployment URL and a mode-0600 temporary secret file; it adds no
+product runtime setting.
 
 ## Human-session policy
 

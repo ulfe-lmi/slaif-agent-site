@@ -108,6 +108,7 @@ class RepositoryPolicyTestCase(unittest.TestCase):
                     "test": "node --test tests/*.test.mjs",
                 },
                 "dependencies": {
+                    "@slaif-agent-site/browser-tool-contracts": "workspace:0.0.0",
                     "@measured/puck": "0.20.2",
                     "@radix-ui/react-dialog": "1.1.23",
                     "next": "16.3.1",
@@ -133,10 +134,22 @@ class RepositoryPolicyTestCase(unittest.TestCase):
                 "private": True,
                 "license": "Apache-2.0",
                 "type": "module",
+                "files": ["dist"],
                 "scripts": {
-                    "build": "tsc --project tsconfig.json --noEmit",
+                    "build": "tsc --project tsconfig.build.json",
                     "typecheck": "tsc --project tsconfig.json --noEmit",
-                    "test": "node --test tests/*.test.mjs",
+                    "test": (
+                        "pnpm --filter @slaif-agent-site/browser-tool-contracts "
+                        "build && pnpm run build && node --test tests/*.test.mjs"
+                    ),
+                },
+                "dependencies": {
+                    "@slaif-agent-site/browser-tool-contracts": "workspace:0.0.0",
+                    "playwright-core": "1.62.1",
+                },
+                "devDependencies": {
+                    "@types/node": "24.13.3",
+                    "typescript": "6.0.3",
                 },
             },
         )
@@ -192,7 +205,21 @@ class RepositoryPolicyTestCase(unittest.TestCase):
         importers = (
             f"  .:\n    devDependencies:\n{workspace_links}\n\n"
             "  apps/web: {}\n\n"
-            "  services/browser-worker: {}\n\n"
+            "  services/browser-worker:\n"
+            "    dependencies:\n"
+            "      '@slaif-agent-site/browser-tool-contracts':\n"
+            "        specifier: workspace:0.0.0\n"
+            "        version: link:../../packages/browser-tool-contracts\n"
+            "      playwright-core:\n"
+            "        specifier: 1.62.1\n"
+            "        version: 1.62.1\n"
+            "    devDependencies:\n"
+            "      '@types/node':\n"
+            "        specifier: 24.13.3\n"
+            "        version: 24.13.3\n"
+            "      typescript:\n"
+            "        specifier: 6.0.3\n"
+            "        version: 6.0.3\n\n"
             + "\n".join(f"  packages/{slug}: {{}}" for slug in WORKSPACE_PACKAGES)
         )
         self.write(
