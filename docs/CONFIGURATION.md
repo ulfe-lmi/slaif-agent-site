@@ -105,6 +105,18 @@ key, Render token, or human session. Reference Compose uses:
 | `BROWSER_WORKER_CHROMIUM_EXECUTABLE` | `/ms-playwright/chromium-1669021/chrome-linux64/chrome` | Image-fixed executable |
 | `BROWSER_WORKER_EXPECTED_CHROMIUM_VERSION` | `152.0.7977.64` | Readiness version assertion |
 
+The Agent API's durable browser dispatcher is enabled by default in the
+development Compose profile. Its bounded settings are `SLAIF_AGENT_DISPATCHER_ENABLED`,
+`SLAIF_AGENT_DISPATCHER_POLL_INTERVAL_SECONDS` (0.05–10),
+`SLAIF_AGENT_DISPATCHER_BACKOFF_SECONDS` (0.1–30),
+`SLAIF_AGENT_DISPATCHER_LEASE_SECONDS` (1–60),
+`SLAIF_AGENT_DISPATCHER_RENEWAL_INTERVAL_SECONDS` (below the lease),
+`SLAIF_AGENT_DISPATCHER_WORKER_TIMEOUT_SECONDS` (5–120),
+`SLAIF_AGENT_DISPATCHER_CONCURRENCY` (1–2), and
+`SLAIF_AGENT_DISPATCHER_SHUTDOWN_TIMEOUT_SECONDS` (0.1–30). The dispatcher
+uses only the Agent pool, signing key, and internal worker credential; it does
+not expose these values or any run payload in readiness output.
+
 The one-shot initializer writes exactly
 `sbws1:<16-hex-key-id>:<43-base64url-secret>` into a mode-`0700`
 UID-10001 directory with one mode-`0400`, single-link regular file. Both

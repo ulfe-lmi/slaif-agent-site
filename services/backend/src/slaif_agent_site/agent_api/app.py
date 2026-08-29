@@ -29,6 +29,7 @@ from .browser_http import router as browser_router
 from .browser_service import AgentBrowserRunService
 from .config import AgentDatabaseConfigurationError, AgentDatabaseSettings
 from .database import AgentDatabase, AgentDatabaseAdapter
+from .dispatcher import AgentBrowserDispatcher
 
 
 def create_app(
@@ -78,12 +79,21 @@ def create_app(
             return ProbeResult.unavailable("worker_credential_unavailable")
         return ProbeResult.ready()
 
+    dispatcher = AgentBrowserDispatcher(
+        database=selected_database,
+        signer=selected_signer,
+        worker_client=selected_worker_client,
+        settings=selected_database_settings.dispatcher_settings,
+    )
+
     @asynccontextmanager
     async def database_lifespan(_app: FastAPI) -> AsyncIterator[None]:
         await selected_database.start()
+        await dispatcher.start()
         try:
             yield
         finally:
+            await dispatcher.stop()
             await selected_database.stop()
 
     app = create_http_application(
@@ -105,6 +115,11 @@ def create_app(
                 if not test_mode or browser_worker_client is not None
                 else ()
             ),
+            *(
+                (ReadinessProbe("browser-dispatcher", dispatcher.readiness),)
+                if not test_mode
+                else ()
+            ),
             *readiness_probes,
         ),
         lifespan_factory=database_lifespan,
@@ -113,6 +128,7 @@ def create_app(
     app.state.browser_run_service = AgentBrowserRunService(selected_database)
     app.state.browser_preview_signer = selected_signer
     app.state.browser_worker_client = selected_worker_client
+    app.state.browser_dispatcher = dispatcher
     app.include_router(agent_router)
     app.include_router(browser_router)
     return app

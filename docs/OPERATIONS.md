@@ -21,9 +21,12 @@ roughly 64 MiB per concurrent Argon2 operation. Backend HTTP login and session
 issuance and the local setup/login/admin UI exist; rate limiting, durable login
 audit, OIDC, and MFA remain absent. Capability-bound Agent preview-run queue/
 status metadata, run-token Render verification, and direct confined worker
-execution/private artifact retrieval are implemented. There is still no
-dispatcher, durable completion/artifact registration, public artifact bytes,
-or artifact GC. Local
+execution/private artifact retrieval are implemented. The Agent API now owns a
+bounded durable dispatcher: it claims migration-035 leases, mints run-bound
+preview credentials, submits and renews attempts, verifies signed results,
+retrieves bytes, and atomically registers private artifact metadata with
+terminal completion. Restart and transient failures remain safely retryable;
+public artifact bytes and artifact GC remain absent. Local
 authentication and administration are qualified by one setup project, one
 single-writer governance project, and six read-only Playwright browser/device
 projects.
@@ -40,8 +43,12 @@ origin, a plaintext credential, or a broader network.
 Each accepted direct attempt owns one fresh Chromium/browser context/page and
 closes it on success, failure, timeout, disconnect, cancellation, or SIGTERM.
 The fixed runtime admits one active attempt and no queue. Overload is therefore
-an immediate internal 429. The Agent client is intentionally dormant until a
-later dispatcher order.
+an immediate internal 429. The Agent dispatcher starts and stops with the
+Agent API lifespan, uses the existing Agent pool and fixed worker credential,
+and is bounded by the dispatcher settings in `docs/CONFIGURATION.md`. It never
+exposes worker credentials or artifact bytes through public HTTP. Lease loss,
+cancellation, shutdown, and worker/database failures fail closed; expired
+leases are recovered by the control-plane claim function.
 
 Private artifacts live only in the `browser-artifacts` volume. Files are mode
 `0600`, immutable, digest-checked, and internally retrievable by exact signed

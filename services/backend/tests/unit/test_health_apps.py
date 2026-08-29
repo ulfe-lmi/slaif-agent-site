@@ -411,6 +411,11 @@ async def test_agent_bad_browser_signing_key_blocks_only_readiness(
             "status": "unavailable",
             "reason": "worker_credential_unavailable",
         },
+        {
+            "component": "browser-dispatcher",
+            "status": "unavailable",
+            "reason": "dispatcher_dependency_unavailable",
+        },
     ]
 
 

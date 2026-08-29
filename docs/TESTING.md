@@ -134,6 +134,11 @@ mismatch, missing/invalid key, schema denial, scope, quota, two-site/two-
 workspace/capability isolation, random IDs, empty artifact metadata, byte 404,
 restart durability, revocation, fake-route absence, shared-lock race recheck,
 exact `(run,idempotency,artifact,event)` counts, and no COW operation.
+Dispatcher unit coverage proves bounded settings, run/lease/site/workspace
+bindings, short-lived preview credentials, and disabled lifecycle behavior.
+The clean Compose smoke additionally proves queued-to-terminal dispatch,
+restart durability, atomic artifact registration, and real Chromium COW
+preview completion before the direct worker artifact/replay checks.
 
 Credential unit tests fix one deterministic token SHA-256 vector and cover
 descriptor-confined key reads, modes/owner/symlink/format, duplicate JSON keys,

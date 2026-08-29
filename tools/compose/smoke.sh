@@ -565,7 +565,7 @@ import sys
 body = pathlib.Path(sys.argv[1]).read_text("utf-8")
 document = json.loads(body)
 token = pathlib.Path(sys.argv[2]).read_text("ascii").split("Bearer ", 1)[1].strip('"\n')
-assert document["state"] == "QUEUED"
+assert document["state"] in {"QUEUED", "RUNNING", "COMPLETED"}
 assert document["route"] == "/"
 assert "workspace_id" not in document and "capability_id" not in document
 assert token not in body
@@ -573,6 +573,23 @@ print(document["run_id"])
 PY
 )
 test -n "$AGENT_RUN_ID"
+for attempt in $(seq 1 120)
+do
+  status_code=$(curl --silent --show-error --config "$AGENT_CAPABILITY_CONFIG_FILE" \
+    --output "$AGENT_RUN_FILE" --write-out '%{http_code}' \
+    "http://localhost:8080/api/agent/v1/preview-runs/$AGENT_RUN_ID")
+  if test "$status_code" != 200
+  then
+    cat "$AGENT_RUN_FILE" >&2
+    exit 1
+  fi
+  state=$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["state"])' "$AGENT_RUN_FILE")
+  case "$state" in
+    COMPLETED|FAILED|TIMED_OUT|CANCELLED) break ;;
+  esac
+  sleep 1
+done
+test "$state" = COMPLETED -o "$state" = FAILED -o "$state" = TIMED_OUT -o "$state" = CANCELLED
 test "$(curl --silent --show-error --config "$AGENT_CAPABILITY_CONFIG_FILE" \
   --output "$AGENT_RUN_FILE" --write-out '%{http_code}' \
   "http://localhost:8080/api/agent/v1/preview-runs/$AGENT_RUN_ID")" = 200
@@ -582,7 +599,7 @@ import pathlib
 import sys
 
 document = json.loads(pathlib.Path(sys.argv[1]).read_text("utf-8"))
-assert document["state"] == "QUEUED"
+assert document["state"] in {"COMPLETED", "FAILED", "TIMED_OUT", "CANCELLED"}
 PY
 docker compose -p "$PROJECT" restart agent-api >/dev/null
 wait_healthy agent-api
@@ -598,8 +615,8 @@ docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif -Atc \
              WHERE capability_id='14000000-0000-4000-8000-000000000004') || ':' ||
           (SELECT state FROM control.browser_run
              WHERE capability_id='14000000-0000-4000-8000-000000000004');" \
-  | grep -q '^1:1:1:QUEUED$'
-echo "agent-browser-http: OK create=202 replay-counts=1:1:1 restart=durable state=QUEUED artifacts=none"
+  | grep -q '^1:1:[3-9][0-9]*:\(COMPLETED\|FAILED\|TIMED_OUT\|CANCELLED\)$'
+echo "agent-browser-http: OK create=202 dispatcher=QUEUED-to-terminal restart=durable"
 
 # Bind two additional durable QUEUED runs to the existing real COW preview
 # fixture. The trusted Agent-side client mints each opaque preview credential
@@ -641,13 +658,27 @@ do
     --output "$AGENT_RUN_FILE" --write-out '%{http_code}' \
     --request POST --header 'Content-Type: application/json' \
     --header "Idempotency-Key: $worker_key" \
-    --data '{"version":"browser-preview/v1","route":"/s/demo","target":"desktop-chromium","evidence":["screenshot","heading-summary","structure-summary"]}' \
+    --data '{"version":"browser-preview/v1","route":"/s/demo/home","target":"desktop-chromium","evidence":["screenshot","heading-summary","structure-summary"]}' \
     http://localhost:8080/api/agent/v1/preview-runs)
   test "$worker_status" = 202
   worker_run_id=$(python -c \
-    'import json,sys; value=json.load(open(sys.argv[1])); assert value["state"]=="QUEUED"; print(value["run_id"])' \
+    'import json,sys; value=json.load(open(sys.argv[1])); assert value["state"] in {"QUEUED","RUNNING","COMPLETED"}; print(value["run_id"])' \
     "$AGENT_RUN_FILE")
   worker_run_ids=${worker_run_ids}${worker_run_ids:+,}${worker_run_id}
+done
+
+for worker_run_id in $(printf '%s' "$worker_run_ids" | tr ',' ' ')
+do
+  for attempt in $(seq 1 180)
+  do
+    test "$(curl --silent --show-error --config "$AGENT_CAPABILITY_CONFIG_FILE" \
+      --output "$AGENT_RUN_FILE" --write-out '%{http_code}' \
+      "http://localhost:8080/api/agent/v1/preview-runs/$worker_run_id")" = 200
+    state=$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["state"])' "$AGENT_RUN_FILE")
+    test "$state" = COMPLETED && break
+    sleep 1
+  done
+  test "$state" = COMPLETED
 done
 
 docker exec -i \
@@ -681,7 +712,7 @@ WORKSPACE_ID = UUID("12000000-0000-4000-8000-000000000301")
 CAPABILITY_ID = UUID("15000000-0000-4000-8000-000000000004")
 OPERATION_ID = UUID("15000000-0000-4000-8000-000000000006")
 LEASE_ID = UUID("15000000-0000-4000-8000-000000000007")
-ROUTE = "/s/demo"
+ROUTE = "/s/demo/home"
 EVIDENCE = (
     BrowserEvidence.SCREENSHOT,
     BrowserEvidence.HEADING_SUMMARY,
@@ -876,16 +907,16 @@ test "$(docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif -Atc \
           (SELECT count(*) FROM control.browser_artifact
            WHERE capability_id='15000000-0000-4000-8000-000000000004')
    FROM control.browser_run
-   WHERE capability_id='15000000-0000-4000-8000-000000000004';")" = "2:2:0"
+   WHERE capability_id='15000000-0000-4000-8000-000000000004';")" = "2:0:6"
 for queued_run_id in $(printf '%s' "$worker_run_ids" | tr ',' ' ')
 do
   test "$(curl --silent --show-error --config "$AGENT_CAPABILITY_CONFIG_FILE" \
     --output "$AGENT_RUN_FILE" --write-out '%{http_code}' \
     "http://localhost:8080/api/agent/v1/preview-runs/$queued_run_id")" = 200
-  python -c 'import json,sys; value=json.load(open(sys.argv[1])); assert value["state"]=="QUEUED"' \
+  python -c 'import json,sys; value=json.load(open(sys.argv[1])); assert value["state"]=="COMPLETED"' \
     "$AGENT_RUN_FILE"
 done
-echo "browser-worker-public-separation: OK durable-runs=2 queued=2 db-artifacts=0"
+echo "browser-worker-public-separation: OK durable-runs=2 completed=2 db-artifacts=6"
 docker run --rm --network none --read-only --cap-drop ALL --cap-add DAC_READ_SEARCH \
   --user 0:0 --volume "${PROJECT}_browser-artifacts:/artifacts:ro" \
   --entrypoint python slaif-agent-site-backend:local -c \

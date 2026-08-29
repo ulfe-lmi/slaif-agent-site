@@ -149,7 +149,7 @@ class ComposeSmokeContractTests(unittest.TestCase):
             "browser-worker-image-policy: OK",
             "browser-worker-direct: OK runs=2 artifacts=6 negatives=5",
             "browser-worker-restart: OK retained-artifacts=3",
-            "browser-worker-public-separation: OK durable-runs=2 queued=2",
+            "browser-worker-public-separation: OK durable-runs=2 completed=2",
             "browser-artifact-runtime-policy: OK files=12 artifacts=6",
             "browser-worker-cleanup: OK chromium-children=0",
             "browser-worker-secret-recovery: OK",

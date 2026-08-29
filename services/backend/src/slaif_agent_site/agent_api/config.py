@@ -10,7 +10,15 @@ from pathlib import Path
 from typing import Self
 from urllib.parse import parse_qsl, unquote, urlsplit
 
-from pydantic import Field, SecretStr, ValidationError, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SecretStr,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 AGENT_LOGIN = "slaif_agent_login"
@@ -32,6 +40,27 @@ class AgentDatabaseMode(StrEnum):
 
 class AgentDatabaseConfigurationError(RuntimeError):
     """A constant failure which never contains database locator material."""
+
+
+class AgentDispatcherSettings(BaseModel):
+    """Bounded settings for the Agent-owned browser dispatcher."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    enabled: bool = True
+    poll_interval_seconds: float = Field(default=0.5, ge=0.05, le=10)
+    backoff_seconds: float = Field(default=2, ge=0.1, le=30)
+    lease_seconds: int = Field(default=30, ge=1, le=60)
+    renewal_interval_seconds: float = Field(default=10, ge=0.1, le=59)
+    worker_timeout_seconds: float = Field(default=120, ge=5, le=120)
+    concurrency: int = Field(default=1, ge=1, le=2)
+    shutdown_timeout_seconds: float = Field(default=5, ge=0.1, le=30)
+
+    @model_validator(mode="after")
+    def bounded_lifecycle(self) -> Self:
+        if self.renewal_interval_seconds >= self.lease_seconds:
+            raise ValueError("Agent dispatcher renewal interval must be below lease")
+        return self
 
 
 class AgentDatabaseSettings(BaseSettings):
@@ -66,6 +95,14 @@ class AgentDatabaseSettings(BaseSettings):
     lock_timeout_ms: int = Field(default=500, ge=10, le=10000)
     idle_transaction_timeout_ms: int = Field(default=2000, ge=50, le=30000)
     application_name: str = AGENT_APPLICATION_NAME
+    dispatcher_enabled: bool = True
+    dispatcher_poll_interval_seconds: float = Field(default=0.5, ge=0.05, le=10)
+    dispatcher_backoff_seconds: float = Field(default=2, ge=0.1, le=30)
+    dispatcher_lease_seconds: int = Field(default=30, ge=1, le=60)
+    dispatcher_renewal_interval_seconds: float = Field(default=10, ge=0.1, le=59)
+    dispatcher_worker_timeout_seconds: float = Field(default=120, ge=5, le=120)
+    dispatcher_concurrency: int = Field(default=1, ge=1, le=2)
+    dispatcher_shutdown_timeout_seconds: float = Field(default=5, ge=0.1, le=30)
 
     @field_validator(
         "dsn_file",
@@ -211,6 +248,19 @@ class AgentDatabaseSettings(BaseSettings):
             ),
         }
 
+    @property
+    def dispatcher_settings(self) -> AgentDispatcherSettings:
+        return AgentDispatcherSettings(
+            enabled=self.dispatcher_enabled,
+            poll_interval_seconds=self.dispatcher_poll_interval_seconds,
+            backoff_seconds=self.dispatcher_backoff_seconds,
+            lease_seconds=self.dispatcher_lease_seconds,
+            renewal_interval_seconds=self.dispatcher_renewal_interval_seconds,
+            worker_timeout_seconds=self.dispatcher_worker_timeout_seconds,
+            concurrency=self.dispatcher_concurrency,
+            shutdown_timeout_seconds=self.dispatcher_shutdown_timeout_seconds,
+        )
+
     @classmethod
     def load(cls) -> Self:
         try:
@@ -229,4 +279,5 @@ __all__ = [
     "AgentDatabaseConfigurationError",
     "AgentDatabaseMode",
     "AgentDatabaseSettings",
+    "AgentDispatcherSettings",
 ]

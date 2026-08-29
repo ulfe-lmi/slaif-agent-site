@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
@@ -223,6 +224,16 @@ class AgentBrowserRunService:
             return status
         if status.completed_at is None or row["summary"] is None:
             raise BrowserRunServiceError(BrowserRunServiceReason.UNAVAILABLE)
+        summary = row["summary"]
+        if isinstance(summary, str):
+            try:
+                summary = json.loads(summary)
+            except json.JSONDecodeError:
+                raise BrowserRunServiceError(
+                    BrowserRunServiceReason.UNAVAILABLE
+                ) from None
+        if not isinstance(summary, dict):
+            raise BrowserRunServiceError(BrowserRunServiceReason.UNAVAILABLE)
         error = None
         if status.state is not BrowserRunState.COMPLETED:
             try:
@@ -238,7 +249,7 @@ class AgentBrowserRunService:
             version="browser-preview/v1",
             run_id=run_id,
             state=BrowserTerminalState(status.state.value),
-            summary=row["summary"],
+            summary=summary,
             error=error,
             artifacts=artifacts,
             completed_at=status.completed_at,

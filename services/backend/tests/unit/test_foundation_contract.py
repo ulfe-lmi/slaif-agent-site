@@ -69,6 +69,7 @@ NEW_PACKAGE_FILES = {
     "slaif_agent_site/agent_api/browser_service.py",
     "slaif_agent_site/agent_api/config.py",
     "slaif_agent_site/agent_api/database.py",
+    "slaif_agent_site/agent_api/dispatcher.py",
     "slaif_agent_site/agent_state/mutations.py",
     "slaif_agent_site/agent_state/reads.py",
     "slaif_agent_site/application.py",
