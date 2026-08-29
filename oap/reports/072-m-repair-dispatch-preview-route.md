@@ -8,8 +8,8 @@
 - Base: `main` at `082f2359b0c4d59b692580d17992c35d46183b12`
 - Branch: `oap/072-browser-worker-real-playwright`
 - Starting remote SHA: `8ad0d59f22976fe088e311349839757b6b754d63`
-- Implementation SHA: `aef558f`
-- Report publication parent: `aef558f`
+- Implementation SHA: `e40fbbb379e8819feb81c3feb9a57102cf0de3e8`
+- Report publication parent: `e40fbbb379e8819feb81c3feb9a57102cf0de3e8`
 
 ## Changes
 
@@ -18,7 +18,8 @@ requests to the authoritative seeded `/s/demo/` route and matching digest,
 removing the guessed `/s/demo/home` suffix. Durable worker polling now stops
 immediately on `FAILED`, `TIMED_OUT`, or `CANCELLED` and prints only the bounded
 run ID, state, error code, and truncated safe message. A packaging regression
-asserts the route and terminal-diagnostic contract. No product, migration,
+asserts the route and terminal-diagnostic contract (including the full Python
+format gate). No product, migration,
 grant, token, Render, worker-runtime, public-artifact, or exception changes
 were made.
 
