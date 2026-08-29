@@ -10,6 +10,12 @@
 
 **The contractual MVP is NOT complete.**
 
+> **Superseded baseline (2026-08-30):** This historical audit and its findings
+> are retained as evidence. Current status, scope, and queue truth are
+> superseded by [`oap/MVP-CONTRACT-AUDIT.md`](MVP-CONTRACT-AUDIT.md), which is
+> evaluated against merged Objective 072 commit
+> `bcaddc41f9ef4e779dd1a8c9a41eb08462250d53`.
+
 The repository contains architecture-scaffold code for every subsystem,
 but the majority of §51.1 contractual-MVP behaviors are stubs, metadata-only
 implementations, or missing entirely. The `oap/MVP-PROGRESS.md` claim of

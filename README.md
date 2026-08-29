@@ -51,8 +51,15 @@ promotion, and publication execution remain unimplemented.
 > canonical or authorized workspace projection JSON, while the shared trusted
 > React catalogue returns escaped HTML through public NGINX. Canonical and
 > preview use separate read-only database identities and preview is private,
-> no-store, and noindex. Review snapshots, promotion, publication, browser
-> worker automation, and public media finalization remain separate work.
+> no-store, and noindex. Objective 072 now provides confined Chromium preview
+> runs with durable private artifact retrieval. Review snapshots, promotion,
+> publication, and public media finalization remain separate work.
+
+The supply-chain policy records a temporary, bounded 41-finding Critical
+exception for Chrome for Testing `152.0.7977.64` in open
+[issue #67](https://github.com/ulfe-lmi/slaif-agent-site/issues/67). It expires
+on `2026-09-04`, is limited to the isolated browser-worker, and is not release
+readiness.
 
 The current automation also migrates/rebuilds disposable databases, verifies
 the exact role/ownership/grant matrix, exercises COW runtime/reviewer paths,
@@ -152,15 +159,15 @@ The target stack is NGINX Open Source at the edge; Next.js, React, TypeScript,
 Puck, open-source Tailwind CSS, shadcn/ui source, and Radix Primitives for the
 web surface; FastAPI and asyncpg for backend services; ordinary self-hosted
 PostgreSQL for data and transactional jobs; and separately confined
-Playwright workers for rendered feedback and E2E verification. Apache HTTP
-Server 2.4 is a planned supported edge adapter.
+Playwright workers for rendered feedback and E2E verification. The Apache HTTP
+Server 2.4 reference edge adapter is implemented and tested.
 
 The default deployment is intended to require no hosted database, browser,
 object store, identity provider, cloud API key, subscription, or proprietary
 control plane. Telemetry will not leave the deployment by default. Production
 dependencies must remain permissively licensed and reproducibly locked.
 
-## Run the deployment skeleton
+## Run the deployment
 
 With Docker Engine and Compose v2 on Linux:
 
@@ -172,8 +179,9 @@ docker compose up --build
 
 No `.env`, manual package install, cloud account, API key, or secret-generation
 step is required. Wait for health, then open <http://localhost:8080/>. Only
-loopback port 8080 is published. This is a deployment/status skeleton, not the
-first-run administrator or website-management product. See the
+loopback port 8080 is published. The deployable pre-alpha stack includes
+one-time first-run setup/login and site-management administration; deeper Agent
+semantics and review/publication remain queued. See the
 [deployment guide](docs/DEPLOYMENT.md) and [operations guide](docs/OPERATIONS.md).
 
 ## Delivery sequence
@@ -182,17 +190,17 @@ first-run administrator or website-management product. See the
 | --- | --- |
 | Completed preparation | Normative architecture, coding governance, versioned OAP transcript, professional project guidance, deterministic repository policy, and initial CI/CodeQL configuration. |
 | Completed foundation baseline | Exact PyPI dependency and artifact hashes, public API adapter boundary, Python packaging, and downstream PostgreSQL 14–18 adoption gate. |
-| Completed contract-toolchain baseline | Reproducible Node 24/pnpm 11 workspace, strict TypeScript tooling, and seven private scaffold-only package boundaries. |
-| Backend process boundary | Five FastAPI HTTP apps, typed canonical/preview Render projection API, four non-listening process entrypoints, typed local configuration, authority mapping, safe errors/correlation/logging, and readiness probes. |
-| Completed database boundary baseline | Exact password-free roles, packaged Alembic head, three empty product schemas, constrained `PENDING`/`EMPTY_SAFE`/`HARDENED` readiness, public-API COW reconciliation, and independent privilege validation. |
-| Completed deployable skeleton | One-command Compose, generated local database principals, safe-empty bootstrap, digest-pinned OCI images, isolated browser placeholder, Next setup/login/admin UI, NGINX edge, and Apache reference. |
+| Completed contract-toolchain baseline | Reproducible Node 24/pnpm 11 workspace, strict TypeScript tooling, and typed API, composition, component-catalog, content-model, scope, browser, and fixture contract boundaries. |
+| Backend process boundary | Six HTTP-facing boundaries—Control, Editor, Agent, internally exposed Render, scaffolded MCP adapter, and Media—plus non-listening review, scheduler, media-GC, and bootstrap processes, typed local configuration, authority mapping, safe errors/correlation/logging, and readiness probes. |
+| Completed database boundary baseline | Exact password-free roles, packaged Alembic head, Control/content/audit schemas with a COW-enabled populated boundary, constrained `PENDING`/`EMPTY_SAFE`/`HARDENED` readiness, public-API COW reconciliation, and independent privilege validation. |
+| Completed deployable boundary | One-command Compose, generated local database principals, safe-empty bootstrap, digest-pinned OCI images, confined browser-worker preview/artifacts, Next setup/login/admin UI, NGINX edge, and tested Apache reference. |
 | Completed supply-chain baseline | Reproducible Python/Web artifacts, exact source/action/base/scanner policy, deterministic notices, six-image SPDX SBOMs, fresh Grype scans, and checksummed retained CI evidence. |
 | Completed Control readiness boundary | Isolated `slaif_control_login` mount, bounded identity-verified Control pool, one owner-defined read-only readiness function, and fail-closed Control/NGINX health dependency. |
 | Completed local authentication proof | One-time setup plus login/session/logout through real NGINX/Compose on desktop Chromium, Firefox, WebKit, tablet, mobile Chromium, and mobile WebKit. |
 | Completed site foundation | Control-owned sites and domain mappings, bounded installation quota, strict identifier normalization, immutable site context, and trusted longest-prefix/local-development resolution. |
 | Completed human RBAC HTTP boundary | Immutable role/permission catalogs, site membership list/get/create/update/deactivate, strict session/CSRF policy, optimistic concurrency, and complete Control/Editor route declarations. |
 | Responsive site and membership administration | Permission-driven site/profile/domain workflows plus existing-user UUID membership cards, built-in roles, bounded ceilings, separate publication overrides, complete override replacement, version refresh, and semantic deactivation. |
-| Planned product work | Add review snapshots, freeze/accept/discard/promotion, runtime browser feedback, reconstruction, public media finalization, and remaining hardening. |
+| Planned product work | Add review snapshots, freeze/accept/discard/promotion, approved-source and responsive-sweep orchestration, reconstruction, public media finalization, and remaining hardening. |
 
 See [Architecture Section 50](ARCHITECTURE.md#50-implementation-phases) for
 the normative phase plan.
@@ -204,15 +212,15 @@ The current repository is intentionally small:
 ```text
 .
 ├── .github/             # CI, CodeQL, Dependabot, and PR guidance
-├── apps/web/            # minimal Next.js pre-alpha status surface
+├── apps/web/            # Next.js pre-alpha public/admin/Puck/preview surface
 ├── contracts/           # contract ownership and future generation policy
 ├── docs/                # deployment, operations, contracts, and assets
 ├── infra/               # NGINX default and Apache reference edge adapters
 ├── migrations/          # Alembic location marker and bootstrap guidance
 ├── oap/                 # versioned strategic orders, active pointer, reports
-├── packages/            # seven private TypeScript boundary scaffolds
-├── services/            # backend and isolated browser-worker placeholder
-├── supply-chain/        # machine policy, scanner contract, empty exceptions
+├── packages/            # typed composition/catalog/scope/browser/API contracts
+├── services/            # backend and isolated browser-worker implementation
+├── supply-chain/        # machine policy, scanner contract, bounded exceptions
 ├── tests/               # contract, packaging, and repository-policy tests
 ├── tools/               # repository, Compose, supply-chain, secret tooling
 ├── AGENTS.md            # coding-agent constitution
@@ -228,14 +236,18 @@ The current repository is intentionally small:
 └── README.md
 ```
 
-The TypeScript package boundaries contain no product schemas, components,
-scopes, browser tools, API behavior, or fixture data. Control HTTP additionally
-implements setup/session, Platform Administrator site/domain, immutable
-role/permission catalog, and site-membership lifecycle routes; the other public
-Python processes remain health-only. Long-running workers do no product work.
-Control readiness has one injected database component, while
-its liveness remains process-only. Bootstrap mutations require explicit
-one-shot commands. See the
+The TypeScript packages provide real normalized composition, component-catalog,
+content-model, scope, API, browser-tool, and fixture contracts where those
+boundaries are implemented; they do not grant editorial or executable-code
+authority. Control HTTP additionally implements setup/session, Platform
+Administrator site/domain, immutable role/permission catalog, and
+site-membership lifecycle routes. Agent, Editor, Render, and Media expose their
+bounded implemented behavior; MCP remains a scaffolded adapter, while review,
+scheduler, and media-GC workers remain lifecycle scaffolds. The separately
+confined browser-worker performs Objective 072 preview runs and private artifact
+handling. Control readiness uses its dedicated database boundary and remains
+process-only for liveness. Bootstrap mutations require explicit one-shot
+commands. See the
 [configuration contract](docs/CONFIGURATION.md),
 [site foundation](docs/SITES.md),
 [database bootstrap](docs/DATABASE_BOOTSTRAP.md),
@@ -290,7 +302,8 @@ The durable project rules are:
   reports.
 
 Architecture-first contributions are welcome, but current changes must remain
-honest about implemented versus planned behavior. See
+honest about implemented versus planned behavior; queued product contracts and
+their evidence will expand this boundary over time. See
 [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request.
 
 ## License, privacy, and acknowledgement
@@ -313,7 +326,14 @@ Ministry of Higher Education, Science and Innovation for SLAIF grant
 
 ## Implementation Status
 
-All core architectural components are implemented. See `oap/MVP-PROGRESS.md` for details.
+The merged Objectives 065–072 prove only the narrow, bounded slices recorded
+in [`oap/MVP-CONTRACT-AUDIT.md`](oap/MVP-CONTRACT-AUDIT.md). The contractual MVP
+remains incomplete: human Agent workspace/capability control, complete Agent
+semantic REST and MCP, immutable review snapshots, accept/discard promotion,
+conflict-safe publication, source reconstruction, lifecycle cleanup, and
+backup/restore evidence are planned in the 074–091 sequence. See
+[`oap/MVP-PROGRESS.md`](oap/MVP-PROGRESS.md) for the current status vocabulary
+and evidence boundaries.
 
 ## Security Review Queue
 
