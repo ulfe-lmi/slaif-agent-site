@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from typing import cast
 from uuid import UUID
 
@@ -13,6 +14,7 @@ from slaif_agent_site.agent_api.config import AgentDispatcherSettings
 from slaif_agent_site.agent_api.dispatcher import (
     AgentBrowserDispatcher,
     BrowserDispatchClaim,
+    _ActiveAttempt,
 )
 from slaif_agent_site.browser_contracts import (
     BrowserEvidence,
@@ -35,6 +37,7 @@ WORKSPACE_ID = UUID("00000000-0000-4000-8000-000000000003")
 CAPABILITY_ID = UUID("00000000-0000-4000-8000-000000000001")
 DELEGATOR_ID = UUID("00000000-0000-4000-8000-000000000006")
 LEASE_ID = UUID("00000000-0000-4000-8000-000000000007")
+REQUEST_ID = UUID("00000000-0000-4000-8000-000000000008")
 NOW = 1_800_000_000
 
 
@@ -101,3 +104,91 @@ async def test_disabled_dispatcher_does_not_start() -> None:
     await dispatcher.start()
     assert dispatcher.enabled is False
     await dispatcher.stop()
+
+
+class _Transaction:
+    async def __aenter__(self) -> _Transaction:
+        return self
+
+    async def __aexit__(self, *_args: object) -> None:
+        return None
+
+
+class _Connection:
+    def __init__(self) -> None:
+        self.calls: list[tuple[object, ...]] = []
+
+    def transaction(self) -> _Transaction:
+        return _Transaction()
+
+    async def fetchval(self, _sql: str, *arguments: object) -> str:
+        self.calls.append(arguments)
+        return "ok"
+
+
+class _Acquire:
+    def __init__(self, connection: _Connection) -> None:
+        self.connection = connection
+
+    async def __aenter__(self) -> _Connection:
+        return self.connection
+
+    async def __aexit__(self, *_args: object) -> None:
+        return None
+
+
+class _Pool:
+    def __init__(self, connection: _Connection) -> None:
+        self.connection = connection
+
+    def acquire(self, *, timeout: float) -> _Acquire:
+        assert timeout > 0
+        return _Acquire(self.connection)
+
+
+class _Database:
+    acquire_timeout = 1.0
+
+    def __init__(self, connection: _Connection) -> None:
+        self.pool = _Pool(connection)
+
+    def cow_pool(self) -> _Pool:
+        return self.pool
+
+
+@pytest.mark.asyncio
+async def test_completion_uses_migration_register_positional_contract() -> None:
+    connection = _Connection()
+    dispatcher = AgentBrowserDispatcher(
+        database=_Database(connection),
+        signer=None,
+        worker_client=cast(BrowserWorkerClient, object()),
+        settings=AgentDispatcherSettings(),
+    )
+    artifact = SimpleNamespace(
+        run_id=RUN_ID,
+        artifact_id=UUID("00000000-0000-4000-8000-000000000009"),
+        kind=BrowserEvidence.SCREENSHOT,
+        mime_type="image/png",
+        sha256="a" * 64,
+        size_bytes=128,
+        target=BrowserTarget.DESKTOP_CHROMIUM,
+        route_digest=hashlib.sha256(b"/").hexdigest(),
+        expires_at=NOW + 60,
+    )
+
+    await dispatcher._complete(
+        active=_ActiveAttempt(claim=_claim()),
+        state="COMPLETED",
+        summary={},
+        error_code=None,
+        error_message=None,
+        artifacts=(artifact,),
+        worker_request_id=REQUEST_ID,
+    )
+
+    register_call = connection.calls[0]
+    assert register_call[3:5] == ("screenshot", REQUEST_ID)
+    assert isinstance(register_call[3], str)
+    assert isinstance(register_call[4], UUID)
+    assert connection.calls[1][0:3] == (RUN_ID, LEASE_ID, "COMPLETED")
