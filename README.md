@@ -190,9 +190,9 @@ semantics and review/publication remain queued. See the
 | --- | --- |
 | Completed preparation | Normative architecture, coding governance, versioned OAP transcript, professional project guidance, deterministic repository policy, and initial CI/CodeQL configuration. |
 | Completed foundation baseline | Exact PyPI dependency and artifact hashes, public API adapter boundary, Python packaging, and downstream PostgreSQL 14–18 adoption gate. |
-| Completed contract-toolchain baseline | Reproducible Node 24/pnpm 11 workspace, strict TypeScript tooling, and seven private scaffold-only package boundaries. |
-| Backend process boundary | Five FastAPI HTTP apps, typed canonical/preview Render projection API, four non-listening process entrypoints, typed local configuration, authority mapping, safe errors/correlation/logging, and readiness probes. |
-| Completed database boundary baseline | Exact password-free roles, packaged Alembic head, three empty product schemas, constrained `PENDING`/`EMPTY_SAFE`/`HARDENED` readiness, public-API COW reconciliation, and independent privilege validation. |
+| Completed contract-toolchain baseline | Reproducible Node 24/pnpm 11 workspace, strict TypeScript tooling, and typed API, composition, component-catalog, content-model, scope, browser, and fixture contract boundaries. |
+| Backend process boundary | Six HTTP-facing boundaries—Control, Editor, Agent, internally exposed Render, scaffolded MCP adapter, and Media—plus non-listening review, scheduler, media-GC, and bootstrap processes, typed local configuration, authority mapping, safe errors/correlation/logging, and readiness probes. |
+| Completed database boundary baseline | Exact password-free roles, packaged Alembic head, Control/content/audit schemas with a COW-enabled populated boundary, constrained `PENDING`/`EMPTY_SAFE`/`HARDENED` readiness, public-API COW reconciliation, and independent privilege validation. |
 | Completed deployable boundary | One-command Compose, generated local database principals, safe-empty bootstrap, digest-pinned OCI images, confined browser-worker preview/artifacts, Next setup/login/admin UI, NGINX edge, and tested Apache reference. |
 | Completed supply-chain baseline | Reproducible Python/Web artifacts, exact source/action/base/scanner policy, deterministic notices, six-image SPDX SBOMs, fresh Grype scans, and checksummed retained CI evidence. |
 | Completed Control readiness boundary | Isolated `slaif_control_login` mount, bounded identity-verified Control pool, one owner-defined read-only readiness function, and fail-closed Control/NGINX health dependency. |
@@ -212,13 +212,13 @@ The current repository is intentionally small:
 ```text
 .
 ├── .github/             # CI, CodeQL, Dependabot, and PR guidance
-├── apps/web/            # minimal Next.js pre-alpha status surface
+├── apps/web/            # Next.js pre-alpha public/admin/Puck/preview surface
 ├── contracts/           # contract ownership and future generation policy
 ├── docs/                # deployment, operations, contracts, and assets
 ├── infra/               # NGINX default and Apache reference edge adapters
 ├── migrations/          # Alembic location marker and bootstrap guidance
 ├── oap/                 # versioned strategic orders, active pointer, reports
-├── packages/            # seven private TypeScript boundary scaffolds
+├── packages/            # typed composition/catalog/scope/browser/API contracts
 ├── services/            # backend and isolated browser-worker implementation
 ├── supply-chain/        # machine policy, scanner contract, bounded exceptions
 ├── tests/               # contract, packaging, and repository-policy tests
@@ -236,16 +236,18 @@ The current repository is intentionally small:
 └── README.md
 ```
 
-The TypeScript package boundaries contain no product schemas, components,
-scopes, browser tools, API behavior, or fixture data. Control HTTP additionally
-implements setup/session, Platform Administrator site/domain, immutable
-role/permission catalog, and site-membership lifecycle routes; the other public
-Python processes remain health-only. The separately confined browser-worker
-performs Objective 072 preview runs and private artifact handling; review,
-scheduler, and media-GC workers remain bounded lifecycle scaffolds.
-Control readiness has one injected database component, while
-its liveness remains process-only. Bootstrap mutations require explicit
-one-shot commands. See the
+The TypeScript packages provide real normalized composition, component-catalog,
+content-model, scope, API, browser-tool, and fixture contracts where those
+boundaries are implemented; they do not grant editorial or executable-code
+authority. Control HTTP additionally implements setup/session, Platform
+Administrator site/domain, immutable role/permission catalog, and
+site-membership lifecycle routes. Agent, Editor, Render, and Media expose their
+bounded implemented behavior; MCP remains a scaffolded adapter, while review,
+scheduler, and media-GC workers remain lifecycle scaffolds. The separately
+confined browser-worker performs Objective 072 preview runs and private artifact
+handling. Control readiness uses its dedicated database boundary and remains
+process-only for liveness. Bootstrap mutations require explicit one-shot
+commands. See the
 [configuration contract](docs/CONFIGURATION.md),
 [site foundation](docs/SITES.md),
 [database bootstrap](docs/DATABASE_BOOTSTRAP.md),
@@ -300,7 +302,8 @@ The durable project rules are:
   reports.
 
 Architecture-first contributions are welcome, but current changes must remain
-honest about implemented versus planned behavior. See
+honest about implemented versus planned behavior; queued product contracts and
+their evidence will expand this boundary over time. See
 [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request.
 
 ## License, privacy, and acknowledgement
