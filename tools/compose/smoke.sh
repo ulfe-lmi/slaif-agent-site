@@ -658,7 +658,7 @@ do
     --output "$AGENT_RUN_FILE" --write-out '%{http_code}' \
     --request POST --header 'Content-Type: application/json' \
     --header "Idempotency-Key: $worker_key" \
-    --data '{"version":"browser-preview/v1","route":"/s/demo/home","target":"desktop-chromium","evidence":["screenshot","heading-summary","structure-summary"]}' \
+    --data '{"version":"browser-preview/v1","route":"/s/demo/","target":"desktop-chromium","evidence":["screenshot","heading-summary","structure-summary"]}' \
     http://localhost:8080/api/agent/v1/preview-runs)
   test "$worker_status" = 202
   worker_run_id=$(python -c \
@@ -674,7 +674,25 @@ do
     test "$(curl --silent --show-error --config "$AGENT_CAPABILITY_CONFIG_FILE" \
       --output "$AGENT_RUN_FILE" --write-out '%{http_code}' \
       "http://localhost:8080/api/agent/v1/preview-runs/$worker_run_id")" = 200
-    state=$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["state"])' "$AGENT_RUN_FILE")
+    state=$(python - "$AGENT_RUN_FILE" "$worker_run_id" <<'PY'
+import json
+import pathlib
+import sys
+
+document = json.loads(pathlib.Path(sys.argv[1]).read_text("utf-8"))
+state = document["state"]
+if state in {"FAILED", "TIMED_OUT", "CANCELLED"}:
+    error = document.get("error") or {}
+    code = str(error.get("code") or "UNKNOWN")[:64]
+    message = str(error.get("message") or "")[:128].replace("\n", " ")
+    print(
+        f"agent-browser-dispatch: terminal run={sys.argv[2]} "
+        f"state={state} code={code} message={message}",
+        file=sys.stderr,
+    )
+print(state)
+PY
+    )
     test "$state" = COMPLETED && break
     sleep 1
   done
@@ -712,7 +730,7 @@ WORKSPACE_ID = UUID("12000000-0000-4000-8000-000000000301")
 CAPABILITY_ID = UUID("15000000-0000-4000-8000-000000000004")
 OPERATION_ID = UUID("15000000-0000-4000-8000-000000000006")
 LEASE_ID = UUID("15000000-0000-4000-8000-000000000007")
-ROUTE = "/s/demo/home"
+ROUTE = "/s/demo/"
 EVIDENCE = (
     BrowserEvidence.SCREENSHOT,
     BrowserEvidence.HEADING_SUMMARY,

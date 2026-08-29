@@ -170,6 +170,15 @@ class ComposeSmokeContractTests(unittest.TestCase):
         self.assertNotIn("slaif_agent_browser_run_complete", source)
         self.assertNotIn("slaif_agent_browser_artifact_register", source)
 
+    def test_dispatch_fixture_uses_seeded_route_and_reports_terminal_failures(self) -> None:
+        source = SMOKE.read_text(encoding="utf-8")
+        self.assertIn('"route":"/s/demo/"', source)
+        self.assertIn('ROUTE = "/s/demo/"', source)
+        self.assertNotIn('"route":"/s/demo/home"', source)
+        self.assertNotIn('ROUTE = "/s/demo/home"', source)
+        self.assertIn("agent-browser-dispatch: terminal run=", source)
+        self.assertIn('state in {"FAILED", "TIMED_OUT", "CANCELLED"}', source)
+
 
 if __name__ == "__main__":
     unittest.main()
