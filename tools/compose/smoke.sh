@@ -59,6 +59,7 @@ ARTIFACT_HEADERS_FILE=
 ARTIFACT_BODY_FILE=
 FOREIGN_CAPABILITY_CONFIG_FILE=
 FOREIGN_CAPABILITY_META_FILE=
+PRE_OUTAGE_BODY_FILE=
 
 retrieve_public_artifacts() {
   for worker_run_id in $(printf '%s' "$worker_run_ids" | tr ',' ' ')
@@ -155,6 +156,7 @@ cleanup() {
   test -z "$ARTIFACT_BODY_FILE" || rm -f "$ARTIFACT_BODY_FILE"
   test -z "$FOREIGN_CAPABILITY_CONFIG_FILE" || rm -f "$FOREIGN_CAPABILITY_CONFIG_FILE"
   test -z "$FOREIGN_CAPABILITY_META_FILE" || rm -f "$FOREIGN_CAPABILITY_META_FILE"
+  test -z "$PRE_OUTAGE_BODY_FILE" || rm -f "$PRE_OUTAGE_BODY_FILE"
   docker compose -p "$NEGATIVE_PROJECT" -f "$ROOT/compose.yaml" \
     -f "$ROOT/tests/packaging/compose.broken-bootstrap.yaml" \
     down --volumes --remove-orphans >/dev/null 2>&1 || true
@@ -182,6 +184,7 @@ ARTIFACT_HEADERS_FILE=$(mktemp)
 ARTIFACT_BODY_FILE=$(mktemp)
 FOREIGN_CAPABILITY_CONFIG_FILE=$(mktemp)
 FOREIGN_CAPABILITY_META_FILE=$(mktemp)
+PRE_OUTAGE_BODY_FILE=$(mktemp)
 chmod 600 "$TOKEN_FILE" "$E2E_SECRET_FILE" "$AGENT_CAPABILITY_CONFIG_FILE" \
   "$AGENT_CAPABILITY_META_FILE" "$AGENT_RUN_FILE"
 
@@ -832,22 +835,53 @@ Path("/tmp/browser-worker-result.json").chmod(0o600)
 print("browser-worker-dispatch: OK durable-runs=2 artifacts=agent-owned")
 PY
 retrieve_public_artifacts
+worker_probe_run_id=$(printf '%s' "$worker_run_ids" | cut -d, -f1)
 worker_artifact_id=$(docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif -Atc \
   "SELECT id FROM control.browser_artifact
    WHERE capability_id='15000000-0000-4000-8000-000000000004'
+     AND run_id='$worker_probe_run_id'
    ORDER BY created_at, id LIMIT 1")
 test -n "$worker_artifact_id"
 test "$(curl --silent --show-error --config "$AGENT_CAPABILITY_CONFIG_FILE" \
   --output "$ARTIFACT_BODY_FILE" --write-out '%{http_code}' \
-  "http://localhost:8080/api/agent/v1/preview-runs/$worker_run_id/artifacts/00000000-0000-4000-8000-000000000099")" = 404
+  "http://localhost:8080/api/agent/v1/preview-runs/$worker_probe_run_id/artifacts/00000000-0000-4000-8000-000000000099")" = 404
 test "$(curl --silent --show-error --config "$FOREIGN_CAPABILITY_CONFIG_FILE" \
   --output "$ARTIFACT_BODY_FILE" --write-out '%{http_code}' \
-  "http://localhost:8080/api/agent/v1/preview-runs/$worker_run_id/artifacts/$worker_artifact_id")" = 404
+  "http://localhost:8080/api/agent/v1/preview-runs/$worker_probe_run_id/artifacts/$worker_artifact_id")" = 404
 echo "browser-artifact-negative: OK random=404 foreign-capability=404"
 docker compose -p "$PROJECT" restart agent-api >/dev/null
 wait_healthy agent-api
 echo "agent-browser-restart: OK durable-artifacts=retained"
 retrieve_public_artifacts
+test "$(curl --silent --show-error --config "$AGENT_CAPABILITY_CONFIG_FILE" \
+  --output "$PRE_OUTAGE_BODY_FILE" --write-out '%{http_code}' \
+  "http://localhost:8080/api/agent/v1/preview-runs/$worker_probe_run_id/artifacts/$worker_artifact_id")" = 200
+docker compose -p "$PROJECT" stop browser-worker >/dev/null
+outage_status=$(curl --silent --show-error --max-time 30 \
+  --config "$AGENT_CAPABILITY_CONFIG_FILE" --output "$ARTIFACT_BODY_FILE" \
+  --write-out '%{http_code}' \
+  "http://localhost:8080/api/agent/v1/preview-runs/$worker_probe_run_id/artifacts/$worker_artifact_id" || true)
+test "$outage_status" = 503
+if grep -Fq "$worker_artifact_id" "$ARTIFACT_BODY_FILE"
+then
+  echo "compose-smoke: worker outage leaked artifact binding" >&2
+  exit 1
+fi
+test "$(curl --silent --output "$ARTIFACT_BODY_FILE" --write-out '%{http_code}' \
+  http://localhost:8080/s/demo)" = 200
+if grep -q 'Compose preview overlay' "$ARTIFACT_BODY_FILE"
+then
+  echo "compose-smoke: worker outage changed canonical output" >&2
+  exit 1
+fi
+echo "browser-artifact-outage: OK status=503 canonical=200 bytes=absent"
+docker compose -p "$PROJECT" start browser-worker >/dev/null
+wait_healthy browser-worker
+test "$(curl --silent --show-error --config "$AGENT_CAPABILITY_CONFIG_FILE" \
+  --output "$ARTIFACT_BODY_FILE" --write-out '%{http_code}' \
+  "http://localhost:8080/api/agent/v1/preview-runs/$worker_probe_run_id/artifacts/$worker_artifact_id")" = 200
+cmp "$PRE_OUTAGE_BODY_FILE" "$ARTIFACT_BODY_FILE"
+echo "browser-artifact-recovery: OK byte-identical"
 worker_canonical_status=$(curl --silent --output /dev/null --write-out '%{http_code}' \
   http://localhost:8080/s/demo)
 if test "$worker_canonical_status" != 200
@@ -1108,5 +1142,18 @@ docker run --rm \
   --add-host media-service:127.0.0.1 \
   --add-host web:127.0.0.1 \
   slaif-agent-site-nginx:local -t
+docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif -v ON_ERROR_STOP=1 -c \
+  "UPDATE control.capability SET revoked_at=CURRENT_TIMESTAMP
+   WHERE id='15000000-0000-4000-8000-000000000004';" >/dev/null
+revoked_status=$(curl --silent --show-error --config "$AGENT_CAPABILITY_CONFIG_FILE" \
+  --output "$ARTIFACT_BODY_FILE" --write-out '%{http_code}' \
+  "http://localhost:8080/api/agent/v1/preview-runs/$worker_probe_run_id/artifacts/$worker_artifact_id")
+test "$revoked_status" = 401
+if grep -Fq "$worker_artifact_id" "$ARTIFACT_BODY_FILE"
+then
+  echo "compose-smoke: revoked artifact binding leaked" >&2
+  exit 1
+fi
+echo "browser-artifact-revoked: OK status=401 bytes=absent"
 python -m unittest discover -s tests/packaging -p 'test_*.py'
 echo "compose-smoke: OK"
