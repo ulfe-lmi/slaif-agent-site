@@ -9,7 +9,7 @@ import secrets
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 from uuid import UUID, uuid4
 
 import asyncpg
@@ -46,6 +46,7 @@ class BrowserDispatchClaim:
     specification: InternalPreviewRunSpecification
     lease_id: UUID
     lease_expires_at: datetime
+    run_expires_at: datetime | None = None
 
 
 @dataclass(slots=True)
@@ -206,7 +207,32 @@ class AgentBrowserDispatcher:
             specification=specification,
             lease_id=row["lease_id"],
             lease_expires_at=row["lease_expires_at"],
+            run_expires_at=await self._run_expiry(specification),
         )
+
+    async def _run_expiry(
+        self, specification: InternalPreviewRunSpecification
+    ) -> datetime:
+        """Read the trusted run expiry through the Agent-owned function boundary."""
+
+        try:
+            async with self._pool().acquire(
+                timeout=getattr(self._database, "acquire_timeout", 1.5)
+            ) as connection:
+                row = await connection.fetchrow(
+                    "SELECT expires_at FROM control.slaif_agent_browser_run_get("
+                    "$1,$2,$3,$4,$5)",
+                    specification.capability_id,
+                    specification.site_id,
+                    specification.workspace_id,
+                    specification.delegator_id,
+                    specification.run_id,
+                )
+            if row is None:
+                raise BrowserWorkerClientError("browser run expiry unavailable")
+            return cast(datetime, row[0])
+        except asyncio.CancelledError:
+            raise
 
     async def _renew(self, active: _ActiveAttempt) -> None:
         assert active.lease_lost is not None
@@ -406,6 +432,7 @@ class AgentBrowserDispatcher:
             timeout=getattr(self._database, "acquire_timeout", 1.5)
         ) as connection:
             async with connection.transaction():
+                run_expiry = active.claim.run_expires_at
                 for artifact in artifacts:
                     await connection.fetchval(
                         ARTIFACT_REGISTER_SQL,
@@ -418,7 +445,14 @@ class AgentBrowserDispatcher:
                         artifact.size_bytes,
                         artifact.target.value,
                         artifact.route_digest,
-                        _utc_timestamp(artifact.expires_at),
+                        _utc_timestamp(
+                            min(
+                                artifact.expires_at,
+                                int(run_expiry.timestamp())
+                                if run_expiry is not None
+                                else artifact.expires_at,
+                            )
+                        ),
                     )
                 await connection.fetchval(
                     COMPLETE_SQL,

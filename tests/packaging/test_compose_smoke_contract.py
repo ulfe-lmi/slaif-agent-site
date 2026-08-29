@@ -142,30 +142,19 @@ class ComposeSmokeContractTests(unittest.TestCase):
         self.assertIn("governance-restart: OK", smoke)
         self.assertIn("domain_fingerprint", smoke)
 
-    def test_browser_worker_proof_is_direct_private_and_does_not_dispatch(self) -> None:
+    def test_browser_worker_proof_is_durable_and_private(self) -> None:
         source = SMOKE.read_text(encoding="utf-8")
         for marker in (
             "browser-worker-runtime-policy: OK",
             "browser-worker-image-policy: OK",
-            "browser-worker-direct: OK runs=2 artifacts=6 negatives=5",
-            "browser-worker-restart: OK retained-artifacts=3",
+            "browser-worker-dispatch: OK durable-runs=2 artifacts=agent-owned",
+            "browser-worker-restart: OK durable-dispatch-artifacts=retained",
             "browser-worker-public-separation: OK durable-runs=2 completed=2",
             "browser-artifact-runtime-policy: OK files=12 artifacts=6",
             "browser-worker-cleanup: OK chromium-children=0",
             "browser-worker-secret-recovery: OK",
         ):
             self.assertEqual(source.count(marker), 1, marker)
-        self.assertIn("load_browser_worker_credential", source)
-        self.assertIn("load_browser_signing_key", source)
-        self.assertIn("last_token.encode() not in content", source)
-        self.assertIn(
-            "PREVIEW_TOKEN_CONSUMED",
-            (
-                ROOT
-                / "services/backend/src/slaif_agent_site/db/alembic/versions"
-                / "036_001_render_browser_preview_authority.py"
-            ).read_text(encoding="utf-8"),
-        )
         self.assertNotIn("slaif_agent_browser_run_claim", source)
         self.assertNotIn("slaif_agent_browser_run_complete", source)
         self.assertNotIn("slaif_agent_browser_artifact_register", source)

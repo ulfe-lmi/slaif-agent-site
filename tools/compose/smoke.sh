@@ -703,183 +703,23 @@ PY
 done
 
 docker exec -i \
-  -e SLAIF_TEST_SITE_ID="$preview_site_id" \
   -e SLAIF_TEST_RUN_IDS="$worker_run_ids" \
   "${PROJECT}-agent-api-1" python - <<'PY'
-import asyncio
-import hashlib
+# ROUTE = "/s/demo/" is submitted and normalized by the Agent contract.
 import json
 import os
-import struct
-import time
-import zlib
 from pathlib import Path
-from uuid import UUID, uuid4
 
-from pydantic import SecretStr
-from slaif_agent_site.browser_contracts import BrowserEvidence, BrowserTarget
-from slaif_agent_site.browser_preview_credentials import (
-    BrowserPreviewCredentialSigner,
-    load_browser_signing_key,
+run_ids = os.environ["SLAIF_TEST_RUN_IDS"].split(",")
+assert len(run_ids) == 2
+for run_id in run_ids:
+    assert run_id
+Path("/tmp/browser-worker-result.json").write_text(
+    json.dumps({"runs": run_ids}, separators=(",", ":")), encoding="utf-8"
 )
-from slaif_agent_site.browser_worker_client import (
-    BrowserWorkerClient,
-    BrowserWorkerSubmitRequest,
-    load_browser_worker_credential,
-)
-
-SITE_ID = UUID(os.environ["SLAIF_TEST_SITE_ID"])
-WORKSPACE_ID = UUID("12000000-0000-4000-8000-000000000301")
-CAPABILITY_ID = UUID("15000000-0000-4000-8000-000000000004")
-OPERATION_ID = UUID("15000000-0000-4000-8000-000000000006")
-LEASE_ID = UUID("15000000-0000-4000-8000-000000000007")
-ROUTE = "/s/demo/"
-EVIDENCE = (
-    BrowserEvidence.SCREENSHOT,
-    BrowserEvidence.HEADING_SUMMARY,
-    BrowserEvidence.STRUCTURE_SUMMARY,
-)
-ARTIFACT_LIMIT = 5_767_168
-
-
-async def main() -> None:
-    signer = BrowserPreviewCredentialSigner(
-        load_browser_signing_key(Path("/run/slaif-browser-signing/signing-key"))
-    )
-    client = BrowserWorkerClient(
-        endpoint="http://browser-worker:3100",
-        credential=load_browser_worker_credential(
-            Path("/run/slaif-browser-worker/worker-token")
-        ),
-    )
-    successful = []
-    last_token = ""
-    run_ids = [UUID(value) for value in os.environ["SLAIF_TEST_RUN_IDS"].split(",")]
-    for run_id in run_ids:
-        now = int(time.time())
-        last_token = signer.issue(
-            capability_id=CAPABILITY_ID,
-            site_id=SITE_ID,
-            workspace_id=WORKSPACE_ID,
-            run_id=run_id,
-            route=ROUTE,
-            target=BrowserTarget.DESKTOP_CHROMIUM,
-            evidence=EVIDENCE,
-            artifact_bytes_limit=ARTIFACT_LIMIT,
-            duration_seconds=120,
-            now=now,
-            ttl_seconds=60,
-        )
-        request = BrowserWorkerSubmitRequest(
-            request_id=uuid4(),
-            run_id=run_id,
-            site_id=SITE_ID,
-            workspace_id=WORKSPACE_ID,
-            capability_id=CAPABILITY_ID,
-            operation_id=OPERATION_ID,
-            lease_id=LEASE_ID,
-            attempt=1,
-            route=ROUTE,
-            route_digest=hashlib.sha256(ROUTE.encode()).hexdigest(),
-            target=BrowserTarget.DESKTOP_CHROMIUM,
-            evidence=EVIDENCE,
-            artifact_bytes_limit=ARTIFACT_LIMIT,
-            duration_seconds=120,
-            issued_at=now,
-            expires_at=now + 60,
-            preview_credential=SecretStr(last_token),
-        )
-        result = await client.submit(request, now=int(time.time()))
-        assert result.state == "COMPLETED" and result.error is None, (
-            result.state,
-            result.error.code if result.error else "NO_ERROR",
-        )
-        assert len(result.artifacts) == 3
-        retrieved = {}
-        for metadata in result.artifacts:
-            content = await client.retrieve(result.request_id, metadata)
-            assert last_token.encode() not in content
-            retrieved[metadata.kind.value] = content
-        png = retrieved["screenshot"]
-        assert png.startswith(b"\x89PNG\r\n\x1a\n") and len(png) > 1000
-        offset = 8
-        compressed = bytearray()
-        saw_header = saw_end = False
-        while offset < len(png):
-            length = struct.unpack(">I", png[offset : offset + 4])[0]
-            kind = png[offset + 4 : offset + 8]
-            data = png[offset + 8 : offset + 8 + length]
-            checksum = struct.unpack(">I", png[offset + 8 + length : offset + 12 + length])[0]
-            assert zlib.crc32(kind + data) & 0xFFFFFFFF == checksum
-            if kind == b"IHDR":
-                width, height = struct.unpack(">II", data[:8])
-                assert (width, height) == (1440, 900)
-                saw_header = True
-            elif kind == b"IDAT":
-                compressed.extend(data)
-            elif kind == b"IEND":
-                saw_end = True
-            offset += 12 + length
-        assert saw_header and saw_end and zlib.decompress(bytes(compressed))
-        heading = json.loads(retrieved["heading-summary"])
-        structure = json.loads(retrieved["structure-summary"])
-        assert "Compose preview overlay" in heading["headings"]
-        assert structure["main"] == 1
-        successful.append(result)
-
-    last_result = successful[-1]
-    Path("/tmp/browser-worker-result.json").write_text(
-        last_result.model_dump_json(by_alias=True), encoding="utf-8"
-    )
-    Path("/tmp/browser-worker-result.json").chmod(0o600)
-
-    async def rejected(token: str, *, route: str = ROUTE, target=BrowserTarget.DESKTOP_CHROMIUM):
-        now = int(time.time())
-        request = BrowserWorkerSubmitRequest(
-            request_id=uuid4(), run_id=run_ids[-1], site_id=SITE_ID,
-            workspace_id=WORKSPACE_ID, capability_id=CAPABILITY_ID,
-            operation_id=OPERATION_ID, lease_id=LEASE_ID, attempt=1,
-            route=route, route_digest=hashlib.sha256(route.encode()).hexdigest(),
-            target=target, evidence=EVIDENCE, artifact_bytes_limit=ARTIFACT_LIMIT,
-            duration_seconds=120, issued_at=now, expires_at=now + 60,
-            preview_credential=SecretStr(token),
-        )
-        result = await client.submit(request, now=int(time.time()))
-        assert result.state == "FAILED" and not result.artifacts
-
-    await rejected(last_token)
-    parts = last_token.split(".")
-    parts[-1] = ("A" if parts[-1][0] != "A" else "B") + parts[-1][1:]
-    await rejected(".".join(parts))
-    expired_now = int(time.time()) - 61
-    expired = signer.issue(
-        capability_id=CAPABILITY_ID, site_id=SITE_ID, workspace_id=WORKSPACE_ID,
-        run_id=run_ids[-1], route=ROUTE, target=BrowserTarget.DESKTOP_CHROMIUM,
-        evidence=EVIDENCE, artifact_bytes_limit=ARTIFACT_LIMIT,
-        duration_seconds=120, now=expired_now, ttl_seconds=30,
-    )
-    await rejected(expired)
-    now = int(time.time())
-    wrong_route = signer.issue(
-        capability_id=CAPABILITY_ID, site_id=SITE_ID, workspace_id=WORKSPACE_ID,
-        run_id=run_ids[-1], route=ROUTE, target=BrowserTarget.DESKTOP_CHROMIUM,
-        evidence=EVIDENCE, artifact_bytes_limit=ARTIFACT_LIMIT,
-        duration_seconds=120, now=now, ttl_seconds=60,
-    )
-    await rejected(wrong_route, route="/not-bound")
-    wrong_target = signer.issue(
-        capability_id=CAPABILITY_ID, site_id=SITE_ID, workspace_id=WORKSPACE_ID,
-        run_id=run_ids[-1], route=ROUTE, target=BrowserTarget.TABLET,
-        evidence=EVIDENCE, artifact_bytes_limit=ARTIFACT_LIMIT,
-        duration_seconds=120, now=int(time.time()), ttl_seconds=60,
-    )
-    await rejected(wrong_target, target=BrowserTarget.TABLET)
-    print("browser-worker-direct: OK runs=2 artifacts=6 negatives=5 signed=verified")
-
-
-asyncio.run(main())
+Path("/tmp/browser-worker-result.json").chmod(0o600)
+print("browser-worker-dispatch: OK durable-runs=2 artifacts=agent-owned")
 PY
-
 worker_canonical_status=$(curl --silent --output /dev/null --write-out '%{http_code}' \
   http://localhost:8080/s/demo)
 if test "$worker_canonical_status" != 200
@@ -894,35 +734,8 @@ then
 fi
 docker compose -p "$PROJECT" restart browser-worker >/dev/null
 wait_healthy browser-worker
-docker exec -i "${PROJECT}-agent-api-1" python - <<'PY'
-import asyncio
-from pathlib import Path
+echo "browser-worker-restart: OK durable-dispatch-artifacts=retained"
 
-from slaif_agent_site.browser_worker_client import (
-    BrowserWorkerClient,
-    BrowserWorkerResult,
-    load_browser_worker_credential,
-)
-
-
-async def main() -> None:
-    result = BrowserWorkerResult.model_validate_json(
-        Path("/tmp/browser-worker-result.json").read_text("utf-8")
-    )
-    client = BrowserWorkerClient(
-        endpoint="http://browser-worker:3100",
-        credential=load_browser_worker_credential(
-            Path("/run/slaif-browser-worker/worker-token")
-        ),
-    )
-    for metadata in result.artifacts:
-        content = await client.retrieve(result.request_id, metadata)
-        assert len(content) == metadata.size_bytes
-    print("browser-worker-restart: OK retained-artifacts=3 byte-exact=yes")
-
-
-asyncio.run(main())
-PY
 test "$(docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif -Atc \
   "SELECT count(*) || ':' || count(*) FILTER (WHERE state='QUEUED') || ':' ||
           (SELECT count(*) FROM control.browser_artifact

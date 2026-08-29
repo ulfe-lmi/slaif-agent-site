@@ -80,6 +80,32 @@ class ReproducibilityHelperTests(unittest.TestCase):
         self.write(manifest_path, content("b", version=2))
         self.assertNotEqual(first, tree_manifest(self.root, target))
 
+    def test_next_route_manifest_compares_json_semantics(self) -> None:
+        manifest_path = (
+            "apps/web/.next/standalone/apps/web/.next/app-path-routes-manifest.json"
+        )
+        target = ("apps/web/.next/standalone",)
+        self.write(manifest_path, b'{"a":[{"b":1}],"z":"same"}')
+        first = tree_manifest(self.root, target)
+        self.write(manifest_path, b'{"z":"same","a":[{"b":1}]}')
+        self.assertEqual(first, tree_manifest(self.root, target))
+        self.write(manifest_path, b'{"z":"changed","a":[{"b":1}]}')
+        second = tree_manifest(self.root, target)
+        self.assertNotEqual(first, second)
+        difference = describe_manifest_difference(
+            {
+                "browser_runtime": [],
+                "web_distribution": first,
+                "workspace_outputs": [],
+            },
+            {
+                "browser_runtime": [],
+                "web_distribution": second,
+                "workspace_outputs": [],
+            },
+        )
+        self.assertIn("json-path=$.z", difference)
+
     def test_generated_contracts_ignore_build_cache_but_reject_source_output(
         self,
     ) -> None:

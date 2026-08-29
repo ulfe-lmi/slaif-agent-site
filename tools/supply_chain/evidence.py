@@ -38,6 +38,7 @@ IMAGE_PREFIXES = {
     "web": ("opt/slaif/",),
 }
 NEXT_PRERENDER_MANIFEST = "opt/slaif/apps/web/.next/prerender-manifest.json"
+NEXT_APP_PATH_ROUTES_MANIFEST = "opt/slaif/apps/web/.next/app-path-routes-manifest.json"
 NEXT_SERVER_REFERENCE_JSON = (
     "opt/slaif/apps/web/.next/server/server-reference-manifest.json"
 )
@@ -345,6 +346,7 @@ def normalize_runtime_file(
     image_name: str, name: str, content: bytes
 ) -> tuple[bytes, list[str]]:
     if image_name != "web" or name not in {
+        NEXT_APP_PATH_ROUTES_MANIFEST,
         NEXT_PRERENDER_MANIFEST,
         NEXT_SERVER_REFERENCE_JSON,
         NEXT_SERVER_REFERENCE_JS,
@@ -359,7 +361,12 @@ def normalize_runtime_file(
             manifest = json.loads(json.loads(source.removeprefix(prefix)))
         else:
             manifest = json.loads(content)
-        if not isinstance(manifest, dict):
+        if not isinstance(manifest, (dict, list)):
+            raise ValueError("manifest is not an object or array")
+        if name in {
+            NEXT_PRERENDER_MANIFEST,
+            NEXT_SERVER_REFERENCE_JSON,
+        } and not isinstance(manifest, dict):
             raise ValueError("manifest is not an object")
         if name == NEXT_PRERENDER_MANIFEST:
             preview = manifest.get("preview")
@@ -375,7 +382,7 @@ def normalize_runtime_file(
                     raise ValueError(f"{field} is missing")
                 preview[field] = NORMALIZED_SECRET
             normalized = [f"preview.{field}" for field in fields]
-        else:
+        elif name != NEXT_APP_PATH_ROUTES_MANIFEST:
             if (
                 not isinstance(manifest.get("encryptionKey"), str)
                 or not manifest["encryptionKey"]
@@ -383,6 +390,8 @@ def normalize_runtime_file(
                 raise ValueError("encryptionKey is missing")
             manifest["encryptionKey"] = NORMALIZED_SECRET
             normalized = ["encryptionKey"]
+        else:
+            normalized = []
         canonical = json.dumps(manifest, sort_keys=True, separators=(",", ":"))
         if name == NEXT_SERVER_REFERENCE_JS:
             canonical = prefix + json.dumps(canonical)
