@@ -423,7 +423,10 @@ export function normalizeBrowserPreviewRoute(route: unknown): string {
     )
     .map(([key, value]) => `${encoded(key)}=${encoded(value)}`)
     .join("&");
-  const canonicalPath = rawPath.length > 1 ? rawPath.replace(/\/+$/u, "") : "/";
+  let canonicalPath = rawPath || "/";
+  while (canonicalPath.length > 1 && canonicalPath.endsWith("/")) {
+    canonicalPath = canonicalPath.slice(0, -1);
+  }
   return canonicalPath + (query ? `?${query}` : "");
 }
 
