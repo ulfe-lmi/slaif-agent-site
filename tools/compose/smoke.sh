@@ -693,7 +693,10 @@ if state in {"FAILED", "TIMED_OUT", "CANCELLED"}:
 print(state)
 PY
     )
-    test "$state" = COMPLETED && break
+    case "$state" in
+      COMPLETED) break ;;
+      FAILED|TIMED_OUT|CANCELLED) exit 1 ;;
+    esac
     sleep 1
   done
   test "$state" = COMPLETED
