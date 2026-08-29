@@ -380,7 +380,7 @@ async def test_public_agent_browser_routes_are_durable_truthful_and_confined(
                 headers=_create_headers(bindings["same_workspace"], "revoked-ws"),
                 json=_body(),
             )
-            assert revoked_workspace.status_code == 404
+            assert revoked_workspace.status_code == 401
             async with owner_connection(
                 database.settings.resolved_owner_dsn(),
                 expected_database=database.name,
@@ -395,7 +395,7 @@ async def test_public_agent_browser_routes_are_durable_truthful_and_confined(
                 headers=_create_headers(bindings["same_workspace"], "expired-ws"),
                 json=_body(),
             )
-            assert expired_workspace.status_code == 404
+            assert expired_workspace.status_code == 401
             async with owner_connection(
                 database.settings.resolved_owner_dsn(),
                 expected_database=database.name,
@@ -414,7 +414,7 @@ async def test_public_agent_browser_routes_are_durable_truthful_and_confined(
                 headers=_create_headers(bindings["foreign"], "archived-site"),
                 json=_body(),
             )
-            assert archived_site.status_code == 404
+            assert archived_site.status_code == 401
             async with owner_connection(
                 database.settings.resolved_owner_dsn(),
                 expected_database=database.name,

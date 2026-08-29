@@ -1,5 +1,7 @@
 """Product-owned PostgreSQL privilege application and effective verification."""
 
+# ruff: noqa: E501 -- SQL identity signatures remain inspectable
+
 from __future__ import annotations
 
 import hashlib
@@ -381,6 +383,30 @@ CONTROL_FUNCTIONS = {
         "p_role_key text, p_delegation_ceiling smallint, p_status text, "
         "p_expected_version bigint, p_overrides text[]",
     ): "uuid, uuid, uuid, text, smallint, text, bigint, text[]",
+    (
+        "slaif_human_agent_workspace_create",
+        "p_site_id uuid, p_user_id uuid, p_title text, p_description text, "
+        "p_preset text, p_requested_scopes text[], p_constraints jsonb, "
+        "p_origins text[], p_request_quota integer, p_mutation_quota integer, "
+        "p_delete_quota integer, p_upload_quota integer, p_browser_quota integer, "
+        "p_duration_hours integer",
+    ): "uuid, uuid, text, text, text, text[], jsonb, text[], integer, integer, integer, integer, integer, integer",
+    (
+        "slaif_human_agent_workspace_get",
+        "p_workspace_id uuid, p_site_id uuid, p_user_id uuid",
+    ): "uuid, uuid, uuid",
+    (
+        "slaif_human_agent_capability_create",
+        "p_workspace_id uuid, p_site_id uuid, p_user_id uuid, p_public_id text, p_secret_digest text",
+    ): "uuid, uuid, uuid, text, text",
+    (
+        "slaif_human_agent_capability_revoke",
+        "p_workspace_id uuid, p_site_id uuid, p_user_id uuid, p_public_id text",
+    ): "uuid, uuid, uuid, text",
+    (
+        "slaif_human_agent_capability_list",
+        "p_workspace_id uuid, p_site_id uuid, p_user_id uuid",
+    ): "uuid, uuid, uuid",
 }
 
 

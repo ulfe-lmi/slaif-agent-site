@@ -1,12 +1,30 @@
-# OAP Work Order — 074-a (inert until activated)
+# OAP Work Order — 074-a
 
 ## Contract and objective
 
 Implement the real human product surface for creating, inspecting and revoking
 site-bound AGENT workspaces and one-time capabilities. Links: Architecture
 §§15.2, 18–20, 24.2, 46.2, 52.2–52.4; audit row “Human Agent session.”
-Prerequisite: merged 073. On activation strategy will refresh exact `main` and
-CREATE_NEW_PR state; one numeric objective is one PR.
+Prerequisite 073 is merged as
+`74d9c189fe241356fbe03f2632197ecbb1ce53a3`.
+
+## GitHub objective state and verified current implementation
+
+- Numeric objective `074`, round `074-a`, mode `CREATE_NEW_PR`; create exactly
+  one new PR from remote `main` at
+  `74d9c189fe241356fbe03f2632197ecbb1ce53a3`, suggested branch
+  `oap/074-human-agent-session-control-plane`. No Objective 074 PR exists.
+- `control_api/app.py` installs auth/site/membership/current-human only; no
+  production caller installs workspace/capability routers or their route policy.
+- The dormant handlers use nonexistent `app.state.database`, can fall back to
+  UUID zero, create empty effective scopes, omit capability expiry, perform
+  direct DML, and do not establish membership/site/CSRF/delegation authority.
+- Current Agent authentication validates already-seeded tokens and its five
+  create/seven semantic-read slices are real, but the trusted context omits
+  general resource/delete/mutation quotas and the latest authentication SQL
+  must be rechecked for workspace `ACTIVE` state after browser migrations.
+- No AI Sessions Web workflow creates or revokes the capability used by a real
+  external Agent request. Review/freeze/promotion remain deliberately absent.
 
 ## Production requirements
 
@@ -23,6 +41,10 @@ CREATE_NEW_PR state; one numeric objective is one PR.
   implementations exist.
 - Extend Agent authentication context/request-time checks to carry and enforce
   immutable resource/quota facts without adding reviewer/control authority.
+- Use owner-defined fixed-signature Control functions and the final privilege
+  allowlist; Control handlers do not gain content DML and Agent never gains
+  Control tables/functions. Require workspace `ACTIVE`, account/site/delegator
+  validity and expiry at authentication and in later mutation transactions.
 
 ## Observable acceptance
 
@@ -37,12 +59,22 @@ must contain no plaintext token after the one-time response.
 The test must use public Control/Web and Agent surfaces; direct fixture SQL may
 create neutral users/sites only, never the claimed workspace/capability action.
 Run real PostgreSQL, public NGINX Playwright desktop+phone, restart, privilege,
-route-policy coverage, full relevant Python/Node/Compose and required CI.
+route-policy coverage, full Python quality/unit/integration, Node, clean Compose
+and every required CI check. Inspect secrets/logs/artifacts for leakage.
 
 ## Non-goals and done
 
 No Agent semantic expansion, freeze/snapshot, promotion/discard, MCP, source
-browsing or publication. Binary done means a human can create and revoke the
+browsing or publication. No raw SQL endpoint, new hosted service, dependency,
+foundation change, production access, release or architecture edit. Binary done
+means a human can create and revoke the
 same capability a real external Agent API request uses, with all positive and
-negative evidence green. Report `074-a-human-agent-session-control-plane.md`
-with literal implementation SHA and SELF; no merge/extra PR.
+negative evidence green.
+
+Fetch/reconcile GitHub, create the fresh branch/one PR, commit this exact order
+and `oap/active` unchanged with implementation, push, repair only in-scope
+failures, never merge. Publish exactly
+`oap/reports/074-a-human-agent-session-control-plane.md` as the final report-
+only child with PR/base/head, literal implementation SHA, `Report publication
+commit: SELF`, files, migrations/grants, exact tests/E2E/checks, skips/setup,
+security/leakage/authority evidence, limitations, no extra PR and no merge.

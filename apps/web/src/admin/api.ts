@@ -517,6 +517,61 @@ export const archiveSite = async (siteId: string) =>
     await json(`/sites/${encodeURIComponent(siteId)}/archive`, mutation("POST")),
   );
 
+export type AgentWorkspace = {
+  workspace_id: string;
+  site_id: string;
+  title: string;
+  status: string;
+  delegation_preset: string;
+  effective_scopes: string[];
+  expires_at: string;
+};
+export type AgentCapability = {
+  capability_id: string;
+  workspace_id: string;
+  site_id: string;
+  token?: string;
+  expires_at: string;
+  revoked?: boolean;
+};
+export async function createAgentWorkspace(
+  siteId: string,
+  body: Record<string, unknown>,
+) {
+  return (await json(
+    `/sites/${encodeURIComponent(siteId)}/workspaces/`,
+    mutation("POST", body),
+  )) as AgentWorkspace;
+}
+export async function getAgentWorkspace(siteId: string, workspaceId: string) {
+  return (await json(
+    `/sites/${encodeURIComponent(siteId)}/workspaces/${encodeURIComponent(workspaceId)}`,
+    { method: "GET" },
+  )) as AgentWorkspace;
+}
+export async function createAgentCapability(siteId: string, workspaceId: string) {
+  return (await json(
+    `/sites/${encodeURIComponent(siteId)}/workspaces/${encodeURIComponent(workspaceId)}/capabilities/`,
+    mutation("POST"),
+  )) as AgentCapability;
+}
+export async function listAgentCapabilities(siteId: string, workspaceId: string) {
+  return (await json(
+    `/sites/${encodeURIComponent(siteId)}/workspaces/${encodeURIComponent(workspaceId)}/capabilities/`,
+    { method: "GET" },
+  )) as AgentCapability[];
+}
+export async function revokeAgentCapability(
+  siteId: string,
+  workspaceId: string,
+  capabilityId: string,
+) {
+  return (await json(
+    `/sites/${encodeURIComponent(siteId)}/workspaces/${encodeURIComponent(workspaceId)}/capabilities/${encodeURIComponent(capabilityId)}/revoke`,
+    mutation("POST"),
+  )) as { status: string };
+}
+
 export async function loadMembershipAdministration(siteId: string): Promise<{
   authority: CurrentAuthority;
   roles: RoleCatalog[];

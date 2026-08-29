@@ -39,6 +39,7 @@ IMAGE_PREFIXES = {
 }
 NEXT_PRERENDER_MANIFEST = "opt/slaif/apps/web/.next/prerender-manifest.json"
 NEXT_APP_PATH_ROUTES_MANIFEST = "opt/slaif/apps/web/.next/app-path-routes-manifest.json"
+NEXT_APP_PATHS_MANIFEST = "opt/slaif/apps/web/.next/server/app-paths-manifest.json"
 NEXT_SERVER_REFERENCE_JSON = (
     "opt/slaif/apps/web/.next/server/server-reference-manifest.json"
 )
@@ -347,6 +348,7 @@ def normalize_runtime_file(
 ) -> tuple[bytes, list[str]]:
     if image_name != "web" or name not in {
         NEXT_APP_PATH_ROUTES_MANIFEST,
+        NEXT_APP_PATHS_MANIFEST,
         NEXT_PRERENDER_MANIFEST,
         NEXT_SERVER_REFERENCE_JSON,
         NEXT_SERVER_REFERENCE_JS,
@@ -382,7 +384,7 @@ def normalize_runtime_file(
                     raise ValueError(f"{field} is missing")
                 preview[field] = NORMALIZED_SECRET
             normalized = [f"preview.{field}" for field in fields]
-        elif name != NEXT_APP_PATH_ROUTES_MANIFEST:
+        elif name not in {NEXT_APP_PATH_ROUTES_MANIFEST, NEXT_APP_PATHS_MANIFEST}:
             if (
                 not isinstance(manifest.get("encryptionKey"), str)
                 or not manifest["encryptionKey"]

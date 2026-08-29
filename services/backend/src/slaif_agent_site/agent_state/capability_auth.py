@@ -1,5 +1,7 @@
 """Shared, bounded capability-token lookup for trusted server processes."""
 
+# ruff: noqa: E501 -- fixed SQL remains inspectable
+
 from __future__ import annotations
 
 import asyncio
@@ -38,9 +40,15 @@ SELECT capability.id, capability.public_id, capability.secret_digest,
        capability.browser_allowed_targets
 FROM control.capability AS capability
 JOIN control.workspace AS workspace ON workspace.id = capability.workspace_id
+JOIN control.site AS site ON site.id = workspace.site_id
+JOIN control.user_account AS account ON account.id = COALESCE(workspace.delegator_id, workspace.created_by)
 WHERE capability.public_id = $1
   AND capability.revoked_at IS NULL
   AND capability.expires_at > CURRENT_TIMESTAMP
+  AND workspace.status = 'ACTIVE'
+  AND workspace.expires_at > CURRENT_TIMESTAMP
+  AND site.status = 'ACTIVE'
+  AND account.status = 'ACTIVE'
 """
 
 

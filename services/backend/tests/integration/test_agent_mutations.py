@@ -1139,7 +1139,7 @@ async def test_agent_semantic_reads_use_cow_overlay_fallback_and_isolation(
                 inactive = await client.get(
                     "/api/agent/v1/content-model/types", headers=headers
                 )
-                assert inactive.status_code == 404, inactive.text
+                assert inactive.status_code == 401, inactive.text
 
             async with app.state.database.cow_pool().acquire() as connection:
                 assert not connection.is_in_transaction()

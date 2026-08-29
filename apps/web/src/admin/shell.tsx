@@ -17,6 +17,7 @@ import {
   type CurrentSite,
 } from "./api";
 import { CspModal } from "./csp-modal";
+import { AgentSessions } from "./agent-sessions";
 
 function SiteSwitcher({ sites }: { sites: CurrentSite[] }) {
   return (
@@ -63,7 +64,6 @@ function Navigation({ global }: { global: boolean }) {
         "Structure",
         "Design",
         "Media",
-        "AI Sessions",
         "Reviews",
         "Audit",
       ].map((item) => (
@@ -71,6 +71,7 @@ function Navigation({ global }: { global: boolean }) {
           {item} · planned
         </span>
       ))}
+      {global && <a href="#ai-sessions">AI Sessions</a>}
     </nav>
   );
 }
@@ -270,6 +271,11 @@ export function AdminShell({
                   <p>
                     <a href={`/s/${authority.site_key}/`}>Open public local route</a>
                   </p>
+                  {authority.effective_permissions.includes("workspace:create") && (
+                    <div id="ai-sessions">
+                      <AgentSessions siteId={authority.site_id} />
+                    </div>
+                  )}
                 </>
               )}
             </>

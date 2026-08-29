@@ -153,6 +153,10 @@ async def test_each_app_has_only_typed_health_routes(
             "/api/control/v1/sites/{site_id}/memberships/{user_id}",
             "/api/control/v1/me/sites",
             "/api/control/v1/sites/{site_id}/my-authority",
+            "/api/control/v1/sites/{site_id}/workspaces/",
+            "/api/control/v1/sites/{site_id}/workspaces/{workspace_id}",
+            "/api/control/v1/sites/{site_id}/workspaces/{workspace_id}/capabilities/",
+            "/api/control/v1/sites/{site_id}/workspaces/{workspace_id}/capabilities/{capability_id}/revoke",
         }
     if process is ProcessKind.EDITOR_API:
         expected_routes |= {

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -23,6 +24,11 @@ class AgentCapabilityContext(BaseModel):
     browser_limits: BrowserCapabilityLimits = Field(
         default_factory=BrowserCapabilityLimits
     )
+    resource_constraints: dict[str, Any] = Field(default_factory=dict)
+    request_quota: int = 0
+    mutation_quota: int = 0
+    delete_quota: int = 0
+    upload_quota: int = 0
 
 
 class AgentDiscoveryResponse(BaseModel):
