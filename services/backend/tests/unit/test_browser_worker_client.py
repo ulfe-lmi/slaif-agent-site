@@ -50,7 +50,7 @@ def _request() -> BrowserWorkerSubmitRequest:
             **IDS,
             "attempt": 1,
             "route": route,
-            "route_digest": hashlib.sha256(route.encode()).hexdigest(),
+            "route_digest": hashlib.sha256(b"/s/demo?a=1&b=2").hexdigest(),
             "target": "desktop-chromium",
             "evidence": ("screenshot", "heading-summary"),
             "artifact_bytes_limit": 8_388_608,
@@ -155,7 +155,7 @@ def test_neutral_worker_facts_and_request_digest_are_exact() -> None:
     }
     request = _request()
     assert browser_worker_request_digest(request) == (
-        "3fbd4b9094738aed2e17ddbf961c776a58c59d13c5e2aae763a2888e815c2051"
+        "86ec03e223b2e44355162480d18f87666cf871f10d6e3021860a2bc667d6c8c1"
     )
     assert "sbp1.a.b.c" not in repr(request)
     assert "sbp1.a.b.c" not in request.model_dump_json()
