@@ -8,8 +8,8 @@
 - Base: `main` at `082f2359b0c4d59b692580d17992c35d46183b12`
 - Branch: `oap/072-browser-worker-real-playwright`
 - Starting remote SHA: `92d385c70321cf09eb2beb561860c2a211560d5f`
-- Implementation SHA: `c93480b7e881606e89ce2e25cb9ab91c8853dbae`
-- Report publication parent: `c93480b7e881606e89ce2e25cb9ab91c8853dbae`
+- Implementation SHA: `d8489d1a56a80ecc78b0b152040e04a2df297cb5`
+- Report publication parent: `d8489d1a56a80ecc78b0b152040e04a2df297cb5`
 
 ## Delivered
 
@@ -18,7 +18,10 @@ preserving `/`, safe percent-encoded spelling, and sorted canonical queries in
 both Python and TypeScript. Agent/DB/token/worker request digests and the Web
 preview boundary use the same canonical bytes; Web now uses the shared internal
 workspace contract package and canonicalizes reconstructed Next paths before
-Render binding. Worker and Python digest vectors were updated accordingly.
+Render binding. Worker and Python digest vectors were updated accordingly. The
+internal Web workspace dependency is pinned as `workspace:0.0.0`, satisfying
+the repository supply-chain policy without introducing a hosted or mutable
+package source.
 
 Added parity coverage for root, trailing-slash, query-order, Unicode/encoding,
 and hostile-route behavior. The 072-m immediate terminal diagnostics remain
