@@ -8,8 +8,8 @@
 - Base: `main` at `082f2359b0c4d59b692580d17992c35d46183b12`
 - Branch: `oap/072-browser-worker-real-playwright`
 - Starting remote SHA: `92d385c70321cf09eb2beb561860c2a211560d5f`
-- Implementation SHA: `3353236601bf6c8a5f10f72c89d21363b7714254`
-- Report publication parent: `3353236601bf6c8a5f10f72c89d21363b7714254`
+- Implementation SHA: `63ebf6eff247b9ce24de6d8dadb9bd8cc0037d4c`
+- Report publication parent: `63ebf6eff247b9ce24de6d8dadb9bd8cc0037d4c`
 
 ## Delivered
 
@@ -23,7 +23,8 @@ internal Web workspace dependency is pinned as `workspace:0.0.0`, satisfying
 the repository supply-chain policy without introducing a hosted or mutable
 package source. The repository checker now records this pinned internal
 workspace dependency as an approved deployment boundary, and lockfile metadata
-is kept free of unapproved external URL notices.
+is kept free of unapproved external URL notices. Trailing-slash trimming uses a
+bounded loop rather than a backtracking regular expression.
 
 Added parity coverage for root, trailing-slash, query-order, Unicode/encoding,
 and hostile-route behavior. The 072-m immediate terminal diagnostics remain
