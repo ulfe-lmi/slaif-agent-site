@@ -1242,6 +1242,7 @@ class RepositoryPolicy:
                     "test": "node --test tests/*.test.mjs",
                 },
                 "dependencies": {
+                    "@slaif-agent-site/browser-tool-contracts": "workspace:0.0.0",
                     "@measured/puck": "0.20.2",
                     "@radix-ui/react-dialog": "1.1.23",
                     "next": "16.3.1",
