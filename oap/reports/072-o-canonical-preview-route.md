@@ -8,8 +8,8 @@
 - Base: `main` at `082f2359b0c4d59b692580d17992c35d46183b12`
 - Branch: `oap/072-browser-worker-real-playwright`
 - Starting remote SHA: `92d385c70321cf09eb2beb561860c2a211560d5f`
-- Implementation SHA: `9c6662c7f15d55b1a2097d5c3f1aedfee325da37`
-- Report publication parent: `9c6662c7f15d55b1a2097d5c3f1aedfee325da37`
+- Implementation SHA: `3353236601bf6c8a5f10f72c89d21363b7714254`
+- Report publication parent: `3353236601bf6c8a5f10f72c89d21363b7714254`
 
 ## Delivered
 
