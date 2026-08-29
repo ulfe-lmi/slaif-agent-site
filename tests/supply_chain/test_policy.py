@@ -216,11 +216,21 @@ class SupplyChainPolicyTests(unittest.TestCase):
             "CVE-2026-79152",
             "CVE-2026-79188",
             "CVE-2026-79189",
+            "CVE-2026-79058",
+            "CVE-2026-79090",
+            "CVE-2026-79148",
+            "CVE-2026-79200",
+            "CVE-2026-79232",
+            "CVE-2026-79235",
+            "CVE-2026-79257",
+            "CVE-2026-79275",
+            "CVE-2026-79282",
+            "CVE-2026-79290",
         }
         self.assertEqual(
             {entry["identifier"] for entry in vulnerability["exceptions"]}, expected
         )
-        self.assertEqual(len(vulnerability["exceptions"]), 31)
+        self.assertEqual(len(vulnerability["exceptions"]), 41)
 
     def test_notice_generation_is_sorted_and_deterministic(self) -> None:
         component = {

@@ -150,7 +150,7 @@ findings do not pass silently: per-image and total counts remain in JSON,
 unknown severity counts also remain visible. A pass means zero unexcepted
 Critical findings in that time-bounded database; it does not mean zero
 vulnerabilities. The temporary 2026-08-28 human-approved exception for the
-19 unavoidable Chrome 152.0.7977.64 Critical findings is recorded in
+41 unavoidable Chrome 152.0.7977.64 Critical findings is recorded in
 [`supply-chain/vulnerability-exceptions.json`](../supply-chain/vulnerability-exceptions.json)
 and tracked at [issue #67](https://github.com/ulfe-lmi/slaif-agent-site/issues/67).
 It expires 2026-09-04, applies only to `browser-worker`, and must be removed
@@ -200,7 +200,7 @@ only on that artifact.
 
 Both exception lists are empty by default; the only current vulnerability
 exception is the owner-approved, seven-day Chrome 152.0.7977.64 entry set of
-31 current findings tracked by [issue #67](https://github.com/ulfe-lmi/slaif-agent-site/issues/67).
+41 current findings tracked by [issue #67](https://github.com/ulfe-lmi/slaif-agent-site/issues/67).
 An entry requires all of:
 
 - exact vulnerability ID or license expression in `identifier`;

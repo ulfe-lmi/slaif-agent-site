@@ -327,7 +327,7 @@ class EvidenceTests(unittest.TestCase):
         with self.assertRaisesRegex(PolicyError, "forbidden evidence marker"):
             finalize_bundle(self.root, "local")
 
-    def test_exception_set_is_retained_and_synthetic_thirty_second_finding_fails(
+    def test_exception_set_is_retained_and_synthetic_forty_second_finding_fails(
         self,
     ) -> None:
         self.populate()
@@ -335,10 +335,10 @@ class EvidenceTests(unittest.TestCase):
         browser = next(
             image for image in index["images"] if image["image"] == "browser-worker"
         )
-        self.assertEqual(len(browser["critical_findings"]), 31)
+        self.assertEqual(len(browser["critical_findings"]), 41)
         self.assertEqual(
             index["exception_counts"]["vulnerability"],
-            31,
+            41,
         )
         self.assertEqual(
             {item["status"] for item in browser["critical_findings"]},
