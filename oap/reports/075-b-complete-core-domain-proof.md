@@ -8,7 +8,7 @@
 - Base/head: `main` / `oap/075-editable-domain-substrate`
 - Starting report head: `7f2b191e71a75df2f0b32c1d7e1df9860389cbcf`
 - Starting remote baseline: `ef456e63abadddfc7d90794c03be3a63677c87f9`
-- Implementation SHA: `acd64245f92a67e0f33b9a5e28068b88afdcc6de`
+- Implementation SHA: `ef607ce8c57328a98d7f2c3c9672b37b7861c245`
 - Report publication commit: SELF
 
 ## Remediation delivered
@@ -50,6 +50,10 @@
 - One clean Compose smoke (`slaif071c`) passed all health, setup, governance,
   Puck, preview, responsive desktop/tablet/mobile, Agent-session, public
   restart, media, edge, database-login, and secret-policy evidence.
+- The public Agent restart helper retries the bounded post-restart session
+  request for transient edge readiness; focused helper tests pass and the clean
+  proof records `agent-before=200`, `agent-after-restart=200`, and
+  `agent-after-revoke=401`.
 - All 20 GitHub required checks on implementation head pass: Repository policy;
   Python 3.12/3.13/3.14; PostgreSQL 14/15/16/17/18; Node contracts; Compose
   and edge packaging; Supply-chain evidence; Markdown; Mermaid; Dependency
