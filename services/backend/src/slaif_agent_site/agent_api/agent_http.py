@@ -73,6 +73,11 @@ def _require_scope(context: Any, scope: str) -> None:
         raise AuthorizationError()
 
 
+def _require_any_scope(context: Any, *scopes: str) -> None:
+    if not any(scope in context.scopes for scope in scopes):
+        raise AuthorizationError()
+
+
 def _enforce_resource_constraint(
     context: Any, *, type_id: UUID | None = None, type_key: str | None = None
 ) -> None:
@@ -346,7 +351,7 @@ async def create_field_definition(
     idempotency_key: IdempotencyHeader = None,
 ) -> AgentMutationResponse:
     context = await _authenticate(request)
-    _require_scope(context, "field-definition:create")
+    _require_any_scope(context, "field-definition:create", "content-model:create")
     _enforce_resource_constraint(context, type_id=type_id)
     return await _execute_mutation(
         request,
