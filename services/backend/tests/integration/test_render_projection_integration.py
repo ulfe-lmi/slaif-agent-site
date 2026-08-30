@@ -160,7 +160,14 @@ async def test_preview_projection_requires_authorized_human_session(
                 "($1, 'home', 'Preview home', 'PUBLISHED', 'en') RETURNING id",
                 site.site_id,
             )
-            type_id, field_id, view_id, item_id = uuid4(), uuid4(), uuid4(), uuid4()
+            type_id, field_id, rank_id, view_id, item_id, item_two_id = (
+                uuid4(),
+                uuid4(),
+                uuid4(),
+                uuid4(),
+                uuid4(),
+                uuid4(),
+            )
             await owner.execute(
                 "INSERT INTO content.content_type_base "
                 "(id, site_id, key, labels, slug_pattern, status, "
@@ -176,10 +183,13 @@ async def test_preview_projection_requires_authorized_human_session(
                 "VALUES ($1, $2, 'title', 'Title', 'short_text', true, false, "
                 "1, 0, '{}', '{}', 1), "
                 "($3, $2, 'secret', 'Secret', 'short_text', false, false, "
-                "1, 1, '{}', '{}', 1)",
+                "1, 1, '{}', '{}', 1), "
+                "($4, $2, 'rank', 'Rank', 'integer', false, false, "
+                "1, 2, '{}', '{}', 1)",
                 field_id,
                 type_id,
                 uuid4(),
+                rank_id,
             )
             await owner.execute(
                 "INSERT INTO content.content_item_base "
@@ -188,18 +198,30 @@ async def test_preview_projection_requires_authorized_human_session(
                 item_id,
                 site.site_id,
                 type_id,
-                '{"title":"Visible item","secret":"Private fixture","id":"spoof"}',
+                '{"title":"Visible item","secret":"Private fixture","rank":2}',
+            )
+            await owner.execute(
+                "INSERT INTO content.content_item_base "
+                "(id, site_id, type_id, slug, status, type_definition_version, values) "
+                "VALUES ($1, $2, $3, 'second', 'PUBLISHED', 1, $4::jsonb)",
+                item_two_id,
+                site.site_id,
+                type_id,
+                '{"title":"Second item","secret":"Other fixture","rank":1}',
             )
             await owner.execute(
                 "INSERT INTO content.collection_view_base "
                 "(id, site_id, type_id, key, filter_spec, sort_spec, "
                 "projection_spec, pagination_spec) VALUES "
-                "($1, $2, $3, 'articles', '{}', '{}', $4::jsonb, $5::jsonb)",
+                "($1, $2, $3, 'articles', $4::jsonb, $5::jsonb, "
+                "$6::jsonb, $7::jsonb)",
                 view_id,
                 site.site_id,
                 type_id,
-                '{"fields":["title"]}',
-                '{"limit":10}',
+                '{"field":"rank","op":"gte","value":1}',
+                '{"field":"rank","direction":"desc"}',
+                '{"fields":["title","rank"]}',
+                '{"limit":1,"offset":1}',
             )
             await owner.execute(
                 "INSERT INTO content.page_composition_base "
@@ -237,12 +259,32 @@ async def test_preview_projection_requires_authorized_human_session(
         assert projection.render_mode == "preview"
         assert projection.page.title == "Preview draft"
         collection_items = next(iter(projection.bindings.values()))
-        assert collection_items[0]["values"] == {"title": "Visible item"}
-        assert collection_items[0]["slug"] == "first"
+        assert collection_items[0]["values"] == {"title": "Second item", "rank": 1}
+        assert collection_items[0]["slug"] == "second"
         canonical = await RenderProjectionService(adapter).canonical(
             RenderPageRequest(authority="localhost", path="/s/staging/")
         )
         assert canonical.page.title == "Preview home"
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            await owner.execute(
+                "UPDATE content.content_type_base SET definition_version = 2 "
+                "WHERE id = $1",
+                type_id,
+            )
+        with pytest.raises(ProjectionError, match="stale_collection_definition"):
+            await RenderProjectionService(adapter).canonical(
+                RenderPageRequest(authority="localhost", path="/s/staging/")
+            )
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            await owner.execute(
+                "UPDATE content.content_type_base SET definition_version = 1 "
+                "WHERE id = $1",
+                type_id,
+            )
 
         async with owner_connection(
             database.settings.resolved_owner_dsn(), expected_database=database.name
