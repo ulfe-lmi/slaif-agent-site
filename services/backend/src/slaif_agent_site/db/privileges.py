@@ -211,12 +211,28 @@ AGENT_CONTENT_FUNCTIONS = {
         "p_slug_pattern text, p_settings jsonb",
     ): "uuid, text, jsonb, text, jsonb",
     (
+        "slaif_agent_content_type_update",
+        "p_site_id uuid, p_type_id uuid, p_labels jsonb, p_slug_pattern text, p_settings jsonb, p_expected integer",
+    ): "uuid, uuid, jsonb, text, jsonb, integer",
+    (
+        "slaif_agent_content_type_delete",
+        "p_site_id uuid, p_type_id uuid, p_expected integer",
+    ): "uuid, uuid, integer",
+    (
         "slaif_agent_field_definition_create",
         "p_site_id uuid, p_type_id uuid, p_key text, p_label text, "
         "p_field_type text, p_required boolean, p_localized boolean, "
         "p_cardinality integer, p_position integer, p_validation jsonb, "
         "p_ui_options jsonb",
     ): "uuid, uuid, text, text, text, boolean, boolean, integer, integer, jsonb, jsonb",
+    (
+        "slaif_agent_field_definition_update",
+        "p_site_id uuid, p_type_id uuid, p_field_id uuid, p_label text, p_required boolean, p_localized boolean, p_cardinality integer, p_position integer, p_validation jsonb, p_ui_options jsonb, p_expected integer",
+    ): "uuid, uuid, uuid, text, boolean, boolean, integer, integer, jsonb, jsonb, integer",
+    (
+        "slaif_agent_field_definition_delete",
+        "p_site_id uuid, p_type_id uuid, p_field_id uuid, p_expected integer",
+    ): "uuid, uuid, uuid, integer",
     (
         "slaif_agent_content_item_create",
         "p_site_id uuid, p_type_id uuid, p_slug text, p_status text, "
