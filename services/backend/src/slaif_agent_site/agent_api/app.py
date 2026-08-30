@@ -151,6 +151,14 @@ def create_app(
             for path, value in document.get("paths", {}).items()
             if path.startswith("/api/agent/v1/")
         }
+        document.setdefault("components", {}).setdefault("securitySchemes", {})[
+            "AgentCapability"
+        ] = {"type": "http", "scheme": "bearer", "bearerFormat": "sas2_"}
+        for path, operations in document["paths"].items():
+            if path != "/api/agent/v1/openapi.json":
+                for operation in operations.values():
+                    if isinstance(operation, dict) and "responses" in operation:
+                        operation["security"] = [{"AgentCapability": []}]
         return JSONResponse(document)
 
     validate_route_policy_coverage(app, ProcessKind.AGENT_API)

@@ -55,6 +55,7 @@ from slaif_agent_site.content_model.service import (
 from slaif_agent_site.errors import (
     AuthenticationError,
     AuthorizationError,
+    DomainValidationError,
     IdempotencyKeyInvalidError,
     IdempotencyKeyRequiredError,
     IdempotencyMismatchError,
@@ -70,6 +71,23 @@ router = APIRouter(prefix="/api/agent/v1")
 def _require_scope(context: Any, scope: str) -> None:
     if scope not in context.scopes:
         raise AuthorizationError()
+
+
+def _enforce_resource_constraint(
+    context: Any, *, type_id: UUID | None = None, type_key: str | None = None
+) -> None:
+    """Apply immutable capability resource allowlists before opening COW."""
+    constraints = context.resource_constraints
+    if not isinstance(constraints, dict):
+        return
+    allowed_ids = constraints.get("allowed_type_ids")
+    if type_id is not None and isinstance(allowed_ids, (list, tuple, set)):
+        if str(type_id) not in {str(value) for value in allowed_ids}:
+            raise AuthorizationError()
+    allowed_keys = constraints.get("allowed_type_keys")
+    if type_key is not None and isinstance(allowed_keys, (list, tuple, set)):
+        if type_key not in {str(value) for value in allowed_keys}:
+            raise AuthorizationError()
 
 
 async def _authenticate(request: Request) -> Any:
@@ -165,6 +183,7 @@ async def list_field_definitions(
 ) -> list[dict[str, Any]]:
     context = await _authenticate(request)
     _require_scope(context, "content-model:read")
+    _enforce_resource_constraint(context, type_id=type_id)
     records = await _execute_read(
         request,
         context,
@@ -177,6 +196,7 @@ async def list_field_definitions(
 async def get_content_type(type_id: UUID, request: Request) -> dict[str, Any]:
     context = await _authenticate(request)
     _require_scope(context, "content-model:read")
+    _enforce_resource_constraint(context, type_id=type_id)
     record = cast(
         ContentTypeRecord,
         await _execute_read(
@@ -192,6 +212,7 @@ async def get_field_definition(
 ) -> dict[str, Any]:
     context = await _authenticate(request)
     _require_scope(context, "content-model:read")
+    _enforce_resource_constraint(context, type_id=type_id)
     record = await _execute_read(
         request,
         context,
@@ -204,6 +225,7 @@ async def get_field_definition(
 async def list_content_items(type_id: UUID, request: Request) -> list[dict[str, Any]]:
     context = await _authenticate(request)
     _require_scope(context, "content-item:read")
+    _enforce_resource_constraint(context, type_id=type_id)
     records = await _execute_read(
         request, context, lambda service: service.list_items(context.site_id, type_id)
     )
@@ -287,6 +309,8 @@ async def _execute_mutation(
             raise ResourceNotFoundError() from None
         if exc.reason is ContentModelServiceReason.CONFLICT:
             raise ResourceConflictError() from None
+        if exc.reason is ContentModelServiceReason.VALIDATION:
+            raise DomainValidationError() from None
         raise ServiceUnavailableError() from None
 
 
@@ -299,6 +323,7 @@ async def create_content_type(
     """Create a content type (L4 scope required)."""
     context = await _authenticate(request)
     _require_scope(context, "content-model:create")
+    _enforce_resource_constraint(context, type_key=body.key)
     return await _execute_mutation(
         request,
         context,
@@ -317,7 +342,8 @@ async def create_field_definition(
     idempotency_key: IdempotencyHeader = None,
 ) -> AgentMutationResponse:
     context = await _authenticate(request)
-    _require_scope(context, "content-model:create")
+    _require_scope(context, "field-definition:create")
+    _enforce_resource_constraint(context, type_id=type_id)
     return await _execute_mutation(
         request,
         context,
@@ -339,12 +365,14 @@ async def update_content_type(
 ) -> AgentMutationResponse:
     context = await _authenticate(request)
     _require_scope(context, "content-model:write")
+    _enforce_resource_constraint(context, type_id=type_id)
     return await _execute_mutation(
         request,
         context,
         body,
         idempotency_key,
         resource_type="content_type",
+        status_code=200,
         mutate=lambda service: service.update_type_for_site(
             context.site_id, type_id, body
         ),
@@ -361,12 +389,14 @@ async def update_field_definition(
 ) -> AgentMutationResponse:
     context = await _authenticate(request)
     _require_scope(context, "field-definition:write")
+    _enforce_resource_constraint(context, type_id=type_id)
     return await _execute_mutation(
         request,
         context,
         body,
         idempotency_key,
         resource_type="field_definition",
+        status_code=200,
         mutate=lambda service: service.update_field_for_site(
             context.site_id, type_id, field_id, body
         ),
@@ -382,12 +412,15 @@ async def delete_content_type(
 ) -> AgentMutationResponse:
     context = await _authenticate(request)
     _require_scope(context, "content-model:delete")
+    _enforce_resource_constraint(context, type_id=type_id)
     return await _execute_mutation(
         request,
         context,
         body,
         idempotency_key,
         resource_type="content_type",
+        status_code=200,
+        quota_kind="delete",
         mutate=lambda service: service.delete_type_for_site(
             context.site_id, type_id, body.expected_definition_version
         ),
@@ -404,12 +437,15 @@ async def delete_field_definition(
 ) -> AgentMutationResponse:
     context = await _authenticate(request)
     _require_scope(context, "field-definition:delete")
+    _enforce_resource_constraint(context, type_id=type_id)
     return await _execute_mutation(
         request,
         context,
         body,
         idempotency_key,
         resource_type="field_definition",
+        status_code=200,
+        quota_kind="delete",
         mutate=lambda service: service.delete_field_for_site(
             context.site_id, type_id, field_id, body.expected_definition_version
         ),

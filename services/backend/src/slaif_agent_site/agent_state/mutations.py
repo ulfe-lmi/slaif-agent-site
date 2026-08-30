@@ -73,14 +73,14 @@ AGENT_CONTENT_TYPE_UPDATE_SQL = (
     "SELECT * FROM content.slaif_agent_content_type_update($1,$2,$3,$4,$5,$6)"
 )
 AGENT_CONTENT_TYPE_DELETE_SQL = (
-    "SELECT content.slaif_agent_content_type_delete($1,$2,$3)"
+    "SELECT * FROM content.slaif_agent_content_type_delete($1,$2,$3)"
 )
 AGENT_FIELD_UPDATE_SQL = (
     "SELECT * FROM content.slaif_agent_field_definition_update("
     "$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)"
 )
 AGENT_FIELD_DELETE_SQL = (
-    "SELECT content.slaif_agent_field_definition_delete($1,$2,$3,$4)"
+    "SELECT * FROM content.slaif_agent_field_definition_delete($1,$2,$3,$4)"
 )
 AGENT_ITEM_CREATE_SQL = (
     "SELECT * FROM content.slaif_agent_content_item_create($1,$2,$3,$4,$5,$6)"
@@ -369,6 +369,7 @@ async def _complete(
     operation_id: UUID,
     response: AgentMutationResponse,
     resource_type: str,
+    status_code: int,
 ) -> None:
     try:
         await _cow_fetchrow(
@@ -379,7 +380,7 @@ async def _complete(
             key,
             digest,
             operation_id,
-            201,
+            status_code,
             json.dumps(response.model_dump(mode="json"), sort_keys=True),
             resource_type,
             UUID(str(response.record["id"])),
@@ -402,6 +403,8 @@ async def execute_agent_mutation(
     digest: str,
     mutate: Mutation,
     resource_type: str,
+    status_code: int = 201,
+    quota_kind: str = "mutation",
 ) -> AgentMutationResponse:
     """Reserve, execute, audit, and complete one atomic Agent mutation."""
 
@@ -434,9 +437,10 @@ async def execute_agent_mutation(
 
             try:
                 mutation_allowed = await cow.native.fetchval(
-                    CONSUME_MUTATION_QUOTA_SQL,
+                    "SELECT control.slaif_agent_quota_consume($1,$2,$3)",
                     context.capability_id,
                     context.workspace_id,
+                    quota_kind,
                 )
             except (asyncpg.PostgresError, OSError, TimeoutError) as error:
                 raise AgentMutationUnavailableError() from error
@@ -458,6 +462,7 @@ async def execute_agent_mutation(
                 operation_id=reservation.operation_id,
                 response=response,
                 resource_type=resource_type,
+                status_code=status_code,
             )
             return response
     except asyncio.CancelledError:
