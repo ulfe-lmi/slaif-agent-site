@@ -417,6 +417,19 @@ CONTROL_FUNCTIONS = {
         "slaif_human_agent_workspace_list",
         "p_site_id uuid, p_user_id uuid",
     ): "uuid, uuid",
+    (
+        "slaif_human_agent_workspace_create_idempotent",
+        "p_site_id uuid, p_user_id uuid, p_title text, p_description text, "
+        "p_preset text, p_requested_scopes text[], p_constraints jsonb, "
+        "p_origins text[], p_request_quota integer, p_mutation_quota integer, "
+        "p_delete_quota integer, p_upload_quota integer, p_browser_quota integer, "
+        "p_duration_hours integer, p_idempotency_key text, p_request_digest text",
+    ): "uuid, uuid, text, text, text, text[], jsonb, text[], integer, integer, integer, integer, integer, integer, text, text",
+    (
+        "slaif_human_agent_capability_create_idempotent",
+        "p_workspace_id uuid, p_site_id uuid, p_user_id uuid, p_public_id text, "
+        "p_secret_digest text, p_idempotency_key text, p_request_digest text",
+    ): "uuid, uuid, uuid, text, text, text, text",
 }
 
 

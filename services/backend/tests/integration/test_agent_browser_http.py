@@ -89,13 +89,20 @@ async def _site(owner: asyncpg.Connection[Any], suffix: str) -> UUID:
 async def _workspace(
     owner: asyncpg.Connection[Any], *, site_id: UUID, user_id: UUID, suffix: str
 ) -> UUID:
+    await owner.execute(
+        "INSERT INTO control.site_membership("
+        "site_id,user_account_id,role_key,delegation_ceiling) "
+        "VALUES ($1,$2,'SITE_OWNER',4)",
+        site_id,
+        user_id,
+    )
     value = await owner.fetchval(
         """
         INSERT INTO control.workspace (
-            site_id, created_by, actor_type, title, delegation_preset,
+            site_id, created_by, delegator_id, actor_type, title, delegation_preset,
             effective_scopes, status, expires_at
         ) VALUES (
-            $1, $2, 'AGENT', $3, 'L1', '["preview:inspect"]'::jsonb,
+            $1, $2, $2, 'AGENT', $3, 'L1', '["preview:inspect"]'::jsonb,
             'ACTIVE', CURRENT_TIMESTAMP + interval '2 hours'
         ) RETURNING id
         """,

@@ -77,13 +77,20 @@ async def _seed_workspace_and_capability(
             RETURNING id
             """
         )
+        await owner.execute(
+            "INSERT INTO control.site_membership("
+            "site_id,user_account_id,role_key,delegation_ceiling) "
+            "VALUES ($1,$2,'SITE_OWNER',4)",
+            site_id,
+            delegator_id,
+        )
         workspace_id = await owner.fetchval(
             """
             INSERT INTO control.workspace (
-                site_id, created_by, title, delegation_preset,
+                site_id, created_by, delegator_id, title, delegation_preset,
                 effective_scopes, status, expires_at
             ) VALUES (
-                $1, $2, 'Capability Auth Workspace', 'L1',
+                $1, $2, $2, 'Capability Auth Workspace', 'L1',
                 '["site:read","content-item:read"]'::jsonb, 'ACTIVE',
                 now() + interval '1 hour'
             ) RETURNING id

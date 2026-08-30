@@ -184,8 +184,8 @@ export function AgentSessions({ siteId }: { siteId: string }) {
                   {(capabilities[workspace.workspace_id] ?? []).map((capability) => (
                     <li key={capability.capability_id}>
                       <code>{capability.capability_id}</code> ·{" "}
-                      {capability.revoked ? "revoked" : "active"}{" "}
-                      {!capability.revoked && (
+                      {capability.status ?? (capability.revoked ? "REVOKED" : "ACTIVE")}{" "}
+                      {!capability.revoked && capability.status !== "EXPIRED" && (
                         <Button
                           type="button"
                           onClick={() =>

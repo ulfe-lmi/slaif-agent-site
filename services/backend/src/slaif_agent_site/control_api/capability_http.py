@@ -4,14 +4,20 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
+import re
+from datetime import UTC, datetime
 from typing import Any, Never
 from uuid import UUID
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Header, Request, Response
 
 from slaif_agent_site.agent_state.capability import generate_capability_token
 from slaif_agent_site.errors import (
     AuthorizationError,
+    DomainValidationError,
+    ResourceConflictError,
     ResourceNotFoundError,
     ServiceUnavailableError,
 )
@@ -31,6 +37,8 @@ def _database(request: Request) -> Any:
 
 
 def _raise(exc: Exception) -> Never:
+    if "IDEMPOTENCY_MISMATCH" in str(exc):
+        raise ResourceConflictError() from None
     if "DENIED" in str(exc) or "P0002" in str(exc):
         raise AuthorizationError() from None
     if "NOT_FOUND" in str(exc):
@@ -38,10 +46,43 @@ def _raise(exc: Exception) -> Never:
     raise ServiceUnavailableError() from None
 
 
+async def _authorize_workspace_read(
+    request: Request, database: Any, site_id: UUID
+) -> Any:
+    try:
+        return await authorize_site_request(
+            request,
+            database,
+            request.app.state.settings,
+            site_id,
+            "workspace:read-all",
+            state_changing=False,
+        )
+    except (AuthorizationError, ResourceNotFoundError):
+        return await authorize_site_request(
+            request,
+            database,
+            request.app.state.settings,
+            site_id,
+            "workspace:create",
+            state_changing=False,
+        )
+
+
 @router.post("/", status_code=201)
 async def create_capability(
-    site_id: UUID, workspace_id: UUID, request: Request
+    site_id: UUID,
+    workspace_id: UUID,
+    request: Request,
+    response: Response,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ) -> dict[str, Any]:
+    if (
+        idempotency_key is None
+        or not idempotency_key.isascii()
+        or not re.fullmatch(r"[A-Za-z0-9._~-]{1,128}", idempotency_key)
+    ):
+        raise DomainValidationError()
     database = _database(request)
     authority = await authorize_site_request(
         request,
@@ -53,8 +94,21 @@ async def create_capability(
     )
     plaintext, public_id, digest = generate_capability_token()
     try:
-        row = await database.human_agent_capability_create(
-            workspace_id, site_id, authority.session.user_account_id, public_id, digest
+        digest_request = hashlib.sha256(
+            json.dumps(
+                {"site_id": str(site_id), "workspace_id": str(workspace_id)},
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode()
+        ).hexdigest()
+        row = await database.human_agent_capability_create_idempotent(
+            workspace_id,
+            site_id,
+            authority.session.user_account_id,
+            public_id,
+            digest,
+            idempotency_key,
+            digest_request,
         )
     except Exception as exc:
         _raise(exc)
@@ -62,6 +116,15 @@ async def create_capability(
         raise ResourceNotFoundError()
     # The plaintext is intentionally constructed and returned only here. It is
     # never passed to persistence, logging, telemetry, or another endpoint.
+    if row["replayed"]:
+        response.status_code = 200
+        return {
+            "capability_id": row["public_id"],
+            "workspace_id": str(row["workspace_id"]),
+            "site_id": str(row["site_id"]),
+            "expires_at": row["expires_at"].isoformat(),
+            "warning": "This capability was already issued; its secret is not redisplayed.",
+        }
     return {
         "capability_id": row["public_id"],
         "workspace_id": str(row["workspace_id"]),
@@ -77,14 +140,7 @@ async def list_capabilities(
     site_id: UUID, workspace_id: UUID, request: Request
 ) -> list[dict[str, Any]]:
     database = _database(request)
-    authority = await authorize_site_request(
-        request,
-        database,
-        request.app.state.settings,
-        site_id,
-        "workspace:read-all",
-        state_changing=False,
-    )
+    authority = await _authorize_workspace_read(request, database, site_id)
     try:
         rows = await database.human_agent_capability_list(
             workspace_id, site_id, authority.session.user_account_id
@@ -97,6 +153,13 @@ async def list_capabilities(
             "created_at": row["created_at"].isoformat(),
             "expires_at": row["expires_at"].isoformat(),
             "revoked": row["revoked_at"] is not None,
+            "status": (
+                "REVOKED"
+                if row["revoked_at"] is not None
+                else "EXPIRED"
+                if row["expires_at"] <= datetime.now(UTC)
+                else "ACTIVE"
+            ),
         }
         for row in rows
     ]

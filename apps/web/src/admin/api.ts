@@ -533,6 +533,7 @@ export type AgentCapability = {
   token?: string;
   expires_at: string;
   revoked?: boolean;
+  status?: "ACTIVE" | "EXPIRED" | "REVOKED";
 };
 export async function createAgentWorkspace(
   siteId: string,

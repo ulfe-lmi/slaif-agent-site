@@ -115,7 +115,6 @@ async def test_public_human_agent_workspace_capability_and_revocation(
         ) as control:
             created = await control.post(
                 f"/api/control/v1/sites/{site}/workspaces/",
-                headers=headers,
                 json={
                     "title": "Public Agent proof",
                     "delegation_preset": "L1_CONTENT_EDITOR",
@@ -125,17 +124,47 @@ async def test_public_human_agent_workspace_capability_and_revocation(
                     "request_quota": 4,
                     "mutation_quota": 2,
                 },
+                headers={**headers, "Idempotency-Key": "workspace-proof"},
             )
             assert created.status_code == 201, created.text
             workspace = created.json()
             assert workspace["source_origins"] == ["https://example.com"]
+            replayed_workspace = await control.post(
+                f"/api/control/v1/sites/{site}/workspaces/",
+                json={
+                    "title": "Public Agent proof",
+                    "delegation_preset": "L1_CONTENT_EDITOR",
+                    "duration_hours": 1,
+                    "requested_scopes": ["site:read"],
+                    "source_origins": ["HTTPS://Example.COM/"],
+                    "request_quota": 4,
+                    "mutation_quota": 2,
+                },
+                headers={**headers, "Idempotency-Key": "workspace-proof"},
+            )
+            assert replayed_workspace.status_code == 200
+            assert (
+                replayed_workspace.json()["workspace_id"] == workspace["workspace_id"]
+            )
+            mismatch_workspace = await control.post(
+                f"/api/control/v1/sites/{site}/workspaces/",
+                json={"title": "different", "delegation_preset": "L1_CONTENT_EDITOR"},
+                headers={**headers, "Idempotency-Key": "workspace-proof"},
+            )
+            assert mismatch_workspace.status_code == 409
             capability_response = await control.post(
                 f"/api/control/v1/sites/{site}/workspaces/{workspace['workspace_id']}/capabilities/",
-                headers=headers,
+                headers={**headers, "Idempotency-Key": "capability-proof"},
             )
             assert capability_response.status_code == 201, capability_response.text
             token = capability_response.json()["token"]
             assert token.startswith("sas2_")
+            capability_replay = await control.post(
+                f"/api/control/v1/sites/{site}/workspaces/{workspace['workspace_id']}/capabilities/",
+                headers={**headers, "Idempotency-Key": "capability-proof"},
+            )
+            assert capability_replay.status_code == 200
+            assert "token" not in capability_replay.text
             listed = await control.get(
                 f"/api/control/v1/sites/{site}/workspaces/",
                 headers={"cookie": headers["cookie"]},
@@ -181,7 +210,7 @@ async def test_public_human_agent_workspace_capability_and_revocation(
                 ) as control_again:
                     revoked = await control_again.post(
                         f"/api/control/v1/sites/{site}/workspaces/{workspace['workspace_id']}/capabilities/{capability_response.json()['capability_id']}/revoke",
-                        headers=headers,
+                        headers={**headers, "Idempotency-Key": "revoke-proof"},
                     )
                 assert revoked.status_code == 200
                 assert (

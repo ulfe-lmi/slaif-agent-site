@@ -435,6 +435,8 @@ def test_adapter_exposes_no_native_pool_or_sql_locator() -> None:
         "human_agent_capability_revoke",
         "human_agent_capability_list",
         "human_agent_workspace_list",
+        "human_agent_workspace_create_idempotent",
+        "human_agent_capability_create_idempotent",
         "setup_status",
         "readiness",
         "start",

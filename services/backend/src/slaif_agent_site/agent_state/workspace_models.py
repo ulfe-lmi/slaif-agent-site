@@ -85,7 +85,7 @@ class CreateWorkspaceRequest(BaseModel):
     task_description: str = ""
     delegation_preset: DelegationPreset
     duration_hours: int = 1
-    requested_scopes: frozenset[str] = frozenset()
+    requested_scopes: frozenset[str] | None = None
     resource_constraints: dict[str, object] = Field(default_factory=dict)
     source_origins: tuple[str, ...] = ()
     request_quota: int = 1000
@@ -111,9 +111,19 @@ class CreateWorkspaceRequest(BaseModel):
             raise ValueError("workspace duration must be 1-8 hours")
         return value
 
-    @field_validator("requested_scopes")
+    @field_validator("requested_scopes", mode="before")
     @classmethod
-    def scopes_are_bounded(cls, value: frozenset[str]) -> frozenset[str]:
+    def scopes_are_bounded(cls, value: object) -> frozenset[str] | None:
+        if value is None:
+            return None
+        if not isinstance(value, (list, tuple, set, frozenset)):
+            raise ValueError("workspace scopes are bounded")
+        raw = list(value)
+        if any(not isinstance(scope, str) for scope in raw):
+            raise ValueError("workspace scopes are bounded")
+        if len(raw) != len(set(raw)):
+            raise ValueError("workspace scopes must be unique")
+        value = frozenset(raw)
         if len(value) > 128 or any(len(scope) > 96 or not scope for scope in value):
             raise ValueError("workspace scopes are bounded")
         return value
@@ -135,16 +145,24 @@ class CreateWorkspaceRequest(BaseModel):
             raise ValueError("workspace source origins must be unique")
         return canonical
 
-    @field_validator(
-        "request_quota",
-        "mutation_quota",
-        "delete_quota",
-        "upload_quota",
-        "browser_quota",
-    )
+    @field_validator("request_quota")
     @classmethod
     def quotas_are_bounded(cls, value: int) -> int:
-        if value < 0 or value > 10000:
+        if value < 1 or value > 10000:
+            raise ValueError("workspace quota is bounded")
+        return value
+
+    @field_validator("mutation_quota", "delete_quota")
+    @classmethod
+    def mutation_quotas_are_bounded(cls, value: int) -> int:
+        if value < 0 or value > 5000:
+            raise ValueError("workspace quota is bounded")
+        return value
+
+    @field_validator("upload_quota", "browser_quota")
+    @classmethod
+    def transfer_quotas_are_bounded(cls, value: int) -> int:
+        if value < 0 or value > 1000:
             raise ValueError("workspace quota is bounded")
         return value
 

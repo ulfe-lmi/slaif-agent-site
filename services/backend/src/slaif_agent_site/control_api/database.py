@@ -85,6 +85,14 @@ HUMAN_AGENT_WORKSPACE_GET_SQL = (
 HUMAN_AGENT_WORKSPACE_LIST_SQL = (
     "SELECT * FROM control.slaif_human_agent_workspace_list($1,$2)"
 )
+HUMAN_AGENT_WORKSPACE_CREATE_IDEMPOTENT_SQL = (
+    "SELECT * FROM control.slaif_human_agent_workspace_create_idempotent("
+    "$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)"
+)
+HUMAN_AGENT_CAPABILITY_CREATE_IDEMPOTENT_SQL = (
+    "SELECT * FROM control.slaif_human_agent_capability_create_idempotent("
+    "$1,$2,$3,$4,$5,$6,$7)"
+)
 HUMAN_AGENT_CAPABILITY_CREATE_SQL = (
     "SELECT * FROM control.slaif_human_agent_capability_create($1,$2,$3,$4,$5)"
 )
@@ -544,9 +552,21 @@ class ControlDatabase:
     async def human_agent_workspace_list(self, *arguments: Any) -> list[Any]:
         return await self._human_agent_call(HUMAN_AGENT_WORKSPACE_LIST_SQL, *arguments)
 
+    async def human_agent_workspace_create_idempotent(self, *arguments: Any) -> Any:
+        rows = await self._human_agent_call(
+            HUMAN_AGENT_WORKSPACE_CREATE_IDEMPOTENT_SQL, *arguments
+        )
+        return rows[0] if rows else None
+
     async def human_agent_capability_create(self, *arguments: Any) -> Any:
         rows = await self._human_agent_call(
             HUMAN_AGENT_CAPABILITY_CREATE_SQL, *arguments
+        )
+        return rows[0] if rows else None
+
+    async def human_agent_capability_create_idempotent(self, *arguments: Any) -> Any:
+        rows = await self._human_agent_call(
+            HUMAN_AGENT_CAPABILITY_CREATE_IDEMPOTENT_SQL, *arguments
         )
         return rows[0] if rows else None
 

@@ -98,6 +98,7 @@ def upgrade() -> None:
             effective text[];
             workspace_id uuid;
         BEGIN
+            PERFORM set_config('app.human_user_id', p_user_id::text, true);
             IF p_duration_hours NOT BETWEEN 1 AND 8
                OR p_request_quota NOT BETWEEN 1 AND 10000
                OR p_mutation_quota NOT BETWEEN 0 AND 5000
@@ -166,7 +167,8 @@ def upgrade() -> None:
             FROM control.workspace w JOIN control.user_account a ON a.id=COALESCE(w.delegator_id,w.created_by)
             JOIN control.site s ON s.id=w.site_id
             WHERE w.id=p_workspace_id AND w.site_id=p_site_id
-              AND (COALESCE(w.delegator_id,w.created_by)=p_user_id OR EXISTS (SELECT 1 FROM control.platform_administrator WHERE user_account_id=p_user_id))
+              AND (COALESCE(w.delegator_id,w.created_by)=p_user_id OR EXISTS (SELECT 1 FROM control.platform_administrator WHERE user_account_id=p_user_id)
+                   OR EXISTS (SELECT 1 FROM control.slaif_effective_human_membership(p_user_id,w.site_id) m WHERE 'workspace:read-all'=ANY(m.effective_permissions)))
               AND w.actor_type='AGENT' AND a.status='ACTIVE' AND s.status='ACTIVE'
         $fn$
         """
@@ -183,9 +185,11 @@ def upgrade() -> None:
         LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $fn$
         DECLARE w record; capability_id uuid;
         BEGIN
+            PERFORM set_config('app.human_user_id', p_user_id::text, true);
             SELECT * INTO w FROM control.workspace WHERE workspace.id=p_workspace_id
               AND workspace.site_id=p_site_id
-              AND (COALESCE(workspace.delegator_id,workspace.created_by)=p_user_id OR EXISTS (SELECT 1 FROM control.platform_administrator WHERE user_account_id=p_user_id))
+              AND (COALESCE(workspace.delegator_id,workspace.created_by)=p_user_id OR EXISTS (SELECT 1 FROM control.platform_administrator WHERE user_account_id=p_user_id)
+                   OR EXISTS (SELECT 1 FROM control.slaif_effective_human_membership(p_user_id,workspace.site_id) m WHERE 'capability:create'=ANY(m.effective_permissions)))
               AND workspace.actor_type='AGENT' AND workspace.status='ACTIVE'
               AND workspace.expires_at>CURRENT_TIMESTAMP;
             IF w IS NULL OR length(p_public_id) NOT BETWEEN 16 AND 64
@@ -207,13 +211,18 @@ def upgrade() -> None:
         """
         CREATE FUNCTION control.slaif_human_agent_capability_revoke(
             p_workspace_id uuid, p_site_id uuid, p_user_id uuid, p_public_id text
-        ) RETURNS boolean LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog AS $fn$
+        ) RETURNS boolean LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $fn$
+        DECLARE revoked boolean;
+        BEGIN
+            PERFORM set_config('app.human_user_id', p_user_id::text, true);
             UPDATE control.capability c SET revoked_at=CURRENT_TIMESTAMP
             FROM control.workspace w WHERE c.workspace_id=w.id AND c.public_id=p_public_id
               AND w.id=p_workspace_id AND w.site_id=p_site_id
-              AND (COALESCE(w.delegator_id,w.created_by)=p_user_id OR EXISTS (SELECT 1 FROM control.platform_administrator WHERE user_account_id=p_user_id))
-              AND c.revoked_at IS NULL RETURNING TRUE
-        $fn$
+              AND (COALESCE(w.delegator_id,w.created_by)=p_user_id OR EXISTS (SELECT 1 FROM control.platform_administrator WHERE user_account_id=p_user_id)
+                   OR EXISTS (SELECT 1 FROM control.slaif_effective_human_membership(p_user_id,w.site_id) m WHERE 'capability:revoke'=ANY(m.effective_permissions)))
+              AND c.revoked_at IS NULL RETURNING TRUE INTO revoked;
+            RETURN COALESCE(revoked, false);
+        END; $fn$
         """
     )
     op.execute(
@@ -225,7 +234,8 @@ def upgrade() -> None:
             SELECT c.public_id,c.created_at,c.expires_at,c.revoked_at FROM control.capability c
             JOIN control.workspace w ON w.id=c.workspace_id
             WHERE c.workspace_id=p_workspace_id AND w.site_id=p_site_id
-              AND (COALESCE(w.delegator_id,w.created_by)=p_user_id OR EXISTS (SELECT 1 FROM control.platform_administrator WHERE user_account_id=p_user_id))
+              AND (COALESCE(w.delegator_id,w.created_by)=p_user_id OR EXISTS (SELECT 1 FROM control.platform_administrator WHERE user_account_id=p_user_id)
+                   OR EXISTS (SELECT 1 FROM control.slaif_effective_human_membership(p_user_id,w.site_id) m WHERE 'workspace:read-all'=ANY(m.effective_permissions)))
             ORDER BY c.created_at DESC, c.id DESC
         $fn$
         """
@@ -259,3 +269,53 @@ def downgrade() -> None:
         ("slaif_human_agent_capability_list", "uuid,uuid,uuid"),
     ):
         op.execute(f"DROP FUNCTION IF EXISTS control.{name}({signature}) CASCADE")
+    # Restore the browser-era authentication contract owned by revision 037.
+    op.execute(
+        """
+        CREATE OR REPLACE FUNCTION control.slaif_agent_capability_authenticate(
+            p_public_id text
+        ) RETURNS TABLE (
+            id uuid, public_id text, secret_digest text, workspace_id uuid,
+            site_id uuid, created_by uuid, scopes jsonb, created_at timestamptz,
+            expires_at timestamptz, revoked_at timestamptz,
+            browser_max_runs integer, browser_max_concurrent_runs integer,
+            browser_max_screenshots integer, browser_max_artifact_bytes bigint,
+            browser_max_routes_per_run integer, browser_max_evidence_per_run integer,
+            browser_max_duration_seconds integer, browser_max_attempts integer,
+            browser_allowed_targets text[]
+        ) LANGUAGE sql SECURITY DEFINER STABLE SET search_path = pg_catalog ROWS 1 AS $fn$
+            SELECT capability.id, capability.public_id, capability.secret_digest,
+                workspace.id, workspace.site_id, workspace.created_by,
+                capability.scopes, capability.created_at, capability.expires_at,
+                capability.revoked_at, capability.browser_max_runs,
+                capability.browser_max_concurrent_runs,
+                capability.browser_max_screenshots,
+                capability.browser_max_artifact_bytes,
+                capability.browser_max_routes_per_run,
+                capability.browser_max_evidence_per_run,
+                capability.browser_max_duration_seconds,
+                capability.browser_max_attempts,
+                capability.browser_allowed_targets
+            FROM control.capability AS capability
+            JOIN control.workspace AS workspace ON workspace.id = capability.workspace_id
+            WHERE capability.public_id = p_public_id
+              AND capability.revoked_at IS NULL
+              AND capability.expires_at > CURRENT_TIMESTAMP
+        $fn$
+        """
+    )
+    op.execute(
+        'ALTER FUNCTION control.slaif_agent_capability_authenticate(text) OWNER TO "slaif_owner"'
+    )
+    op.execute(
+        "REVOKE ALL ON FUNCTION control.slaif_agent_capability_authenticate(text) FROM PUBLIC"
+    )
+    op.execute(
+        'GRANT EXECUTE ON FUNCTION control.slaif_agent_capability_authenticate(text) TO "slaif_agent_runtime"'
+    )
+    op.execute(
+        "ALTER TABLE control.workspace DROP COLUMN IF EXISTS delegator_id, DROP COLUMN IF EXISTS resource_constraints, DROP COLUMN IF EXISTS source_origins, DROP COLUMN IF EXISTS request_quota, DROP COLUMN IF EXISTS mutation_quota, DROP COLUMN IF EXISTS delete_quota, DROP COLUMN IF EXISTS upload_quota, DROP COLUMN IF EXISTS browser_quota"
+    )
+    op.execute(
+        "ALTER TABLE control.capability DROP COLUMN IF EXISTS resource_constraints, DROP COLUMN IF EXISTS source_origins, DROP COLUMN IF EXISTS request_quota, DROP COLUMN IF EXISTS mutation_quota, DROP COLUMN IF EXISTS delete_quota, DROP COLUMN IF EXISTS upload_quota"
+    )

@@ -626,12 +626,18 @@ docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif \
    VALUES
      ('14000000-0000-4000-8000-000000000002','agent-browser-smoke',
       'Agent Browser Smoke','en-US','catalog-v1','ACTIVE');
+   INSERT INTO control.site_membership
+     (site_id,user_account_id,role_key,delegation_ceiling)
+   VALUES
+     ('14000000-0000-4000-8000-000000000002',
+      '14000000-0000-4000-8000-000000000001','SITE_OWNER',4);
    INSERT INTO control.workspace
-     (id,site_id,created_by,actor_type,title,delegation_preset,effective_scopes,
+     (id,site_id,created_by,delegator_id,actor_type,title,delegation_preset,effective_scopes,
       status,expires_at)
    VALUES
      ('14000000-0000-4000-8000-000000000003',
       '14000000-0000-4000-8000-000000000002',
+      '14000000-0000-4000-8000-000000000001',
       '14000000-0000-4000-8000-000000000001','AGENT','Agent browser smoke',
       'L1','[\"preview:inspect\"]'::jsonb,'ACTIVE',
       CURRENT_TIMESTAMP + interval '1 hour');
