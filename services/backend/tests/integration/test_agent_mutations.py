@@ -129,7 +129,7 @@ async def _seed(database: AgentSiteDatabase) -> tuple[str, dict[str, UUID]]:
                 effective_scopes, status, expires_at
             ) VALUES (
                 $1, $2, $2, 'Agent Mutation Workspace', 'L4',
-                '["site:read","content-model:create","content-model:read",
+                '["site:read","content-model:create","field-definition:create","content-model:read",
                   "content-item:create","content-item:read","page:create",
                   "page:read","composition:read","media:read",
                   "component-structure:create"]'::jsonb,
@@ -149,7 +149,7 @@ async def _seed(database: AgentSiteDatabase) -> tuple[str, dict[str, UUID]]:
             workspace_id,
             public_id,
             digest,
-            '["site:read","content-model:create","content-model:read","content-item:create","content-item:read","page:create","page:read","composition:read","media:read","component-structure:create"]',
+            '["site:read","content-model:create","field-definition:create","content-model:read","content-item:create","content-item:read","page:create","page:read","composition:read","media:read","component-structure:create"]',
             datetime.now(UTC) + timedelta(minutes=30),
         )
         capability_id = await owner.fetchval(
