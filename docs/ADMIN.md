@@ -48,6 +48,9 @@ The workflow creates no account, invitation, email, password, or login and has
 no user directory, custom roles, or identity editing. Content/models/pages,
 Puck, review, audit workflows, and publication execution remain deferred. AI
 Sessions provides the bounded Agent workspace and one-time capability workflow.
+The AI Sessions panel lists the creator's active Agent workspaces and capability
+metadata after reload, offers all four delegation presets with bounded TTL and
+request quota controls, and never redisplays a capability secret after dismiss.
 
 ## Browser evidence
 

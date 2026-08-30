@@ -1,53 +1,86 @@
 "use client";
 
 import { useEffect, useState } from "react";
+
 import { Button, Card, StatusPanel } from "../components/ui/primitives";
 import {
   createAgentCapability,
   createAgentWorkspace,
   listAgentCapabilities,
+  listAgentWorkspaces,
   revokeAgentCapability,
   type AgentCapability,
+  type AgentWorkspace,
 } from "./api";
+
+const PRESETS = [
+  ["L1_CONTENT_EDITOR", "L1 · Content editor"],
+  ["L2_SITE_EDITOR", "L2 · Site editor"],
+  ["L3_SITE_DESIGNER", "L3 · Site designer"],
+  ["L4_SITE_ARCHITECT", "L4 · Site architect"],
+] as const;
 
 export function AgentSessions({ siteId }: { siteId: string }) {
   const [title, setTitle] = useState("Editorial agent session");
-  const [workspaceId, setWorkspaceId] = useState<string | null>(null);
-  const [capabilities, setCapabilities] = useState<AgentCapability[]>([]);
+  const [preset, setPreset] =
+    useState<(typeof PRESETS)[number][0]>("L4_SITE_ARCHITECT");
+  const [duration, setDuration] = useState(1);
+  const [quota, setQuota] = useState(1000);
+  const [origin, setOrigin] = useState("");
+  const [constraints, setConstraints] = useState("");
+  const [workspaces, setWorkspaces] = useState<AgentWorkspace[]>([]);
+  const [capabilities, setCapabilities] = useState<Record<string, AgentCapability[]>>(
+    {},
+  );
   const [token, setToken] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  async function refresh(id = workspaceId) {
-    if (!id) return;
+
+  async function refresh() {
     try {
-      setCapabilities(await listAgentCapabilities(siteId, id));
+      const items = await listAgentWorkspaces(siteId);
+      setWorkspaces(items);
+      const entries = await Promise.all(
+        items.map(
+          async (item) =>
+            [
+              item.workspace_id,
+              await listAgentCapabilities(siteId, item.workspace_id),
+            ] as const,
+        ),
+      );
+      setCapabilities(Object.fromEntries(entries));
     } catch {
       setError("Session data is temporarily unavailable.");
     }
   }
   useEffect(() => {
     void refresh();
-  }, [workspaceId]);
+  }, [siteId]);
+
   async function create() {
     setError(null);
     setToken(null);
     try {
       const workspace = await createAgentWorkspace(siteId, {
         title,
-        delegation_preset: "L4_SITE_ARCHITECT",
-        duration_hours: 1,
+        delegation_preset: preset,
+        duration_hours: duration,
+        request_quota: quota,
+        source_origins: origin ? [origin] : [],
+        resource_constraints: constraints
+          ? (JSON.parse(constraints) as Record<string, unknown>)
+          : {},
       });
-      setWorkspaceId(workspace.workspace_id);
       const capability = await createAgentCapability(siteId, workspace.workspace_id);
       setToken(capability.token ?? null);
-      await refresh(workspace.workspace_id);
+      await refresh();
     } catch {
       setError("The Agent session could not be created.");
     }
   }
-  async function revoke(id: string) {
-    if (!workspaceId) return;
+  async function revoke(workspaceId: string, capabilityId: string) {
     try {
-      await revokeAgentCapability(siteId, workspaceId, id);
+      await revokeAgentCapability(siteId, workspaceId, capabilityId);
       await refresh();
     } catch {
       setError("The capability could not be revoked.");
@@ -57,7 +90,7 @@ export function AgentSessions({ siteId }: { siteId: string }) {
     <section aria-labelledby="agent-sessions-heading" className="agent-sessions">
       <h2 id="agent-sessions-heading">AI Sessions</h2>
       <p>
-        Create a bounded site Agent workspace. The capability secret is displayed once.
+        Create and monitor bounded site Agent workspaces. Secrets are displayed once.
       </p>
       {error && <StatusPanel>{error}</StatusPanel>}
       <Card>
@@ -68,7 +101,55 @@ export function AgentSessions({ siteId }: { siteId: string }) {
           onChange={(event) => setTitle(event.target.value)}
           maxLength={128}
         />
-        <p>Level 4 Site Architect · one hour · site-bound</p>
+        <label htmlFor="agent-session-preset">Delegation preset</label>
+        <select
+          id="agent-session-preset"
+          value={preset}
+          onChange={(event) =>
+            setPreset(event.target.value as (typeof PRESETS)[number][0])
+          }
+        >
+          {PRESETS.map(([value, label]) => (
+            <option key={value} value={value}>
+              {label}
+            </option>
+          ))}
+        </select>
+        <label htmlFor="agent-session-duration">TTL (hours)</label>
+        <input
+          id="agent-session-duration"
+          type="number"
+          min={1}
+          max={8}
+          value={duration}
+          onChange={(event) => setDuration(Number(event.target.value))}
+        />
+        <label htmlFor="agent-session-quota">Request quota</label>
+        <input
+          id="agent-session-quota"
+          type="number"
+          min={1}
+          max={10000}
+          value={quota}
+          onChange={(event) => setQuota(Number(event.target.value))}
+        />
+        <details>
+          <summary>Advanced source and resource restrictions</summary>
+          <label htmlFor="agent-session-origin">Approved HTTP(S) origin</label>
+          <input
+            id="agent-session-origin"
+            value={origin}
+            onChange={(event) => setOrigin(event.target.value)}
+            placeholder="https://example.com"
+          />
+          <label htmlFor="agent-session-constraints">Resource constraints (JSON)</label>
+          <input
+            id="agent-session-constraints"
+            value={constraints}
+            onChange={(event) => setConstraints(event.target.value)}
+            placeholder='{"max_items":100}'
+          />
+        </details>
         <Button type="button" onClick={() => void create()}>
           Create Agent session
         </Button>
@@ -76,34 +157,57 @@ export function AgentSessions({ siteId }: { siteId: string }) {
           <div className="one-time-secret" role="alert">
             <strong>Copy this token now; it will not be shown again.</strong>
             <code>{token}</code>
+            <span>
+              <Button
+                type="button"
+                onClick={() => void navigator.clipboard.writeText(token)}
+              >
+                Copy token
+              </Button>{" "}
+              <Button type="button" onClick={() => setToken(null)}>
+                Dismiss
+              </Button>
+            </span>
           </div>
         )}
       </Card>
-      {workspaceId && (
-        <Card>
-          <h3>Capabilities</h3>
-          {capabilities.length ? (
-            <ul>
-              {capabilities.map((capability) => (
-                <li key={capability.capability_id}>
-                  <code>{capability.capability_id}</code> ·{" "}
-                  {capability.revoked ? "revoked" : "active"}{" "}
-                  {!capability.revoked && (
-                    <Button
-                      type="button"
-                      onClick={() => void revoke(capability.capability_id)}
-                    >
-                      Revoke
-                    </Button>
-                  )}
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p>No capabilities issued.</p>
-          )}
-        </Card>
-      )}
+      <Card>
+        <h3>Session status</h3>
+        {workspaces.length ? (
+          <ul>
+            {workspaces.map((workspace) => (
+              <li key={workspace.workspace_id}>
+                <strong>{workspace.title}</strong> · {workspace.delegation_preset} ·{" "}
+                {workspace.status} · expires{" "}
+                {new Date(workspace.expires_at).toLocaleString()}
+                <ul>
+                  {(capabilities[workspace.workspace_id] ?? []).map((capability) => (
+                    <li key={capability.capability_id}>
+                      <code>{capability.capability_id}</code> ·{" "}
+                      {capability.revoked ? "revoked" : "active"}{" "}
+                      {!capability.revoked && (
+                        <Button
+                          type="button"
+                          onClick={() =>
+                            void revoke(
+                              workspace.workspace_id,
+                              capability.capability_id,
+                            )
+                          }
+                        >
+                          Revoke
+                        </Button>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p>No Agent workspaces have been created.</p>
+        )}
+      </Card>
     </section>
   );
 }

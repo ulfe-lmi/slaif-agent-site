@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import StrEnum
+from urllib.parse import urlsplit
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -16,6 +17,40 @@ def _bounded_text(value: str, max_length: int) -> str:
     if not normalized or len(normalized) > max_length or "\x00" in normalized:
         raise ValueError(f"text must be 1-{max_length} characters")
     return normalized
+
+
+def canonicalize_origin(value: str) -> str:
+    """Accept only a canonical HTTP(S) origin, without user-controlled paths."""
+    if (
+        not isinstance(value, str)
+        or not value
+        or any(character.isspace() or ord(character) < 0x20 for character in value)
+    ):
+        raise ValueError("origin is malformed")
+    parsed = urlsplit(value)
+    if parsed.scheme.lower() not in {"http", "https"} or not parsed.hostname:
+        raise ValueError("origin is malformed")
+    if parsed.username is not None or parsed.password is not None:
+        raise ValueError("origin credentials are forbidden")
+    if parsed.path not in {"", "/"} or parsed.query or parsed.fragment:
+        raise ValueError("origin must not include a path or fragment")
+    try:
+        port = parsed.port
+    except ValueError as error:
+        raise ValueError("origin port is malformed") from error
+    host = parsed.hostname.lower().rstrip(".")
+    if not host or any(
+        character not in "abcdefghijklmnopqrstuvwxyz0123456789.-:" for character in host
+    ):
+        raise ValueError("origin host is malformed")
+    scheme = parsed.scheme.lower()
+    if port is None or port == (443 if scheme == "https" else 80):
+        port_part = ""
+    else:
+        port_part = f":{port}"
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
+    return f"{scheme}://{host}{port_part}"
 
 
 class WorkspaceStatus(StrEnum):
@@ -93,15 +128,12 @@ class CreateWorkspaceRequest(BaseModel):
     @field_validator("source_origins")
     @classmethod
     def origins_are_bounded(cls, value: tuple[str, ...]) -> tuple[str, ...]:
-        if len(value) > 16 or any(
-            not origin
-            or len(origin) > 2048
-            or not (origin.startswith("https://") or origin.startswith("http://"))
-            or any(character.isspace() for character in origin)
-            for origin in value
-        ):
+        if len(value) > 16 or any(len(origin) > 2048 for origin in value):
             raise ValueError("workspace source origins are bounded")
-        return value
+        canonical = tuple(canonicalize_origin(origin) for origin in value)
+        if len(set(canonical)) != len(canonical):
+            raise ValueError("workspace source origins must be unique")
+        return canonical
 
     @field_validator(
         "request_quota",
@@ -140,6 +172,7 @@ class WorkspaceRecord(BaseModel):
 
 __all__ = [
     "CreateWorkspaceRequest",
+    "canonicalize_origin",
     "DelegationPreset",
     "WorkspaceRecord",
     "WorkspaceStatus",

@@ -46,6 +46,7 @@ ALLOWED_CLEAN_RELATIONS = {
     ("control", "browser_idempotency"),
     ("control", "browser_artifact"),
     ("audit", "browser_event"),
+    ("audit", "human_agent_session"),
 }
 FOUNDATION_SCHEMA = "agentcow"
 CONTROL_READINESS_FUNCTION = "slaif_control_readiness"
@@ -124,6 +125,11 @@ AGENT_CONTROL_FUNCTIONS = {
         "p_capability_id uuid, p_site_id uuid, p_workspace_id uuid, "
         "p_delegator_id uuid, p_run_id uuid, p_artifact_id uuid",
     ): "uuid, uuid, uuid, uuid, uuid, uuid",
+    ("slaif_agent_capability_context", "p_public_id text"): "text",
+    (
+        "slaif_agent_quota_consume",
+        "p_capability_id uuid, p_workspace_id uuid, p_kind text",
+    ): "uuid, uuid, text",
 }
 MEDIA_CONTROL_FUNCTIONS = {
     (
@@ -407,6 +413,10 @@ CONTROL_FUNCTIONS = {
         "slaif_human_agent_capability_list",
         "p_workspace_id uuid, p_site_id uuid, p_user_id uuid",
     ): "uuid, uuid, uuid",
+    (
+        "slaif_human_agent_workspace_list",
+        "p_site_id uuid, p_user_id uuid",
+    ): "uuid, uuid",
 }
 
 

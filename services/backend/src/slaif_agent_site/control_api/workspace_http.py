@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any, Never
 from uuid import UUID
 
@@ -50,6 +51,8 @@ def _database(request: Request) -> Any:
 
 
 def _raise(exc: Exception) -> Never:
+    if "INPUT_INVALID" in str(exc):
+        raise DomainValidationError() from None
     if "DENIED" in str(exc) or "P0002" in str(exc):
         raise AuthorizationError() from None
     if "NOT_FOUND" in str(exc):
@@ -109,7 +112,7 @@ async def create_workspace(
             body.task_description,
             preset.value,
             sorted(scopes),
-            body.resource_constraints,
+            json.dumps(body.resource_constraints, sort_keys=True),
             list(body.source_origins),
             body.request_quota,
             body.mutation_quota,
@@ -123,6 +126,26 @@ async def create_workspace(
     if row is None:
         raise ResourceNotFoundError()
     return _record(row)
+
+
+@router.get("/")
+async def list_workspaces(site_id: UUID, request: Request) -> list[dict[str, Any]]:
+    database = _database(request)
+    authority = await authorize_site_request(
+        request,
+        database,
+        request.app.state.settings,
+        site_id,
+        "workspace:read-all",
+        state_changing=False,
+    )
+    try:
+        rows = await database.human_agent_workspace_list(
+            site_id, authority.session.user_account_id
+        )
+    except Exception as exc:
+        _raise(exc)
+    return [_record(row) for row in rows]
 
 
 @router.get("/{workspace_id}")

@@ -321,6 +321,14 @@ active workspace, site, delegator account, expiry, and revocation state. It has
 no Control-table or reviewer authority. Freeze, review, promotion, and discard
 are intentionally not exposed by this surface.
 
+Authentication returns the immutable normalized source origins, resource
+constraints, and request/mutation/delete/upload budgets issued with the
+workspace. Every authenticated request consumes one request unit atomically;
+the five existing Agent create routes consume one mutation unit only after a
+new idempotency reservation, so retries do not double-charge. Exhausted
+budgets return `429` without exposing secrets. Human Agent create/issue/revoke
+actions append secret-free rows to the append-only audit stream.
+
 ## Internal Render projection API
 
 Render exposes typed, private projection routes on its internal listener:

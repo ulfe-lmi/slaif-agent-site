@@ -58,6 +58,9 @@ BEGIN_IDEMPOTENCY_SQL = (
 COMPLETE_IDEMPOTENCY_SQL = (
     "SELECT control.slaif_agent_idempotency_complete($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)"
 )
+CONSUME_MUTATION_QUOTA_SQL = (
+    "SELECT control.slaif_agent_quota_consume($1,$2,'mutation')"
+)
 
 AGENT_CONTENT_TYPE_CREATE_SQL = (
     "SELECT * FROM content.slaif_agent_content_type_create($1,$2,$3,$4,$5)"
@@ -81,6 +84,10 @@ _IDEMPOTENCY_KEY = re.compile(r"^[A-Za-z0-9._~-]{1,128}$")
 
 class AgentMutationUnavailableError(RuntimeError):
     """A durable idempotency or COW dependency could not complete."""
+
+
+class AgentQuotaExceededError(RuntimeError):
+    """The immutable capability mutation budget is exhausted."""
 
 
 class AgentMutationConflictError(RuntimeError):
@@ -347,6 +354,17 @@ async def execute_agent_mutation(
             if reservation.state != "STARTED":
                 raise AgentMutationUnavailableError()
 
+            try:
+                mutation_allowed = await cow.native.fetchval(
+                    CONSUME_MUTATION_QUOTA_SQL,
+                    context.capability_id,
+                    context.workspace_id,
+                )
+            except (asyncpg.PostgresError, OSError, TimeoutError) as error:
+                raise AgentMutationUnavailableError() from error
+            if mutation_allowed is not True:
+                raise AgentQuotaExceededError()
+
             service = AgentCowContentModelService(cow)
             record = await mutate(service)
             record_body = record.model_dump(mode="json")
@@ -382,6 +400,7 @@ __all__ = [
     "AgentCowContentModelService",
     "AgentMutationConflictError",
     "AgentMutationUnavailableError",
+    "AgentQuotaExceededError",
     "IdempotencyMismatchError",
     "InvalidIdempotencyKeyError",
     "MissingIdempotencyKeyError",

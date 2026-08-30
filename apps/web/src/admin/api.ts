@@ -543,6 +543,11 @@ export async function createAgentWorkspace(
     mutation("POST", body),
   )) as AgentWorkspace;
 }
+export async function listAgentWorkspaces(siteId: string) {
+  return (await json(`/sites/${encodeURIComponent(siteId)}/workspaces/`, {
+    method: "GET",
+  })) as AgentWorkspace[];
+}
 export async function getAgentWorkspace(siteId: string, workspaceId: string) {
   return (await json(
     `/sites/${encodeURIComponent(siteId)}/workspaces/${encodeURIComponent(workspaceId)}`,

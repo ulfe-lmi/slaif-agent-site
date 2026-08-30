@@ -165,7 +165,8 @@ def upgrade() -> None:
                 w.base_site_revision,w.created_at,w.expires_at
             FROM control.workspace w JOIN control.user_account a ON a.id=COALESCE(w.delegator_id,w.created_by)
             JOIN control.site s ON s.id=w.site_id
-            WHERE w.id=p_workspace_id AND w.site_id=p_site_id AND COALESCE(w.delegator_id,w.created_by)=p_user_id
+            WHERE w.id=p_workspace_id AND w.site_id=p_site_id
+              AND (COALESCE(w.delegator_id,w.created_by)=p_user_id OR EXISTS (SELECT 1 FROM control.platform_administrator WHERE user_account_id=p_user_id))
               AND w.actor_type='AGENT' AND a.status='ACTIVE' AND s.status='ACTIVE'
         $fn$
         """
@@ -183,7 +184,8 @@ def upgrade() -> None:
         DECLARE w record; capability_id uuid;
         BEGIN
             SELECT * INTO w FROM control.workspace WHERE workspace.id=p_workspace_id
-              AND workspace.site_id=p_site_id AND COALESCE(workspace.delegator_id,workspace.created_by)=p_user_id
+              AND workspace.site_id=p_site_id
+              AND (COALESCE(workspace.delegator_id,workspace.created_by)=p_user_id OR EXISTS (SELECT 1 FROM control.platform_administrator WHERE user_account_id=p_user_id))
               AND workspace.actor_type='AGENT' AND workspace.status='ACTIVE'
               AND workspace.expires_at>CURRENT_TIMESTAMP;
             IF w IS NULL OR length(p_public_id) NOT BETWEEN 16 AND 64
@@ -208,7 +210,8 @@ def upgrade() -> None:
         ) RETURNS boolean LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog AS $fn$
             UPDATE control.capability c SET revoked_at=CURRENT_TIMESTAMP
             FROM control.workspace w WHERE c.workspace_id=w.id AND c.public_id=p_public_id
-              AND w.id=p_workspace_id AND w.site_id=p_site_id AND COALESCE(w.delegator_id,w.created_by)=p_user_id
+              AND w.id=p_workspace_id AND w.site_id=p_site_id
+              AND (COALESCE(w.delegator_id,w.created_by)=p_user_id OR EXISTS (SELECT 1 FROM control.platform_administrator WHERE user_account_id=p_user_id))
               AND c.revoked_at IS NULL RETURNING TRUE
         $fn$
         """
@@ -221,7 +224,8 @@ def upgrade() -> None:
         LANGUAGE sql SECURITY DEFINER STABLE SET search_path = pg_catalog AS $fn$
             SELECT c.public_id,c.created_at,c.expires_at,c.revoked_at FROM control.capability c
             JOIN control.workspace w ON w.id=c.workspace_id
-            WHERE c.workspace_id=p_workspace_id AND w.site_id=p_site_id AND COALESCE(w.delegator_id,w.created_by)=p_user_id
+            WHERE c.workspace_id=p_workspace_id AND w.site_id=p_site_id
+              AND (COALESCE(w.delegator_id,w.created_by)=p_user_id OR EXISTS (SELECT 1 FROM control.platform_administrator WHERE user_account_id=p_user_id))
             ORDER BY c.created_at DESC, c.id DESC
         $fn$
         """

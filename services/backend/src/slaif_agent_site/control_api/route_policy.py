@@ -272,6 +272,12 @@ ROUTE_POLICIES: Final[tuple[RoutePolicy, ...]] = (
             ),
             (
                 "GET",
+                "/api/control/v1/sites/{site_id}/workspaces/",
+                _R,
+                "workspace:read-all",
+            ),
+            (
+                "GET",
                 "/api/control/v1/sites/{site_id}/workspaces/{workspace_id}",
                 _R,
                 "workspace:read-all",

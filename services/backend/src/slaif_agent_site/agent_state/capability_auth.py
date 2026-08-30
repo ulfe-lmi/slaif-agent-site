@@ -21,35 +21,10 @@ from .capability import (
 )
 
 CAPABILITY_AUTHENTICATION_SQL = """
-SELECT * FROM control.slaif_agent_capability_authenticate($1)
+SELECT * FROM control.slaif_agent_capability_context($1)
 """
 
-CONTROL_CAPABILITY_AUTHENTICATION_SQL = """
-SELECT capability.id, capability.public_id, capability.secret_digest,
-       workspace.id AS workspace_id, workspace.site_id,
-       workspace.created_by, capability.scopes, capability.created_at,
-       capability.expires_at, capability.revoked_at,
-       capability.browser_max_runs,
-       capability.browser_max_concurrent_runs,
-       capability.browser_max_screenshots,
-       capability.browser_max_artifact_bytes,
-       capability.browser_max_routes_per_run,
-       capability.browser_max_evidence_per_run,
-       capability.browser_max_duration_seconds,
-       capability.browser_max_attempts,
-       capability.browser_allowed_targets
-FROM control.capability AS capability
-JOIN control.workspace AS workspace ON workspace.id = capability.workspace_id
-JOIN control.site AS site ON site.id = workspace.site_id
-JOIN control.user_account AS account ON account.id = COALESCE(workspace.delegator_id, workspace.created_by)
-WHERE capability.public_id = $1
-  AND capability.revoked_at IS NULL
-  AND capability.expires_at > CURRENT_TIMESTAMP
-  AND workspace.status = 'ACTIVE'
-  AND workspace.expires_at > CURRENT_TIMESTAMP
-  AND site.status = 'ACTIVE'
-  AND account.status = 'ACTIVE'
-"""
+CONTROL_CAPABILITY_AUTHENTICATION_SQL = CAPABILITY_AUTHENTICATION_SQL
 
 
 class CapabilityAuthenticationUnavailableError(RuntimeError):
@@ -66,6 +41,16 @@ class CapabilityAuthenticationRecord:
     created_at: datetime
     expires_at: datetime
     browser_limits: BrowserCapabilityLimits
+    resource_constraints: dict[str, Any]
+    source_origins: tuple[str, ...]
+    request_quota: int
+    mutation_quota: int
+    delete_quota: int
+    upload_quota: int
+    request_used: int
+    mutation_used: int
+    delete_used: int
+    upload_used: int
 
 
 async def authenticate_capability(
@@ -134,6 +119,16 @@ async def authenticate_capability(
                 "allowed_targets": targets_value,
             }
         )
+        constraints_value = row["resource_constraints"]
+        if isinstance(constraints_value, str):
+            constraints_value = json.loads(constraints_value)
+        if not isinstance(constraints_value, dict):
+            return None
+        origins_value = row["source_origins"]
+        if not isinstance(origins_value, (list, tuple)) or not all(
+            isinstance(origin, str) for origin in origins_value
+        ):
+            return None
         return CapabilityAuthenticationRecord(
             capability_id=row["id"],
             site_id=row["site_id"],
@@ -143,6 +138,16 @@ async def authenticate_capability(
             created_at=row["created_at"],
             expires_at=expires_at,
             browser_limits=browser_limits,
+            resource_constraints=constraints_value,
+            source_origins=tuple(origins_value),
+            request_quota=row["request_quota"],
+            mutation_quota=row["mutation_quota"],
+            delete_quota=row["delete_quota"],
+            upload_quota=row["upload_quota"],
+            request_used=row["request_used"],
+            mutation_used=row["mutation_used"],
+            delete_used=row["delete_used"],
+            upload_used=row["upload_used"],
         )
     except (KeyError, TypeError, ValidationError, ValueError):
         return None

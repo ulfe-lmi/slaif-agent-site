@@ -22,7 +22,8 @@ body {
 }
 
 button,
-input {
+input,
+select {
   font: inherit;
 }
 
@@ -272,7 +273,8 @@ input:focus-visible,
   display: grid;
   gap: 1rem;
 }
-.agent-sessions input {
+.agent-sessions input,
+.agent-sessions select {
   display: block;
   width: 100%;
   max-width: 32rem;

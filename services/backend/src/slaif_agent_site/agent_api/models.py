@@ -25,6 +25,7 @@ class AgentCapabilityContext(BaseModel):
         default_factory=BrowserCapabilityLimits
     )
     resource_constraints: dict[str, Any] = Field(default_factory=dict)
+    source_origins: tuple[str, ...] = ()
     request_quota: int = 0
     mutation_quota: int = 0
     delete_quota: int = 0
@@ -40,6 +41,12 @@ class AgentDiscoveryResponse(BaseModel):
     component_catalog_version: str
     composition_schema_version: str
     content_model_schema_version: str
+    resource_constraints: dict[str, Any] = Field(default_factory=dict)
+    source_origins: tuple[str, ...] = ()
+    request_quota: int = 0
+    mutation_quota: int = 0
+    delete_quota: int = 0
+    upload_quota: int = 0
 
 
 class AgentErrorResponse(BaseModel):

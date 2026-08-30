@@ -210,7 +210,37 @@ class AgentDatabase:
             created_at=record.created_at,
             expires_at=record.expires_at,
             browser_limits=record.browser_limits,
+            resource_constraints=record.resource_constraints,
+            source_origins=record.source_origins,
+            request_quota=record.request_quota,
+            mutation_quota=record.mutation_quota,
+            delete_quota=record.delete_quota,
+            upload_quota=record.upload_quota,
         )
+
+    async def consume_agent_quota(
+        self, context: AgentCapabilityContext, kind: str
+    ) -> bool:
+        if self._pool is None:
+            raise AgentDatabaseError(AgentDatabaseReason.CONNECTION_UNAVAILABLE)
+        try:
+            async with self._pool.acquire(
+                timeout=self._settings.acquire_timeout_seconds  # type: ignore[union-attr]
+            ) as connection:
+                return bool(
+                    await connection.fetchval(
+                        "SELECT control.slaif_agent_quota_consume($1,$2,$3)",
+                        context.capability_id,
+                        context.workspace_id,
+                        kind,
+                    )
+                )
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            raise AgentDatabaseError(
+                AgentDatabaseReason.CONNECTION_UNAVAILABLE
+            ) from error
 
 
 __all__ = [
