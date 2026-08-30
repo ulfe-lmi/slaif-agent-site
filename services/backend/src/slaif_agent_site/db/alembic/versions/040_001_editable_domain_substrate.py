@@ -60,11 +60,15 @@ def upgrade() -> None:
     op.execute("""
         CREATE OR REPLACE FUNCTION content.slaif_immutable_site_id() RETURNS trigger
         LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $$
-        BEGIN IF TG_OP='UPDATE' AND NEW.site_id IS DISTINCT FROM OLD.site_id THEN
+        BEGIN
+          IF TG_OP='INSERT' AND NEW.site_id IS NULL THEN
+            SELECT site_id INTO NEW.site_id FROM content.content_type WHERE id=NEW.type_id;
+          END IF;
+          IF TG_OP='UPDATE' AND NEW.site_id IS DISTINCT FROM OLD.site_id THEN
             RAISE EXCEPTION 'SITE_ID_IMMUTABLE' USING ERRCODE='P0003'; END IF; RETURN NEW; END $$
     """)
     op.execute(
-        "CREATE TRIGGER field_definition_site_immutable BEFORE UPDATE ON content.field_definition FOR EACH ROW EXECUTE FUNCTION content.slaif_immutable_site_id()"
+        "CREATE TRIGGER field_definition_site_immutable BEFORE INSERT OR UPDATE ON content.field_definition FOR EACH ROW EXECUTE FUNCTION content.slaif_immutable_site_id()"
     )
 
     op.execute("""
@@ -145,7 +149,7 @@ def upgrade() -> None:
       CREATE FUNCTION content.slaif_agent_field_definition_create(p_site_id uuid,p_type_id uuid,p_key text,p_label text,p_field_type text,p_required boolean,p_localized boolean,p_cardinality integer,p_position integer,p_validation jsonb,p_ui_options jsonb)
       RETURNS TABLE(id uuid,type_id uuid,key text,label text,field_type text,required boolean,localized boolean,cardinality integer,"position" integer,validation jsonb,ui_options jsonb,definition_version integer,created_at timestamptz,updated_at timestamptz)
       LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $$ BEGIN
-        IF NOT EXISTS (SELECT 1 FROM content.content_type WHERE id=p_type_id AND site_id=p_site_id AND status='ACTIVE') THEN RAISE EXCEPTION 'FIELD_TYPE_SITE_NOT_FOUND' USING ERRCODE='P0002'; END IF;
+        IF NOT EXISTS (SELECT 1 FROM content.content_type t WHERE t.id=p_type_id AND t.site_id=p_site_id AND t.status='ACTIVE') THEN RAISE EXCEPTION 'FIELD_TYPE_SITE_NOT_FOUND' USING ERRCODE='P0002'; END IF;
         INSERT INTO content.field_definition(site_id,type_id,key,label,field_type,required,localized,cardinality,"position",validation,ui_options) VALUES(p_site_id,p_type_id,p_key,p_label,p_field_type,p_required,p_localized,p_cardinality,p_position,p_validation,p_ui_options);
         RETURN QUERY SELECT f.id,f.type_id,f.key,f.label,f.field_type,f.required,f.localized,f.cardinality,f."position",f.validation,f.ui_options,f.definition_version,f.created_at,f.updated_at FROM content.field_definition f WHERE f.site_id=p_site_id AND f.type_id=p_type_id AND f.key=p_key ORDER BY f.created_at DESC LIMIT 1;
       END $$
