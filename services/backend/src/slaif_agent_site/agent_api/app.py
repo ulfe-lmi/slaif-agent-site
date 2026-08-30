@@ -23,6 +23,7 @@ from ..browser_worker_client import (
     load_browser_worker_credential,
 )
 from ..config import ConfigurationError, ServiceSettings
+from ..control_api.route_policy import validate_route_policy_coverage
 from ..health import ProbeResult, ReadinessProbe
 from ..logging import configure_json_logging
 from .agent_http import router as agent_router
@@ -152,6 +153,7 @@ def create_app(
         }
         return JSONResponse(document)
 
+    validate_route_policy_coverage(app, ProcessKind.AGENT_API)
     return app
 
 

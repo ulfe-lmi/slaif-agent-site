@@ -191,7 +191,7 @@ async def get_field_definition(
     type_id: UUID, field_id: UUID, request: Request
 ) -> dict[str, Any]:
     context = await _authenticate(request)
-    _require_scope(context, "field-definition:read")
+    _require_scope(context, "content-model:read")
     record = await _execute_read(
         request,
         context,
@@ -338,7 +338,7 @@ async def update_content_type(
     idempotency_key: IdempotencyHeader = None,
 ) -> AgentMutationResponse:
     context = await _authenticate(request)
-    _require_scope(context, "content-model:update")
+    _require_scope(context, "content-model:write")
     return await _execute_mutation(
         request,
         context,
@@ -360,7 +360,7 @@ async def update_field_definition(
     idempotency_key: IdempotencyHeader = None,
 ) -> AgentMutationResponse:
     context = await _authenticate(request)
-    _require_scope(context, "field-definition:update")
+    _require_scope(context, "field-definition:write")
     return await _execute_mutation(
         request,
         context,
