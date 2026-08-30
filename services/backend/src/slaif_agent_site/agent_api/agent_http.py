@@ -43,6 +43,7 @@ from slaif_agent_site.content_model.models import (
     ContentTypeRecord,
     CreateContentTypeRequest,
     CreateFieldDefinitionRequest,
+    DeleteDefinitionRequest,
     UpdateContentTypeRequest,
     UpdateFieldDefinitionRequest,
 )
@@ -368,6 +369,49 @@ async def update_field_definition(
         resource_type="field_definition",
         mutate=lambda service: service.update_field_for_site(
             context.site_id, type_id, field_id, body
+        ),
+    )
+
+
+@router.delete("/content-model/types/{type_id}")
+async def delete_content_type(
+    type_id: UUID,
+    request: Request,
+    body: DeleteDefinitionRequest,
+    idempotency_key: IdempotencyHeader = None,
+) -> AgentMutationResponse:
+    context = await _authenticate(request)
+    _require_scope(context, "content-model:delete")
+    return await _execute_mutation(
+        request,
+        context,
+        body,
+        idempotency_key,
+        resource_type="content_type",
+        mutate=lambda service: service.delete_type_for_site(
+            context.site_id, type_id, body.expected_definition_version
+        ),
+    )
+
+
+@router.delete("/content-model/types/{type_id}/fields/{field_id}")
+async def delete_field_definition(
+    type_id: UUID,
+    field_id: UUID,
+    request: Request,
+    body: DeleteDefinitionRequest,
+    idempotency_key: IdempotencyHeader = None,
+) -> AgentMutationResponse:
+    context = await _authenticate(request)
+    _require_scope(context, "field-definition:delete")
+    return await _execute_mutation(
+        request,
+        context,
+        body,
+        idempotency_key,
+        resource_type="field_definition",
+        mutate=lambda service: service.delete_field_for_site(
+            context.site_id, type_id, field_id, body.expected_definition_version
         ),
     )
 

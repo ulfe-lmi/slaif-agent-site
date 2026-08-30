@@ -111,6 +111,12 @@ class UpdateContentTypeRequest(BaseModel):
         return result
 
 
+class DeleteDefinitionRequest(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    expected_definition_version: int = Field(default=1, ge=1)
+
+
 class ContentTypeRecord(BaseModel):
     model_config = ConfigDict(frozen=True)
 

@@ -214,8 +214,13 @@ class AgentCowContentModelService(ContentModelService):
 
     async def delete_type_for_site(
         self, site_id: UUID, type_id: UUID, expected: int
-    ) -> None:
-        await self._fetchrow(AGENT_CONTENT_TYPE_DELETE_SQL, site_id, type_id, expected)
+    ) -> ContentTypeRecord:
+        row = await self._fetchrow(
+            AGENT_CONTENT_TYPE_DELETE_SQL, site_id, type_id, expected
+        )
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
+        return _ct(row)
 
     async def update_field_for_site(
         self, site_id: UUID, type_id: UUID, field_id: UUID, request: Any
@@ -244,10 +249,13 @@ class AgentCowContentModelService(ContentModelService):
 
     async def delete_field_for_site(
         self, site_id: UUID, type_id: UUID, field_id: UUID, expected: int
-    ) -> None:
-        await self._fetchrow(
+    ) -> FieldDefinitionRecord:
+        row = await self._fetchrow(
             AGENT_FIELD_DELETE_SQL, site_id, type_id, field_id, expected
         )
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
+        return _fd(row)
 
     async def create_item_for_site(
         self,
