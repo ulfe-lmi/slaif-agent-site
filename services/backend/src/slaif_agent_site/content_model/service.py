@@ -639,6 +639,10 @@ class EditableDomainMixin:
         )
         if row is None:
             raise ContentModelServiceError(ContentModelServiceReason.CONFLICT)
+        if row[0] is None:
+            row = await self._fetchrow(TR_EXACT_SQL, site_id, item_id, request.locale)
+            if row is None:
+                raise ContentModelServiceError(ContentModelServiceReason.CONFLICT)
         return _tr(row)
 
     async def list_translations(
@@ -715,6 +719,17 @@ class EditableDomainMixin:
         )
         if row is None:
             raise ContentModelServiceError(ContentModelServiceReason.CONFLICT)
+        if row[0] is None:
+            row = await self._fetchrow(
+                REL_EXACT_SQL,
+                site_id,
+                source_item_id,
+                request.field_definition_id,
+                request.target_item_id,
+                request.position,
+            )
+            if row is None:
+                raise ContentModelServiceError(ContentModelServiceReason.CONFLICT)
         return _rel(row)
 
     async def list_relations(
@@ -1308,6 +1323,10 @@ class ContentModelService(
 TR_CREATE_SQL = (
     "SELECT * FROM content.slaif_content_item_translation_create($1,$2,$3,$4)"
 )
+TR_EXACT_SQL = (
+    "SELECT * FROM content.content_item_translation WHERE site_id=$1 "
+    "AND item_id=$2 AND locale=$3 ORDER BY id DESC LIMIT 1"
+)
 TR_LIST_SQL = "SELECT * FROM content.slaif_content_item_translation_list($1,$2)"
 TR_GET_SQL = "SELECT * FROM content.slaif_content_item_translation_get($1,$2)"
 TR_UPDATE_SQL = (
@@ -1315,6 +1334,11 @@ TR_UPDATE_SQL = (
 )
 TR_DELETE_SQL = "SELECT content.slaif_content_item_translation_delete($1,$2,$3)"
 REL_CREATE_SQL = "SELECT * FROM content.slaif_item_relation_create($1,$2,$3,$4,$5,$6)"
+REL_EXACT_SQL = (
+    "SELECT * FROM content.item_relation WHERE site_id=$1 AND source_item_id=$2 "
+    "AND field_definition_id=$3 AND target_item_id=$4 AND position=$5 "
+    "ORDER BY id DESC LIMIT 1"
+)
 REL_LIST_SQL = "SELECT * FROM content.slaif_item_relation_list($1,$2)"
 REL_GET_SQL = "SELECT * FROM content.slaif_item_relation_get($1,$2)"
 REL_UPDATE_SQL = "SELECT * FROM content.slaif_item_relation_update($1,$2,$3,$4,$5,$6)"
