@@ -288,7 +288,9 @@ def upgrade() -> None:
                 w.base_site_revision,w.created_at,w.expires_at FROM control.workspace w
             JOIN control.site s ON s.id=w.site_id JOIN control.user_account a ON a.id=COALESCE(w.delegator_id,w.created_by)
             WHERE w.site_id=p_site_id
-              AND (COALESCE(w.delegator_id,w.created_by)=p_user_id OR EXISTS (SELECT 1 FROM control.platform_administrator WHERE user_account_id=p_user_id))
+              AND (COALESCE(w.delegator_id,w.created_by)=p_user_id
+                   OR EXISTS (SELECT 1 FROM control.platform_administrator WHERE user_account_id=p_user_id)
+                   OR EXISTS (SELECT 1 FROM control.slaif_effective_human_membership(p_user_id,p_site_id) m WHERE 'workspace:read-all'=ANY(m.effective_permissions)))
               AND w.actor_type='AGENT' AND s.status='ACTIVE' AND a.status='ACTIVE'
             ORDER BY w.created_at DESC,w.id DESC
         $fn$
@@ -331,6 +333,82 @@ def upgrade() -> None:
         END; $fn$
         """
     )
+    op.execute(
+        """
+        CREATE OR REPLACE FUNCTION control.slaif_agent_require_cow_site(
+            p_site_id uuid
+        ) RETURNS void LANGUAGE plpgsql SECURITY DEFINER
+        SET search_path = pg_catalog AS $fn$
+        DECLARE
+            session_text text;
+            operation_text text;
+            session_uuid uuid;
+            operation_uuid uuid;
+            workspace_record record;
+            membership_record record;
+            membership_found boolean;
+            platform_admin boolean;
+            required_level smallint;
+        BEGIN
+            session_text := NULLIF(current_setting('app.session_id', true), '');
+            operation_text := NULLIF(current_setting('app.operation_id', true), '');
+            IF session_text IS NULL OR operation_text IS NULL THEN
+                RAISE EXCEPTION 'COW_CONTEXT_REQUIRED' USING ERRCODE='22023';
+            END IF;
+            BEGIN
+                session_uuid := session_text::uuid;
+                operation_uuid := operation_text::uuid;
+            EXCEPTION WHEN invalid_text_representation THEN
+                RAISE EXCEPTION 'COW_CONTEXT_REQUIRED' USING ERRCODE='22023';
+            END;
+            IF session_uuid IS NULL OR operation_uuid IS NULL THEN
+                RAISE EXCEPTION 'COW_CONTEXT_REQUIRED' USING ERRCODE='22023';
+            END IF;
+            SELECT w.site_id,w.delegator_id,w.created_by,w.delegation_preset,w.status,
+                   w.expires_at,s.status AS site_status,a.status AS account_status
+            INTO workspace_record
+            FROM control.workspace w
+            JOIN control.site s ON s.id=w.site_id
+            JOIN control.user_account a ON a.id=COALESCE(w.delegator_id,w.created_by)
+            WHERE w.id=session_uuid
+            FOR SHARE;
+            IF NOT FOUND OR workspace_record.site_id IS DISTINCT FROM p_site_id
+               OR workspace_record.status <> 'ACTIVE'
+               OR workspace_record.expires_at <= CURRENT_TIMESTAMP
+               OR workspace_record.site_status <> 'ACTIVE'
+               OR workspace_record.account_status <> 'ACTIVE'
+            THEN
+                RAISE EXCEPTION 'COW_SITE_MISMATCH' USING ERRCODE='P0002';
+            END IF;
+            required_level := CASE workspace_record.delegation_preset
+                WHEN 'L1' THEN 1 WHEN 'L1_CONTENT_EDITOR' THEN 1
+                WHEN 'L2' THEN 2 WHEN 'L2_SITE_EDITOR' THEN 2
+                WHEN 'L3' THEN 3 WHEN 'L3_SITE_DESIGNER' THEN 3
+                WHEN 'L4' THEN 4 WHEN 'L4_SITE_ARCHITECT' THEN 4 ELSE 99 END;
+            SELECT m.delegation_ceiling,r.default_delegation_ceiling
+            INTO membership_record
+            FROM control.site_membership m
+            JOIN control.human_role r ON r.role_key=m.role_key
+            WHERE m.site_id=workspace_record.site_id
+              AND m.user_account_id=COALESCE(workspace_record.delegator_id,workspace_record.created_by)
+              AND m.status='ACTIVE'
+            FOR SHARE;
+            membership_found := FOUND;
+            SELECT EXISTS (
+                SELECT 1 FROM control.platform_administrator pa
+                JOIN control.user_account ua ON ua.id=pa.user_account_id
+                WHERE pa.user_account_id=COALESCE(workspace_record.delegator_id,workspace_record.created_by)
+                  AND ua.status='ACTIVE'
+            ) INTO platform_admin;
+            IF NOT platform_admin AND (NOT membership_found
+               OR LEAST(membership_record.delegation_ceiling,membership_record.default_delegation_ceiling) < required_level)
+            THEN
+                RAISE EXCEPTION 'COW_AUTHORITY_REVOKED' USING ERRCODE='P0002';
+            END IF;
+        END;
+        $fn$
+        """
+    )
     for name, signature, role in (
         ("slaif_agent_capability_context", "text", "slaif_agent_runtime"),
         ("slaif_agent_quota_consume", "uuid,uuid,text", "slaif_agent_runtime"),
@@ -355,6 +433,42 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    # Restore the 026 guard before removing 039 objects. The stronger
+    # membership/ceiling check must not survive under an older revision.
+    op.execute(
+        """
+        CREATE OR REPLACE FUNCTION control.slaif_agent_require_cow_site(
+            p_site_id uuid
+        ) RETURNS void LANGUAGE plpgsql SECURITY DEFINER
+        SET search_path = pg_catalog AS $fn$
+        DECLARE session_text text; operation_text text; session_uuid uuid;
+            operation_uuid uuid; workspace_site uuid;
+        BEGIN
+            session_text := NULLIF(current_setting('app.session_id', true), '');
+            operation_text := NULLIF(current_setting('app.operation_id', true), '');
+            IF session_text IS NULL OR operation_text IS NULL THEN
+                RAISE EXCEPTION 'COW_CONTEXT_REQUIRED' USING ERRCODE='22023';
+            END IF;
+            BEGIN
+                session_uuid := session_text::uuid;
+                operation_uuid := operation_text::uuid;
+            EXCEPTION WHEN invalid_text_representation THEN
+                RAISE EXCEPTION 'COW_CONTEXT_REQUIRED' USING ERRCODE='22023';
+            END;
+            IF session_uuid IS NULL OR operation_uuid IS NULL THEN
+                RAISE EXCEPTION 'COW_CONTEXT_REQUIRED' USING ERRCODE='22023';
+            END IF;
+            SELECT workspace.site_id INTO workspace_site
+            FROM control.workspace AS workspace
+            WHERE workspace.id=session_uuid AND workspace.status='ACTIVE'
+              AND workspace.expires_at>CURRENT_TIMESTAMP;
+            IF workspace_site IS NULL OR workspace_site IS DISTINCT FROM p_site_id THEN
+                RAISE EXCEPTION 'COW_SITE_MISMATCH' USING ERRCODE='P0002';
+            END IF;
+        END;
+        $fn$
+        """
+    )
     op.execute(
         "DROP TRIGGER IF EXISTS human_agent_workspace_audit ON control.workspace"
     )

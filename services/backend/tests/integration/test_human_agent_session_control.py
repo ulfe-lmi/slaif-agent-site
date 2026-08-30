@@ -7,13 +7,15 @@ from __future__ import annotations
 from urllib.parse import quote
 from uuid import UUID, uuid4
 
+import asyncpg
 import httpx
 import pytest
 from conftest import AgentSiteDatabase
 from pydantic import SecretStr
 from slaif_agent_site.agent_api.app import create_app as create_agent_app
 from slaif_agent_site.agent_api.config import AgentDatabaseMode, AgentDatabaseSettings
-from slaif_agent_site.bootstrap.service import reconcile, upgrade
+from slaif_agent_site.agent_state.foundation import asyncpg_cow_session
+from slaif_agent_site.bootstrap.service import reconcile, status, upgrade
 from slaif_agent_site.config import EnvironmentMode, ServiceSettings
 from slaif_agent_site.control_api.app import create_app as create_control_app
 from slaif_agent_site.control_api.config import (
@@ -22,9 +24,17 @@ from slaif_agent_site.control_api.config import (
 )
 from slaif_agent_site.control_api.database import ControlDatabase
 from slaif_agent_site.db.connections import owner_connection
+from slaif_agent_site.db.migrations import run_migration
 from slaif_agent_site.human_authorization import (
     HumanAuthorizationService,
     MembershipChange,
+)
+from slaif_agent_site.human_authorization.catalog import (
+    L1_SCOPES,
+    L2_SCOPES,
+    L3_SCOPES,
+    L4_SCOPES,
+    READ_SCOPES,
 )
 
 
@@ -236,3 +246,273 @@ async def test_public_human_agent_workspace_capability_and_revocation(
     finally:
         await adapter.stop()
         await control_pool.close()
+
+
+@pytest.mark.asyncio
+async def test_site_governor_and_delegator_authority_are_rechecked(
+    agent_site_database: AgentSiteDatabase,
+) -> None:
+    database = agent_site_database
+    await upgrade(database.settings)
+    await reconcile(database.settings)
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        await owner.execute(
+            """
+            INSERT INTO control.user_account
+              (id,identity_kind,oidc_issuer,oidc_subject,display_name,status)
+            VALUES
+              (gen_random_uuid(),'OIDC','fixture',gen_random_uuid()::text,'Architect','ACTIVE'),
+              (gen_random_uuid(),'OIDC','fixture',gen_random_uuid()::text,'Governor','ACTIVE'),
+              (gen_random_uuid(),'OIDC','fixture',gen_random_uuid()::text,'Low ceiling','ACTIVE')
+            """
+        )
+        users = {
+            row["display_name"]: row["id"]
+            for row in await owner.fetch(
+                "SELECT id,display_name FROM control.user_account WHERE display_name IN ('Architect','Governor','Low ceiling')"
+            )
+        }
+        creator, governor, low_ceiling = (
+            users["Architect"],
+            users["Governor"],
+            users["Low ceiling"],
+        )
+        site = await owner.fetchval(
+            "INSERT INTO control.site (site_key,display_name,default_locale,component_catalog_version) VALUES ($1,'Governor site','en','catalog-v1') RETURNING id",
+            f"governor-{uuid4().hex[:10]}",
+        )
+        await owner.execute(
+            "INSERT INTO control.site_membership(site_id,user_account_id,role_key,delegation_ceiling) VALUES ($1,$2,'SITE_OWNER',4),($1,$3,'SITE_ARCHITECT',4),($1,$4,'CONTENT_EDITOR',1)",
+            site,
+            governor,
+            creator,
+            low_ceiling,
+        )
+        await owner.execute(
+            "INSERT INTO control.site_membership_permission_override(site_id,user_account_id,permission_key,effect) VALUES ($1,$2,'workspace:create','ALLOW')",
+            site,
+            creator,
+        )
+        control_pool = await database.role_pool("slaif_control")
+    adapter = ControlDatabase(_control_settings(database))
+    await adapter.start()
+    control_app = create_control_app(
+        settings=ServiceSettings(mode=EnvironmentMode.TEST), database=adapter
+    )
+    try:
+        creator_session = await adapter.human_session_service().create(creator)
+        creator_headers = {
+            "cookie": f"slaif_session={creator_session.token.get_secret_value()}; slaif_csrf={creator_session.csrf_token.get_secret_value()}",
+            "X-CSRF-Token": creator_session.csrf_token.get_secret_value(),
+        }
+        governor_session = await adapter.human_session_service().create(governor)
+        governor_headers = {
+            "cookie": f"slaif_session={governor_session.token.get_secret_value()}; slaif_csrf={governor_session.csrf_token.get_secret_value()}",
+            "X-CSRF-Token": governor_session.csrf_token.get_secret_value(),
+        }
+        low_session = await adapter.human_session_service().create(low_ceiling)
+        low_headers = {
+            "cookie": f"slaif_session={low_session.token.get_secret_value()}; slaif_csrf={low_session.csrf_token.get_secret_value()}",
+            "X-CSRF-Token": low_session.csrf_token.get_secret_value(),
+        }
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=control_app),
+            base_url="http://control.test",
+        ) as control:
+            csrf_missing = await control.post(
+                f"/api/control/v1/sites/{site}/workspaces/",
+                json={"title": "csrf", "delegation_preset": "L1_CONTENT_EDITOR"},
+                headers={
+                    "cookie": creator_headers["cookie"],
+                    "Idempotency-Key": "csrf",
+                },
+            )
+            assert csrf_missing.status_code in {400, 403}
+            workspaces: dict[str, dict[str, object]] = {}
+            for index, preset in enumerate(
+                (
+                    "L1_CONTENT_EDITOR",
+                    "L2_SITE_EDITOR",
+                    "L3_SITE_DESIGNER",
+                    "L4_SITE_ARCHITECT",
+                )
+            ):
+                response = await control.post(
+                    f"/api/control/v1/sites/{site}/workspaces/",
+                    json={"title": preset, "delegation_preset": preset},
+                    headers={**creator_headers, "Idempotency-Key": f"preset-{index}"},
+                )
+                assert response.status_code == 201, response.text
+                workspaces[preset] = response.json()
+                expected = {
+                    "L1_CONTENT_EDITOR": READ_SCOPES | L1_SCOPES,
+                    "L2_SITE_EDITOR": READ_SCOPES | L1_SCOPES | L2_SCOPES,
+                    "L3_SITE_DESIGNER": READ_SCOPES | L1_SCOPES | L2_SCOPES | L3_SCOPES,
+                    "L4_SITE_ARCHITECT": READ_SCOPES
+                    | L1_SCOPES
+                    | L2_SCOPES
+                    | L3_SCOPES
+                    | L4_SCOPES,
+                }[preset]
+                assert expected <= set(response.json()["effective_scopes"])
+            empty = await control.post(
+                f"/api/control/v1/sites/{site}/workspaces/",
+                json={
+                    "title": "explicit empty",
+                    "delegation_preset": "L1_CONTENT_EDITOR",
+                    "requested_scopes": [],
+                },
+                headers={**creator_headers, "Idempotency-Key": "explicit-empty"},
+            )
+            assert empty.status_code == 201 and empty.json()["effective_scopes"] == []
+            duplicate = await control.post(
+                f"/api/control/v1/sites/{site}/workspaces/",
+                json={
+                    "title": "duplicate",
+                    "delegation_preset": "L1_CONTENT_EDITOR",
+                    "requested_scopes": ["site:read", "site:read"],
+                },
+                headers={**creator_headers, "Idempotency-Key": "duplicate"},
+            )
+            assert duplicate.status_code == 422
+            denied = await control.post(
+                f"/api/control/v1/sites/{site}/workspaces/",
+                json={"title": "too high", "delegation_preset": "L4_SITE_ARCHITECT"},
+                headers={**low_headers, "Idempotency-Key": "low-ceiling"},
+            )
+            assert denied.status_code in {403, 404}
+            target = workspaces["L4_SITE_ARCHITECT"]["workspace_id"]
+            low_capability = await control.post(
+                f"/api/control/v1/sites/{site}/workspaces/{target}/capabilities/",
+                headers={**low_headers, "Idempotency-Key": "low-capability"},
+            )
+            assert low_capability.status_code in {403, 404}
+            listed = await control.get(
+                f"/api/control/v1/sites/{site}/workspaces/",
+                headers={"cookie": governor_headers["cookie"]},
+            )
+            assert listed.status_code == 200
+            assert any(item["workspace_id"] == target for item in listed.json())
+            foreign = await control.get(
+                f"/api/control/v1/sites/{uuid4()}/workspaces/",
+                headers={"cookie": governor_headers["cookie"]},
+            )
+            assert foreign.status_code == 404
+            inspected = await control.get(
+                f"/api/control/v1/sites/{site}/workspaces/{target}",
+                headers={"cookie": governor_headers["cookie"]},
+            )
+            assert inspected.status_code == 200
+            issued = await control.post(
+                f"/api/control/v1/sites/{site}/workspaces/{target}/capabilities/",
+                headers={**governor_headers, "Idempotency-Key": "governor-issue"},
+            )
+            assert issued.status_code == 201 and issued.json()["token"].startswith(
+                "sas2_"
+            )
+            capability_id = issued.json()["capability_id"]
+            capability_list = await control.get(
+                f"/api/control/v1/sites/{site}/workspaces/{target}/capabilities/",
+                headers={"cookie": governor_headers["cookie"]},
+            )
+            assert capability_list.status_code == 200
+            revoked = await control.post(
+                f"/api/control/v1/sites/{site}/workspaces/{target}/capabilities/{capability_id}/revoke",
+                headers={**governor_headers, "Idempotency-Key": "governor-revoke"},
+            )
+            assert revoked.status_code == 200
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            audit = await owner.fetch(
+                "SELECT action,actor_user_id FROM audit.human_agent_session WHERE actor_user_id=$1 ORDER BY occurred_at,id",
+                governor,
+            )
+            assert [row["action"] for row in audit] == [
+                "CAPABILITY_ISSUED",
+                "CAPABILITY_REVOKED",
+            ]
+            await owner.execute(
+                "UPDATE control.site_membership SET status='INACTIVE',version=version+1 WHERE site_id=$1 AND user_account_id=$2",
+                site,
+                creator,
+            )
+        agent_pool = await database.role_pool("slaif_agent_runtime")
+        try:
+            async with asyncpg_cow_session(
+                agent_pool, session_id=UUID(str(target)), operation_id=uuid4()
+            ) as cow:
+                try:
+                    await cow.native.fetchrow(
+                        "SELECT * FROM content.slaif_agent_content_type_create($1,$2,$3,$4,$5)",
+                        site,
+                        "blocked-after-ceiling",
+                        '{"en":"Blocked"}',
+                        "/blocked/{slug}",
+                        "{}",
+                    )
+                except asyncpg.PostgresError:
+                    await cow.rollback()
+                else:
+                    raise AssertionError(
+                        "inactive delegator wrapper unexpectedly succeeded"
+                    )
+        finally:
+            await agent_pool.close()
+    finally:
+        await adapter.stop()
+        await control_pool.close()
+
+
+@pytest.mark.asyncio
+async def test_session_migrations_round_trip_through_037(
+    agent_site_database: AgentSiteDatabase,
+) -> None:
+    database = agent_site_database
+    await upgrade(database.settings)
+    await run_migration(
+        database.settings.resolved_owner_dsn(),
+        expected_database=database.name,
+        operation="downgrade",
+        revision="037_001",
+    )
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        assert (
+            await owner.fetchval(
+                "SELECT version_num::text FROM control.alembic_version"
+            )
+            == "037_001"
+        )
+        assert await owner.fetchval(
+            "SELECT to_regclass('audit.human_agent_session') IS NULL"
+        )
+        assert await owner.fetchval(
+            "SELECT to_regprocedure('control.slaif_agent_capability_context(text)') IS NULL"
+        )
+        assert await owner.fetchval(
+            "SELECT to_regclass('control.workspace') IS NOT NULL"
+        )
+        assert await owner.fetchval(
+            "SELECT NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='control' AND table_name='workspace' AND column_name IN ('delegator_id','request_quota','create_idempotency_key'))"
+        )
+        assert await owner.fetchval(
+            "SELECT has_function_privilege('slaif_agent_runtime','control.slaif_agent_capability_authenticate(text)','EXECUTE')"
+        )
+        result = await owner.fetchval(
+            "SELECT pg_get_function_result('control.slaif_agent_capability_authenticate(text)'::regprocedure)"
+        )
+        assert (
+            "browser_allowed_targets" in result and "resource_constraints" not in result
+        )
+    await run_migration(
+        database.settings.resolved_owner_dsn(),
+        expected_database=database.name,
+        operation="upgrade",
+        revision="head",
+    )
+    await reconcile(database.settings)
+    assert (await status(database.settings)).revision == "039_001"

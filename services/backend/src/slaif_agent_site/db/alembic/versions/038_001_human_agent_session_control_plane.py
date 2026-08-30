@@ -186,12 +186,17 @@ def upgrade() -> None:
         DECLARE w record; capability_id uuid;
         BEGIN
             PERFORM set_config('app.human_user_id', p_user_id::text, true);
-            SELECT * INTO w FROM control.workspace WHERE workspace.id=p_workspace_id
-              AND workspace.site_id=p_site_id
+            SELECT workspace.* INTO w FROM control.workspace workspace
+              JOIN control.site s ON s.id=workspace.site_id
+              JOIN control.user_account delegator ON delegator.id=COALESCE(workspace.delegator_id,workspace.created_by)
+              WHERE workspace.id=p_workspace_id AND workspace.site_id=p_site_id
               AND (COALESCE(workspace.delegator_id,workspace.created_by)=p_user_id OR EXISTS (SELECT 1 FROM control.platform_administrator WHERE user_account_id=p_user_id)
                    OR EXISTS (SELECT 1 FROM control.slaif_effective_human_membership(p_user_id,workspace.site_id) m WHERE 'capability:create'=ANY(m.effective_permissions)))
               AND workspace.actor_type='AGENT' AND workspace.status='ACTIVE'
-              AND workspace.expires_at>CURRENT_TIMESTAMP;
+              AND workspace.expires_at>CURRENT_TIMESTAMP AND s.status='ACTIVE'
+              AND delegator.status='ACTIVE'
+              AND (EXISTS (SELECT 1 FROM control.platform_administrator pa WHERE pa.user_account_id=COALESCE(workspace.delegator_id,workspace.created_by))
+                   OR EXISTS (SELECT 1 FROM control.slaif_effective_human_membership(COALESCE(workspace.delegator_id,workspace.created_by),workspace.site_id) m WHERE m.effective_ceiling >= CASE workspace.delegation_preset WHEN 'L1' THEN 1 WHEN 'L1_CONTENT_EDITOR' THEN 1 WHEN 'L2' THEN 2 WHEN 'L2_SITE_EDITOR' THEN 2 WHEN 'L3' THEN 3 WHEN 'L3_SITE_DESIGNER' THEN 3 WHEN 'L4' THEN 4 WHEN 'L4_SITE_ARCHITECT' THEN 4 ELSE 99 END));
             IF w IS NULL OR length(p_public_id) NOT BETWEEN 16 AND 64
                OR p_secret_digest !~ '^[0-9a-f]{64}$'
             THEN RAISE EXCEPTION 'AGENT_CAPABILITY_DENIED' USING ERRCODE='P0002'; END IF;
@@ -216,10 +221,17 @@ def upgrade() -> None:
         BEGIN
             PERFORM set_config('app.human_user_id', p_user_id::text, true);
             UPDATE control.capability c SET revoked_at=CURRENT_TIMESTAMP
-            FROM control.workspace w WHERE c.workspace_id=w.id AND c.public_id=p_public_id
+            FROM control.workspace w
+            JOIN control.site s ON s.id=w.site_id
+            JOIN control.user_account delegator ON delegator.id=COALESCE(w.delegator_id,w.created_by)
+            WHERE c.workspace_id=w.id AND c.public_id=p_public_id
               AND w.id=p_workspace_id AND w.site_id=p_site_id
               AND (COALESCE(w.delegator_id,w.created_by)=p_user_id OR EXISTS (SELECT 1 FROM control.platform_administrator WHERE user_account_id=p_user_id)
                    OR EXISTS (SELECT 1 FROM control.slaif_effective_human_membership(p_user_id,w.site_id) m WHERE 'capability:revoke'=ANY(m.effective_permissions)))
+              AND w.actor_type='AGENT' AND w.status='ACTIVE' AND w.expires_at>CURRENT_TIMESTAMP
+              AND s.status='ACTIVE' AND delegator.status='ACTIVE'
+              AND (EXISTS (SELECT 1 FROM control.platform_administrator pa WHERE pa.user_account_id=COALESCE(w.delegator_id,w.created_by))
+                   OR EXISTS (SELECT 1 FROM control.slaif_effective_human_membership(COALESCE(w.delegator_id,w.created_by),w.site_id) m WHERE m.effective_ceiling >= CASE w.delegation_preset WHEN 'L1' THEN 1 WHEN 'L1_CONTENT_EDITOR' THEN 1 WHEN 'L2' THEN 2 WHEN 'L2_SITE_EDITOR' THEN 2 WHEN 'L3' THEN 3 WHEN 'L3_SITE_DESIGNER' THEN 3 WHEN 'L4' THEN 4 WHEN 'L4_SITE_ARCHITECT' THEN 4 ELSE 99 END))
               AND c.revoked_at IS NULL RETURNING TRUE INTO revoked;
             RETURN COALESCE(revoked, false);
         END; $fn$
@@ -233,7 +245,13 @@ def upgrade() -> None:
         LANGUAGE sql SECURITY DEFINER STABLE SET search_path = pg_catalog AS $fn$
             SELECT c.public_id,c.created_at,c.expires_at,c.revoked_at FROM control.capability c
             JOIN control.workspace w ON w.id=c.workspace_id
+            JOIN control.site s ON s.id=w.site_id
+            JOIN control.user_account delegator ON delegator.id=COALESCE(w.delegator_id,w.created_by)
             WHERE c.workspace_id=p_workspace_id AND w.site_id=p_site_id
+              AND w.actor_type='AGENT' AND w.status='ACTIVE' AND w.expires_at>CURRENT_TIMESTAMP
+              AND s.status='ACTIVE' AND delegator.status='ACTIVE'
+              AND (EXISTS (SELECT 1 FROM control.platform_administrator pa WHERE pa.user_account_id=COALESCE(w.delegator_id,w.created_by))
+                   OR EXISTS (SELECT 1 FROM control.slaif_effective_human_membership(COALESCE(w.delegator_id,w.created_by),w.site_id) m WHERE m.effective_ceiling >= CASE w.delegation_preset WHEN 'L1' THEN 1 WHEN 'L1_CONTENT_EDITOR' THEN 1 WHEN 'L2' THEN 2 WHEN 'L2_SITE_EDITOR' THEN 2 WHEN 'L3' THEN 3 WHEN 'L3_SITE_DESIGNER' THEN 3 WHEN 'L4' THEN 4 WHEN 'L4_SITE_ARCHITECT' THEN 4 ELSE 99 END))
               AND (COALESCE(w.delegator_id,w.created_by)=p_user_id OR EXISTS (SELECT 1 FROM control.platform_administrator WHERE user_account_id=p_user_id)
                    OR EXISTS (SELECT 1 FROM control.slaif_effective_human_membership(p_user_id,w.site_id) m WHERE 'workspace:read-all'=ANY(m.effective_permissions)))
             ORDER BY c.created_at DESC, c.id DESC
