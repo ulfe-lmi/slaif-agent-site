@@ -259,12 +259,11 @@ def validate_query_contract(
     if len(set(projection_fields)) != len(projection_fields):
         raise ValueError("duplicate projection field")
     for name in projection_fields:
-        if (
-            not isinstance(name, str)
-            or name in _COMMON_FIELDS
-            or name not in definitions
-        ):
+        field = definitions.get(name) if isinstance(name, str) else None
+        if not isinstance(name, str) or name in _COMMON_FIELDS or field is None:
             raise ValueError("unknown or reserved projection field")
+        if field.localized:
+            raise ValueError("localized fields are not valid projection fields")
     if set(pagination_spec) - {"limit", "offset"}:
         raise ValueError("unknown pagination member")
     limit = pagination_spec.get("limit", 24)

@@ -498,6 +498,11 @@ class ContentItemMixin:
     get_type: Any
     list_fields: Any
 
+    async def _assert_item_definition_current(self, item: Any) -> None:
+        content_type = await self.get_type(item.type_id)
+        if item.type_definition_version != content_type.definition_version:
+            raise ContentModelServiceError(ContentModelServiceReason.VALIDATION)
+
     async def create_item(
         self,
         site_id: UUID,
@@ -550,8 +555,9 @@ class ContentItemMixin:
         values: dict[str, Any] | None,
         expected_row_version: int | None,
     ) -> Any:
+        current = await self.get_item(item_id)
+        await self._assert_item_definition_current(current)
         if values is not None:
-            current = await self.get_item(item_id)
             try:
                 validate_values(values, await self.list_fields(current.type_id))
             except (ValueError, TypeError):
@@ -583,6 +589,7 @@ class EditableDomainMixin:
     get_item: Any
     list_fields: Any
     get_field: Any
+    _assert_item_definition_current: Any
 
     async def _validate_relation_target(
         self,
@@ -594,6 +601,8 @@ class EditableDomainMixin:
         source = await self.get_item(source_item_id)
         field = await self.get_field(field_definition_id)
         target = await self.get_item(target_item_id)
+        await self._assert_item_definition_current(source)
+        await self._assert_item_definition_current(target)
         if source.site_id != site_id or target.site_id != site_id:
             raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
         if field.site_id != site_id or field.type_id != source.type_id:
@@ -610,6 +619,7 @@ class EditableDomainMixin:
         item = await self.get_item(item_id)
         if item.site_id != site_id:
             raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
+        await self._assert_item_definition_current(item)
         try:
             validate_values(
                 request.localized_values,
@@ -653,8 +663,10 @@ class EditableDomainMixin:
         self, site_id: UUID, translation_id: UUID, request: UpdateTranslationRequest
     ) -> TranslationRecord:
         current = await self.get_translation(site_id, translation_id)
+        await self._assert_item_definition_current(await self.get_item(current.item_id))
         if request.localized_values is not None:
             item = await self.get_item(current.item_id)
+            await self._assert_item_definition_current(item)
             try:
                 validate_values(
                     request.localized_values,
@@ -726,6 +738,9 @@ class EditableDomainMixin:
         self, site_id: UUID, relation_id: UUID, request: UpdateRelationRequest
     ) -> RelationRecord:
         current = await self.get_relation(site_id, relation_id)
+        await self._assert_item_definition_current(
+            await self.get_item(current.source_item_id)
+        )
         await self._validate_relation_target(
             site_id,
             current.source_item_id,
