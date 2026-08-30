@@ -99,6 +99,11 @@ class CreateNavigationItemRequest(BaseModel):
     @model_validator(mode="after")
     def target_is_safe(self) -> CreateNavigationItemRequest:
         validate_target(self.target_kind, self.target_value)
+        if self.target_kind == "PAGE":
+            if self.page_id is None or self.target_value != str(self.page_id):
+                raise ValueError("page target must match page_id")
+        elif self.page_id is not None:
+            raise ValueError("non-page navigation target cannot have page_id")
         if not self.labels and self.locale is None:
             raise ValueError("navigation item needs a label")
         return self
@@ -141,6 +146,13 @@ class CreateRedirectRequest(BaseModel):
     target: str
     status_code: int = Field(default=302, ge=301, le=308)
     locale: str | None = None
+
+    @field_validator("status_code")
+    @classmethod
+    def status_is_redirect(cls, value: int) -> int:
+        if value not in {301, 302, 303, 307, 308}:
+            raise ValueError("unsupported redirect status")
+        return value
 
     @field_validator("source_route")
     @classmethod

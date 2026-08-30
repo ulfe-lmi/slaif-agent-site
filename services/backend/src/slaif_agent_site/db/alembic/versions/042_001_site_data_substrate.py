@@ -155,19 +155,18 @@ def upgrade() -> None:
           p_site_id uuid,p_navigation_id uuid,p_parent_id uuid,p_page_id uuid,
           p_target_kind text,p_target_value text,p_labels jsonb,p_locale text,p_position integer
         ) RETURNS SETOF content.navigation_item LANGUAGE plpgsql SECURITY DEFINER
-        SET search_path=pg_catalog AS $$ DECLARE created uuid; parent_nav uuid;
+        SET search_path=pg_catalog AS $$ DECLARE parent_nav uuid;
         BEGIN
           IF NOT EXISTS(SELECT 1 FROM content.navigation n WHERE n.id=p_navigation_id AND n.site_id=p_site_id) THEN RAISE EXCEPTION 'NOT_FOUND' USING ERRCODE='P0002'; END IF;
           IF p_parent_id IS NOT NULL THEN SELECT n.navigation_id INTO parent_nav FROM content.navigation_item n WHERE n.id=p_parent_id AND n.site_id=p_site_id; IF parent_nav IS NULL OR parent_nav<>p_navigation_id THEN RAISE EXCEPTION 'NAVIGATION_PARENT_INVALID' USING ERRCODE='P0003'; END IF; END IF;
           IF p_page_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM content.page p WHERE p.site_id=p_site_id AND p.id=p_page_id) THEN RAISE EXCEPTION 'NAVIGATION_PAGE_INVALID' USING ERRCODE='P0003'; END IF;
           IF p_target_kind NOT IN ('PAGE','INTERNAL','EXTERNAL') OR p_position NOT BETWEEN 0 AND 999 OR jsonb_typeof(p_labels)<>'object' THEN RAISE EXCEPTION 'NAVIGATION_INVALID' USING ERRCODE='P0003'; END IF;
-          INSERT INTO content.navigation_item(site_id,navigation_id,parent_id,page_id,target_kind,target_value,labels,locale,position) VALUES(p_site_id,p_navigation_id,p_parent_id,p_page_id,p_target_kind,p_target_value,p_labels,p_locale,p_position) RETURNING id INTO created;
-          RETURN QUERY SELECT n.* FROM content.navigation_item n WHERE n.id=created AND n.site_id=p_site_id;
+          RETURN QUERY INSERT INTO content.navigation_item(site_id,navigation_id,parent_id,page_id,target_kind,target_value,labels,locale,position) VALUES(p_site_id,p_navigation_id,p_parent_id,p_page_id,p_target_kind,p_target_value,p_labels,p_locale,p_position) RETURNING *;
         END $$
         """
     )
     op.execute(
-        r"""CREATE FUNCTION content.slaif_redirect_create(p_site_id uuid,p_source text,p_target text,p_status integer,p_locale text) RETURNS SETOF content.redirect LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $$ DECLARE created uuid; BEGIN IF p_source !~ '^/[A-Za-z0-9._~/-]*$' OR p_source ~ '//|\.\.|%|\\' OR p_source=p_target OR p_status NOT BETWEEN 301 AND 308 OR p_target ~ '[[:cntrl:] ]' OR (p_target !~ '^/' AND p_target !~ '^https?://[^/@?#]+([/?#].*)?$') THEN RAISE EXCEPTION 'REDIRECT_INVALID' USING ERRCODE='P0003'; END IF; IF p_target ~ '^/' AND p_target ~ '^/(api|admin|agent|control|editor|health|internal|login|logout|mcp|media|preview|setup|_next|static)(/|$)' THEN RAISE EXCEPTION 'REDIRECT_RESERVED' USING ERRCODE='P0003'; END IF; INSERT INTO content.redirect(site_id,source_route,target,status_code,locale) VALUES(p_site_id,p_source,p_target,p_status,p_locale) RETURNING id INTO created; RETURN QUERY SELECT r.* FROM content.redirect r WHERE r.id=created; END $$"""
+        r"""CREATE FUNCTION content.slaif_redirect_create(p_site_id uuid,p_source text,p_target text,p_status integer,p_locale text) RETURNS SETOF content.redirect LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $$ BEGIN IF p_source !~ '^/[A-Za-z0-9._~/-]*$' OR p_source ~ '//|\.\.|%|\\' OR p_source=p_target OR p_status NOT BETWEEN 301 AND 308 OR p_target ~ '[[:cntrl:] ]' OR (p_target !~ '^/' AND p_target !~ '^https?://[^/@?#]+([/?#].*)?$') THEN RAISE EXCEPTION 'REDIRECT_INVALID' USING ERRCODE='P0003'; END IF; IF p_target ~ '^/' AND p_target ~ '^/(api|admin|agent|control|editor|health|internal|login|logout|mcp|media|preview|setup|_next|static)(/|$)' THEN RAISE EXCEPTION 'REDIRECT_RESERVED' USING ERRCODE='P0003'; END IF; RETURN QUERY INSERT INTO content.redirect(site_id,source_route,target,status_code,locale) VALUES(p_site_id,p_source,p_target,p_status,p_locale) RETURNING *; END $$"""
     )
     op.execute(
         """CREATE FUNCTION content.slaif_redirect_list(p_site_id uuid) RETURNS SETOF content.redirect LANGUAGE sql SECURITY DEFINER SET search_path=pg_catalog STABLE AS $$ SELECT r.* FROM content.redirect r WHERE r.site_id=p_site_id ORDER BY r.source_route COLLATE "C",coalesce(r.locale,'') $$"""
@@ -209,6 +208,170 @@ def upgrade() -> None:
         """CREATE OR REPLACE FUNCTION content.slaif_navigation_update(p_nav_id uuid,p_label text,p_settings jsonb) RETURNS TABLE(id uuid,site_id uuid,"key" text,label text,settings jsonb,created_at timestamptz,updated_at timestamptz) LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $$ BEGIN UPDATE content.navigation n SET label=coalesce(p_label,n.label),settings=coalesce(p_settings,n.settings),updated_at=now() WHERE n.id=p_nav_id; IF NOT FOUND THEN RAISE EXCEPTION 'NOT_FOUND' USING ERRCODE='P0002'; END IF; RETURN QUERY SELECT n.* FROM content.navigation n WHERE n.id=p_nav_id; END $$"""
     )
 
+    # Upgrade existing installations without losing canonical locale data.
+    op.execute(
+        "INSERT INTO content.site_locale(site_id,tag,enabled,is_default,position) SELECT s.id,s.default_locale,true,true,0 FROM control.site s WHERE s.status='ACTIVE' ON CONFLICT (site_id,tag) DO UPDATE SET enabled=true,is_default=true"
+    )
+    op.execute(
+        "INSERT INTO content.site_locale(site_id,tag,enabled,is_default,position) SELECT DISTINCT p.site_id,p.locale,true,false,1 FROM content.page p WHERE p.locale IS NOT NULL ON CONFLICT (site_id,tag) DO NOTHING"
+    )
+    op.execute(
+        "INSERT INTO content.site_locale(site_id,tag,enabled,is_default,position) SELECT DISTINCT n.site_id,n.locale,true,false,1 FROM content.navigation_item n WHERE n.locale IS NOT NULL ON CONFLICT (site_id,tag) DO NOTHING"
+    )
+    op.execute(
+        "INSERT INTO content.site_locale(site_id,tag,enabled,is_default,position) SELECT DISTINCT r.site_id,r.locale,true,false,1 FROM content.redirect r WHERE r.locale IS NOT NULL ON CONFLICT (site_id,tag) DO NOTHING"
+    )
+    op.execute(
+        "ALTER TABLE control.workspace ADD CONSTRAINT uq_workspace_site_id UNIQUE (id,site_id)"
+    )
+    op.execute(
+        "ALTER TABLE content.page ADD CONSTRAINT page_site_locale_fk FOREIGN KEY (site_id,locale) REFERENCES content.site_locale(site_id,tag)"
+    )
+    op.execute(
+        "ALTER TABLE content.navigation_item ADD CONSTRAINT navigation_item_site_locale_fk FOREIGN KEY (site_id,locale) REFERENCES content.site_locale(site_id,tag)"
+    )
+    op.execute(
+        "ALTER TABLE content.redirect ADD CONSTRAINT redirect_site_locale_fk FOREIGN KEY (site_id,locale) REFERENCES content.site_locale(site_id,tag)"
+    )
+    op.execute(
+        "ALTER TABLE content.proposed_side_effect ADD CONSTRAINT proposed_effect_workspace_site_fk FOREIGN KEY (workspace_id,site_id) REFERENCES control.workspace(id,site_id)"
+    )
+    op.execute(
+        "CREATE UNIQUE INDEX navigation_item_sibling_position ON content.navigation_item(site_id,navigation_id,coalesce(parent_id,'00000000-0000-0000-0000-000000000000'::uuid),position)"
+    )
+    op.execute("""
+      CREATE FUNCTION content.slaif_locale_enabled_guard() RETURNS trigger
+      LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $$
+      BEGIN
+        IF NEW.locale IS NOT NULL AND NOT EXISTS(SELECT 1 FROM content.site_locale WHERE site_id=NEW.site_id AND tag=NEW.locale AND enabled) THEN
+          IF NEW.locale !~ '^[A-Za-z]{2,3}(-[A-Za-z]{4})?(-([A-Za-z]{2}|[0-9]{3}))?(-[A-Za-z0-9]{5,8})*$' THEN RAISE EXCEPTION 'LOCALE_INVALID' USING ERRCODE='P0003'; END IF;
+          IF NOT (pg_has_role(session_user,'slaif_owner','MEMBER') OR pg_has_role(session_user,'slaif_control','MEMBER')) THEN RAISE EXCEPTION 'LOCALE_INVALID' USING ERRCODE='P0003'; END IF;
+          IF to_regclass('content.site_locale_base') IS NOT NULL THEN
+            EXECUTE 'INSERT INTO content.site_locale_base(site_id,tag,enabled,is_default,position) SELECT $1,$2,true,($2=s.default_locale),coalesce((SELECT max(position)+1 FROM content.site_locale_base WHERE site_id=$1),0) FROM control.site s WHERE s.id=$1 ON CONFLICT (site_id,tag) DO NOTHING' USING NEW.site_id,NEW.locale;
+          ELSE
+            INSERT INTO content.site_locale(site_id,tag,enabled,is_default,position) SELECT NEW.site_id,NEW.locale,true,(NEW.locale=s.default_locale),coalesce((SELECT max(position)+1 FROM content.site_locale WHERE site_id=NEW.site_id),0) FROM control.site s WHERE s.id=NEW.site_id ON CONFLICT (site_id,tag) DO NOTHING;
+          END IF;
+        END IF;
+        RETURN NEW;
+      END $$
+    """)
+    op.execute(
+        "CREATE TRIGGER page_locale_enabled_guard BEFORE INSERT OR UPDATE OF locale ON content.page FOR EACH ROW EXECUTE FUNCTION content.slaif_locale_enabled_guard()"
+    )
+    op.execute(
+        "CREATE TRIGGER navigation_item_locale_enabled_guard BEFORE INSERT OR UPDATE OF locale ON content.navigation_item FOR EACH ROW EXECUTE FUNCTION content.slaif_locale_enabled_guard()"
+    )
+    op.execute(
+        "CREATE TRIGGER redirect_locale_enabled_guard BEFORE INSERT OR UPDATE OF locale ON content.redirect FOR EACH ROW EXECUTE FUNCTION content.slaif_locale_enabled_guard()"
+    )
+    op.execute("ALTER TABLE content.redirect DROP CONSTRAINT redirect_status")
+    op.execute(
+        "ALTER TABLE content.redirect ADD CONSTRAINT redirect_status CHECK (status_code IN (301,302,303,307,308))"
+    )
+    op.execute("""
+      CREATE OR REPLACE FUNCTION content.slaif_navigation_item_create(p_site_id uuid,p_navigation_id uuid,p_parent_id uuid,p_page_id uuid,p_target_kind text,p_target_value text,p_labels jsonb,p_locale text,p_position integer)
+      RETURNS SETOF content.navigation_item LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $$ DECLARE parent_nav uuid; created content.navigation_item;
+      BEGIN
+        PERFORM pg_advisory_xact_lock(hashtextextended(p_site_id::text || '_navigation',0));
+        IF NOT EXISTS(SELECT 1 FROM content.navigation WHERE id=p_navigation_id AND site_id=p_site_id) THEN RAISE EXCEPTION 'NOT_FOUND' USING ERRCODE='P0002'; END IF;
+        IF p_parent_id IS NOT NULL THEN SELECT navigation_id INTO parent_nav FROM content.navigation_item WHERE id=p_parent_id AND site_id=p_site_id; IF parent_nav IS NULL OR parent_nav<>p_navigation_id THEN RAISE EXCEPTION 'NAVIGATION_PARENT_INVALID' USING ERRCODE='P0003'; END IF; END IF;
+        IF p_target_kind='PAGE' AND (p_page_id IS NULL OR p_target_value<>p_page_id::text) THEN RAISE EXCEPTION 'NAVIGATION_PAGE_INVALID' USING ERRCODE='P0003'; END IF;
+        IF p_target_kind<>'PAGE' AND p_page_id IS NOT NULL THEN RAISE EXCEPTION 'NAVIGATION_PAGE_INVALID' USING ERRCODE='P0003'; END IF;
+        IF p_page_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM content.page WHERE id=p_page_id AND site_id=p_site_id) THEN RAISE EXCEPTION 'NAVIGATION_PAGE_INVALID' USING ERRCODE='P0003'; END IF;
+        IF p_locale IS NOT NULL AND NOT EXISTS(SELECT 1 FROM content.site_locale WHERE site_id=p_site_id AND tag=p_locale AND enabled) THEN RAISE EXCEPTION 'LOCALE_INVALID' USING ERRCODE='P0003'; END IF;
+        IF p_target_kind NOT IN ('PAGE','INTERNAL','EXTERNAL') OR p_position NOT BETWEEN 0 AND 999 OR jsonb_typeof(p_labels)<>'object' THEN RAISE EXCEPTION 'NAVIGATION_INVALID' USING ERRCODE='P0003'; END IF;
+        INSERT INTO content.navigation_item(site_id,navigation_id,parent_id,page_id,target_kind,target_value,labels,locale,position) VALUES(p_site_id,p_navigation_id,p_parent_id,p_page_id,p_target_kind,p_target_value,p_labels,p_locale,p_position) RETURNING * INTO created; RETURN NEXT created;
+      END $$
+    """)
+    op.execute("""
+      CREATE OR REPLACE FUNCTION content.slaif_redirect_create(p_site_id uuid,p_source text,p_target text,p_status integer,p_locale text)
+      RETURNS SETOF content.redirect LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $$ DECLARE created content.redirect; cursor_route text; next_target text; steps integer := 0;
+      BEGIN
+        PERFORM pg_advisory_xact_lock(hashtextextended(p_site_id::text || '_redirects',0));
+        IF p_status NOT IN (301,302,303,307,308) OR p_source !~ '^/[A-Za-z0-9._~/-]*$' OR p_source ~ '//|\\.\\.|%|\\\\' OR p_source=p_target OR p_target ~ '[[:cntrl:]]' OR (p_target !~ '^/' AND p_target !~ '^https?://[^/@?#]+([/?#].*)?$') THEN RAISE EXCEPTION 'REDIRECT_INVALID' USING ERRCODE='P0003'; END IF;
+        IF p_target ~ '^/' AND p_target ~ '^/(api|admin|agent|control|editor|health|internal|login|logout|mcp|media|preview|setup|_next|static)(/|$)' THEN RAISE EXCEPTION 'REDIRECT_RESERVED' USING ERRCODE='P0003'; END IF;
+        IF p_locale IS NOT NULL AND NOT EXISTS(SELECT 1 FROM content.site_locale WHERE site_id=p_site_id AND tag=p_locale AND enabled) THEN RAISE EXCEPTION 'LOCALE_INVALID' USING ERRCODE='P0003'; END IF;
+        cursor_route := p_target;
+        WHILE cursor_route ~ '^/' LOOP
+          IF cursor_route=p_source OR steps>=16 THEN RAISE EXCEPTION 'REDIRECT_CYCLE' USING ERRCODE='P0003'; END IF;
+          SELECT target INTO next_target FROM content.redirect WHERE site_id=p_site_id AND source_route=cursor_route AND locale IS NOT DISTINCT FROM p_locale;
+          EXIT WHEN NOT FOUND OR next_target !~ '^/'; cursor_route := next_target; steps := steps + 1;
+        END LOOP;
+        INSERT INTO content.redirect(site_id,source_route,target,status_code,locale) VALUES(p_site_id,p_source,p_target,p_status,p_locale) RETURNING * INTO created; RETURN NEXT created;
+      END $$
+    """)
+    op.execute("""
+      CREATE OR REPLACE FUNCTION content.slaif_proposed_side_effect_create(p_site_id uuid,p_workspace_id uuid,p_kind text,p_payload jsonb)
+      RETURNS SETOF content.proposed_side_effect LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $$ DECLARE created content.proposed_side_effect; session_id uuid;
+      BEGIN
+        BEGIN session_id := NULLIF(current_setting('app.session_id',true),'')::uuid; EXCEPTION WHEN invalid_text_representation THEN RAISE EXCEPTION 'SIDE_EFFECT_INVALID' USING ERRCODE='P0003'; END;
+        IF session_id IS NULL OR session_id IS DISTINCT FROM p_workspace_id OR p_kind NOT IN ('analytics_event','cache_purge') OR jsonb_typeof(p_payload)<>'object' OR octet_length(p_payload::text)>16384 OR NOT EXISTS(SELECT 1 FROM control.workspace w JOIN control.site s ON s.id=w.site_id WHERE w.id=p_workspace_id AND w.site_id=p_site_id AND w.status='ACTIVE' AND w.expires_at>CURRENT_TIMESTAMP AND s.status='ACTIVE') THEN RAISE EXCEPTION 'SIDE_EFFECT_INVALID' USING ERRCODE='P0003'; END IF;
+        INSERT INTO content.proposed_side_effect(site_id,workspace_id,kind,payload) VALUES(p_site_id,p_workspace_id,p_kind,p_payload) RETURNING * INTO created; RETURN NEXT created;
+      END $$
+    """)
+    op.execute(
+        "REVOKE EXECUTE ON FUNCTION content.slaif_proposed_side_effect_create(uuid,uuid,text,jsonb) FROM slaif_editor_runtime, PUBLIC"
+    )
+    op.execute(
+        "GRANT EXECUTE ON FUNCTION content.slaif_proposed_side_effect_create(uuid,uuid,text,jsonb) TO slaif_control"
+    )
+    op.execute(
+        "REVOKE EXECUTE ON FUNCTION content.slaif_proposed_side_effect_list(uuid,uuid) FROM slaif_editor_runtime, PUBLIC"
+    )
+    op.execute(
+        "GRANT EXECUTE ON FUNCTION content.slaif_proposed_side_effect_list(uuid,uuid) TO slaif_control"
+    )
+    op.execute("""
+      CREATE OR REPLACE FUNCTION content.slaif_locale_update(p_site_id uuid,p_id uuid,p_tag text,p_enabled boolean,p_default boolean,p_position integer,p_metadata jsonb,p_expected integer)
+      RETURNS SETOF content.site_locale LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $$ DECLARE old content.site_locale; updated content.site_locale;
+      BEGIN
+        SELECT * INTO old FROM content.site_locale WHERE site_id=p_site_id AND id=p_id FOR UPDATE; IF NOT FOUND THEN RAISE EXCEPTION 'NOT_FOUND' USING ERRCODE='P0002'; END IF; IF old.row_version<>p_expected THEN RAISE EXCEPTION 'ROW_VERSION_MISMATCH' USING ERRCODE='P0004'; END IF;
+        IF coalesce(p_default,old.is_default) AND NOT coalesce(p_enabled,old.enabled) THEN RAISE EXCEPTION 'LOCALE_INVALID' USING ERRCODE='P0003'; END IF;
+        IF old.is_default AND (coalesce(p_default,old.is_default)=false OR coalesce(p_enabled,old.enabled)=false) THEN RAISE EXCEPTION 'LOCALE_REFERENCED' USING ERRCODE='P0003'; END IF;
+        IF coalesce(p_default,old.is_default) THEN UPDATE content.site_locale SET is_default=false WHERE site_id=p_site_id AND id<>p_id; END IF;
+        UPDATE content.site_locale SET tag=coalesce(p_tag,tag),enabled=coalesce(p_enabled,enabled),is_default=coalesce(p_default,is_default),position=coalesce(p_position,position),metadata=coalesce(p_metadata,metadata),row_version=row_version+1,updated_at=now() WHERE site_id=p_site_id AND id=p_id RETURNING * INTO updated; RETURN NEXT updated;
+      END $$
+    """)
+    op.execute("""
+      CREATE OR REPLACE FUNCTION content.slaif_locale_create(p_site_id uuid,p_tag text,p_enabled boolean,p_default boolean,p_position integer,p_metadata jsonb)
+      RETURNS SETOF content.site_locale LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $$ DECLARE created content.site_locale;
+      BEGIN
+        IF p_default AND NOT p_enabled THEN RAISE EXCEPTION 'LOCALE_INVALID' USING ERRCODE='P0003'; END IF;
+        IF p_tag !~ '^[A-Za-z]{2,3}(-[A-Za-z]{4})?(-([A-Za-z]{2}|[0-9]{3}))?(-[A-Za-z0-9]{5,8})*$' OR p_position NOT BETWEEN 0 AND 999 OR jsonb_typeof(p_metadata)<>'object' THEN RAISE EXCEPTION 'LOCALE_INVALID' USING ERRCODE='P0003'; END IF;
+        IF p_default THEN UPDATE content.site_locale SET is_default=false WHERE site_id=p_site_id; END IF;
+        INSERT INTO content.site_locale(site_id,tag,enabled,is_default,position,metadata) VALUES(p_site_id,p_tag,p_enabled,p_default,p_position,p_metadata) RETURNING * INTO created; RETURN NEXT created;
+      END $$
+    """)
+    op.execute("""
+      CREATE OR REPLACE FUNCTION content.slaif_navigation_item_update(p_site_id uuid,p_id uuid,p_parent_id uuid,p_page_id uuid,p_target_kind text,p_target_value text,p_labels jsonb,p_locale text,p_position integer,p_expected integer)
+      RETURNS SETOF content.navigation_item LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $$ DECLARE old content.navigation_item; parent_nav uuid; updated content.navigation_item;
+      BEGIN
+        PERFORM pg_advisory_xact_lock(hashtextextended(p_site_id::text || '_navigation',0)); SELECT * INTO old FROM content.navigation_item WHERE site_id=p_site_id AND id=p_id FOR UPDATE; IF NOT FOUND THEN RAISE EXCEPTION 'NOT_FOUND' USING ERRCODE='P0002'; END IF; IF old.row_version<>p_expected THEN RAISE EXCEPTION 'ROW_VERSION_MISMATCH' USING ERRCODE='P0004'; END IF;
+        IF p_parent_id IS NOT NULL THEN SELECT navigation_id INTO parent_nav FROM content.navigation_item WHERE site_id=p_site_id AND id=p_parent_id; IF parent_nav IS NULL OR parent_nav<>old.navigation_id OR p_parent_id=p_id THEN RAISE EXCEPTION 'NAVIGATION_PARENT_INVALID' USING ERRCODE='P0003'; END IF; END IF;
+        IF coalesce(p_target_kind,old.target_kind)='PAGE' AND (coalesce(p_page_id,old.page_id) IS NULL OR coalesce(p_target_value,old.target_value)<>coalesce(p_page_id,old.page_id)::text) THEN RAISE EXCEPTION 'NAVIGATION_PAGE_INVALID' USING ERRCODE='P0003'; END IF;
+        IF coalesce(p_target_kind,old.target_kind)<>'PAGE' AND coalesce(p_page_id,old.page_id) IS NOT NULL THEN RAISE EXCEPTION 'NAVIGATION_PAGE_INVALID' USING ERRCODE='P0003'; END IF;
+        IF p_locale IS NOT NULL AND NOT EXISTS(SELECT 1 FROM content.site_locale WHERE site_id=p_site_id AND tag=p_locale AND enabled) THEN RAISE EXCEPTION 'LOCALE_INVALID' USING ERRCODE='P0003'; END IF;
+        UPDATE content.navigation_item SET parent_id=p_parent_id,page_id=CASE WHEN p_target_kind IS NOT NULL AND p_target_kind<>'PAGE' THEN NULL ELSE coalesce(p_page_id,page_id) END,target_kind=coalesce(p_target_kind,target_kind),target_value=coalesce(p_target_value,target_value),labels=coalesce(p_labels,labels),locale=p_locale,position=coalesce(p_position,position),row_version=row_version+1,updated_at=now() WHERE site_id=p_site_id AND id=p_id RETURNING * INTO updated; RETURN NEXT updated;
+      END $$
+    """)
+    op.execute("""
+      CREATE OR REPLACE FUNCTION content.slaif_redirect_update(p_site_id uuid,p_id uuid,p_source text,p_target text,p_status integer,p_locale text,p_expected integer)
+      RETURNS SETOF content.redirect LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $$ DECLARE old content.redirect; updated content.redirect; cursor_route text; next_target text; steps integer := 0; new_source text; new_target text;
+      BEGIN
+        PERFORM pg_advisory_xact_lock(hashtextextended(p_site_id::text || '_redirects',0)); SELECT * INTO old FROM content.redirect WHERE site_id=p_site_id AND id=p_id FOR UPDATE; IF NOT FOUND THEN RAISE EXCEPTION 'NOT_FOUND' USING ERRCODE='P0002'; END IF; IF old.row_version<>p_expected THEN RAISE EXCEPTION 'ROW_VERSION_MISMATCH' USING ERRCODE='P0004'; END IF;
+        new_source := coalesce(p_source,old.source_route); new_target := coalesce(p_target,old.target);
+        IF coalesce(p_status,old.status_code) NOT IN (301,302,303,307,308) OR new_source !~ '^/[A-Za-z0-9._~/-]*$' OR new_source ~ '//|\\.\\.|%|\\\\' OR new_source=new_target OR new_target ~ '[[:cntrl:] ]' OR (new_target !~ '^/' AND new_target !~ '^https?://[^/@?#]+([/?#].*)?$') THEN RAISE EXCEPTION 'REDIRECT_INVALID' USING ERRCODE='P0003'; END IF;
+        IF p_locale IS NOT NULL AND NOT EXISTS(SELECT 1 FROM content.site_locale WHERE site_id=p_site_id AND tag=p_locale AND enabled) THEN RAISE EXCEPTION 'LOCALE_INVALID' USING ERRCODE='P0003'; END IF;
+        cursor_route := new_target;
+        WHILE cursor_route ~ '^/' LOOP
+          IF cursor_route=new_source OR steps>=16 THEN RAISE EXCEPTION 'REDIRECT_CYCLE' USING ERRCODE='P0003'; END IF;
+          SELECT target INTO next_target FROM content.redirect WHERE site_id=p_site_id AND source_route=cursor_route AND id<>p_id AND locale IS NOT DISTINCT FROM p_locale;
+          EXIT WHEN NOT FOUND OR next_target !~ '^/'; cursor_route := next_target; steps := steps + 1;
+        END LOOP;
+        UPDATE content.redirect SET source_route=coalesce(p_source,source_route),target=coalesce(p_target,target),status_code=coalesce(p_status,status_code),locale=p_locale,row_version=row_version+1,updated_at=now() WHERE site_id=p_site_id AND id=p_id RETURNING * INTO updated; RETURN NEXT updated;
+      END $$
+    """)
+
 
 def downgrade() -> None:
     op.execute(
@@ -219,7 +382,12 @@ def downgrade() -> None:
     )
     for table in ("proposed_side_effect", "redirect", "navigation_item", "site_locale"):
         op.execute(f"DROP TABLE IF EXISTS content.{table} CASCADE")
+    op.execute("DROP FUNCTION IF EXISTS content.slaif_locale_enabled_guard() CASCADE")
+    op.execute("DROP FUNCTION IF EXISTS content.slaif_site_locale_seed() CASCADE")
     op.execute("ALTER TABLE content.page DROP CONSTRAINT IF EXISTS uq_page_site_id")
     op.execute(
         "ALTER TABLE content.navigation DROP CONSTRAINT IF EXISTS uq_navigation_site_id"
+    )
+    op.execute(
+        "ALTER TABLE control.workspace DROP CONSTRAINT IF EXISTS uq_workspace_site_id"
     )

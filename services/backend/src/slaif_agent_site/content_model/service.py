@@ -46,6 +46,7 @@ from .site_data_models import (
 )
 from .site_data_validators import (
     validate_redirect,
+    validate_redirect_graph,
     validate_side_effect,
     validate_target,
 )
@@ -784,6 +785,11 @@ class SiteDataMixin:
     async def create_locale(
         self, site_id: UUID, request: CreateLocaleRequest
     ) -> LocaleRecord:
+        existing = await self.list_locales(site_id)
+        if (not existing and not request.is_default) or (
+            request.is_default and not request.enabled
+        ):
+            raise ContentModelServiceError(ContentModelServiceReason.VALIDATION)
         row = await self._fetchrow(
             LOCALE_CREATE_SQL,
             site_id,
@@ -795,6 +801,10 @@ class SiteDataMixin:
         )
         if row is None:
             raise ContentModelServiceError(ContentModelServiceReason.CONFLICT)
+        if row[0] is None:
+            row = await self._fetchrow(LOCALE_EXACT_SQL, site_id, request.tag)
+            if row is None:
+                raise ContentModelServiceError(ContentModelServiceReason.CONFLICT)
         return _locale(row)
 
     async def list_locales(self, site_id: UUID) -> tuple[LocaleRecord, ...]:
@@ -806,11 +816,16 @@ class SiteDataMixin:
         row = await self._fetchrow(LOCALE_GET_SQL, site_id, locale_id)
         if row is None:
             raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
+        if row[0] is None:
+            return await self.get_locale(site_id, locale_id)
         return _locale(row)
 
     async def update_locale(
         self, site_id: UUID, locale_id: UUID, request: UpdateLocaleRequest
     ) -> LocaleRecord:
+        current = await self.get_locale(site_id, locale_id)
+        if current.is_default and (not request.is_default or not request.enabled):
+            raise ContentModelServiceError(ContentModelServiceReason.VALIDATION)
         row = await self._fetchrow(
             LOCALE_UPDATE_SQL,
             site_id,
@@ -824,6 +839,8 @@ class SiteDataMixin:
         )
         if row is None:
             raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
+        if row[0] is None:
+            return await self.get_locale(site_id, locale_id)
         return _locale(row)
 
     async def delete_locale(
@@ -845,6 +862,11 @@ class SiteDataMixin:
             for locale in await self.list_locales(site_id)
         ):
             raise ContentModelServiceError(ContentModelServiceReason.VALIDATION)
+        if any(
+            row.parent_id == request.parent_id and row.position == request.position
+            for row in await self.list_navigation_items(site_id, request.navigation_id)
+        ):
+            raise ContentModelServiceError(ContentModelServiceReason.CONFLICT)
         row = await self._fetchrow(
             NAV_ITEM_CREATE_SQL,
             site_id,
@@ -858,10 +880,22 @@ class SiteDataMixin:
             request.position,
         )
         if row is None:
-            rows = await self._fetch(NAV_ITEM_LIST_SQL, site_id, request.navigation_id)
-            if rows:
-                return _nav_item(rows[-1])
             raise ContentModelServiceError(ContentModelServiceReason.CONFLICT)
+        # COW's INSTEAD OF INSERT trigger may return a sparse NEW record for
+        # server defaults.  Resolve it by the exact caller-owned identity,
+        # never by an arbitrary latest/last row.
+        if row[0] is None:
+            row = await self._fetchrow(
+                NAV_ITEM_EXACT_SQL,
+                site_id,
+                request.navigation_id,
+                request.parent_id,
+                request.target_kind,
+                request.target_value,
+                request.position,
+            )
+            if row is None:
+                raise ContentModelServiceError(ContentModelServiceReason.CONFLICT)
         return _nav_item(row)
 
     async def list_navigation_items(
@@ -878,6 +912,8 @@ class SiteDataMixin:
         row = await self._fetchrow(NAV_ITEM_GET_SQL, site_id, item_id)
         if row is None:
             raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
+        if row[0] is None:
+            return await self.get_navigation_item(site_id, item_id)
         return _nav_item(row)
 
     async def update_navigation_item(
@@ -946,6 +982,14 @@ class SiteDataMixin:
         self, site_id: UUID, request: CreateRedirectRequest
     ) -> RedirectRecord:
         source, target = validate_redirect(request.source_route, request.target)
+        validate_redirect_graph(
+            source,
+            target,
+            [
+                (row.source_route, row.target)
+                for row in await self.list_redirects(site_id)
+            ],
+        )
         if request.locale is not None and not any(
             locale.tag == request.locale and locale.enabled
             for locale in await self.list_locales(site_id)
@@ -960,10 +1004,13 @@ class SiteDataMixin:
             request.locale,
         )
         if row is None:
-            rows = await self._fetch(REDIRECT_LIST_SQL, site_id)
-            if rows:
-                return _redirect(rows[-1])
             raise ContentModelServiceError(ContentModelServiceReason.CONFLICT)
+        if row[0] is None:
+            row = await self._fetchrow(
+                REDIRECT_EXACT_SQL, site_id, source, request.locale
+            )
+            if row is None:
+                raise ContentModelServiceError(ContentModelServiceReason.CONFLICT)
         return _redirect(row)
 
     async def list_redirects(self, site_id: UUID) -> tuple[RedirectRecord, ...]:
@@ -975,12 +1022,23 @@ class SiteDataMixin:
         row = await self._fetchrow(REDIRECT_GET_SQL, site_id, redirect_id)
         if row is None:
             raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
+        if row[0] is None:
+            return await self.get_redirect(site_id, redirect_id)
         return _redirect(row)
 
     async def update_redirect(
         self, site_id: UUID, redirect_id: UUID, request: UpdateRedirectRequest
     ) -> RedirectRecord:
         source, target = validate_redirect(request.source_route, request.target)
+        validate_redirect_graph(
+            source,
+            target,
+            [
+                (row.source_route, row.target)
+                for row in await self.list_redirects(site_id)
+                if row.id != redirect_id
+            ],
+        )
         if request.locale is not None and not any(
             locale.tag == request.locale and locale.enabled
             for locale in await self.list_locales(site_id)
@@ -1346,6 +1404,10 @@ TH_UPDATE_SQL = "SELECT * FROM content.slaif_theme_update($1,$2,$3,$4,$5)"
 LOCALE_CREATE_SQL = "SELECT * FROM content.slaif_locale_create($1,$2,$3,$4,$5,$6)"
 LOCALE_LIST_SQL = "SELECT * FROM content.slaif_locale_list($1)"
 LOCALE_GET_SQL = "SELECT * FROM content.slaif_locale_get($1,$2)"
+LOCALE_EXACT_SQL = (
+    "SELECT * FROM content.site_locale WHERE site_id=$1 AND tag=$2 "
+    "ORDER BY id DESC LIMIT 1"
+)
 LOCALE_UPDATE_SQL = "SELECT * FROM content.slaif_locale_update($1,$2,$3,$4,$5,$6,$7,$8)"
 LOCALE_DELETE_SQL = "SELECT content.slaif_locale_delete($1,$2,$3)"
 NAV_ITEM_CREATE_SQL = (
@@ -1353,6 +1415,11 @@ NAV_ITEM_CREATE_SQL = (
 )
 NAV_ITEM_LIST_SQL = "SELECT * FROM content.slaif_navigation_item_list($1,$2)"
 NAV_ITEM_GET_SQL = "SELECT * FROM content.slaif_navigation_item_get($1,$2)"
+NAV_ITEM_EXACT_SQL = (
+    "SELECT * FROM content.navigation_item WHERE site_id=$1 AND navigation_id=$2 "
+    "AND parent_id IS NOT DISTINCT FROM $3 AND target_kind=$4 "
+    "AND target_value=$5 AND position=$6 ORDER BY id DESC LIMIT 1"
+)
 NAV_ITEM_UPDATE_SQL = (
     "SELECT * FROM content.slaif_navigation_item_update($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)"
 )
@@ -1360,6 +1427,10 @@ NAV_ITEM_DELETE_SQL = "SELECT content.slaif_navigation_item_delete($1,$2,$3)"
 REDIRECT_CREATE_SQL = "SELECT * FROM content.slaif_redirect_create($1,$2,$3,$4,$5)"
 REDIRECT_LIST_SQL = "SELECT * FROM content.slaif_redirect_list($1)"
 REDIRECT_GET_SQL = "SELECT * FROM content.slaif_redirect_get($1,$2)"
+REDIRECT_EXACT_SQL = (
+    "SELECT * FROM content.redirect WHERE site_id=$1 AND source_route=$2 "
+    "AND locale IS NOT DISTINCT FROM $3 ORDER BY id DESC LIMIT 1"
+)
 REDIRECT_UPDATE_SQL = (
     "SELECT * FROM content.slaif_redirect_update($1,$2,$3,$4,$5,$6,$7)"
 )

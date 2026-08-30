@@ -6,8 +6,13 @@ from uuid import uuid4
 
 import pytest
 from conftest import AgentSiteDatabase
+from slaif_agent_site.agent_state.foundation import (
+    deploy_cow_functions,
+    enable_cow_schema,
+)
 from slaif_agent_site.bootstrap.service import reconcile, upgrade
 from slaif_agent_site.db.connections import owner_connection
+from slaif_agent_site.db.executor import AsyncpgExecutor
 from slaif_agent_site.db.migrations import run_migration
 
 
@@ -150,3 +155,48 @@ async def test_site_data_substrate_downgrades_from_head_to_041_and_back(
         operation="upgrade",
         revision="head",
     )
+
+
+@pytest.mark.asyncio
+async def test_upgrade_rebuilds_enabled_cow_without_pending_workspace_operations(
+    agent_site_database: AgentSiteDatabase,
+) -> None:
+    """The production path tears down empty COW views before 040-042."""
+    database = agent_site_database
+    await upgrade(database.settings)
+    await run_migration(
+        database.settings.resolved_owner_dsn(),
+        expected_database=database.name,
+        operation="downgrade",
+        revision="041_001",
+    )
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        executor = AsyncpgExecutor(owner)
+        await deploy_cow_functions(executor)
+        await enable_cow_schema(
+            executor,
+            schema="content",
+            allow_deferred_fks=True,
+            allow_unsafe_canonical_writes=False,
+        )
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        before = await owner.fetchval(
+            "SELECT to_regclass('content.page_base') IS NOT NULL"
+        )
+        assert before
+    await upgrade(database.settings)
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        assert (
+            await owner.fetchval(
+                "SELECT version_num::text FROM control.alembic_version"
+            )
+            == "042_001"
+        )
+        assert await owner.fetchval("SELECT to_regclass('content.page') IS NOT NULL")
+        assert await owner.fetchval("SELECT to_regclass('content.page_base') IS NULL")

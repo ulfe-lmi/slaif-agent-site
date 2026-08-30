@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable
 from typing import Any
 from urllib.parse import urlsplit
 from uuid import UUID
@@ -71,6 +72,26 @@ def validate_redirect(source: str, target: str) -> tuple[str, str]:
     return normalized_source, normalized_target
 
 
+def validate_redirect_graph(
+    source: str, target: str, existing: Iterable[tuple[str, str]]
+) -> None:
+    """Reject a redirect that would create a self-loop or chained cycle."""
+
+    routes = {route: destination for route, destination in existing if route != source}
+    routes[source] = target
+    cursor = source
+    visited: set[str] = set()
+    for _ in range(16):
+        if cursor in visited:
+            raise ValueError("redirect cycle")
+        visited.add(cursor)
+        destination = routes.get(cursor)
+        if destination is None or not destination.startswith("/"):
+            return
+        cursor = destination
+    raise ValueError("redirect chain exceeds bound")
+
+
 def validate_side_effect(kind: str, payload: dict[str, Any]) -> None:
     if kind not in {"analytics_event", "cache_purge"}:
         raise ValueError("side effect kind is not allowlisted")
@@ -89,6 +110,7 @@ __all__ = [
     "validate_internal_route",
     "validate_locale_tag",
     "validate_redirect",
+    "validate_redirect_graph",
     "validate_side_effect",
     "validate_target",
 ]

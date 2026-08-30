@@ -54,10 +54,13 @@ EXPECTED_PUBLIC_API = {
     "asyncpg_cow_reviewer",
     "asyncpg_cow_session",
     "deploy_cow_functions",
+    "disable_cow",
+    "disable_cow_schema",
     "enable_cow_schema",
     "get_cow_conflicts",
     "get_operation_dependencies",
     "get_session_operations",
+    "get_cow_status",
     "harden_cow_schema",
     "validate_cow_schema_privileges",
 }

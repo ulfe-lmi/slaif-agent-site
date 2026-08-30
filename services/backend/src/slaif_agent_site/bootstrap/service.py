@@ -15,7 +15,10 @@ from slaif_agent_site.agent_state.foundation import (
     FOUNDATION_DISTRIBUTION,
     FOUNDATION_VERSION,
     deploy_cow_functions,
+    disable_cow_schema,
     enable_cow_schema,
+    get_cow_status,
+    get_session_operations,
     harden_cow_schema,
     validate_cow_schema_privileges,
 )
@@ -382,6 +385,41 @@ async def _authenticate_local_logins(
 
 
 async def upgrade(settings: BootstrapSettings) -> None:
+    # A migration may replace COW views/base tables.  Before destructive
+    # preparation prove every product workspace has no pending operations via
+    # agent-cow's public API; private foundation tables are never inspected.
+    expected_head = migration_heads()
+    async with owner_connection(
+        settings.resolved_owner_dsn(), expected_database=settings.expected_database
+    ) as connection:
+        version_table = await connection.fetchval(
+            "SELECT to_regclass('control.alembic_version')"
+        )
+        if version_table is None:
+            current = None
+        else:
+            current = await connection.fetchval(
+                "SELECT version_num::text FROM control.alembic_version"
+            )
+        if current == (expected_head[0] if len(expected_head) == 1 else None):
+            return
+        executor = AsyncpgExecutor(connection)
+        cow_status = await get_cow_status(executor, schema="content")
+        if cow_status["enabled"]:
+            workspace_rows = await connection.fetch(
+                "SELECT id FROM control.workspace "
+                "WHERE status NOT IN ('ACCEPTED','DISCARDED')"
+            )
+            for row in workspace_rows:
+                pending = await get_session_operations(
+                    executor, row[0], schema="content"
+                )
+                if pending:
+                    raise BootstrapStateError(
+                        "cannot upgrade while a workspace has pending COW operations"
+                    )
+            async with connection.transaction():
+                await disable_cow_schema(executor, schema="content")
     await run_migration(
         settings.resolved_owner_dsn(),
         expected_database=settings.expected_database,
