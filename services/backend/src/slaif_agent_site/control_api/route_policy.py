@@ -975,6 +975,7 @@ ROUTE_POLICIES: Final[tuple[RoutePolicy, ...]] = (
             ("GET", "/api/agent/v1/content-model/types"),
             ("GET", "/api/agent/v1/content-model/types/{type_id}"),
             ("GET", "/api/agent/v1/content-model/types/{type_id}/fields"),
+            ("GET", "/api/agent/v1/content-model/types/{type_id}/fields/{field_id}"),
             ("GET", "/api/agent/v1/content-items/types/{type_id}"),
             ("GET", "/api/agent/v1/pages/"),
             ("GET", "/api/agent/v1/pages/{page_id}/components"),
@@ -995,6 +996,12 @@ ROUTE_POLICIES: Final[tuple[RoutePolicy, ...]] = (
         for method, path, mutation in (
             ("POST", "/api/agent/v1/content-model/types", _M),
             ("POST", "/api/agent/v1/content-model/types/{type_id}/fields", _M),
+            ("PATCH", "/api/agent/v1/content-model/types/{type_id}", _M),
+            (
+                "PATCH",
+                "/api/agent/v1/content-model/types/{type_id}/fields/{field_id}",
+                _M,
+            ),
             ("POST", "/api/agent/v1/content-items/types/{type_id}", _M),
             ("POST", "/api/agent/v1/pages/", _M),
             ("POST", "/api/agent/v1/pages/{page_id}/components", _M),
