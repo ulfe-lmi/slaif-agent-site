@@ -2,7 +2,12 @@ from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
-from slaif_agent_site.content_model.models import FieldDefinitionRecord
+from slaif_agent_site.content_model.models import (
+    CreateFieldDefinitionRequest,
+    FieldDefinitionRecord,
+    UpdateRelationRequest,
+    UpdateTranslationRequest,
+)
 from slaif_agent_site.content_model.validators import validate_values
 
 
@@ -40,3 +45,14 @@ def test_values_enforce_primitive_and_cardinality() -> None:
     validate_values({"title": ["one", "two"]}, [field])
     with pytest.raises(ValueError):
         validate_values({"title": ["one", "two", "three"]}, [field])
+
+
+def test_relation_configuration_and_versions_are_bounded() -> None:
+    with pytest.raises(ValueError):
+        CreateFieldDefinitionRequest(
+            key="ref", label="Reference", field_type="reference", cardinality=2
+        )
+    with pytest.raises(ValueError):
+        UpdateTranslationRequest(expected_row_version=0)
+    with pytest.raises(ValueError):
+        UpdateRelationRequest(expected_row_version=0)

@@ -1,11 +1,16 @@
-"""Editor CRUD for site-confined translations and normalized relations."""
+"""Editor CRUD for site-confined translations and normalized relations.
+
+Translation PATCH replaces the complete locale value map (it never performs a
+partial merge) and every PATCH/DELETE requires ``expected_row_version``;
+stale mutations return a stable conflict envelope.
+"""
 
 from __future__ import annotations
 
 from typing import NoReturn
 from uuid import UUID
 
-from fastapi import APIRouter, Request, Response
+from fastapi import APIRouter, Query, Request, Response
 
 from ..content_model.models import (
     CreateRelationRequest,
@@ -111,7 +116,11 @@ async def update_translation(
 
 @router.delete("/translations/{translation_id}", status_code=204)
 async def delete_translation(
-    site_id: UUID, item_id: UUID, translation_id: UUID, request: Request
+    site_id: UUID,
+    item_id: UUID,
+    translation_id: UUID,
+    request: Request,
+    expected_row_version: int = Query(..., ge=1),
 ) -> Response:
     await _auth(request, site_id, "translation:write", True)
     try:
@@ -120,7 +129,9 @@ async def delete_translation(
         )
         if current.item_id != item_id:
             raise ResourceNotFoundError()
-        await request_service(request).delete_translation(site_id, translation_id)
+        await request_service(request).delete_translation(
+            site_id, translation_id, expected_row_version
+        )
     except ContentModelServiceError as exc:
         _error(exc)
     return Response(status_code=204)
@@ -130,7 +141,7 @@ async def delete_translation(
 async def list_relations(
     site_id: UUID, item_id: UUID, request: Request
 ) -> list[RelationRecord]:
-    await _auth(request, site_id, "relationship:read", False)
+    await _auth(request, site_id, "content-item:read", False)
     try:
         return list(await request_service(request).list_relations(site_id, item_id))
     except ContentModelServiceError as exc:
@@ -152,7 +163,7 @@ async def create_relation(
 async def get_relation(
     site_id: UUID, item_id: UUID, relation_id: UUID, request: Request
 ) -> RelationRecord:
-    await _auth(request, site_id, "relationship:read", False)
+    await _auth(request, site_id, "content-item:read", False)
     try:
         record = await request_service(request).get_relation(site_id, relation_id)
         if record.source_item_id != item_id:
@@ -184,14 +195,20 @@ async def update_relation(
 
 @router.delete("/relations/{relation_id}", status_code=204)
 async def delete_relation(
-    site_id: UUID, item_id: UUID, relation_id: UUID, request: Request
+    site_id: UUID,
+    item_id: UUID,
+    relation_id: UUID,
+    request: Request,
+    expected_row_version: int = Query(..., ge=1),
 ) -> Response:
     await _auth(request, site_id, "relationship:write", True)
     try:
         current = await request_service(request).get_relation(site_id, relation_id)
         if current.source_item_id != item_id:
             raise ResourceNotFoundError()
-        await request_service(request).delete_relation(site_id, relation_id)
+        await request_service(request).delete_relation(
+            site_id, relation_id, expected_row_version
+        )
     except ContentModelServiceError as exc:
         _error(exc)
     return Response(status_code=204)

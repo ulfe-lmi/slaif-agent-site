@@ -378,3 +378,217 @@ async def test_fixed_production_logins_run_public_editor_http_chain(
             await database.administrator.execute(
                 f"DROP ROLE IF EXISTS {quote_identifier(login)}"
             )
+
+
+@pytest.mark.asyncio
+async def test_editor_http_translations_relations_are_versioned_and_site_confined(
+    agent_site_database: AgentSiteDatabase,
+) -> None:
+    """Exercise the new substrate through authenticated public Editor routes."""
+    database = agent_site_database
+    await upgrade(database.settings)
+    owner_pool = await database.role_pool("slaif_owner")
+    site_id, human_id = uuid4(), uuid4()
+    site_key = f"domain-proof-{uuid4().hex[:12]}"
+    fixed_logins = (
+        (CONTROL_LOGIN, CONTROL_PASSWORD, CONTROL_ROLE),
+        (EDITOR_LOGIN, EDITOR_PASSWORD, EDITOR_ROLE),
+    )
+    editor: EditorDatabase | None = None
+    try:
+        async with owner_pool.acquire() as owner:
+            await owner.execute(
+                "INSERT INTO control.user_account "
+                "(id, identity_kind, oidc_issuer, oidc_subject, display_name) "
+                "VALUES ($1, 'OIDC', 'https://domain-proof.test', $2, 'Domain Human')",
+                human_id,
+                str(human_id),
+            )
+            await owner.execute(
+                "INSERT INTO control.platform_administrator "
+                "(user_account_id) VALUES ($1)",
+                human_id,
+            )
+            await owner.execute(
+                "INSERT INTO control.site "
+                "(id, site_key, display_name, default_locale, "
+                "component_catalog_version) "
+                "VALUES ($1, $2, 'Domain Proof', 'en', 'catalog-v1')",
+                site_id,
+                site_key,
+            )
+        await reconcile(database.settings)
+        for login, password, role in fixed_logins:
+            password_literal = await database.administrator.fetchval(
+                "SELECT pg_catalog.quote_literal($1::text)", password
+            )
+            await database.administrator.execute(
+                f"CREATE ROLE {quote_identifier(login)} LOGIN PASSWORD "
+                f"{password_literal} "
+                "NOSUPERUSER NOCREATEDB NOCREATEROLE INHERIT NOREPLICATION "
+                "NOBYPASSRLS"
+            )
+            await database.administrator.execute(
+                f"GRANT {quote_identifier(role)} TO {quote_identifier(login)}"
+            )
+        control = ControlDatabase(_control_settings(database))
+        editor = EditorDatabase(_editor_settings(database))
+        app = create_app(
+            settings=ServiceSettings(mode=EnvironmentMode.TEST),
+            database=control,
+            editor_database=editor,
+        )
+        async with app.router.lifespan_context(app):
+            issued = await control.human_session_service().create(human_id)
+            session = issued.token.get_secret_value()
+            csrf = issued.csrf_token.get_secret_value()
+            root = f"/api/editor/v1/sites/{site_id}"
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app),
+                base_url="http://domain-proof.test",
+            ) as client:
+                read = {"cookie": _cookie(session, csrf)}
+
+                def mutation(key: str) -> dict[str, str]:
+                    return _mutation_headers(session, csrf, key)
+
+                type_response = await client.post(
+                    f"{root}/content-model/types",
+                    headers=mutation("domain-type"),
+                    json={
+                        "key": "article",
+                        "labels": {"en": "Article"},
+                        "slug_pattern": "/article/{slug}",
+                        "settings": {},
+                    },
+                )
+                assert type_response.status_code == 201, type_response.text
+                type_id = type_response.json()["id"]
+                localized = await client.post(
+                    f"{root}/content-model/types/{type_id}/fields",
+                    headers=mutation("domain-title"),
+                    json={
+                        "key": "title",
+                        "label": "Title",
+                        "field_type": "short_text",
+                        "localized": True,
+                    },
+                )
+                assert localized.status_code == 201, localized.text
+                relation_field = await client.post(
+                    f"{root}/content-model/types/{type_id}/fields",
+                    headers=mutation("domain-related"),
+                    json={
+                        "key": "related",
+                        "label": "Related",
+                        "field_type": "reference",
+                    },
+                )
+                assert relation_field.status_code == 201, relation_field.text
+                field_id = relation_field.json()["id"]
+                source = await client.post(
+                    f"{root}/content-items/",
+                    headers=mutation("domain-source"),
+                    json={"type_id": type_id, "slug": "source", "values": {}},
+                )
+                target = await client.post(
+                    f"{root}/content-items/",
+                    headers=mutation("domain-target"),
+                    json={"type_id": type_id, "slug": "target", "values": {}},
+                )
+                assert source.status_code == target.status_code == 201
+                source_id, target_id = source.json()["id"], target.json()["id"]
+                translation_path = f"{root}/content-items/{source_id}/translations"
+                translation = await client.post(
+                    translation_path,
+                    headers=mutation("domain-translation"),
+                    json={"locale": "en", "localized_values": {"title": "Hello"}},
+                )
+                assert translation.status_code == 201, translation.text
+                translation_replay = await client.post(
+                    translation_path,
+                    headers=mutation("domain-translation"),
+                    json={"locale": "en", "localized_values": {"title": "Hello"}},
+                )
+                assert translation_replay.status_code == 201
+                assert translation_replay.json() == translation.json()
+                translation_id = translation.json()["id"]
+                translation_update = await client.patch(
+                    f"{translation_path}/{translation_id}",
+                    headers=mutation("domain-translation-update"),
+                    json={
+                        "localized_values": {"title": "Updated"},
+                        "expected_row_version": 1,
+                    },
+                )
+                assert translation_update.status_code == 200
+                stale_translation = await client.patch(
+                    f"{translation_path}/{translation_id}",
+                    headers=mutation("domain-translation-stale"),
+                    json={
+                        "localized_values": {"title": "Stale"},
+                        "expected_row_version": 1,
+                    },
+                )
+                assert stale_translation.status_code == 409
+                relation_path = f"{root}/content-items/{source_id}/relations"
+                relation = await client.post(
+                    relation_path,
+                    headers=mutation("domain-relation"),
+                    json={"field_definition_id": field_id, "target_item_id": target_id},
+                )
+                assert relation.status_code == 201, relation.text
+                relation_id = relation.json()["id"]
+                relation_update = await client.patch(
+                    f"{relation_path}/{relation_id}",
+                    headers=mutation("domain-relation-update"),
+                    json={"metadata": {"kind": "related"}, "expected_row_version": 1},
+                )
+                assert relation_update.status_code == 200
+                stale_relation = await client.patch(
+                    f"{relation_path}/{relation_id}",
+                    headers=mutation("domain-relation-stale"),
+                    json={"metadata": {}, "expected_row_version": 1},
+                )
+                assert stale_relation.status_code == 409
+                assert (
+                    await client.delete(
+                        f"{translation_path}/{translation_id}?expected_row_version=2",
+                        headers=mutation("domain-translation-delete"),
+                    )
+                ).status_code == 204
+                assert (
+                    await client.delete(
+                        f"{relation_path}/{relation_id}?expected_row_version=2",
+                        headers=mutation("domain-relation-delete"),
+                    )
+                ).status_code == 204
+                assert (await client.get(translation_path, headers=read)).json() == []
+                assert (await client.get(relation_path, headers=read)).json() == []
+        async with owner_pool.acquire() as owner:
+            assert (
+                await owner.fetchval(
+                    "SELECT count(*) FROM content.content_item WHERE site_id=$1 "
+                    "AND slug IN ('source','target')",
+                    site_id,
+                )
+                == 0
+            )
+            counts = await owner.fetchrow(
+                "SELECT (SELECT count(*) FROM control.human_editor_idempotency "
+                "WHERE site_id=$1), "
+                "(SELECT count(*) FROM audit.human_editor_mutation WHERE site_id=$1)",
+                site_id,
+            )
+            assert tuple(counts) == (11, 11)
+    finally:
+        if editor is not None:
+            await editor.stop()
+        await owner_pool.close()
+        for login, _, role in fixed_logins:
+            await database.administrator.execute(
+                f"REVOKE {quote_identifier(role)} FROM {quote_identifier(login)}"
+            )
+            await database.administrator.execute(
+                f"DROP ROLE IF EXISTS {quote_identifier(login)}"
+            )

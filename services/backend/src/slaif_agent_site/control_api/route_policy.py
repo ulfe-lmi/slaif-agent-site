@@ -526,7 +526,7 @@ ROUTE_POLICIES: Final[tuple[RoutePolicy, ...]] = (
                 "/api/editor/v1/sites/{site_id}/content-items/{item_id}/relations",
                 _R,
                 False,
-                "relationship:read",
+                "content-item:read",
             ),
             (
                 "POST",
@@ -540,7 +540,7 @@ ROUTE_POLICIES: Final[tuple[RoutePolicy, ...]] = (
                 "/api/editor/v1/sites/{site_id}/content-items/{item_id}/relations/{relation_id}",
                 _R,
                 False,
-                "relationship:read",
+                "content-item:read",
             ),
             (
                 "PATCH",

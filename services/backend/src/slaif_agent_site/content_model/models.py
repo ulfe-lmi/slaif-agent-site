@@ -11,7 +11,7 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
 from .primitives import FieldPrimitive, FieldPrimitiveError
 
@@ -193,6 +193,24 @@ class CreateFieldDefinitionRequest(BaseModel):
         assert isinstance(result, dict)
         return result
 
+    @model_validator(mode="after")
+    def relation_configuration_is_bounded(self) -> CreateFieldDefinitionRequest:
+        if self.field_type == "reference" and self.cardinality != 1:
+            raise ValueError("reference cardinality must be exactly one")
+        if self.field_type == "multi_reference" and self.cardinality < 1:
+            raise ValueError("multi_reference cardinality must be positive")
+        if self.field_type in ("reference", "multi_reference"):
+            unknown = set(self.validation) - {"target_type_id"}
+            if unknown:
+                raise ValueError("relation validation has unsupported keys")
+            target = self.validation.get("target_type_id")
+            if target is not None:
+                try:
+                    UUID(str(target))
+                except (TypeError, ValueError):
+                    raise ValueError("target_type_id must be a UUID") from None
+        return self
+
 
 class UpdateFieldDefinitionRequest(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -304,6 +322,7 @@ class UpdateTranslationRequest(BaseModel):
 
     locale: str | None = None
     localized_values: dict[str, Any] | None = None
+    expected_row_version: int
 
     @field_validator("locale")
     @classmethod
@@ -325,6 +344,13 @@ class UpdateTranslationRequest(BaseModel):
         result = _bounded_json(value)
         assert isinstance(result, dict)
         return result
+
+    @field_validator("expected_row_version")
+    @classmethod
+    def row_version_is_positive(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("expected_row_version must be positive")
+        return value
 
 
 class TranslationRecord(BaseModel):
@@ -369,12 +395,20 @@ class UpdateRelationRequest(BaseModel):
     target_item_id: UUID | None = None
     position: int | None = None
     metadata: dict[str, Any] | None = None
+    expected_row_version: int
 
     @field_validator("position")
     @classmethod
     def position_is_bounded(cls, value: int | None) -> int | None:
         if value is not None and not 0 <= value <= 999:
             raise ValueError("position must be between 0 and 999")
+        return value
+
+    @field_validator("expected_row_version")
+    @classmethod
+    def row_version_is_positive(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("expected_row_version must be positive")
         return value
 
     @field_validator("metadata")
@@ -407,6 +441,12 @@ __all__ = [
     "CreateContentTypeRequest",
     "CreateFieldDefinitionRequest",
     "FieldDefinitionRecord",
+    "CreateTranslationRequest",
+    "UpdateTranslationRequest",
+    "TranslationRecord",
+    "CreateRelationRequest",
+    "UpdateRelationRequest",
+    "RelationRecord",
     "UpdateContentTypeRequest",
     "UpdateFieldDefinitionRequest",
 ]

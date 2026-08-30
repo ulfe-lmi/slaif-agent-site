@@ -115,6 +115,7 @@ NEW_PACKAGE_FILES = {
     "slaif_agent_site/db/alembic/versions/037_001_browser_artifact_worker_binding.py",
     "slaif_agent_site/db/alembic/versions/038_001_human_agent_session_control_plane.py",
     "slaif_agent_site/db/alembic/versions/039_001_complete_session_authority_and_proof.py",
+    "slaif_agent_site/db/alembic/versions/040_001_editable_domain_substrate.py",
     "slaif_agent_site/db/connections.py",
     "slaif_agent_site/db/executor.py",
     "slaif_agent_site/db/migrations.py",
@@ -177,6 +178,8 @@ EXPECTED_PACKAGE_FILES = NEW_PACKAGE_FILES | {
     "slaif_agent_site/agent_state/foundation.py",
     "slaif_agent_site/content_model/__init__.py",
     "slaif_agent_site/content_model/models.py",
+    "slaif_agent_site/content_model/validators.py",
+    "slaif_agent_site/editor_api/domain_http.py",
     "slaif_agent_site/content_model/primitives.py",
     "slaif_agent_site/content_model/item_models.py",
     "slaif_agent_site/content_model/view_models.py",
@@ -239,8 +242,10 @@ EXPECTED_SDIST_FILES = {
     "services/backend/src/slaif_agent_site/content_model/primitives.py",
     "services/backend/src/slaif_agent_site/content_model/models.py",
     "services/backend/src/slaif_agent_site/content_model/service.py",
+    "services/backend/src/slaif_agent_site/content_model/validators.py",
     "services/backend/src/slaif_agent_site/content_model/item_models.py",
     "services/backend/src/slaif_agent_site/editor_api/content_http.py",
+    "services/backend/src/slaif_agent_site/editor_api/domain_http.py",
     "services/backend/src/slaif_agent_site/db/alembic/versions/018_001_content_item_functions.py",
     "services/backend/src/slaif_agent_site/db/alembic/versions/019_001_collection_view_functions.py",
     "services/backend/src/slaif_agent_site/db/alembic/versions/020_001_nav_theme_functions.py",
@@ -274,6 +279,7 @@ EXPECTED_SDIST_FILES = {
     "services/backend/src/slaif_agent_site/db/alembic/versions/037_001_browser_artifact_worker_binding.py",
     "services/backend/src/slaif_agent_site/db/alembic/versions/038_001_human_agent_session_control_plane.py",
     "services/backend/src/slaif_agent_site/db/alembic/versions/039_001_complete_session_authority_and_proof.py",
+    "services/backend/src/slaif_agent_site/db/alembic/versions/040_001_editable_domain_substrate.py",
     "services/backend/src/slaif_agent_site/mcp_adapter/mcp_http.py",
     "services/backend/src/slaif_agent_site/mcp_adapter/app.py",
     "services/backend/src/slaif_agent_site/control_api/workspace_http.py",
@@ -554,8 +560,9 @@ def test_locked_foundation_artifact_hash_constants_are_sha256() -> None:
 
 
 def test_alembic_graph_and_offline_sql_need_no_locator_or_network() -> None:
-    assert migration_heads() == ("039_001",)
+    assert migration_heads() == ("040_001",)
     assert migration_history() == (
+        "040_001",
         "039_001",
         "038_001",
         "037_001",
