@@ -135,7 +135,7 @@ def create_app(
     app.include_router(agent_router)
     app.include_router(browser_router)
 
-    @app.get("/api/agent/v1/openapi.json", include_in_schema=False)
+    @app.get("/api/agent/v1/openapi.json")
     async def agent_openapi() -> JSONResponse:
         """Return the stable, versioned public Agent contract only."""
         document = app.openapi()
