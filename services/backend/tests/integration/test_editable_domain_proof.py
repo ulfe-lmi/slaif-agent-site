@@ -69,3 +69,31 @@ async def test_editable_domain_migration_round_trip_restores_field_contract(
         operation="upgrade",
         revision="head",
     )
+
+
+@pytest.mark.asyncio
+async def test_collection_contract_downgrades_from_head_to_040_and_back(
+    agent_site_database: AgentSiteDatabase,
+) -> None:
+    database = agent_site_database
+    await upgrade(database.settings)
+    await run_migration(
+        database.settings.resolved_owner_dsn(),
+        expected_database=database.name,
+        operation="downgrade",
+        revision="040_001",
+    )
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        assert await owner.fetchval(
+            "SELECT NOT EXISTS (SELECT 1 FROM information_schema.columns "
+            "WHERE table_schema='content' AND table_name='collection_view' "
+            "AND column_name='row_version')"
+        )
+    await run_migration(
+        database.settings.resolved_owner_dsn(),
+        expected_database=database.name,
+        operation="upgrade",
+        revision="head",
+    )

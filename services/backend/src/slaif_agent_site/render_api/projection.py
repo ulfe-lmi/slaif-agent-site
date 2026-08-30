@@ -6,6 +6,7 @@ import asyncio
 import logging
 import time
 from collections import defaultdict
+from types import SimpleNamespace
 from typing import Any, Protocol, cast
 from uuid import UUID
 
@@ -19,6 +20,7 @@ from slaif_agent_site.browser_preview_credentials import (
     BrowserPreviewCredentialSigner,
     BrowserPreviewExpectedBinding,
 )
+from slaif_agent_site.content_model.query_dsl import validate_query_contract
 from slaif_agent_site.identity.sessions import digest_secret, parse_session_token
 from slaif_agent_site.sites.models import SiteContext
 from slaif_agent_site.sites.normalization import normalize_request_path
@@ -554,11 +556,30 @@ async def _collection_bindings(
         if type_row is None or type_row[0] != site_id or type_row[1] != "ACTIVE":
             raise ProjectionError("collection_scope")
         field_rows = await connection.fetch(
-            "SELECT key FROM content.field_definition WHERE type_id = $1 "
+            "SELECT key, field_type, localized, validation "
+            "FROM content.field_definition WHERE type_id = $1 "
             'ORDER BY key COLLATE "C"',
             view[2],
         )
         defined_fields = {row[0] for row in field_rows}
+        try:
+            validate_query_contract(
+                filter_spec,
+                sort_spec,
+                projection_spec,
+                pagination_spec,
+                [
+                    SimpleNamespace(
+                        key=row[0],
+                        field_type=row[1],
+                        localized=row[2],
+                        validation=_json_value(row[3]) or {},
+                    )
+                    for row in field_rows
+                ],
+            )
+        except (TypeError, ValueError):
+            raise ProjectionError("unsupported_collection_query") from None
         if any(field not in defined_fields for field in projection_fields):
             raise ProjectionError("unknown_projection_field")
         requested_limit = node.props.get("limit", pagination_spec.get("limit", 24))
@@ -585,6 +606,63 @@ async def _collection_bindings(
         )
         items: list[dict[str, Any]] = []
         slug_filter = filter_spec.get("slug")
+
+        def matches(
+            values: dict[str, Any], query: dict[str, Any] = filter_spec
+        ) -> bool:
+            def clause(
+                clause_spec: dict[str, Any], query: dict[str, Any] = query
+            ) -> bool:
+                name, operator, expected = (
+                    clause_spec.get("field"),
+                    clause_spec.get("op"),
+                    clause_spec.get("value"),
+                )
+                if not isinstance(name, str) or not isinstance(operator, str):
+                    return False
+                actual = values.get(name)
+                if actual is None:
+                    return False
+                if operator == "eq":
+                    return bool(actual == expected)
+                if operator == "contains":
+                    return (
+                        isinstance(actual, str)
+                        and isinstance(expected, str)
+                        and expected in actual
+                    )
+                if operator == "prefix":
+                    return (
+                        isinstance(actual, str)
+                        and isinstance(expected, str)
+                        and actual.startswith(expected)
+                    )
+                if operator == "in":
+                    return isinstance(expected, list) and actual in expected
+                try:
+                    return bool(
+                        {
+                            "lt": actual < expected,
+                            "lte": actual <= expected,
+                            "gt": actual > expected,
+                            "gte": actual >= expected,
+                        }[operator]
+                    )
+                except (KeyError, TypeError):
+                    return False
+
+            if "and" in query and not all(clause(item) for item in query["and"]):
+                return False
+            if (
+                "or" in query
+                and query["or"]
+                and not any(clause(item) for item in query["or"])
+            ):
+                return False
+            if "not" in query and clause(query["not"]):
+                return False
+            return "field" not in query or clause(query)
+
         for row in rows:
             if row[1] != site_id or row[2] != view[2]:
                 raise ProjectionError("collection_scope")
@@ -593,6 +671,8 @@ async def _collection_bindings(
             values = _json_value(row[5])
             if not isinstance(values, dict):
                 raise ProjectionError("malformed_item")
+            if not matches(values):
+                continue
             item = {
                 "id": row[0],
                 "site_id": row[1],

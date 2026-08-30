@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Request, Response
+from fastapi import APIRouter, Query, Request, Response
 
 from slaif_agent_site.content_model.service import (
     ContentModelService,
@@ -19,6 +19,7 @@ from slaif_agent_site.content_model.view_models import (
 from slaif_agent_site.control_api.site_authority import authorize_site_request
 from slaif_agent_site.editor_api.mutations import request_service
 from slaif_agent_site.errors import (
+    DomainValidationError,
     ResourceConflictError,
     ResourceNotFoundError,
     ServiceUnavailableError,
@@ -53,14 +54,18 @@ async def create_view(
     )
     try:
         return await _service(request).create_view(  # type: ignore[no-any-return]
+            site_id=site_id,
             type_id=type_id,
             key=body.key,
             filter_spec=body.filter_spec,
             sort_spec=body.sort_spec,
             projection_spec=body.projection_spec,
             pagination_spec=body.pagination_spec,
+            definition_version=body.definition_version,
         )
     except ContentModelServiceError as exc:
+        if exc.reason is ContentModelServiceReason.VALIDATION:
+            raise DomainValidationError() from None
         if exc.reason is ContentModelServiceReason.CONFLICT:
             raise ResourceConflictError() from None
         raise ServiceUnavailableError() from None
@@ -74,7 +79,7 @@ async def list_views(
         request, site_id, permission="collection-view:read", state_changing=False
     )
     try:
-        return list(await _service(request).list_views(type_id))
+        return list(await _service(request).list_views(site_id, type_id))
     except ContentModelServiceError:
         raise ServiceUnavailableError() from None
 
@@ -87,7 +92,7 @@ async def get_view(
         request, site_id, permission="collection-view:read", state_changing=False
     )
     try:
-        record = await _service(request).get_view(view_id)
+        record = await _service(request).get_view(site_id, view_id)
     except ContentModelServiceError as exc:
         if exc.reason is ContentModelServiceReason.NOT_FOUND:
             raise ResourceNotFoundError() from None
@@ -105,7 +110,7 @@ async def update_view(
         request, site_id, permission="collection-view:write", state_changing=True
     )
     try:
-        record = await _service(request).get_view(view_id)
+        record = await _service(request).get_view(site_id, view_id)
     except ContentModelServiceError as exc:
         if exc.reason is ContentModelServiceReason.NOT_FOUND:
             raise ResourceNotFoundError() from None
@@ -114,30 +119,45 @@ async def update_view(
         raise ResourceNotFoundError()
     try:
         return await _service(request).update_view(  # type: ignore[no-any-return]
+            site_id=site_id,
             view_id=view_id,
             filter_spec=body.filter_spec,
             sort_spec=body.sort_spec,
             projection_spec=body.projection_spec,
             pagination_spec=body.pagination_spec,
+            expected_row_version=body.expected_row_version,
+            definition_version=body.definition_version,
         )
     except ContentModelServiceError as exc:
         if exc.reason is ContentModelServiceReason.NOT_FOUND:
             raise ResourceNotFoundError() from None
+        if exc.reason is ContentModelServiceReason.VALIDATION:
+            raise DomainValidationError() from None
         raise ResourceConflictError() from None
 
 
 @router.delete("/{view_id}", status_code=204)
-async def delete_view(site_id: UUID, view_id: UUID, request: Request) -> Response:
+async def delete_view(
+    site_id: UUID,
+    view_id: UUID,
+    request: Request,
+    expected_row_version: int = Query(..., ge=1),
+) -> Response:
     await _auth(
         request, site_id, permission="collection-view:delete", state_changing=True
     )
     try:
-        record = await _service(request).get_view(view_id)
+        record = await _service(request).get_view(site_id, view_id)
     except ContentModelServiceError as exc:
         if exc.reason is ContentModelServiceReason.NOT_FOUND:
             raise ResourceNotFoundError() from None
         raise ServiceUnavailableError() from None
     if record.site_id != site_id:
         raise ResourceNotFoundError()
-    await _service(request).delete_view(view_id)
+    try:
+        await _service(request).delete_view(site_id, view_id, expected_row_version)
+    except ContentModelServiceError as exc:
+        if exc.reason is ContentModelServiceReason.NOT_FOUND:
+            raise ResourceNotFoundError() from None
+        raise ResourceConflictError() from None
     return Response(status_code=204)

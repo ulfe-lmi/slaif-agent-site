@@ -551,10 +551,47 @@ async def test_editor_http_translations_relations_are_versioned_and_site_confine
                     json={"metadata": {}, "expected_row_version": 1},
                 )
                 assert stale_relation.status_code == 409
+                view_path = f"{root}/collection-views/types/{type_id}"
+                view = await client.post(
+                    view_path,
+                    headers=mutation("domain-view"),
+                    json={
+                        "type_id": type_id,
+                        "key": "published",
+                        "filter_spec": {"status": "DRAFT"},
+                        "sort_spec": {"field": "slug", "direction": "asc"},
+                        "projection_spec": {},
+                        "pagination_spec": {"limit": 10, "offset": 0},
+                        "definition_version": 1,
+                    },
+                )
+                assert view.status_code == 201, view.text
+                view_id = view.json()["id"]
+                view_update = await client.patch(
+                    f"{root}/collection-views/{view_id}",
+                    headers=mutation("domain-view-update"),
+                    json={
+                        "pagination_spec": {"limit": 5, "offset": 0},
+                        "expected_row_version": 1,
+                    },
+                )
+                assert view_update.status_code == 200
+                stale_view = await client.patch(
+                    f"{root}/collection-views/{view_id}",
+                    headers=mutation("domain-view-stale"),
+                    json={"expected_row_version": 1},
+                )
+                assert stale_view.status_code == 409
                 assert (
                     await client.delete(
                         f"{translation_path}/{translation_id}?expected_row_version=2",
                         headers=mutation("domain-translation-delete"),
+                    )
+                ).status_code == 204
+                assert (
+                    await client.delete(
+                        f"{root}/collection-views/{view_id}?expected_row_version=2",
+                        headers=mutation("domain-view-delete"),
                     )
                 ).status_code == 204
                 assert (
@@ -580,7 +617,7 @@ async def test_editor_http_translations_relations_are_versioned_and_site_confine
                 "(SELECT count(*) FROM audit.human_editor_mutation WHERE site_id=$1)",
                 site_id,
             )
-            assert tuple(counts) == (11, 11)
+            assert tuple(counts) == (14, 14)
     finally:
         if editor is not None:
             await editor.stop()

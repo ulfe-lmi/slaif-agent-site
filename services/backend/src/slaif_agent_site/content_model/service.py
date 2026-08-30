@@ -30,6 +30,7 @@ from .models import (
     UpdateRelationRequest,
     UpdateTranslationRequest,
 )
+from .query_dsl import validate_query_contract
 from .validators import validate_values
 
 CT_CREATE_SQL = "SELECT * FROM content.slaif_content_type_create($1,$2,$3,$4,$5)"
@@ -120,61 +121,126 @@ def _fd(row: Any) -> FieldDefinitionRecord:
 class CollectionViewMixin:
     _fetchrow: Any
     _fetch: Any
+    get_type: Any
+    list_fields: Any
 
     async def create_view(
         self,
+        site_id: UUID,
         type_id: UUID,
         key: str,
         filter_spec: dict[str, Any],
         sort_spec: dict[str, Any],
         projection_spec: dict[str, Any],
         pagination_spec: dict[str, Any],
+        definition_version: int | None = None,
     ) -> Any:
+        content_type = await self.get_type(type_id)
+        if content_type.site_id != site_id or (
+            definition_version is not None
+            and definition_version != content_type.definition_version
+        ):
+            raise ContentModelServiceError(ContentModelServiceReason.VALIDATION)
+        try:
+            validate_query_contract(
+                filter_spec,
+                sort_spec,
+                projection_spec,
+                pagination_spec,
+                await self.list_fields(type_id),
+            )
+        except (ValueError, TypeError):
+            raise ContentModelServiceError(
+                ContentModelServiceReason.VALIDATION
+            ) from None
         row = await self._fetchrow(
-            CV_CREATE_SQL,
+            CV2_CREATE_SQL,
+            site_id,
             type_id,
             key,
-            filter_spec,
-            sort_spec,
-            projection_spec,
-            pagination_spec,
+            json.dumps(filter_spec, sort_keys=True),
+            json.dumps(sort_spec, sort_keys=True),
+            json.dumps(projection_spec, sort_keys=True),
+            json.dumps(pagination_spec, sort_keys=True),
+            content_type.definition_version,
         )
         if row is None:
             raise ContentModelServiceError(ContentModelServiceReason.CONFLICT)
         return _cv(row)
 
-    async def list_views(self, type_id: UUID) -> tuple[Any, ...]:
-        rows = await self._fetch(CV_LIST_SQL, type_id)
+    async def list_views(self, site_id: UUID, type_id: UUID) -> tuple[Any, ...]:
+        rows = await self._fetch(CV2_LIST_SQL, site_id, type_id)
         return tuple(_cv(row) for row in rows)
 
-    async def get_view(self, view_id: UUID) -> Any:
-        row = await self._fetchrow(CV_GET_SQL, view_id)
+    async def get_view(self, site_id: UUID, view_id: UUID) -> Any:
+        row = await self._fetchrow(CV2_GET_SQL, site_id, view_id)
         if row is None:
             raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
         return _cv(row)
 
     async def update_view(
         self,
+        site_id: UUID,
         view_id: UUID,
         filter_spec: dict[str, Any] | None,
         sort_spec: dict[str, Any] | None,
         projection_spec: dict[str, Any] | None,
         pagination_spec: dict[str, Any] | None,
+        expected_row_version: int,
+        definition_version: int | None = None,
     ) -> Any:
+        current = await self.get_view(site_id, view_id)
+        if (
+            definition_version is not None
+            and definition_version != current.definition_version
+        ):
+            raise ContentModelServiceError(ContentModelServiceReason.VALIDATION)
+        values = {
+            "filter": filter_spec if filter_spec is not None else current.filter_spec,
+            "sort": sort_spec if sort_spec is not None else current.sort_spec,
+            "projection": projection_spec
+            if projection_spec is not None
+            else current.projection_spec,
+            "pagination": pagination_spec
+            if pagination_spec is not None
+            else current.pagination_spec,
+        }
+        try:
+            validate_query_contract(
+                values["filter"],
+                values["sort"],
+                values["projection"],
+                values["pagination"],
+                await self.list_fields(current.type_id),
+            )
+        except (ValueError, TypeError):
+            raise ContentModelServiceError(
+                ContentModelServiceReason.VALIDATION
+            ) from None
         row = await self._fetchrow(
-            CV_UPDATE_SQL,
+            CV2_UPDATE_SQL,
+            site_id,
             view_id,
-            filter_spec,
-            sort_spec,
-            projection_spec,
-            pagination_spec,
+            json.dumps(filter_spec, sort_keys=True)
+            if filter_spec is not None
+            else None,
+            json.dumps(sort_spec, sort_keys=True) if sort_spec is not None else None,
+            json.dumps(projection_spec, sort_keys=True)
+            if projection_spec is not None
+            else None,
+            json.dumps(pagination_spec, sort_keys=True)
+            if pagination_spec is not None
+            else None,
+            expected_row_version,
         )
         if row is None:
             raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
         return _cv(row)
 
-    async def delete_view(self, view_id: UUID) -> None:
-        await self._fetchrow(CV_DELETE_SQL, view_id)
+    async def delete_view(
+        self, site_id: UUID, view_id: UUID, expected_row_version: int
+    ) -> None:
+        await self._fetchrow(CV2_DELETE_SQL, site_id, view_id, expected_row_version)
 
 
 class PageMixin:
@@ -932,11 +998,15 @@ def _ci(row: Any) -> Any:
     )
 
 
-CV_CREATE_SQL = "SELECT * FROM content.slaif_collection_view_create($1,$2,$3,$4,$5,$6)"
-CV_LIST_SQL = "SELECT * FROM content.slaif_collection_view_list($1)"
-CV_GET_SQL = "SELECT * FROM content.slaif_collection_view_get($1)"
-CV_UPDATE_SQL = "SELECT * FROM content.slaif_collection_view_update($1,$2,$3,$4,$5)"
-CV_DELETE_SQL = "SELECT content.slaif_collection_view_delete($1)"
+CV2_CREATE_SQL = (
+    "SELECT * FROM content.slaif_collection_view_v2_create($1,$2,$3,$4,$5,$6,$7,$8)"
+)
+CV2_LIST_SQL = "SELECT * FROM content.slaif_collection_view_v2_list($1,$2)"
+CV2_GET_SQL = "SELECT * FROM content.slaif_collection_view_v2_get($1,$2)"
+CV2_UPDATE_SQL = (
+    "SELECT * FROM content.slaif_collection_view_v2_update($1,$2,$3,$4,$5,$6,$7)"
+)
+CV2_DELETE_SQL = "SELECT content.slaif_collection_view_v2_delete($1,$2,$3)"
 
 
 def _cv(row: Any) -> Any:
@@ -955,6 +1025,8 @@ def _cv(row: Any) -> Any:
         pagination_spec=json.loads(row[7]) if isinstance(row[7], str) else row[7],
         created_at=row[8],
         updated_at=row[9],
+        definition_version=row[10] if len(row) > 10 else 1,
+        row_version=row[11] if len(row) > 11 else 1,
     )
 
 

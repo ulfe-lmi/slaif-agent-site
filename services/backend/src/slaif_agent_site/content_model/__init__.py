@@ -9,6 +9,7 @@ from .models import (
     UpdateTranslationRequest,
 )
 from .primitives import FieldPrimitive, FieldPrimitiveError
+from .query_dsl import validate_query_contract
 
 __all__ = [
     "FieldPrimitive",
@@ -19,4 +20,5 @@ __all__ = [
     "TranslationRecord",
     "UpdateRelationRequest",
     "UpdateTranslationRequest",
+    "validate_query_contract",
 ]

@@ -36,6 +36,7 @@ EXPECTED_CONTENT_TABLES = frozenset(
         "content_type",
         "field_definition",
         "content_item",
+        "collection_view",
     }
 )
 
