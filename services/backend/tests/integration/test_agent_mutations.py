@@ -92,6 +92,14 @@ async def _seed(database: AgentSiteDatabase) -> tuple[str, dict[str, UUID]]:
             RETURNING id
             """
         )
+        await owner.execute(
+            "INSERT INTO control.site_membership("
+            "site_id,user_account_id,role_key,delegation_ceiling) "
+            "VALUES ($1,$2,'SITE_OWNER',4),($3,$2,'SITE_OWNER',4)",
+            site_id,
+            delegator_id,
+            site_b_id,
+        )
         type_b_id = uuid4()
         page_b_id = uuid4()
         await owner.execute(
@@ -117,10 +125,10 @@ async def _seed(database: AgentSiteDatabase) -> tuple[str, dict[str, UUID]]:
         workspace_id = await owner.fetchval(
             """
             INSERT INTO control.workspace (
-                site_id, created_by, title, delegation_preset,
+                site_id, created_by, delegator_id, title, delegation_preset,
                 effective_scopes, status, expires_at
             ) VALUES (
-                $1, $2, 'Agent Mutation Workspace', 'L4',
+                $1, $2, $2, 'Agent Mutation Workspace', 'L4',
                 '["site:read","content-model:create","content-model:read",
                   "content-item:create","content-item:read","page:create",
                   "page:read","composition:read","media:read",
@@ -195,9 +203,10 @@ async def _workspace_capability(
         workspace_id = await owner.fetchval(
             """
             INSERT INTO control.workspace (
-                site_id, created_by, title, delegation_preset,
+                site_id, created_by, delegator_id, title, delegation_preset,
                 effective_scopes, status, expires_at
-            ) VALUES ($1, $2, $3, 'L4', $4::jsonb, 'ACTIVE', now() + interval '1 hour')
+            ) VALUES ($1, $2, $2, $3, 'L4', $4::jsonb, 'ACTIVE',
+                      now() + interval '1 hour')
             RETURNING id
             """,
             seeded["site_id"],
@@ -1139,7 +1148,7 @@ async def test_agent_semantic_reads_use_cow_overlay_fallback_and_isolation(
                 inactive = await client.get(
                     "/api/agent/v1/content-model/types", headers=headers
                 )
-                assert inactive.status_code == 404, inactive.text
+                assert inactive.status_code == 401, inactive.text
 
             async with app.state.database.cow_pool().acquire() as connection:
                 assert not connection.is_in_transaction()

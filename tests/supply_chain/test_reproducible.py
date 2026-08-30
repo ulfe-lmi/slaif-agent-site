@@ -106,6 +106,16 @@ class ReproducibilityHelperTests(unittest.TestCase):
         )
         self.assertIn("json-path=$.z", difference)
 
+    def test_next_app_paths_manifest_compares_json_semantics(self) -> None:
+        manifest_path = (
+            "apps/web/.next/standalone/apps/web/.next/server/app-paths-manifest.json"
+        )
+        target = ("apps/web/.next/standalone",)
+        self.write(manifest_path, b'{"/a":"app/a.js","/b":"app/b.js"}')
+        first = tree_manifest(self.root, target)
+        self.write(manifest_path, b'{"/b":"app/b.js","/a":"app/a.js"}')
+        self.assertEqual(first, tree_manifest(self.root, target))
+
     def test_generated_contracts_ignore_build_cache_but_reject_source_output(
         self,
     ) -> None:

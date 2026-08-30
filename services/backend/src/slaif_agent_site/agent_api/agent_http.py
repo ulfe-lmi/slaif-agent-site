@@ -21,6 +21,7 @@ from slaif_agent_site.agent_api.models import (
 from slaif_agent_site.agent_state.mutations import (
     AgentMutationConflictError,
     AgentMutationUnavailableError,
+    AgentQuotaExceededError,
     InvalidIdempotencyKeyError,
     MissingIdempotencyKeyError,
     execute_agent_mutation,
@@ -54,6 +55,7 @@ from slaif_agent_site.errors import (
     IdempotencyKeyInvalidError,
     IdempotencyKeyRequiredError,
     IdempotencyMismatchError,
+    QuotaExceededError,
     ResourceConflictError,
     ResourceNotFoundError,
     ServiceUnavailableError,
@@ -81,6 +83,16 @@ async def _authenticate(request: Request) -> Any:
         raise ServiceUnavailableError() from None
     if context is None:
         raise AuthenticationError()
+    consume = getattr(database, "consume_agent_quota", None)
+    if consume is None:
+        raise ServiceUnavailableError()
+    try:
+        if not await consume(context, "request"):
+            raise QuotaExceededError()
+    except QuotaExceededError:
+        raise
+    except Exception:
+        raise ServiceUnavailableError() from None
     return context
 
 
@@ -112,6 +124,12 @@ async def get_session(request: Request) -> AgentDiscoveryResponse:
         component_catalog_version="catalog-v1",
         composition_schema_version="site-composition/v1",
         content_model_schema_version="content-model/v1",
+        resource_constraints=context.resource_constraints,
+        source_origins=context.source_origins,
+        request_quota=context.request_quota,
+        mutation_quota=context.mutation_quota,
+        delete_quota=context.delete_quota,
+        upload_quota=context.upload_quota,
     )
 
 
@@ -243,6 +261,8 @@ async def _execute_mutation(
         raise IdempotencyMismatchError() from None
     except AgentMutationConflictError:
         raise ResourceConflictError() from None
+    except AgentQuotaExceededError:
+        raise QuotaExceededError() from None
     except AgentMutationUnavailableError:
         raise ServiceUnavailableError() from None
     except ContentModelServiceError as exc:

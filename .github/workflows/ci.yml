@@ -203,6 +203,7 @@ jobs:
           services/backend/tests/integration/test_membership_control_http.py
           services/backend/tests/integration/test_current_human_control_http.py
           services/backend/tests/integration/test_capability_authentication.py
+          services/backend/tests/integration/test_human_agent_session_control.py
           services/backend/tests/integration/test_browser_run_control_plane.py
           services/backend/tests/integration/test_agent_browser_http.py
           services/backend/tests/integration/test_render_browser_preview.py

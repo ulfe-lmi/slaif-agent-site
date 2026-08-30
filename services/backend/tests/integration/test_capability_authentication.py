@@ -77,13 +77,20 @@ async def _seed_workspace_and_capability(
             RETURNING id
             """
         )
+        await owner.execute(
+            "INSERT INTO control.site_membership("
+            "site_id,user_account_id,role_key,delegation_ceiling) "
+            "VALUES ($1,$2,'SITE_OWNER',4)",
+            site_id,
+            delegator_id,
+        )
         workspace_id = await owner.fetchval(
             """
             INSERT INTO control.workspace (
-                site_id, created_by, title, delegation_preset,
+                site_id, created_by, delegator_id, title, delegation_preset,
                 effective_scopes, status, expires_at
             ) VALUES (
-                $1, $2, 'Capability Auth Workspace', 'L1',
+                $1, $2, $2, 'Capability Auth Workspace', 'L1',
                 '["site:read","content-item:read"]'::jsonb, 'ACTIVE',
                 now() + interval '1 hour'
             ) RETURNING id
@@ -188,6 +195,12 @@ async def test_capability_authentication_positive_negative_and_expiry_paths(
                 "component_catalog_version": "catalog-v1",
                 "composition_schema_version": "site-composition/v1",
                 "content_model_schema_version": "content-model/v1",
+                "resource_constraints": {},
+                "source_origins": [],
+                "request_quota": 1000,
+                "mutation_quota": 500,
+                "delete_quota": 0,
+                "upload_quota": 0,
             }
 
             for token in ("malformed", unknown_token, wrong_secret):

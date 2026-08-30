@@ -89,13 +89,20 @@ async def _site(owner: asyncpg.Connection[Any], suffix: str) -> UUID:
 async def _workspace(
     owner: asyncpg.Connection[Any], *, site_id: UUID, user_id: UUID, suffix: str
 ) -> UUID:
+    await owner.execute(
+        "INSERT INTO control.site_membership("
+        "site_id,user_account_id,role_key,delegation_ceiling) "
+        "VALUES ($1,$2,'SITE_OWNER',4)",
+        site_id,
+        user_id,
+    )
     value = await owner.fetchval(
         """
         INSERT INTO control.workspace (
-            site_id, created_by, actor_type, title, delegation_preset,
+            site_id, created_by, delegator_id, actor_type, title, delegation_preset,
             effective_scopes, status, expires_at
         ) VALUES (
-            $1, $2, 'AGENT', $3, 'L1', '["preview:inspect"]'::jsonb,
+            $1, $2, $2, 'AGENT', $3, 'L1', '["preview:inspect"]'::jsonb,
             'ACTIVE', CURRENT_TIMESTAMP + interval '2 hours'
         ) RETURNING id
         """,
@@ -380,7 +387,7 @@ async def test_public_agent_browser_routes_are_durable_truthful_and_confined(
                 headers=_create_headers(bindings["same_workspace"], "revoked-ws"),
                 json=_body(),
             )
-            assert revoked_workspace.status_code == 404
+            assert revoked_workspace.status_code == 401
             async with owner_connection(
                 database.settings.resolved_owner_dsn(),
                 expected_database=database.name,
@@ -395,7 +402,7 @@ async def test_public_agent_browser_routes_are_durable_truthful_and_confined(
                 headers=_create_headers(bindings["same_workspace"], "expired-ws"),
                 json=_body(),
             )
-            assert expired_workspace.status_code == 404
+            assert expired_workspace.status_code == 401
             async with owner_connection(
                 database.settings.resolved_owner_dsn(),
                 expected_database=database.name,
@@ -414,7 +421,7 @@ async def test_public_agent_browser_routes_are_durable_truthful_and_confined(
                 headers=_create_headers(bindings["foreign"], "archived-site"),
                 json=_body(),
             )
-            assert archived_site.status_code == 404
+            assert archived_site.status_code == 401
             async with owner_connection(
                 database.settings.resolved_owner_dsn(),
                 expected_database=database.name,

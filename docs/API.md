@@ -300,6 +300,35 @@ archived state 409; validation 422; persistence unavailability 503. Every
 success and error is `private, no-store`, `noindex`, and carries one request ID.
 Errors use the stable envelope and reveal no credential or cross-site detail.
 
+## Human Agent session Control API
+
+Authenticated Site Owners use these site-bound routes with the normal session
+cookie and CSRF proof. Workspace creation applies the requested preset/scopes,
+source-origin and quota bounds through owner-defined Control functions. A
+capability response contains its opaque bearer token exactly once; later reads
+return metadata only, and revocation immediately invalidates Agent requests.
+
+| Route | Success | Request |
+| --- | --- | --- |
+| `POST /sites/{site_id}/workspaces/` | 201 | bounded title, preset, TTL, scopes, origins, constraints, quotas |
+| `GET /sites/{site_id}/workspaces/{workspace_id}` | 200 | metadata only |
+| `POST /sites/{site_id}/workspaces/{workspace_id}/capabilities/` | 201 | no body; one-time token response |
+| `GET /sites/{site_id}/workspaces/{workspace_id}/capabilities/` | 200 | metadata only, never secrets |
+| `POST /sites/{site_id}/workspaces/{workspace_id}/capabilities/{capability_id}/revoke` | 200 | no body |
+
+The Agent API authenticates the same site/workspace capability and rechecks
+active workspace, site, delegator account, expiry, and revocation state. It has
+no Control-table or reviewer authority. Freeze, review, promotion, and discard
+are intentionally not exposed by this surface.
+
+Authentication returns the immutable normalized source origins, resource
+constraints, and request/mutation/delete/upload budgets issued with the
+workspace. Every authenticated request consumes one request unit atomically;
+the five existing Agent create routes consume one mutation unit only after a
+new idempotency reservation, so retries do not double-charge. Exhausted
+budgets return `429` without exposing secrets. Human Agent create/issue/revoke
+actions append secret-free rows to the append-only audit stream.
+
 ## Internal Render projection API
 
 Render exposes typed, private projection routes on its internal listener:

@@ -17,6 +17,7 @@ from typing import Any
 
 from tools.supply_chain.evidence import (
     NEXT_APP_PATH_ROUTES_MANIFEST,
+    NEXT_APP_PATHS_MANIFEST,
     normalize_runtime_file,
     sha256_bytes,
 )
@@ -155,7 +156,10 @@ def tree_manifest(root: Path, relative_paths: tuple[str, ...]) -> list[dict[str,
                 )
                 entry["normalized_fields"] = normalized_fields
                 entry["sha256"] = sha256_bytes(content)
-                if runtime_name == NEXT_APP_PATH_ROUTES_MANIFEST:
+                if runtime_name in {
+                    NEXT_APP_PATH_ROUTES_MANIFEST,
+                    NEXT_APP_PATHS_MANIFEST,
+                }:
                     try:
                         document = json.loads(content)
                     except json.JSONDecodeError as exc:

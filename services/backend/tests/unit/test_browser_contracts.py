@@ -226,6 +226,16 @@ async def test_capability_authentication_reads_validated_limits_and_fails_closed
             "tablet",
             "mobile-chromium",
         ],
+        "resource_constraints": {},
+        "source_origins": [],
+        "request_quota": 1000,
+        "mutation_quota": 500,
+        "delete_quota": 100,
+        "upload_quota": 100,
+        "request_used": 0,
+        "mutation_used": 0,
+        "delete_used": 0,
+        "upload_used": 0,
     }
     authenticated = await authenticate_capability(
         _FakePool(row), acquire_timeout=1.0, auth_header=f"Bearer {token}"

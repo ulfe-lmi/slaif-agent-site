@@ -1,5 +1,7 @@
 """Immutable auditable policy declarations for Control and Editor HTTP routes."""
 
+# ruff: noqa: E501 -- route templates remain directly auditable
+
 from __future__ import annotations
 
 import inspect
@@ -247,6 +249,57 @@ ROUTE_POLICIES: Final[tuple[RoutePolicy, ...]] = (
             ("GET", "/api/control/v1/sites", _R),
             ("POST", "/api/control/v1/sites", _M),
             ("POST", "/api/control/v1/sites/{site_id}/archive", _M),
+        )
+    ),
+    *(
+        _policy(
+            _CONTROL,
+            method,
+            path,
+            mutation,
+            True,
+            mutation is _M,
+            _SITE,
+            RoutePolicyKind.SITE_PERMISSION,
+            permission,
+        )
+        for method, path, mutation, permission in (
+            (
+                "POST",
+                "/api/control/v1/sites/{site_id}/workspaces/",
+                _M,
+                "workspace:create",
+            ),
+            (
+                "GET",
+                "/api/control/v1/sites/{site_id}/workspaces/",
+                _R,
+                "workspace:read-all",
+            ),
+            (
+                "GET",
+                "/api/control/v1/sites/{site_id}/workspaces/{workspace_id}",
+                _R,
+                "workspace:read-all",
+            ),
+            (
+                "POST",
+                "/api/control/v1/sites/{site_id}/workspaces/{workspace_id}/capabilities/",
+                _M,
+                "capability:create",
+            ),
+            (
+                "GET",
+                "/api/control/v1/sites/{site_id}/workspaces/{workspace_id}/capabilities/",
+                _R,
+                "workspace:read-all",
+            ),
+            (
+                "POST",
+                "/api/control/v1/sites/{site_id}/workspaces/{workspace_id}/capabilities/{capability_id}/revoke",
+                _M,
+                "capability:revoke",
+            ),
         )
     ),
     *(

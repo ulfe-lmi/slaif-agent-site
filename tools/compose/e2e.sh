@@ -84,4 +84,12 @@ if ! SLAIF_E2E_SECRET_FILE="$SECRET_FILE" \
 then
   fail browser stable-devices-contract
 fi
-echo "compose-e2e: OK projects=9 setup=1 governance=1 preview=1 stable-devices=6 artifacts=disabled"
+
+if ! SLAIF_E2E_SECRET_FILE="$SECRET_FILE" \
+  SLAIF_E2E_OUTPUT_DIR="$OUTPUT_DIR" \
+  pnpm exec playwright test --no-deps \
+    --project=agent-desktop-chromium --project=agent-mobile-chromium
+then
+  fail browser agent-session-desktop-phone-contract
+fi
+echo "compose-e2e: OK projects=11 setup=1 governance=1 preview=1 stable-devices=6 agent-sessions=2 artifacts=disabled"

@@ -22,7 +22,8 @@ body {
 }
 
 button,
-input {
+input,
+select {
   font: inherit;
 }
 
@@ -265,6 +266,35 @@ input:focus-visible,
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 1rem;
+}
+
+.agent-sessions {
+  margin-top: 2rem;
+  display: grid;
+  gap: 1rem;
+}
+.agent-sessions input,
+.agent-sessions select {
+  display: block;
+  width: 100%;
+  max-width: 32rem;
+  margin: 0.5rem 0 1rem;
+  padding: 0.7rem;
+  border: 1px solid var(--line);
+  border-radius: 0.4rem;
+  background: #10252b;
+  color: var(--ink);
+}
+.one-time-secret {
+  display: grid;
+  gap: 0.5rem;
+  margin-top: 1rem;
+  padding: 1rem;
+  border: 1px solid var(--green);
+  overflow-wrap: anywhere;
+}
+.one-time-secret code {
+  user-select: all;
 }
 .admin-card {
   min-height: 0;

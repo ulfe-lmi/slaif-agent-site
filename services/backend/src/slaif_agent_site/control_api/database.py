@@ -1,5 +1,7 @@
 """Control-owned bounded asyncpg pool and database readiness adapter."""
 
+# ruff: noqa: E501 -- fixed SQL signatures remain inspectable
+
 from __future__ import annotations
 
 import asyncio
@@ -75,6 +77,30 @@ PLATFORM_ADMINISTRATOR_SQL = (
 )
 HUMAN_EDITOR_WORKSPACE_RESOLVE_SQL = (
     "SELECT control.slaif_human_editor_workspace_resolve($1,$2)"
+)
+HUMAN_AGENT_WORKSPACE_CREATE_SQL = "SELECT * FROM control.slaif_human_agent_workspace_create($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)"
+HUMAN_AGENT_WORKSPACE_GET_SQL = (
+    "SELECT * FROM control.slaif_human_agent_workspace_get($1,$2,$3)"
+)
+HUMAN_AGENT_WORKSPACE_LIST_SQL = (
+    "SELECT * FROM control.slaif_human_agent_workspace_list($1,$2)"
+)
+HUMAN_AGENT_WORKSPACE_CREATE_IDEMPOTENT_SQL = (
+    "SELECT * FROM control.slaif_human_agent_workspace_create_idempotent("
+    "$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)"
+)
+HUMAN_AGENT_CAPABILITY_CREATE_IDEMPOTENT_SQL = (
+    "SELECT * FROM control.slaif_human_agent_capability_create_idempotent("
+    "$1,$2,$3,$4,$5,$6,$7)"
+)
+HUMAN_AGENT_CAPABILITY_CREATE_SQL = (
+    "SELECT * FROM control.slaif_human_agent_capability_create($1,$2,$3,$4,$5)"
+)
+HUMAN_AGENT_CAPABILITY_REVOKE_SQL = (
+    "SELECT control.slaif_human_agent_capability_revoke($1,$2,$3,$4)"
+)
+HUMAN_AGENT_CAPABILITY_LIST_SQL = (
+    "SELECT * FROM control.slaif_human_agent_capability_list($1,$2,$3)"
 )
 
 
@@ -492,7 +518,66 @@ class ControlDatabase:
             created_at=record.created_at,
             expires_at=record.expires_at,
             browser_limits=record.browser_limits,
+            resource_constraints=record.resource_constraints,
+            source_origins=record.source_origins,
+            request_quota=record.request_quota,
+            mutation_quota=record.mutation_quota,
+            delete_quota=record.delete_quota,
+            upload_quota=record.upload_quota,
         )
+
+    async def _human_agent_call(self, sql: str, *arguments: Any) -> list[Any]:
+        if self._pool is None:
+            raise ControlDatabaseError(ControlDatabaseReason.CONNECTION_UNAVAILABLE)
+        try:
+            async with self._pool.acquire(
+                timeout=self._settings.acquire_timeout_seconds
+            ) as connection:
+                return list(await connection.fetch(sql, *arguments))
+        except asyncio.CancelledError:
+            raise
+        except (TimeoutError, OSError, asyncpg.PostgresError) as error:
+            raise error
+
+    async def human_agent_workspace_create(self, *arguments: Any) -> Any:
+        rows = await self._human_agent_call(
+            HUMAN_AGENT_WORKSPACE_CREATE_SQL, *arguments
+        )
+        return rows[0] if rows else None
+
+    async def human_agent_workspace_get(self, *arguments: Any) -> Any:
+        rows = await self._human_agent_call(HUMAN_AGENT_WORKSPACE_GET_SQL, *arguments)
+        return rows[0] if rows else None
+
+    async def human_agent_workspace_list(self, *arguments: Any) -> list[Any]:
+        return await self._human_agent_call(HUMAN_AGENT_WORKSPACE_LIST_SQL, *arguments)
+
+    async def human_agent_workspace_create_idempotent(self, *arguments: Any) -> Any:
+        rows = await self._human_agent_call(
+            HUMAN_AGENT_WORKSPACE_CREATE_IDEMPOTENT_SQL, *arguments
+        )
+        return rows[0] if rows else None
+
+    async def human_agent_capability_create(self, *arguments: Any) -> Any:
+        rows = await self._human_agent_call(
+            HUMAN_AGENT_CAPABILITY_CREATE_SQL, *arguments
+        )
+        return rows[0] if rows else None
+
+    async def human_agent_capability_create_idempotent(self, *arguments: Any) -> Any:
+        rows = await self._human_agent_call(
+            HUMAN_AGENT_CAPABILITY_CREATE_IDEMPOTENT_SQL, *arguments
+        )
+        return rows[0] if rows else None
+
+    async def human_agent_capability_revoke(self, *arguments: Any) -> Any:
+        rows = await self._human_agent_call(
+            HUMAN_AGENT_CAPABILITY_REVOKE_SQL, *arguments
+        )
+        return bool(rows and rows[0][0])
+
+    async def human_agent_capability_list(self, *arguments: Any) -> list[Any]:
+        return await self._human_agent_call(HUMAN_AGENT_CAPABILITY_LIST_SQL, *arguments)
 
     async def authenticate_local_login(
         self, request: LocalLoginRequest
