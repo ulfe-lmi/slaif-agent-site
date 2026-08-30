@@ -182,11 +182,27 @@ def _require_public_id(value: object) -> str:
     return value
 
 
+def _is_ready_service(response: PublicResponse, service: str) -> bool:
+    if response.status != 200:
+        return False
+    try:
+        document = json.loads(response.body)
+    except (TypeError, ValueError):
+        return False
+    return (
+        isinstance(document, dict)
+        and document.get("status") == "ready"
+        and document.get("service") == service
+    )
+
+
 def _wait_public_ready(client: PublicClientProtocol) -> None:
     for _attempt in range(30):
         control = client.request("/api/control/health/ready")
         agent = client.request("/api/agent/health/ready")
-        if control.status == 200 and agent.status == 200:
+        if _is_ready_service(control, "control-api") and _is_ready_service(
+            agent, "agent-api"
+        ):
             return
         time.sleep(1)
     raise ProofFailure("public-readiness-timeout")
