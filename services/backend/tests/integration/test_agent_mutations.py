@@ -30,6 +30,7 @@ from slaif_agent_site.agent_state.reads import execute_agent_read
 from slaif_agent_site.bootstrap.service import reconcile, upgrade
 from slaif_agent_site.config import ServiceSettings
 from slaif_agent_site.db.connections import owner_connection
+from slaif_agent_site.db.migrations import run_migration
 
 
 def _agent_settings(database: AgentSiteDatabase) -> AgentDatabaseSettings:
@@ -227,6 +228,28 @@ async def _workspace_capability(
             json.dumps(scopes),
         )
     return token, workspace_id
+
+
+async def _set_resource_constraints(
+    database: AgentSiteDatabase,
+    workspace_id: UUID,
+    constraints: dict[str, Any],
+) -> None:
+    encoded = json.dumps(constraints, sort_keys=True)
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        await owner.execute(
+            "UPDATE control.workspace SET resource_constraints=$2::jsonb WHERE id=$1",
+            workspace_id,
+            encoded,
+        )
+        await owner.execute(
+            "UPDATE control.capability SET resource_constraints=$2::jsonb "
+            "WHERE workspace_id=$1",
+            workspace_id,
+            encoded,
+        )
 
 
 @pytest.mark.asyncio
@@ -1435,3 +1458,329 @@ async def test_cancelled_agent_mutation_rolls_back_reservation_and_cleans_pool(
             )
     finally:
         await reviewer_pool.close()
+
+
+@pytest.mark.asyncio
+async def test_content_type_create_resource_limits_are_db_serialized(
+    agent_site_database: AgentSiteDatabase,
+) -> None:
+    database = agent_site_database
+    _token, seeded = await _seed(database)
+    scopes = ["site:read", "content-model:create", "content-model:read"]
+    _, other_workspace = await _workspace_capability(
+        database, seeded, scopes, "Resource Isolation Workspace"
+    )
+    _, race_workspace = await _workspace_capability(
+        database, seeded, scopes, "Resource Race Workspace"
+    )
+    http_token, http_workspace = await _workspace_capability(
+        database, seeded, scopes, "Resource HTTP Race Workspace"
+    )
+    _, roundtrip_workspace = await _workspace_capability(
+        database, seeded, scopes, "Resource Migration Workspace"
+    )
+    agent_pool = await database.role_pool("slaif_agent_runtime")
+    second_agent_pool = await database.role_pool("slaif_agent_runtime")
+    reviewer_pool = await database.role_pool("slaif_reviewer")
+
+    async def create_type(pool: asyncpg.Pool[Any], workspace_id: UUID, key: str) -> Any:
+        async with asyncpg_cow_session(
+            pool, session_id=workspace_id, operation_id=uuid4()
+        ) as cow:
+            return await cow.native.fetchrow(
+                "SELECT * FROM content.slaif_agent_content_type_create($1,$2,$3,$4,$5)",
+                seeded["site_id"],
+                key,
+                json.dumps({"en": key}),
+                f"/{key}/{{slug}}",
+                "{}",
+            )
+
+    async def visible_type_keys(
+        pool: asyncpg.Pool[Any], workspace_id: UUID
+    ) -> set[str]:
+        async with asyncpg_cow_session(
+            pool, session_id=workspace_id, operation_id=uuid4()
+        ) as cow:
+            return {
+                str(row[0])
+                for row in await cow.native.fetch(
+                    "SELECT key FROM content.content_type "
+                    "WHERE site_id=$1 AND status='ACTIVE' ORDER BY key",
+                    seeded["site_id"],
+                )
+            }
+
+    async def operation_count(workspace_id: UUID) -> int:
+        async with asyncpg_cow_reviewer(reviewer_pool) as reviewer:
+            return len(await reviewer.operations(workspace_id, schema="content"))
+
+    try:
+        async with agent_pool.acquire() as agent:
+            assert not await agent.fetchval(
+                "SELECT has_function_privilege(current_user, "
+                "'control.slaif_agent_resource_constraints(uuid)', 'EXECUTE')"
+            )
+            with pytest.raises(asyncpg.InsufficientPrivilegeError):
+                await agent.fetchrow(
+                    "SELECT * FROM control.slaif_agent_resource_constraints($1)",
+                    seeded["site_id"],
+                )
+
+        await _set_resource_constraints(
+            database,
+            seeded["workspace_id"],
+            {"allowed_type_keys": ["allowed"], "max_content_types": 2},
+        )
+        assert (await create_type(agent_pool, seeded["workspace_id"], "allowed"))[
+            "key"
+        ] == "allowed"
+        operations_after_allowed = await operation_count(seeded["workspace_id"])
+        with pytest.raises(
+            asyncpg.PostgresError, match="AGENT_RESOURCE_TYPE_KEY_DENIED"
+        ):
+            await create_type(agent_pool, seeded["workspace_id"], "blocked")
+        assert await operation_count(seeded["workspace_id"]) == operations_after_allowed
+        assert await visible_type_keys(agent_pool, seeded["workspace_id"]) == {
+            "allowed"
+        }
+
+        await _set_resource_constraints(
+            database,
+            seeded["workspace_id"],
+            {
+                "allowed_type_keys": ["allowed", "second", "third"],
+                "max_content_types": 2,
+            },
+        )
+        assert (await create_type(agent_pool, seeded["workspace_id"], "second"))[
+            "key"
+        ] == "second"
+        operations_at_limit = await operation_count(seeded["workspace_id"])
+        with pytest.raises(
+            asyncpg.PostgresError, match="AGENT_RESOURCE_CONTENT_TYPE_LIMIT"
+        ):
+            await create_type(agent_pool, seeded["workspace_id"], "third")
+        assert await operation_count(seeded["workspace_id"]) == operations_at_limit
+        assert await visible_type_keys(agent_pool, seeded["workspace_id"]) == {
+            "allowed",
+            "second",
+        }
+        assert await visible_type_keys(agent_pool, other_workspace) == set()
+
+        await _set_resource_constraints(
+            database,
+            race_workspace,
+            {
+                "allowed_type_keys": ["race-one", "race-two"],
+                "max_content_types": 1,
+            },
+        )
+        race_ready = asyncio.Event()
+        race_guard = asyncio.Lock()
+        race_arrivals = 0
+
+        async def race_create(pool: asyncpg.Pool[Any], key: str) -> tuple[str, str]:
+            nonlocal race_arrivals
+            try:
+                async with asyncpg_cow_session(
+                    pool, session_id=race_workspace, operation_id=uuid4()
+                ) as cow:
+                    async with race_guard:
+                        race_arrivals += 1
+                        if race_arrivals == 2:
+                            race_ready.set()
+                    await asyncio.wait_for(race_ready.wait(), timeout=5)
+                    row = await cow.native.fetchrow(
+                        "SELECT * FROM content.slaif_agent_content_type_create("
+                        "$1,$2,$3,$4,$5)",
+                        seeded["site_id"],
+                        key,
+                        json.dumps({"en": key}),
+                        f"/{key}/{{slug}}",
+                        "{}",
+                    )
+                    return "created", str(row["key"])
+            except asyncpg.PostgresError as error:
+                return "denied", str(error)
+
+        race_results = await asyncio.gather(
+            race_create(agent_pool, "race-one"),
+            race_create(second_agent_pool, "race-two"),
+        )
+        assert [result[0] for result in race_results].count("created") == 1
+        assert [result[0] for result in race_results].count("denied") == 1
+        denied_result = next(result for result in race_results if result[0] == "denied")
+        assert "AGENT_RESOURCE_CONTENT_TYPE_LIMIT" in denied_result[1]
+        race_keys = await visible_type_keys(agent_pool, race_workspace)
+        assert len(race_keys) == 1
+        assert race_keys <= {"race-one", "race-two"}
+        assert await operation_count(race_workspace) == 1
+        assert not race_keys.intersection(
+            await visible_type_keys(agent_pool, seeded["workspace_id"])
+        )
+
+        await _set_resource_constraints(
+            database,
+            http_workspace,
+            {
+                "allowed_type_keys": ["http-one", "http-two"],
+                "max_content_types": 1,
+            },
+        )
+        app = create_agent_app(
+            settings=ServiceSettings.for_test(),
+            database_settings=_agent_settings(database),
+        )
+        async with app.router.lifespan_context(app):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://agent.test"
+            ) as client:
+                headers = {"Authorization": f"Bearer {http_token}"}
+                http_responses = await asyncio.gather(
+                    client.post(
+                        "/api/agent/v1/content-model/types",
+                        headers={**headers, "Idempotency-Key": "http-race-one"},
+                        json={
+                            "key": "http-one",
+                            "labels": {"en": "HTTP one"},
+                            "slug_pattern": "/http-one/{slug}",
+                            "settings": {},
+                        },
+                    ),
+                    client.post(
+                        "/api/agent/v1/content-model/types",
+                        headers={**headers, "Idempotency-Key": "http-race-two"},
+                        json={
+                            "key": "http-two",
+                            "labels": {"en": "HTTP two"},
+                            "slug_pattern": "/http-two/{slug}",
+                            "settings": {},
+                        },
+                    ),
+                )
+        statuses = [response.status_code for response in http_responses]
+        assert statuses.count(201) == 1, [response.text for response in http_responses]
+        assert sum(status in {409, 429} for status in statuses) == 1, [
+            response.text for response in http_responses
+        ]
+        assert len(await visible_type_keys(agent_pool, http_workspace)) == 1
+        assert await operation_count(http_workspace) == 1
+
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            assert (
+                await owner.fetchval(
+                    "SELECT count(*) FROM content.content_type_base "
+                    "WHERE site_id=$1 AND key = ANY($2::text[])",
+                    seeded["site_id"],
+                    [
+                        "allowed",
+                        "second",
+                        "race-one",
+                        "race-two",
+                        "http-one",
+                        "http-two",
+                    ],
+                )
+                == 0
+            )
+            assert (
+                await owner.fetchval(
+                    "SELECT count(*) FROM control.agent_idempotency "
+                    "WHERE workspace_id=$1",
+                    http_workspace,
+                )
+                == 1
+            )
+            assert (
+                await owner.fetchval(
+                    "SELECT count(*) FROM audit.agent_mutation WHERE workspace_id=$1",
+                    http_workspace,
+                )
+                == 1
+            )
+
+        await _set_resource_constraints(
+            database,
+            roundtrip_workspace,
+            {
+                "allowed_type_keys": ["downgrade-create", "upgrade-denied"],
+                "max_content_types": 0,
+            },
+        )
+        await run_migration(
+            database.settings.resolved_owner_dsn(),
+            expected_database=database.name,
+            operation="downgrade",
+            revision="043_001",
+        )
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            assert (
+                await owner.fetchval(
+                    "SELECT to_regprocedure("
+                    "'control.slaif_agent_resource_constraints(uuid)')"
+                )
+                is None
+            )
+            function_definition = await owner.fetchval(
+                "SELECT pg_get_functiondef("
+                "'content.slaif_agent_content_type_create("
+                "uuid,text,jsonb,text,jsonb)'::regprocedure)"
+            )
+            assert "slaif_agent_require_cow_site" in function_definition
+            assert "slaif_agent_unchecked_content_type_create" in function_definition
+            assert "slaif_agent_resource_constraints" not in function_definition
+            assert await owner.fetchval(
+                "SELECT has_function_privilege('slaif_agent_runtime', "
+                "'content.slaif_agent_content_type_create("
+                "uuid,text,jsonb,text,jsonb)', 'EXECUTE')"
+            )
+            assert not await owner.fetchval(
+                "SELECT EXISTS (SELECT 1 FROM pg_proc proc, "
+                "aclexplode(COALESCE(proc.proacl, "
+                "acldefault('f', proc.proowner))) acl "
+                "WHERE proc.oid='content.slaif_agent_content_type_create("
+                "uuid,text,jsonb,text,jsonb)'::regprocedure "
+                "AND acl.grantee=0 AND acl.privilege_type='EXECUTE')"
+            )
+        assert (await create_type(agent_pool, roundtrip_workspace, "downgrade-create"))[
+            "key"
+        ] == "downgrade-create"
+
+        await run_migration(
+            database.settings.resolved_owner_dsn(),
+            expected_database=database.name,
+            operation="upgrade",
+            revision="044_001",
+        )
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            assert (
+                await owner.fetchval(
+                    "SELECT to_regprocedure("
+                    "'control.slaif_agent_resource_constraints(uuid)')"
+                )
+                is not None
+            )
+            assert await owner.fetchval(
+                "SELECT has_function_privilege('slaif_agent_runtime', "
+                "'content.slaif_agent_content_type_create("
+                "uuid,text,jsonb,text,jsonb)', 'EXECUTE')"
+            )
+            assert not await owner.fetchval(
+                "SELECT has_function_privilege('slaif_agent_runtime', "
+                "'control.slaif_agent_resource_constraints(uuid)', 'EXECUTE')"
+            )
+        with pytest.raises(
+            asyncpg.PostgresError, match="AGENT_RESOURCE_CONTENT_TYPE_LIMIT"
+        ):
+            await create_type(agent_pool, roundtrip_workspace, "upgrade-denied")
+    finally:
+        await reviewer_pool.close()
+        await second_agent_pool.close()
+        await agent_pool.close()

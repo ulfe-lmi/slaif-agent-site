@@ -45,7 +45,114 @@ def upgrade() -> None:
     op.execute(
         "REVOKE ALL ON FUNCTION control.slaif_agent_resource_constraints(uuid) FROM PUBLIC, slaif_agent_runtime, slaif_editor_runtime, slaif_control"
     )
+    op.execute(
+        """
+        CREATE OR REPLACE FUNCTION content.slaif_agent_content_type_create(
+            p_site_id uuid, p_key text, p_labels jsonb,
+            p_slug_pattern text, p_settings jsonb
+        ) RETURNS TABLE (
+            id uuid, site_id uuid, key text, labels jsonb,
+            slug_pattern text, status text, definition_version integer,
+            settings jsonb, created_at timestamptz, updated_at timestamptz
+        ) LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $fn$
+        DECLARE
+          workspace_id uuid;
+          constraints record;
+          visible_type_count bigint;
+        BEGIN
+          PERFORM control.slaif_agent_require_cow_site(p_site_id);
+          BEGIN
+            workspace_id := NULLIF(current_setting('app.session_id', true), '')::uuid;
+          EXCEPTION WHEN invalid_text_representation THEN
+            RAISE EXCEPTION 'COW_CONTEXT_REQUIRED' USING ERRCODE='22023';
+          END;
+          IF workspace_id IS NULL THEN
+            RAISE EXCEPTION 'COW_CONTEXT_REQUIRED' USING ERRCODE='22023';
+          END IF;
+
+          SELECT * INTO STRICT constraints
+          FROM control.slaif_agent_resource_constraints(p_site_id);
+          IF coalesce(cardinality(constraints.allowed_type_keys), 0) > 0
+             AND NOT (p_key = ANY(constraints.allowed_type_keys))
+          THEN
+            RAISE EXCEPTION 'AGENT_RESOURCE_TYPE_KEY_DENIED' USING ERRCODE='P0003';
+          END IF;
+
+          PERFORM pg_advisory_xact_lock(
+            hashtextextended(workspace_id::text || '_content_type_create', 994)
+          );
+          IF constraints.max_content_types IS NOT NULL THEN
+            SELECT count(*) INTO visible_type_count
+            FROM content.content_type AS content_type
+            WHERE content_type.site_id=p_site_id
+              AND content_type.status='ACTIVE';
+            IF visible_type_count >= constraints.max_content_types THEN
+              RAISE EXCEPTION 'AGENT_RESOURCE_CONTENT_TYPE_LIMIT'
+                USING ERRCODE='P0001';
+            END IF;
+          END IF;
+
+          RETURN QUERY
+          SELECT * FROM content.slaif_agent_unchecked_content_type_create(
+            p_site_id, p_key, p_labels, p_slug_pattern, p_settings
+          );
+        END;
+        $fn$
+        """
+    )
+    op.execute(
+        """
+        REVOKE ALL ON FUNCTION content.slaif_agent_content_type_create(
+            uuid,text,jsonb,text,jsonb
+        ) FROM PUBLIC, slaif_control, slaif_editor_runtime,
+            slaif_agent_runtime, slaif_public_reader, slaif_preview_reader,
+            slaif_reviewer, slaif_scheduler, slaif_media, slaif_gc
+        """
+    )
+    op.execute(
+        """
+        GRANT EXECUTE ON FUNCTION content.slaif_agent_content_type_create(
+            uuid,text,jsonb,text,jsonb
+        ) TO slaif_agent_runtime
+        """
+    )
 
 
 def downgrade() -> None:
+    op.execute(
+        """
+        CREATE OR REPLACE FUNCTION content.slaif_agent_content_type_create(
+            p_site_id uuid, p_key text, p_labels jsonb,
+            p_slug_pattern text, p_settings jsonb
+        ) RETURNS TABLE (
+            id uuid, site_id uuid, key text, labels jsonb,
+            slug_pattern text, status text, definition_version integer,
+            settings jsonb, created_at timestamptz, updated_at timestamptz
+        ) LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $fn$
+        BEGIN
+          PERFORM control.slaif_agent_require_cow_site(p_site_id);
+          RETURN QUERY
+          SELECT * FROM content.slaif_agent_unchecked_content_type_create(
+            p_site_id, p_key, p_labels, p_slug_pattern, p_settings
+          );
+        END;
+        $fn$
+        """
+    )
+    op.execute(
+        """
+        REVOKE ALL ON FUNCTION content.slaif_agent_content_type_create(
+            uuid,text,jsonb,text,jsonb
+        ) FROM PUBLIC, slaif_control, slaif_editor_runtime,
+            slaif_agent_runtime, slaif_public_reader, slaif_preview_reader,
+            slaif_reviewer, slaif_scheduler, slaif_media, slaif_gc
+        """
+    )
+    op.execute(
+        """
+        GRANT EXECUTE ON FUNCTION content.slaif_agent_content_type_create(
+            uuid,text,jsonb,text,jsonb
+        ) TO slaif_agent_runtime
+        """
+    )
     op.execute("DROP FUNCTION IF EXISTS control.slaif_agent_resource_constraints(uuid)")
