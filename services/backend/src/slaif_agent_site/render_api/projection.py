@@ -6,6 +6,7 @@ import asyncio
 import logging
 import time
 from collections import defaultdict
+from types import SimpleNamespace
 from typing import Any, Protocol, cast
 from uuid import UUID
 
@@ -19,6 +20,14 @@ from slaif_agent_site.browser_preview_credentials import (
     BrowserPreviewCredentialSigner,
     BrowserPreviewExpectedBinding,
 )
+from slaif_agent_site.content_model.query_dsl import (
+    MAX_CANDIDATES,
+    MAX_PAGE_SIZE,
+    matches_filter,
+    sort_collection_items,
+    validate_query_contract,
+)
+from slaif_agent_site.content_model.validators import validate_values
 from slaif_agent_site.identity.sessions import digest_secret, parse_session_token
 from slaif_agent_site.sites.models import SiteContext
 from slaif_agent_site.sites.normalization import normalize_request_path
@@ -501,8 +510,8 @@ async def _collection_bindings(
             raise ProjectionError("invalid_collection_view") from None
         view = await connection.fetchrow(
             "SELECT id, site_id, type_id, key, filter_spec, sort_spec, "
-            "projection_spec, pagination_spec FROM content.collection_view "
-            "WHERE id = $1 LIMIT 1",
+            "projection_spec, pagination_spec, definition_version "
+            "FROM content.collection_view WHERE id = $1 LIMIT 1",
             view_id,
         )
         if view is None or view[1] != site_id:
@@ -516,106 +525,119 @@ async def _collection_bindings(
             for value in (filter_spec, sort_spec, pagination_spec)
         ):
             raise ProjectionError("unsupported_collection_query")
-        if (
-            set(filter_spec) - {"status", "slug"}
-            or set(sort_spec) - {"field", "direction"}
-            or set(pagination_spec) - {"limit"}
-        ):
-            raise ProjectionError("unsupported_collection_query")
-        if filter_spec.get("status") is not None and not isinstance(
-            filter_spec["status"], str
-        ):
-            raise ProjectionError("unsupported_collection_query")
-        if filter_spec.get("slug") is not None and not isinstance(
-            filter_spec["slug"], str
-        ):
-            raise ProjectionError("unsupported_collection_query")
-        if projection_spec in ({}, None):
-            projection_fields: list[str] = []
-        elif isinstance(projection_spec, list):
-            projection_fields = projection_spec
-        elif isinstance(projection_spec, dict) and set(projection_spec) == {"fields"}:
-            projection_fields = projection_spec["fields"]
-        else:
-            raise ProjectionError("unsupported_collection_query")
-        if len(projection_fields) > 16 or not all(
-            isinstance(value, str) and value for value in projection_fields
-        ):
-            raise ProjectionError("unsupported_collection_query")
-        if len(set(projection_fields)) != len(projection_fields) or any(
-            field in {"id", "site_id", "type_id", "slug", "status", "values"}
-            for field in projection_fields
-        ):
-            raise ProjectionError("unsupported_collection_query")
         type_row = await connection.fetchrow(
-            "SELECT site_id, status FROM content.content_type WHERE id = $1 LIMIT 1",
+            "SELECT site_id, status, definition_version "
+            "FROM content.content_type WHERE id = $1 LIMIT 1",
             view[2],
         )
-        if type_row is None or type_row[0] != site_id or type_row[1] != "ACTIVE":
+        if type_row is None or type_row[0] != site_id:
             raise ProjectionError("collection_scope")
+        if type_row[1] != "ACTIVE":
+            raise ProjectionError("collection_scope")
+        if type_row[2] != view[8]:
+            raise ProjectionError("stale_collection_definition")
         field_rows = await connection.fetch(
-            "SELECT key FROM content.field_definition WHERE type_id = $1 "
+            "SELECT key, field_type, localized, validation, cardinality, required "
+            "FROM content.field_definition WHERE type_id = $1 "
             'ORDER BY key COLLATE "C"',
             view[2],
         )
-        defined_fields = {row[0] for row in field_rows}
-        if any(field not in defined_fields for field in projection_fields):
-            raise ProjectionError("unknown_projection_field")
+        field_defs = [
+            SimpleNamespace(
+                key=row[0],
+                field_type=row[1],
+                localized=row[2],
+                validation=_json_value(row[3]) or {},
+                cardinality=row[4],
+                required=row[5],
+            )
+            for row in field_rows
+        ]
+        try:
+            validate_query_contract(
+                filter_spec, sort_spec, projection_spec, pagination_spec, field_defs
+            )
+        except (TypeError, ValueError):
+            raise ProjectionError("unsupported_collection_query") from None
+        projection_fields = (
+            projection_spec.get("fields", [])
+            if isinstance(projection_spec, dict)
+            else projection_spec
+        )
+        statuses = (
+            ["PUBLISHED"] if render_mode == "canonical" else ["PUBLISHED", "DRAFT"]
+        )
+        requested_status = filter_spec.get("status")
+        if requested_status is not None:
+            if requested_status not in statuses:
+                raise ProjectionError("collection_status")
+            statuses = [requested_status]
         requested_limit = node.props.get("limit", pagination_spec.get("limit", 24))
         if (
             isinstance(requested_limit, bool)
             or not isinstance(requested_limit, int)
-            or not 1 <= requested_limit <= 100
+            or not 1 <= requested_limit <= MAX_PAGE_SIZE
         ):
             raise ProjectionError("collection_limit")
-        statuses = (
-            ["PUBLISHED"] if render_mode == "canonical" else ["PUBLISHED", "DRAFT"]
-        )
-        if isinstance(filter_spec.get("status"), str):
-            if filter_spec["status"] not in statuses:
-                raise ProjectionError("collection_status")
-            statuses = [filter_spec["status"]]
-        rows = await connection.fetch(
-            "SELECT id, site_id, type_id, slug, status, values "
-            "FROM content.content_item WHERE site_id = $1 AND type_id = $2 "
-            'AND status = ANY($3::text[]) ORDER BY slug COLLATE "C", id LIMIT 100',
+        offset = pagination_spec.get("offset", 0)
+        candidate_count = await connection.fetchval(
+            "SELECT count(*) FROM content.content_item "
+            "WHERE site_id = $1 AND type_id = $2 AND status = ANY($3::text[])",
             site_id,
             view[2],
             statuses,
         )
+        if not isinstance(candidate_count, int) or candidate_count > MAX_CANDIDATES:
+            raise ProjectionError("query_cost")
+        rows = await connection.fetch(
+            "SELECT id, site_id, type_id, slug, status, values "
+            "FROM content.content_item WHERE site_id = $1 AND type_id = $2 "
+            "AND status = ANY($3::text[]) ORDER BY id",
+            site_id,
+            view[2],
+            statuses,
+        )
+        if len(rows) > MAX_CANDIDATES:
+            raise ProjectionError("query_cost")
         items: list[dict[str, Any]] = []
-        slug_filter = filter_spec.get("slug")
         for row in rows:
             if row[1] != site_id or row[2] != view[2]:
                 raise ProjectionError("collection_scope")
-            if slug_filter is not None and row[3] != slug_filter:
-                continue
             values = _json_value(row[5])
             if not isinstance(values, dict):
                 raise ProjectionError("malformed_item")
-            item = {
-                "id": row[0],
-                "site_id": row[1],
-                "type_id": row[2],
-                "slug": row[3],
-                "status": row[4],
-                "values": {
-                    field: values[field]
-                    for field in projection_fields
-                    if field in values
-                },
+            try:
+                validate_values(values, cast(Any, field_defs))
+            except (TypeError, ValueError):
+                raise ProjectionError("malformed_item") from None
+            if not matches_filter(
+                filter_spec, values, slug=str(row[3]), status=str(row[4])
+            ):
+                continue
+            items.append(
+                {
+                    "id": row[0],
+                    "site_id": row[1],
+                    "type_id": row[2],
+                    "slug": row[3],
+                    "status": row[4],
+                    # Keep all validated values available to the shared sort
+                    # evaluator; projection is applied only after ordering.
+                    "values": values,
+                }
+            )
+        try:
+            sort_collection_items(items, sort_spec)
+        except (TypeError, ValueError):
+            raise ProjectionError("malformed_item") from None
+        page = items[offset : offset + requested_limit]
+        bindings[str(node.id)] = tuple(
+            {
+                **item,
+                "values": {field: item["values"][field] for field in projection_fields},
             }
-            if any(field not in values for field in projection_fields):
-                raise ProjectionError("unknown_projection_field")
-            items.append(item)
-        field = sort_spec.get("field", "slug")
-        if field not in {"slug", "id"}:
-            raise ProjectionError("unsupported_collection_query")
-        reverse = sort_spec.get("direction", "asc") == "desc"
-        if sort_spec.get("direction", "asc") not in {"asc", "desc"}:
-            raise ProjectionError("unsupported_collection_query")
-        items.sort(key=lambda item: str(item.get(field, "")), reverse=reverse)
-        bindings[str(node.id)] = tuple(items[:requested_limit])
+            for item in page
+        )
     return bindings
 
 

@@ -321,6 +321,13 @@ def run_public_restart_proof(
         restart_control_and_agent(project, run=compose_run)
         _wait_public_ready(client)
         restarted_agent = client.request("/api/agent/v1/session", headers=agent_headers)
+        for _attempt in range(5):
+            if restarted_agent.status == 200:
+                break
+            time.sleep(1)
+            restarted_agent = client.request(
+                "/api/agent/v1/session", headers=agent_headers
+            )
         _json(restarted_agent, status=200, label="agent-after-restart")
         workspace_metadata = client.request(workspace_path)
         if token.encode("ascii") in workspace_metadata.body:

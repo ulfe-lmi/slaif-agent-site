@@ -15,6 +15,7 @@ class CreateCollectionViewRequest(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     type_id: UUID
+    definition_version: int | None = None
     key: str
     filter_spec: dict[str, Any] = {}
     sort_spec: dict[str, Any] = {}
@@ -62,6 +63,15 @@ class UpdateCollectionViewRequest(BaseModel):
     sort_spec: dict[str, Any] | None = None
     projection_spec: dict[str, Any] | None = None
     pagination_spec: dict[str, Any] | None = None
+    expected_row_version: int
+    definition_version: int | None = None
+
+    @field_validator("expected_row_version")
+    @classmethod
+    def row_version_is_positive(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("expected_row_version must be positive")
+        return value
 
     @field_validator("filter_spec")
     @classmethod
@@ -117,3 +127,5 @@ class CollectionViewRecord(BaseModel):
     pagination_spec: dict[str, Any]
     created_at: datetime
     updated_at: datetime
+    definition_version: int = 1
+    row_version: int = 1
