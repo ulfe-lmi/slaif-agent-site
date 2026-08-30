@@ -147,7 +147,7 @@ export function AgentSessions({ siteId }: { siteId: string }) {
             id="agent-session-constraints"
             value={constraints}
             onChange={(event) => setConstraints(event.target.value)}
-            placeholder='{"max_items":100}'
+            placeholder='{"max_content_types":100}'
           />
         </details>
         <Button type="button" onClick={() => void create()}>
