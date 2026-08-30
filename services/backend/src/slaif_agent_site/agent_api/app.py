@@ -23,7 +23,10 @@ from ..browser_worker_client import (
     load_browser_worker_credential,
 )
 from ..config import ConfigurationError, ServiceSettings
-from ..control_api.route_policy import validate_route_policy_coverage
+from ..control_api.route_policy import (
+    route_policies_for,
+    validate_route_policy_coverage,
+)
 from ..health import ProbeResult, ReadinessProbe
 from ..logging import configure_json_logging
 from .agent_http import router as agent_router
@@ -158,7 +161,29 @@ def create_app(
             if path != "/api/agent/v1/openapi.json":
                 for operation in operations.values():
                     if isinstance(operation, dict) and "responses" in operation:
-                        operation["security"] = [{"AgentCapability": []}]
+                        method = next(
+                            (
+                                method
+                                for method, candidate in {
+                                    "get": "GET",
+                                    "post": "POST",
+                                    "patch": "PATCH",
+                                    "delete": "DELETE",
+                                }.items()
+                                if operations.get(method) is operation
+                            ),
+                            "",
+                        )
+                        scopes = next(
+                            (
+                                policy.required_scopes
+                                for policy in route_policies_for(ProcessKind.AGENT_API)
+                                if policy.path_template == path
+                                and policy.method == method
+                            ),
+                            (),
+                        )
+                        operation["security"] = [{"AgentCapability": list(scopes)}]
         return JSONResponse(document)
 
     validate_route_policy_coverage(app, ProcessKind.AGENT_API)

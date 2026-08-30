@@ -275,6 +275,8 @@ async def _execute_mutation(
     *,
     resource_type: str,
     mutate: Any,
+    status_code: int = 201,
+    quota_kind: str = "mutation",
 ) -> AgentMutationResponse:
     try:
         key = validate_idempotency_key(idempotency_key)
@@ -295,6 +297,8 @@ async def _execute_mutation(
             digest=digest,
             mutate=mutate,
             resource_type=resource_type,
+            status_code=status_code,
+            quota_kind=quota_kind,
         )
     except DurableIdempotencyMismatchError:
         raise IdempotencyMismatchError() from None
