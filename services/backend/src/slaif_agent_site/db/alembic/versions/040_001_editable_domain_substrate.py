@@ -338,6 +338,16 @@ def downgrade() -> None:
         ("slaif_item_relation_delete", "uuid,uuid,integer"),
     ):
         op.execute(f"DROP FUNCTION IF EXISTS content.{name}({signature}) CASCADE")
+    for name, signature in (
+        ("slaif_agent_content_type_update", "uuid,uuid,jsonb,text,jsonb,integer"),
+        ("slaif_agent_content_type_delete", "uuid,uuid,integer"),
+        (
+            "slaif_agent_field_definition_update",
+            "uuid,uuid,uuid,text,boolean,boolean,integer,integer,jsonb,jsonb,integer",
+        ),
+        ("slaif_agent_field_definition_delete", "uuid,uuid,uuid,integer"),
+    ):
+        op.execute(f"DROP FUNCTION IF EXISTS content.{name}({signature}) CASCADE")
     op.execute("DROP TABLE IF EXISTS content.item_relation CASCADE")
     op.execute("DROP TABLE IF EXISTS content.content_item_translation CASCADE")
     for name, signature in (
