@@ -119,8 +119,10 @@ NEW_PACKAGE_FILES = {
     "slaif_agent_site/db/alembic/versions/038_001_human_agent_session_control_plane.py",
     "slaif_agent_site/db/alembic/versions/039_001_complete_session_authority_and_proof.py",
     "slaif_agent_site/db/alembic/versions/040_001_editable_domain_substrate.py",
+    "slaif_agent_site/db/alembic/versions/041_001_agent_semantic_audit.py",
     "slaif_agent_site/db/alembic/versions/041_001_collection_query_contract.py",
     "slaif_agent_site/db/alembic/versions/042_001_site_data_substrate.py",
+    "slaif_agent_site/db/alembic/versions/044_001_agent_resource_constraints.py",
     "slaif_agent_site/db/connections.py",
     "slaif_agent_site/db/executor.py",
     "slaif_agent_site/db/migrations.py",
@@ -293,8 +295,10 @@ EXPECTED_SDIST_FILES = {
     "services/backend/src/slaif_agent_site/db/alembic/versions/038_001_human_agent_session_control_plane.py",
     "services/backend/src/slaif_agent_site/db/alembic/versions/039_001_complete_session_authority_and_proof.py",
     "services/backend/src/slaif_agent_site/db/alembic/versions/040_001_editable_domain_substrate.py",
+    "services/backend/src/slaif_agent_site/db/alembic/versions/041_001_agent_semantic_audit.py",
     "services/backend/src/slaif_agent_site/db/alembic/versions/041_001_collection_query_contract.py",
     "services/backend/src/slaif_agent_site/db/alembic/versions/042_001_site_data_substrate.py",
+    "services/backend/src/slaif_agent_site/db/alembic/versions/044_001_agent_resource_constraints.py",
     "services/backend/src/slaif_agent_site/mcp_adapter/mcp_http.py",
     "services/backend/src/slaif_agent_site/mcp_adapter/app.py",
     "services/backend/src/slaif_agent_site/control_api/workspace_http.py",
@@ -575,8 +579,10 @@ def test_locked_foundation_artifact_hash_constants_are_sha256() -> None:
 
 
 def test_alembic_graph_and_offline_sql_need_no_locator_or_network() -> None:
-    assert migration_heads() == ("042_001",)
+    assert migration_heads() == ("044_001",)
     assert migration_history() == (
+        "044_001",
+        "043_001",
         "042_001",
         "041_001",
         "040_001",
