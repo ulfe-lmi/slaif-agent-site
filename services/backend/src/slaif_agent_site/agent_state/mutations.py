@@ -58,6 +58,10 @@ BEGIN_IDEMPOTENCY_SQL = (
 COMPLETE_IDEMPOTENCY_SQL = (
     "SELECT control.slaif_agent_idempotency_complete($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)"
 )
+COMPLETE_SEMANTIC_IDEMPOTENCY_SQL = (
+    "SELECT control.slaif_agent_idempotency_complete("
+    "$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)"
+)
 CONSUME_MUTATION_QUOTA_SQL = (
     "SELECT control.slaif_agent_quota_consume($1,$2,'mutation')"
 )
@@ -382,11 +386,15 @@ async def _complete(
     response: AgentMutationResponse,
     resource_type: str,
     status_code: int,
+    action: str | None,
 ) -> None:
     try:
-        await _cow_fetchrow(
-            cow,
-            COMPLETE_IDEMPOTENCY_SQL,
+        completion_sql = (
+            COMPLETE_SEMANTIC_IDEMPOTENCY_SQL
+            if action is not None
+            else COMPLETE_IDEMPOTENCY_SQL
+        )
+        arguments: tuple[object, ...] = (
             context.capability_id,
             context.workspace_id,
             key,
@@ -397,6 +405,13 @@ async def _complete(
             resource_type,
             UUID(str(response.record["id"])),
             context.site_id,
+        )
+        if action is not None:
+            arguments += (action,)
+        await _cow_fetchrow(
+            cow,
+            completion_sql,
+            *arguments,
         )
     except asyncio.CancelledError:
         raise
@@ -479,6 +494,7 @@ async def execute_agent_mutation(
                 response=response,
                 resource_type=resource_type,
                 status_code=status_code,
+                action=action,
             )
             return response
     except asyncio.CancelledError:
