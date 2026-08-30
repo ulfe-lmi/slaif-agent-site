@@ -257,6 +257,7 @@ class FieldDefinitionRecord(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     id: UUID
+    site_id: UUID
     type_id: UUID
     key: str
     label: str
@@ -268,6 +269,135 @@ class FieldDefinitionRecord(BaseModel):
     validation: dict[str, Any]
     ui_options: dict[str, Any]
     definition_version: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class CreateTranslationRequest(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    locale: str
+    localized_values: dict[str, Any] = {}
+
+    @field_validator("locale")
+    @classmethod
+    def locale_is_bounded(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        import re
+
+        normalized = value.strip()
+        if not re.fullmatch(r"[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8}){0,3}", normalized):
+            raise ValueError("locale must be a bounded BCP-47-like tag")
+        return normalized
+
+    @field_validator("localized_values")
+    @classmethod
+    def values_are_bounded(cls, value: dict[str, Any]) -> dict[str, Any]:
+        result = _bounded_json(value)
+        assert isinstance(result, dict)
+        return result
+
+
+class UpdateTranslationRequest(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    locale: str | None = None
+    localized_values: dict[str, Any] | None = None
+
+    @field_validator("locale")
+    @classmethod
+    def locale_is_bounded(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        import re
+
+        normalized = value.strip()
+        if not re.fullmatch(r"[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8}){0,3}", normalized):
+            raise ValueError("locale must be a bounded BCP-47-like tag")
+        return normalized
+
+    @field_validator("localized_values")
+    @classmethod
+    def values_are_bounded(cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
+        if value is None:
+            return None
+        result = _bounded_json(value)
+        assert isinstance(result, dict)
+        return result
+
+
+class TranslationRecord(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    id: UUID
+    site_id: UUID
+    item_id: UUID
+    locale: str
+    localized_values: dict[str, Any]
+    row_version: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class CreateRelationRequest(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    field_definition_id: UUID
+    target_item_id: UUID
+    position: int = 0
+    metadata: dict[str, Any] = {}
+
+    @field_validator("position")
+    @classmethod
+    def position_is_bounded(cls, value: int) -> int:
+        if not 0 <= value <= 999:
+            raise ValueError("position must be between 0 and 999")
+        return value
+
+    @field_validator("metadata")
+    @classmethod
+    def metadata_is_bounded(cls, value: dict[str, Any]) -> dict[str, Any]:
+        result = _bounded_json(value)
+        assert isinstance(result, dict)
+        return result
+
+
+class UpdateRelationRequest(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    target_item_id: UUID | None = None
+    position: int | None = None
+    metadata: dict[str, Any] | None = None
+
+    @field_validator("position")
+    @classmethod
+    def position_is_bounded(cls, value: int | None) -> int | None:
+        if value is not None and not 0 <= value <= 999:
+            raise ValueError("position must be between 0 and 999")
+        return value
+
+    @field_validator("metadata")
+    @classmethod
+    def metadata_is_bounded(cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
+        if value is None:
+            return None
+        result = _bounded_json(value)
+        assert isinstance(result, dict)
+        return result
+
+
+class RelationRecord(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    id: UUID
+    site_id: UUID
+    source_item_id: UUID
+    field_definition_id: UUID
+    target_item_id: UUID
+    position: int
+    metadata: dict[str, Any]
+    row_version: int
     created_at: datetime
     updated_at: datetime
 

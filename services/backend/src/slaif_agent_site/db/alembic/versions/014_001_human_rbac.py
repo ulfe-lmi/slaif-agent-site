@@ -14,7 +14,7 @@ branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 READ = """site:read content-model:read content-item:read collection-view:read
-page:read composition:read navigation:read translation:read media:read theme:read
+page:read composition:read navigation:read translation:read relationship:read media:read theme:read
 redirect:read component-catalog:read preview:inspect validation:read""".split()
 L1 = """content-item:create content-item:write content-item:delete
 translation:write media:upload media-metadata:write media-reference:delete

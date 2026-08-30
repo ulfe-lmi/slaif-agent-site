@@ -20,10 +20,17 @@ from .models import (
     ContentTypeRecord,
     CreateContentTypeRequest,
     CreateFieldDefinitionRequest,
+    CreateRelationRequest,
+    CreateTranslationRequest,
     FieldDefinitionRecord,
+    RelationRecord,
+    TranslationRecord,
     UpdateContentTypeRequest,
     UpdateFieldDefinitionRequest,
+    UpdateRelationRequest,
+    UpdateTranslationRequest,
 )
+from .validators import validate_values
 
 CT_CREATE_SQL = "SELECT * FROM content.slaif_content_type_create($1,$2,$3,$4,$5)"
 CT_LIST_SQL = "SELECT * FROM content.slaif_content_type_list($1)"
@@ -47,6 +54,7 @@ class ContentModelServiceReason(StrEnum):
     CONFLICT = "conflict"
     NOT_FOUND = "not_found"
     UNAVAILABLE = "unavailable"
+    VALIDATION = "validation"
 
 
 class ContentModelServiceError(RuntimeError):
@@ -85,21 +93,27 @@ def _ct(row: Any) -> ContentTypeRecord:
 def _fd(row: Any) -> FieldDefinitionRecord:
     import json
 
+    offset = 1 if len(row) >= 15 else 0
     return FieldDefinitionRecord(
         id=row[0],
-        type_id=row[1],
-        key=row[2],
-        label=row[3],
-        field_type=row[4],
-        required=row[5],
-        localized=row[6],
-        cardinality=row[7],
-        position=row[8],
-        validation=json.loads(row[9]) if isinstance(row[9], str) else row[9],
-        ui_options=json.loads(row[10]) if isinstance(row[10], str) else row[10],
-        definition_version=row[11],
-        created_at=row[12],
-        updated_at=row[13],
+        site_id=row[1] if offset else UUID(int=0),
+        type_id=row[1 + offset],
+        key=row[2 + offset],
+        label=row[3 + offset],
+        field_type=row[4 + offset],
+        required=row[5 + offset],
+        localized=row[6 + offset],
+        cardinality=row[7 + offset],
+        position=row[8 + offset],
+        validation=json.loads(row[9 + offset])
+        if isinstance(row[9 + offset], str)
+        else row[9 + offset],
+        ui_options=json.loads(row[10 + offset])
+        if isinstance(row[10 + offset], str)
+        else row[10 + offset],
+        definition_version=row[11 + offset],
+        created_at=row[12 + offset],
+        updated_at=row[13 + offset],
     )
 
 
@@ -389,6 +403,8 @@ class CompositionMixin:
 class ContentItemMixin:
     _fetchrow: Any
     _fetch: Any
+    get_type: Any
+    list_fields: Any
 
     async def create_item(
         self,
@@ -399,6 +415,18 @@ class ContentItemMixin:
         values: dict[str, Any],
         type_definition_version: int,
     ) -> Any:
+        content_type = await self.get_type(type_id)
+        if (
+            content_type.site_id != site_id
+            or type_definition_version != content_type.definition_version
+        ):
+            raise ContentModelServiceError(ContentModelServiceReason.VALIDATION)
+        try:
+            validate_values(values, await self.list_fields(type_id))
+        except (ValueError, TypeError):
+            raise ContentModelServiceError(
+                ContentModelServiceReason.VALIDATION
+            ) from None
         row = await self._fetchrow(
             CI_CREATE_SQL,
             site_id,
@@ -430,6 +458,14 @@ class ContentItemMixin:
         values: dict[str, Any] | None,
         expected_row_version: int | None,
     ) -> Any:
+        if values is not None:
+            current = await self.get_item(item_id)
+            try:
+                validate_values(values, await self.list_fields(current.type_id))
+            except (ValueError, TypeError):
+                raise ContentModelServiceError(
+                    ContentModelServiceReason.VALIDATION
+                ) from None
         row = await self._fetchrow(
             CI_UPDATE_SQL, item_id, slug, status, values, expected_row_version, None
         )
@@ -443,8 +479,152 @@ class ContentItemMixin:
         await self._fetchrow(CI_DELETE_SQL, item_id, expected_row_version)
 
 
+class EditableDomainMixin:
+    _fetchrow: Any
+    _fetch: Any
+    get_item: Any
+    list_fields: Any
+    get_field: Any
+
+    async def create_translation(
+        self, site_id: UUID, item_id: UUID, request: CreateTranslationRequest
+    ) -> TranslationRecord:
+        item = await self.get_item(item_id)
+        if item.site_id != site_id:
+            raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
+        try:
+            validate_values(
+                request.localized_values,
+                await self.list_fields(item.type_id),
+                localized=True,
+            )
+        except (ValueError, TypeError):
+            raise ContentModelServiceError(
+                ContentModelServiceReason.VALIDATION
+            ) from None
+        row = await self._fetchrow(
+            TR_CREATE_SQL, site_id, item_id, request.locale, request.localized_values
+        )
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.CONFLICT)
+        return _tr(row)
+
+    async def list_translations(
+        self, site_id: UUID, item_id: UUID
+    ) -> tuple[TranslationRecord, ...]:
+        item = await self.get_item(item_id)
+        if item.site_id != site_id:
+            raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
+        return tuple(
+            _tr(row) for row in await self._fetch(TR_LIST_SQL, site_id, item_id)
+        )
+
+    async def get_translation(
+        self, site_id: UUID, translation_id: UUID
+    ) -> TranslationRecord:
+        row = await self._fetchrow(TR_GET_SQL, site_id, translation_id)
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
+        return _tr(row)
+
+    async def update_translation(
+        self, site_id: UUID, translation_id: UUID, request: UpdateTranslationRequest
+    ) -> TranslationRecord:
+        current = await self.get_translation(site_id, translation_id)
+        if request.localized_values is not None:
+            item = await self.get_item(current.item_id)
+            try:
+                validate_values(
+                    request.localized_values,
+                    await self.list_fields(item.type_id),
+                    localized=True,
+                )
+            except (ValueError, TypeError):
+                raise ContentModelServiceError(
+                    ContentModelServiceReason.VALIDATION
+                ) from None
+        row = await self._fetchrow(
+            TR_UPDATE_SQL,
+            site_id,
+            translation_id,
+            request.locale,
+            request.localized_values,
+            None,
+        )
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
+        return _tr(row)
+
+    async def delete_translation(self, site_id: UUID, translation_id: UUID) -> None:
+        await self._fetchrow(TR_DELETE_SQL, site_id, translation_id)
+
+    async def create_relation(
+        self, site_id: UUID, source_item_id: UUID, request: CreateRelationRequest
+    ) -> RelationRecord:
+        source = await self.get_item(source_item_id)
+        if source.site_id != site_id:
+            raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
+        field = await self.get_field(request.field_definition_id)
+        target = await self.get_item(request.target_item_id)
+        if (
+            field.site_id != site_id
+            or target.site_id != site_id
+            or field.type_id != source.type_id
+            or field.field_type not in ("reference", "multi_reference")
+        ):
+            raise ContentModelServiceError(ContentModelServiceReason.VALIDATION)
+        row = await self._fetchrow(
+            REL_CREATE_SQL,
+            site_id,
+            source_item_id,
+            request.field_definition_id,
+            request.target_item_id,
+            request.position,
+            request.metadata,
+        )
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.CONFLICT)
+        return _rel(row)
+
+    async def list_relations(
+        self, site_id: UUID, source_item_id: UUID
+    ) -> tuple[RelationRecord, ...]:
+        source = await self.get_item(source_item_id)
+        if source.site_id != site_id:
+            raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
+        return tuple(
+            _rel(row)
+            for row in await self._fetch(REL_LIST_SQL, site_id, source_item_id)
+        )
+
+    async def get_relation(self, site_id: UUID, relation_id: UUID) -> RelationRecord:
+        row = await self._fetchrow(REL_GET_SQL, site_id, relation_id)
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
+        return _rel(row)
+
+    async def update_relation(
+        self, site_id: UUID, relation_id: UUID, request: UpdateRelationRequest
+    ) -> RelationRecord:
+        row = await self._fetchrow(
+            REL_UPDATE_SQL,
+            site_id,
+            relation_id,
+            request.target_item_id,
+            request.position,
+            request.metadata,
+        )
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
+        return _rel(row)
+
+    async def delete_relation(self, site_id: UUID, relation_id: UUID) -> None:
+        await self._fetchrow(REL_DELETE_SQL, site_id, relation_id)
+
+
 class ContentModelService(
     ContentItemMixin,
+    EditableDomainMixin,
     CollectionViewMixin,
     NavThemeMixin,
     PageMixin,
@@ -497,6 +677,10 @@ class ContentModelService(
             if getattr(error, "sqlstate", None) == "P0002":
                 raise ContentModelServiceError(
                     ContentModelServiceReason.NOT_FOUND
+                ) from None
+            if getattr(error, "sqlstate", None) == "P0003":
+                raise ContentModelServiceError(
+                    ContentModelServiceReason.VALIDATION
                 ) from None
             if getattr(error, "sqlstate", None) == "P0001" or isinstance(
                 error, asyncpg.RaiseError
@@ -623,6 +807,51 @@ class ContentModelService(
 
     async def delete_field(self, field_id: UUID) -> None:
         await self._fetchrow(FD_DELETE_SQL, field_id)
+
+
+# -- Editable domain SQL constants --
+TR_CREATE_SQL = (
+    "SELECT * FROM content.slaif_content_item_translation_create($1,$2,$3,$4)"
+)
+TR_LIST_SQL = "SELECT * FROM content.slaif_content_item_translation_list($1,$2)"
+TR_GET_SQL = "SELECT * FROM content.slaif_content_item_translation_get($1,$2)"
+TR_UPDATE_SQL = (
+    "SELECT * FROM content.slaif_content_item_translation_update($1,$2,$3,$4,$5)"
+)
+TR_DELETE_SQL = "SELECT content.slaif_content_item_translation_delete($1,$2)"
+REL_CREATE_SQL = "SELECT * FROM content.slaif_item_relation_create($1,$2,$3,$4,$5,$6)"
+REL_LIST_SQL = "SELECT * FROM content.slaif_item_relation_list($1,$2)"
+REL_GET_SQL = "SELECT * FROM content.slaif_item_relation_get($1,$2)"
+REL_UPDATE_SQL = "SELECT * FROM content.slaif_item_relation_update($1,$2,$3,$4,$5)"
+REL_DELETE_SQL = "SELECT content.slaif_item_relation_delete($1,$2)"
+
+
+def _tr(row: Any) -> TranslationRecord:
+    return TranslationRecord(
+        id=row[0],
+        site_id=row[1],
+        item_id=row[2],
+        locale=row[3],
+        localized_values=json.loads(row[4]) if isinstance(row[4], str) else row[4],
+        row_version=row[5],
+        created_at=row[6],
+        updated_at=row[7],
+    )
+
+
+def _rel(row: Any) -> RelationRecord:
+    return RelationRecord(
+        id=row[0],
+        site_id=row[1],
+        source_item_id=row[2],
+        field_definition_id=row[3],
+        target_item_id=row[4],
+        position=row[5],
+        metadata=json.loads(row[6]) if isinstance(row[6], str) else row[6],
+        row_version=row[7],
+        created_at=row[8],
+        updated_at=row[9],
+    )
 
 
 # -- Content Item SQL constants --

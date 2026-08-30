@@ -1138,6 +1138,11 @@ async def _function_violations(
                 and name.startswith("slaif_content_type_")
                 or (schema == "content" and name.startswith("slaif_field_definition_"))
                 or (schema == "content" and name.startswith("slaif_content_item_"))
+                or (
+                    schema == "content"
+                    and name.startswith("slaif_content_item_translation_")
+                )
+                or (schema == "content" and name.startswith("slaif_item_relation_"))
                 or (schema == "content" and name.startswith("slaif_collection_view_"))
                 or (schema == "content" and name.startswith("slaif_navigation_"))
                 or (schema == "content" and name.startswith("slaif_theme_"))

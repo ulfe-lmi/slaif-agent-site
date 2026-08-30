@@ -27,6 +27,7 @@ from .composition_http import router as composition_router
 from .config import EditorDatabaseConfigurationError, EditorDatabaseSettings
 from .content_http import router as content_model_router
 from .database import EditorDatabase, EditorIdempotencyReplayError
+from .domain_http import router as editable_domain_router
 from .item_http import router as content_item_router
 from .media_http import router as media_router
 from .mutations import resource_type, response_payload, response_resource_id
@@ -147,6 +148,7 @@ def create_app(
 
     app.include_router(content_model_router)
     app.include_router(content_item_router)
+    app.include_router(editable_domain_router)
     app.include_router(collection_view_router)
     app.include_router(nav_theme_router)
     app.include_router(page_router)
