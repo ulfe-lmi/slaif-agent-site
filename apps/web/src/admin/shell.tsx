@@ -271,7 +271,8 @@ export function AdminShell({
                   <p>
                     <a href={`/s/${authority.site_key}/`}>Open public local route</a>
                   </p>
-                  {authority.effective_permissions.includes("workspace:create") && (
+                  {(authority.platform_administrator ||
+                    authority.effective_permissions.includes("workspace:create")) && (
                     <div id="ai-sessions">
                       <AgentSessions siteId={authority.site_id} />
                     </div>

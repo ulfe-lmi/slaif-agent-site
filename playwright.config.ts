@@ -71,5 +71,17 @@ export default defineConfig({
       testMatch: /auth\.spec\.ts/,
       use: { ...devices["iPhone 13"] },
     },
+    {
+      name: "agent-desktop-chromium",
+      dependencies: ["governance"],
+      testMatch: /agent-sessions\.spec\.ts/,
+      use: { ...devices["Desktop Chrome"] },
+    },
+    {
+      name: "agent-mobile-chromium",
+      dependencies: ["governance"],
+      testMatch: /agent-sessions\.spec\.ts/,
+      use: { ...devices["Pixel 5"] },
+    },
   ],
 });
