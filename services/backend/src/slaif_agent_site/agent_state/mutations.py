@@ -69,6 +69,19 @@ AGENT_FIELD_CREATE_SQL = (
     "SELECT * FROM content.slaif_agent_field_definition_create("
     "$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)"
 )
+AGENT_CONTENT_TYPE_UPDATE_SQL = (
+    "SELECT * FROM content.slaif_agent_content_type_update($1,$2,$3,$4,$5,$6)"
+)
+AGENT_CONTENT_TYPE_DELETE_SQL = (
+    "SELECT content.slaif_agent_content_type_delete($1,$2,$3)"
+)
+AGENT_FIELD_UPDATE_SQL = (
+    "SELECT * FROM content.slaif_agent_field_definition_update("
+    "$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)"
+)
+AGENT_FIELD_DELETE_SQL = (
+    "SELECT content.slaif_agent_field_definition_delete($1,$2,$3,$4)"
+)
 AGENT_ITEM_CREATE_SQL = (
     "SELECT * FROM content.slaif_agent_content_item_create($1,$2,$3,$4,$5,$6)"
 )
@@ -178,6 +191,63 @@ class AgentCowContentModelService(ContentModelService):
         if row is None:
             raise ContentModelServiceError(ContentModelServiceReason.CONFLICT)
         return _fd(row)
+
+    async def update_type_for_site(
+        self, site_id: UUID, type_id: UUID, request: Any
+    ) -> ContentTypeRecord:
+        row = await self._fetchrow(
+            AGENT_CONTENT_TYPE_UPDATE_SQL,
+            site_id,
+            type_id,
+            json.dumps(request.labels, sort_keys=True)
+            if request.labels is not None
+            else None,
+            request.slug_pattern,
+            json.dumps(request.settings, sort_keys=True)
+            if request.settings is not None
+            else None,
+            request.expected_definition_version,
+        )
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
+        return _ct(row)
+
+    async def delete_type_for_site(
+        self, site_id: UUID, type_id: UUID, expected: int
+    ) -> None:
+        await self._fetchrow(AGENT_CONTENT_TYPE_DELETE_SQL, site_id, type_id, expected)
+
+    async def update_field_for_site(
+        self, site_id: UUID, type_id: UUID, field_id: UUID, request: Any
+    ) -> FieldDefinitionRecord:
+        row = await self._fetchrow(
+            AGENT_FIELD_UPDATE_SQL,
+            site_id,
+            type_id,
+            field_id,
+            request.label,
+            request.required,
+            request.localized,
+            request.cardinality,
+            request.position,
+            json.dumps(request.validation, sort_keys=True)
+            if request.validation is not None
+            else None,
+            json.dumps(request.ui_options, sort_keys=True)
+            if request.ui_options is not None
+            else None,
+            request.expected_definition_version,
+        )
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
+        return _fd(row)
+
+    async def delete_field_for_site(
+        self, site_id: UUID, type_id: UUID, field_id: UUID, expected: int
+    ) -> None:
+        await self._fetchrow(
+            AGENT_FIELD_DELETE_SQL, site_id, type_id, field_id, expected
+        )
 
     async def create_item_for_site(
         self,

@@ -11,7 +11,7 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .primitives import FieldPrimitive, FieldPrimitiveError
 
@@ -81,6 +81,7 @@ class UpdateContentTypeRequest(BaseModel):
     labels: dict[str, str] | None = None
     slug_pattern: str | None = None
     settings: dict[str, Any] | None = None
+    expected_definition_version: int = Field(default=1, ge=1)
 
     @field_validator("slug_pattern")
     @classmethod
@@ -222,6 +223,8 @@ class UpdateFieldDefinitionRequest(BaseModel):
     position: int | None = None
     validation: dict[str, Any] | None = None
     ui_options: dict[str, Any] | None = None
+    expected_definition_version: int = Field(default=1, ge=1)
+    expected_row_version: int | None = Field(default=None, ge=1)
 
     @field_validator("label")
     @classmethod

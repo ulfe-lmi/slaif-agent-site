@@ -111,6 +111,14 @@ class AgentSemanticReadService:
         rows = await self._fetch(AGENT_FIELD_DEFINITION_LIST_SQL, site_id, type_id)
         return tuple(_fd(row) for row in rows)
 
+    async def get_field(
+        self, site_id: UUID, type_id: UUID, field_id: UUID
+    ) -> FieldDefinitionRecord:
+        for field in await self.list_fields(site_id, type_id):
+            if field.id == field_id:
+                return field
+        raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
+
     async def list_items(
         self, site_id: UUID, type_id: UUID
     ) -> tuple[ContentItemRecord, ...]:

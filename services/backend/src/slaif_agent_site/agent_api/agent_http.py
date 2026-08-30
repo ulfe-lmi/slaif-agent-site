@@ -43,6 +43,8 @@ from slaif_agent_site.content_model.models import (
     ContentTypeRecord,
     CreateContentTypeRequest,
     CreateFieldDefinitionRequest,
+    UpdateContentTypeRequest,
+    UpdateFieldDefinitionRequest,
 )
 from slaif_agent_site.content_model.page_models import CreatePageRequest
 from slaif_agent_site.content_model.service import (
@@ -183,6 +185,20 @@ async def get_content_type(type_id: UUID, request: Request) -> dict[str, Any]:
     return record.model_dump(mode="json")
 
 
+@router.get("/content-model/types/{type_id}/fields/{field_id}")
+async def get_field_definition(
+    type_id: UUID, field_id: UUID, request: Request
+) -> dict[str, Any]:
+    context = await _authenticate(request)
+    _require_scope(context, "field-definition:read")
+    record = await _execute_read(
+        request,
+        context,
+        lambda service: service.get_field(context.site_id, type_id, field_id),
+    )
+    return cast(dict[str, Any], record.model_dump(mode="json"))
+
+
 @router.get("/content-items/types/{type_id}")
 async def list_content_items(type_id: UUID, request: Request) -> list[dict[str, Any]]:
     context = await _authenticate(request)
@@ -309,6 +325,49 @@ async def create_field_definition(
         resource_type="field_definition",
         mutate=lambda service: service.create_field_for_site(
             context.site_id, type_id, body
+        ),
+    )
+
+
+@router.patch("/content-model/types/{type_id}")
+async def update_content_type(
+    type_id: UUID,
+    request: Request,
+    body: UpdateContentTypeRequest,
+    idempotency_key: IdempotencyHeader = None,
+) -> AgentMutationResponse:
+    context = await _authenticate(request)
+    _require_scope(context, "content-model:update")
+    return await _execute_mutation(
+        request,
+        context,
+        body,
+        idempotency_key,
+        resource_type="content_type",
+        mutate=lambda service: service.update_type_for_site(
+            context.site_id, type_id, body
+        ),
+    )
+
+
+@router.patch("/content-model/types/{type_id}/fields/{field_id}")
+async def update_field_definition(
+    type_id: UUID,
+    field_id: UUID,
+    request: Request,
+    body: UpdateFieldDefinitionRequest,
+    idempotency_key: IdempotencyHeader = None,
+) -> AgentMutationResponse:
+    context = await _authenticate(request)
+    _require_scope(context, "field-definition:update")
+    return await _execute_mutation(
+        request,
+        context,
+        body,
+        idempotency_key,
+        resource_type="field_definition",
+        mutate=lambda service: service.update_field_for_site(
+            context.site_id, type_id, field_id, body
         ),
     )
 
