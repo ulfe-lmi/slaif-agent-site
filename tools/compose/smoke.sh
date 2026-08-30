@@ -51,6 +51,7 @@ MEDIA_SITES_FILE=
 MEDIA_UPLOAD_FILE=
 MEDIA_CONTENT_FILE=
 EDGE_LIMIT_BODY_FILE=
+PUBLIC_AGENT_RESTART_OUTPUT_FILE=
 AGENT_CAPABILITY_CONFIG_FILE=
 AGENT_CAPABILITY_META_FILE=
 AGENT_RUN_FILE=
@@ -148,6 +149,7 @@ cleanup() {
   test -z "$MEDIA_UPLOAD_FILE" || rm -f "$MEDIA_UPLOAD_FILE"
   test -z "$MEDIA_CONTENT_FILE" || rm -f "$MEDIA_CONTENT_FILE"
   test -z "$EDGE_LIMIT_BODY_FILE" || rm -f "$EDGE_LIMIT_BODY_FILE"
+  test -z "$PUBLIC_AGENT_RESTART_OUTPUT_FILE" || rm -f "$PUBLIC_AGENT_RESTART_OUTPUT_FILE"
   test -z "$AGENT_CAPABILITY_CONFIG_FILE" || rm -f "$AGENT_CAPABILITY_CONFIG_FILE"
   test -z "$AGENT_CAPABILITY_META_FILE" || rm -f "$AGENT_CAPABILITY_META_FILE"
   test -z "$AGENT_RUN_FILE" || rm -f "$AGENT_RUN_FILE"
@@ -176,6 +178,7 @@ MEDIA_SITES_FILE=$(mktemp)
 MEDIA_UPLOAD_FILE=$(mktemp)
 MEDIA_CONTENT_FILE=$(mktemp)
 EDGE_LIMIT_BODY_FILE=$(mktemp)
+PUBLIC_AGENT_RESTART_OUTPUT_FILE=$(mktemp)
 AGENT_CAPABILITY_CONFIG_FILE=$(mktemp)
 AGENT_CAPABILITY_META_FILE=$(mktemp)
 AGENT_RUN_FILE=$(mktemp)
@@ -246,6 +249,28 @@ docker compose -p "$PROJECT" logs --no-color bootstrap 2>/dev/null \
   | sed -n 's/^.*setup-token-secret: //p' >"$TOKEN_FILE"
 test "$(wc -l <"$TOKEN_FILE" | tr -d ' ')" = 1
 tools/compose/e2e.sh "$TOKEN_FILE" "$E2E_SECRET_FILE" "$PROJECT"
+
+python tools/compose/public_agent_restart.py \
+  --project "$PROJECT" >"$PUBLIC_AGENT_RESTART_OUTPUT_FILE"
+cat "$PUBLIC_AGENT_RESTART_OUTPUT_FILE"
+public_workspace_id=$(sed -n 's/.*workspace=\([^ ]*\).*/\1/p' "$PUBLIC_AGENT_RESTART_OUTPUT_FILE")
+public_capability_id=$(sed -n 's/.*capability=\([^ ]*\).*/\1/p' "$PUBLIC_AGENT_RESTART_OUTPUT_FILE")
+case "$public_workspace_id" in
+  ''|*[!0-9a-f-]*) fail public-agent-restart-invalid-workspace-id ;;
+esac
+case "$public_capability_id" in
+  ''|*[!0-9a-f]*) fail public-agent-restart-invalid-capability-id ;;
+esac
+docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif -Atc \
+  "SELECT count(*) = 3
+      AND count(*) FILTER (WHERE action='WORKSPACE_CREATED') = 1
+      AND count(*) FILTER (WHERE action='CAPABILITY_ISSUED'
+                           AND capability_public_id='$public_capability_id') = 1
+      AND count(*) FILTER (WHERE action='CAPABILITY_REVOKED'
+                           AND capability_public_id='$public_capability_id') = 1
+   FROM audit.human_agent_session
+   WHERE workspace_id='$public_workspace_id'::uuid;" | grep -q '^t$'
+echo "public-agent-restart-audit: OK workspace=$public_workspace_id capability=$public_capability_id rows=3"
 
 media_login_status=$(curl --silent --show-error --cookie-jar "$MEDIA_COOKIE_FILE" \
   --output "$MEDIA_LOGIN_FILE" --write-out '%{http_code}' \
