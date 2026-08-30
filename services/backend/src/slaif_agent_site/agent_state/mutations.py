@@ -99,6 +99,18 @@ class AgentMutationUnavailableError(RuntimeError):
     """A durable idempotency or COW dependency could not complete."""
 
 
+AGENT_SEMANTIC_ACTIONS = frozenset(
+    {
+        "CONTENT_TYPE_CREATED",
+        "CONTENT_TYPE_UPDATED",
+        "CONTENT_TYPE_DELETED",
+        "FIELD_DEFINITION_CREATED",
+        "FIELD_DEFINITION_UPDATED",
+        "FIELD_DEFINITION_DELETED",
+    }
+)
+
+
 class AgentQuotaExceededError(RuntimeError):
     """The immutable capability mutation budget is exhausted."""
 
@@ -405,6 +417,7 @@ async def execute_agent_mutation(
     resource_type: str,
     status_code: int = 201,
     quota_kind: str = "mutation",
+    action: str | None = None,
 ) -> AgentMutationResponse:
     """Reserve, execute, audit, and complete one atomic Agent mutation."""
 
@@ -450,9 +463,12 @@ async def execute_agent_mutation(
             service = AgentCowContentModelService(cow)
             record = await mutate(service)
             record_body = record.model_dump(mode="json")
+            if action is not None and action not in AGENT_SEMANTIC_ACTIONS:
+                raise AgentMutationUnavailableError()
             response = AgentMutationResponse(
                 record=record_body,
                 operation_id=reservation.operation_id,
+                action=action,
             )
             await _complete(
                 cow,

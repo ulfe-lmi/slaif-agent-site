@@ -90,6 +90,11 @@ def _enforce_resource_constraint(
             raise AuthorizationError()
 
 
+def _constraint(context: Any, key: str, default: Any = None) -> Any:
+    values = context.resource_constraints
+    return values.get(key, default) if isinstance(values, dict) else default
+
+
 async def _authenticate(request: Request) -> Any:
     """Authenticate the agent capability and return trusted context."""
     auth_header = request.headers.get("Authorization", "")
@@ -277,6 +282,7 @@ async def _execute_mutation(
     mutate: Any,
     status_code: int = 201,
     quota_kind: str = "mutation",
+    action: str | None = None,
 ) -> AgentMutationResponse:
     try:
         key = validate_idempotency_key(idempotency_key)
@@ -299,6 +305,7 @@ async def _execute_mutation(
             resource_type=resource_type,
             status_code=status_code,
             quota_kind=quota_kind,
+            action=action,
         )
     except DurableIdempotencyMismatchError:
         raise IdempotencyMismatchError() from None
@@ -328,12 +335,20 @@ async def create_content_type(
     context = await _authenticate(request)
     _require_scope(context, "content-model:create")
     _enforce_resource_constraint(context, type_key=body.key)
+    maximum = _constraint(context, "max_content_types")
+    if maximum is not None:
+        records = await _execute_read(
+            request, context, lambda service: service.list_types(context.site_id)
+        )
+        if len(records) >= maximum:
+            raise QuotaExceededError()
     return await _execute_mutation(
         request,
         context,
         body,
         idempotency_key,
         resource_type="content_type",
+        action="CONTENT_TYPE_CREATED",
         mutate=lambda service: service.create_type(context.site_id, body),
     )
 
@@ -348,12 +363,22 @@ async def create_field_definition(
     context = await _authenticate(request)
     _require_scope(context, "field-definition:create")
     _enforce_resource_constraint(context, type_id=type_id)
+    maximum = _constraint(context, "max_fields_per_type")
+    if maximum is not None:
+        records = await _execute_read(
+            request,
+            context,
+            lambda service: service.list_fields(context.site_id, type_id),
+        )
+        if len(records) >= maximum:
+            raise QuotaExceededError()
     return await _execute_mutation(
         request,
         context,
         body,
         idempotency_key,
         resource_type="field_definition",
+        action="FIELD_DEFINITION_CREATED",
         mutate=lambda service: service.create_field_for_site(
             context.site_id, type_id, body
         ),
@@ -377,6 +402,7 @@ async def update_content_type(
         idempotency_key,
         resource_type="content_type",
         status_code=200,
+        action="CONTENT_TYPE_UPDATED",
         mutate=lambda service: service.update_type_for_site(
             context.site_id, type_id, body
         ),
@@ -401,6 +427,7 @@ async def update_field_definition(
         idempotency_key,
         resource_type="field_definition",
         status_code=200,
+        action="FIELD_DEFINITION_UPDATED",
         mutate=lambda service: service.update_field_for_site(
             context.site_id, type_id, field_id, body
         ),
@@ -417,6 +444,8 @@ async def delete_content_type(
     context = await _authenticate(request)
     _require_scope(context, "content-model:delete")
     _enforce_resource_constraint(context, type_id=type_id)
+    if _constraint(context, "delete_enabled", True) is False:
+        raise AuthorizationError()
     return await _execute_mutation(
         request,
         context,
@@ -425,6 +454,7 @@ async def delete_content_type(
         resource_type="content_type",
         status_code=200,
         quota_kind="delete",
+        action="CONTENT_TYPE_DELETED",
         mutate=lambda service: service.delete_type_for_site(
             context.site_id, type_id, body.expected_definition_version
         ),
@@ -442,6 +472,8 @@ async def delete_field_definition(
     context = await _authenticate(request)
     _require_scope(context, "field-definition:delete")
     _enforce_resource_constraint(context, type_id=type_id)
+    if _constraint(context, "delete_enabled", True) is False:
+        raise AuthorizationError()
     return await _execute_mutation(
         request,
         context,
@@ -450,6 +482,7 @@ async def delete_field_definition(
         resource_type="field_definition",
         status_code=200,
         quota_kind="delete",
+        action="FIELD_DEFINITION_DELETED",
         mutate=lambda service: service.delete_field_for_site(
             context.site_id, type_id, field_id, body.expected_definition_version
         ),
