@@ -6,7 +6,7 @@ from uuid import uuid4
 
 import pytest
 from conftest import AgentSiteDatabase
-from slaif_agent_site.bootstrap.service import upgrade
+from slaif_agent_site.bootstrap.service import reconcile, upgrade
 from slaif_agent_site.db.connections import owner_connection
 from slaif_agent_site.db.migrations import run_migration
 
@@ -17,6 +17,7 @@ async def test_editable_domain_migration_round_trip_restores_field_contract(
 ) -> None:
     database = agent_site_database
     await upgrade(database.settings)
+    await reconcile(database.settings)
     async with owner_connection(
         database.settings.resolved_owner_dsn(), expected_database=database.name
     ) as owner:
@@ -90,6 +91,58 @@ async def test_collection_contract_downgrades_from_head_to_040_and_back(
             "SELECT NOT EXISTS (SELECT 1 FROM information_schema.columns "
             "WHERE table_schema='content' AND table_name='collection_view' "
             "AND column_name='row_version')"
+        )
+    await run_migration(
+        database.settings.resolved_owner_dsn(),
+        expected_database=database.name,
+        operation="upgrade",
+        revision="head",
+    )
+
+
+@pytest.mark.asyncio
+async def test_site_data_substrate_downgrades_from_head_to_041_and_back(
+    agent_site_database: AgentSiteDatabase,
+) -> None:
+    database = agent_site_database
+    await upgrade(database.settings)
+    await reconcile(database.settings)
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        assert await owner.fetchval(
+            "SELECT to_regclass('content.site_locale') IS NOT NULL"
+        )
+        assert await owner.fetchval(
+            "SELECT to_regclass('content.navigation_item') IS NOT NULL"
+        )
+        assert await owner.fetchval(
+            "SELECT to_regclass('content.redirect') IS NOT NULL"
+        )
+        assert await owner.fetchval(
+            "SELECT to_regclass('content.proposed_side_effect') IS NOT NULL"
+        )
+    await run_migration(
+        database.settings.resolved_owner_dsn(),
+        expected_database=database.name,
+        operation="downgrade",
+        revision="041_001",
+    )
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        for table in (
+            "site_locale",
+            "navigation_item",
+            "redirect",
+            "proposed_side_effect",
+        ):
+            assert await owner.fetchval(
+                "SELECT to_regclass($1) IS NULL", f"content.{table}"
+            )
+        assert await owner.fetchval(
+            "SELECT to_regprocedure("
+            "'content.slaif_collection_view_v2_get(uuid,uuid)') IS NOT NULL"
         )
     await run_migration(
         database.settings.resolved_owner_dsn(),

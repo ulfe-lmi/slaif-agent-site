@@ -10,6 +10,20 @@ from .models import (
 )
 from .primitives import FieldPrimitive, FieldPrimitiveError
 from .query_dsl import validate_query_contract
+from .site_data_models import (
+    CreateLocaleRequest,
+    CreateNavigationItemRequest,
+    CreateProposedSideEffectRequest,
+    CreateRedirectRequest,
+    LocaleRecord,
+    MoveNavigationItemRequest,
+    NavigationItemRecord,
+    ProposedSideEffectRecord,
+    RedirectRecord,
+    UpdateLocaleRequest,
+    UpdateNavigationItemRequest,
+    UpdateRedirectRequest,
+)
 
 __all__ = [
     "FieldPrimitive",
@@ -21,4 +35,16 @@ __all__ = [
     "UpdateRelationRequest",
     "UpdateTranslationRequest",
     "validate_query_contract",
+    "CreateLocaleRequest",
+    "UpdateLocaleRequest",
+    "LocaleRecord",
+    "CreateNavigationItemRequest",
+    "UpdateNavigationItemRequest",
+    "MoveNavigationItemRequest",
+    "NavigationItemRecord",
+    "CreateRedirectRequest",
+    "UpdateRedirectRequest",
+    "RedirectRecord",
+    "CreateProposedSideEffectRequest",
+    "ProposedSideEffectRecord",
 ]

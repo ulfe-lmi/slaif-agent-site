@@ -37,6 +37,10 @@ EXPECTED_CONTENT_TABLES = frozenset(
         "field_definition",
         "content_item",
         "collection_view",
+        "site_locale",
+        "navigation_item",
+        "redirect",
+        "proposed_side_effect",
     }
 )
 

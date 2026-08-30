@@ -31,6 +31,24 @@ from .models import (
     UpdateTranslationRequest,
 )
 from .query_dsl import validate_query_contract
+from .site_data_models import (
+    CreateLocaleRequest,
+    CreateNavigationItemRequest,
+    CreateProposedSideEffectRequest,
+    CreateRedirectRequest,
+    LocaleRecord,
+    NavigationItemRecord,
+    ProposedSideEffectRecord,
+    RedirectRecord,
+    UpdateLocaleRequest,
+    UpdateNavigationItemRequest,
+    UpdateRedirectRequest,
+)
+from .site_data_validators import (
+    validate_redirect,
+    validate_side_effect,
+    validate_target,
+)
 from .validators import validate_values
 
 CT_CREATE_SQL = "SELECT * FROM content.slaif_content_type_create($1,$2,$3,$4,$5)"
@@ -291,7 +309,9 @@ class NavThemeMixin:
     async def create_navigation(
         self, site_id: UUID, key: str, label: str, settings: dict[str, Any]
     ) -> Any:
-        row = await self._fetchrow(NV_CREATE_SQL, site_id, key, label, settings)
+        row = await self._fetchrow(
+            NV_CREATE_SQL, site_id, key, label, json.dumps(settings, sort_keys=True)
+        )
         if row is None:
             raise ContentModelServiceError(ContentModelServiceReason.CONFLICT)
         return _nv(row)
@@ -309,7 +329,12 @@ class NavThemeMixin:
     async def update_navigation(
         self, nav_id: UUID, label: str | None, settings: dict[str, Any] | None
     ) -> Any:
-        row = await self._fetchrow(NV_UPDATE_SQL, nav_id, label, settings)
+        row = await self._fetchrow(
+            NV_UPDATE_SQL,
+            nav_id,
+            label,
+            json.dumps(settings, sort_keys=True) if settings is not None else None,
+        )
         if row is None:
             raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
         return _nv(row)
@@ -727,9 +752,289 @@ class EditableDomainMixin:
         await self._fetchrow(REL_DELETE_SQL, site_id, relation_id, expected_row_version)
 
 
+class SiteDataMixin:
+    """Semantic CRUD for the fixed site-data substrate."""
+
+    _fetchrow: Any
+    _fetch: Any
+
+    async def _validate_navigation_parent(
+        self,
+        site_id: UUID,
+        navigation_id: UUID,
+        item_id: UUID | None,
+        parent_id: UUID | None,
+    ) -> None:
+        if parent_id is None:
+            return
+        if item_id == parent_id:
+            raise ContentModelServiceError(ContentModelServiceReason.VALIDATION)
+        rows = await self.list_navigation_items(site_id, navigation_id)
+        parents = {row.id: row.parent_id for row in rows}
+        cursor: UUID | None = parent_id
+        depth = 0
+        while cursor is not None:
+            if cursor == item_id or depth >= 8:
+                raise ContentModelServiceError(ContentModelServiceReason.VALIDATION)
+            cursor = parents.get(cursor)
+            depth += 1
+        if parent_id not in parents:
+            raise ContentModelServiceError(ContentModelServiceReason.VALIDATION)
+
+    async def create_locale(
+        self, site_id: UUID, request: CreateLocaleRequest
+    ) -> LocaleRecord:
+        row = await self._fetchrow(
+            LOCALE_CREATE_SQL,
+            site_id,
+            request.tag,
+            request.enabled,
+            request.is_default,
+            request.position,
+            json.dumps(request.metadata, sort_keys=True),
+        )
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.CONFLICT)
+        return _locale(row)
+
+    async def list_locales(self, site_id: UUID) -> tuple[LocaleRecord, ...]:
+        return tuple(
+            _locale(row) for row in await self._fetch(LOCALE_LIST_SQL, site_id)
+        )
+
+    async def get_locale(self, site_id: UUID, locale_id: UUID) -> LocaleRecord:
+        row = await self._fetchrow(LOCALE_GET_SQL, site_id, locale_id)
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
+        return _locale(row)
+
+    async def update_locale(
+        self, site_id: UUID, locale_id: UUID, request: UpdateLocaleRequest
+    ) -> LocaleRecord:
+        row = await self._fetchrow(
+            LOCALE_UPDATE_SQL,
+            site_id,
+            locale_id,
+            request.tag,
+            request.enabled,
+            request.is_default,
+            request.position,
+            json.dumps(request.metadata, sort_keys=True),
+            request.expected_row_version,
+        )
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
+        return _locale(row)
+
+    async def delete_locale(
+        self, site_id: UUID, locale_id: UUID, expected_row_version: int
+    ) -> None:
+        await self._fetchrow(
+            LOCALE_DELETE_SQL, site_id, locale_id, expected_row_version
+        )
+
+    async def create_navigation_item(
+        self, site_id: UUID, request: CreateNavigationItemRequest
+    ) -> NavigationItemRecord:
+        validate_target(request.target_kind, request.target_value)
+        await self._validate_navigation_parent(
+            site_id, request.navigation_id, None, request.parent_id
+        )
+        if request.locale is not None and not any(
+            locale.tag == request.locale and locale.enabled
+            for locale in await self.list_locales(site_id)
+        ):
+            raise ContentModelServiceError(ContentModelServiceReason.VALIDATION)
+        row = await self._fetchrow(
+            NAV_ITEM_CREATE_SQL,
+            site_id,
+            request.navigation_id,
+            request.parent_id,
+            request.page_id,
+            request.target_kind,
+            request.target_value,
+            json.dumps(request.labels, sort_keys=True),
+            request.locale,
+            request.position,
+        )
+        if row is None:
+            rows = await self._fetch(NAV_ITEM_LIST_SQL, site_id, request.navigation_id)
+            if rows:
+                return _nav_item(rows[-1])
+            raise ContentModelServiceError(ContentModelServiceReason.CONFLICT)
+        return _nav_item(row)
+
+    async def list_navigation_items(
+        self, site_id: UUID, navigation_id: UUID
+    ) -> tuple[NavigationItemRecord, ...]:
+        return tuple(
+            _nav_item(row)
+            for row in await self._fetch(NAV_ITEM_LIST_SQL, site_id, navigation_id)
+        )
+
+    async def get_navigation_item(
+        self, site_id: UUID, item_id: UUID
+    ) -> NavigationItemRecord:
+        row = await self._fetchrow(NAV_ITEM_GET_SQL, site_id, item_id)
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
+        return _nav_item(row)
+
+    async def update_navigation_item(
+        self, site_id: UUID, item_id: UUID, request: UpdateNavigationItemRequest
+    ) -> NavigationItemRecord:
+        validate_target(request.target_kind, request.target_value)
+        current = await self.get_navigation_item(site_id, item_id)
+        await self._validate_navigation_parent(
+            site_id, current.navigation_id, item_id, request.parent_id
+        )
+        if request.locale is not None and not any(
+            locale.tag == request.locale and locale.enabled
+            for locale in await self.list_locales(site_id)
+        ):
+            raise ContentModelServiceError(ContentModelServiceReason.VALIDATION)
+        row = await self._fetchrow(
+            NAV_ITEM_UPDATE_SQL,
+            site_id,
+            item_id,
+            request.parent_id,
+            request.page_id,
+            request.target_kind,
+            request.target_value,
+            json.dumps(request.labels, sort_keys=True),
+            request.locale,
+            request.position,
+            request.expected_row_version,
+        )
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
+        return _nav_item(row)
+
+    async def delete_navigation_item(
+        self, site_id: UUID, item_id: UUID, expected_row_version: int
+    ) -> None:
+        await self._fetchrow(
+            NAV_ITEM_DELETE_SQL, site_id, item_id, expected_row_version
+        )
+
+    async def move_navigation_item(
+        self,
+        site_id: UUID,
+        item_id: UUID,
+        parent_id: UUID | None,
+        position: int,
+        expected_row_version: int,
+    ) -> NavigationItemRecord:
+        current = await self.get_navigation_item(site_id, item_id)
+        await self._validate_navigation_parent(
+            site_id, current.navigation_id, item_id, parent_id
+        )
+        request = UpdateNavigationItemRequest(
+            navigation_id=current.navigation_id,
+            parent_id=parent_id,
+            page_id=current.page_id,
+            target_kind=current.target_kind,
+            target_value=current.target_value,
+            labels=current.labels,
+            locale=current.locale,
+            position=position,
+            expected_row_version=expected_row_version,
+        )
+        return await self.update_navigation_item(site_id, item_id, request)
+
+    async def create_redirect(
+        self, site_id: UUID, request: CreateRedirectRequest
+    ) -> RedirectRecord:
+        source, target = validate_redirect(request.source_route, request.target)
+        if request.locale is not None and not any(
+            locale.tag == request.locale and locale.enabled
+            for locale in await self.list_locales(site_id)
+        ):
+            raise ContentModelServiceError(ContentModelServiceReason.VALIDATION)
+        row = await self._fetchrow(
+            REDIRECT_CREATE_SQL,
+            site_id,
+            source,
+            target,
+            request.status_code,
+            request.locale,
+        )
+        if row is None:
+            rows = await self._fetch(REDIRECT_LIST_SQL, site_id)
+            if rows:
+                return _redirect(rows[-1])
+            raise ContentModelServiceError(ContentModelServiceReason.CONFLICT)
+        return _redirect(row)
+
+    async def list_redirects(self, site_id: UUID) -> tuple[RedirectRecord, ...]:
+        return tuple(
+            _redirect(row) for row in await self._fetch(REDIRECT_LIST_SQL, site_id)
+        )
+
+    async def get_redirect(self, site_id: UUID, redirect_id: UUID) -> RedirectRecord:
+        row = await self._fetchrow(REDIRECT_GET_SQL, site_id, redirect_id)
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
+        return _redirect(row)
+
+    async def update_redirect(
+        self, site_id: UUID, redirect_id: UUID, request: UpdateRedirectRequest
+    ) -> RedirectRecord:
+        source, target = validate_redirect(request.source_route, request.target)
+        if request.locale is not None and not any(
+            locale.tag == request.locale and locale.enabled
+            for locale in await self.list_locales(site_id)
+        ):
+            raise ContentModelServiceError(ContentModelServiceReason.VALIDATION)
+        row = await self._fetchrow(
+            REDIRECT_UPDATE_SQL,
+            site_id,
+            redirect_id,
+            source,
+            target,
+            request.status_code,
+            request.locale,
+            request.expected_row_version,
+        )
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
+        return _redirect(row)
+
+    async def delete_redirect(
+        self, site_id: UUID, redirect_id: UUID, expected_row_version: int
+    ) -> None:
+        await self._fetchrow(
+            REDIRECT_DELETE_SQL, site_id, redirect_id, expected_row_version
+        )
+
+    async def create_proposed_side_effect(
+        self, site_id: UUID, request: CreateProposedSideEffectRequest
+    ) -> ProposedSideEffectRecord:
+        validate_side_effect(request.kind, request.payload)
+        row = await self._fetchrow(
+            EFFECT_CREATE_SQL,
+            site_id,
+            request.workspace_id,
+            request.kind,
+            json.dumps(request.payload, sort_keys=True),
+        )
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.CONFLICT)
+        return _effect(row)
+
+    async def list_proposed_side_effects(
+        self, site_id: UUID, workspace_id: UUID
+    ) -> tuple[ProposedSideEffectRecord, ...]:
+        return tuple(
+            _effect(row)
+            for row in await self._fetch(EFFECT_LIST_SQL, site_id, workspace_id)
+        )
+
+
 class ContentModelService(
     ContentItemMixin,
     EditableDomainMixin,
+    SiteDataMixin,
     CollectionViewMixin,
     NavThemeMixin,
     PageMixin,
@@ -1037,6 +1342,92 @@ NV_UPDATE_SQL = "SELECT * FROM content.slaif_navigation_update($1,$2,$3)"
 NV_DELETE_SQL = "SELECT content.slaif_navigation_delete($1)"
 TH_GET_SQL = "SELECT * FROM content.slaif_theme_get($1)"
 TH_UPDATE_SQL = "SELECT * FROM content.slaif_theme_update($1,$2,$3,$4,$5)"
+
+LOCALE_CREATE_SQL = "SELECT * FROM content.slaif_locale_create($1,$2,$3,$4,$5,$6)"
+LOCALE_LIST_SQL = "SELECT * FROM content.slaif_locale_list($1)"
+LOCALE_GET_SQL = "SELECT * FROM content.slaif_locale_get($1,$2)"
+LOCALE_UPDATE_SQL = "SELECT * FROM content.slaif_locale_update($1,$2,$3,$4,$5,$6,$7,$8)"
+LOCALE_DELETE_SQL = "SELECT content.slaif_locale_delete($1,$2,$3)"
+NAV_ITEM_CREATE_SQL = (
+    "SELECT * FROM content.slaif_navigation_item_create($1,$2,$3,$4,$5,$6,$7,$8,$9)"
+)
+NAV_ITEM_LIST_SQL = "SELECT * FROM content.slaif_navigation_item_list($1,$2)"
+NAV_ITEM_GET_SQL = "SELECT * FROM content.slaif_navigation_item_get($1,$2)"
+NAV_ITEM_UPDATE_SQL = (
+    "SELECT * FROM content.slaif_navigation_item_update($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)"
+)
+NAV_ITEM_DELETE_SQL = "SELECT content.slaif_navigation_item_delete($1,$2,$3)"
+REDIRECT_CREATE_SQL = "SELECT * FROM content.slaif_redirect_create($1,$2,$3,$4,$5)"
+REDIRECT_LIST_SQL = "SELECT * FROM content.slaif_redirect_list($1)"
+REDIRECT_GET_SQL = "SELECT * FROM content.slaif_redirect_get($1,$2)"
+REDIRECT_UPDATE_SQL = (
+    "SELECT * FROM content.slaif_redirect_update($1,$2,$3,$4,$5,$6,$7)"
+)
+REDIRECT_DELETE_SQL = "SELECT content.slaif_redirect_delete($1,$2,$3)"
+EFFECT_CREATE_SQL = (
+    "SELECT * FROM content.slaif_proposed_side_effect_create($1,$2,$3,$4)"
+)
+EFFECT_LIST_SQL = "SELECT * FROM content.slaif_proposed_side_effect_list($1,$2)"
+
+
+def _locale(row: Any) -> LocaleRecord:
+    return LocaleRecord(
+        id=row[0],
+        site_id=row[1],
+        tag=row[2],
+        enabled=row[3],
+        is_default=row[4],
+        position=row[5],
+        metadata=json.loads(row[6]) if isinstance(row[6], str) else row[6],
+        row_version=row[7],
+        created_at=row[8],
+        updated_at=row[9],
+    )
+
+
+def _nav_item(row: Any) -> NavigationItemRecord:
+    return NavigationItemRecord(
+        id=row[0],
+        site_id=row[1],
+        navigation_id=row[2],
+        parent_id=row[3],
+        page_id=row[4],
+        target_kind=row[5],
+        target_value=row[6],
+        labels=json.loads(row[7]) if isinstance(row[7], str) else row[7],
+        locale=row[8],
+        position=row[9],
+        row_version=row[10],
+        created_at=row[11],
+        updated_at=row[12],
+    )
+
+
+def _redirect(row: Any) -> RedirectRecord:
+    return RedirectRecord(
+        id=row[0],
+        site_id=row[1],
+        source_route=row[2],
+        target=row[3],
+        status_code=row[4],
+        locale=row[5],
+        row_version=row[6],
+        created_at=row[7],
+        updated_at=row[8],
+    )
+
+
+def _effect(row: Any) -> ProposedSideEffectRecord:
+    return ProposedSideEffectRecord(
+        id=row[0],
+        site_id=row[1],
+        workspace_id=row[2],
+        kind=row[3],
+        payload=json.loads(row[4]) if isinstance(row[4], str) else row[4],
+        state=row[5],
+        created_at=row[6],
+        updated_at=row[7],
+    )
 
 
 def _nv(row: Any) -> Any:
