@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 
 import uvicorn
 from fastapi import FastAPI
+from fastapi.responses import JSONResponse
 
 from ..application import create_http_application
 from ..authority import ProcessKind
@@ -133,6 +134,24 @@ def create_app(
     app.state.browser_dispatcher = dispatcher
     app.include_router(agent_router)
     app.include_router(browser_router)
+
+    @app.get("/api/agent/v1/openapi.json", include_in_schema=False)
+    async def agent_openapi() -> JSONResponse:
+        """Return the stable, versioned public Agent contract only."""
+        document = app.openapi()
+        document["openapi"] = "3.1.0"
+        document["info"] = {
+            "title": "SLAIF Agent API",
+            "version": "v1",
+            "description": "Capability-authenticated semantic Agent contract.",
+        }
+        document["paths"] = {
+            path: value
+            for path, value in document.get("paths", {}).items()
+            if path.startswith("/api/agent/v1/")
+        }
+        return JSONResponse(document)
+
     return app
 
 
