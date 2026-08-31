@@ -1786,6 +1786,25 @@ async def test_content_type_create_resource_limits_are_db_serialized(
                 "uuid,text,jsonb,text,jsonb)'::regprocedure "
                 "AND acl.grantee=0 AND acl.privilege_type='EXECUTE')"
             )
+            for signature in (
+                "content.slaif_agent_field_definition_update("
+                "uuid,uuid,uuid,text,boolean,boolean,integer,integer,jsonb,jsonb,integer)",
+                "content.slaif_agent_field_definition_delete(uuid,uuid,uuid,integer)",
+            ):
+                function_definition = await owner.fetchval(
+                    "SELECT pg_get_functiondef($1::regprocedure)", signature
+                )
+                assert "slaif_agent_require_cow_site" in function_definition
+                assert "slaif_agent_resource_constraints" not in function_definition
+                assert await owner.fetchval(
+                    "SELECT has_function_privilege('slaif_agent_runtime', $1, "
+                    "'EXECUTE')",
+                    signature,
+                )
+                assert await owner.fetchval(
+                    "SELECT has_function_privilege('public', $1, 'EXECUTE')",
+                    signature,
+                )
             field_signature = (
                 "content.slaif_agent_field_definition_create("
                 "uuid,uuid,text,text,text,boolean,boolean,integer,integer,jsonb,jsonb)"
@@ -1849,6 +1868,20 @@ async def test_content_type_create_resource_limits_are_db_serialized(
                     "'EXECUTE')",
                     signature,
                 )
+            for signature in (
+                "content.slaif_agent_content_type_update("
+                "uuid,uuid,jsonb,text,jsonb,integer)",
+                "content.slaif_agent_content_type_delete(uuid,uuid,integer)",
+                "content.slaif_agent_field_definition_create("
+                "uuid,uuid,text,text,text,boolean,boolean,integer,integer,jsonb,jsonb)",
+                "content.slaif_agent_field_definition_update("
+                "uuid,uuid,uuid,text,boolean,boolean,integer,integer,jsonb,jsonb,integer)",
+                "content.slaif_agent_field_definition_delete(uuid,uuid,uuid,integer)",
+            ):
+                assert not await owner.fetchval(
+                    "SELECT has_function_privilege('public', $1, 'EXECUTE')",
+                    signature,
+                )
             assert not await owner.fetchval(
                 "SELECT has_function_privilege('public', $1, 'EXECUTE')",
                 "content.slaif_agent_field_definition_create("
@@ -1904,6 +1937,596 @@ async def test_content_type_create_resource_limits_are_db_serialized(
                     downgrade_created["id"],
                     2,
                 )
+    finally:
+        await reviewer_pool.close()
+        await second_agent_pool.close()
+        await agent_pool.close()
+
+
+@pytest.mark.asyncio
+async def test_field_update_delete_resources_are_db_enforced_and_concurrency_safe(
+    agent_site_database: AgentSiteDatabase,
+) -> None:
+    database = agent_site_database
+    _token, seeded = await _seed(database)
+    scopes = [
+        "site:read",
+        "content-model:create",
+        "content-model:read",
+        "content-model:delete",
+        "field-definition:create",
+        "field-definition:write",
+        "field-definition:delete",
+        "content-item:create",
+    ]
+    token, workspace_id = await _workspace_capability(
+        database, seeded, scopes, "Field Update Delete Workspace"
+    )
+    other_token, other_workspace_id = await _workspace_capability(
+        database, seeded, scopes, "Field Update Delete Other Workspace"
+    )
+    deleted_token, deleted_workspace_id = await _workspace_capability(
+        database, seeded, scopes, "Field Update Delete Deleted Parent Workspace"
+    )
+    race_token, race_workspace_id = await _workspace_capability(
+        database, seeded, scopes, "Field Update Delete Race Workspace"
+    )
+    agent_pool = await database.role_pool("slaif_agent_runtime")
+    second_agent_pool = await database.role_pool("slaif_agent_runtime")
+    reviewer_pool = await database.role_pool("slaif_reviewer")
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        await owner.execute(
+            "UPDATE control.capability SET delete_quota=2 "
+            "WHERE workspace_id = ANY($1::uuid[])",
+            [workspace_id, deleted_workspace_id],
+        )
+
+    async def operation_count(workspace: UUID) -> int:
+        async with asyncpg_cow_reviewer(reviewer_pool) as reviewer:
+            return len(await reviewer.operations(workspace, schema="content"))
+
+    async def durable_counts(workspace: UUID) -> tuple[int, int, int, int]:
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            row = await owner.fetchrow(
+                "SELECT "
+                "(SELECT count(*) FROM control.agent_idempotency "
+                " WHERE workspace_id=$1), "
+                "(SELECT count(*) FROM audit.agent_mutation "
+                " WHERE workspace_id=$1), "
+                "(SELECT mutation_used FROM control.capability "
+                " WHERE workspace_id=$1), "
+                "(SELECT delete_used FROM control.capability "
+                " WHERE workspace_id=$1)",
+                workspace,
+            )
+        return tuple(row)
+
+    async def direct_update(
+        pool: asyncpg.Pool[Any],
+        workspace: UUID,
+        site_id: UUID,
+        type_id: UUID,
+        field_id: UUID,
+        expected: int,
+        label: str = "Direct update",
+    ) -> Any:
+        async with asyncpg_cow_session(
+            pool, session_id=workspace, operation_id=uuid4()
+        ) as cow:
+            return await cow.native.fetchrow(
+                "SELECT * FROM content.slaif_agent_field_definition_update("
+                "$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)",
+                site_id,
+                type_id,
+                field_id,
+                label,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                expected,
+            )
+
+    async def direct_delete(
+        pool: asyncpg.Pool[Any],
+        workspace: UUID,
+        site_id: UUID,
+        type_id: UUID,
+        field_id: UUID,
+        expected: int,
+    ) -> Any:
+        async with asyncpg_cow_session(
+            pool, session_id=workspace, operation_id=uuid4()
+        ) as cow:
+            return await cow.native.fetchrow(
+                "SELECT * FROM content.slaif_agent_field_definition_delete("
+                "$1,$2,$3,$4)",
+                site_id,
+                type_id,
+                field_id,
+                expected,
+            )
+
+    async def visible_field(workspace: UUID, field_id: UUID) -> Any:
+        async with asyncpg_cow_session(
+            agent_pool, session_id=workspace, operation_id=uuid4()
+        ) as cow:
+            return await cow.native.fetchrow(
+                "SELECT id, key, label, definition_version "
+                "FROM content.field_definition WHERE id=$1",
+                field_id,
+            )
+
+    try:
+        app = create_agent_app(
+            settings=ServiceSettings.for_test(),
+            database_settings=_agent_settings(database),
+        )
+        async with app.router.lifespan_context(app):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://agent.test"
+            ) as client:
+                headers = {"Authorization": f"Bearer {token}"}
+                parent = await client.post(
+                    "/api/agent/v1/content-model/types",
+                    headers={**headers, "Idempotency-Key": "field-update-parent"},
+                    json={
+                        "key": "field-update-parent",
+                        "labels": {"en": "Field update parent"},
+                        "slug_pattern": "/field-update-parent/{slug}",
+                        "settings": {},
+                    },
+                )
+                assert parent.status_code == 201, parent.text
+                parent_id = UUID(parent.json()["record"]["id"])
+                await _set_resource_constraints(
+                    database,
+                    workspace_id,
+                    {
+                        "allowed_type_ids": [str(parent_id)],
+                        "allowed_type_keys": ["field-update-parent"],
+                    },
+                )
+                field = await client.post(
+                    f"/api/agent/v1/content-model/types/{parent_id}/fields",
+                    headers={**headers, "Idempotency-Key": "field-update-field"},
+                    json={
+                        "key": "managed-field",
+                        "label": "Managed field",
+                        "field_type": "short_text",
+                    },
+                )
+                assert field.status_code == 201, field.text
+                field_id = UUID(field.json()["record"]["id"])
+                before_update = await durable_counts(workspace_id)
+                operations_before_update = await operation_count(workspace_id)
+                update_body = {
+                    "label": "Managed field v2",
+                    "required": True,
+                    "expected_definition_version": 1,
+                }
+                updated = await client.patch(
+                    f"/api/agent/v1/content-model/types/{parent_id}/fields/{field_id}",
+                    headers={**headers, "Idempotency-Key": "field-update"},
+                    json=update_body,
+                )
+                assert updated.status_code == 200, updated.text
+                update_result = updated.json()
+                assert update_result["action"] == "FIELD_DEFINITION_UPDATED"
+                assert update_result["record"]["id"] == str(field_id)
+                assert update_result["record"]["type_id"] == str(parent_id)
+                assert update_result["record"]["label"] == "Managed field v2"
+                assert update_result["record"]["definition_version"] == 2
+                replay = await client.patch(
+                    f"/api/agent/v1/content-model/types/{parent_id}/fields/{field_id}",
+                    headers={**headers, "Idempotency-Key": "field-update"},
+                    json=update_body,
+                )
+                assert replay.status_code == 200
+                assert replay.json() == update_result
+                mismatch = await client.patch(
+                    f"/api/agent/v1/content-model/types/{parent_id}/fields/{field_id}",
+                    headers={**headers, "Idempotency-Key": "field-update"},
+                    json={**update_body, "label": "Changed body"},
+                )
+                assert mismatch.status_code == 409
+                assert mismatch.json()["error"]["code"] == "IDEMPOTENCY_MISMATCH"
+                after_update = await durable_counts(workspace_id)
+                assert after_update == (
+                    before_update[0] + 1,
+                    before_update[1] + 1,
+                    before_update[2] + 1,
+                    before_update[3],
+                )
+                assert (
+                    await operation_count(workspace_id) == operations_before_update + 1
+                )
+
+                other_parent = await client.post(
+                    "/api/agent/v1/content-model/types",
+                    headers={
+                        "Authorization": f"Bearer {other_token}",
+                        "Idempotency-Key": "other-field-parent",
+                    },
+                    json={
+                        "key": "other-field-parent",
+                        "labels": {"en": "Other field parent"},
+                        "slug_pattern": "/other-field-parent/{slug}",
+                        "settings": {},
+                    },
+                )
+                assert other_parent.status_code == 201, other_parent.text
+                other_parent_id = UUID(other_parent.json()["record"]["id"])
+                other_field = await client.post(
+                    f"/api/agent/v1/content-model/types/{other_parent_id}/fields",
+                    headers={
+                        "Authorization": f"Bearer {other_token}",
+                        "Idempotency-Key": "other-field",
+                    },
+                    json={
+                        "key": "other-managed-field",
+                        "label": "Other managed field",
+                        "field_type": "short_text",
+                    },
+                )
+                assert other_field.status_code == 201, other_field.text
+                other_field_id = UUID(other_field.json()["record"]["id"])
+
+                deleted_parent = await client.post(
+                    "/api/agent/v1/content-model/types",
+                    headers={
+                        "Authorization": f"Bearer {deleted_token}",
+                        "Idempotency-Key": "deleted-parent",
+                    },
+                    json={
+                        "key": "deleted-field-parent",
+                        "labels": {"en": "Deleted field parent"},
+                        "slug_pattern": "/deleted-field-parent/{slug}",
+                        "settings": {},
+                    },
+                )
+                assert deleted_parent.status_code == 201, deleted_parent.text
+                deleted_parent_id = UUID(deleted_parent.json()["record"]["id"])
+                deleted_field = await client.post(
+                    f"/api/agent/v1/content-model/types/{deleted_parent_id}/fields",
+                    headers={
+                        "Authorization": f"Bearer {deleted_token}",
+                        "Idempotency-Key": "deleted-field",
+                    },
+                    json={
+                        "key": "deleted-parent-field",
+                        "label": "Deleted parent field",
+                        "field_type": "short_text",
+                    },
+                )
+                assert deleted_field.status_code == 201, deleted_field.text
+                deleted_field_id = UUID(deleted_field.json()["record"]["id"])
+                deleted_parent_request = await client.request(
+                    "DELETE",
+                    f"/api/agent/v1/content-model/types/{deleted_parent_id}",
+                    headers={
+                        "Authorization": f"Bearer {deleted_token}",
+                        "Idempotency-Key": "delete-parent",
+                    },
+                    json={"expected_definition_version": 1},
+                )
+                assert deleted_parent_request.status_code == 200, (
+                    deleted_parent_request.text
+                )
+
+        before_denials = await operation_count(workspace_id)
+        await _set_resource_constraints(
+            database,
+            workspace_id,
+            {
+                "allowed_type_ids": [str(uuid4())],
+                "allowed_type_keys": ["field-update-parent"],
+            },
+        )
+        with pytest.raises(
+            asyncpg.PostgresError, match="AGENT_RESOURCE_TYPE_ID_DENIED"
+        ):
+            await direct_update(
+                agent_pool,
+                workspace_id,
+                seeded["site_id"],
+                parent_id,
+                field_id,
+                2,
+            )
+        assert await operation_count(workspace_id) == before_denials
+
+        await _set_resource_constraints(
+            database,
+            workspace_id,
+            {
+                "allowed_type_ids": [str(parent_id)],
+                "allowed_type_keys": ["different-parent"],
+            },
+        )
+        with pytest.raises(
+            asyncpg.PostgresError, match="AGENT_RESOURCE_TYPE_KEY_DENIED"
+        ):
+            await direct_update(
+                agent_pool,
+                workspace_id,
+                seeded["site_id"],
+                parent_id,
+                field_id,
+                2,
+            )
+        assert await operation_count(workspace_id) == before_denials
+
+        await _set_resource_constraints(database, workspace_id, {})
+        for expected_error, type_id, field_uuid, site_id in (
+            ("STALE_DEFINITION", parent_id, uuid4(), seeded["site_id"]),
+            ("STALE_DEFINITION", seeded["type_b_id"], field_id, seeded["site_id"]),
+            ("COW_SITE_MISMATCH", seeded["type_b_id"], field_id, seeded["site_b_id"]),
+            (
+                "STALE_DEFINITION",
+                other_parent_id,
+                other_field_id,
+                seeded["site_id"],
+            ),
+        ):
+            with pytest.raises(asyncpg.PostgresError, match=expected_error):
+                await direct_update(
+                    agent_pool,
+                    workspace_id,
+                    site_id,
+                    type_id,
+                    field_uuid,
+                    2,
+                )
+            assert await operation_count(workspace_id) == before_denials
+
+        deleted_before = await operation_count(deleted_workspace_id)
+        with pytest.raises(asyncpg.PostgresError, match="STALE_DEFINITION"):
+            await direct_update(
+                agent_pool,
+                deleted_workspace_id,
+                seeded["site_id"],
+                deleted_parent_id,
+                deleted_field_id,
+                1,
+            )
+        assert await operation_count(deleted_workspace_id) == deleted_before
+
+        app = create_agent_app(
+            settings=ServiceSettings.for_test(),
+            database_settings=_agent_settings(database),
+        )
+        async with app.router.lifespan_context(app):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://agent.test"
+            ) as client:
+                headers = {"Authorization": f"Bearer {token}"}
+                dependent = await client.post(
+                    f"/api/agent/v1/content-model/types/{parent_id}/fields",
+                    headers={**headers, "Idempotency-Key": "dependent-field"},
+                    json={
+                        "key": "dependent-field",
+                        "label": "Dependent field",
+                        "field_type": "short_text",
+                    },
+                )
+                assert dependent.status_code == 201, dependent.text
+                dependent_id = UUID(dependent.json()["record"]["id"])
+                item = await client.post(
+                    f"/api/agent/v1/content-items/types/{parent_id}",
+                    headers={**headers, "Idempotency-Key": "dependent-item"},
+                    json={
+                        "type_id": str(parent_id),
+                        "slug": "dependent-item",
+                        "status": "DRAFT",
+                        "values": {"dependent-field": "used"},
+                    },
+                )
+                assert item.status_code == 201, item.text
+                deletable = await client.post(
+                    f"/api/agent/v1/content-model/types/{parent_id}/fields",
+                    headers={**headers, "Idempotency-Key": "deletable-field"},
+                    json={
+                        "key": "deletable-field",
+                        "label": "Deletable field",
+                        "field_type": "short_text",
+                    },
+                )
+                assert deletable.status_code == 201, deletable.text
+                deletable_id = UUID(deletable.json()["record"]["id"])
+                await _set_resource_constraints(
+                    database,
+                    workspace_id,
+                    {
+                        "allowed_type_ids": [str(parent_id)],
+                        "allowed_type_keys": ["field-update-parent"],
+                        "delete_enabled": False,
+                    },
+                )
+                before_disabled = await durable_counts(workspace_id)
+                operations_before_disabled = await operation_count(workspace_id)
+                disabled = await client.request(
+                    "DELETE",
+                    f"/api/agent/v1/content-model/types/{parent_id}/fields/{deletable_id}",
+                    headers={**headers, "Idempotency-Key": "delete-disabled"},
+                    json={"expected_definition_version": 1},
+                )
+                assert disabled.status_code == 403, disabled.text
+                assert await durable_counts(workspace_id) == before_disabled
+                assert await operation_count(workspace_id) == operations_before_disabled
+
+                await _set_resource_constraints(
+                    database,
+                    workspace_id,
+                    {
+                        "allowed_type_ids": [str(parent_id)],
+                        "allowed_type_keys": ["field-update-parent"],
+                        "delete_enabled": True,
+                    },
+                )
+                with pytest.raises(asyncpg.PostgresError, match="FIELD_DEPENDENCIES"):
+                    await direct_delete(
+                        agent_pool,
+                        workspace_id,
+                        seeded["site_id"],
+                        parent_id,
+                        dependent_id,
+                        1,
+                    )
+                assert await operation_count(workspace_id) == operations_before_disabled
+                before_delete = await durable_counts(workspace_id)
+                deleted = await client.request(
+                    "DELETE",
+                    f"/api/agent/v1/content-model/types/{parent_id}/fields/{deletable_id}",
+                    headers={**headers, "Idempotency-Key": "delete-enabled"},
+                    json={"expected_definition_version": 1},
+                )
+                assert deleted.status_code == 200, deleted.text
+                deleted_result = deleted.json()
+                assert deleted_result["action"] == "FIELD_DEFINITION_DELETED"
+                assert deleted_result["record"]["id"] == str(deletable_id)
+                replay_delete = await client.request(
+                    "DELETE",
+                    f"/api/agent/v1/content-model/types/{parent_id}/fields/{deletable_id}",
+                    headers={**headers, "Idempotency-Key": "delete-enabled"},
+                    json={"expected_definition_version": 1},
+                )
+                assert replay_delete.status_code == 200
+                assert replay_delete.json() == deleted_result
+                after_delete = await durable_counts(workspace_id)
+                assert after_delete == (
+                    before_delete[0] + 1,
+                    before_delete[1] + 1,
+                    before_delete[2],
+                    before_delete[3] + 1,
+                )
+                assert await visible_field(workspace_id, deletable_id) is None
+                assert await visible_field(other_workspace_id, deletable_id) is None
+
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            assert (
+                await owner.fetchval(
+                    "SELECT count(*) FROM content.field_definition_base WHERE id=$1",
+                    deletable_id,
+                )
+                == 0
+            )
+
+        race_app = create_agent_app(
+            settings=ServiceSettings.for_test(),
+            database_settings=_agent_settings(database),
+        )
+        async with race_app.router.lifespan_context(race_app):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=race_app),
+                base_url="http://agent.test",
+            ) as client:
+                race_parent = await client.post(
+                    "/api/agent/v1/content-model/types",
+                    headers={
+                        "Authorization": f"Bearer {race_token}",
+                        "Idempotency-Key": "field-race-parent",
+                    },
+                    json={
+                        "key": "field-race-parent",
+                        "labels": {"en": "Field race parent"},
+                        "slug_pattern": "/field-race-parent/{slug}",
+                        "settings": {},
+                    },
+                )
+                assert race_parent.status_code == 201, race_parent.text
+                race_parent_id = UUID(race_parent.json()["record"]["id"])
+                race_field = await client.post(
+                    f"/api/agent/v1/content-model/types/{race_parent_id}/fields",
+                    headers={
+                        "Authorization": f"Bearer {race_token}",
+                        "Idempotency-Key": "field-race-field",
+                    },
+                    json={
+                        "key": "field-race",
+                        "label": "Field race",
+                        "field_type": "short_text",
+                    },
+                )
+                assert race_field.status_code == 201, race_field.text
+                race_field_id = UUID(race_field.json()["record"]["id"])
+
+        await _set_resource_constraints(
+            database,
+            race_workspace_id,
+            {
+                "allowed_type_ids": [str(race_parent_id)],
+                "allowed_type_keys": ["field-race-parent"],
+            },
+        )
+        race_operations = await operation_count(race_workspace_id)
+        ready = asyncio.Event()
+        arrival_lock = asyncio.Lock()
+        arrivals = 0
+
+        async def racing_update(pool: asyncpg.Pool[Any], label: str) -> tuple[str, str]:
+            nonlocal arrivals
+            try:
+                async with asyncpg_cow_session(
+                    pool, session_id=race_workspace_id, operation_id=uuid4()
+                ) as cow:
+                    async with arrival_lock:
+                        arrivals += 1
+                        if arrivals == 2:
+                            ready.set()
+                    await asyncio.wait_for(ready.wait(), timeout=5)
+                    row = await cow.native.fetchrow(
+                        "SELECT * FROM content.slaif_agent_field_definition_update("
+                        "$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)",
+                        seeded["site_id"],
+                        race_parent_id,
+                        race_field_id,
+                        label,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        1,
+                    )
+                    return "updated", str(row[4])
+            except asyncpg.PostgresError as error:
+                return "denied", str(error)
+
+        race_results = await asyncio.gather(
+            racing_update(agent_pool, "Race one"),
+            racing_update(second_agent_pool, "Race two"),
+        )
+        assert [result[0] for result in race_results].count("updated") == 1, (
+            race_results
+        )
+        assert [result[0] for result in race_results].count("denied") == 1, race_results
+        assert "STALE_DEFINITION" in next(
+            result[1] for result in race_results if result[0] == "denied"
+        )
+        race_visible = await visible_field(race_workspace_id, race_field_id)
+        assert race_visible[2] in {"Race one", "Race two"}
+        assert race_visible[3] == 2
+        assert await operation_count(race_workspace_id) == race_operations + 1
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            assert (
+                await owner.fetchval(
+                    "SELECT count(*) FROM content.field_definition_base WHERE id=$1",
+                    race_field_id,
+                )
+                == 0
+            )
     finally:
         await reviewer_pool.close()
         await second_agent_pool.close()
