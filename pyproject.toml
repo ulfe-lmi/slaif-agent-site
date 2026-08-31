@@ -1,5 +1,5 @@
 [build-system]
-requires = ["uv_build==0.12.5"]
+requires = ["uv_build==0.12.7"]
 build-backend = "uv_build"
 
 [project]
@@ -24,10 +24,10 @@ dependencies = [
   "argon2-cffi==25.1.0",
   "asyncpg==0.31.0",
   "fastapi==0.141.1",
-  "pydantic==2.13.4",
+  "pydantic==2.13.5",
   "pydantic-settings==2.15.0",
   "sqlalchemy==2.0.52",
-  "uvicorn==0.52.3",
+  "uvicorn==0.52.4",
 ]
 
 [project.urls]
@@ -41,10 +41,10 @@ build = [
   "uv-build==0.12.5",
 ]
 qualification = [
-  "packaging>=24,<26",
+  "packaging>=24,<27",
 ]
 quality = [
-  "mypy>=1.17,<2",
+  "mypy>=1.17,<3",
   "ruff>=0.12,<1",
 ]
 test = [
