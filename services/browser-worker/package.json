@@ -17,7 +17,7 @@
     "playwright-core": "1.62.1"
   },
   "devDependencies": {
-    "@types/node": "24.13.3",
-    "typescript": "6.0.3"
+    "@types/node": "25.9.5",
+    "typescript": "7.0.2"
   }
 }
