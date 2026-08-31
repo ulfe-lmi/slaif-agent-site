@@ -31,8 +31,10 @@ from slaif_agent_site.content_model.composition_models import (
     CreateCompositionNodeRequest,
 )
 from slaif_agent_site.content_model.item_models import (
+    AgentUpdateContentItemRequest,
     ContentItemRecord,
     CreateContentItemRequest,
+    DeleteContentItemRequest,
 )
 from slaif_agent_site.content_model.models import (
     ContentTypeRecord,
@@ -87,8 +89,17 @@ AGENT_FIELD_DELETE_SQL = (
     "SELECT * FROM content.slaif_agent_field_definition_delete($1,$2,$3,$4)"
 )
 AGENT_ITEM_CREATE_SQL = (
-    "SELECT * FROM content.slaif_agent_content_item_create($1,$2,$3,$4,$5,$6)"
+    "SELECT * FROM content.slaif_agent_content_item_create($1,$2,$3,$4,$5)"
 )
+AGENT_ITEM_GET_SQL = "SELECT * FROM content.slaif_agent_content_item_get($1,$2)"
+AGENT_ITEM_UPDATE_SQL = (
+    "SELECT * FROM content.slaif_agent_content_item_update($1,$2,$3,$4,$5,$6)"
+)
+AGENT_ITEM_DELETE_SQL = (
+    "SELECT * FROM content.slaif_agent_content_item_delete($1,$2,$3)"
+)
+AGENT_TYPE_GET_SQL = "SELECT * FROM content.slaif_agent_content_type_get($1,$2)"
+AGENT_FIELD_LIST_SQL = "SELECT * FROM content.slaif_agent_field_definition_list($1,$2)"
 AGENT_PAGE_CREATE_SQL = (
     "SELECT * FROM content.slaif_agent_page_create($1,$2,$3,$4,$5,$6)"
 )
@@ -125,6 +136,9 @@ AGENT_SEMANTIC_CONTRACTS = {
         200,
         "delete",
     ),
+    "CONTENT_ITEM_CREATED": ("content_item", "POST", 201, "mutation"),
+    "CONTENT_ITEM_UPDATED": ("content_item", "PATCH", 200, "mutation"),
+    "CONTENT_ITEM_DELETED": ("content_item", "DELETE", 200, "delete"),
 }
 AGENT_SEMANTIC_ACTIONS = frozenset(AGENT_SEMANTIC_CONTRACTS)
 
@@ -293,6 +307,13 @@ class AgentCowContentModelService(ContentModelService):
         type_id: UUID,
         request: CreateContentItemRequest,
     ) -> ContentItemRecord:
+        content_type = await self._fetchrow(AGENT_TYPE_GET_SQL, site_id, type_id)
+        if content_type is None:
+            raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
+        fields = await self._fetch(AGENT_FIELD_LIST_SQL, site_id, type_id)
+        self._validate_item_values(
+            request.values, tuple(_fd(field) for field in fields)
+        )
         row = await self._fetchrow(
             AGENT_ITEM_CREATE_SQL,
             site_id,
@@ -300,10 +321,59 @@ class AgentCowContentModelService(ContentModelService):
             request.slug,
             request.status,
             json.dumps(request.values, sort_keys=True),
-            1,
         )
         if row is None:
             raise ContentModelServiceError(ContentModelServiceReason.CONFLICT)
+        return cast(ContentItemRecord, _ci(row))
+
+    async def get_item_for_site(
+        self, site_id: UUID, item_id: UUID
+    ) -> ContentItemRecord:
+        row = await self._fetchrow(AGENT_ITEM_GET_SQL, site_id, item_id)
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
+        return cast(ContentItemRecord, _ci(row))
+
+    async def update_item_for_site(
+        self,
+        site_id: UUID,
+        item_id: UUID,
+        request: AgentUpdateContentItemRequest,
+    ) -> ContentItemRecord:
+        current = await self.get_item_for_site(site_id, item_id)
+        content_type = await self._fetchrow(
+            AGENT_TYPE_GET_SQL, site_id, current.type_id
+        )
+        if content_type is None or current.type_definition_version != content_type[6]:
+            raise ContentModelServiceError(ContentModelServiceReason.VALIDATION)
+        if request.values is not None:
+            fields = await self._fetch(AGENT_FIELD_LIST_SQL, site_id, current.type_id)
+            self._validate_item_values(
+                request.values, tuple(_fd(field) for field in fields)
+            )
+        row = await self._fetchrow(
+            AGENT_ITEM_UPDATE_SQL,
+            site_id,
+            item_id,
+            request.slug,
+            request.status,
+            json.dumps(request.values, sort_keys=True)
+            if request.values is not None
+            else None,
+            request.expected_row_version,
+        )
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
+        return cast(ContentItemRecord, _ci(row))
+
+    async def delete_item_for_site(
+        self, site_id: UUID, item_id: UUID, request: DeleteContentItemRequest
+    ) -> ContentItemRecord:
+        row = await self._fetchrow(
+            AGENT_ITEM_DELETE_SQL, site_id, item_id, request.expected_row_version
+        )
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
         return cast(ContentItemRecord, _ci(row))
 
     async def create_page_for_site(
@@ -471,6 +541,10 @@ async def execute_agent_mutation(
             session_id=context.workspace_id,
             operation_id=operation_id,
         ) as cow:
+            await cow.native.execute(
+                "SELECT set_config('app.capability_id', $1, true)",
+                str(context.capability_id),
+            )
             reservation = await _reserve(
                 cow,
                 context=context,
@@ -487,17 +561,24 @@ async def execute_agent_mutation(
             if reservation.state != "STARTED":
                 raise AgentMutationUnavailableError()
 
-            try:
-                mutation_allowed = await cow.native.fetchval(
-                    "SELECT control.slaif_agent_quota_consume($1,$2,$3)",
-                    context.capability_id,
-                    context.workspace_id,
-                    quota_kind,
-                )
-            except (asyncpg.PostgresError, OSError, TimeoutError) as error:
-                raise AgentMutationUnavailableError() from error
-            if mutation_allowed is not True:
-                raise AgentQuotaExceededError()
+            # Content-model wrappers own their resource quota reservation.
+            # Page/component wrappers retain the legacy executor-owned path.
+            if resource_type not in {
+                "content_type",
+                "field_definition",
+                "content_item",
+            }:
+                try:
+                    mutation_allowed = await cow.native.fetchval(
+                        "SELECT control.slaif_agent_quota_consume($1,$2,$3)",
+                        context.capability_id,
+                        context.workspace_id,
+                        quota_kind,
+                    )
+                except (asyncpg.PostgresError, OSError, TimeoutError) as error:
+                    raise AgentMutationUnavailableError() from error
+                if mutation_allowed is not True:
+                    raise AgentQuotaExceededError()
 
             service = AgentCowContentModelService(cow)
             record = await mutate(service)

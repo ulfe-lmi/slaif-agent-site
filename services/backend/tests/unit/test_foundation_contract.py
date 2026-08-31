@@ -124,6 +124,7 @@ NEW_PACKAGE_FILES = {
     "slaif_agent_site/db/alembic/versions/042_001_site_data_substrate.py",
     "slaif_agent_site/db/alembic/versions/044_001_agent_resource_constraints.py",
     "slaif_agent_site/db/alembic/versions/045_001_agent_semantic_audit_delete_quota.py",
+    "slaif_agent_site/db/alembic/versions/046_001_complete_agent_content_item_crud.py",
     "slaif_agent_site/db/connections.py",
     "slaif_agent_site/db/executor.py",
     "slaif_agent_site/db/migrations.py",
@@ -301,6 +302,7 @@ EXPECTED_SDIST_FILES = {
     "services/backend/src/slaif_agent_site/db/alembic/versions/042_001_site_data_substrate.py",
     "services/backend/src/slaif_agent_site/db/alembic/versions/044_001_agent_resource_constraints.py",
     "services/backend/src/slaif_agent_site/db/alembic/versions/045_001_agent_semantic_audit_delete_quota.py",
+    "services/backend/src/slaif_agent_site/db/alembic/versions/046_001_complete_agent_content_item_crud.py",
     "services/backend/src/slaif_agent_site/mcp_adapter/mcp_http.py",
     "services/backend/src/slaif_agent_site/mcp_adapter/app.py",
     "services/backend/src/slaif_agent_site/control_api/workspace_http.py",
@@ -581,8 +583,9 @@ def test_locked_foundation_artifact_hash_constants_are_sha256() -> None:
 
 
 def test_alembic_graph_and_offline_sql_need_no_locator_or_network() -> None:
-    assert migration_heads() == ("045_001",)
+    assert migration_heads() == ("046_001",)
     assert migration_history() == (
+        "046_001",
         "045_001",
         "044_001",
         "043_001",

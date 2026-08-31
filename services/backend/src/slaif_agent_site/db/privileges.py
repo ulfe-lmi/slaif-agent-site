@@ -205,6 +205,10 @@ AGENT_CONTENT_FUNCTIONS = {
         "p_site_id uuid, p_type_id uuid",
     ): "uuid, uuid",
     (
+        "slaif_agent_content_item_get",
+        "p_site_id uuid, p_item_id uuid",
+    ): "uuid, uuid",
+    (
         "slaif_agent_page_list",
         "p_site_id uuid",
     ): "uuid",
@@ -246,9 +250,17 @@ AGENT_CONTENT_FUNCTIONS = {
     ): "uuid, uuid, uuid, integer",
     (
         "slaif_agent_content_item_create",
-        "p_site_id uuid, p_type_id uuid, p_slug text, p_status text, "
-        "p_values jsonb, p_type_definition_version integer",
+        "p_site_id uuid, p_type_id uuid, p_slug text, p_status text, p_values jsonb",
+    ): "uuid, uuid, text, text, jsonb",
+    (
+        "slaif_agent_content_item_update",
+        "p_site_id uuid, p_item_id uuid, p_slug text, p_status text, "
+        "p_values jsonb, p_expected_row_version integer",
     ): "uuid, uuid, text, text, jsonb, integer",
+    (
+        "slaif_agent_content_item_delete",
+        "p_site_id uuid, p_item_id uuid, p_expected_row_version integer",
+    ): "uuid, uuid, integer",
     (
         "slaif_agent_page_create",
         "p_site_id uuid, p_slug text, p_title text, p_status text, "

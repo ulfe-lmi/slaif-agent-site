@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections.abc import Iterable
 from enum import StrEnum
 from typing import Any, Protocol
 from uuid import UUID
@@ -75,6 +76,7 @@ class ContentModelServiceReason(StrEnum):
     NOT_FOUND = "not_found"
     UNAVAILABLE = "unavailable"
     VALIDATION = "validation"
+    QUOTA = "quota"
 
 
 class ContentModelServiceError(RuntimeError):
@@ -503,6 +505,17 @@ class ContentItemMixin:
         if item.type_definition_version != content_type.definition_version:
             raise ContentModelServiceError(ContentModelServiceReason.VALIDATION)
 
+    @staticmethod
+    def _validate_item_values(
+        values: dict[str, Any], fields: Iterable[FieldDefinitionRecord]
+    ) -> None:
+        try:
+            validate_values(values, fields)
+        except (ValueError, TypeError):
+            raise ContentModelServiceError(
+                ContentModelServiceReason.VALIDATION
+            ) from None
+
     async def create_item(
         self,
         site_id: UUID,
@@ -518,12 +531,7 @@ class ContentItemMixin:
             or type_definition_version != content_type.definition_version
         ):
             raise ContentModelServiceError(ContentModelServiceReason.VALIDATION)
-        try:
-            validate_values(values, await self.list_fields(type_id))
-        except (ValueError, TypeError):
-            raise ContentModelServiceError(
-                ContentModelServiceReason.VALIDATION
-            ) from None
+        self._validate_item_values(values, await self.list_fields(type_id))
         row = await self._fetchrow(
             CI_CREATE_SQL,
             site_id,
@@ -558,12 +566,7 @@ class ContentItemMixin:
         current = await self.get_item(item_id)
         await self._assert_item_definition_current(current)
         if values is not None:
-            try:
-                validate_values(values, await self.list_fields(current.type_id))
-            except (ValueError, TypeError):
-                raise ContentModelServiceError(
-                    ContentModelServiceReason.VALIDATION
-                ) from None
+            self._validate_item_values(values, await self.list_fields(current.type_id))
         row = await self._fetchrow(
             CI_UPDATE_SQL,
             item_id,
@@ -1183,6 +1186,14 @@ class ContentModelService(
             if getattr(error, "sqlstate", None) == "P0004":
                 raise ContentModelServiceError(
                     ContentModelServiceReason.CONFLICT
+                ) from None
+            if getattr(error, "sqlstate", None) == "P0005":
+                raise ContentModelServiceError(
+                    ContentModelServiceReason.QUOTA
+                ) from None
+            if getattr(error, "sqlstate", None) == "P0006":
+                raise ContentModelServiceError(
+                    ContentModelServiceReason.QUOTA
                 ) from None
             if getattr(error, "sqlstate", None) == "P0001" or isinstance(
                 error, asyncpg.RaiseError

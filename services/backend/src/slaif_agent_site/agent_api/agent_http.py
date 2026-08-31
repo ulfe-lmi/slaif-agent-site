@@ -38,7 +38,12 @@ from slaif_agent_site.agent_state.reads import (
 from slaif_agent_site.content_model.composition_models import (
     CreateCompositionNodeRequest,
 )
-from slaif_agent_site.content_model.item_models import CreateContentItemRequest
+from slaif_agent_site.content_model.item_models import (
+    AgentUpdateContentItemRequest,
+    ContentItemRecord,
+    CreateContentItemRequest,
+    DeleteContentItemRequest,
+)
 from slaif_agent_site.content_model.models import (
     ContentTypeRecord,
     CreateContentTypeRequest,
@@ -136,6 +141,8 @@ async def _execute_read(
     except ContentModelServiceError as exc:
         if exc.reason is ContentModelServiceReason.NOT_FOUND:
             raise ResourceNotFoundError() from None
+        if exc.reason is ContentModelServiceReason.VALIDATION:
+            raise AuthorizationError() from None
         raise ServiceUnavailableError() from None
 
 
@@ -323,6 +330,8 @@ async def _execute_mutation(
             raise ResourceConflictError() from None
         if exc.reason is ContentModelServiceReason.VALIDATION:
             raise DomainValidationError() from None
+        if exc.reason is ContentModelServiceReason.QUOTA:
+            raise QuotaExceededError() from None
         raise ServiceUnavailableError() from None
 
 
@@ -336,13 +345,6 @@ async def create_content_type(
     context = await _authenticate(request)
     _require_scope(context, "content-model:create")
     _enforce_resource_constraint(context, type_key=body.key)
-    maximum = _constraint(context, "max_content_types")
-    if maximum is not None:
-        records = await _execute_read(
-            request, context, lambda service: service.list_types(context.site_id)
-        )
-        if len(records) >= maximum:
-            raise QuotaExceededError()
     return await _execute_mutation(
         request,
         context,
@@ -364,15 +366,6 @@ async def create_field_definition(
     context = await _authenticate(request)
     _require_scope(context, "field-definition:create")
     _enforce_resource_constraint(context, type_id=type_id)
-    maximum = _constraint(context, "max_fields_per_type")
-    if maximum is not None:
-        records = await _execute_read(
-            request,
-            context,
-            lambda service: service.list_fields(context.site_id, type_id),
-        )
-        if len(records) >= maximum:
-            raise QuotaExceededError()
     return await _execute_mutation(
         request,
         context,
@@ -500,6 +493,7 @@ async def create_content_item(
     """Create a content item within this workspace."""
     context = await _authenticate(request)
     _require_scope(context, "content-item:create")
+    _enforce_resource_constraint(context, type_id=type_id)
     if body.type_id != type_id:
         raise ResourceNotFoundError()
     return await _execute_mutation(
@@ -508,8 +502,74 @@ async def create_content_item(
         body,
         idempotency_key,
         resource_type="content_item",
+        action="CONTENT_ITEM_CREATED",
         mutate=lambda service: service.create_item_for_site(
             context.site_id, type_id, body
+        ),
+    )
+
+
+@router.get("/content-items/{item_id}")
+async def get_content_item(item_id: UUID, request: Request) -> dict[str, Any]:
+    context = await _authenticate(request)
+    _require_scope(context, "content-item:read")
+    record = cast(
+        ContentItemRecord,
+        await _execute_read(
+            request,
+            context,
+            lambda service: service.get_item(context.site_id, item_id),
+        ),
+    )
+    _enforce_resource_constraint(context, type_id=record.type_id)
+    return record.model_dump(mode="json")
+
+
+@router.patch("/content-items/{item_id}")
+async def update_content_item(
+    item_id: UUID,
+    request: Request,
+    body: AgentUpdateContentItemRequest,
+    idempotency_key: IdempotencyHeader = None,
+) -> AgentMutationResponse:
+    context = await _authenticate(request)
+    _require_scope(context, "content-item:write")
+    return await _execute_mutation(
+        request,
+        context,
+        body,
+        idempotency_key,
+        resource_type="content_item",
+        status_code=200,
+        action="CONTENT_ITEM_UPDATED",
+        mutate=lambda service: service.update_item_for_site(
+            context.site_id, item_id, body
+        ),
+    )
+
+
+@router.delete("/content-items/{item_id}")
+async def delete_content_item(
+    item_id: UUID,
+    request: Request,
+    body: DeleteContentItemRequest,
+    idempotency_key: IdempotencyHeader = None,
+) -> AgentMutationResponse:
+    context = await _authenticate(request)
+    _require_scope(context, "content-item:delete")
+    if _constraint(context, "delete_enabled", True) is False:
+        raise AuthorizationError()
+    return await _execute_mutation(
+        request,
+        context,
+        body,
+        idempotency_key,
+        resource_type="content_item",
+        status_code=200,
+        quota_kind="delete",
+        action="CONTENT_ITEM_DELETED",
+        mutate=lambda service: service.delete_item_for_site(
+            context.site_id, item_id, body
         ),
     )
 

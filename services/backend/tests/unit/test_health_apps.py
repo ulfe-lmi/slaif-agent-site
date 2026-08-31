@@ -212,6 +212,7 @@ async def test_each_app_has_only_typed_health_routes(
             "/api/agent/v1/content-model/types/{type_id}/fields",
             "/api/agent/v1/content-model/types/{type_id}/fields/{field_id}",
             "/api/agent/v1/content-items/types/{type_id}",
+            "/api/agent/v1/content-items/{item_id}",
             "/api/agent/v1/pages/",
             "/api/agent/v1/pages/{page_id}/components",
             "/api/agent/v1/media/",

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
-from typing import Any
+from typing import Any, cast
 from uuid import UUID
 
 import asyncpg
@@ -44,6 +44,7 @@ AGENT_FIELD_DEFINITION_LIST_SQL = (
 AGENT_CONTENT_ITEM_LIST_SQL = (
     "SELECT * FROM content.slaif_agent_content_item_list($1,$2)"
 )
+AGENT_CONTENT_ITEM_GET_SQL = "SELECT * FROM content.slaif_agent_content_item_get($1,$2)"
 AGENT_PAGE_LIST_SQL = "SELECT * FROM content.slaif_agent_page_list($1)"
 AGENT_COMPOSITION_LIST_SQL = "SELECT * FROM content.slaif_agent_composition_list($1,$2)"
 AGENT_MEDIA_LIST_SQL = "SELECT * FROM content.slaif_agent_media_list($1)"
@@ -68,6 +69,10 @@ class AgentSemanticReadService:
                 raise ContentModelServiceError(
                     ContentModelServiceReason.NOT_FOUND
                 ) from None
+            if getattr(error, "sqlstate", None) == "P0003":
+                raise ContentModelServiceError(
+                    ContentModelServiceReason.VALIDATION
+                ) from None
             raise ContentModelServiceError(
                 ContentModelServiceReason.UNAVAILABLE
             ) from None
@@ -86,6 +91,10 @@ class AgentSemanticReadService:
             if getattr(error, "sqlstate", None) == "P0002":
                 raise ContentModelServiceError(
                     ContentModelServiceReason.NOT_FOUND
+                ) from None
+            if getattr(error, "sqlstate", None) == "P0003":
+                raise ContentModelServiceError(
+                    ContentModelServiceReason.VALIDATION
                 ) from None
             raise ContentModelServiceError(
                 ContentModelServiceReason.UNAVAILABLE
@@ -119,6 +128,12 @@ class AgentSemanticReadService:
                 return field
         raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
 
+    async def get_item(self, site_id: UUID, item_id: UUID) -> ContentItemRecord:
+        row = await self._fetchrow(AGENT_CONTENT_ITEM_GET_SQL, site_id, item_id)
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
+        return cast(ContentItemRecord, _ci(row))
+
     async def list_items(
         self, site_id: UUID, type_id: UUID
     ) -> tuple[ContentItemRecord, ...]:
@@ -151,6 +166,10 @@ async def execute_agent_read(
     try:
         pool = database.cow_pool()
         async with asyncpg_cow_session(pool, session_id=context.workspace_id) as cow:
+            await cow.native.execute(
+                "SELECT set_config('app.capability_id', $1, true)",
+                str(context.capability_id),
+            )
             return await read(AgentSemanticReadService(cow))
     except asyncio.CancelledError:
         raise

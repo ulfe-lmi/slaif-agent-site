@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.parse import quote
@@ -20,7 +21,9 @@ from slaif_agent_site.agent_api.config import AgentDatabaseMode, AgentDatabaseSe
 from slaif_agent_site.agent_state.capability import generate_capability_token
 from slaif_agent_site.agent_state.foundation import (
     asyncpg_cow_reviewer,
-    asyncpg_cow_session,
+)
+from slaif_agent_site.agent_state.foundation import (
+    asyncpg_cow_session as _asyncpg_cow_session,
 )
 from slaif_agent_site.agent_state.mutations import (
     execute_agent_mutation,
@@ -29,7 +32,6 @@ from slaif_agent_site.agent_state.mutations import (
 from slaif_agent_site.agent_state.reads import execute_agent_read
 from slaif_agent_site.bootstrap.service import reconcile, upgrade
 from slaif_agent_site.config import ServiceSettings
-from slaif_agent_site.content_model.item_models import CreateContentItemRequest
 from slaif_agent_site.content_model.models import (
     CreateContentTypeRequest,
     CreateFieldDefinitionRequest,
@@ -39,6 +41,23 @@ from slaif_agent_site.content_model.models import (
 )
 from slaif_agent_site.db.connections import owner_connection
 from slaif_agent_site.db.migrations import run_migration
+
+_TEST_CAPABILITY_BY_WORKSPACE: dict[UUID, UUID] = {}
+
+
+@asynccontextmanager
+async def asyncpg_cow_session(*args: Any, **kwargs: Any) -> Any:
+    """Give direct wrapper proofs the same authenticated cap context as HTTP."""
+    async with _asyncpg_cow_session(*args, **kwargs) as cow:
+        workspace_id = kwargs.get("session_id")
+        if workspace_id is not None:
+            capability_id = _TEST_CAPABILITY_BY_WORKSPACE.get(UUID(str(workspace_id)))
+            if capability_id is not None:
+                await cow.native.execute(
+                    "SELECT set_config('app.capability_id',$1,true)",
+                    str(capability_id),
+                )
+        yield cow
 
 
 def _agent_settings(database: AgentSiteDatabase) -> AgentDatabaseSettings:
@@ -164,6 +183,7 @@ async def _seed(database: AgentSiteDatabase) -> tuple[str, dict[str, UUID]]:
         capability_id = await owner.fetchval(
             "SELECT id FROM control.capability WHERE public_id = $1", public_id
         )
+    _TEST_CAPABILITY_BY_WORKSPACE[workspace_id] = capability_id
     return token, {
         "capability_id": capability_id,
         "delegator_id": delegator_id,
@@ -197,6 +217,10 @@ async def _capability_with_scopes(
             json.dumps(scopes),
             datetime.now(UTC) + timedelta(minutes=30),
         )
+        capability_id = await owner.fetchval(
+            "SELECT id FROM control.capability WHERE public_id=$1", public_id
+        )
+    _TEST_CAPABILITY_BY_WORKSPACE[seeded["workspace_id"]] = capability_id
     return token
 
 
@@ -235,6 +259,10 @@ async def _workspace_capability(
             digest,
             json.dumps(scopes),
         )
+        capability_id = await owner.fetchval(
+            "SELECT id FROM control.capability WHERE public_id=$1", public_id
+        )
+    _TEST_CAPABILITY_BY_WORKSPACE[workspace_id] = capability_id
     return token, workspace_id
 
 
@@ -569,6 +597,182 @@ async def test_agent_create_routes_cover_field_item_page_and_component(
             read_media = await client.get("/api/agent/v1/media/", headers=headers)
             assert read_media.status_code == 200, read_media.text
             assert read_media.json() == []
+
+
+@pytest.mark.asyncio
+async def test_agent_content_item_crud_is_strict_idempotent_and_tombstoned(
+    agent_site_database: AgentSiteDatabase,
+) -> None:
+    database = agent_site_database
+    _token, seeded = await _seed(database)
+    scopes = [
+        "site:read",
+        "content-model:create",
+        "content-model:read",
+        "field-definition:create",
+        "content-item:create",
+        "content-item:read",
+        "content-item:write",
+        "content-item:delete",
+    ]
+    token, workspace_id = await _workspace_capability(
+        database, seeded, scopes, "Strict Content Item Workspace"
+    )
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        capability_id = await owner.fetchval(
+            "SELECT id FROM control.capability WHERE workspace_id=$1", workspace_id
+        )
+        await owner.execute(
+            "UPDATE control.capability SET request_quota=100, mutation_quota=20, "
+            "delete_quota=2 WHERE id=$1",
+            capability_id,
+        )
+    app = create_agent_app(
+        settings=ServiceSettings.for_test(),
+        database_settings=_agent_settings(database),
+    )
+    headers = {"Authorization": f"Bearer {token}"}
+    async with app.router.lifespan_context(app):
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://agent.test"
+        ) as client:
+            created_type = await client.post(
+                "/api/agent/v1/content-model/types",
+                headers={**headers, "Idempotency-Key": "item-type"},
+                json={
+                    "key": "item-crud",
+                    "labels": {"en": "Item CRUD"},
+                    "slug_pattern": "/item-crud/{slug}",
+                    "settings": {},
+                },
+            )
+            assert created_type.status_code == 201, created_type.text
+            type_id = UUID(created_type.json()["record"]["id"])
+            await _set_resource_constraints(
+                database,
+                workspace_id,
+                {
+                    "allowed_type_ids": [str(type_id)],
+                    "allowed_type_keys": ["item-crud"],
+                },
+            )
+            created_field = await client.post(
+                f"/api/agent/v1/content-model/types/{type_id}/fields",
+                headers={**headers, "Idempotency-Key": "item-field"},
+                json={"key": "title", "label": "Title", "field_type": "short_text"},
+            )
+            assert created_field.status_code == 201, created_field.text
+            item_path = f"/api/agent/v1/content-items/types/{type_id}"
+            created_item = await client.post(
+                item_path,
+                headers={**headers, "Idempotency-Key": "item-create"},
+                json={
+                    "type_id": str(type_id),
+                    "slug": "first-item",
+                    "status": "DRAFT",
+                    "values": {"title": "First"},
+                },
+            )
+            assert created_item.status_code == 201, created_item.text
+            created_record = created_item.json()["record"]
+            item_id = UUID(created_record["id"])
+            assert created_record["type_definition_version"] == 1
+            assert created_record["row_version"] == 1
+
+            exact = await client.get(
+                f"/api/agent/v1/content-items/{item_id}", headers=headers
+            )
+            assert exact.status_code == 200, exact.text
+            assert exact.json() == created_record
+
+            update_body = {
+                "slug": "updated-item",
+                "values": {"title": "Updated"},
+                "expected_row_version": 1,
+            }
+            updated = await client.patch(
+                f"/api/agent/v1/content-items/{item_id}",
+                headers={**headers, "Idempotency-Key": "item-update"},
+                json=update_body,
+            )
+            assert updated.status_code == 200, updated.text
+            updated_result = updated.json()
+            assert updated_result["action"] == "CONTENT_ITEM_UPDATED"
+            assert updated_result["record"]["row_version"] == 2
+            replay = await client.patch(
+                f"/api/agent/v1/content-items/{item_id}",
+                headers={**headers, "Idempotency-Key": "item-update"},
+                json=update_body,
+            )
+            assert replay.status_code == 200
+            assert replay.json() == updated_result
+            stale = await client.patch(
+                f"/api/agent/v1/content-items/{item_id}",
+                headers={**headers, "Idempotency-Key": "item-stale"},
+                json={"values": {"title": "Stale"}, "expected_row_version": 1},
+            )
+            assert stale.status_code == 409, stale.text
+
+            deleted = await client.request(
+                "DELETE",
+                f"/api/agent/v1/content-items/{item_id}",
+                headers={**headers, "Idempotency-Key": "item-delete"},
+                json={"expected_row_version": 2},
+            )
+            assert deleted.status_code == 200, deleted.text
+            deleted_result = deleted.json()
+            assert deleted_result["action"] == "CONTENT_ITEM_DELETED"
+            assert deleted_result["record"]["status"] == "DELETED"
+            assert deleted_result["record"]["row_version"] == 3
+            delete_replay = await client.request(
+                "DELETE",
+                f"/api/agent/v1/content-items/{item_id}",
+                headers={**headers, "Idempotency-Key": "item-delete"},
+                json={"expected_row_version": 2},
+            )
+            assert delete_replay.status_code == 200
+            assert delete_replay.json() == deleted_result
+            assert (await client.get(item_path, headers=headers)).json() == []
+            assert (
+                await client.get(
+                    f"/api/agent/v1/content-items/{item_id}", headers=headers
+                )
+            ).status_code == 404
+
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        actions = await owner.fetch(
+            "SELECT action, http_method, quota_kind FROM audit.agent_mutation "
+            "WHERE workspace_id=$1 ORDER BY occurred_at, operation_id",
+            workspace_id,
+        )
+        assert [tuple(row) for row in actions][-3:] == [
+            ("CONTENT_ITEM_CREATED", "POST", "mutation"),
+            ("CONTENT_ITEM_UPDATED", "PATCH", "mutation"),
+            ("CONTENT_ITEM_DELETED", "DELETE", "delete"),
+        ]
+        assert (
+            await owner.fetchval(
+                "SELECT count(*) FROM content.content_item_base WHERE id=$1", item_id
+            )
+            == 0
+        )
+        assert (
+            await owner.fetchval(
+                "SELECT mutation_used FROM control.capability WHERE id=$1",
+                capability_id,
+            )
+            == 4
+        )
+        assert (
+            await owner.fetchval(
+                "SELECT delete_used FROM control.capability WHERE id=$1", capability_id
+            )
+            == 1
+        )
 
 
 @pytest.mark.asyncio
@@ -2333,7 +2537,10 @@ async def test_field_update_delete_resources_are_db_enforced_and_concurrency_saf
                         "type_id": str(parent_id),
                         "slug": "dependent-item",
                         "status": "DRAFT",
-                        "values": {"dependent-field": "used"},
+                        "values": {
+                            "managed-field": "present",
+                            "dependent-field": "used",
+                        },
                     },
                 )
                 assert item.status_code == 201, item.text
@@ -3533,7 +3740,6 @@ async def test_semantic_audit_contract_is_strict_and_reversible(
     semantic_requests: list[
         tuple[str, str, dict[str, Any], Any, str, dict[str, Any]]
     ] = []
-    legacy_item_operation: UUID | None = None
     parent_id: UUID
     field_id: UUID
     try:
@@ -3590,39 +3796,6 @@ async def test_semantic_audit_contract_is_strict_and_reversible(
                         "delete_enabled": True,
                     },
                 )
-                item_path = f"/api/agent/v1/content-items/types/{legacy_type_id}"
-                item_body = {
-                    "type_id": str(legacy_type_id),
-                    "slug": "legacy-item",
-                    "status": "DRAFT",
-                    "values": {},
-                }
-                legacy_item = await client.post(
-                    item_path,
-                    headers={**headers, "Idempotency-Key": "legacy-item"},
-                    json=item_body,
-                )
-                assert legacy_item.status_code == 201, legacy_item.text
-                legacy_item_operation = UUID(legacy_item.json()["operation_id"])
-                assert await audit_row(legacy_item_operation) == (
-                    capability_id,
-                    workspace_id,
-                    seeded["site_id"],
-                    "content_item",
-                    UUID(legacy_item.json()["record"]["id"]),
-                    mutation_digest(
-                        method="POST",
-                        path=item_path,
-                        body=CreateContentItemRequest.model_validate(
-                            item_body
-                        ).model_dump(mode="json"),
-                    ),
-                    "LEGACY_MUTATION",
-                    None,
-                    201,
-                    None,
-                )
-
                 field_path = f"{parent_path}/{parent_id}/fields"
                 field_body = {
                     "key": "strict-field",
@@ -3905,7 +4078,6 @@ async def test_semantic_audit_contract_is_strict_and_reversible(
                 await connection.execute("DELETE FROM audit.agent_mutation")
         assert await owner_counts() == counts_before_direct
 
-        assert legacy_item_operation is not None
         await run_migration(
             database.settings.resolved_owner_dsn(),
             expected_database=database.name,
@@ -3958,7 +4130,7 @@ async def test_semantic_audit_contract_is_strict_and_reversible(
                 await owner.fetchval(
                     "SELECT version_num::text FROM control.alembic_version"
                 )
-                == "045_001"
+                == "046_001"
             )
             assert (
                 await owner.fetchval(
@@ -3967,12 +4139,6 @@ async def test_semantic_audit_contract_is_strict_and_reversible(
                     "AND column_name IN ('http_method','quota_kind')"
                 )
                 == 2
-            )
-            assert await owner.fetchval(
-                "SELECT action IS NOT NULL AND http_method IS NULL "
-                "AND quota_kind IS NULL FROM audit.agent_mutation "
-                "WHERE operation_id=$1",
-                legacy_item_operation,
             )
             assert await owner.fetchval(
                 "SELECT to_regprocedure($1)",
