@@ -29,11 +29,11 @@
     "@slaif-agent-site/content-model-schema": "workspace:0.0.0",
     "@slaif-agent-site/scope-catalog": "workspace:0.0.0",
     "@slaif-agent-site/test-fixtures": "workspace:0.0.0",
-    "@types/node": "24.13.3",
-    "eslint": "10.8.1",
+    "@types/node": "25.9.5",
+    "eslint": "10.9.1",
     "prettier": "3.9.6",
-    "typescript": "6.0.3",
-    "typescript-eslint": "8.67.0",
-    "vitest": "4.1.10"
+    "typescript": "7.0.2",
+    "typescript-eslint": "8.68.0",
+    "vitest": "4.1.11"
   }
 }
