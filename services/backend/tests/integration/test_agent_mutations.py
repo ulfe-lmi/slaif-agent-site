@@ -678,7 +678,7 @@ async def test_agent_content_item_crud_is_strict_idempotent_and_tombstoned(
             assert created_item.status_code == 201, created_item.text
             created_record = created_item.json()["record"]
             item_id = UUID(created_record["id"])
-            assert created_record["type_definition_version"] == 1
+            assert created_record["type_definition_version"] == 2
             assert created_record["row_version"] == 1
 
             exact = await client.get(
@@ -724,8 +724,8 @@ async def test_agent_content_item_crud_is_strict_idempotent_and_tombstoned(
             assert deleted.status_code == 200, deleted.text
             deleted_result = deleted.json()
             assert deleted_result["action"] == "CONTENT_ITEM_DELETED"
-            assert deleted_result["record"]["status"] == "DELETED"
-            assert deleted_result["record"]["row_version"] == 3
+            assert deleted_result["record"]["status"] == "DRAFT"
+            assert deleted_result["record"]["row_version"] == 2
             delete_replay = await client.request(
                 "DELETE",
                 f"/api/agent/v1/content-items/{item_id}",
@@ -773,6 +773,981 @@ async def test_agent_content_item_crud_is_strict_idempotent_and_tombstoned(
             )
             == 1
         )
+
+
+@pytest.mark.asyncio
+async def test_agent_content_item_translation_crud_is_strict_and_cow_bound(
+    agent_site_database: AgentSiteDatabase,
+) -> None:
+    database = agent_site_database
+    _token, seeded = await _seed(database)
+    scopes = [
+        "site:read",
+        "content-model:create",
+        "content-model:read",
+        "field-definition:create",
+        "content-item:create",
+        "content-item:read",
+        "translation:read",
+        "translation:write",
+    ]
+    token, workspace_id = await _workspace_capability(
+        database, seeded, scopes, "Agent Translation Workspace"
+    )
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        capability_id = await owner.fetchval(
+            "SELECT id FROM control.capability WHERE workspace_id=$1", workspace_id
+        )
+        await owner.execute(
+            "UPDATE control.capability SET request_quota=100, mutation_quota=20, "
+            "delete_quota=1 WHERE id=$1",
+            capability_id,
+        )
+    app = create_agent_app(
+        settings=ServiceSettings.for_test(),
+        database_settings=_agent_settings(database),
+    )
+    headers = {"Authorization": f"Bearer {token}"}
+    agent_pool = await database.role_pool("slaif_agent_runtime")
+    reviewer_pool = await database.role_pool("slaif_reviewer")
+    try:
+        async with app.router.lifespan_context(app):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://agent.test"
+            ) as client:
+                parent = await client.post(
+                    "/api/agent/v1/content-model/types",
+                    headers={**headers, "Idempotency-Key": "translation-parent"},
+                    json={
+                        "key": "translation-parent",
+                        "labels": {"en": "Translation parent"},
+                        "slug_pattern": "/translation-parent/{slug}",
+                        "settings": {},
+                    },
+                )
+                assert parent.status_code == 201, parent.text
+                parent_id = UUID(parent.json()["record"]["id"])
+                await _set_resource_constraints(
+                    database,
+                    workspace_id,
+                    {
+                        "allowed_type_ids": [str(parent_id)],
+                        "allowed_type_keys": ["translation-parent"],
+                        "delete_enabled": True,
+                    },
+                )
+                for key, localized, idem in (
+                    ("title", False, "translation-title"),
+                    ("headline", True, "translation-headline"),
+                ):
+                    field = await client.post(
+                        f"/api/agent/v1/content-model/types/{parent_id}/fields",
+                        headers={**headers, "Idempotency-Key": idem},
+                        json={
+                            "key": key,
+                            "label": key.title(),
+                            "field_type": "short_text",
+                            "localized": localized,
+                            "required": localized,
+                        },
+                    )
+                    assert field.status_code == 201, field.text
+
+                item = await client.post(
+                    f"/api/agent/v1/content-items/types/{parent_id}",
+                    headers={**headers, "Idempotency-Key": "translation-item"},
+                    json={
+                        "type_id": str(parent_id),
+                        "slug": "translation-item",
+                        "status": "DRAFT",
+                        "values": {"title": "Base title"},
+                    },
+                )
+                assert item.status_code == 201, item.text
+                item_id = UUID(item.json()["record"]["id"])
+                translation_path = f"/api/agent/v1/content-items/{item_id}/translations"
+
+                wrong_scope = await _capability_with_scopes(
+                    database, seeded, ["translation:read"]
+                )
+                denied = await client.post(
+                    translation_path,
+                    headers={
+                        "Authorization": f"Bearer {wrong_scope}",
+                        "Idempotency-Key": "translation-denied",
+                    },
+                    json={"locale": "en-US", "localized_values": {"headline": "No"}},
+                )
+                assert denied.status_code == 403, denied.text
+
+                invalid_locale = await client.post(
+                    translation_path,
+                    headers={
+                        **headers,
+                        "Idempotency-Key": "translation-invalid-locale",
+                    },
+                    json={
+                        "locale": "not a locale",
+                        "localized_values": {"headline": "No"},
+                    },
+                )
+                assert invalid_locale.status_code == 422, invalid_locale.text
+                invalid_nonlocalized = await client.post(
+                    translation_path,
+                    headers={
+                        **headers,
+                        "Idempotency-Key": "translation-invalid-nonlocalized",
+                    },
+                    json={"locale": "en-US", "localized_values": {"title": "No"}},
+                )
+                assert invalid_nonlocalized.status_code == 422, (
+                    invalid_nonlocalized.text
+                )
+
+                created = await client.post(
+                    translation_path,
+                    headers={**headers, "Idempotency-Key": "translation-create"},
+                    json={
+                        "locale": "en-US",
+                        "localized_values": {"headline": "Hello"},
+                    },
+                )
+                assert created.status_code == 201, created.text
+                created_result = created.json()
+                assert created_result["action"] == "CONTENT_ITEM_TRANSLATION_CREATED"
+                created_record = created_result["record"]
+                translation_id = UUID(created_record["id"])
+                assert created_record["row_version"] == 1
+
+                replay = await client.post(
+                    translation_path,
+                    headers={**headers, "Idempotency-Key": "translation-create"},
+                    json={
+                        "locale": "en-US",
+                        "localized_values": {"headline": "Hello"},
+                    },
+                )
+                assert replay.status_code == 201
+                assert replay.json() == created_result
+                mismatch = await client.post(
+                    translation_path,
+                    headers={**headers, "Idempotency-Key": "translation-create"},
+                    json={
+                        "locale": "en-US",
+                        "localized_values": {"headline": "Changed"},
+                    },
+                )
+                assert mismatch.status_code == 409
+                assert mismatch.json()["error"]["code"] == "IDEMPOTENCY_MISMATCH"
+
+                listed = await client.get(translation_path, headers=headers)
+                assert listed.status_code == 200, listed.text
+                assert listed.json() == [created_record]
+                exact = await client.get(
+                    f"{translation_path}/{translation_id}", headers=headers
+                )
+                assert exact.status_code == 200, exact.text
+                assert exact.json() == created_record
+                wrong_parent = await client.get(
+                    f"/api/agent/v1/content-items/{uuid4()}/translations/{translation_id}",
+                    headers=headers,
+                )
+                assert wrong_parent.status_code == 404, wrong_parent.text
+
+                updated = await client.patch(
+                    f"{translation_path}/{translation_id}",
+                    headers={**headers, "Idempotency-Key": "translation-update"},
+                    json={
+                        "localized_values": {"headline": "Updated"},
+                        "expected_row_version": 1,
+                    },
+                )
+                assert updated.status_code == 200, updated.text
+                updated_result = updated.json()
+                assert updated_result["action"] == "CONTENT_ITEM_TRANSLATION_UPDATED"
+                assert updated_result["record"]["row_version"] == 2
+                stale = await client.patch(
+                    f"{translation_path}/{translation_id}",
+                    headers={**headers, "Idempotency-Key": "translation-stale"},
+                    json={
+                        "localized_values": {"headline": "Stale"},
+                        "expected_row_version": 1,
+                    },
+                )
+                assert stale.status_code == 409, stale.text
+
+                second = await client.post(
+                    translation_path,
+                    headers={**headers, "Idempotency-Key": "translation-create-second"},
+                    json={
+                        "locale": "sl-SI",
+                        "localized_values": {"headline": "Živjo"},
+                    },
+                )
+                assert second.status_code == 201, second.text
+                second_record = second.json()["record"]
+                second_id = UUID(second_record["id"])
+
+                deleted = await client.request(
+                    "DELETE",
+                    f"{translation_path}/{translation_id}",
+                    headers={**headers, "Idempotency-Key": "translation-delete"},
+                    json={"expected_row_version": 2},
+                )
+                assert deleted.status_code == 200, deleted.text
+                deleted_result = deleted.json()
+                assert deleted_result["action"] == "CONTENT_ITEM_TRANSLATION_DELETED"
+                assert deleted_result["record"] == updated_result["record"]
+                delete_replay = await client.request(
+                    "DELETE",
+                    f"{translation_path}/{translation_id}",
+                    headers={**headers, "Idempotency-Key": "translation-delete"},
+                    json={"expected_row_version": 2},
+                )
+                assert delete_replay.status_code == 200
+                assert delete_replay.json() == deleted_result
+                remaining = await client.get(translation_path, headers=headers)
+                assert remaining.status_code == 200
+                assert remaining.json() == [second_record]
+
+                quota_denied = await client.request(
+                    "DELETE",
+                    f"{translation_path}/{second_id}",
+                    headers={**headers, "Idempotency-Key": "translation-delete-second"},
+                    json={"expected_row_version": 1},
+                )
+                assert quota_denied.status_code == 429, quota_denied.text
+                assert (await client.get(translation_path, headers=headers)).json() == [
+                    second_record
+                ]
+
+                changed_field = await client.post(
+                    f"/api/agent/v1/content-model/types/{parent_id}/fields",
+                    headers={**headers, "Idempotency-Key": "translation-new-field"},
+                    json={
+                        "key": "later-field",
+                        "label": "Later field",
+                        "field_type": "short_text",
+                    },
+                )
+                assert changed_field.status_code == 201, changed_field.text
+                stale_definition = await client.patch(
+                    f"{translation_path}/{second_id}",
+                    headers={
+                        **headers,
+                        "Idempotency-Key": "translation-stale-definition",
+                    },
+                    json={
+                        "localized_values": {"headline": "Rejected"},
+                        "expected_row_version": 1,
+                    },
+                )
+                assert stale_definition.status_code == 422, stale_definition.text
+
+        async with asyncpg_cow_reviewer(reviewer_pool) as reviewer:
+            operations = await reviewer.operations(workspace_id, schema="content")
+            assert UUID(created_result["operation_id"]) in operations
+            assert UUID(updated_result["operation_id"]) in operations
+            assert UUID(deleted_result["operation_id"]) in operations
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            actions = await owner.fetch(
+                "SELECT action, http_method, quota_kind FROM audit.agent_mutation "
+                "WHERE workspace_id=$1 AND resource_type='content_item_translation' "
+                "ORDER BY occurred_at, operation_id",
+                workspace_id,
+            )
+            assert [tuple(row) for row in actions] == [
+                (
+                    "CONTENT_ITEM_TRANSLATION_CREATED",
+                    "POST",
+                    "mutation",
+                ),
+                (
+                    "CONTENT_ITEM_TRANSLATION_UPDATED",
+                    "PATCH",
+                    "mutation",
+                ),
+                (
+                    "CONTENT_ITEM_TRANSLATION_CREATED",
+                    "POST",
+                    "mutation",
+                ),
+                (
+                    "CONTENT_ITEM_TRANSLATION_DELETED",
+                    "DELETE",
+                    "delete",
+                ),
+            ]
+            assert (
+                await owner.fetchval(
+                    "SELECT delete_used FROM control.capability WHERE id=$1",
+                    capability_id,
+                )
+                == 1
+            )
+            assert (
+                await owner.fetchval(
+                    "SELECT count(*) FROM content.content_item_translation_base "
+                    "WHERE item_id=$1",
+                    item_id,
+                )
+                == 0
+            )
+    finally:
+        await reviewer_pool.close()
+        await agent_pool.close()
+
+
+@pytest.mark.asyncio
+async def test_agent_046_047_migration_round_trip_preserves_contract_and_state(
+    agent_site_database: AgentSiteDatabase,
+) -> None:
+    database = agent_site_database
+    _token, seeded = await _seed(database)
+    scopes = [
+        "site:read",
+        "content-model:create",
+        "content-model:read",
+        "content-item:create",
+        "content-item:read",
+    ]
+    token, workspace_id = await _workspace_capability(
+        database, seeded, scopes, "Agent Migration Round Trip Workspace"
+    )
+    app = create_agent_app(
+        settings=ServiceSettings.for_test(),
+        database_settings=_agent_settings(database),
+    )
+    agent_pool = await database.role_pool("slaif_agent_runtime")
+    try:
+        async with app.router.lifespan_context(app):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://agent.test"
+            ) as client:
+                created_type = await client.post(
+                    "/api/agent/v1/content-model/types",
+                    headers={
+                        "Authorization": f"Bearer {token}",
+                        "Idempotency-Key": "migration-type",
+                    },
+                    json={
+                        "key": "migration-type",
+                        "labels": {"en": "Migration type"},
+                        "slug_pattern": "/migration/{slug}",
+                        "settings": {},
+                    },
+                )
+                assert created_type.status_code == 201, created_type.text
+                type_id = UUID(created_type.json()["record"]["id"])
+                created_item = await client.post(
+                    f"/api/agent/v1/content-items/types/{type_id}",
+                    headers={
+                        "Authorization": f"Bearer {token}",
+                        "Idempotency-Key": "migration-item",
+                    },
+                    json={
+                        "type_id": str(type_id),
+                        "slug": "migration-item",
+                        "status": "DRAFT",
+                        "values": {},
+                    },
+                )
+                assert created_item.status_code == 201, created_item.text
+                item_id = UUID(created_item.json()["record"]["id"])
+
+        await run_migration(
+            database.settings.resolved_owner_dsn(),
+            expected_database=database.name,
+            operation="downgrade",
+            revision="046_001",
+        )
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            assert (
+                await owner.fetchval(
+                    "SELECT version_num::text FROM control.alembic_version"
+                )
+                == "046_001"
+            )
+            assert await owner.fetchval(
+                "SELECT to_regprocedure($1)",
+                "control.slaif_agent_require_capability(uuid)",
+            )
+            assert not await owner.fetchval(
+                "SELECT to_regprocedure($1)",
+                "control.slaif_agent_require_capability(uuid,text)",
+            )
+            assert not await owner.fetchval(
+                "SELECT to_regprocedure($1)",
+                "content.slaif_agent_content_item_translation_list(uuid,uuid)",
+            )
+            actions = await owner.fetch(
+                "SELECT action FROM audit.agent_mutation WHERE workspace_id=$1 "
+                "ORDER BY occurred_at, operation_id",
+                workspace_id,
+            )
+            assert [row[0] for row in actions] == [
+                "CONTENT_TYPE_CREATED",
+                "CONTENT_ITEM_CREATED",
+            ]
+            constraint = await owner.fetchval(
+                "SELECT pg_get_constraintdef(oid) FROM pg_constraint "
+                "WHERE conrelid='audit.agent_mutation'::regclass "
+                "AND conname='agent_mutation_semantic_shape'"
+            )
+            assert "CONTENT_ITEM_TRANSLATION_CREATED" not in constraint
+        async with asyncpg_cow_session(
+            agent_pool, session_id=workspace_id, operation_id=uuid4()
+        ) as cow:
+            assert (
+                await cow.native.fetchval(
+                    "SELECT count(*) FROM content.content_item WHERE id=$1", item_id
+                )
+                == 1
+            )
+
+        await run_migration(
+            database.settings.resolved_owner_dsn(),
+            expected_database=database.name,
+            operation="upgrade",
+            revision="head",
+        )
+        await reconcile(database.settings)
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            assert (
+                await owner.fetchval(
+                    "SELECT version_num::text FROM control.alembic_version"
+                )
+                == "047_001"
+            )
+            assert await owner.fetchval(
+                "SELECT to_regprocedure($1)",
+                "control.slaif_agent_require_capability(uuid,text)",
+            )
+            assert not await owner.fetchval(
+                "SELECT to_regprocedure($1)",
+                "control.slaif_agent_require_capability(uuid)",
+            )
+            assert await owner.fetchval(
+                "SELECT to_regprocedure($1)",
+                "content.slaif_agent_content_item_translation_list(uuid,uuid)",
+            )
+            constraint = await owner.fetchval(
+                "SELECT pg_get_constraintdef(oid) FROM pg_constraint "
+                "WHERE conrelid='audit.agent_mutation'::regclass "
+                "AND conname='agent_mutation_semantic_shape'"
+            )
+            assert "CONTENT_ITEM_TRANSLATION_CREATED" in constraint
+        async with asyncpg_cow_session(
+            agent_pool, session_id=workspace_id, operation_id=uuid4()
+        ) as cow:
+            assert (
+                await cow.native.fetchval(
+                    "SELECT count(*) FROM content.content_item WHERE id=$1", item_id
+                )
+                == 1
+            )
+    finally:
+        await agent_pool.close()
+
+
+@pytest.mark.asyncio
+async def test_agent_model_and_translation_wrappers_require_exact_scopes(
+    agent_site_database: AgentSiteDatabase,
+) -> None:
+    database = agent_site_database
+    _token, seeded = await _seed(database)
+    scopes = [
+        "site:read",
+        "content-model:create",
+        "content-model:read",
+        "content-model:write",
+        "content-model:delete",
+        "field-definition:create",
+        "field-definition:write",
+        "field-definition:delete",
+        "content-item:create",
+        "content-item:read",
+        "content-item:write",
+        "content-item:delete",
+        "translation:read",
+        "translation:write",
+    ]
+    token, workspace_id = await _workspace_capability(
+        database, seeded, scopes, "Agent Exact Scope Workspace"
+    )
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        full_capability_id = await owner.fetchval(
+            "SELECT id FROM control.capability WHERE workspace_id=$1", workspace_id
+        )
+    app = create_agent_app(
+        settings=ServiceSettings.for_test(),
+        database_settings=_agent_settings(database),
+    )
+    agent_pool = await database.role_pool("slaif_agent_runtime")
+    try:
+        async with app.router.lifespan_context(app):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://agent.test"
+            ) as client:
+                parent = await client.post(
+                    "/api/agent/v1/content-model/types",
+                    headers={
+                        "Authorization": f"Bearer {token}",
+                        "Idempotency-Key": "scope-parent",
+                    },
+                    json={
+                        "key": "scope-parent",
+                        "labels": {"en": "Scope parent"},
+                        "slug_pattern": "/scope/{slug}",
+                        "settings": {},
+                    },
+                )
+                assert parent.status_code == 201, parent.text
+                type_id = UUID(parent.json()["record"]["id"])
+                await _set_resource_constraints(
+                    database,
+                    workspace_id,
+                    {
+                        "allowed_type_ids": [str(type_id)],
+                        "allowed_type_keys": ["scope-parent"],
+                    },
+                )
+                field = await client.post(
+                    f"/api/agent/v1/content-model/types/{type_id}/fields",
+                    headers={
+                        "Authorization": f"Bearer {token}",
+                        "Idempotency-Key": "scope-field",
+                    },
+                    json={
+                        "key": "scope-title",
+                        "label": "Scope title",
+                        "field_type": "short_text",
+                    },
+                )
+                assert field.status_code == 201, field.text
+                field_id = UUID(field.json()["record"]["id"])
+                item = await client.post(
+                    f"/api/agent/v1/content-items/types/{type_id}",
+                    headers={
+                        "Authorization": f"Bearer {token}",
+                        "Idempotency-Key": "scope-item",
+                    },
+                    json={
+                        "type_id": str(type_id),
+                        "slug": "scope-item",
+                        "status": "DRAFT",
+                        "values": {"scope-title": "Scope"},
+                    },
+                )
+                assert item.status_code == 201, item.text
+                item_id = UUID(item.json()["record"]["id"])
+
+                async def issue_capability(
+                    capability_scopes: list[str],
+                ) -> tuple[str, UUID]:
+                    issued_token, public_id, digest = generate_capability_token()
+                    async with owner_connection(
+                        database.settings.resolved_owner_dsn(),
+                        expected_database=database.name,
+                    ) as owner:
+                        issued_id = await owner.fetchval(
+                            """
+                            INSERT INTO control.capability (
+                                workspace_id, public_id, secret_digest, scopes,
+                                expires_at
+                            ) VALUES (
+                                $1, $2, $3, $4::jsonb,
+                                now() + interval '30 minutes'
+                            )
+                            RETURNING id
+                            """,
+                            workspace_id,
+                            public_id,
+                            digest,
+                            json.dumps(capability_scopes),
+                        )
+                    return issued_token, issued_id
+
+                _wrong_token, wrong_capability_id = await issue_capability(
+                    ["site:read"]
+                )
+
+                async def denied(sql: str, *arguments: object) -> None:
+                    async with asyncpg_cow_session(
+                        agent_pool, session_id=workspace_id, operation_id=uuid4()
+                    ) as cow:
+                        await cow.native.execute(
+                            "SELECT set_config('app.capability_id',$1,true)",
+                            str(wrong_capability_id),
+                        )
+                        with pytest.raises(
+                            asyncpg.PostgresError, match="AGENT_SCOPE_DENIED"
+                        ):
+                            await cow.native.fetch(sql, *arguments)
+                        await cow.rollback()
+
+                denied_calls: tuple[tuple[str, tuple[object, ...]], ...] = (
+                    (
+                        "SELECT * FROM content.slaif_agent_content_type_list($1)",
+                        (seeded["site_id"],),
+                    ),
+                    (
+                        "SELECT * FROM content.slaif_agent_content_type_get($1,$2)",
+                        (seeded["site_id"], type_id),
+                    ),
+                    (
+                        "SELECT * FROM content.slaif_agent_field_definition_list("
+                        "$1,$2)",
+                        (seeded["site_id"], type_id),
+                    ),
+                    (
+                        "SELECT * FROM content.slaif_agent_content_item_list($1,$2)",
+                        (seeded["site_id"], type_id),
+                    ),
+                    (
+                        "SELECT * FROM content.slaif_agent_content_item_get($1,$2)",
+                        (seeded["site_id"], item_id),
+                    ),
+                    (
+                        "SELECT * FROM content.slaif_agent_content_type_create("
+                        "$1,$2,$3,$4,$5)",
+                        (seeded["site_id"], "denied", "{}", "/denied", "{}"),
+                    ),
+                    (
+                        "SELECT * FROM content.slaif_agent_content_type_update("
+                        "$1,$2,$3,$4,$5,$6)",
+                        (seeded["site_id"], type_id, None, None, None, 1),
+                    ),
+                    (
+                        "SELECT * FROM content.slaif_agent_content_type_delete("
+                        "$1,$2,$3)",
+                        (seeded["site_id"], type_id, 2),
+                    ),
+                    (
+                        "SELECT * FROM content.slaif_agent_field_definition_create("
+                        "$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)",
+                        (
+                            seeded["site_id"],
+                            type_id,
+                            "denied-field",
+                            "Denied",
+                            "short_text",
+                            False,
+                            False,
+                            1,
+                            0,
+                            "{}",
+                            "{}",
+                        ),
+                    ),
+                    (
+                        "SELECT * FROM content.slaif_agent_field_definition_update("
+                        "$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)",
+                        (
+                            seeded["site_id"],
+                            type_id,
+                            field_id,
+                            None,
+                            None,
+                            None,
+                            None,
+                            None,
+                            None,
+                            None,
+                            1,
+                        ),
+                    ),
+                    (
+                        "SELECT * FROM content.slaif_agent_field_definition_delete("
+                        "$1,$2,$3,$4)",
+                        (seeded["site_id"], type_id, field_id, 1),
+                    ),
+                    (
+                        "SELECT * FROM content.slaif_agent_content_item_create("
+                        "$1,$2,$3,$4,$5)",
+                        (seeded["site_id"], type_id, "denied-item", "DRAFT", "{}"),
+                    ),
+                    (
+                        "SELECT * FROM content.slaif_agent_content_item_update("
+                        "$1,$2,$3,$4,$5,$6)",
+                        (seeded["site_id"], item_id, None, None, None, 1),
+                    ),
+                    (
+                        "SELECT * FROM content.slaif_agent_content_item_delete("
+                        "$1,$2,$3)",
+                        (seeded["site_id"], item_id, 1),
+                    ),
+                    (
+                        "SELECT * FROM content."
+                        "slaif_agent_content_item_translation_fields_for_write("
+                        "$1,$2)",
+                        (seeded["site_id"], item_id),
+                    ),
+                    (
+                        "SELECT * FROM content."
+                        "slaif_agent_content_item_translation_list("
+                        "$1,$2)",
+                        (seeded["site_id"], item_id),
+                    ),
+                    (
+                        "SELECT * FROM content."
+                        "slaif_agent_content_item_translation_get("
+                        "$1,$2,$3)",
+                        (seeded["site_id"], item_id, uuid4()),
+                    ),
+                    (
+                        "SELECT * FROM content."
+                        "slaif_agent_content_item_translation_create("
+                        "$1,$2,$3,$4)",
+                        (seeded["site_id"], item_id, "en-US", "{}"),
+                    ),
+                    (
+                        "SELECT * FROM content."
+                        "slaif_agent_content_item_translation_update("
+                        "$1,$2,$3,$4,$5,$6)",
+                        (seeded["site_id"], item_id, uuid4(), None, None, 1),
+                    ),
+                    (
+                        "SELECT * FROM content."
+                        "slaif_agent_content_item_translation_delete("
+                        "$1,$2,$3,$4)",
+                        (seeded["site_id"], item_id, uuid4(), 1),
+                    ),
+                )
+                for sql, arguments in denied_calls:
+                    await denied(sql, *arguments)
+
+                _malformed_token, malformed_capability_id = await issue_capability(
+                    ["content-model:read"]
+                )
+                async with owner_connection(
+                    database.settings.resolved_owner_dsn(),
+                    expected_database=database.name,
+                ) as owner:
+                    await owner.execute(
+                        "UPDATE control.capability SET scopes='{}'::jsonb WHERE id=$1",
+                        malformed_capability_id,
+                    )
+                async with asyncpg_cow_session(
+                    agent_pool, session_id=workspace_id, operation_id=uuid4()
+                ) as cow:
+                    await cow.native.execute(
+                        "SELECT set_config('app.capability_id',$1,true)",
+                        str(malformed_capability_id),
+                    )
+                    with pytest.raises(
+                        asyncpg.PostgresError, match="AGENT_SCOPE_DENIED"
+                    ):
+                        await cow.native.fetch(
+                            "SELECT * FROM content.slaif_agent_content_type_list($1)",
+                            seeded["site_id"],
+                        )
+                    await cow.rollback()
+
+                async with asyncpg_cow_session(
+                    agent_pool, session_id=workspace_id, operation_id=uuid4()
+                ) as cow:
+                    await cow.native.execute(
+                        "SELECT set_config('app.capability_id',$1,true)",
+                        str(full_capability_id),
+                    )
+                    # The full-scope capability is proven by the HTTP calls; this
+                    # direct call proves the scope check permits its exact read.
+                    rows = await cow.native.fetch(
+                        "SELECT * FROM content.slaif_agent_content_type_list($1)",
+                        seeded["site_id"],
+                    )
+                    assert any(row[0] == type_id for row in rows)
+    finally:
+        await agent_pool.close()
+
+
+@pytest.mark.asyncio
+async def test_agent_canonical_item_delete_is_a_real_cow_delete_and_isolated(
+    agent_site_database: AgentSiteDatabase,
+) -> None:
+    database = agent_site_database
+    _token, seeded = await _seed(database)
+    canonical_type_id = UUID("00000000-0000-0000-0000-0000000007a1")
+    canonical_item_id = UUID("00000000-0000-0000-0000-0000000007a2")
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        await owner.execute(
+            """
+            INSERT INTO content.content_type_base (
+                id, site_id, "key", labels, slug_pattern, status,
+                definition_version, settings
+            ) VALUES (
+                $1, $2, 'canonical-delete-type',
+                '{"en":"Canonical delete"}'::jsonb,
+                '/canonical-delete/{slug}', 'ACTIVE', 1, '{}'::jsonb
+            )
+            """,
+            canonical_type_id,
+            seeded["site_id"],
+        )
+        await owner.execute(
+            """
+            INSERT INTO content.content_item_base (
+                id, site_id, type_id, slug, status, type_definition_version,
+                "values", row_version
+            ) VALUES ($1, $2, $3, 'canonical-delete-item', 'DRAFT', 1,
+                      '{}'::jsonb, 1)
+            """,
+            canonical_item_id,
+            seeded["site_id"],
+            canonical_type_id,
+        )
+    scopes_a = [
+        "site:read",
+        "content-model:read",
+        "content-model:delete",
+        "content-item:read",
+        "content-item:delete",
+    ]
+    scopes_b = ["site:read", "content-model:read", "content-item:read"]
+    token_a, workspace_a = await _workspace_capability(
+        database, seeded, scopes_a, "Canonical Delete Workspace A"
+    )
+    token_b, workspace_b = await _workspace_capability(
+        database, seeded, scopes_b, "Canonical Delete Workspace B"
+    )
+    for workspace in (workspace_a, workspace_b):
+        await _set_resource_constraints(
+            database,
+            workspace,
+            {
+                "allowed_type_ids": [str(canonical_type_id)],
+                "allowed_type_keys": ["canonical-delete-type"],
+                "delete_enabled": True,
+            },
+        )
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        await owner.execute(
+            "UPDATE control.capability SET delete_quota=2 WHERE workspace_id=$1",
+            workspace_a,
+        )
+    app = create_agent_app(
+        settings=ServiceSettings.for_test(),
+        database_settings=_agent_settings(database),
+    )
+    agent_pool = await database.role_pool("slaif_agent_runtime")
+    reviewer_pool = await database.role_pool("slaif_reviewer")
+    try:
+        async with app.router.lifespan_context(app):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://agent.test"
+            ) as client:
+                item_path = f"/api/agent/v1/content-items/{canonical_item_id}"
+                list_path = f"/api/agent/v1/content-items/types/{canonical_type_id}"
+                before = await client.get(
+                    item_path, headers={"Authorization": f"Bearer {token_a}"}
+                )
+                assert before.status_code == 200, before.text
+                assert before.json()["id"] == str(canonical_item_id)
+
+                deleted = await client.request(
+                    "DELETE",
+                    item_path,
+                    headers={
+                        "Authorization": f"Bearer {token_a}",
+                        "Idempotency-Key": "canonical-item-delete",
+                    },
+                    json={"expected_row_version": 1},
+                )
+                assert deleted.status_code == 200, deleted.text
+                deleted_result = deleted.json()
+                assert deleted_result["action"] == "CONTENT_ITEM_DELETED"
+                assert deleted_result["record"] == before.json()
+                replay = await client.request(
+                    "DELETE",
+                    item_path,
+                    headers={
+                        "Authorization": f"Bearer {token_a}",
+                        "Idempotency-Key": "canonical-item-delete",
+                    },
+                    json={"expected_row_version": 1},
+                )
+                assert replay.status_code == 200
+                assert replay.json() == deleted_result
+                assert (
+                    await client.get(
+                        item_path, headers={"Authorization": f"Bearer {token_a}"}
+                    )
+                ).status_code == 404
+                assert (
+                    await client.get(
+                        list_path, headers={"Authorization": f"Bearer {token_a}"}
+                    )
+                ).json() == []
+
+                other_workspace_item = await client.get(
+                    item_path, headers={"Authorization": f"Bearer {token_b}"}
+                )
+                assert other_workspace_item.status_code == 200
+                assert other_workspace_item.json() == before.json()
+
+                type_deleted = await client.request(
+                    "DELETE",
+                    f"/api/agent/v1/content-model/types/{canonical_type_id}",
+                    headers={
+                        "Authorization": f"Bearer {token_a}",
+                        "Idempotency-Key": "canonical-type-delete",
+                    },
+                    json={"expected_definition_version": 1},
+                )
+                assert type_deleted.status_code == 200, type_deleted.text
+                assert type_deleted.json()["record"]["status"] == "DELETED"
+                still_other_type = await client.get(
+                    f"/api/agent/v1/content-model/types/{canonical_type_id}",
+                    headers={"Authorization": f"Bearer {token_b}"},
+                )
+                assert still_other_type.status_code == 200
+                assert still_other_type.json()["status"] == "ACTIVE"
+
+        async with asyncpg_cow_reviewer(reviewer_pool) as reviewer:
+            operations = await reviewer.operations(workspace_a, schema="content")
+            assert UUID(deleted_result["operation_id"]) in operations
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            assert (
+                await owner.fetchval(
+                    "SELECT count(*) FROM content.content_item_base WHERE id=$1",
+                    canonical_item_id,
+                )
+                == 1
+            )
+            assert (
+                await owner.fetchval(
+                    "SELECT count(*) FROM content.content_type_base WHERE id=$1",
+                    canonical_type_id,
+                )
+                == 1
+            )
+            assert (
+                await owner.fetchval(
+                    "SELECT delete_used FROM control.capability WHERE workspace_id=$1",
+                    workspace_a,
+                )
+                == 2
+            )
+    finally:
+        await reviewer_pool.close()
+        await agent_pool.close()
 
 
 @pytest.mark.asyncio
@@ -2426,7 +3401,7 @@ async def test_field_update_delete_resources_are_db_enforced_and_concurrency_saf
                         "Authorization": f"Bearer {deleted_token}",
                         "Idempotency-Key": "delete-parent",
                     },
-                    json={"expected_definition_version": 1},
+                    json={"expected_definition_version": 2},
                 )
                 assert deleted_parent_request.status_code == 200, (
                     deleted_parent_request.text
@@ -2732,6 +3707,16 @@ async def test_field_update_delete_resources_are_db_enforced_and_concurrency_saf
         assert race_visible[2] in {"Race one", "Race two"}
         assert race_visible[3] == 2
         assert await operation_count(race_workspace_id) == race_operations + 1
+        async with asyncpg_cow_session(
+            agent_pool, session_id=race_workspace_id, operation_id=uuid4()
+        ) as cow:
+            assert (
+                await cow.native.fetchval(
+                    "SELECT definition_version FROM content.content_type WHERE id=$1",
+                    race_parent_id,
+                )
+                == 3
+            )
         async with owner_connection(
             database.settings.resolved_owner_dsn(), expected_database=database.name
         ) as owner:
@@ -3822,7 +4807,7 @@ async def test_semantic_audit_contract_is_strict_and_reversible(
                 type_update_path = f"{parent_path}/{parent_id}"
                 type_update_body = {
                     "labels": {"en": "Strict parent v2"},
-                    "expected_definition_version": 1,
+                    "expected_definition_version": 2,
                 }
                 type_update_model = UpdateContentTypeRequest.model_validate(
                     type_update_body
@@ -3886,7 +4871,7 @@ async def test_semantic_audit_contract_is_strict_and_reversible(
                     expected_status=200,
                 )
 
-                type_delete_body = {"expected_definition_version": 2}
+                type_delete_body = {"expected_definition_version": 5}
                 type_delete_model = DeleteDefinitionRequest.model_validate(
                     type_delete_body
                 )
@@ -4130,7 +5115,7 @@ async def test_semantic_audit_contract_is_strict_and_reversible(
                 await owner.fetchval(
                     "SELECT version_num::text FROM control.alembic_version"
                 )
-                == "046_001"
+                == "047_001"
             )
             assert (
                 await owner.fetchval(

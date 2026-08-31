@@ -3,6 +3,7 @@
 from .models import (
     CreateRelationRequest,
     CreateTranslationRequest,
+    DeleteTranslationRequest,
     RelationRecord,
     TranslationRecord,
     UpdateRelationRequest,
@@ -30,6 +31,7 @@ __all__ = [
     "FieldPrimitiveError",
     "CreateRelationRequest",
     "CreateTranslationRequest",
+    "DeleteTranslationRequest",
     "RelationRecord",
     "TranslationRecord",
     "UpdateRelationRequest",

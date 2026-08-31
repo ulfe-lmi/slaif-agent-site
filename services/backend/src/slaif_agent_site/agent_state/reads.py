@@ -23,6 +23,7 @@ from slaif_agent_site.content_model.media_models import MediaAssetRecord
 from slaif_agent_site.content_model.models import (
     ContentTypeRecord,
     FieldDefinitionRecord,
+    TranslationRecord,
 )
 from slaif_agent_site.content_model.page_models import PageRecord
 from slaif_agent_site.content_model.service import (
@@ -34,6 +35,7 @@ from slaif_agent_site.content_model.service import (
     _fd,
     _md,
     _pg,
+    _tr,
 )
 
 AGENT_CONTENT_TYPE_LIST_SQL = "SELECT * FROM content.slaif_agent_content_type_list($1)"
@@ -45,6 +47,12 @@ AGENT_CONTENT_ITEM_LIST_SQL = (
     "SELECT * FROM content.slaif_agent_content_item_list($1,$2)"
 )
 AGENT_CONTENT_ITEM_GET_SQL = "SELECT * FROM content.slaif_agent_content_item_get($1,$2)"
+AGENT_TRANSLATION_LIST_SQL = (
+    "SELECT * FROM content.slaif_agent_content_item_translation_list($1,$2)"
+)
+AGENT_TRANSLATION_GET_SQL = (
+    "SELECT * FROM content.slaif_agent_content_item_translation_get($1,$2,$3)"
+)
 AGENT_PAGE_LIST_SQL = "SELECT * FROM content.slaif_agent_page_list($1)"
 AGENT_COMPOSITION_LIST_SQL = "SELECT * FROM content.slaif_agent_composition_list($1,$2)"
 AGENT_MEDIA_LIST_SQL = "SELECT * FROM content.slaif_agent_media_list($1)"
@@ -73,6 +81,10 @@ class AgentSemanticReadService:
                 raise ContentModelServiceError(
                     ContentModelServiceReason.VALIDATION
                 ) from None
+            if getattr(error, "sqlstate", None) == "P0007":
+                raise ContentModelServiceError(
+                    ContentModelServiceReason.AUTHORIZATION
+                ) from None
             raise ContentModelServiceError(
                 ContentModelServiceReason.UNAVAILABLE
             ) from None
@@ -95,6 +107,10 @@ class AgentSemanticReadService:
             if getattr(error, "sqlstate", None) == "P0003":
                 raise ContentModelServiceError(
                     ContentModelServiceReason.VALIDATION
+                ) from None
+            if getattr(error, "sqlstate", None) == "P0007":
+                raise ContentModelServiceError(
+                    ContentModelServiceReason.AUTHORIZATION
                 ) from None
             raise ContentModelServiceError(
                 ContentModelServiceReason.UNAVAILABLE
@@ -139,6 +155,22 @@ class AgentSemanticReadService:
     ) -> tuple[ContentItemRecord, ...]:
         rows = await self._fetch(AGENT_CONTENT_ITEM_LIST_SQL, site_id, type_id)
         return tuple(_ci(row) for row in rows)
+
+    async def list_translations_for_site(
+        self, site_id: UUID, item_id: UUID
+    ) -> tuple[TranslationRecord, ...]:
+        rows = await self._fetch(AGENT_TRANSLATION_LIST_SQL, site_id, item_id)
+        return tuple(_tr(row) for row in rows)
+
+    async def get_translation_for_site(
+        self, site_id: UUID, item_id: UUID, translation_id: UUID
+    ) -> TranslationRecord:
+        row = await self._fetchrow(
+            AGENT_TRANSLATION_GET_SQL, site_id, item_id, translation_id
+        )
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
+        return _tr(row)
 
     async def list_pages(self, site_id: UUID) -> tuple[PageRecord, ...]:
         rows = await self._fetch(AGENT_PAGE_LIST_SQL, site_id)

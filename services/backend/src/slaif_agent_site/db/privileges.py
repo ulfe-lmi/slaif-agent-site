@@ -262,6 +262,30 @@ AGENT_CONTENT_FUNCTIONS = {
         "p_site_id uuid, p_item_id uuid, p_expected_row_version integer",
     ): "uuid, uuid, integer",
     (
+        "slaif_agent_content_item_translation_fields_for_write",
+        "p_site_id uuid, p_item_id uuid",
+    ): "uuid, uuid",
+    (
+        "slaif_agent_content_item_translation_list",
+        "p_site_id uuid, p_item_id uuid",
+    ): "uuid, uuid",
+    (
+        "slaif_agent_content_item_translation_get",
+        "p_site_id uuid, p_item_id uuid, p_translation_id uuid",
+    ): "uuid, uuid, uuid",
+    (
+        "slaif_agent_content_item_translation_create",
+        "p_site_id uuid, p_item_id uuid, p_locale text, p_values jsonb",
+    ): "uuid, uuid, text, jsonb",
+    (
+        "slaif_agent_content_item_translation_update",
+        "p_site_id uuid, p_item_id uuid, p_translation_id uuid, p_locale text, p_values jsonb, p_expected_row_version integer",
+    ): "uuid, uuid, uuid, text, jsonb, integer",
+    (
+        "slaif_agent_content_item_translation_delete",
+        "p_site_id uuid, p_item_id uuid, p_translation_id uuid, p_expected_row_version integer",
+    ): "uuid, uuid, uuid, integer",
+    (
         "slaif_agent_page_create",
         "p_site_id uuid, p_slug text, p_title text, p_status text, "
         "p_locale text, p_parent_id uuid",
@@ -786,6 +810,11 @@ async def apply_product_privileges(
             'TO "slaif_media"'
         )
     for (name, _identity), signature in AGENT_CONTENT_FUNCTIONS.items():
+        exists = await connection.fetchval(
+            "SELECT to_regprocedure($1)", f"content.{name}({signature})"
+        )
+        if exists is None:
+            continue
         await connection.execute(
             "GRANT EXECUTE ON FUNCTION "
             f'"content".{quote_identifier(name)}({signature}) '

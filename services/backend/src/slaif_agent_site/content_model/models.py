@@ -362,6 +362,12 @@ class UpdateTranslationRequest(BaseModel):
         return value
 
 
+class DeleteTranslationRequest(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    expected_row_version: int = Field(gt=0)
+
+
 class TranslationRecord(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -451,6 +457,7 @@ __all__ = [
     "CreateFieldDefinitionRequest",
     "FieldDefinitionRecord",
     "CreateTranslationRequest",
+    "DeleteTranslationRequest",
     "UpdateTranslationRequest",
     "TranslationRecord",
     "CreateRelationRequest",

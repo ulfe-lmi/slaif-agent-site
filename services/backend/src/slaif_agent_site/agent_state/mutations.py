@@ -40,7 +40,11 @@ from slaif_agent_site.content_model.models import (
     ContentTypeRecord,
     CreateContentTypeRequest,
     CreateFieldDefinitionRequest,
+    CreateTranslationRequest,
+    DeleteTranslationRequest,
     FieldDefinitionRecord,
+    TranslationRecord,
+    UpdateTranslationRequest,
 )
 from slaif_agent_site.content_model.page_models import CreatePageRequest, PageRecord
 from slaif_agent_site.content_model.service import (
@@ -52,7 +56,9 @@ from slaif_agent_site.content_model.service import (
     _ct,
     _fd,
     _pg,
+    _tr,
 )
+from slaif_agent_site.content_model.validators import validate_values
 
 BEGIN_IDEMPOTENCY_SQL = (
     "SELECT * FROM control.slaif_agent_idempotency_begin($1,$2,$3,$4,$5)"
@@ -98,6 +104,19 @@ AGENT_ITEM_UPDATE_SQL = (
 AGENT_ITEM_DELETE_SQL = (
     "SELECT * FROM content.slaif_agent_content_item_delete($1,$2,$3)"
 )
+AGENT_TRANSLATION_FIELDS_SQL = (
+    "SELECT * FROM content.slaif_agent_content_item_translation_fields_for_write($1,$2)"
+)
+AGENT_TRANSLATION_CREATE_SQL = (
+    "SELECT * FROM content.slaif_agent_content_item_translation_create($1,$2,$3,$4)"
+)
+AGENT_TRANSLATION_UPDATE_SQL = (
+    "SELECT * FROM content.slaif_agent_content_item_translation_update("
+    "$1,$2,$3,$4,$5,$6)"
+)
+AGENT_TRANSLATION_DELETE_SQL = (
+    "SELECT * FROM content.slaif_agent_content_item_translation_delete($1,$2,$3,$4)"
+)
 AGENT_TYPE_GET_SQL = "SELECT * FROM content.slaif_agent_content_type_get($1,$2)"
 AGENT_FIELD_LIST_SQL = "SELECT * FROM content.slaif_agent_field_definition_list($1,$2)"
 AGENT_PAGE_CREATE_SQL = (
@@ -139,6 +158,24 @@ AGENT_SEMANTIC_CONTRACTS = {
     "CONTENT_ITEM_CREATED": ("content_item", "POST", 201, "mutation"),
     "CONTENT_ITEM_UPDATED": ("content_item", "PATCH", 200, "mutation"),
     "CONTENT_ITEM_DELETED": ("content_item", "DELETE", 200, "delete"),
+    "CONTENT_ITEM_TRANSLATION_CREATED": (
+        "content_item_translation",
+        "POST",
+        201,
+        "mutation",
+    ),
+    "CONTENT_ITEM_TRANSLATION_UPDATED": (
+        "content_item_translation",
+        "PATCH",
+        200,
+        "mutation",
+    ),
+    "CONTENT_ITEM_TRANSLATION_DELETED": (
+        "content_item_translation",
+        "DELETE",
+        200,
+        "delete",
+    ),
 }
 AGENT_SEMANTIC_ACTIONS = frozenset(AGENT_SEMANTIC_CONTRACTS)
 
@@ -376,6 +413,82 @@ class AgentCowContentModelService(ContentModelService):
             raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
         return cast(ContentItemRecord, _ci(row))
 
+    async def _translation_fields_for_write(
+        self, site_id: UUID, item_id: UUID
+    ) -> tuple[FieldDefinitionRecord, ...]:
+        rows = await self._fetch(AGENT_TRANSLATION_FIELDS_SQL, site_id, item_id)
+        return tuple(_fd(field) for field in rows)
+
+    @staticmethod
+    def _validate_translation_values(
+        values: dict[str, Any], fields: tuple[FieldDefinitionRecord, ...]
+    ) -> None:
+        try:
+            validate_values(values, fields, localized=True)
+        except (ValueError, TypeError):
+            raise ContentModelServiceError(
+                ContentModelServiceReason.VALIDATION
+            ) from None
+
+    async def create_translation_for_site(
+        self, site_id: UUID, item_id: UUID, request: CreateTranslationRequest
+    ) -> TranslationRecord:
+        fields = await self._translation_fields_for_write(site_id, item_id)
+        self._validate_translation_values(request.localized_values, fields)
+        row = await self._fetchrow(
+            AGENT_TRANSLATION_CREATE_SQL,
+            site_id,
+            item_id,
+            request.locale,
+            json.dumps(request.localized_values, sort_keys=True),
+        )
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.CONFLICT)
+        return _tr(row)
+
+    async def update_translation_for_site(
+        self,
+        site_id: UUID,
+        item_id: UUID,
+        translation_id: UUID,
+        request: UpdateTranslationRequest,
+    ) -> TranslationRecord:
+        if request.localized_values is not None:
+            fields = await self._translation_fields_for_write(site_id, item_id)
+            self._validate_translation_values(request.localized_values, fields)
+        row = await self._fetchrow(
+            AGENT_TRANSLATION_UPDATE_SQL,
+            site_id,
+            item_id,
+            translation_id,
+            request.locale,
+            json.dumps(request.localized_values, sort_keys=True)
+            if request.localized_values is not None
+            else None,
+            request.expected_row_version,
+        )
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
+        return _tr(row)
+
+    async def delete_translation_for_site(
+        self,
+        site_id: UUID,
+        item_id: UUID,
+        translation_id: UUID,
+        request: DeleteTranslationRequest,
+    ) -> TranslationRecord:
+        row = await self._fetchrow(
+            AGENT_TRANSLATION_DELETE_SQL,
+            site_id,
+            item_id,
+            translation_id,
+            request.expected_row_version,
+        )
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
+        return _tr(row)
+
     async def create_page_for_site(
         self, site_id: UUID, request: CreatePageRequest
     ) -> PageRecord:
@@ -567,6 +680,7 @@ async def execute_agent_mutation(
                 "content_type",
                 "field_definition",
                 "content_item",
+                "content_item_translation",
             }:
                 try:
                     mutation_allowed = await cow.native.fetchval(

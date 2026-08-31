@@ -77,6 +77,7 @@ class ContentModelServiceReason(StrEnum):
     UNAVAILABLE = "unavailable"
     VALIDATION = "validation"
     QUOTA = "quota"
+    AUTHORIZATION = "authorization"
 
 
 class ContentModelServiceError(RuntimeError):
@@ -1195,6 +1196,10 @@ class ContentModelService(
                 raise ContentModelServiceError(
                     ContentModelServiceReason.QUOTA
                 ) from None
+            if getattr(error, "sqlstate", None) == "P0007":
+                raise ContentModelServiceError(
+                    ContentModelServiceReason.AUTHORIZATION
+                ) from None
             if getattr(error, "sqlstate", None) == "P0001" or isinstance(
                 error, asyncpg.RaiseError
             ):
@@ -1219,7 +1224,31 @@ class ContentModelService(
                 return list(await connection.fetch(sql, *arguments))
         except asyncio.CancelledError:
             raise
-        except (asyncpg.PostgresError, OSError, TimeoutError):
+        except asyncpg.PostgresError as error:
+            if getattr(error, "sqlstate", None) == "P0002":
+                raise ContentModelServiceError(
+                    ContentModelServiceReason.NOT_FOUND
+                ) from None
+            if getattr(error, "sqlstate", None) == "P0003":
+                raise ContentModelServiceError(
+                    ContentModelServiceReason.VALIDATION
+                ) from None
+            if getattr(error, "sqlstate", None) == "P0004":
+                raise ContentModelServiceError(
+                    ContentModelServiceReason.CONFLICT
+                ) from None
+            if getattr(error, "sqlstate", None) in {"P0005", "P0006"}:
+                raise ContentModelServiceError(
+                    ContentModelServiceReason.QUOTA
+                ) from None
+            if getattr(error, "sqlstate", None) == "P0007":
+                raise ContentModelServiceError(
+                    ContentModelServiceReason.AUTHORIZATION
+                ) from None
+            raise ContentModelServiceError(
+                ContentModelServiceReason.UNAVAILABLE
+            ) from None
+        except (OSError, TimeoutError):
             raise ContentModelServiceError(
                 ContentModelServiceReason.UNAVAILABLE
             ) from None

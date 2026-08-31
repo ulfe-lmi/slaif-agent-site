@@ -1016,6 +1016,16 @@ ROUTE_POLICIES: Final[tuple[RoutePolicy, ...]] = (
                 "/api/agent/v1/content-items/{item_id}",
                 ("content-item:read",),
             ),
+            (
+                "GET",
+                "/api/agent/v1/content-items/{item_id}/translations",
+                ("translation:read",),
+            ),
+            (
+                "GET",
+                "/api/agent/v1/content-items/{item_id}/translations/{translation_id}",
+                ("translation:read",),
+            ),
             ("GET", "/api/agent/v1/pages/", ("page:read",)),
             ("GET", "/api/agent/v1/pages/{page_id}/components", ("composition:read",)),
             ("GET", "/api/agent/v1/media/", ("media:read",)),
@@ -1064,6 +1074,21 @@ ROUTE_POLICIES: Final[tuple[RoutePolicy, ...]] = (
                 "DELETE",
                 "/api/agent/v1/content-items/{item_id}",
                 "content-item:delete",
+            ),
+            (
+                "POST",
+                "/api/agent/v1/content-items/{item_id}/translations",
+                "translation:write",
+            ),
+            (
+                "PATCH",
+                "/api/agent/v1/content-items/{item_id}/translations/{translation_id}",
+                "translation:write",
+            ),
+            (
+                "DELETE",
+                "/api/agent/v1/content-items/{item_id}/translations/{translation_id}",
+                "translation:write",
             ),
             ("POST", "/api/agent/v1/pages/", "page:create"),
             (

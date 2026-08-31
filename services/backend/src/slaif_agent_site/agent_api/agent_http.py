@@ -48,9 +48,13 @@ from slaif_agent_site.content_model.models import (
     ContentTypeRecord,
     CreateContentTypeRequest,
     CreateFieldDefinitionRequest,
+    CreateTranslationRequest,
     DeleteDefinitionRequest,
+    DeleteTranslationRequest,
+    TranslationRecord,
     UpdateContentTypeRequest,
     UpdateFieldDefinitionRequest,
+    UpdateTranslationRequest,
 )
 from slaif_agent_site.content_model.page_models import CreatePageRequest
 from slaif_agent_site.content_model.service import (
@@ -142,6 +146,8 @@ async def _execute_read(
         if exc.reason is ContentModelServiceReason.NOT_FOUND:
             raise ResourceNotFoundError() from None
         if exc.reason is ContentModelServiceReason.VALIDATION:
+            raise AuthorizationError() from None
+        if exc.reason is ContentModelServiceReason.AUTHORIZATION:
             raise AuthorizationError() from None
         raise ServiceUnavailableError() from None
 
@@ -330,6 +336,8 @@ async def _execute_mutation(
             raise ResourceConflictError() from None
         if exc.reason is ContentModelServiceReason.VALIDATION:
             raise DomainValidationError() from None
+        if exc.reason is ContentModelServiceReason.AUTHORIZATION:
+            raise AuthorizationError() from None
         if exc.reason is ContentModelServiceReason.QUOTA:
             raise QuotaExceededError() from None
         raise ServiceUnavailableError() from None
@@ -570,6 +578,112 @@ async def delete_content_item(
         action="CONTENT_ITEM_DELETED",
         mutate=lambda service: service.delete_item_for_site(
             context.site_id, item_id, body
+        ),
+    )
+
+
+@router.get("/content-items/{item_id}/translations")
+async def list_content_item_translations(
+    item_id: UUID, request: Request
+) -> list[dict[str, Any]]:
+    context = await _authenticate(request)
+    _require_scope(context, "translation:read")
+    records = await _execute_read(
+        request,
+        context,
+        lambda service: service.list_translations_for_site(context.site_id, item_id),
+    )
+    return [record.model_dump(mode="json") for record in records]
+
+
+@router.get("/content-items/{item_id}/translations/{translation_id}")
+async def get_content_item_translation(
+    item_id: UUID, translation_id: UUID, request: Request
+) -> dict[str, Any]:
+    context = await _authenticate(request)
+    _require_scope(context, "translation:read")
+    record = cast(
+        TranslationRecord,
+        await _execute_read(
+            request,
+            context,
+            lambda service: service.get_translation_for_site(
+                context.site_id, item_id, translation_id
+            ),
+        ),
+    )
+    return record.model_dump(mode="json")
+
+
+@router.post("/content-items/{item_id}/translations", status_code=201)
+async def create_content_item_translation(
+    item_id: UUID,
+    request: Request,
+    body: CreateTranslationRequest,
+    idempotency_key: IdempotencyHeader = None,
+) -> AgentMutationResponse:
+    context = await _authenticate(request)
+    _require_scope(context, "translation:write")
+    return await _execute_mutation(
+        request,
+        context,
+        body,
+        idempotency_key,
+        resource_type="content_item_translation",
+        action="CONTENT_ITEM_TRANSLATION_CREATED",
+        mutate=lambda service: service.create_translation_for_site(
+            context.site_id, item_id, body
+        ),
+    )
+
+
+@router.patch("/content-items/{item_id}/translations/{translation_id}")
+async def update_content_item_translation(
+    item_id: UUID,
+    translation_id: UUID,
+    request: Request,
+    body: UpdateTranslationRequest,
+    idempotency_key: IdempotencyHeader = None,
+) -> AgentMutationResponse:
+    context = await _authenticate(request)
+    _require_scope(context, "translation:write")
+    return await _execute_mutation(
+        request,
+        context,
+        body,
+        idempotency_key,
+        resource_type="content_item_translation",
+        status_code=200,
+        action="CONTENT_ITEM_TRANSLATION_UPDATED",
+        mutate=lambda service: service.update_translation_for_site(
+            context.site_id, item_id, translation_id, body
+        ),
+    )
+
+
+@router.delete("/content-items/{item_id}/translations/{translation_id}")
+async def delete_content_item_translation(
+    item_id: UUID,
+    translation_id: UUID,
+    request: Request,
+    body: DeleteTranslationRequest,
+    idempotency_key: IdempotencyHeader = None,
+) -> AgentMutationResponse:
+    context = await _authenticate(request)
+    _require_scope(context, "translation:write")
+    if _constraint(context, "delete_enabled", True) is False:
+        raise AuthorizationError()
+    return await _execute_mutation(
+        request,
+        context,
+        body,
+        idempotency_key,
+        resource_type="content_item_translation",
+        status_code=200,
+        quota_kind="delete",
+        action="CONTENT_ITEM_TRANSLATION_DELETED",
+        mutate=lambda service: service.delete_translation_for_site(
+            context.site_id, item_id, translation_id, body
         ),
     )
 
