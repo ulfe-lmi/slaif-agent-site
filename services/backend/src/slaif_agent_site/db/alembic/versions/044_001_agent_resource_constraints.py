@@ -46,6 +46,117 @@ def upgrade() -> None:
         "REVOKE ALL ON FUNCTION control.slaif_agent_resource_constraints(uuid) FROM PUBLIC, slaif_agent_runtime, slaif_editor_runtime, slaif_control"
     )
     op.execute(
+        "DROP FUNCTION content.slaif_agent_field_definition_create(uuid,uuid,text,text,text,boolean,boolean,integer,integer,jsonb,jsonb)"
+    )
+    op.execute(
+        """
+        CREATE FUNCTION content.slaif_agent_field_definition_create(
+            p_site_id uuid, p_type_id uuid, p_key text, p_label text,
+            p_field_type text, p_required boolean, p_localized boolean,
+            p_cardinality integer, p_position integer, p_validation jsonb,
+            p_ui_options jsonb
+        ) RETURNS TABLE (
+            id uuid, type_id uuid, "key" text, label text, field_type text,
+            required boolean, localized boolean, cardinality integer,
+            "position" integer, validation jsonb, ui_options jsonb,
+            definition_version integer, created_at timestamptz,
+            updated_at timestamptz
+        ) LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $fn$
+        DECLARE
+          workspace_id uuid;
+          parent_type content.content_type;
+          constraints record;
+          visible_field_count bigint;
+        BEGIN
+          PERFORM control.slaif_agent_require_cow_site(p_site_id);
+          BEGIN
+            workspace_id := NULLIF(current_setting('app.session_id', true), '')::uuid;
+          EXCEPTION WHEN invalid_text_representation THEN
+            RAISE EXCEPTION 'COW_CONTEXT_REQUIRED' USING ERRCODE = '22023';
+          END;
+          IF workspace_id IS NULL THEN
+            RAISE EXCEPTION 'COW_CONTEXT_REQUIRED' USING ERRCODE = '22023';
+          END IF;
+
+          SELECT t.* INTO parent_type
+          FROM content.content_type AS t
+          WHERE t.id = p_type_id
+            AND t.site_id = p_site_id
+            AND t.status = 'ACTIVE'
+          FOR UPDATE;
+          IF NOT FOUND THEN
+            RAISE EXCEPTION 'FIELD_TYPE_SITE_NOT_FOUND' USING ERRCODE = 'P0002';
+          END IF;
+
+          SELECT * INTO STRICT constraints
+          FROM control.slaif_agent_resource_constraints(p_site_id);
+          IF coalesce(cardinality(constraints.allowed_type_ids), 0) > 0
+             AND NOT (parent_type.id = ANY(constraints.allowed_type_ids))
+          THEN
+            RAISE EXCEPTION 'AGENT_RESOURCE_TYPE_ID_DENIED' USING ERRCODE = 'P0003';
+          END IF;
+          IF coalesce(cardinality(constraints.allowed_type_keys), 0) > 0
+             AND NOT (parent_type.key = ANY(constraints.allowed_type_keys))
+          THEN
+            RAISE EXCEPTION 'AGENT_RESOURCE_TYPE_KEY_DENIED' USING ERRCODE = 'P0003';
+          END IF;
+
+          PERFORM pg_advisory_xact_lock(
+            hashtextextended(
+              workspace_id::text || ':' || parent_type.id::text ||
+                '_field_definition_create',
+              994
+            )
+          );
+          IF constraints.max_fields_per_type IS NOT NULL THEN
+            SELECT count(*) INTO visible_field_count
+            FROM content.field_definition AS field
+            WHERE field.site_id = p_site_id
+              AND field.type_id = parent_type.id;
+            IF visible_field_count >= constraints.max_fields_per_type THEN
+              RAISE EXCEPTION 'AGENT_RESOURCE_FIELD_DEFINITION_LIMIT'
+                USING ERRCODE = 'P0001';
+            END IF;
+          END IF;
+
+          INSERT INTO content.field_definition(
+            site_id, type_id, key, label, field_type, required, localized,
+            cardinality, "position", validation, ui_options
+          ) VALUES (
+            p_site_id, p_type_id, p_key, p_label, p_field_type, p_required,
+            p_localized, p_cardinality, p_position, p_validation, p_ui_options
+          );
+          RETURN QUERY
+          SELECT f.id, f.type_id, f.key, f.label, f.field_type, f.required,
+                 f.localized, f.cardinality, f."position", f.validation,
+                 f.ui_options, f.definition_version, f.created_at, f.updated_at
+          FROM content.field_definition AS f
+          WHERE f.site_id = p_site_id
+            AND f.type_id = p_type_id
+            AND f.key = p_key
+          ORDER BY f.created_at DESC
+          LIMIT 1;
+        END;
+        $fn$
+        """
+    )
+    op.execute(
+        """
+        REVOKE ALL ON FUNCTION content.slaif_agent_field_definition_create(
+            uuid,uuid,text,text,text,boolean,boolean,integer,integer,jsonb,jsonb
+        ) FROM PUBLIC, slaif_control, slaif_editor_runtime,
+            slaif_public_reader, slaif_preview_reader, slaif_reviewer,
+            slaif_scheduler, slaif_media, slaif_gc
+        """
+    )
+    op.execute(
+        """
+        GRANT EXECUTE ON FUNCTION content.slaif_agent_field_definition_create(
+            uuid,uuid,text,text,text,boolean,boolean,integer,integer,jsonb,jsonb
+        ) TO slaif_agent_runtime
+        """
+    )
+    op.execute(
         "DROP FUNCTION content.slaif_agent_content_type_update(uuid,uuid,jsonb,text,jsonb,integer)"
     )
     op.execute(
@@ -283,6 +394,61 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    op.execute(
+        "DROP FUNCTION content.slaif_agent_field_definition_create(uuid,uuid,text,text,text,boolean,boolean,integer,integer,jsonb,jsonb)"
+    )
+    op.execute(
+        """
+        CREATE FUNCTION content.slaif_agent_field_definition_create(
+            p_site_id uuid, p_type_id uuid, p_key text, p_label text,
+            p_field_type text, p_required boolean, p_localized boolean,
+            p_cardinality integer, p_position integer, p_validation jsonb,
+            p_ui_options jsonb
+        ) RETURNS TABLE (
+            id uuid, type_id uuid, "key" text, label text, field_type text,
+            required boolean, localized boolean, cardinality integer,
+            "position" integer, validation jsonb, ui_options jsonb,
+            definition_version integer, created_at timestamptz,
+            updated_at timestamptz
+        ) LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $fn$
+        BEGIN
+          PERFORM control.slaif_agent_require_cow_site(p_site_id);
+          IF NOT EXISTS (
+            SELECT 1 FROM content.content_type AS t
+            WHERE t.id = p_type_id
+              AND t.site_id = p_site_id
+              AND t.status = 'ACTIVE'
+          ) THEN
+            RAISE EXCEPTION 'FIELD_TYPE_SITE_NOT_FOUND' USING ERRCODE = 'P0002';
+          END IF;
+          INSERT INTO content.field_definition(
+            site_id, type_id, key, label, field_type, required, localized,
+            cardinality, "position", validation, ui_options
+          ) VALUES (
+            p_site_id, p_type_id, p_key, p_label, p_field_type, p_required,
+            p_localized, p_cardinality, p_position, p_validation, p_ui_options
+          );
+          RETURN QUERY
+          SELECT f.id, f.type_id, f.key, f.label, f.field_type, f.required,
+                 f.localized, f.cardinality, f."position", f.validation,
+                 f.ui_options, f.definition_version, f.created_at, f.updated_at
+          FROM content.field_definition AS f
+          WHERE f.site_id = p_site_id
+            AND f.type_id = p_type_id
+            AND f.key = p_key
+          ORDER BY f.created_at DESC
+          LIMIT 1;
+        END;
+        $fn$
+        """
+    )
+    op.execute(
+        """
+        GRANT EXECUTE ON FUNCTION content.slaif_agent_field_definition_create(
+            uuid,uuid,text,text,text,boolean,boolean,integer,integer,jsonb,jsonb
+        ) TO slaif_agent_runtime
+        """
+    )
     op.execute(
         "DROP FUNCTION content.slaif_agent_content_type_update(uuid,uuid,jsonb,text,jsonb,integer)"
     )
