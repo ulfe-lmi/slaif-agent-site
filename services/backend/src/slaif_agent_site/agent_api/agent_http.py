@@ -306,6 +306,7 @@ async def _execute_mutation(
             status_code=status_code,
             quota_kind=quota_kind,
             action=action,
+            method=request.method,
         )
     except DurableIdempotencyMismatchError:
         raise IdempotencyMismatchError() from None

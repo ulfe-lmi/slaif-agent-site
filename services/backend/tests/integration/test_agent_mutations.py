@@ -29,6 +29,14 @@ from slaif_agent_site.agent_state.mutations import (
 from slaif_agent_site.agent_state.reads import execute_agent_read
 from slaif_agent_site.bootstrap.service import reconcile, upgrade
 from slaif_agent_site.config import ServiceSettings
+from slaif_agent_site.content_model.item_models import CreateContentItemRequest
+from slaif_agent_site.content_model.models import (
+    CreateContentTypeRequest,
+    CreateFieldDefinitionRequest,
+    DeleteDefinitionRequest,
+    UpdateContentTypeRequest,
+    UpdateFieldDefinitionRequest,
+)
 from slaif_agent_site.db.connections import owner_connection
 from slaif_agent_site.db.migrations import run_migration
 
@@ -3410,4 +3418,902 @@ async def test_field_create_resources_are_db_enforced_and_concurrency_safe(
     finally:
         await reviewer_pool.close()
         await second_agent_pool.close()
+        await agent_pool.close()
+
+
+@pytest.mark.asyncio
+async def test_semantic_audit_contract_is_strict_and_reversible(
+    agent_site_database: AgentSiteDatabase,
+) -> None:
+    database = agent_site_database
+    _token, seeded = await _seed(database)
+    scopes = [
+        "site:read",
+        "content-model:create",
+        "content-model:read",
+        "content-model:write",
+        "content-model:delete",
+        "field-definition:create",
+        "field-definition:write",
+        "field-definition:delete",
+        "content-item:create",
+    ]
+    token, workspace_id = await _workspace_capability(
+        database, seeded, scopes, "Strict Semantic Audit Workspace"
+    )
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        capability_id = await owner.fetchval(
+            "SELECT id FROM control.capability WHERE workspace_id=$1", workspace_id
+        )
+        await owner.execute(
+            "UPDATE control.capability SET request_quota=100, mutation_quota=20, "
+            "delete_quota=4 WHERE id=$1",
+            capability_id,
+        )
+    agent_pool = await database.role_pool("slaif_agent_runtime")
+
+    async def audit_row(operation_id: UUID) -> Any:
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            row = await owner.fetchrow(
+                "SELECT capability_id, workspace_id, site_id, resource_type, "
+                "resource_id, request_digest, action, http_method, "
+                "response_status, quota_kind FROM audit.agent_mutation "
+                "WHERE operation_id=$1",
+                operation_id,
+            )
+        return None if row is None else tuple(row)
+
+    async def assert_semantic_result(
+        response: httpx.Response,
+        *,
+        model: Any,
+        method: str,
+        path: str,
+        action: str,
+        resource_type: str,
+        expected_status: int,
+    ) -> tuple[dict[str, Any], UUID]:
+        assert response.status_code == expected_status, response.text
+        result = response.json()
+        operation_id = UUID(result["operation_id"])
+        record_id = UUID(result["record"]["id"])
+        assert result["action"] == action
+        assert await audit_row(operation_id) == (
+            capability_id,
+            workspace_id,
+            seeded["site_id"],
+            resource_type,
+            record_id,
+            mutation_digest(
+                method=method,
+                path=path,
+                body=model.model_dump(mode="json"),
+            ),
+            action,
+            method,
+            expected_status,
+            "delete" if method == "DELETE" else "mutation",
+        )
+        return result, operation_id
+
+    async def owner_counts() -> tuple[int, int, int, int]:
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            row = await owner.fetchrow(
+                "SELECT "
+                "(SELECT count(*) FROM control.agent_idempotency "
+                " WHERE workspace_id=$1), "
+                "(SELECT count(*) FROM audit.agent_mutation "
+                " WHERE workspace_id=$1), "
+                "(SELECT mutation_used FROM control.capability "
+                " WHERE workspace_id=$1), "
+                "(SELECT delete_used FROM control.capability "
+                " WHERE workspace_id=$1)",
+                workspace_id,
+            )
+        return tuple(row)
+
+    async def strict_complete(arguments: list[object]) -> Any:
+        async with agent_pool.acquire() as connection:
+            return await connection.fetchval(
+                "SELECT control.slaif_agent_idempotency_complete("
+                "$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)",
+                *arguments,
+            )
+
+    app = create_agent_app(
+        settings=ServiceSettings.for_test(),
+        database_settings=_agent_settings(database),
+    )
+    semantic_requests: list[
+        tuple[str, str, dict[str, Any], Any, str, dict[str, Any]]
+    ] = []
+    legacy_item_operation: UUID | None = None
+    parent_id: UUID
+    field_id: UUID
+    try:
+        async with app.router.lifespan_context(app):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://agent.test"
+            ) as client:
+                headers = {"Authorization": f"Bearer {token}"}
+                parent_path = "/api/agent/v1/content-model/types"
+                parent_body = {
+                    "key": "strict-parent",
+                    "labels": {"en": "Strict parent"},
+                    "slug_pattern": "/strict-parent/{slug}",
+                    "settings": {},
+                }
+                parent_model = CreateContentTypeRequest.model_validate(parent_body)
+                parent_response = await client.post(
+                    parent_path,
+                    headers={**headers, "Idempotency-Key": "strict-parent"},
+                    json=parent_body,
+                )
+                parent_result, _ = await assert_semantic_result(
+                    parent_response,
+                    model=parent_model,
+                    method="POST",
+                    path=parent_path,
+                    action="CONTENT_TYPE_CREATED",
+                    resource_type="content_type",
+                    expected_status=201,
+                )
+                parent_id = UUID(parent_result["record"]["id"])
+
+                legacy_type_body = {
+                    "key": "legacy-holder",
+                    "labels": {"en": "Legacy holder"},
+                    "slug_pattern": "/legacy-holder/{slug}",
+                    "settings": {},
+                }
+                legacy_type_response = await client.post(
+                    parent_path,
+                    headers={**headers, "Idempotency-Key": "legacy-holder"},
+                    json=legacy_type_body,
+                )
+                assert legacy_type_response.status_code == 201, (
+                    legacy_type_response.text
+                )
+                legacy_type_id = UUID(legacy_type_response.json()["record"]["id"])
+                await _set_resource_constraints(
+                    database,
+                    workspace_id,
+                    {
+                        "allowed_type_ids": [str(parent_id), str(legacy_type_id)],
+                        "allowed_type_keys": ["strict-parent", "legacy-holder"],
+                        "delete_enabled": True,
+                    },
+                )
+                item_path = f"/api/agent/v1/content-items/types/{legacy_type_id}"
+                item_body = {
+                    "type_id": str(legacy_type_id),
+                    "slug": "legacy-item",
+                    "status": "DRAFT",
+                    "values": {},
+                }
+                legacy_item = await client.post(
+                    item_path,
+                    headers={**headers, "Idempotency-Key": "legacy-item"},
+                    json=item_body,
+                )
+                assert legacy_item.status_code == 201, legacy_item.text
+                legacy_item_operation = UUID(legacy_item.json()["operation_id"])
+                assert await audit_row(legacy_item_operation) == (
+                    capability_id,
+                    workspace_id,
+                    seeded["site_id"],
+                    "content_item",
+                    UUID(legacy_item.json()["record"]["id"]),
+                    mutation_digest(
+                        method="POST",
+                        path=item_path,
+                        body=CreateContentItemRequest.model_validate(
+                            item_body
+                        ).model_dump(mode="json"),
+                    ),
+                    "LEGACY_MUTATION",
+                    None,
+                    201,
+                    None,
+                )
+
+                field_path = f"{parent_path}/{parent_id}/fields"
+                field_body = {
+                    "key": "strict-field",
+                    "label": "Strict field",
+                    "field_type": "short_text",
+                }
+                field_model = CreateFieldDefinitionRequest.model_validate(field_body)
+                field_response = await client.post(
+                    field_path,
+                    headers={**headers, "Idempotency-Key": "strict-field"},
+                    json=field_body,
+                )
+                field_result, _ = await assert_semantic_result(
+                    field_response,
+                    model=field_model,
+                    method="POST",
+                    path=field_path,
+                    action="FIELD_DEFINITION_CREATED",
+                    resource_type="field_definition",
+                    expected_status=201,
+                )
+                field_id = UUID(field_result["record"]["id"])
+
+                type_update_path = f"{parent_path}/{parent_id}"
+                type_update_body = {
+                    "labels": {"en": "Strict parent v2"},
+                    "expected_definition_version": 1,
+                }
+                type_update_model = UpdateContentTypeRequest.model_validate(
+                    type_update_body
+                )
+                type_updated = await client.patch(
+                    type_update_path,
+                    headers={**headers, "Idempotency-Key": "strict-type-update"},
+                    json=type_update_body,
+                )
+                type_update_result, _ = await assert_semantic_result(
+                    type_updated,
+                    model=type_update_model,
+                    method="PATCH",
+                    path=type_update_path,
+                    action="CONTENT_TYPE_UPDATED",
+                    resource_type="content_type",
+                    expected_status=200,
+                )
+
+                field_update_path = f"{field_path}/{field_id}"
+                field_update_body = {
+                    "label": "Strict field v2",
+                    "required": True,
+                    "expected_definition_version": 1,
+                }
+                field_update_model = UpdateFieldDefinitionRequest.model_validate(
+                    field_update_body
+                )
+                field_updated = await client.patch(
+                    field_update_path,
+                    headers={**headers, "Idempotency-Key": "strict-field-update"},
+                    json=field_update_body,
+                )
+                field_update_result, _ = await assert_semantic_result(
+                    field_updated,
+                    model=field_update_model,
+                    method="PATCH",
+                    path=field_update_path,
+                    action="FIELD_DEFINITION_UPDATED",
+                    resource_type="field_definition",
+                    expected_status=200,
+                )
+
+                field_delete_body = {"expected_definition_version": 2}
+                field_delete_model = DeleteDefinitionRequest.model_validate(
+                    field_delete_body
+                )
+                field_deleted = await client.request(
+                    "DELETE",
+                    field_update_path,
+                    headers={**headers, "Idempotency-Key": "strict-field-delete"},
+                    json=field_delete_body,
+                )
+                field_delete_result, _ = await assert_semantic_result(
+                    field_deleted,
+                    model=field_delete_model,
+                    method="DELETE",
+                    path=field_update_path,
+                    action="FIELD_DEFINITION_DELETED",
+                    resource_type="field_definition",
+                    expected_status=200,
+                )
+
+                type_delete_body = {"expected_definition_version": 2}
+                type_delete_model = DeleteDefinitionRequest.model_validate(
+                    type_delete_body
+                )
+                type_deleted = await client.request(
+                    "DELETE",
+                    type_update_path,
+                    headers={**headers, "Idempotency-Key": "strict-type-delete"},
+                    json=type_delete_body,
+                )
+                type_delete_result, _ = await assert_semantic_result(
+                    type_deleted,
+                    model=type_delete_model,
+                    method="DELETE",
+                    path=type_update_path,
+                    action="CONTENT_TYPE_DELETED",
+                    resource_type="content_type",
+                    expected_status=200,
+                )
+                semantic_requests = [
+                    (
+                        "POST",
+                        parent_path,
+                        parent_body,
+                        parent_model,
+                        "strict-parent",
+                        parent_result,
+                    ),
+                    (
+                        "POST",
+                        field_path,
+                        field_body,
+                        field_model,
+                        "strict-field",
+                        field_result,
+                    ),
+                    (
+                        "PATCH",
+                        type_update_path,
+                        type_update_body,
+                        type_update_model,
+                        "strict-type-update",
+                        type_update_result,
+                    ),
+                    (
+                        "PATCH",
+                        field_update_path,
+                        field_update_body,
+                        field_update_model,
+                        "strict-field-update",
+                        field_update_result,
+                    ),
+                    (
+                        "DELETE",
+                        field_update_path,
+                        field_delete_body,
+                        field_delete_model,
+                        "strict-field-delete",
+                        field_delete_result,
+                    ),
+                    (
+                        "DELETE",
+                        type_update_path,
+                        type_delete_body,
+                        type_delete_model,
+                        "strict-type-delete",
+                        type_delete_result,
+                    ),
+                ]
+                before_replays = await owner_counts()
+                for method, path, body, _model, key, original in semantic_requests:
+                    replay = await client.request(
+                        method,
+                        path,
+                        headers={**headers, "Idempotency-Key": key},
+                        json=body,
+                    )
+                    assert replay.status_code == (201 if method == "POST" else 200)
+                    assert replay.json() == original
+                mismatch = await client.patch(
+                    type_update_path,
+                    headers={**headers, "Idempotency-Key": "strict-type-update"},
+                    json={**type_update_body, "labels": {"en": "changed"}},
+                )
+                assert mismatch.status_code == 409
+                assert mismatch.json()["error"]["code"] == "IDEMPOTENCY_MISMATCH"
+                assert await owner_counts() == before_replays
+
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            strict_signature = (
+                "control.slaif_agent_idempotency_complete(uuid,uuid,text,text,"
+                "uuid,integer,jsonb,text,uuid,uuid,text,text,text)"
+            )
+            old_semantic_signature = (
+                "control.slaif_agent_idempotency_complete(uuid,uuid,text,text,"
+                "uuid,integer,jsonb,text,uuid,uuid,text)"
+            )
+            assert await owner.fetchval("SELECT to_regprocedure($1)", strict_signature)
+            assert not await owner.fetchval(
+                "SELECT to_regprocedure($1)", old_semantic_signature
+            )
+            strict_owner = await owner.fetchval(
+                "SELECT pg_get_userbyid(proowner) FROM pg_proc "
+                "WHERE oid=$1::regprocedure",
+                strict_signature,
+            )
+            assert strict_owner == "slaif_owner"
+            assert await owner.fetchval(
+                "SELECT has_function_privilege('slaif_agent_runtime',$1,'EXECUTE')",
+                strict_signature,
+            )
+            assert not await owner.fetchval(
+                "SELECT has_function_privilege('public',$1,'EXECUTE')",
+                strict_signature,
+            )
+
+        counts_before_direct = await owner_counts()
+        valid_operation_id = uuid4()
+        valid_action = "CONTENT_TYPE_CREATED"
+        valid_body = {
+            "record": {"id": str(parent_id)},
+            "operation_id": str(valid_operation_id),
+            "action": valid_action,
+        }
+        valid_arguments: list[object] = [
+            capability_id,
+            workspace_id,
+            "direct-strict",
+            "0" * 64,
+            valid_operation_id,
+            201,
+            json.dumps(valid_body),
+            "content_type",
+            parent_id,
+            seeded["site_id"],
+            valid_action,
+            "POST",
+            "mutation",
+        ]
+        mismatch_arguments: list[tuple[str, dict[int, object]]] = [
+            ("action", {10: "FIELD_DEFINITION_CREATED"}),
+            ("resource", {7: "field_definition"}),
+            ("method", {11: "PATCH"}),
+            ("status", {5: 200}),
+            ("quota", {12: "delete"}),
+        ]
+        for _label, changes in mismatch_arguments:
+            arguments = list(valid_arguments)
+            for index, value in changes.items():
+                arguments[index] = value
+            with pytest.raises(
+                asyncpg.PostgresError, match="INVALID_SEMANTIC_COMPLETION"
+            ):
+                await strict_complete(arguments)
+
+        for _label, body_changes in (
+            ("body-action", {"action": "FIELD_DEFINITION_CREATED"}),
+            ("body-operation", {"operation_id": str(uuid4())}),
+            ("body-record", {"record": {"id": str(uuid4())}}),
+        ):
+            body = dict(valid_body)
+            body.update(body_changes)
+            arguments = list(valid_arguments)
+            arguments[6] = json.dumps(body)
+            with pytest.raises(
+                asyncpg.PostgresError, match="INVALID_SEMANTIC_COMPLETION"
+            ):
+                await strict_complete(arguments)
+
+        legacy_arguments = list(valid_arguments[:10])
+        with pytest.raises(
+            asyncpg.PostgresError, match="INVALID_IDEMPOTENCY_COMPLETION"
+        ):
+            async with agent_pool.acquire() as connection:
+                await connection.fetchval(
+                    "SELECT control.slaif_agent_idempotency_complete("
+                    "$1,$2,$3,$4,$5,$6,$7,$8,$9,$10)",
+                    *legacy_arguments,
+                )
+        async with agent_pool.acquire() as connection:
+            with pytest.raises(asyncpg.InsufficientPrivilegeError):
+                await connection.fetch("SELECT * FROM audit.agent_mutation")
+            with pytest.raises(asyncpg.InsufficientPrivilegeError):
+                await connection.execute(
+                    "UPDATE audit.agent_mutation SET response_status=200"
+                )
+            with pytest.raises(asyncpg.InsufficientPrivilegeError):
+                await connection.execute("DELETE FROM audit.agent_mutation")
+        assert await owner_counts() == counts_before_direct
+
+        assert legacy_item_operation is not None
+        await run_migration(
+            database.settings.resolved_owner_dsn(),
+            expected_database=database.name,
+            operation="downgrade",
+            revision="044_001",
+        )
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            assert (
+                await owner.fetchval(
+                    "SELECT version_num::text FROM control.alembic_version"
+                )
+                == "044_001"
+            )
+            assert (
+                await owner.fetchval(
+                    "SELECT count(*) FROM information_schema.columns "
+                    "WHERE table_schema='audit' AND table_name='agent_mutation' "
+                    "AND column_name IN ('http_method','quota_kind')"
+                )
+                == 0
+            )
+            assert await owner.fetchval(
+                "SELECT to_regprocedure($1)",
+                "control.slaif_agent_idempotency_complete(uuid,uuid,text,text,"
+                "uuid,integer,jsonb,text,uuid,uuid,text)",
+            )
+            assert not await owner.fetchval(
+                "SELECT to_regprocedure($1)",
+                "control.slaif_agent_idempotency_complete(uuid,uuid,text,text,"
+                "uuid,integer,jsonb,text,uuid,uuid,text,text,text)",
+            )
+            assert "max_deletes" not in await owner.fetchval(
+                "SELECT pg_get_functiondef($1::regprocedure)",
+                "control.slaif_agent_quota_consume(uuid,uuid,text)",
+            )
+
+        await run_migration(
+            database.settings.resolved_owner_dsn(),
+            expected_database=database.name,
+            operation="upgrade",
+            revision="head",
+        )
+        await reconcile(database.settings)
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            assert (
+                await owner.fetchval(
+                    "SELECT version_num::text FROM control.alembic_version"
+                )
+                == "045_001"
+            )
+            assert (
+                await owner.fetchval(
+                    "SELECT count(*) FROM information_schema.columns "
+                    "WHERE table_schema='audit' AND table_name='agent_mutation' "
+                    "AND column_name IN ('http_method','quota_kind')"
+                )
+                == 2
+            )
+            assert await owner.fetchval(
+                "SELECT action IS NOT NULL AND http_method IS NULL "
+                "AND quota_kind IS NULL FROM audit.agent_mutation "
+                "WHERE operation_id=$1",
+                legacy_item_operation,
+            )
+            assert await owner.fetchval(
+                "SELECT to_regprocedure($1)",
+                "control.slaif_agent_idempotency_complete(uuid,uuid,text,text,"
+                "uuid,integer,jsonb,text,uuid,uuid,text,text,text)",
+            )
+            assert not await owner.fetchval(
+                "SELECT to_regprocedure($1)",
+                "control.slaif_agent_idempotency_complete(uuid,uuid,text,text,"
+                "uuid,integer,jsonb,text,uuid,uuid,text)",
+            )
+            marker = await owner.fetchrow(
+                "SELECT readiness_state, foundation_hardened, "
+                "foundation_privileges_validated FROM control.bootstrap_readiness "
+                "WHERE singleton"
+            )
+            assert tuple(marker) == ("HARDENED", True, True)
+            for signature in (
+                "control.slaif_agent_idempotency_complete(uuid,uuid,text,text,"
+                "uuid,integer,jsonb,text,uuid,uuid)",
+                "control.slaif_agent_idempotency_complete(uuid,uuid,text,text,"
+                "uuid,integer,jsonb,text,uuid,uuid,text,text,text)",
+                "control.slaif_agent_quota_consume(uuid,uuid,text)",
+            ):
+                assert (
+                    await owner.fetchval(
+                        "SELECT pg_get_userbyid(proowner) FROM pg_proc "
+                        "WHERE oid=$1::regprocedure",
+                        signature,
+                    )
+                    == "slaif_owner"
+                )
+                assert await owner.fetchval(
+                    "SELECT has_function_privilege('slaif_agent_runtime',$1,'EXECUTE')",
+                    signature,
+                )
+                assert not await owner.fetchval(
+                    "SELECT has_function_privilege('public',$1,'EXECUTE')",
+                    signature,
+                )
+    finally:
+        await agent_pool.close()
+
+
+@pytest.mark.asyncio
+async def test_max_deletes_is_the_transactional_delete_quota_bound(
+    agent_site_database: AgentSiteDatabase,
+) -> None:
+    database = agent_site_database
+    _token, seeded = await _seed(database)
+    scopes = [
+        "site:read",
+        "content-model:create",
+        "content-model:read",
+        "content-model:delete",
+    ]
+    token, workspace_id = await _workspace_capability(
+        database, seeded, scopes, "Bounded Delete Workspace"
+    )
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        capability_id = await owner.fetchval(
+            "SELECT id FROM control.capability WHERE workspace_id=$1", workspace_id
+        )
+        await owner.execute(
+            "UPDATE control.capability SET request_quota=100, mutation_quota=20, "
+            "delete_quota=2 WHERE id=$1",
+            capability_id,
+        )
+    agent_pool = await database.role_pool("slaif_agent_runtime")
+    reviewer_pool = await database.role_pool("slaif_reviewer")
+
+    async def durable_counts() -> tuple[int, int, int, int]:
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            row = await owner.fetchrow(
+                "SELECT "
+                "(SELECT count(*) FROM control.agent_idempotency "
+                " WHERE workspace_id=$1), "
+                "(SELECT count(*) FROM audit.agent_mutation "
+                " WHERE workspace_id=$1), "
+                "(SELECT mutation_used FROM control.capability WHERE id=$2), "
+                "(SELECT delete_used FROM control.capability WHERE id=$2)",
+                workspace_id,
+                capability_id,
+            )
+        return tuple(row)
+
+    async def operation_count() -> int:
+        async with asyncpg_cow_reviewer(reviewer_pool) as reviewer:
+            return len(await reviewer.operations(workspace_id, schema="content"))
+
+    async def create_type(client: httpx.AsyncClient, key: str) -> UUID:
+        response = await client.post(
+            "/api/agent/v1/content-model/types",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Idempotency-Key": f"bounded-create-{key}",
+            },
+            json={
+                "key": key,
+                "labels": {"en": key},
+                "slug_pattern": f"/{key}/{{slug}}",
+                "settings": {},
+            },
+        )
+        assert response.status_code == 201, response.text
+        return UUID(response.json()["record"]["id"])
+
+    app_one = create_agent_app(
+        settings=ServiceSettings.for_test(),
+        database_settings=_agent_settings(database),
+    )
+    app_two = create_agent_app(
+        settings=ServiceSettings.for_test(),
+        database_settings=_agent_settings(database),
+    )
+    try:
+        async with app_one.router.lifespan_context(app_one):
+            async with app_two.router.lifespan_context(app_two):
+                async with httpx.AsyncClient(
+                    transport=httpx.ASGITransport(app=app_one),
+                    base_url="http://agent.test",
+                ) as client_one:
+                    type_one_id = await create_type(client_one, "bounded-one")
+                    type_two_id = await create_type(client_one, "bounded-two")
+                    type_zero_id = await create_type(client_one, "bounded-zero")
+                    type_fallback_id = await create_type(client_one, "bounded-fallback")
+                    await _set_resource_constraints(
+                        database,
+                        workspace_id,
+                        {
+                            "allowed_type_ids": [
+                                str(type_one_id),
+                                str(type_two_id),
+                                str(type_zero_id),
+                                str(type_fallback_id),
+                            ],
+                            "allowed_type_keys": [
+                                "bounded-one",
+                                "bounded-two",
+                                "bounded-zero",
+                                "bounded-fallback",
+                            ],
+                            "delete_enabled": True,
+                            "max_deletes": 1,
+                        },
+                    )
+                    before_race = await durable_counts()
+                    operations_before_race = await operation_count()
+                    async with httpx.AsyncClient(
+                        transport=httpx.ASGITransport(app=app_two),
+                        base_url="http://agent.test",
+                    ) as client_two:
+                        responses = await asyncio.gather(
+                            client_one.request(
+                                "DELETE",
+                                f"/api/agent/v1/content-model/types/{type_one_id}",
+                                headers={
+                                    "Authorization": f"Bearer {token}",
+                                    "Idempotency-Key": "bounded-delete-one",
+                                },
+                                json={"expected_definition_version": 1},
+                            ),
+                            client_two.request(
+                                "DELETE",
+                                f"/api/agent/v1/content-model/types/{type_two_id}",
+                                headers={
+                                    "Authorization": f"Bearer {token}",
+                                    "Idempotency-Key": "bounded-delete-two",
+                                },
+                                json={"expected_definition_version": 1},
+                            ),
+                        )
+                        assert [response.status_code for response in responses].count(
+                            200
+                        ) == 1, [response.text for response in responses]
+                        assert [response.status_code for response in responses].count(
+                            429
+                        ) == 1, [response.text for response in responses]
+                        losing_response = next(
+                            response
+                            for response in responses
+                            if response.status_code == 429
+                        )
+                        assert losing_response.json()["error"]["code"] == (
+                            "QUOTA_EXCEEDED"
+                        )
+                        winning_response = next(
+                            response
+                            for response in responses
+                            if response.status_code == 200
+                        )
+                        winning_key = (
+                            "bounded-delete-one"
+                            if responses[0].status_code == 200
+                            else "bounded-delete-two"
+                        )
+                        winning_client = (
+                            client_one
+                            if responses[0].status_code == 200
+                            else client_two
+                        )
+                        winning_path = (
+                            f"/api/agent/v1/content-model/types/{type_one_id}"
+                            if responses[0].status_code == 200
+                            else f"/api/agent/v1/content-model/types/{type_two_id}"
+                        )
+                        winning_body = {"expected_definition_version": 1}
+                        winning_result = winning_response.json()
+
+                        after_race = await durable_counts()
+                        assert after_race == (
+                            before_race[0] + 1,
+                            before_race[1] + 1,
+                            before_race[2],
+                            before_race[3] + 1,
+                        )
+                        assert await operation_count() == operations_before_race + 1
+                        async with owner_connection(
+                            database.settings.resolved_owner_dsn(),
+                            expected_database=database.name,
+                        ) as owner:
+                            assert (
+                                await owner.fetchval(
+                                    "SELECT count(*) FROM control.agent_idempotency "
+                                    "WHERE workspace_id=$1 AND idempotency_key IN "
+                                    "('bounded-delete-one','bounded-delete-two')",
+                                    workspace_id,
+                                )
+                                == 1
+                            )
+                            audit = await owner.fetchrow(
+                                "SELECT action, http_method, response_status, "
+                                "quota_kind "
+                                "FROM audit.agent_mutation WHERE operation_id=$1",
+                                UUID(winning_result["operation_id"]),
+                            )
+                            assert tuple(audit) == (
+                                "CONTENT_TYPE_DELETED",
+                                "DELETE",
+                                200,
+                                "delete",
+                            )
+
+                        replay = await winning_client.request(
+                            "DELETE",
+                            winning_path,
+                            headers={
+                                "Authorization": f"Bearer {token}",
+                                "Idempotency-Key": winning_key,
+                            },
+                            json=winning_body,
+                        )
+                        assert replay.status_code == 200
+                        assert replay.json() == winning_result
+                        assert await durable_counts() == after_race
+                        assert await operation_count() == operations_before_race + 1
+
+                        await _set_resource_constraints(
+                            database,
+                            workspace_id,
+                            {
+                                "allowed_type_ids": [
+                                    str(type_one_id),
+                                    str(type_two_id),
+                                    str(type_zero_id),
+                                ],
+                                "allowed_type_keys": [
+                                    "bounded-one",
+                                    "bounded-two",
+                                    "bounded-zero",
+                                ],
+                                "delete_enabled": True,
+                                "max_deletes": 0,
+                            },
+                        )
+                        before_zero = await durable_counts()
+                        zero_response = await client_one.request(
+                            "DELETE",
+                            f"/api/agent/v1/content-model/types/{type_zero_id}",
+                            headers={
+                                "Authorization": f"Bearer {token}",
+                                "Idempotency-Key": "bounded-delete-zero",
+                            },
+                            json={"expected_definition_version": 1},
+                        )
+                        assert zero_response.status_code == 429
+                        assert zero_response.json()["error"]["code"] == "QUOTA_EXCEEDED"
+                        assert await durable_counts() == before_zero
+                        assert await operation_count() == operations_before_race + 1
+
+                        await _set_resource_constraints(
+                            database,
+                            workspace_id,
+                            {
+                                "allowed_type_ids": [
+                                    str(type_zero_id),
+                                    str(type_fallback_id),
+                                ],
+                                "allowed_type_keys": [
+                                    "bounded-zero",
+                                    "bounded-fallback",
+                                ],
+                                "delete_enabled": True,
+                            },
+                        )
+                        fallback = await client_one.request(
+                            "DELETE",
+                            f"/api/agent/v1/content-model/types/{type_fallback_id}",
+                            headers={
+                                "Authorization": f"Bearer {token}",
+                                "Idempotency-Key": "bounded-delete-fallback",
+                            },
+                            json={"expected_definition_version": 1},
+                        )
+                        assert fallback.status_code == 200, fallback.text
+                        assert (await durable_counts())[3] == 2
+
+                await _set_resource_constraints(
+                    database,
+                    workspace_id,
+                    {"max_deletes": "malformed", "delete_enabled": True},
+                )
+                before_malformed = await durable_counts()
+                with pytest.raises(
+                    asyncpg.PostgresError, match="INVALID_RESOURCE_CONSTRAINTS"
+                ):
+                    async with asyncpg_cow_session(
+                        agent_pool,
+                        session_id=workspace_id,
+                        operation_id=uuid4(),
+                    ) as cow:
+                        await cow.native.fetchval(
+                            "SELECT control.slaif_agent_quota_consume($1,$2,'delete')",
+                            capability_id,
+                            workspace_id,
+                        )
+                assert await durable_counts() == before_malformed
+    finally:
+        await reviewer_pool.close()
         await agent_pool.close()

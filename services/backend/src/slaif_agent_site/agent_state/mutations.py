@@ -60,7 +60,7 @@ COMPLETE_IDEMPOTENCY_SQL = (
 )
 COMPLETE_SEMANTIC_IDEMPOTENCY_SQL = (
     "SELECT control.slaif_agent_idempotency_complete("
-    "$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)"
+    "$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)"
 )
 CONSUME_MUTATION_QUOTA_SQL = (
     "SELECT control.slaif_agent_quota_consume($1,$2,'mutation')"
@@ -103,16 +103,30 @@ class AgentMutationUnavailableError(RuntimeError):
     """A durable idempotency or COW dependency could not complete."""
 
 
-AGENT_SEMANTIC_ACTIONS = frozenset(
-    {
-        "CONTENT_TYPE_CREATED",
-        "CONTENT_TYPE_UPDATED",
-        "CONTENT_TYPE_DELETED",
-        "FIELD_DEFINITION_CREATED",
-        "FIELD_DEFINITION_UPDATED",
-        "FIELD_DEFINITION_DELETED",
-    }
-)
+AGENT_SEMANTIC_CONTRACTS = {
+    "CONTENT_TYPE_CREATED": ("content_type", "POST", 201, "mutation"),
+    "CONTENT_TYPE_UPDATED": ("content_type", "PATCH", 200, "mutation"),
+    "CONTENT_TYPE_DELETED": ("content_type", "DELETE", 200, "delete"),
+    "FIELD_DEFINITION_CREATED": (
+        "field_definition",
+        "POST",
+        201,
+        "mutation",
+    ),
+    "FIELD_DEFINITION_UPDATED": (
+        "field_definition",
+        "PATCH",
+        200,
+        "mutation",
+    ),
+    "FIELD_DEFINITION_DELETED": (
+        "field_definition",
+        "DELETE",
+        200,
+        "delete",
+    ),
+}
+AGENT_SEMANTIC_ACTIONS = frozenset(AGENT_SEMANTIC_CONTRACTS)
 
 
 class AgentQuotaExceededError(RuntimeError):
@@ -387,6 +401,8 @@ async def _complete(
     resource_type: str,
     status_code: int,
     action: str | None,
+    method: str | None,
+    quota_kind: str,
 ) -> None:
     try:
         completion_sql = (
@@ -407,7 +423,14 @@ async def _complete(
             context.site_id,
         )
         if action is not None:
-            arguments += (action,)
+            if method is None or AGENT_SEMANTIC_CONTRACTS.get(action) != (
+                resource_type,
+                method,
+                status_code,
+                quota_kind,
+            ):
+                raise AgentMutationUnavailableError()
+            arguments += (action, method, quota_kind)
         await _cow_fetchrow(
             cow,
             completion_sql,
@@ -433,6 +456,7 @@ async def execute_agent_mutation(
     status_code: int = 201,
     quota_kind: str = "mutation",
     action: str | None = None,
+    method: str | None = None,
 ) -> AgentMutationResponse:
     """Reserve, execute, audit, and complete one atomic Agent mutation."""
 
@@ -478,7 +502,12 @@ async def execute_agent_mutation(
             service = AgentCowContentModelService(cow)
             record = await mutate(service)
             record_body = record.model_dump(mode="json")
-            if action is not None and action not in AGENT_SEMANTIC_ACTIONS:
+            if action is not None and (
+                action not in AGENT_SEMANTIC_ACTIONS
+                or method is None
+                or AGENT_SEMANTIC_CONTRACTS[action]
+                != (resource_type, method, status_code, quota_kind)
+            ):
                 raise AgentMutationUnavailableError()
             response = AgentMutationResponse(
                 record=record_body,
@@ -495,6 +524,8 @@ async def execute_agent_mutation(
                 resource_type=resource_type,
                 status_code=status_code,
                 action=action,
+                method=method,
+                quota_kind=quota_kind,
             )
             return response
     except asyncio.CancelledError:
