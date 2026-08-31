@@ -46,6 +46,170 @@ def upgrade() -> None:
         "REVOKE ALL ON FUNCTION control.slaif_agent_resource_constraints(uuid) FROM PUBLIC, slaif_agent_runtime, slaif_editor_runtime, slaif_control"
     )
     op.execute(
+        "DROP FUNCTION content.slaif_agent_content_type_update(uuid,uuid,jsonb,text,jsonb,integer)"
+    )
+    op.execute(
+        """
+        CREATE FUNCTION content.slaif_agent_content_type_update(
+            p_site_id uuid, p_type_id uuid, p_labels jsonb,
+            p_slug_pattern text, p_settings jsonb, p_expected integer
+        ) RETURNS SETOF content.content_type
+        LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $fn$
+        DECLARE
+          locked_type content.content_type;
+          constraints record;
+          updated content.content_type;
+        BEGIN
+          PERFORM control.slaif_agent_require_cow_site(p_site_id);
+          PERFORM pg_advisory_xact_lock(
+            hashtextextended(
+              p_site_id::text || ':' || p_type_id::text || '_content_type_definition',
+              994
+            )
+          );
+          SELECT t.* INTO locked_type
+          FROM content.content_type AS t
+          WHERE t.site_id = p_site_id
+            AND t.id = p_type_id
+            AND t.status = 'ACTIVE'
+          FOR UPDATE;
+          IF NOT FOUND THEN
+            RAISE EXCEPTION 'STALE_DEFINITION' USING ERRCODE = 'P0003';
+          END IF;
+          IF locked_type.definition_version <> p_expected THEN
+            RAISE EXCEPTION 'STALE_DEFINITION' USING ERRCODE = 'P0003';
+          END IF;
+
+          SELECT * INTO STRICT constraints
+          FROM control.slaif_agent_resource_constraints(p_site_id);
+          IF coalesce(cardinality(constraints.allowed_type_ids), 0) > 0
+             AND NOT (locked_type.id = ANY(constraints.allowed_type_ids))
+          THEN
+            RAISE EXCEPTION 'AGENT_RESOURCE_TYPE_ID_DENIED' USING ERRCODE = 'P0003';
+          END IF;
+          IF coalesce(cardinality(constraints.allowed_type_keys), 0) > 0
+             AND NOT (locked_type.key = ANY(constraints.allowed_type_keys))
+          THEN
+            RAISE EXCEPTION 'AGENT_RESOURCE_TYPE_KEY_DENIED' USING ERRCODE = 'P0003';
+          END IF;
+
+          UPDATE content.content_type
+          SET labels = coalesce(p_labels, labels),
+              slug_pattern = coalesce(p_slug_pattern, slug_pattern),
+              settings = coalesce(p_settings, settings),
+              definition_version = definition_version + 1,
+              updated_at = now()
+          WHERE id = locked_type.id
+            AND site_id = p_site_id
+            AND status = 'ACTIVE'
+          RETURNING * INTO updated;
+          RETURN NEXT updated;
+        END;
+        $fn$
+        """
+    )
+    op.execute(
+        "DROP FUNCTION content.slaif_agent_content_type_delete(uuid,uuid,integer)"
+    )
+    op.execute(
+        """
+        CREATE FUNCTION content.slaif_agent_content_type_delete(
+            p_site_id uuid, p_type_id uuid, p_expected integer
+        ) RETURNS SETOF content.content_type
+        LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $fn$
+        DECLARE
+          locked_type content.content_type;
+          constraints record;
+          deleted content.content_type;
+        BEGIN
+          PERFORM control.slaif_agent_require_cow_site(p_site_id);
+          PERFORM pg_advisory_xact_lock(
+            hashtextextended(
+              p_site_id::text || ':' || p_type_id::text || '_content_type_definition',
+              994
+            )
+          );
+          SELECT t.* INTO locked_type
+          FROM content.content_type AS t
+          WHERE t.site_id = p_site_id
+            AND t.id = p_type_id
+            AND t.status = 'ACTIVE'
+          FOR UPDATE;
+          IF NOT FOUND THEN
+            RAISE EXCEPTION 'STALE_DEFINITION' USING ERRCODE = 'P0003';
+          END IF;
+          IF locked_type.definition_version <> p_expected THEN
+            RAISE EXCEPTION 'STALE_DEFINITION' USING ERRCODE = 'P0003';
+          END IF;
+
+          SELECT * INTO STRICT constraints
+          FROM control.slaif_agent_resource_constraints(p_site_id);
+          IF coalesce(cardinality(constraints.allowed_type_ids), 0) > 0
+             AND NOT (locked_type.id = ANY(constraints.allowed_type_ids))
+          THEN
+            RAISE EXCEPTION 'AGENT_RESOURCE_TYPE_ID_DENIED' USING ERRCODE = 'P0003';
+          END IF;
+          IF coalesce(cardinality(constraints.allowed_type_keys), 0) > 0
+             AND NOT (locked_type.key = ANY(constraints.allowed_type_keys))
+          THEN
+            RAISE EXCEPTION 'AGENT_RESOURCE_TYPE_KEY_DENIED' USING ERRCODE = 'P0003';
+          END IF;
+          IF constraints.delete_enabled IS FALSE THEN
+            RAISE EXCEPTION 'AGENT_RESOURCE_DELETE_DISABLED' USING ERRCODE = 'P0003';
+          END IF;
+          IF EXISTS (
+            SELECT 1 FROM content.content_item
+            WHERE site_id = p_site_id AND type_id = locked_type.id
+          ) THEN
+            RAISE EXCEPTION 'TYPE_DEPENDENCIES' USING ERRCODE = 'P0003';
+          END IF;
+
+          UPDATE content.content_type
+          SET status = 'DELETED',
+              definition_version = definition_version + 1,
+              updated_at = now()
+          WHERE id = locked_type.id
+            AND site_id = p_site_id
+            AND status = 'ACTIVE'
+          RETURNING * INTO deleted;
+          RETURN NEXT deleted;
+        END;
+        $fn$
+        """
+    )
+    op.execute(
+        """
+        REVOKE ALL ON FUNCTION content.slaif_agent_content_type_update(
+            uuid,uuid,jsonb,text,jsonb,integer
+        ) FROM PUBLIC, slaif_control, slaif_editor_runtime,
+            slaif_public_reader, slaif_preview_reader, slaif_reviewer,
+            slaif_scheduler, slaif_media, slaif_gc
+        """
+    )
+    op.execute(
+        """
+        REVOKE ALL ON FUNCTION content.slaif_agent_content_type_delete(
+            uuid,uuid,integer
+        ) FROM PUBLIC, slaif_control, slaif_editor_runtime,
+            slaif_public_reader, slaif_preview_reader, slaif_reviewer,
+            slaif_scheduler, slaif_media, slaif_gc
+        """
+    )
+    op.execute(
+        """
+        GRANT EXECUTE ON FUNCTION content.slaif_agent_content_type_update(
+            uuid,uuid,jsonb,text,jsonb,integer
+        ) TO slaif_agent_runtime
+        """
+    )
+    op.execute(
+        """
+        GRANT EXECUTE ON FUNCTION content.slaif_agent_content_type_delete(
+            uuid,uuid,integer
+        ) TO slaif_agent_runtime
+        """
+    )
+    op.execute(
         """
         CREATE OR REPLACE FUNCTION content.slaif_agent_content_type_create(
             p_site_id uuid, p_key text, p_labels jsonb,
@@ -119,6 +283,107 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    op.execute(
+        "DROP FUNCTION content.slaif_agent_content_type_update(uuid,uuid,jsonb,text,jsonb,integer)"
+    )
+    op.execute(
+        """
+        CREATE FUNCTION content.slaif_agent_content_type_update(
+            p_site_id uuid, p_type_id uuid, p_labels jsonb,
+            p_slug_pattern text, p_settings jsonb, p_expected integer
+        ) RETURNS SETOF content.content_type
+        LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $fn$
+        DECLARE updated content.content_type;
+        BEGIN
+          PERFORM control.slaif_agent_require_cow_site(p_site_id);
+          IF NOT EXISTS(
+            SELECT 1 FROM content.content_type
+            WHERE id = p_type_id AND site_id = p_site_id
+              AND status = 'ACTIVE' AND definition_version = p_expected
+          ) THEN
+            RAISE EXCEPTION 'STALE_DEFINITION' USING ERRCODE = 'P0003';
+          END IF;
+          UPDATE content.content_type
+          SET labels = coalesce(p_labels, labels),
+              slug_pattern = coalesce(p_slug_pattern, slug_pattern),
+              settings = coalesce(p_settings, settings),
+              definition_version = definition_version + 1,
+              updated_at = now()
+          WHERE id = p_type_id AND site_id = p_site_id
+          RETURNING * INTO updated;
+          RETURN NEXT updated;
+        END;
+        $fn$
+        """
+    )
+    op.execute(
+        "DROP FUNCTION content.slaif_agent_content_type_delete(uuid,uuid,integer)"
+    )
+    op.execute(
+        """
+        CREATE FUNCTION content.slaif_agent_content_type_delete(
+            p_site_id uuid, p_type_id uuid, p_expected integer
+        ) RETURNS SETOF content.content_type
+        LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $fn$
+        DECLARE deleted content.content_type;
+        BEGIN
+          PERFORM control.slaif_agent_require_cow_site(p_site_id);
+          IF NOT EXISTS(
+            SELECT 1 FROM content.content_type
+            WHERE id = p_type_id AND site_id = p_site_id
+              AND status = 'ACTIVE' AND definition_version = p_expected
+          ) THEN
+            RAISE EXCEPTION 'STALE_DEFINITION' USING ERRCODE = 'P0003';
+          END IF;
+          IF EXISTS(
+            SELECT 1 FROM content.content_item
+            WHERE site_id = p_site_id AND type_id = p_type_id
+          ) THEN
+            RAISE EXCEPTION 'TYPE_DEPENDENCIES' USING ERRCODE = 'P0003';
+          END IF;
+          UPDATE content.content_type
+          SET status = 'DELETED',
+              definition_version = definition_version + 1,
+              updated_at = now()
+          WHERE id = p_type_id AND site_id = p_site_id
+          RETURNING * INTO deleted;
+          RETURN NEXT deleted;
+        END;
+        $fn$
+        """
+    )
+    op.execute(
+        """
+        REVOKE ALL ON FUNCTION content.slaif_agent_content_type_update(
+            uuid,uuid,jsonb,text,jsonb,integer
+        ) FROM PUBLIC, slaif_control, slaif_editor_runtime,
+            slaif_public_reader, slaif_preview_reader, slaif_reviewer,
+            slaif_scheduler, slaif_media, slaif_gc
+        """
+    )
+    op.execute(
+        """
+        REVOKE ALL ON FUNCTION content.slaif_agent_content_type_delete(
+            uuid,uuid,integer
+        ) FROM PUBLIC, slaif_control, slaif_editor_runtime,
+            slaif_public_reader, slaif_preview_reader, slaif_reviewer,
+            slaif_scheduler, slaif_media, slaif_gc
+        """
+    )
+    op.execute(
+        """
+        GRANT EXECUTE ON FUNCTION content.slaif_agent_content_type_update(
+            uuid,uuid,jsonb,text,jsonb,integer
+        ) TO PUBLIC, slaif_agent_runtime
+        """
+    )
+    op.execute(
+        """
+        GRANT EXECUTE ON FUNCTION content.slaif_agent_content_type_delete(
+            uuid,uuid,integer
+        ) TO PUBLIC, slaif_agent_runtime
+        """
+    )
     op.execute(
         """
         CREATE OR REPLACE FUNCTION content.slaif_agent_content_type_create(
