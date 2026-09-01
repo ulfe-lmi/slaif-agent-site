@@ -40,13 +40,17 @@ from slaif_agent_site.content_model.models import (
     ContentTypeRecord,
     CreateContentTypeRequest,
     CreateFieldDefinitionRequest,
+    CreateRelationRequest,
     CreateTranslationRequest,
     DeleteTranslationRequest,
     FieldDefinitionRecord,
+    RelationRecord,
     TranslationRecord,
+    UpdateRelationRequest,
     UpdateTranslationRequest,
 )
 from slaif_agent_site.content_model.page_models import CreatePageRequest, PageRecord
+from slaif_agent_site.content_model.query_dsl import validate_query_contract
 from slaif_agent_site.content_model.service import (
     ContentModelService,
     ContentModelServiceError,
@@ -54,11 +58,16 @@ from slaif_agent_site.content_model.service import (
     _ci,
     _cmp,
     _ct,
+    _cv,
     _fd,
     _pg,
+    _rel,
     _tr,
 )
 from slaif_agent_site.content_model.validators import validate_values
+from slaif_agent_site.content_model.view_models import (
+    CollectionViewRecord,
+)
 
 BEGIN_IDEMPOTENCY_SQL = (
     "SELECT * FROM control.slaif_agent_idempotency_begin($1,$2,$3,$4,$5)"
@@ -125,6 +134,30 @@ AGENT_PAGE_CREATE_SQL = (
 AGENT_COMPONENT_CREATE_SQL = (
     "SELECT * FROM content.slaif_agent_composition_node_add($1,$2,$3,$4,$5,$6,$7)"
 )
+AGENT_RELATION_CREATE_SQL = (
+    "SELECT * FROM content.slaif_agent_item_relation_create($1,$2,$3,$4,$5,$6)"
+)
+AGENT_RELATION_UPDATE_SQL = (
+    "SELECT * FROM content.slaif_agent_item_relation_update($1,$2,$3,$4,$5,$6,$7)"
+)
+AGENT_RELATION_DELETE_SQL = (
+    "SELECT * FROM content.slaif_agent_item_relation_delete($1,$2,$3,$4)"
+)
+AGENT_COLLECTION_VIEW_CREATE_SQL = (
+    "SELECT * FROM content.slaif_agent_collection_view_create($1,$2,$3,$4,$5,$6,$7,$8)"
+)
+AGENT_COLLECTION_VIEW_CURRENT_SQL = (
+    "SELECT * FROM content.slaif_agent_collection_view_current($1,$2,$3)"
+)
+AGENT_COLLECTION_VIEW_FIELDS_SQL = (
+    "SELECT * FROM content.slaif_agent_collection_view_fields($1,$2,$3)"
+)
+AGENT_COLLECTION_VIEW_UPDATE_SQL = (
+    "SELECT * FROM content.slaif_agent_collection_view_update($1,$2,$3,$4,$5,$6,$7,$8)"
+)
+AGENT_COLLECTION_VIEW_DELETE_SQL = (
+    "SELECT * FROM content.slaif_agent_collection_view_delete($1,$2,$3)"
+)
 
 _IDEMPOTENCY_KEY = re.compile(r"^[A-Za-z0-9._~-]{1,128}$")
 
@@ -176,6 +209,12 @@ AGENT_SEMANTIC_CONTRACTS = {
         200,
         "delete",
     ),
+    "ITEM_RELATION_CREATED": ("item_relation", "POST", 201, "mutation"),
+    "ITEM_RELATION_UPDATED": ("item_relation", "PATCH", 200, "mutation"),
+    "ITEM_RELATION_DELETED": ("item_relation", "DELETE", 200, "delete"),
+    "COLLECTION_VIEW_CREATED": ("collection_view", "POST", 201, "mutation"),
+    "COLLECTION_VIEW_UPDATED": ("collection_view", "PATCH", 200, "mutation"),
+    "COLLECTION_VIEW_DELETED": ("collection_view", "DELETE", 200, "delete"),
 }
 AGENT_SEMANTIC_ACTIONS = frozenset(AGENT_SEMANTIC_CONTRACTS)
 
@@ -489,6 +528,194 @@ class AgentCowContentModelService(ContentModelService):
             raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
         return _tr(row)
 
+    async def create_relation_for_site(
+        self,
+        site_id: UUID,
+        source_item_id: UUID,
+        request: CreateRelationRequest,
+    ) -> RelationRecord:
+        row = await self._fetchrow(
+            AGENT_RELATION_CREATE_SQL,
+            site_id,
+            source_item_id,
+            request.field_definition_id,
+            request.target_item_id,
+            request.position,
+            json.dumps(request.metadata, sort_keys=True),
+        )
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.CONFLICT)
+        return _rel(row)
+
+    async def update_relation_for_site(
+        self,
+        site_id: UUID,
+        source_item_id: UUID,
+        relation_id: UUID,
+        request: UpdateRelationRequest,
+    ) -> RelationRecord:
+        row = await self._fetchrow(
+            AGENT_RELATION_UPDATE_SQL,
+            site_id,
+            source_item_id,
+            relation_id,
+            request.target_item_id,
+            request.position,
+            json.dumps(request.metadata, sort_keys=True)
+            if request.metadata is not None
+            else None,
+            request.expected_row_version,
+        )
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
+        return _rel(row)
+
+    async def delete_relation_for_site(
+        self,
+        site_id: UUID,
+        source_item_id: UUID,
+        relation_id: UUID,
+        expected_row_version: int,
+    ) -> RelationRecord:
+        row = await self._fetchrow(
+            AGENT_RELATION_DELETE_SQL,
+            site_id,
+            source_item_id,
+            relation_id,
+            expected_row_version,
+        )
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
+        return _rel(row)
+
+    async def _validate_agent_view(
+        self,
+        site_id: UUID,
+        type_id: UUID,
+        *,
+        scope: str,
+        filter_spec: dict[str, Any],
+        sort_spec: dict[str, Any],
+        projection_spec: dict[str, Any],
+        pagination_spec: dict[str, Any],
+    ) -> None:
+        fields = tuple(
+            _fd(row)
+            for row in await self._fetch(
+                AGENT_COLLECTION_VIEW_FIELDS_SQL, site_id, type_id, scope
+            )
+        )
+        try:
+            validate_query_contract(
+                filter_spec,
+                sort_spec,
+                projection_spec,
+                pagination_spec,
+                fields,
+            )
+        except (ValueError, TypeError):
+            raise ContentModelServiceError(
+                ContentModelServiceReason.VALIDATION
+            ) from None
+
+    async def create_view_for_site(
+        self, site_id: UUID, request: Any
+    ) -> CollectionViewRecord:
+        await self._validate_agent_view(
+            site_id,
+            request.type_id,
+            scope="collection-view:create",
+            filter_spec=request.filter_spec,
+            sort_spec=request.sort_spec,
+            projection_spec=request.projection_spec,
+            pagination_spec=request.pagination_spec,
+        )
+        row = await self._fetchrow(
+            AGENT_COLLECTION_VIEW_CREATE_SQL,
+            site_id,
+            request.type_id,
+            request.key,
+            json.dumps(request.filter_spec, sort_keys=True),
+            json.dumps(request.sort_spec, sort_keys=True),
+            json.dumps(request.projection_spec, sort_keys=True),
+            json.dumps(request.pagination_spec, sort_keys=True),
+            request.definition_version,
+        )
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.CONFLICT)
+        return cast(CollectionViewRecord, _cv(row))
+
+    async def update_view_for_site(
+        self, site_id: UUID, view_id: UUID, request: Any
+    ) -> CollectionViewRecord:
+        current_row = await self._fetchrow(
+            AGENT_COLLECTION_VIEW_CURRENT_SQL,
+            site_id,
+            view_id,
+            "collection-view:write",
+        )
+        if current_row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
+        current = _cv(current_row)
+        values = {
+            "filter": request.filter_spec
+            if request.filter_spec is not None
+            else current.filter_spec,
+            "sort": request.sort_spec
+            if request.sort_spec is not None
+            else current.sort_spec,
+            "projection": request.projection_spec
+            if request.projection_spec is not None
+            else current.projection_spec,
+            "pagination": request.pagination_spec
+            if request.pagination_spec is not None
+            else current.pagination_spec,
+        }
+        await self._validate_agent_view(
+            site_id,
+            current.type_id,
+            scope="collection-view:write",
+            filter_spec=values["filter"],
+            sort_spec=values["sort"],
+            projection_spec=values["projection"],
+            pagination_spec=values["pagination"],
+        )
+        row = await self._fetchrow(
+            AGENT_COLLECTION_VIEW_UPDATE_SQL,
+            site_id,
+            view_id,
+            json.dumps(request.filter_spec, sort_keys=True)
+            if request.filter_spec is not None
+            else None,
+            json.dumps(request.sort_spec, sort_keys=True)
+            if request.sort_spec is not None
+            else None,
+            json.dumps(request.projection_spec, sort_keys=True)
+            if request.projection_spec is not None
+            else None,
+            json.dumps(request.pagination_spec, sort_keys=True)
+            if request.pagination_spec is not None
+            else None,
+            request.expected_row_version,
+            request.definition_version,
+        )
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
+        return cast(CollectionViewRecord, _cv(row))
+
+    async def delete_view_for_site(
+        self, site_id: UUID, view_id: UUID, expected_row_version: int
+    ) -> CollectionViewRecord:
+        row = await self._fetchrow(
+            AGENT_COLLECTION_VIEW_DELETE_SQL,
+            site_id,
+            view_id,
+            expected_row_version,
+        )
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
+        return cast(CollectionViewRecord, _cv(row))
+
     async def create_page_for_site(
         self, site_id: UUID, request: CreatePageRequest
     ) -> PageRecord:
@@ -681,6 +908,8 @@ async def execute_agent_mutation(
                 "field_definition",
                 "content_item",
                 "content_item_translation",
+                "item_relation",
+                "collection_view",
             }:
                 try:
                     mutation_allowed = await cow.native.fetchval(

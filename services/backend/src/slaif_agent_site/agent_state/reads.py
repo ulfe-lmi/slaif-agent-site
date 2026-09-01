@@ -23,6 +23,7 @@ from slaif_agent_site.content_model.media_models import MediaAssetRecord
 from slaif_agent_site.content_model.models import (
     ContentTypeRecord,
     FieldDefinitionRecord,
+    RelationRecord,
     TranslationRecord,
 )
 from slaif_agent_site.content_model.page_models import PageRecord
@@ -32,11 +33,14 @@ from slaif_agent_site.content_model.service import (
     _ci,
     _cmp,
     _ct,
+    _cv,
     _fd,
     _md,
     _pg,
+    _rel,
     _tr,
 )
+from slaif_agent_site.content_model.view_models import CollectionViewRecord
 
 AGENT_CONTENT_TYPE_LIST_SQL = "SELECT * FROM content.slaif_agent_content_type_list($1)"
 AGENT_CONTENT_TYPE_GET_SQL = "SELECT * FROM content.slaif_agent_content_type_get($1,$2)"
@@ -52,6 +56,14 @@ AGENT_TRANSLATION_LIST_SQL = (
 )
 AGENT_TRANSLATION_GET_SQL = (
     "SELECT * FROM content.slaif_agent_content_item_translation_get($1,$2,$3)"
+)
+AGENT_RELATION_LIST_SQL = "SELECT * FROM content.slaif_agent_item_relation_list($1,$2)"
+AGENT_RELATION_GET_SQL = "SELECT * FROM content.slaif_agent_item_relation_get($1,$2,$3)"
+AGENT_COLLECTION_VIEW_LIST_SQL = (
+    "SELECT * FROM content.slaif_agent_collection_view_list($1,$2)"
+)
+AGENT_COLLECTION_VIEW_GET_SQL = (
+    "SELECT * FROM content.slaif_agent_collection_view_get($1,$2)"
 )
 AGENT_PAGE_LIST_SQL = "SELECT * FROM content.slaif_agent_page_list($1)"
 AGENT_COMPOSITION_LIST_SQL = "SELECT * FROM content.slaif_agent_composition_list($1,$2)"
@@ -171,6 +183,36 @@ class AgentSemanticReadService:
         if row is None:
             raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
         return _tr(row)
+
+    async def list_relations_for_site(
+        self, site_id: UUID, source_item_id: UUID
+    ) -> tuple[RelationRecord, ...]:
+        rows = await self._fetch(AGENT_RELATION_LIST_SQL, site_id, source_item_id)
+        return tuple(_rel(row) for row in rows)
+
+    async def get_relation_for_site(
+        self, site_id: UUID, source_item_id: UUID, relation_id: UUID
+    ) -> RelationRecord:
+        row = await self._fetchrow(
+            AGENT_RELATION_GET_SQL, site_id, source_item_id, relation_id
+        )
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
+        return _rel(row)
+
+    async def list_views_for_site(
+        self, site_id: UUID, type_id: UUID
+    ) -> tuple[CollectionViewRecord, ...]:
+        rows = await self._fetch(AGENT_COLLECTION_VIEW_LIST_SQL, site_id, type_id)
+        return tuple(_cv(row) for row in rows)
+
+    async def get_view_for_site(
+        self, site_id: UUID, view_id: UUID
+    ) -> CollectionViewRecord:
+        row = await self._fetchrow(AGENT_COLLECTION_VIEW_GET_SQL, site_id, view_id)
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
+        return cast(CollectionViewRecord, _cv(row))
 
     async def list_pages(self, site_id: UUID) -> tuple[PageRecord, ...]:
         rows = await self._fetch(AGENT_PAGE_LIST_SQL, site_id)

@@ -990,6 +990,52 @@ async def test_agent_content_item_translation_crud_is_strict_and_cow_bound(
                 second_record = second.json()["record"]
                 second_id = UUID(second_record["id"])
 
+                # Two real Agent application instances must serialize on the
+                # translation row lock, with one winner and one stale conflict.
+                app_two = create_agent_app(
+                    settings=ServiceSettings.for_test(),
+                    database_settings=_agent_settings(database),
+                )
+                async with app_two.router.lifespan_context(app_two):
+                    async with httpx.AsyncClient(
+                        transport=httpx.ASGITransport(app=app_two),
+                        base_url="http://agent-two.test",
+                    ) as client_two:
+                        race_responses = await asyncio.gather(
+                            client.patch(
+                                f"{translation_path}/{second_id}",
+                                headers={
+                                    **headers,
+                                    "Idempotency-Key": "translation-race-one",
+                                },
+                                json={
+                                    "localized_values": {"headline": "Race one"},
+                                    "expected_row_version": 1,
+                                },
+                            ),
+                            client_two.patch(
+                                f"{translation_path}/{second_id}",
+                                headers={
+                                    **headers,
+                                    "Idempotency-Key": "translation-race-two",
+                                },
+                                json={
+                                    "localized_values": {"headline": "Race two"},
+                                    "expected_row_version": 1,
+                                },
+                            ),
+                        )
+                assert sorted(response.status_code for response in race_responses) == [
+                    200,
+                    409,
+                ], [response.text for response in race_responses]
+                raced_record = next(
+                    response.json()["record"]
+                    for response in race_responses
+                    if response.status_code == 200
+                )
+                assert raced_record["row_version"] == 2
+
                 deleted = await client.request(
                     "DELETE",
                     f"{translation_path}/{translation_id}",
@@ -1010,17 +1056,17 @@ async def test_agent_content_item_translation_crud_is_strict_and_cow_bound(
                 assert delete_replay.json() == deleted_result
                 remaining = await client.get(translation_path, headers=headers)
                 assert remaining.status_code == 200
-                assert remaining.json() == [second_record]
+                assert remaining.json() == [raced_record]
 
                 quota_denied = await client.request(
                     "DELETE",
                     f"{translation_path}/{second_id}",
                     headers={**headers, "Idempotency-Key": "translation-delete-second"},
-                    json={"expected_row_version": 1},
+                    json={"expected_row_version": 2},
                 )
                 assert quota_denied.status_code == 429, quota_denied.text
                 assert (await client.get(translation_path, headers=headers)).json() == [
-                    second_record
+                    raced_record
                 ]
 
                 changed_field = await client.post(
@@ -1074,6 +1120,11 @@ async def test_agent_content_item_translation_crud_is_strict_and_cow_bound(
                 (
                     "CONTENT_ITEM_TRANSLATION_CREATED",
                     "POST",
+                    "mutation",
+                ),
+                (
+                    "CONTENT_ITEM_TRANSLATION_UPDATED",
+                    "PATCH",
                     "mutation",
                 ),
                 (
@@ -1225,7 +1276,7 @@ async def test_agent_046_047_migration_round_trip_preserves_contract_and_state(
                 await owner.fetchval(
                     "SELECT version_num::text FROM control.alembic_version"
                 )
-                == "047_001"
+                == "048_001"
             )
             assert await owner.fetchval(
                 "SELECT to_regprocedure($1)",
@@ -1748,6 +1799,539 @@ async def test_agent_canonical_item_delete_is_a_real_cow_delete_and_isolated(
     finally:
         await reviewer_pool.close()
         await agent_pool.close()
+
+
+@pytest.mark.asyncio
+async def test_agent_relation_and_collection_view_crud_is_cow_bound_and_audited(
+    agent_site_database: AgentSiteDatabase,
+) -> None:
+    database = agent_site_database
+    _token, seeded = await _seed(database)
+    scopes = [
+        "content-model:create",
+        "content-model:read",
+        "field-definition:create",
+        "content-item:create",
+        "content-item:read",
+        "relationship:write",
+        "collection-view:read",
+        "collection-view:create",
+        "collection-view:write",
+        "collection-view:delete",
+    ]
+    token, workspace_id = await _workspace_capability(
+        database, seeded, scopes, "Agent Relation View Workspace"
+    )
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        capability_id = await owner.fetchval(
+            "SELECT id FROM control.capability WHERE workspace_id=$1", workspace_id
+        )
+        await owner.execute(
+            "UPDATE control.capability SET request_quota=100, mutation_quota=20, "
+            "delete_quota=10 WHERE id=$1",
+            capability_id,
+        )
+    await _set_resource_constraints(
+        database,
+        workspace_id,
+        {"delete_enabled": True},
+    )
+    app = create_agent_app(
+        settings=ServiceSettings.for_test(),
+        database_settings=_agent_settings(database),
+    )
+    headers = {"Authorization": f"Bearer {token}"}
+    try:
+        async with app.router.lifespan_context(app):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://agent.test"
+            ) as client:
+                created_type = await client.post(
+                    "/api/agent/v1/content-model/types",
+                    headers={**headers, "Idempotency-Key": "relation-view-type"},
+                    json={
+                        "key": "relation-view-type",
+                        "labels": {"en": "Relation view type"},
+                        "slug_pattern": "/relation-view/{slug}",
+                        "settings": {},
+                    },
+                )
+                assert created_type.status_code == 201, created_type.text
+                type_id = UUID(created_type.json()["record"]["id"])
+                await _set_resource_constraints(
+                    database,
+                    workspace_id,
+                    {
+                        "allowed_type_ids": [str(type_id)],
+                        "allowed_type_keys": ["relation-view-type"],
+                        "delete_enabled": True,
+                    },
+                )
+                field = await client.post(
+                    f"/api/agent/v1/content-model/types/{type_id}/fields",
+                    headers={**headers, "Idempotency-Key": "relation-view-field"},
+                    json={
+                        "key": "related",
+                        "label": "Related",
+                        "field_type": "reference",
+                    },
+                )
+                assert field.status_code == 201, field.text
+                field_id = UUID(field.json()["record"]["id"])
+
+                async def create_item(key: str) -> UUID:
+                    response = await client.post(
+                        f"/api/agent/v1/content-items/types/{type_id}",
+                        headers={**headers, "Idempotency-Key": f"relation-view-{key}"},
+                        json={
+                            "type_id": str(type_id),
+                            "slug": key,
+                            "status": "DRAFT",
+                            "values": {},
+                        },
+                    )
+                    assert response.status_code == 201, response.text
+                    return UUID(response.json()["record"]["id"])
+
+                source_id = await create_item("source")
+                target_id = await create_item("target")
+                relation_path = f"/api/agent/v1/content-items/{source_id}/relations"
+                relation = await client.post(
+                    relation_path,
+                    headers={**headers, "Idempotency-Key": "relation-create"},
+                    json={
+                        "field_definition_id": str(field_id),
+                        "target_item_id": str(target_id),
+                    },
+                )
+                assert relation.status_code == 201, relation.text
+                relation_result = relation.json()
+                assert relation_result["action"] == "ITEM_RELATION_CREATED"
+                relation_id = UUID(relation_result["record"]["id"])
+                assert relation_result["record"]["row_version"] == 1
+                assert (
+                    await client.post(
+                        relation_path,
+                        headers={**headers, "Idempotency-Key": "relation-create"},
+                        json={
+                            "field_definition_id": str(field_id),
+                            "target_item_id": str(target_id),
+                        },
+                    )
+                ).json() == relation_result
+                assert (await client.get(relation_path, headers=headers)).json() == [
+                    relation_result["record"]
+                ]
+                relation_item_path = f"{relation_path}/{relation_id}"
+                assert (
+                    await client.get(relation_item_path, headers=headers)
+                ).json() == relation_result["record"]
+                relation_update = await client.patch(
+                    relation_item_path,
+                    headers={**headers, "Idempotency-Key": "relation-update"},
+                    json={"metadata": {"kind": "related"}, "expected_row_version": 1},
+                )
+                assert relation_update.status_code == 200, relation_update.text
+                assert relation_update.json()["record"]["row_version"] == 2
+                stale_relation = await client.patch(
+                    relation_item_path,
+                    headers={**headers, "Idempotency-Key": "relation-stale"},
+                    json={"metadata": {}, "expected_row_version": 1},
+                )
+                assert stale_relation.status_code == 409, stale_relation.text
+
+                view_path = f"/api/agent/v1/collection-views/types/{type_id}"
+                view = await client.post(
+                    view_path,
+                    headers={**headers, "Idempotency-Key": "view-create"},
+                    json={
+                        "type_id": str(type_id),
+                        "key": "published",
+                        "filter_spec": {"status": "DRAFT"},
+                        "sort_spec": {"field": "slug", "direction": "asc"},
+                        "projection_spec": {},
+                        "pagination_spec": {"limit": 10, "offset": 0},
+                    },
+                )
+                assert view.status_code == 201, view.text
+                view_result = view.json()
+                assert view_result["action"] == "COLLECTION_VIEW_CREATED"
+                view_id = UUID(view_result["record"]["id"])
+                view_item_path = f"/api/agent/v1/collection-views/{view_id}"
+                assert (await client.get(view_path, headers=headers)).json() == [
+                    view_result["record"]
+                ]
+                assert (
+                    await client.get(view_item_path, headers=headers)
+                ).json() == view_result["record"]
+                view_update = await client.patch(
+                    view_item_path,
+                    headers={**headers, "Idempotency-Key": "view-update"},
+                    json={
+                        "pagination_spec": {"limit": 5, "offset": 0},
+                        "expected_row_version": 1,
+                    },
+                )
+                assert view_update.status_code == 200, view_update.text
+                assert view_update.json()["record"]["row_version"] == 2
+                app_two = create_agent_app(
+                    settings=ServiceSettings.for_test(),
+                    database_settings=_agent_settings(database),
+                )
+                async with app_two.router.lifespan_context(app_two):
+                    async with httpx.AsyncClient(
+                        transport=httpx.ASGITransport(app=app_two),
+                        base_url="http://agent-two.test",
+                    ) as client_two:
+                        view_race_responses = await asyncio.gather(
+                            client.patch(
+                                view_item_path,
+                                headers={
+                                    **headers,
+                                    "Idempotency-Key": "view-race-one",
+                                },
+                                json={
+                                    "pagination_spec": {"limit": 4, "offset": 0},
+                                    "expected_row_version": 2,
+                                },
+                            ),
+                            client_two.patch(
+                                view_item_path,
+                                headers={
+                                    **headers,
+                                    "Idempotency-Key": "view-race-two",
+                                },
+                                json={
+                                    "pagination_spec": {"limit": 3, "offset": 0},
+                                    "expected_row_version": 2,
+                                },
+                            ),
+                        )
+                assert sorted(
+                    response.status_code for response in view_race_responses
+                ) == [200, 409], [response.text for response in view_race_responses]
+                final_view_result = next(
+                    response.json()
+                    for response in view_race_responses
+                    if response.status_code == 200
+                )
+                assert final_view_result["record"]["row_version"] == 3
+                stale_view = await client.patch(
+                    view_item_path,
+                    headers={**headers, "Idempotency-Key": "view-stale"},
+                    json={"expected_row_version": 1},
+                )
+                assert stale_view.status_code == 409, stale_view.text
+
+                deleted_view = await client.request(
+                    "DELETE",
+                    view_item_path,
+                    headers={**headers, "Idempotency-Key": "view-delete"},
+                    json={"expected_row_version": 3},
+                )
+                assert deleted_view.status_code == 200, deleted_view.text
+                assert deleted_view.json()["record"] == final_view_result["record"]
+                assert (
+                    await client.request(
+                        "DELETE",
+                        view_item_path,
+                        headers={**headers, "Idempotency-Key": "view-delete"},
+                        json={"expected_row_version": 3},
+                    )
+                ).json() == deleted_view.json()
+
+                deleted_relation = await client.request(
+                    "DELETE",
+                    relation_item_path,
+                    headers={**headers, "Idempotency-Key": "relation-delete"},
+                    json={"expected_row_version": 2},
+                )
+                assert deleted_relation.status_code == 200, deleted_relation.text
+                assert (
+                    deleted_relation.json()["record"]
+                    == relation_update.json()["record"]
+                )
+                assert (await client.get(relation_path, headers=headers)).json() == []
+
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            actions = await owner.fetch(
+                "SELECT action,resource_type,http_method,quota_kind "
+                "FROM audit.agent_mutation WHERE workspace_id=$1 "
+                "ORDER BY occurred_at,operation_id",
+                workspace_id,
+            )
+            assert [
+                tuple(row)
+                for row in actions
+                if row[1] in {"item_relation", "collection_view"}
+            ] == [
+                ("ITEM_RELATION_CREATED", "item_relation", "POST", "mutation"),
+                ("ITEM_RELATION_UPDATED", "item_relation", "PATCH", "mutation"),
+                ("COLLECTION_VIEW_CREATED", "collection_view", "POST", "mutation"),
+                ("COLLECTION_VIEW_UPDATED", "collection_view", "PATCH", "mutation"),
+                ("COLLECTION_VIEW_UPDATED", "collection_view", "PATCH", "mutation"),
+                ("COLLECTION_VIEW_DELETED", "collection_view", "DELETE", "delete"),
+                ("ITEM_RELATION_DELETED", "item_relation", "DELETE", "delete"),
+            ]
+    finally:
+        pass
+
+
+@pytest.mark.asyncio
+async def test_agent_stale_dependencies_are_discoverable_and_deletable_via_rest(
+    agent_site_database: AgentSiteDatabase,
+) -> None:
+    database = agent_site_database
+    _token, seeded = await _seed(database)
+    scopes = [
+        "content-model:create",
+        "content-model:read",
+        "content-model:delete",
+        "field-definition:create",
+        "field-definition:delete",
+        "content-item:create",
+        "content-item:read",
+        "content-item:delete",
+        "translation:read",
+        "translation:write",
+        "relationship:write",
+        "collection-view:read",
+        "collection-view:create",
+        "collection-view:write",
+        "collection-view:delete",
+    ]
+    token, workspace_id = await _workspace_capability(
+        database, seeded, scopes, "Agent Stale Cleanup Workspace"
+    )
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        capability_id = await owner.fetchval(
+            "SELECT id FROM control.capability WHERE workspace_id=$1", workspace_id
+        )
+        await owner.execute(
+            "UPDATE control.capability SET request_quota=100, mutation_quota=30, "
+            "delete_quota=20 WHERE id=$1",
+            capability_id,
+        )
+    app = create_agent_app(
+        settings=ServiceSettings.for_test(),
+        database_settings=_agent_settings(database),
+    )
+    headers = {"Authorization": f"Bearer {token}"}
+    try:
+        async with app.router.lifespan_context(app):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://agent.test"
+            ) as client:
+                created_type = await client.post(
+                    "/api/agent/v1/content-model/types",
+                    headers={**headers, "Idempotency-Key": "stale-type"},
+                    json={
+                        "key": "stale-cleanup",
+                        "labels": {"en": "Stale cleanup"},
+                        "slug_pattern": "/stale/{slug}",
+                        "settings": {},
+                    },
+                )
+                assert created_type.status_code == 201, created_type.text
+                type_id = UUID(created_type.json()["record"]["id"])
+                await _set_resource_constraints(
+                    database,
+                    workspace_id,
+                    {
+                        "allowed_type_ids": [str(type_id)],
+                        "allowed_type_keys": ["stale-cleanup"],
+                        "delete_enabled": True,
+                    },
+                )
+                relation_field = await client.post(
+                    f"/api/agent/v1/content-model/types/{type_id}/fields",
+                    headers={**headers, "Idempotency-Key": "stale-relation-field"},
+                    json={
+                        "key": "related",
+                        "label": "Related",
+                        "field_type": "reference",
+                    },
+                )
+                title_field = await client.post(
+                    f"/api/agent/v1/content-model/types/{type_id}/fields",
+                    headers={**headers, "Idempotency-Key": "stale-title-field"},
+                    json={
+                        "key": "title",
+                        "label": "Title",
+                        "field_type": "short_text",
+                        "localized": True,
+                    },
+                )
+                assert relation_field.status_code == title_field.status_code == 201
+                relation_field_id = UUID(relation_field.json()["record"]["id"])
+                title_field_id = UUID(title_field.json()["record"]["id"])
+
+                async def create_item(slug: str) -> UUID:
+                    response = await client.post(
+                        f"/api/agent/v1/content-items/types/{type_id}",
+                        headers={**headers, "Idempotency-Key": f"stale-item-{slug}"},
+                        json={
+                            "type_id": str(type_id),
+                            "slug": slug,
+                            "status": "DRAFT",
+                            "values": {},
+                        },
+                    )
+                    assert response.status_code == 201, response.text
+                    return UUID(response.json()["record"]["id"])
+
+                source_id = await create_item("source")
+                target_id = await create_item("target")
+                relation_path = f"/api/agent/v1/content-items/{source_id}/relations"
+                relation = await client.post(
+                    relation_path,
+                    headers={**headers, "Idempotency-Key": "stale-relation"},
+                    json={
+                        "field_definition_id": str(relation_field_id),
+                        "target_item_id": str(target_id),
+                    },
+                )
+                assert relation.status_code == 201, relation.text
+                relation_id = UUID(relation.json()["record"]["id"])
+                translation_path = (
+                    f"/api/agent/v1/content-items/{source_id}/translations"
+                )
+                translation = await client.post(
+                    translation_path,
+                    headers={**headers, "Idempotency-Key": "stale-translation"},
+                    json={
+                        "locale": "en",
+                        "localized_values": {"title": "Before change"},
+                    },
+                )
+                assert translation.status_code == 201, translation.text
+                translation_id = UUID(translation.json()["record"]["id"])
+                view_path = f"/api/agent/v1/collection-views/types/{type_id}"
+                view = await client.post(
+                    view_path,
+                    headers={**headers, "Idempotency-Key": "stale-view"},
+                    json={
+                        "type_id": str(type_id),
+                        "key": "all",
+                        "filter_spec": {},
+                        "sort_spec": {"field": "slug"},
+                        "projection_spec": {},
+                        "pagination_spec": {"limit": 10, "offset": 0},
+                    },
+                )
+                assert view.status_code == 201, view.text
+                view_id = UUID(view.json()["record"]["id"])
+
+                later_field = await client.post(
+                    f"/api/agent/v1/content-model/types/{type_id}/fields",
+                    headers={**headers, "Idempotency-Key": "stale-later-field"},
+                    json={
+                        "key": "later",
+                        "label": "Later",
+                        "field_type": "short_text",
+                    },
+                )
+                assert later_field.status_code == 201, later_field.text
+
+                stale_items = await client.get(
+                    f"/api/agent/v1/content-items/types/{type_id}", headers=headers
+                )
+                assert stale_items.status_code == 200
+                assert {record["id"] for record in stale_items.json()} == {
+                    str(source_id),
+                    str(target_id),
+                }
+                assert (await client.get(relation_path, headers=headers)).json()[0][
+                    "id"
+                ] == str(relation_id)
+                assert (await client.get(translation_path, headers=headers)).json()[0][
+                    "id"
+                ] == str(translation_id)
+                assert (await client.get(view_path, headers=headers)).json()[0][
+                    "id"
+                ] == str(view_id)
+
+                deleted_relation = await client.request(
+                    "DELETE",
+                    f"{relation_path}/{relation_id}",
+                    headers={**headers, "Idempotency-Key": "stale-relation-delete"},
+                    json={"expected_row_version": 1},
+                )
+                deleted_translation = await client.request(
+                    "DELETE",
+                    f"{translation_path}/{translation_id}",
+                    headers={
+                        **headers,
+                        "Idempotency-Key": "stale-translation-delete",
+                    },
+                    json={"expected_row_version": 1},
+                )
+                deleted_view = await client.request(
+                    "DELETE",
+                    f"/api/agent/v1/collection-views/{view_id}",
+                    headers={**headers, "Idempotency-Key": "stale-view-delete"},
+                    json={"expected_row_version": 1},
+                )
+                assert (
+                    deleted_relation.status_code,
+                    deleted_translation.status_code,
+                    deleted_view.status_code,
+                ) == (200, 200, 200)
+
+                for item_id, key in ((source_id, "source"), (target_id, "target")):
+                    deleted_item = await client.request(
+                        "DELETE",
+                        f"/api/agent/v1/content-items/{item_id}",
+                        headers={**headers, "Idempotency-Key": f"stale-delete-{key}"},
+                        json={"expected_row_version": 1},
+                    )
+                    assert deleted_item.status_code == 200, deleted_item.text
+
+                for field_id, key in (
+                    (relation_field_id, "related"),
+                    (title_field_id, "title"),
+                    (UUID(later_field.json()["record"]["id"]), "later"),
+                ):
+                    deleted_field = await client.request(
+                        "DELETE",
+                        f"/api/agent/v1/content-model/types/{type_id}/fields/{field_id}",
+                        headers={**headers, "Idempotency-Key": f"stale-field-{key}"},
+                        json={"expected_definition_version": 1},
+                    )
+                    assert deleted_field.status_code == 200, deleted_field.text
+                current_type = await client.get(
+                    f"/api/agent/v1/content-model/types/{type_id}", headers=headers
+                )
+                assert current_type.status_code == 200
+                deleted_type = await client.request(
+                    "DELETE",
+                    f"/api/agent/v1/content-model/types/{type_id}",
+                    headers={**headers, "Idempotency-Key": "stale-type-delete"},
+                    json={
+                        "expected_definition_version": current_type.json()[
+                            "definition_version"
+                        ]
+                    },
+                )
+                assert deleted_type.status_code == 200, deleted_type.text
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            assert (
+                await owner.fetchval(
+                    "SELECT count(*) FROM content.content_item_base WHERE site_id=$1",
+                    seeded["site_id"],
+                )
+                == 0
+            )
+    finally:
+        pass
 
 
 @pytest.mark.asyncio
@@ -5115,7 +5699,7 @@ async def test_semantic_audit_contract_is_strict_and_reversible(
                 await owner.fetchval(
                     "SELECT version_num::text FROM control.alembic_version"
                 )
-                == "047_001"
+                == "048_001"
             )
             assert (
                 await owner.fetchval(

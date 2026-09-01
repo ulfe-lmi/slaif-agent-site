@@ -286,6 +286,54 @@ AGENT_CONTENT_FUNCTIONS = {
         "p_site_id uuid, p_item_id uuid, p_translation_id uuid, p_expected_row_version integer",
     ): "uuid, uuid, uuid, integer",
     (
+        "slaif_agent_item_relation_create",
+        "p_site_id uuid, p_source uuid, p_field uuid, p_target uuid, p_position integer, p_metadata jsonb",
+    ): "uuid, uuid, uuid, uuid, integer, jsonb",
+    (
+        "slaif_agent_item_relation_list",
+        "p_site_id uuid, p_source uuid",
+    ): "uuid, uuid",
+    (
+        "slaif_agent_item_relation_get",
+        "p_site_id uuid, p_source uuid, p_relation uuid",
+    ): "uuid, uuid, uuid",
+    (
+        "slaif_agent_item_relation_update",
+        "p_site_id uuid, p_source uuid, p_relation uuid, p_target uuid, p_position integer, p_metadata jsonb, p_expected integer",
+    ): "uuid, uuid, uuid, uuid, integer, jsonb, integer",
+    (
+        "slaif_agent_item_relation_delete",
+        "p_site_id uuid, p_source uuid, p_relation uuid, p_expected integer",
+    ): "uuid, uuid, uuid, integer",
+    (
+        "slaif_agent_collection_view_create",
+        "p_site_id uuid, p_type_id uuid, p_key text, p_filter jsonb, p_sort jsonb, p_projection jsonb, p_pagination jsonb, p_expected_definition integer",
+    ): "uuid, uuid, text, jsonb, jsonb, jsonb, jsonb, integer",
+    (
+        "slaif_agent_collection_view_list",
+        "p_site_id uuid, p_type_id uuid",
+    ): "uuid, uuid",
+    (
+        "slaif_agent_collection_view_get",
+        "p_site_id uuid, p_view_id uuid",
+    ): "uuid, uuid",
+    (
+        "slaif_agent_collection_view_current",
+        "p_site_id uuid, p_view_id uuid, p_scope text",
+    ): "uuid, uuid, text",
+    (
+        "slaif_agent_collection_view_fields",
+        "p_site_id uuid, p_type_id uuid, p_scope text",
+    ): "uuid, uuid, text",
+    (
+        "slaif_agent_collection_view_update",
+        "p_site_id uuid, p_view_id uuid, p_filter jsonb, p_sort jsonb, p_projection jsonb, p_pagination jsonb, p_expected_row_version integer, p_expected_definition integer",
+    ): "uuid, uuid, jsonb, jsonb, jsonb, jsonb, integer, integer",
+    (
+        "slaif_agent_collection_view_delete",
+        "p_site_id uuid, p_view_id uuid, p_expected integer",
+    ): "uuid, uuid, integer",
+    (
         "slaif_agent_page_create",
         "p_site_id uuid, p_slug text, p_title text, p_status text, "
         "p_locale text, p_parent_id uuid",

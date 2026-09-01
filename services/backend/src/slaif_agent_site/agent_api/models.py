@@ -99,3 +99,11 @@ class AgentMutationResponse(BaseModel):
     record: dict[str, object]
     operation_id: UUID
     action: str | None = None
+
+
+class AgentDeleteRequest(BaseModel):
+    """Positive optimistic-lock token for Agent destructive mutations."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    expected_row_version: int = Field(gt=0)

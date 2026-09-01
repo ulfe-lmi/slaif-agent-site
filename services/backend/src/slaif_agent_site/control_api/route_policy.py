@@ -1026,6 +1026,26 @@ ROUTE_POLICIES: Final[tuple[RoutePolicy, ...]] = (
                 "/api/agent/v1/content-items/{item_id}/translations/{translation_id}",
                 ("translation:read",),
             ),
+            (
+                "GET",
+                "/api/agent/v1/content-items/{item_id}/relations",
+                ("content-item:read",),
+            ),
+            (
+                "GET",
+                "/api/agent/v1/content-items/{item_id}/relations/{relation_id}",
+                ("content-item:read",),
+            ),
+            (
+                "GET",
+                "/api/agent/v1/collection-views/types/{type_id}",
+                ("collection-view:read",),
+            ),
+            (
+                "GET",
+                "/api/agent/v1/collection-views/{view_id}",
+                ("collection-view:read",),
+            ),
             ("GET", "/api/agent/v1/pages/", ("page:read",)),
             ("GET", "/api/agent/v1/pages/{page_id}/components", ("composition:read",)),
             ("GET", "/api/agent/v1/media/", ("media:read",)),
@@ -1089,6 +1109,36 @@ ROUTE_POLICIES: Final[tuple[RoutePolicy, ...]] = (
                 "DELETE",
                 "/api/agent/v1/content-items/{item_id}/translations/{translation_id}",
                 "translation:write",
+            ),
+            (
+                "POST",
+                "/api/agent/v1/content-items/{item_id}/relations",
+                "relationship:write",
+            ),
+            (
+                "PATCH",
+                "/api/agent/v1/content-items/{item_id}/relations/{relation_id}",
+                "relationship:write",
+            ),
+            (
+                "DELETE",
+                "/api/agent/v1/content-items/{item_id}/relations/{relation_id}",
+                "relationship:write",
+            ),
+            (
+                "POST",
+                "/api/agent/v1/collection-views/types/{type_id}",
+                "collection-view:create",
+            ),
+            (
+                "PATCH",
+                "/api/agent/v1/collection-views/{view_id}",
+                "collection-view:write",
+            ),
+            (
+                "DELETE",
+                "/api/agent/v1/collection-views/{view_id}",
+                "collection-view:delete",
             ),
             ("POST", "/api/agent/v1/pages/", "page:create"),
             (

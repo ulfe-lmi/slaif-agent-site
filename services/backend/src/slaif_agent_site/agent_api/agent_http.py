@@ -15,6 +15,7 @@ from uuid import UUID
 from fastapi import APIRouter, Header, Request
 
 from slaif_agent_site.agent_api.models import (
+    AgentDeleteRequest,
     AgentDiscoveryResponse,
     AgentMutationResponse,
 )
@@ -48,18 +49,26 @@ from slaif_agent_site.content_model.models import (
     ContentTypeRecord,
     CreateContentTypeRequest,
     CreateFieldDefinitionRequest,
+    CreateRelationRequest,
     CreateTranslationRequest,
     DeleteDefinitionRequest,
     DeleteTranslationRequest,
+    RelationRecord,
     TranslationRecord,
     UpdateContentTypeRequest,
     UpdateFieldDefinitionRequest,
+    UpdateRelationRequest,
     UpdateTranslationRequest,
 )
 from slaif_agent_site.content_model.page_models import CreatePageRequest
 from slaif_agent_site.content_model.service import (
     ContentModelServiceError,
     ContentModelServiceReason,
+)
+from slaif_agent_site.content_model.view_models import (
+    CollectionViewRecord,
+    CreateCollectionViewRequest,
+    UpdateCollectionViewRequest,
 )
 from slaif_agent_site.errors import (
     AuthenticationError,
@@ -684,6 +693,215 @@ async def delete_content_item_translation(
         action="CONTENT_ITEM_TRANSLATION_DELETED",
         mutate=lambda service: service.delete_translation_for_site(
             context.site_id, item_id, translation_id, body
+        ),
+    )
+
+
+@router.get("/content-items/{item_id}/relations")
+async def list_content_item_relations(
+    item_id: UUID, request: Request
+) -> list[dict[str, Any]]:
+    context = await _authenticate(request)
+    _require_scope(context, "content-item:read")
+    records = await _execute_read(
+        request,
+        context,
+        lambda service: service.list_relations_for_site(context.site_id, item_id),
+    )
+    return [record.model_dump(mode="json") for record in records]
+
+
+@router.get("/content-items/{item_id}/relations/{relation_id}")
+async def get_content_item_relation(
+    item_id: UUID, relation_id: UUID, request: Request
+) -> dict[str, Any]:
+    context = await _authenticate(request)
+    _require_scope(context, "content-item:read")
+    record = cast(
+        RelationRecord,
+        await _execute_read(
+            request,
+            context,
+            lambda service: service.get_relation_for_site(
+                context.site_id, item_id, relation_id
+            ),
+        ),
+    )
+    return record.model_dump(mode="json")
+
+
+@router.post("/content-items/{item_id}/relations", status_code=201)
+async def create_content_item_relation(
+    item_id: UUID,
+    request: Request,
+    body: CreateRelationRequest,
+    idempotency_key: IdempotencyHeader = None,
+) -> AgentMutationResponse:
+    context = await _authenticate(request)
+    _require_scope(context, "relationship:write")
+    return await _execute_mutation(
+        request,
+        context,
+        body,
+        idempotency_key,
+        resource_type="item_relation",
+        action="ITEM_RELATION_CREATED",
+        mutate=lambda service: service.create_relation_for_site(
+            context.site_id, item_id, body
+        ),
+    )
+
+
+@router.patch("/content-items/{item_id}/relations/{relation_id}")
+async def update_content_item_relation(
+    item_id: UUID,
+    relation_id: UUID,
+    request: Request,
+    body: UpdateRelationRequest,
+    idempotency_key: IdempotencyHeader = None,
+) -> AgentMutationResponse:
+    context = await _authenticate(request)
+    _require_scope(context, "relationship:write")
+    return await _execute_mutation(
+        request,
+        context,
+        body,
+        idempotency_key,
+        resource_type="item_relation",
+        status_code=200,
+        action="ITEM_RELATION_UPDATED",
+        mutate=lambda service: service.update_relation_for_site(
+            context.site_id, item_id, relation_id, body
+        ),
+    )
+
+
+@router.delete("/content-items/{item_id}/relations/{relation_id}")
+async def delete_content_item_relation(
+    item_id: UUID,
+    relation_id: UUID,
+    request: Request,
+    body: AgentDeleteRequest,
+    idempotency_key: IdempotencyHeader = None,
+) -> AgentMutationResponse:
+    context = await _authenticate(request)
+    _require_scope(context, "relationship:write")
+    if _constraint(context, "delete_enabled", True) is False:
+        raise AuthorizationError()
+    return await _execute_mutation(
+        request,
+        context,
+        body,
+        idempotency_key,
+        resource_type="item_relation",
+        status_code=200,
+        quota_kind="delete",
+        action="ITEM_RELATION_DELETED",
+        mutate=lambda service: service.delete_relation_for_site(
+            context.site_id, item_id, relation_id, body.expected_row_version
+        ),
+    )
+
+
+@router.get("/collection-views/types/{type_id}")
+async def list_collection_views(
+    type_id: UUID, request: Request
+) -> list[dict[str, Any]]:
+    context = await _authenticate(request)
+    _require_scope(context, "collection-view:read")
+    _enforce_resource_constraint(context, type_id=type_id)
+    records = await _execute_read(
+        request,
+        context,
+        lambda service: service.list_views_for_site(context.site_id, type_id),
+    )
+    return [record.model_dump(mode="json") for record in records]
+
+
+@router.post("/collection-views/types/{type_id}", status_code=201)
+async def create_collection_view(
+    type_id: UUID,
+    request: Request,
+    body: CreateCollectionViewRequest,
+    idempotency_key: IdempotencyHeader = None,
+) -> AgentMutationResponse:
+    context = await _authenticate(request)
+    _require_scope(context, "collection-view:create")
+    _enforce_resource_constraint(context, type_id=type_id)
+    if body.type_id != type_id:
+        raise ResourceNotFoundError()
+    return await _execute_mutation(
+        request,
+        context,
+        body,
+        idempotency_key,
+        resource_type="collection_view",
+        action="COLLECTION_VIEW_CREATED",
+        mutate=lambda service: service.create_view_for_site(context.site_id, body),
+    )
+
+
+@router.get("/collection-views/{view_id}")
+async def get_collection_view(view_id: UUID, request: Request) -> dict[str, Any]:
+    context = await _authenticate(request)
+    _require_scope(context, "collection-view:read")
+    record = cast(
+        CollectionViewRecord,
+        await _execute_read(
+            request,
+            context,
+            lambda service: service.get_view_for_site(context.site_id, view_id),
+        ),
+    )
+    _enforce_resource_constraint(context, type_id=record.type_id)
+    return record.model_dump(mode="json")
+
+
+@router.patch("/collection-views/{view_id}")
+async def update_collection_view(
+    view_id: UUID,
+    request: Request,
+    body: UpdateCollectionViewRequest,
+    idempotency_key: IdempotencyHeader = None,
+) -> AgentMutationResponse:
+    context = await _authenticate(request)
+    _require_scope(context, "collection-view:write")
+    return await _execute_mutation(
+        request,
+        context,
+        body,
+        idempotency_key,
+        resource_type="collection_view",
+        status_code=200,
+        action="COLLECTION_VIEW_UPDATED",
+        mutate=lambda service: service.update_view_for_site(
+            context.site_id, view_id, body
+        ),
+    )
+
+
+@router.delete("/collection-views/{view_id}")
+async def delete_collection_view(
+    view_id: UUID,
+    request: Request,
+    body: AgentDeleteRequest,
+    idempotency_key: IdempotencyHeader = None,
+) -> AgentMutationResponse:
+    context = await _authenticate(request)
+    _require_scope(context, "collection-view:delete")
+    if _constraint(context, "delete_enabled", True) is False:
+        raise AuthorizationError()
+    return await _execute_mutation(
+        request,
+        context,
+        body,
+        idempotency_key,
+        resource_type="collection_view",
+        status_code=200,
+        quota_kind="delete",
+        action="COLLECTION_VIEW_DELETED",
+        mutate=lambda service: service.delete_view_for_site(
+            context.site_id, view_id, body.expected_row_version
         ),
     )
 
