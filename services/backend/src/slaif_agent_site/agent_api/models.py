@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from ..browser_contracts import BrowserCapabilityLimits
+from ..content_model.primitives import FieldPrimitive
 
 
 class AgentCapabilityContext(BaseModel):
@@ -80,6 +81,21 @@ class AgentDiscoveryResponse(BaseModel):
     mutation_quota: int = 0
     delete_quota: int = 0
     upload_quota: int = 0
+
+
+class AgentPermissionsResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    site_id: UUID
+    workspace_id: UUID
+    scopes: tuple[str, ...]
+
+
+class AgentFieldPrimitiveDescriptor(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    primitive: FieldPrimitive
+    executable: Literal[False] = False
 
 
 class AgentErrorResponse(BaseModel):

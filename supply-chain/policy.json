@@ -116,7 +116,7 @@
     "nginx": "docker.io/library/nginx:1.29.7-alpine3.23@sha256:e7257f1ef28ba17cf7c248cb8ccf6f0c6e0228ab9c315c152f9c203cd34cf6d1",
     "node": "docker.io/library/node:24.14.1-alpine3.23@sha256:8510330d3eb72c804231a834b1a8ebb55cb3796c3e4431297a24d246b8add4d5",
     "playwright": "mcr.microsoft.com/playwright:v1.62.1-noble@sha256:dcc5531e97840b9b5e794f2814476b21571c5124a3fca2267d73041f56e7580e",
-    "postgres": "docker.io/library/postgres:18.6-trixie@sha256:4ef4dbc939d61acea57712655ddb4b4ab27419c913f94cca0cd57cb3ea3c2280",
+    "postgres": "docker.io/library/postgres:18.6-alpine3.23@sha256:697c180dbf244d3ce4a8f4cbc0156cde840af055c1bf8b76aebe422a4822086f",
     "python": "docker.io/library/python:3.12.12-alpine3.23@sha256:2d91681153dd4b8cdb52d4fd34a17b9edbafa4dd3086143cfd4b6c3a84c1acb0",
     "uv": "ghcr.io/astral-sh/uv:0.12.5@sha256:e85be844203885286c60ffad8a858d48afb6c5a5c237ca0e67f12e74b8f174b1"
   },
@@ -134,6 +134,10 @@
       "nginx": {
         "install": ["libcrypto3=3.5.8-r0", "libssl3=3.5.8-r0"],
         "remove": ["curl"]
+      },
+      "postgres": {
+        "install": ["libcrypto3=3.5.8-r0", "libssl3=3.5.8-r0"],
+        "remove": []
       },
       "web": {
         "install": ["libcrypto3=3.5.8-r0", "libssl3=3.5.8-r0"],
@@ -199,7 +203,7 @@
       "expected_components": ["nginx"]
     },
     "postgres": {
-      "local_reference": "docker.io/library/postgres:18.6-trixie@sha256:4ef4dbc939d61acea57712655ddb4b4ab27419c913f94cca0cd57cb3ea3c2280",
+      "local_reference": "slaif-agent-site-postgres:local",
       "base": "postgres",
       "expected_components": ["postgresql"]
     },

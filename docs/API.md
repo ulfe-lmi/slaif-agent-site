@@ -19,8 +19,9 @@ contain no profile, credential, token, cookie, digest, or database locator.
 
 The Control service exposes a bounded local-authentication boundary under
 `/api/control/v1`. Existing NGINX routing makes these backend endpoints
-externally reachable in the default topology. Public OpenAPI and documentation
-URLs remain disabled.
+externally reachable in the default topology. Interactive Swagger/ReDoc and
+generic FastAPI documentation URLs remain disabled; the versioned Agent
+contract is deliberately exposed at the public path documented below.
 
 - `GET /setup/status` returns only `initialized` and `setup_available`.
 - `POST /setup` consumes the one-time setup token and creates the first local administrator.
@@ -167,6 +168,17 @@ style policy. No user-controlled raw CSS/style payload is accepted.
 
 ## Capability-bound Agent semantic API
 
+### Deterministic public Agent contract
+
+`GET /api/agent/v1/openapi.json` is unauthenticated and returns the exact
+committed bytes of [`contracts/openapi/agent-v1.json`](../contracts/openapi/agent-v1.json).
+It grants no operation authority. The document is OpenAPI 3.1, contains only
+the versioned Agent paths, uses the `AgentCapability` bearer scheme with
+empty OpenAPI bearer requirement values, and publishes exact operation scopes
+in `x-slaif-required-scopes`. Mutations require a bounded `Idempotency-Key`
+header in the contract. Regenerate and check it with the commands in
+[`contracts/README.md`](../contracts/README.md).
+
 The Agent API authenticates a bearer capability and derives the site and
 workspace exclusively from that trusted capability. Semantic GETs and bounded
 mutations use different server paths: reads enter one request-scoped COW
@@ -178,6 +190,7 @@ The capability-bound read surface is:
 | Route | Success | Required scope |
 | --- | --- | --- |
 | `GET /api/agent/v1/content-model/types` | 200 | `content-model:read` |
+| `GET /api/agent/v1/content-model/primitives` | 200 | `validation:read` |
 | `GET /api/agent/v1/content-model/types/{type_id}` | 200 | `content-model:read` |
 | `GET /api/agent/v1/content-model/types/{type_id}/fields` | 200 | `content-model:read` |
 | `GET /api/agent/v1/content-items/types/{type_id}` | 200 | `content-item:read` |

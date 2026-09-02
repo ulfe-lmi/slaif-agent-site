@@ -17,7 +17,9 @@ from fastapi import APIRouter, Header, Request
 from slaif_agent_site.agent_api.models import (
     AgentDeleteRequest,
     AgentDiscoveryResponse,
+    AgentFieldPrimitiveDescriptor,
     AgentMutationResponse,
+    AgentPermissionsResponse,
 )
 from slaif_agent_site.agent_state.mutations import (
     AgentMutationConflictError,
@@ -37,6 +39,7 @@ from slaif_agent_site.agent_state.reads import (
     execute_agent_read,
 )
 from slaif_agent_site.content_model.composition_models import (
+    CompositionNodeRecord,
     CreateCompositionNodeRequest,
 )
 from slaif_agent_site.content_model.item_models import (
@@ -45,6 +48,7 @@ from slaif_agent_site.content_model.item_models import (
     CreateContentItemRequest,
     DeleteContentItemRequest,
 )
+from slaif_agent_site.content_model.media_models import MediaAssetRecord
 from slaif_agent_site.content_model.models import (
     ContentTypeRecord,
     CreateContentTypeRequest,
@@ -53,6 +57,7 @@ from slaif_agent_site.content_model.models import (
     CreateTranslationRequest,
     DeleteDefinitionRequest,
     DeleteTranslationRequest,
+    FieldDefinitionRecord,
     RelationRecord,
     TranslationRecord,
     UpdateContentTypeRequest,
@@ -60,7 +65,8 @@ from slaif_agent_site.content_model.models import (
     UpdateRelationRequest,
     UpdateTranslationRequest,
 )
-from slaif_agent_site.content_model.page_models import CreatePageRequest
+from slaif_agent_site.content_model.page_models import CreatePageRequest, PageRecord
+from slaif_agent_site.content_model.primitives import FieldPrimitive
 from slaif_agent_site.content_model.service import (
     ContentModelServiceError,
     ContentModelServiceReason,
@@ -182,19 +188,31 @@ async def get_session(request: Request) -> AgentDiscoveryResponse:
 
 
 @router.get("/permissions")
-async def get_permissions(request: Request) -> dict[str, Any]:
+async def get_permissions(request: Request) -> AgentPermissionsResponse:
     """Return the effective scope list for this capability."""
     context = await _authenticate(request)
     _require_scope(context, "site:read")
-    return {
-        "site_id": str(context.site_id),
-        "workspace_id": str(context.workspace_id),
-        "scopes": sorted(context.scopes),
-    }
+    return AgentPermissionsResponse(
+        site_id=context.site_id,
+        workspace_id=context.workspace_id,
+        scopes=tuple(sorted(context.scopes)),
+    )
+
+
+@router.get("/content-model/primitives")
+async def list_field_primitives(
+    request: Request,
+) -> tuple[AgentFieldPrimitiveDescriptor, ...]:
+    context = await _authenticate(request)
+    _require_scope(context, "validation:read")
+    return tuple(
+        AgentFieldPrimitiveDescriptor(primitive=primitive)
+        for primitive in FieldPrimitive
+    )
 
 
 @router.get("/content-model/types")
-async def list_content_types(request: Request) -> list[dict[str, Any]]:
+async def list_content_types(request: Request) -> list[ContentTypeRecord]:
     """List all active content types visible to this capability."""
     context = await _authenticate(request)
     _require_scope(context, "content-model:read")
@@ -207,7 +225,7 @@ async def list_content_types(request: Request) -> list[dict[str, Any]]:
 @router.get("/content-model/types/{type_id}/fields")
 async def list_field_definitions(
     type_id: UUID, request: Request
-) -> list[dict[str, Any]]:
+) -> list[FieldDefinitionRecord]:
     context = await _authenticate(request)
     _require_scope(context, "content-model:read")
     _enforce_resource_constraint(context, type_id=type_id)
@@ -220,7 +238,7 @@ async def list_field_definitions(
 
 
 @router.get("/content-model/types/{type_id}")
-async def get_content_type(type_id: UUID, request: Request) -> dict[str, Any]:
+async def get_content_type(type_id: UUID, request: Request) -> ContentTypeRecord:
     context = await _authenticate(request)
     _require_scope(context, "content-model:read")
     _enforce_resource_constraint(context, type_id=type_id)
@@ -230,13 +248,13 @@ async def get_content_type(type_id: UUID, request: Request) -> dict[str, Any]:
             request, context, lambda service: service.get_type(context.site_id, type_id)
         ),
     )
-    return record.model_dump(mode="json")
+    return cast(ContentTypeRecord, record.model_dump(mode="json"))
 
 
 @router.get("/content-model/types/{type_id}/fields/{field_id}")
 async def get_field_definition(
     type_id: UUID, field_id: UUID, request: Request
-) -> dict[str, Any]:
+) -> FieldDefinitionRecord:
     context = await _authenticate(request)
     _require_scope(context, "content-model:read")
     _enforce_resource_constraint(context, type_id=type_id)
@@ -245,11 +263,13 @@ async def get_field_definition(
         context,
         lambda service: service.get_field(context.site_id, type_id, field_id),
     )
-    return cast(dict[str, Any], record.model_dump(mode="json"))
+    return cast(FieldDefinitionRecord, record.model_dump(mode="json"))
 
 
 @router.get("/content-items/types/{type_id}")
-async def list_content_items(type_id: UUID, request: Request) -> list[dict[str, Any]]:
+async def list_content_items(
+    type_id: UUID, request: Request
+) -> list[ContentItemRecord]:
     context = await _authenticate(request)
     _require_scope(context, "content-item:read")
     _enforce_resource_constraint(context, type_id=type_id)
@@ -260,7 +280,7 @@ async def list_content_items(type_id: UUID, request: Request) -> list[dict[str, 
 
 
 @router.get("/pages/")
-async def list_pages(request: Request) -> list[dict[str, Any]]:
+async def list_pages(request: Request) -> list[PageRecord]:
     context = await _authenticate(request)
     _require_scope(context, "page:read")
     records = await _execute_read(
@@ -270,7 +290,9 @@ async def list_pages(request: Request) -> list[dict[str, Any]]:
 
 
 @router.get("/pages/{page_id}/components")
-async def list_components(page_id: UUID, request: Request) -> list[dict[str, Any]]:
+async def list_components(
+    page_id: UUID, request: Request
+) -> list[CompositionNodeRecord]:
     context = await _authenticate(request)
     _require_scope(context, "composition:read")
     records = await _execute_read(
@@ -282,7 +304,7 @@ async def list_components(page_id: UUID, request: Request) -> list[dict[str, Any
 
 
 @router.get("/media/")
-async def list_media(request: Request) -> list[dict[str, Any]]:
+async def list_media(request: Request) -> list[MediaAssetRecord]:
     context = await _authenticate(request)
     _require_scope(context, "media:read")
     records = await _execute_read(
@@ -527,7 +549,7 @@ async def create_content_item(
 
 
 @router.get("/content-items/{item_id}")
-async def get_content_item(item_id: UUID, request: Request) -> dict[str, Any]:
+async def get_content_item(item_id: UUID, request: Request) -> ContentItemRecord:
     context = await _authenticate(request)
     _require_scope(context, "content-item:read")
     record = cast(
@@ -539,7 +561,7 @@ async def get_content_item(item_id: UUID, request: Request) -> dict[str, Any]:
         ),
     )
     _enforce_resource_constraint(context, type_id=record.type_id)
-    return record.model_dump(mode="json")
+    return cast(ContentItemRecord, record.model_dump(mode="json"))
 
 
 @router.patch("/content-items/{item_id}")
@@ -594,7 +616,7 @@ async def delete_content_item(
 @router.get("/content-items/{item_id}/translations")
 async def list_content_item_translations(
     item_id: UUID, request: Request
-) -> list[dict[str, Any]]:
+) -> list[TranslationRecord]:
     context = await _authenticate(request)
     _require_scope(context, "translation:read")
     records = await _execute_read(
@@ -608,7 +630,7 @@ async def list_content_item_translations(
 @router.get("/content-items/{item_id}/translations/{translation_id}")
 async def get_content_item_translation(
     item_id: UUID, translation_id: UUID, request: Request
-) -> dict[str, Any]:
+) -> TranslationRecord:
     context = await _authenticate(request)
     _require_scope(context, "translation:read")
     record = cast(
@@ -621,7 +643,7 @@ async def get_content_item_translation(
             ),
         ),
     )
-    return record.model_dump(mode="json")
+    return cast(TranslationRecord, record.model_dump(mode="json"))
 
 
 @router.post("/content-items/{item_id}/translations", status_code=201)
@@ -700,7 +722,7 @@ async def delete_content_item_translation(
 @router.get("/content-items/{item_id}/relations")
 async def list_content_item_relations(
     item_id: UUID, request: Request
-) -> list[dict[str, Any]]:
+) -> list[RelationRecord]:
     context = await _authenticate(request)
     _require_scope(context, "content-item:read")
     records = await _execute_read(
@@ -714,7 +736,7 @@ async def list_content_item_relations(
 @router.get("/content-items/{item_id}/relations/{relation_id}")
 async def get_content_item_relation(
     item_id: UUID, relation_id: UUID, request: Request
-) -> dict[str, Any]:
+) -> RelationRecord:
     context = await _authenticate(request)
     _require_scope(context, "content-item:read")
     record = cast(
@@ -727,7 +749,7 @@ async def get_content_item_relation(
             ),
         ),
     )
-    return record.model_dump(mode="json")
+    return cast(RelationRecord, record.model_dump(mode="json"))
 
 
 @router.post("/content-items/{item_id}/relations", status_code=201)
@@ -806,7 +828,7 @@ async def delete_content_item_relation(
 @router.get("/collection-views/types/{type_id}")
 async def list_collection_views(
     type_id: UUID, request: Request
-) -> list[dict[str, Any]]:
+) -> list[CollectionViewRecord]:
     context = await _authenticate(request)
     _require_scope(context, "collection-view:read")
     _enforce_resource_constraint(context, type_id=type_id)
@@ -842,7 +864,7 @@ async def create_collection_view(
 
 
 @router.get("/collection-views/{view_id}")
-async def get_collection_view(view_id: UUID, request: Request) -> dict[str, Any]:
+async def get_collection_view(view_id: UUID, request: Request) -> CollectionViewRecord:
     context = await _authenticate(request)
     _require_scope(context, "collection-view:read")
     record = cast(
@@ -854,7 +876,7 @@ async def get_collection_view(view_id: UUID, request: Request) -> dict[str, Any]
         ),
     )
     _enforce_resource_constraint(context, type_id=record.type_id)
-    return record.model_dump(mode="json")
+    return cast(CollectionViewRecord, record.model_dump(mode="json"))
 
 
 @router.patch("/collection-views/{view_id}")

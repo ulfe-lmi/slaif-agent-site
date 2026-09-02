@@ -990,6 +990,11 @@ ROUTE_POLICIES: Final[tuple[RoutePolicy, ...]] = (
         for method, path, scopes in (
             ("GET", "/api/agent/v1/session", ()),
             ("GET", "/api/agent/v1/permissions", ("site:read",)),
+            (
+                "GET",
+                "/api/agent/v1/content-model/primitives",
+                ("validation:read",),
+            ),
             ("GET", "/api/agent/v1/content-model/types", ("content-model:read",)),
             (
                 "GET",

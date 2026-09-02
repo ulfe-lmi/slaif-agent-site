@@ -207,6 +207,7 @@ async def test_each_app_has_only_typed_health_routes(
         expected_routes |= {
             "/api/agent/v1/session",
             "/api/agent/v1/permissions",
+            "/api/agent/v1/content-model/primitives",
             "/api/agent/v1/content-model/types",
             "/api/agent/v1/content-model/types/{type_id}",
             "/api/agent/v1/content-model/types/{type_id}/fields",

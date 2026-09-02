@@ -121,6 +121,8 @@ class ReproducibilityHelperTests(unittest.TestCase):
     ) -> None:
         self.write("apps/web/.next/openapi.json")
         self.assertEqual(find_generated_contracts(self.root), [])
+        self.write("contracts/openapi/agent-v1.json")
+        self.assertEqual(find_generated_contracts(self.root), [])
         self.write("generated/openapi.json")
         self.assertEqual(
             find_generated_contracts(self.root), ["generated/openapi.json"]

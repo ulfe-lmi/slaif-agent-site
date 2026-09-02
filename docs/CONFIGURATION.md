@@ -18,6 +18,12 @@ models, and separate typed configuration for explicit one-shot database
 bootstrap. Each service owns its fixed database login and pool; Media also
 owns a validated absolute local store root and bounded upload limit.
 
+The public Agent OpenAPI contract is a deterministic source artifact, not a
+runtime-configurable endpoint. Generate or verify it from the repository root
+with `uv run --frozen python -m tools.contracts.generate_agent_openapi` or its
+`--check` form. It contains no host, environment, database, credential, COW,
+or internal schema values; the interactive documentation URLs remain disabled.
+
 ## Loading rules
 
 `ServiceSettings` reads only variables with the `SLAIF_` prefix. It has no

@@ -64,10 +64,7 @@ EXPECTED_IMAGES = {
     },
     "browser-worker": "slaif-agent-site-browser-worker:local",
     "nginx": "slaif-agent-site-nginx:local",
-    "postgres": (
-        "postgres:18.6-trixie@sha256:"
-        "4ef4dbc939d61acea57712655ddb4b4ab27419c913f94cca0cd57cb3ea3c2280"
-    ),
+    "postgres": "slaif-agent-site-postgres:local",
     "web": "slaif-agent-site-web:local",
 }
 EXPECTED_COMMANDS = {
@@ -113,6 +110,7 @@ EXPECTED_COMMANDS = {
 EXPECTED_BUILD_FILES = {
     "browser-worker": "services/browser-worker/Dockerfile",
     "nginx": "infra/nginx/Dockerfile",
+    "postgres": "infra/postgres/Dockerfile",
     "secrets-init": "services/backend/Dockerfile",
     "web": "apps/web/Dockerfile",
 }

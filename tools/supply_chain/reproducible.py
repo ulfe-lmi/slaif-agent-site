@@ -66,6 +66,7 @@ IGNORED_PARTS = {
     "__pycache__",
     "node_modules",
 }
+APPROVED_AGENT_OPENAPI = "contracts/openapi/agent-v1.json"
 
 
 def sha256_file(path: Path) -> str:
@@ -269,6 +270,8 @@ def find_generated_contracts(root: Path) -> list[str]:
         relative = path.relative_to(root)
         if any(part in IGNORED_PARTS for part in relative.parts):
             continue
+        if relative.as_posix() == APPROVED_AGENT_OPENAPI:
+            continue
         lower = path.name.casefold()
         if lower in {"openapi.json", "openapi.yaml", "openapi.yml"}:
             found.append(relative.as_posix())
@@ -347,12 +350,17 @@ def reproduce(root: Path, output: Path) -> dict[str, Any]:
             "generated OpenAPI/product contracts are not approved: "
             + ", ".join(generated_contracts)
         )
+    run(
+        [sys.executable, "-m", "tools.contracts.generate_agent_openapi", "--check"],
+        root,
+        environment,
+    )
     result = {
         "browser_worker": {
             "build_output": "none-by-design",
             "runtime_source_manifest": node_attempts[0]["browser_runtime"],
         },
-        "generated_openapi_or_product_contracts": [],
+        "generated_openapi_or_product_contracts": [APPROVED_AGENT_OPENAPI],
         "next_build_id": node_attempts[0]["build_id"],
         "python_artifacts": python_manifests[0],
         "schema_version": 1,

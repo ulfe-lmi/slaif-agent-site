@@ -35,6 +35,7 @@ IMAGE_PREFIXES = {
     "backend": ("opt/slaif/",),
     "browser-worker": ("opt/slaif/", "ms-playwright/chromium-1669021/"),
     "nginx": ("etc/nginx/nginx.conf",),
+    "postgres": ("usr/local/bin/docker-entrypoint.sh",),
     "web": ("opt/slaif/",),
 }
 NEXT_PRERENDER_MANIFEST = "opt/slaif/apps/web/.next/prerender-manifest.json"
