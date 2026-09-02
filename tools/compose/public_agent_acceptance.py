@@ -265,7 +265,9 @@ def run_acceptance(project: str) -> None:
     lower_workspace = lower_capability = constrained_workspace = (
         constrained_capability
     ) = ""
+    quota_workspace = quota_capability = quota_recovery_capability = ""
     primary_token = observer_token = lower_token = constrained_token = ""
+    quota_token = quota_recovery_token = ""
     try:
         _json(
             client.request(
@@ -837,6 +839,94 @@ def run_acceptance(project: str) -> None:
             csrf,
             f"oap-076y-constrained-cap-{tag}",
         )
+        quota_body = {
+            "title": f"OAP 076-y quota {tag}",
+            "task_description": "Bounded public quota proof",
+            "delegation_preset": "L4_SITE_ARCHITECT",
+            "duration_hours": 1,
+            "request_quota": 100,
+            "mutation_quota": 2,
+            "delete_quota": 2,
+            "upload_quota": 0,
+            "browser_quota": 0,
+            "resource_constraints": {"delete_enabled": True, "max_deletes": 1},
+        }
+        quota_workspace = _create_workspace(
+            client, site_id, csrf, quota_body, f"oap-076y-quota-{tag}"
+        )
+        quota_token, quota_capability = _issue_capability(
+            client, site_id, quota_workspace, csrf, f"oap-076y-quota-cap-{tag}"
+        )
+        quota_type_body = {
+            "labels": {"en": "Quota proof"},
+            "slug_pattern": "/quota/{slug}",
+            "settings": {},
+        }
+        quota_one = _mutation(
+            client,
+            quota_token,
+            "/api/agent/v1/content-model/types",
+            {"key": f"oap-quota-one-{tag}", **quota_type_body},
+            f"oap-quota-type-one-{tag}",
+        )
+        quota_one_id = _require_uuid(quota_one["record"]["id"], "quota-type-one")
+        quota_two = _mutation(
+            client,
+            quota_token,
+            "/api/agent/v1/content-model/types",
+            {"key": f"oap-quota-two-{tag}", **quota_type_body},
+            f"oap-quota-type-two-{tag}",
+        )
+        quota_two_id = _require_uuid(quota_two["record"]["id"], "quota-type-two")
+        quota_mutation_exceeded = client.request(
+            "/api/agent/v1/content-model/types",
+            method="POST",
+            body={"key": f"oap-quota-three-{tag}", **quota_type_body},
+            headers={
+                "Authorization": f"Bearer {quota_token}",
+                "Idempotency-Key": f"oap-quota-type-three-{tag}",
+            },
+        )
+        if quota_mutation_exceeded.status != 429:
+            raise ProofFailure(
+                f"mutation-quota-status-{quota_mutation_exceeded.status}"
+            )
+        _request_mutation(
+            client,
+            quota_token,
+            f"/api/agent/v1/content-model/types/{quota_one_id}",
+            {"expected_definition_version": 1},
+            f"oap-quota-delete-one-{tag}",
+            method="DELETE",
+        )
+        quota_delete_exceeded = client.request(
+            f"/api/agent/v1/content-model/types/{quota_two_id}",
+            method="DELETE",
+            body={"expected_definition_version": 1},
+            headers={
+                "Authorization": f"Bearer {quota_token}",
+                "Idempotency-Key": f"oap-quota-delete-two-{tag}",
+            },
+        )
+        if quota_delete_exceeded.status != 429:
+            raise ProofFailure(
+                f"max-delete-quota-status-{quota_delete_exceeded.status}"
+            )
+        quota_recovery_token, quota_recovery_capability = _issue_capability(
+            client,
+            site_id,
+            quota_workspace,
+            csrf,
+            f"oap-076y-quota-recovery-cap-{tag}",
+        )
+        _request_mutation(
+            client,
+            quota_recovery_token,
+            f"/api/agent/v1/content-model/types/{quota_two_id}",
+            {"expected_definition_version": 1},
+            f"oap-quota-recovery-delete-two-{tag}",
+            method="DELETE",
+        )
         wrong_resource = client.request(
             f"/api/agent/v1/content-model/types/{source_type_id}",
             headers={"Authorization": f"Bearer {constrained_token}"},
@@ -848,6 +938,8 @@ def run_acceptance(project: str) -> None:
         anonymous = PublicClient().request("/api/control/v1/session")
         if anonymous.status != 401:
             raise ProofFailure(f"anonymous-control-status-{anonymous.status}")
+        if client.request("/api/agent/v1/session").status != 401:
+            raise ProofFailure("missing-agent-auth-not-rejected")
         if (
             client.request(
                 "/api/agent/v1/content-model/types/not-a-uuid",
@@ -1064,12 +1156,15 @@ def run_acceptance(project: str) -> None:
         _revoke_capability(
             client, site_id, constrained_workspace, constrained_capability
         )
+        _revoke_capability(client, site_id, quota_workspace, quota_capability)
+        _revoke_capability(client, site_id, quota_workspace, quota_recovery_capability)
         print(
             "public-agent-acceptance: OK "
             f"workspace={primary_workspace} types=2 fields=3 items=2 "
             "translations=1 relations=1 views=1 pages=1 components=1 "
             "openapi=exact restart=verified nginx-outage=verified "
-            "crud=public dependency-delete=422 tombstones=verified"
+            "crud=public quotas=mutation-429,max-delete-429 "
+            "dependency-delete=422 tombstones=verified"
         )
     finally:
         if agent_outage:
@@ -1077,6 +1172,7 @@ def run_acceptance(project: str) -> None:
         if nginx_outage:
             _compose(project, "start", "nginx")
         primary_token = observer_token = lower_token = constrained_token = ""
+        quota_token = quota_recovery_token = ""
         client.clear()
 
 
