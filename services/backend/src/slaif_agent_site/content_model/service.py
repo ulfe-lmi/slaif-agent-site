@@ -81,9 +81,21 @@ class ContentModelServiceReason(StrEnum):
 
 
 class ContentModelServiceError(RuntimeError):
-    def __init__(self, reason: ContentModelServiceReason) -> None:
+    def __init__(
+        self, reason: ContentModelServiceReason, *, code: str | None = None
+    ) -> None:
         super().__init__(reason.value)
         self.reason = reason
+        self.code = code
+
+
+def _semantic_database_error_code(error: asyncpg.PostgresError) -> str | None:
+    """Preserve only stable, non-sensitive dependency denial identifiers."""
+
+    message = getattr(error, "message", str(error)).split("\n", 1)[0]
+    if message in {"FIELD_DEPENDENCIES", "TYPE_DEPENDENCIES"}:
+        return message
+    return None
 
 
 class _Pool(Protocol):
@@ -1182,7 +1194,8 @@ class ContentModelService(
                 ) from None
             if getattr(error, "sqlstate", None) == "P0003":
                 raise ContentModelServiceError(
-                    ContentModelServiceReason.VALIDATION
+                    ContentModelServiceReason.VALIDATION,
+                    code=_semantic_database_error_code(error),
                 ) from None
             if getattr(error, "sqlstate", None) == "P0004":
                 raise ContentModelServiceError(
@@ -1231,7 +1244,8 @@ class ContentModelService(
                 ) from None
             if getattr(error, "sqlstate", None) == "P0003":
                 raise ContentModelServiceError(
-                    ContentModelServiceReason.VALIDATION
+                    ContentModelServiceReason.VALIDATION,
+                    code=_semantic_database_error_code(error),
                 ) from None
             if getattr(error, "sqlstate", None) == "P0004":
                 raise ContentModelServiceError(

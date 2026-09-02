@@ -85,6 +85,278 @@ def upgrade() -> None:
         "ALTER TABLE audit.agent_mutation DROP CONSTRAINT agent_mutation_semantic_shape"
     )
     op.execute(_semantic_constraint_sql())
+    # Every model/content dependency mutation in this revision enters through
+    # the capability gate.  Keep one workspace-wide lock contract here so
+    # dependency checks and their creators cannot pass one another between a
+    # check and the final COW write.  A single key also prevents deadlocks
+    # between relations (which can touch two item types) and definition
+    # deletion without weakening the row/version locks below.
+    op.execute(
+        """
+        CREATE OR REPLACE FUNCTION control.slaif_agent_require_capability(
+            p_site_id uuid, p_required_scope text
+        ) RETURNS uuid LANGUAGE plpgsql SECURITY DEFINER
+        SET search_path = pg_catalog AS $fn$
+        DECLARE
+            cow_workspace_id uuid;
+            capability_id uuid;
+            operation_id uuid;
+            expected_site uuid;
+            delegator_id uuid;
+            preset text;
+            required_level integer;
+            platform_admin boolean;
+            effective_ceiling integer;
+            effective_scopes jsonb;
+        BEGIN
+            PERFORM control.slaif_agent_require_cow_site(p_site_id);
+            BEGIN
+                cow_workspace_id := NULLIF(current_setting('app.session_id', true), '')::uuid;
+                operation_id := NULLIF(current_setting('app.operation_id', true), '')::uuid;
+                capability_id := NULLIF(current_setting('app.capability_id', true), '')::uuid;
+            EXCEPTION WHEN invalid_text_representation THEN
+                RAISE EXCEPTION 'AGENT_CAPABILITY_CONTEXT_REQUIRED'
+                    USING ERRCODE = '22023';
+            END;
+            IF cow_workspace_id IS NULL OR operation_id IS NULL OR capability_id IS NULL THEN
+                RAISE EXCEPTION 'AGENT_CAPABILITY_CONTEXT_REQUIRED'
+                    USING ERRCODE = '22023';
+            END IF;
+            IF p_required_scope IN (
+                'content-model:create', 'content-model:read',
+                'content-model:write', 'content-model:delete',
+                'field-definition:create', 'field-definition:write',
+                'field-definition:delete', 'content-item:create',
+                'content-item:read', 'content-item:write',
+                'content-item:delete', 'translation:read',
+                'translation:write', 'relationship:write',
+                'collection-view:read', 'collection-view:create',
+                'collection-view:write', 'collection-view:delete'
+            ) THEN
+                PERFORM pg_advisory_xact_lock(hashtextextended(
+                    cow_workspace_id::text || chr(58) || 'agent-content-dependencies', 994));
+            END IF;
+            SELECT w.site_id, COALESCE(w.delegator_id, w.created_by),
+                   w.delegation_preset, c.scopes
+              INTO expected_site, delegator_id, preset, effective_scopes
+            FROM control.capability c
+            JOIN control.workspace w ON w.id = c.workspace_id
+            JOIN control.site s ON s.id = w.site_id
+            JOIN control.user_account a
+              ON a.id = COALESCE(w.delegator_id, w.created_by)
+            WHERE c.id = capability_id
+              AND c.workspace_id = cow_workspace_id
+              AND c.revoked_at IS NULL
+              AND c.expires_at > CURRENT_TIMESTAMP
+              AND w.status = 'ACTIVE'
+              AND w.expires_at > CURRENT_TIMESTAMP
+              AND s.status = 'ACTIVE'
+              AND a.status = 'ACTIVE';
+            IF expected_site IS NULL OR expected_site IS DISTINCT FROM p_site_id THEN
+                RAISE EXCEPTION 'AGENT_CAPABILITY_SITE_MISMATCH'
+                    USING ERRCODE = 'P0002';
+            END IF;
+            IF p_required_scope IS NULL OR btrim(p_required_scope) = ''
+               OR effective_scopes IS NULL
+               OR jsonb_typeof(effective_scopes) <> 'array'
+            THEN
+                RAISE EXCEPTION 'AGENT_SCOPE_DENIED' USING ERRCODE = 'P0007';
+            END IF;
+            IF EXISTS (
+                SELECT 1
+                FROM jsonb_array_elements(effective_scopes) AS scope(value)
+                WHERE jsonb_typeof(scope.value) <> 'string'
+            ) OR NOT EXISTS (
+                SELECT 1
+                FROM jsonb_array_elements(effective_scopes) AS scope(value)
+                WHERE scope.value #>> '{}' = p_required_scope
+            ) THEN
+                RAISE EXCEPTION 'AGENT_SCOPE_DENIED' USING ERRCODE = 'P0007';
+            END IF;
+            required_level := CASE preset
+                WHEN 'L1' THEN 1 WHEN 'L1_CONTENT_EDITOR' THEN 1
+                WHEN 'L2' THEN 2 WHEN 'L2_SITE_EDITOR' THEN 2
+                WHEN 'L3' THEN 3 WHEN 'L3_SITE_DESIGNER' THEN 3
+                WHEN 'L4' THEN 4 WHEN 'L4_SITE_ARCHITECT' THEN 4 ELSE 99 END;
+            SELECT EXISTS (
+                SELECT 1 FROM control.platform_administrator pa
+                WHERE pa.user_account_id = delegator_id
+            ) INTO platform_admin;
+            IF NOT platform_admin THEN
+                SELECT MAX(m.effective_ceiling) INTO effective_ceiling
+                FROM control.slaif_effective_human_membership(delegator_id, p_site_id) m;
+                IF effective_ceiling IS NULL OR effective_ceiling < required_level THEN
+                    RAISE EXCEPTION 'COW_AUTHORITY_REVOKED' USING ERRCODE = 'P0002';
+                END IF;
+            END IF;
+            RETURN capability_id;
+        END;
+        $fn$
+        """
+    )
+    op.execute(
+        """
+        CREATE OR REPLACE FUNCTION content.slaif_agent_content_type_delete(
+            p_site_id uuid,p_type_id uuid,p_expected integer
+        ) RETURNS SETOF content.content_type LANGUAGE plpgsql SECURITY DEFINER
+        SET search_path=pg_catalog AS $fn$
+        DECLARE workspace_id uuid; capability_id uuid; constraints record;
+            locked content.content_type; deleted content.content_type;
+        BEGIN
+            capability_id := control.slaif_agent_require_capability(p_site_id,'content-model:delete');
+            workspace_id := NULLIF(current_setting('app.session_id',true),'')::uuid;
+            SELECT t.* INTO locked FROM content.content_type t
+            WHERE t.site_id=p_site_id AND t.id=p_type_id AND t.status='ACTIVE' FOR UPDATE;
+            IF NOT FOUND OR locked.definition_version <> p_expected THEN
+                RAISE EXCEPTION 'STALE_DEFINITION' USING ERRCODE='P0003';
+            END IF;
+            SELECT * INTO STRICT constraints FROM control.slaif_agent_resource_constraints(p_site_id);
+            IF coalesce(cardinality(constraints.allowed_type_ids),0)>0 AND NOT locked.id=ANY(constraints.allowed_type_ids)
+            THEN RAISE EXCEPTION 'AGENT_RESOURCE_TYPE_ID_DENIED' USING ERRCODE='P0007'; END IF;
+            IF coalesce(cardinality(constraints.allowed_type_keys),0)>0 AND NOT locked."key"=ANY(constraints.allowed_type_keys)
+            THEN RAISE EXCEPTION 'AGENT_RESOURCE_TYPE_KEY_DENIED' USING ERRCODE='P0007'; END IF;
+            IF constraints.delete_enabled IS FALSE THEN
+                RAISE EXCEPTION 'AGENT_RESOURCE_DELETE_DISABLED' USING ERRCODE='P0007';
+            END IF;
+            IF EXISTS (
+                SELECT 1 FROM content.field_definition f
+                WHERE f.site_id=p_site_id AND f.type_id=locked.id
+            ) OR EXISTS (
+                SELECT 1 FROM content.content_item i
+                WHERE i.site_id=p_site_id AND i.type_id=locked.id
+                  AND i.status <> 'DELETED'
+            ) OR EXISTS (
+                SELECT 1 FROM content.collection_view v
+                WHERE v.site_id=p_site_id AND v.type_id=locked.id
+            ) OR EXISTS (
+                SELECT 1
+                FROM content.content_item i
+                JOIN content.content_item_translation tr
+                  ON tr.site_id=p_site_id AND tr.item_id=i.id
+                WHERE i.site_id=p_site_id AND i.type_id=locked.id
+            ) OR EXISTS (
+                SELECT 1
+                FROM content.item_relation r
+                JOIN content.content_item i
+                  ON i.site_id=p_site_id
+                 AND (i.id=r.source_item_id OR i.id=r.target_item_id)
+                WHERE r.site_id=p_site_id AND i.type_id=locked.id
+            ) THEN
+                RAISE EXCEPTION 'TYPE_DEPENDENCIES' USING ERRCODE='P0003';
+            END IF;
+            IF NOT control.slaif_agent_quota_consume(capability_id,workspace_id,'delete') THEN
+                RAISE EXCEPTION 'AGENT_DELETE_QUOTA_EXCEEDED' USING ERRCODE='P0005';
+            END IF;
+            UPDATE content.content_type t SET status='DELETED',definition_version=t.definition_version+1,
+                updated_at=now() WHERE t.id=locked.id AND t.site_id=p_site_id RETURNING t.* INTO deleted;
+            RETURN NEXT deleted;
+        END; $fn$
+        """
+    )
+    op.execute(
+        """
+        CREATE OR REPLACE FUNCTION content.slaif_agent_field_definition_delete(
+            p_site_id uuid,p_type_id uuid,p_field_id uuid,p_expected integer
+        ) RETURNS TABLE(id uuid,site_id uuid,type_id uuid,"key" text,label text,
+            field_type text,required boolean,localized boolean,cardinality integer,
+            "position" integer,validation jsonb,ui_options jsonb,definition_version integer,
+            created_at timestamptz,updated_at timestamptz)
+        LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $fn$
+        DECLARE workspace_id uuid; capability_id uuid; constraints record;
+            parent content.content_type; locked content.field_definition;
+            deleted content.field_definition;
+        BEGIN
+            capability_id := control.slaif_agent_require_capability(p_site_id,'field-definition:delete');
+            workspace_id := NULLIF(current_setting('app.session_id',true),'')::uuid;
+            SELECT t.* INTO parent FROM content.content_type t
+            WHERE t.site_id=p_site_id AND t.id=p_type_id AND t.status='ACTIVE' FOR UPDATE;
+            SELECT f.* INTO locked FROM content.field_definition f
+            WHERE f.id=p_field_id AND f.site_id=p_site_id AND f.type_id=p_type_id
+                AND f.definition_version=p_expected FOR UPDATE;
+            IF parent.id IS NULL OR locked.id IS NULL THEN
+                RAISE EXCEPTION 'STALE_DEFINITION' USING ERRCODE='P0003';
+            END IF;
+            SELECT * INTO STRICT constraints FROM control.slaif_agent_resource_constraints(p_site_id);
+            IF coalesce(cardinality(constraints.allowed_type_ids),0)>0 AND NOT parent.id=ANY(constraints.allowed_type_ids)
+            THEN RAISE EXCEPTION 'AGENT_RESOURCE_TYPE_ID_DENIED' USING ERRCODE='P0007'; END IF;
+            IF coalesce(cardinality(constraints.allowed_type_keys),0)>0 AND NOT parent."key"=ANY(constraints.allowed_type_keys)
+            THEN RAISE EXCEPTION 'AGENT_RESOURCE_TYPE_KEY_DENIED' USING ERRCODE='P0007'; END IF;
+            IF constraints.delete_enabled IS FALSE THEN
+                RAISE EXCEPTION 'AGENT_RESOURCE_DELETE_DISABLED' USING ERRCODE='P0007';
+            END IF;
+            IF EXISTS (
+                SELECT 1 FROM content.content_item i
+                WHERE i.site_id=p_site_id AND i.type_id=p_type_id
+                  AND i.status <> 'DELETED' AND i."values" ? locked."key"
+            ) OR EXISTS (
+                SELECT 1 FROM content.content_item i
+                JOIN content.content_item_translation tr
+                  ON tr.site_id=p_site_id AND tr.item_id=i.id
+                WHERE i.site_id=p_site_id AND i.type_id=p_type_id
+                  AND i.status <> 'DELETED'
+                  AND tr.localized_values ? locked."key"
+            ) OR EXISTS (
+                SELECT 1 FROM content.item_relation r
+                WHERE r.site_id=p_site_id AND r.field_definition_id=locked.id
+            ) OR EXISTS (
+                SELECT 1
+                FROM content.collection_view v
+                WHERE v.site_id=p_site_id AND v.type_id=p_type_id
+                  AND (
+                    v.sort_spec->>'field' = locked."key"
+                    OR (
+                        jsonb_typeof(v.projection_spec->'fields') = 'array'
+                        AND EXISTS (
+                            SELECT 1 FROM jsonb_array_elements_text(v.projection_spec->'fields') AS field_name(value)
+                            WHERE field_name.value = locked."key"
+                        )
+                    )
+                    OR EXISTS (
+                        WITH RECURSIVE nodes(value) AS (
+                            SELECT v.filter_spec
+                            UNION ALL
+                            SELECT child.value
+                            FROM nodes n
+                            CROSS JOIN LATERAL (
+                                SELECT a.value
+                                FROM jsonb_array_elements(
+                                    CASE WHEN jsonb_typeof(n.value)='array'
+                                         THEN n.value ELSE '[]'::jsonb END
+                                ) a
+                                UNION ALL
+                                SELECT e.value
+                                FROM jsonb_each(
+                                    CASE WHEN jsonb_typeof(n.value)='object'
+                                         THEN n.value ELSE '{}'::jsonb END
+                                ) e
+                            ) child
+                        )
+                        SELECT 1 FROM nodes n
+                        WHERE jsonb_typeof(n.value)='object'
+                          AND n.value->>'field' = locked."key"
+                    )
+                  )
+            ) THEN
+                RAISE EXCEPTION 'FIELD_DEPENDENCIES' USING ERRCODE='P0003';
+            END IF;
+            IF NOT control.slaif_agent_quota_consume(capability_id,workspace_id,'delete') THEN
+                RAISE EXCEPTION 'AGENT_DELETE_QUOTA_EXCEEDED' USING ERRCODE='P0005';
+            END IF;
+            deleted := locked;
+            DELETE FROM content.field_definition f WHERE f.id=locked.id
+                AND f.site_id=p_site_id AND f.definition_version=locked.definition_version;
+            IF NOT FOUND THEN RAISE EXCEPTION 'ROW_VERSION_MISMATCH' USING ERRCODE='P0004'; END IF;
+            UPDATE content.content_type t SET definition_version=t.definition_version+1,
+                updated_at=now() WHERE t.id=parent.id AND t.site_id=p_site_id
+                AND t.definition_version=parent.definition_version;
+            IF NOT FOUND THEN RAISE EXCEPTION 'STALE_DEFINITION' USING ERRCODE='P0003'; END IF;
+            RETURN QUERY SELECT deleted.id,deleted.site_id,deleted.type_id,deleted."key",
+                deleted.label,deleted.field_type,deleted.required,deleted.localized,
+                deleted.cardinality,deleted."position",deleted.validation,deleted.ui_options,
+                deleted.definition_version,deleted.created_at,deleted.updated_at;
+        END; $fn$
+        """
+    )
     op.execute(
         """
         CREATE OR REPLACE FUNCTION control.slaif_agent_idempotency_complete(
@@ -150,6 +422,35 @@ def upgrade() -> None:
             );
         END; $fn$
         """
+    )
+    op.execute(
+        """
+        CREATE OR REPLACE FUNCTION content.slaif_agent_validate_value_keys(
+            p_type_id uuid, p_values jsonb, p_localized boolean
+        ) RETURNS void LANGUAGE plpgsql SECURITY DEFINER
+        SET search_path=pg_catalog AS $fn$
+        DECLARE field_key text;
+        BEGIN
+            IF p_values IS NULL OR jsonb_typeof(p_values) <> 'object' THEN
+                RAISE EXCEPTION 'ITEM_VALUES_INVALID' USING ERRCODE='P0003';
+            END IF;
+            FOR field_key IN SELECT key FROM jsonb_object_keys(p_values) AS key LOOP
+                IF NOT EXISTS (
+                    SELECT 1 FROM content.field_definition f
+                    WHERE f.type_id=p_type_id AND f."key"=field_key
+                      AND f.localized=p_localized
+                ) THEN
+                    RAISE EXCEPTION 'ITEM_VALUES_INVALID' USING ERRCODE='P0003';
+                END IF;
+            END LOOP;
+        END; $fn$
+        """
+    )
+    op.execute(
+        "ALTER FUNCTION content.slaif_agent_validate_value_keys(uuid,jsonb,boolean) OWNER TO slaif_owner"
+    )
+    op.execute(
+        "REVOKE ALL ON FUNCTION content.slaif_agent_validate_value_keys(uuid,jsonb,boolean) FROM PUBLIC, slaif_agent_runtime"
     )
 
     # Stale records are readable and deletable for cleanup, while create/update
@@ -616,6 +917,182 @@ def upgrade() -> None:
         """
     )
 
+    # Reinstall the 047 item/translation writes with database-side value-key
+    # validation.  Python validation is useful at the edge, but cannot be the
+    # concurrency boundary: the wrapper must reject a value whose definition
+    # disappeared while the request was being prepared.
+    op.execute(
+        """
+        CREATE OR REPLACE FUNCTION content.slaif_agent_content_item_create(
+            p_site_id uuid,p_type_id uuid,p_slug text,p_status text,p_values jsonb
+        ) RETURNS SETOF content.content_item LANGUAGE plpgsql SECURITY DEFINER
+        SET search_path=pg_catalog AS $fn$
+        DECLARE workspace_id uuid; capability_id uuid; constraints record;
+            parent content.content_type; created_id uuid;
+        BEGIN
+            capability_id := control.slaif_agent_require_capability(p_site_id,'content-item:create');
+            workspace_id := NULLIF(current_setting('app.session_id',true),'')::uuid;
+            SELECT t.* INTO parent FROM content.content_type t
+            WHERE t.id=p_type_id AND t.site_id=p_site_id AND t.status='ACTIVE' FOR UPDATE;
+            IF NOT FOUND THEN RAISE EXCEPTION 'ITEM_TYPE_SITE_NOT_FOUND' USING ERRCODE='P0002'; END IF;
+            PERFORM content.slaif_agent_validate_value_keys(p_type_id,p_values,false);
+            SELECT * INTO STRICT constraints FROM control.slaif_agent_resource_constraints(p_site_id);
+            IF coalesce(cardinality(constraints.allowed_type_ids),0)>0 AND NOT parent.id=ANY(constraints.allowed_type_ids)
+            THEN RAISE EXCEPTION 'AGENT_RESOURCE_TYPE_ID_DENIED' USING ERRCODE='P0007'; END IF;
+            IF coalesce(cardinality(constraints.allowed_type_keys),0)>0 AND NOT parent."key"=ANY(constraints.allowed_type_keys)
+            THEN RAISE EXCEPTION 'AGENT_RESOURCE_TYPE_KEY_DENIED' USING ERRCODE='P0007'; END IF;
+            IF NOT control.slaif_agent_quota_consume(capability_id,workspace_id,'mutation') THEN
+                RAISE EXCEPTION 'AGENT_MUTATION_QUOTA_EXCEEDED' USING ERRCODE='P0005';
+            END IF;
+            created_id := gen_random_uuid();
+            INSERT INTO content.content_item(
+                id,site_id,type_id,slug,status,"values",type_definition_version
+            ) VALUES(created_id,p_site_id,p_type_id,p_slug,p_status,p_values,parent.definition_version);
+            RETURN QUERY SELECT i.* FROM content.content_item i WHERE i.id=created_id;
+        END; $fn$
+        """
+    )
+    op.execute(
+        """
+        CREATE OR REPLACE FUNCTION content.slaif_agent_content_item_update(
+            p_site_id uuid,p_item_id uuid,p_slug text,p_status text,p_values jsonb,
+            p_expected_row_version integer
+        ) RETURNS SETOF content.content_item LANGUAGE plpgsql SECURITY DEFINER
+        SET search_path=pg_catalog AS $fn$
+        DECLARE workspace_id uuid; capability_id uuid; constraints record;
+            current_item content.content_item; parent content.content_type;
+        BEGIN
+            capability_id := control.slaif_agent_require_capability(p_site_id,'content-item:write');
+            workspace_id := NULLIF(current_setting('app.session_id',true),'')::uuid;
+            PERFORM pg_advisory_xact_lock(hashtextextended(
+                workspace_id::text||':'||p_item_id::text||'_content_item',994));
+            IF p_expected_row_version IS NULL OR p_expected_row_version <= 0 THEN
+                RAISE EXCEPTION 'ROW_VERSION_REQUIRED' USING ERRCODE='P0003';
+            END IF;
+            SELECT i.* INTO current_item FROM content.content_item i
+            WHERE i.id=p_item_id AND i.site_id=p_site_id AND i.status <> 'DELETED' FOR UPDATE;
+            IF NOT FOUND THEN RAISE EXCEPTION 'ITEM_NOT_FOUND' USING ERRCODE='P0002'; END IF;
+            SELECT t.* INTO parent FROM content.content_type t
+            WHERE t.id=current_item.type_id AND t.site_id=p_site_id AND t.status='ACTIVE';
+            IF NOT FOUND OR parent.definition_version <> current_item.type_definition_version THEN
+                RAISE EXCEPTION 'STALE_DEFINITION' USING ERRCODE='P0003';
+            END IF;
+            IF p_values IS NOT NULL THEN
+                PERFORM content.slaif_agent_validate_value_keys(current_item.type_id,p_values,false);
+            END IF;
+            SELECT * INTO STRICT constraints FROM control.slaif_agent_resource_constraints(p_site_id);
+            IF coalesce(cardinality(constraints.allowed_type_ids),0)>0 AND NOT parent.id=ANY(constraints.allowed_type_ids)
+            THEN RAISE EXCEPTION 'AGENT_RESOURCE_TYPE_ID_DENIED' USING ERRCODE='P0007'; END IF;
+            IF coalesce(cardinality(constraints.allowed_type_keys),0)>0 AND NOT parent."key"=ANY(constraints.allowed_type_keys)
+            THEN RAISE EXCEPTION 'AGENT_RESOURCE_TYPE_KEY_DENIED' USING ERRCODE='P0007'; END IF;
+            IF current_item.row_version <> p_expected_row_version THEN
+                RAISE EXCEPTION 'ROW_VERSION_MISMATCH' USING ERRCODE='P0004';
+            END IF;
+            IF NOT control.slaif_agent_quota_consume(capability_id,workspace_id,'mutation') THEN
+                RAISE EXCEPTION 'AGENT_MUTATION_QUOTA_EXCEEDED' USING ERRCODE='P0005';
+            END IF;
+            UPDATE content.content_item i SET slug=coalesce(p_slug,i.slug),
+                status=coalesce(p_status,i.status),"values"=coalesce(p_values,i."values"),
+                row_version=i.row_version+1,updated_at=now()
+            WHERE i.id=current_item.id AND i.site_id=p_site_id
+              AND i.row_version=current_item.row_version;
+            IF NOT FOUND THEN RAISE EXCEPTION 'ROW_VERSION_MISMATCH' USING ERRCODE='P0004'; END IF;
+            RETURN QUERY SELECT i.* FROM content.content_item i WHERE i.id=current_item.id;
+        END; $fn$
+        """
+    )
+    op.execute(
+        """
+        CREATE OR REPLACE FUNCTION content.slaif_agent_content_item_translation_create(
+            p_site_id uuid,p_item_id uuid,p_locale text,p_values jsonb
+        ) RETURNS SETOF content.content_item_translation
+        LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $fn$
+        DECLARE workspace_id uuid; capability_id uuid; constraints record;
+            item content.content_item; parent content.content_type; created_id uuid;
+        BEGIN
+            capability_id := control.slaif_agent_require_capability(p_site_id,'translation:write');
+            workspace_id := NULLIF(current_setting('app.session_id',true),'')::uuid;
+            IF p_locale IS NULL OR p_locale !~ '^[A-Za-z]{2,8}(-[A-Za-z0-9]{1,8}){0,3}$'
+               OR p_values IS NULL OR jsonb_typeof(p_values) <> 'object'
+            THEN RAISE EXCEPTION 'TRANSLATION_INVALID' USING ERRCODE='P0003'; END IF;
+            SELECT i.* INTO item FROM content.content_item i
+            WHERE i.id=p_item_id AND i.site_id=p_site_id AND i.status <> 'DELETED' FOR UPDATE;
+            IF NOT FOUND THEN RAISE EXCEPTION 'ITEM_NOT_FOUND' USING ERRCODE='P0002'; END IF;
+            SELECT t.* INTO parent FROM content.content_type t
+            WHERE t.id=item.type_id AND t.site_id=p_site_id AND t.status='ACTIVE'
+              AND t.definition_version=item.type_definition_version FOR UPDATE;
+            IF NOT FOUND THEN RAISE EXCEPTION 'STALE_DEFINITION' USING ERRCODE='P0003'; END IF;
+            PERFORM content.slaif_agent_validate_value_keys(item.type_id,p_values,true);
+            SELECT * INTO STRICT constraints FROM control.slaif_agent_resource_constraints(p_site_id);
+            IF coalesce(cardinality(constraints.allowed_type_ids),0)>0 AND NOT parent.id=ANY(constraints.allowed_type_ids)
+            THEN RAISE EXCEPTION 'AGENT_RESOURCE_TYPE_ID_DENIED' USING ERRCODE='P0007'; END IF;
+            IF coalesce(cardinality(constraints.allowed_type_keys),0)>0 AND NOT parent."key"=ANY(constraints.allowed_type_keys)
+            THEN RAISE EXCEPTION 'AGENT_RESOURCE_TYPE_KEY_DENIED' USING ERRCODE='P0007'; END IF;
+            IF NOT control.slaif_agent_quota_consume(capability_id,workspace_id,'mutation') THEN
+                RAISE EXCEPTION 'AGENT_MUTATION_QUOTA_EXCEEDED' USING ERRCODE='P0005';
+            END IF;
+            created_id := gen_random_uuid();
+            INSERT INTO content.content_item_translation(id,site_id,item_id,locale,localized_values)
+            VALUES(created_id,p_site_id,p_item_id,p_locale,p_values);
+            RETURN QUERY SELECT tr.* FROM content.content_item_translation tr WHERE tr.id=created_id;
+        END; $fn$
+        """
+    )
+    op.execute(
+        """
+        CREATE OR REPLACE FUNCTION content.slaif_agent_content_item_translation_update(
+            p_site_id uuid,p_item_id uuid,p_translation_id uuid,p_locale text,
+            p_values jsonb,p_expected_row_version integer
+        ) RETURNS SETOF content.content_item_translation
+        LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $fn$
+        DECLARE workspace_id uuid; capability_id uuid; constraints record;
+            item content.content_item; parent content.content_type;
+            current_translation content.content_item_translation;
+        BEGIN
+            capability_id := control.slaif_agent_require_capability(p_site_id,'translation:write');
+            workspace_id := NULLIF(current_setting('app.session_id',true),'')::uuid;
+            PERFORM pg_advisory_xact_lock(hashtextextended(
+                workspace_id::text||':'||p_translation_id::text||'_content_item_translation',994));
+            IF p_expected_row_version IS NULL OR p_expected_row_version <= 0
+               OR (p_locale IS NOT NULL AND p_locale !~ '^[A-Za-z]{2,8}(-[A-Za-z0-9]{1,8}){0,3}$')
+               OR (p_values IS NOT NULL AND jsonb_typeof(p_values) <> 'object')
+            THEN RAISE EXCEPTION 'TRANSLATION_INVALID' USING ERRCODE='P0003'; END IF;
+            SELECT tr.* INTO current_translation
+            FROM content.content_item_translation tr
+            WHERE tr.id=p_translation_id AND tr.site_id=p_site_id AND tr.item_id=p_item_id FOR UPDATE;
+            IF NOT FOUND THEN RAISE EXCEPTION 'TRANSLATION_NOT_FOUND' USING ERRCODE='P0002'; END IF;
+            SELECT i.* INTO item FROM content.content_item i
+            WHERE i.id=p_item_id AND i.site_id=p_site_id AND i.status <> 'DELETED' FOR UPDATE;
+            IF NOT FOUND THEN RAISE EXCEPTION 'ITEM_NOT_FOUND' USING ERRCODE='P0002'; END IF;
+            SELECT t.* INTO parent FROM content.content_type t
+            WHERE t.id=item.type_id AND t.site_id=p_site_id AND t.status='ACTIVE'
+              AND t.definition_version=item.type_definition_version;
+            IF NOT FOUND THEN RAISE EXCEPTION 'STALE_DEFINITION' USING ERRCODE='P0003'; END IF;
+            IF p_values IS NOT NULL THEN
+                PERFORM content.slaif_agent_validate_value_keys(item.type_id,p_values,true);
+            END IF;
+            SELECT * INTO STRICT constraints FROM control.slaif_agent_resource_constraints(p_site_id);
+            IF coalesce(cardinality(constraints.allowed_type_ids),0)>0 AND NOT parent.id=ANY(constraints.allowed_type_ids)
+            THEN RAISE EXCEPTION 'AGENT_RESOURCE_TYPE_ID_DENIED' USING ERRCODE='P0007'; END IF;
+            IF coalesce(cardinality(constraints.allowed_type_keys),0)>0 AND NOT parent."key"=ANY(constraints.allowed_type_keys)
+            THEN RAISE EXCEPTION 'AGENT_RESOURCE_TYPE_KEY_DENIED' USING ERRCODE='P0007'; END IF;
+            IF current_translation.row_version <> p_expected_row_version THEN
+                RAISE EXCEPTION 'ROW_VERSION_MISMATCH' USING ERRCODE='P0004';
+            END IF;
+            IF NOT control.slaif_agent_quota_consume(capability_id,workspace_id,'mutation') THEN
+                RAISE EXCEPTION 'AGENT_MUTATION_QUOTA_EXCEEDED' USING ERRCODE='P0005';
+            END IF;
+            UPDATE content.content_item_translation tr SET locale=coalesce(p_locale,tr.locale),
+                localized_values=coalesce(p_values,tr.localized_values),
+                row_version=tr.row_version+1,updated_at=now()
+            WHERE tr.id=current_translation.id AND tr.site_id=p_site_id
+              AND tr.row_version=current_translation.row_version;
+            IF NOT FOUND THEN RAISE EXCEPTION 'ROW_VERSION_MISMATCH' USING ERRCODE='P0004'; END IF;
+            RETURN QUERY SELECT tr.* FROM content.content_item_translation tr WHERE tr.id=current_translation.id;
+        END; $fn$
+        """
+    )
+
     for name, signature in (
         ("slaif_agent_item_relation_create", _RELATION_CREATE_SIGNATURE),
         ("slaif_agent_item_relation_list", _RELATION_LIST_SIGNATURE),
@@ -647,6 +1124,9 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     _drop_agent_functions()
+    op.execute(
+        "DROP FUNCTION IF EXISTS content.slaif_agent_validate_value_keys(uuid,jsonb,boolean)"
+    )
     # Leave the current exact constraint in place while the canonical 047
     # upgrade replaces it with its forward-compatible historical shape. This
     # keeps immutable 048 audit rows valid throughout the transition without a

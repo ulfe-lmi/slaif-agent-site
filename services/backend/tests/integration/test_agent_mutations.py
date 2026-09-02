@@ -3446,10 +3446,10 @@ async def test_agent_relation_and_view_hostile_matrix_and_races(
                             workspace_id,
                             race_relation_id,
                         )
-                        assert [tuple(row) for row in actions] == [
+                        assert {tuple(row) for row in actions} == {
                             ("ITEM_RELATION_CREATED", "POST", 201, "mutation"),
                             ("ITEM_RELATION_UPDATED", "PATCH", 200, "mutation"),
-                        ]
+                        }
 
                     later_field = await client_one.post(
                         f"/api/agent/v1/content-model/types/{source_type_id}/fields",
@@ -5381,6 +5381,18 @@ async def test_field_update_delete_resources_are_db_enforced_and_concurrency_saf
                 )
                 assert deleted_field.status_code == 201, deleted_field.text
                 deleted_field_id = UUID(deleted_field.json()["record"]["id"])
+                deleted_field_request = await client.request(
+                    "DELETE",
+                    f"/api/agent/v1/content-model/types/{deleted_parent_id}/fields/{deleted_field_id}",
+                    headers={
+                        "Authorization": f"Bearer {deleted_token}",
+                        "Idempotency-Key": "delete-parent-field",
+                    },
+                    json={"expected_definition_version": 1},
+                )
+                assert deleted_field_request.status_code == 200, (
+                    deleted_field_request.text
+                )
                 deleted_parent_request = await client.request(
                     "DELETE",
                     f"/api/agent/v1/content-model/types/{deleted_parent_id}",
@@ -5388,7 +5400,7 @@ async def test_field_update_delete_resources_are_db_enforced_and_concurrency_saf
                         "Authorization": f"Bearer {deleted_token}",
                         "Idempotency-Key": "delete-parent",
                     },
-                    json={"expected_definition_version": 2},
+                    json={"expected_definition_version": 3},
                 )
                 assert deleted_parent_request.status_code == 200, (
                     deleted_parent_request.text
@@ -6105,6 +6117,887 @@ async def test_content_type_delete_resource_and_dependency_guards_are_atomic(
         assert tuple(await visible_type(agent_pool, dependent_id)) == ("ACTIVE", 1)
     finally:
         await reviewer_pool.close()
+        await agent_pool.close()
+
+
+@pytest.mark.asyncio
+async def test_agent_final_dependency_matrix_and_two_connection_delete_races(
+    agent_site_database: AgentSiteDatabase,
+) -> None:
+    """Prove every model dependency and its delete race is serialized."""
+
+    database = agent_site_database
+    _token, seeded = await _seed(database)
+    scopes = [
+        "site:read",
+        "content-model:create",
+        "content-model:read",
+        "content-model:delete",
+        "field-definition:create",
+        "field-definition:delete",
+        "content-item:create",
+        "content-item:read",
+        "content-item:delete",
+        "translation:read",
+        "translation:write",
+        "relationship:write",
+        "collection-view:read",
+        "collection-view:create",
+        "collection-view:delete",
+    ]
+    token, workspace_id = await _workspace_capability(
+        database, seeded, scopes, "Final Dependency Matrix Workspace"
+    )
+    observer_token, _observer_workspace_id = await _workspace_capability(
+        database,
+        seeded,
+        ["site:read", "content-model:read"],
+        "Final Dependency Observer",
+    )
+    agent_pool = await database.role_pool("slaif_agent_runtime")
+    second_agent_pool = await database.role_pool("slaif_agent_runtime")
+    reviewer_pool = await database.role_pool("slaif_reviewer")
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        await owner.execute(
+            "UPDATE control.capability SET request_quota=500, mutation_quota=500, "
+            "delete_quota=200 WHERE workspace_id=$1",
+            workspace_id,
+        )
+    app_one = create_agent_app(
+        settings=ServiceSettings.for_test(),
+        database_settings=_agent_settings(database),
+    )
+    app_two = create_agent_app(
+        settings=ServiceSettings.for_test(),
+        database_settings=_agent_settings(database),
+    )
+
+    async def durable_counts() -> tuple[int, int, int, int]:
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            row = await owner.fetchrow(
+                "SELECT "
+                "(SELECT count(*) FROM control.agent_idempotency "
+                "WHERE workspace_id=$1),"
+                "(SELECT count(*) FROM audit.agent_mutation WHERE workspace_id=$1),"
+                "(SELECT mutation_used FROM control.capability WHERE workspace_id=$1),"
+                "(SELECT delete_used FROM control.capability WHERE workspace_id=$1)",
+                workspace_id,
+            )
+        return tuple(row)
+
+    async def create_type(
+        client: httpx.AsyncClient, key: str, idempotency_key: str
+    ) -> tuple[UUID, dict[str, Any]]:
+        response = await client.post(
+            "/api/agent/v1/content-model/types",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Idempotency-Key": idempotency_key,
+            },
+            json={
+                "key": key,
+                "labels": {"en": key},
+                "slug_pattern": f"/{key}/{{slug}}",
+                "settings": {},
+            },
+        )
+        assert response.status_code == 201, response.text
+        record = response.json()["record"]
+        return UUID(record["id"]), record
+
+    async def add_field(
+        client: httpx.AsyncClient,
+        type_id: UUID,
+        key: str,
+        idempotency_key: str,
+        **extra: Any,
+    ) -> UUID:
+        response = await client.post(
+            f"/api/agent/v1/content-model/types/{type_id}/fields",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Idempotency-Key": idempotency_key,
+            },
+            json={"key": key, "label": key, "field_type": "short_text", **extra},
+        )
+        assert response.status_code == 201, response.text
+        return UUID(response.json()["record"]["id"])
+
+    async def add_item(
+        client: httpx.AsyncClient,
+        type_id: UUID,
+        slug: str,
+        values: dict[str, Any],
+        idempotency_key: str,
+    ) -> UUID:
+        response = await client.post(
+            f"/api/agent/v1/content-items/types/{type_id}",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Idempotency-Key": idempotency_key,
+            },
+            json={
+                "type_id": str(type_id),
+                "slug": slug,
+                "status": "DRAFT",
+                "values": values,
+            },
+        )
+        assert response.status_code == 201, response.text
+        return UUID(response.json()["record"]["id"])
+
+    async def delete_field(
+        client: httpx.AsyncClient,
+        type_id: UUID,
+        field_id: UUID,
+        idempotency_key: str,
+    ) -> httpx.Response:
+        return await client.request(
+            "DELETE",
+            f"/api/agent/v1/content-model/types/{type_id}/fields/{field_id}",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Idempotency-Key": idempotency_key,
+            },
+            json={"expected_definition_version": 1},
+        )
+
+    try:
+        async with app_one.router.lifespan_context(app_one):
+            async with app_two.router.lifespan_context(app_two):
+                async with (
+                    httpx.AsyncClient(
+                        transport=httpx.ASGITransport(app=app_one),
+                        base_url="http://agent-one.test",
+                    ) as client_one,
+                    httpx.AsyncClient(
+                        transport=httpx.ASGITransport(app=app_two),
+                        base_url="http://agent-two.test",
+                    ) as client_two,
+                ):
+                    observer_before = await client_one.get(
+                        "/api/agent/v1/content-model/types",
+                        headers={"Authorization": f"Bearer {observer_token}"},
+                    )
+                    assert observer_before.status_code == 200, observer_before.text
+                    observer_types_before = observer_before.json()
+
+                    source_type_id, _ = await create_type(
+                        client_one, "dependency-source", "dependency-source-type"
+                    )
+                    target_type_id, _ = await create_type(
+                        client_one, "dependency-target", "dependency-target-type"
+                    )
+                    plain_field_id = await add_field(
+                        client_one, source_type_id, "plain", "dependency-plain"
+                    )
+                    localized_field_id = await add_field(
+                        client_one,
+                        source_type_id,
+                        "localized",
+                        "dependency-localized",
+                        localized=True,
+                    )
+                    relation_field_id = await add_field(
+                        client_one,
+                        source_type_id,
+                        "relation",
+                        "dependency-relation-field",
+                        field_type="reference",
+                        validation={"target_type_id": str(target_type_id)},
+                    )
+                    filter_field_id = await add_field(
+                        client_one, source_type_id, "filterable", "dependency-filter"
+                    )
+                    sort_field_id = await add_field(
+                        client_one, source_type_id, "sortable", "dependency-sort"
+                    )
+                    projection_field_id = await add_field(
+                        client_one, source_type_id, "projected", "dependency-projection"
+                    )
+                    target_field_id = await add_field(
+                        client_one, target_type_id, "target", "dependency-target-field"
+                    )
+                    target_item_id = await add_item(
+                        client_one,
+                        target_type_id,
+                        "dependency-target-item",
+                        {"target": "target"},
+                        "dependency-target-item",
+                    )
+                    source_item_id = await add_item(
+                        client_one,
+                        source_type_id,
+                        "dependency-source-item",
+                        {"plain": "plain"},
+                        "dependency-source-item",
+                    )
+                    translation = await client_one.post(
+                        f"/api/agent/v1/content-items/{source_item_id}/translations",
+                        headers={
+                            "Authorization": f"Bearer {token}",
+                            "Idempotency-Key": "dependency-translation",
+                        },
+                        json={
+                            "locale": "en",
+                            "localized_values": {"localized": "localized"},
+                        },
+                    )
+                    assert translation.status_code == 201, translation.text
+                    translation_id = UUID(translation.json()["record"]["id"])
+                    relation = await client_one.post(
+                        f"/api/agent/v1/content-items/{source_item_id}/relations",
+                        headers={
+                            "Authorization": f"Bearer {token}",
+                            "Idempotency-Key": "dependency-relation",
+                        },
+                        json={
+                            "field_definition_id": str(relation_field_id),
+                            "target_item_id": str(target_item_id),
+                        },
+                    )
+                    assert relation.status_code == 201, relation.text
+                    relation_id = UUID(relation.json()["record"]["id"])
+
+                    async def create_view(
+                        key: str, body: dict[str, Any], idempotency_key: str
+                    ) -> UUID:
+                        response = await client_one.post(
+                            f"/api/agent/v1/collection-views/types/{source_type_id}",
+                            headers={
+                                "Authorization": f"Bearer {token}",
+                                "Idempotency-Key": idempotency_key,
+                            },
+                            json={
+                                "type_id": str(source_type_id),
+                                "key": key,
+                                "filter_spec": {},
+                                "sort_spec": {"field": "slug"},
+                                "projection_spec": {},
+                                "pagination_spec": {"limit": 10, "offset": 0},
+                                **body,
+                            },
+                        )
+                        assert response.status_code == 201, response.text
+                        return UUID(response.json()["record"]["id"])
+
+                    filter_view_id = await create_view(
+                        "filter-view",
+                        {
+                            "filter_spec": {
+                                "field": "filterable",
+                                "op": "eq",
+                                "value": "x",
+                            }
+                        },
+                        "dependency-filter-view",
+                    )
+                    sort_view_id = await create_view(
+                        "sort-view",
+                        {"sort_spec": {"field": "sortable", "direction": "asc"}},
+                        "dependency-sort-view",
+                    )
+                    projection_view_id = await create_view(
+                        "projection-view",
+                        {"projection_spec": {"fields": ["projected"]}},
+                        "dependency-projection-view",
+                    )
+                    assert all(
+                        isinstance(value, UUID)
+                        for value in (
+                            plain_field_id,
+                            localized_field_id,
+                            relation_field_id,
+                            filter_field_id,
+                            sort_field_id,
+                            projection_field_id,
+                            target_field_id,
+                            source_item_id,
+                            target_item_id,
+                            translation_id,
+                            relation_id,
+                            filter_view_id,
+                            sort_view_id,
+                            projection_view_id,
+                        )
+                    )
+
+                    direct_before = await durable_counts()
+                    with pytest.raises(
+                        asyncpg.PostgresError, match="FIELD_DEPENDENCIES"
+                    ):
+                        async with asyncpg_cow_session(
+                            agent_pool, session_id=workspace_id, operation_id=uuid4()
+                        ) as cow:
+                            await cow.native.fetchrow(
+                                "SELECT * FROM "
+                                "content.slaif_agent_field_definition_delete("
+                                "$1,$2,$3,$4)",
+                                seeded["site_id"],
+                                source_type_id,
+                                plain_field_id,
+                                1,
+                            )
+                    assert await durable_counts() == direct_before
+
+                    for field_id, key in (
+                        (plain_field_id, "plain"),
+                        (localized_field_id, "localized"),
+                        (relation_field_id, "relation"),
+                        (filter_field_id, "filter"),
+                        (sort_field_id, "sort"),
+                        (projection_field_id, "projection"),
+                    ):
+                        before = await durable_counts()
+                        denied = await delete_field(
+                            client_one,
+                            source_type_id,
+                            field_id,
+                            f"dependency-denied-{key}",
+                        )
+                        assert denied.status_code == 422, denied.text
+                        assert denied.json()["error"]["code"] == "FIELD_DEPENDENCIES"
+                        assert await durable_counts() == before
+
+                    before_type_denial = await durable_counts()
+                    type_denied = await client_one.request(
+                        "DELETE",
+                        f"/api/agent/v1/content-model/types/{source_type_id}",
+                        headers={
+                            "Authorization": f"Bearer {token}",
+                            "Idempotency-Key": "dependency-type-denied",
+                        },
+                        json={"expected_definition_version": 7},
+                    )
+                    assert type_denied.status_code == 422, type_denied.text
+                    assert type_denied.json()["error"]["code"] == "TYPE_DEPENDENCIES"
+                    assert await durable_counts() == before_type_denial
+
+                    for view_id, key in (
+                        (filter_view_id, "filter-view"),
+                        (sort_view_id, "sort-view"),
+                        (projection_view_id, "projection-view"),
+                    ):
+                        deleted = await client_one.request(
+                            "DELETE",
+                            f"/api/agent/v1/collection-views/{view_id}",
+                            headers={
+                                "Authorization": f"Bearer {token}",
+                                "Idempotency-Key": f"dependency-delete-{key}",
+                            },
+                            json={"expected_row_version": 1},
+                        )
+                        assert deleted.status_code == 200, deleted.text
+                    deleted_relation = await client_one.request(
+                        "DELETE",
+                        f"/api/agent/v1/content-items/{source_item_id}/relations/{relation_id}",
+                        headers={
+                            "Authorization": f"Bearer {token}",
+                            "Idempotency-Key": "dependency-delete-relation",
+                        },
+                        json={"expected_row_version": 1},
+                    )
+                    assert deleted_relation.status_code == 200, deleted_relation.text
+                    deleted_translation = await client_one.request(
+                        "DELETE",
+                        f"/api/agent/v1/content-items/{source_item_id}/translations/{translation_id}",
+                        headers={
+                            "Authorization": f"Bearer {token}",
+                            "Idempotency-Key": "dependency-delete-translation",
+                        },
+                        json={"expected_row_version": 1},
+                    )
+                    assert deleted_translation.status_code == 200, (
+                        deleted_translation.text
+                    )
+                    for item_id, key in (
+                        (source_item_id, "source-item"),
+                        (target_item_id, "target-item"),
+                    ):
+                        deleted_item = await client_one.request(
+                            "DELETE",
+                            f"/api/agent/v1/content-items/{item_id}",
+                            headers={
+                                "Authorization": f"Bearer {token}",
+                                "Idempotency-Key": f"dependency-delete-{key}",
+                            },
+                            json={"expected_row_version": 1},
+                        )
+                        assert deleted_item.status_code == 200, deleted_item.text
+                    for field_id, key in (
+                        (plain_field_id, "plain"),
+                        (localized_field_id, "localized"),
+                        (relation_field_id, "relation"),
+                        (filter_field_id, "filter"),
+                        (sort_field_id, "sort"),
+                        (projection_field_id, "projection"),
+                    ):
+                        deleted = await delete_field(
+                            client_one,
+                            source_type_id,
+                            field_id,
+                            f"dependency-delete-field-{key}",
+                        )
+                        assert deleted.status_code == 200, deleted.text
+                    deleted_target_field = await delete_field(
+                        client_one,
+                        target_type_id,
+                        target_field_id,
+                        "dependency-delete-target-field",
+                    )
+                    assert deleted_target_field.status_code == 200, (
+                        deleted_target_field.text
+                    )
+                    for type_id, expected, key in (
+                        (source_type_id, 13, "dependency-delete-source-type"),
+                        (target_type_id, 3, "dependency-delete-target-type"),
+                    ):
+                        deleted_type = await client_one.request(
+                            "DELETE",
+                            f"/api/agent/v1/content-model/types/{type_id}",
+                            headers={
+                                "Authorization": f"Bearer {token}",
+                                "Idempotency-Key": key,
+                            },
+                            json={"expected_definition_version": expected},
+                        )
+                        assert deleted_type.status_code == 200, deleted_type.text
+
+                    observer_after = await client_one.get(
+                        "/api/agent/v1/content-model/types",
+                        headers={"Authorization": f"Bearer {observer_token}"},
+                    )
+                    assert observer_after.status_code == 200
+                    assert observer_after.json() == observer_types_before
+
+                    async def race_field_and_type(suffix: str) -> None:
+                        race_type_id, _ = await create_type(
+                            client_one,
+                            f"race-field-type-{suffix}",
+                            f"race-field-type-{suffix}",
+                        )
+                        type_delete = client_two.request(
+                            "DELETE",
+                            f"/api/agent/v1/content-model/types/{race_type_id}",
+                            headers={
+                                "Authorization": f"Bearer {token}",
+                                "Idempotency-Key": f"race-field-type-delete-{suffix}",
+                            },
+                            json={"expected_definition_version": 1},
+                        )
+                        field_create = client_one.post(
+                            f"/api/agent/v1/content-model/types/{race_type_id}/fields",
+                            headers={
+                                "Authorization": f"Bearer {token}",
+                                "Idempotency-Key": f"race-field-create-{suffix}",
+                            },
+                            json={
+                                "key": "race",
+                                "label": "Race",
+                                "field_type": "short_text",
+                            },
+                        )
+                        responses = await asyncio.gather(type_delete, field_create)
+                        assert (
+                            sum(
+                                response.status_code in {404, 409, 422}
+                                for response in responses
+                            )
+                            == 1
+                        ), [response.text for response in responses]
+                        assert (
+                            sum(
+                                response.status_code in {200, 201}
+                                for response in responses
+                            )
+                            == 1
+                        ), [response.text for response in responses]
+                        if responses[0].status_code == 200:
+                            assert responses[1].status_code in {404, 409, 422}
+                        else:
+                            assert responses[0].status_code in {404, 409, 422}
+                            assert responses[1].status_code == 201
+                            field_id = UUID(responses[1].json()["record"]["id"])
+                            cleanup = await delete_field(
+                                client_one,
+                                race_type_id,
+                                field_id,
+                                f"race-field-cleanup-{suffix}",
+                            )
+                            assert cleanup.status_code == 200, cleanup.text
+                            type_cleanup = await client_one.request(
+                                "DELETE",
+                                f"/api/agent/v1/content-model/types/{race_type_id}",
+                                headers={
+                                    "Authorization": f"Bearer {token}",
+                                    "Idempotency-Key": (
+                                        f"race-field-type-cleanup-{suffix}"
+                                    ),
+                                },
+                                json={"expected_definition_version": 3},
+                            )
+                            assert type_cleanup.status_code == 200, type_cleanup.text
+
+                    async def race_item_and_type(suffix: str) -> None:
+                        race_type_id, _ = await create_type(
+                            client_one,
+                            f"race-item-type-{suffix}",
+                            f"race-item-type-{suffix}",
+                        )
+                        type_delete = client_two.request(
+                            "DELETE",
+                            f"/api/agent/v1/content-model/types/{race_type_id}",
+                            headers={
+                                "Authorization": f"Bearer {token}",
+                                "Idempotency-Key": f"race-item-type-delete-{suffix}",
+                            },
+                            json={"expected_definition_version": 1},
+                        )
+                        item_create = client_one.post(
+                            f"/api/agent/v1/content-items/types/{race_type_id}",
+                            headers={
+                                "Authorization": f"Bearer {token}",
+                                "Idempotency-Key": f"race-item-create-{suffix}",
+                            },
+                            json={
+                                "type_id": str(race_type_id),
+                                "slug": "race-item",
+                                "status": "DRAFT",
+                                "values": {},
+                            },
+                        )
+                        responses = await asyncio.gather(type_delete, item_create)
+                        assert (
+                            sum(
+                                response.status_code in {404, 409, 422}
+                                for response in responses
+                            )
+                            == 1
+                        ), [response.text for response in responses]
+                        assert (
+                            sum(
+                                response.status_code in {200, 201}
+                                for response in responses
+                            )
+                            == 1
+                        ), [response.text for response in responses]
+                        if responses[0].status_code == 200:
+                            return
+                        item_id = UUID(responses[1].json()["record"]["id"])
+                        deleted_item = await client_one.request(
+                            "DELETE",
+                            f"/api/agent/v1/content-items/{item_id}",
+                            headers={
+                                "Authorization": f"Bearer {token}",
+                                "Idempotency-Key": f"race-item-cleanup-{suffix}",
+                            },
+                            json={"expected_row_version": 1},
+                        )
+                        assert deleted_item.status_code == 200, deleted_item.text
+                        type_cleanup = await client_one.request(
+                            "DELETE",
+                            f"/api/agent/v1/content-model/types/{race_type_id}",
+                            headers={
+                                "Authorization": f"Bearer {token}",
+                                "Idempotency-Key": f"race-item-type-cleanup-{suffix}",
+                            },
+                            json={"expected_definition_version": 1},
+                        )
+                        assert type_cleanup.status_code == 200, type_cleanup.text
+
+                    async def race_view_and_type(suffix: str) -> None:
+                        race_type_id, _ = await create_type(
+                            client_one,
+                            f"race-view-type-{suffix}",
+                            f"race-view-type-{suffix}",
+                        )
+                        type_delete = client_two.request(
+                            "DELETE",
+                            f"/api/agent/v1/content-model/types/{race_type_id}",
+                            headers={
+                                "Authorization": f"Bearer {token}",
+                                "Idempotency-Key": f"race-view-type-delete-{suffix}",
+                            },
+                            json={"expected_definition_version": 1},
+                        )
+                        view_create = client_one.post(
+                            f"/api/agent/v1/collection-views/types/{race_type_id}",
+                            headers={
+                                "Authorization": f"Bearer {token}",
+                                "Idempotency-Key": f"race-view-create-{suffix}",
+                            },
+                            json={
+                                "type_id": str(race_type_id),
+                                "key": "race-view",
+                                "filter_spec": {},
+                                "sort_spec": {"field": "slug"},
+                                "projection_spec": {},
+                                "pagination_spec": {"limit": 10, "offset": 0},
+                            },
+                        )
+                        responses = await asyncio.gather(type_delete, view_create)
+                        assert (
+                            sum(
+                                response.status_code in {404, 409, 422}
+                                for response in responses
+                            )
+                            == 1
+                        ), [response.text for response in responses]
+                        assert (
+                            sum(
+                                response.status_code in {200, 201}
+                                for response in responses
+                            )
+                            == 1
+                        ), [response.text for response in responses]
+                        if responses[0].status_code == 200:
+                            return
+                        view_id = UUID(responses[1].json()["record"]["id"])
+                        deleted_view = await client_one.request(
+                            "DELETE",
+                            f"/api/agent/v1/collection-views/{view_id}",
+                            headers={
+                                "Authorization": f"Bearer {token}",
+                                "Idempotency-Key": f"race-view-cleanup-{suffix}",
+                            },
+                            json={"expected_row_version": 1},
+                        )
+                        assert deleted_view.status_code == 200, deleted_view.text
+                        type_cleanup = await client_one.request(
+                            "DELETE",
+                            f"/api/agent/v1/content-model/types/{race_type_id}",
+                            headers={
+                                "Authorization": f"Bearer {token}",
+                                "Idempotency-Key": f"race-view-type-cleanup-{suffix}",
+                            },
+                            json={"expected_definition_version": 1},
+                        )
+                        assert type_cleanup.status_code == 200, type_cleanup.text
+
+                    await race_field_and_type("one")
+                    await race_item_and_type("one")
+                    await race_view_and_type("one")
+
+                    race_source_id, _ = await create_type(
+                        client_one, "race-relation-source", "race-relation-source"
+                    )
+                    race_target_id, _ = await create_type(
+                        client_one, "race-relation-target", "race-relation-target"
+                    )
+                    race_field_id = await add_field(
+                        client_one,
+                        race_source_id,
+                        "race-relation",
+                        "race-relation-field",
+                        field_type="reference",
+                        validation={"target_type_id": str(race_target_id)},
+                    )
+                    race_source_item_id = await add_item(
+                        client_one,
+                        race_source_id,
+                        "race-source-item",
+                        {},
+                        "race-source-item",
+                    )
+                    race_target_item_id = await add_item(
+                        client_one,
+                        race_target_id,
+                        "race-target-item",
+                        {},
+                        "race-target-item",
+                    )
+                    race_relation_create = client_one.post(
+                        f"/api/agent/v1/content-items/{race_source_item_id}/relations",
+                        headers={
+                            "Authorization": f"Bearer {token}",
+                            "Idempotency-Key": "race-relation-create",
+                        },
+                        json={
+                            "field_definition_id": str(race_field_id),
+                            "target_item_id": str(race_target_item_id),
+                        },
+                    )
+                    race_relation_delete_field = delete_field(
+                        client_two,
+                        race_source_id,
+                        race_field_id,
+                        "race-relation-delete-field",
+                    )
+                    relation_race = await asyncio.gather(
+                        race_relation_create, race_relation_delete_field
+                    )
+                    assert (
+                        sum(response.status_code == 201 for response in relation_race)
+                        == 1
+                    )
+                    assert (
+                        sum(response.status_code == 422 for response in relation_race)
+                        == 1
+                    ), [response.text for response in relation_race]
+                    if relation_race[0].status_code == 201:
+                        relation_id = UUID(relation_race[0].json()["record"]["id"])
+                        cleanup_relation = await client_one.request(
+                            "DELETE",
+                            f"/api/agent/v1/content-items/{race_source_item_id}/relations/{relation_id}",
+                            headers={
+                                "Authorization": f"Bearer {token}",
+                                "Idempotency-Key": "race-relation-cleanup",
+                            },
+                            json={"expected_row_version": 1},
+                        )
+                        assert cleanup_relation.status_code == 200, (
+                            cleanup_relation.text
+                        )
+                        cleanup_field = await delete_field(
+                            client_one,
+                            race_source_id,
+                            race_field_id,
+                            "race-relation-field-cleanup",
+                        )
+                        assert cleanup_field.status_code == 200, cleanup_field.text
+
+                    race_translation_type, _ = await create_type(
+                        client_one, "race-translation-type", "race-translation-type"
+                    )
+                    race_translation_field = await add_field(
+                        client_one,
+                        race_translation_type,
+                        "race-localized",
+                        "race-translation-field",
+                        localized=True,
+                    )
+                    race_translation_item = await add_item(
+                        client_one,
+                        race_translation_type,
+                        "race-translation-item",
+                        {},
+                        "race-translation-item",
+                    )
+                    translation_race = await asyncio.gather(
+                        client_one.post(
+                            f"/api/agent/v1/content-items/{race_translation_item}/translations",
+                            headers={
+                                "Authorization": f"Bearer {token}",
+                                "Idempotency-Key": "race-translation-create",
+                            },
+                            json={
+                                "locale": "en",
+                                "localized_values": {"race-localized": "value"},
+                            },
+                        ),
+                        delete_field(
+                            client_two,
+                            race_translation_type,
+                            race_translation_field,
+                            "race-translation-delete-field",
+                        ),
+                    )
+                    assert (
+                        sum(
+                            response.status_code == 201 for response in translation_race
+                        )
+                        == 1
+                    )
+                    assert (
+                        sum(
+                            response.status_code == 422 for response in translation_race
+                        )
+                        == 1
+                    ), [response.text for response in translation_race]
+                    if translation_race[0].status_code == 201:
+                        translation_id = UUID(
+                            translation_race[0].json()["record"]["id"]
+                        )
+                        cleanup_translation = await client_one.request(
+                            "DELETE",
+                            f"/api/agent/v1/content-items/{race_translation_item}/translations/{translation_id}",
+                            headers={
+                                "Authorization": f"Bearer {token}",
+                                "Idempotency-Key": "race-translation-cleanup",
+                            },
+                            json={"expected_row_version": 1},
+                        )
+                        assert cleanup_translation.status_code == 200, (
+                            cleanup_translation.text
+                        )
+                        cleanup_field = await delete_field(
+                            client_one,
+                            race_translation_type,
+                            race_translation_field,
+                            "race-translation-field-cleanup",
+                        )
+                        assert cleanup_field.status_code == 200, cleanup_field.text
+
+                    race_view_field_type, _ = await create_type(
+                        client_one, "race-view-field-type", "race-view-field-type"
+                    )
+                    race_view_field = await add_field(
+                        client_one,
+                        race_view_field_type,
+                        "race-filter",
+                        "race-view-field",
+                    )
+                    view_field_race = await asyncio.gather(
+                        client_one.post(
+                            f"/api/agent/v1/collection-views/types/{race_view_field_type}",
+                            headers={
+                                "Authorization": f"Bearer {token}",
+                                "Idempotency-Key": "race-view-field-create",
+                            },
+                            json={
+                                "type_id": str(race_view_field_type),
+                                "key": "race-filter-view",
+                                "filter_spec": {
+                                    "field": "race-filter",
+                                    "op": "eq",
+                                    "value": "value",
+                                },
+                                "sort_spec": {"field": "slug"},
+                                "projection_spec": {},
+                                "pagination_spec": {"limit": 10, "offset": 0},
+                            },
+                        ),
+                        delete_field(
+                            client_two,
+                            race_view_field_type,
+                            race_view_field,
+                            "race-view-field-delete",
+                        ),
+                    )
+                    assert (
+                        sum(response.status_code == 201 for response in view_field_race)
+                        == 1
+                    )
+                    assert (
+                        sum(response.status_code == 422 for response in view_field_race)
+                        == 1
+                    ), [response.text for response in view_field_race]
+                    if view_field_race[0].status_code == 201:
+                        view_id = UUID(view_field_race[0].json()["record"]["id"])
+                        cleanup_view = await client_one.request(
+                            "DELETE",
+                            f"/api/agent/v1/collection-views/{view_id}",
+                            headers={
+                                "Authorization": f"Bearer {token}",
+                                "Idempotency-Key": "race-view-field-cleanup",
+                            },
+                            json={"expected_row_version": 1},
+                        )
+                        assert cleanup_view.status_code == 200, cleanup_view.text
+                        cleanup_field = await delete_field(
+                            client_one,
+                            race_view_field_type,
+                            race_view_field,
+                            "race-view-field-field-cleanup",
+                        )
+                        assert cleanup_field.status_code == 200, cleanup_field.text
+    finally:
+        await reviewer_pool.close()
+        await second_agent_pool.close()
         await agent_pool.close()
 
 

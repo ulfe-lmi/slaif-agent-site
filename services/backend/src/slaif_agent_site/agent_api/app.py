@@ -11,6 +11,7 @@ from contextlib import asynccontextmanager
 import uvicorn
 from fastapi import FastAPI
 from fastapi.responses import Response
+from fastapi.routing import APIRoute
 
 from ..application import create_http_application
 from ..authority import ProcessKind
@@ -80,7 +81,38 @@ def build_public_agent_openapi_document(app: FastAPI) -> dict[str, object]:
     policies = {
         (policy.method, policy.path_template): policy
         for policy in route_policies_for(ProcessKind.AGENT_API)
+        if policy.path_template.startswith("/api/agent/v1/")
     }
+    live_routes: dict[tuple[str, str], APIRoute] = {}
+    routes_to_visit: list[object] = list(app.routes)
+    while routes_to_visit:
+        route = routes_to_visit.pop()
+        original_router = getattr(route, "original_router", None)
+        if original_router is not None:
+            routes_to_visit.extend(original_router.routes)
+            continue
+        if not isinstance(route, APIRoute) or not route.path.startswith(
+            "/api/agent/v1/"
+        ):
+            continue
+        for method in route.methods or ():
+            if method.lower() in _AGENT_HTTP_METHODS:
+                key = (method.upper(), route.path)
+                if key in live_routes:
+                    raise RuntimeError(f"duplicate Agent handler: {key}")
+                live_routes[key] = route
+    openapi_inventory = {
+        (method.upper(), path)
+        for path, operations in paths.items()
+        for method in operations
+        if method in _AGENT_HTTP_METHODS
+    }
+    expected_inventory = set(policies)
+    if (
+        openapi_inventory != expected_inventory
+        or set(live_routes) != expected_inventory
+    ):
+        raise RuntimeError("Agent OpenAPI/policy/handler inventory mismatch")
     document: dict[str, object] = {
         "openapi": "3.1.0",
         "info": {
@@ -128,8 +160,17 @@ def build_public_agent_openapi_document(app: FastAPI) -> dict[str, object]:
                 raise RuntimeError(
                     f"Agent OpenAPI route has no policy: {method.upper()} {path}"
                 )
+            route = live_routes[(method.upper(), path)]
             scopes = list(policy.required_scopes)
             operation["x-slaif-required-scopes"] = scopes
+            operation["x-slaif-mutation"] = (
+                policy.mutation_class is RouteMutationClass.MUTATION
+            )
+            operation["x-slaif-idempotency"] = (
+                "required"
+                if policy.mutation_class is RouteMutationClass.MUTATION
+                else "not-applicable"
+            )
             if path == "/api/agent/v1/openapi.json":
                 operation["security"] = []
             else:
@@ -157,6 +198,15 @@ def build_public_agent_openapi_document(app: FastAPI) -> dict[str, object]:
                     parameters.append(header)
                 header["required"] = True
                 header["schema"] = copy.deepcopy(_IDEMPOTENCY_HEADER_SCHEMA)
+                if "requestBody" not in operation:
+                    raise RuntimeError(
+                        f"Agent mutation has no request body: {method.upper()} {path}"
+                    )
+            elif "requestBody" in operation:
+                raise RuntimeError(
+                    "Agent read unexpectedly has a request body: "
+                    f"{method.upper()} {path}"
+                )
             if (
                 path == "/api/agent/v1/preview-runs/{run_id}/artifacts/{artifact_id}"
                 and method == "get"
@@ -172,6 +222,26 @@ def build_public_agent_openapi_document(app: FastAPI) -> dict[str, object]:
             responses = operation["responses"]
             if not isinstance(responses, dict):
                 raise RuntimeError(f"Agent OpenAPI responses are malformed: {path}")
+            expected_status = str(
+                route.status_code
+                or {"GET": 200, "POST": 201, "PUT": 200, "PATCH": 200, "DELETE": 200}[
+                    method.upper()
+                ]
+            )
+            success = responses.get(expected_status)
+            if not isinstance(success, dict):
+                raise RuntimeError(
+                    f"Agent handler success status missing: {method.upper()} {path}"
+                )
+            if route.response_model is not None:
+                content = success.get("content")
+                if not isinstance(content, dict) or not any(
+                    isinstance(value, dict) and "schema" in value
+                    for value in content.values()
+                ):
+                    raise RuntimeError(
+                        f"Agent handler success schema missing: {method.upper()} {path}"
+                    )
             for status, description in _AGENT_ERROR_RESPONSES.items():
                 responses[status] = {
                     "description": description,

@@ -25,9 +25,12 @@ uv run --frozen python -m tools.contracts.generate_agent_openapi --check
 ```
 
 The check fixes OpenAPI 3.1 metadata, stable JSON ordering/newline, bearer
-security semantics, route scope extensions, required mutation headers, and
-stable error envelopes. It exposes only `/api/agent/v1` paths. Interactive
-Swagger/ReDoc and generic FastAPI OpenAPI routes remain disabled.
+security semantics, route scope extensions, explicit mutation/idempotency
+declarations, required mutation headers, success schemas, and stable error
+envelopes. It compares the canonical path/method inventory in both directions
+with the live Agent handlers and route-policy registry. It exposes only
+`/api/agent/v1` paths. Interactive Swagger/ReDoc and generic FastAPI OpenAPI
+routes remain disabled.
 
 The seven workspace packages are private package boundaries only. Their sole
 export identifies a pre-alpha scaffold. They do not implement product APIs,

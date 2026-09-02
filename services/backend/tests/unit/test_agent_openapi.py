@@ -56,7 +56,11 @@ def test_public_contract_has_scopes_headers_errors_and_no_internal_paths() -> No
     permissions = document["paths"]["/api/agent/v1/permissions"]["get"]
     assert permissions["security"] == [{"AgentCapability": []}]
     assert permissions["x-slaif-required-scopes"] == ["site:read"]
+    assert permissions["x-slaif-mutation"] is False
+    assert permissions["x-slaif-idempotency"] == "not-applicable"
     mutation = document["paths"]["/api/agent/v1/content-model/types"]["post"]
+    assert mutation["x-slaif-mutation"] is True
+    assert mutation["x-slaif-idempotency"] == "required"
     header = next(
         parameter
         for parameter in mutation["parameters"]

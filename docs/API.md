@@ -212,7 +212,22 @@ The bounded mutation surface is:
 | --- | --- | --- |
 | `POST /api/agent/v1/content-model/types` | 201 | `CreateContentTypeRequest` |
 | `POST /api/agent/v1/content-model/types/{type_id}/fields` | 201 | `CreateFieldDefinitionRequest` |
+| `PATCH /api/agent/v1/content-model/types/{type_id}` | 200 | `UpdateContentTypeRequest` |
+| `PATCH /api/agent/v1/content-model/types/{type_id}/fields/{field_id}` | 200 | `UpdateFieldDefinitionRequest` |
+| `DELETE /api/agent/v1/content-model/types/{type_id}` | 200 | `DeleteDefinitionRequest` |
+| `DELETE /api/agent/v1/content-model/types/{type_id}/fields/{field_id}` | 200 | `DeleteDefinitionRequest` |
 | `POST /api/agent/v1/content-items/types/{type_id}` | 201 | `CreateContentItemRequest`; its `type_id` must match the path |
+| `PATCH /api/agent/v1/content-items/{item_id}` | 200 | `AgentUpdateContentItemRequest` |
+| `DELETE /api/agent/v1/content-items/{item_id}` | 200 | `DeleteContentItemRequest` |
+| `POST /api/agent/v1/content-items/{item_id}/translations` | 201 | `CreateTranslationRequest` |
+| `PATCH /api/agent/v1/content-items/{item_id}/translations/{translation_id}` | 200 | `UpdateTranslationRequest` |
+| `DELETE /api/agent/v1/content-items/{item_id}/translations/{translation_id}` | 200 | `DeleteTranslationRequest` |
+| `POST /api/agent/v1/content-items/{item_id}/relations` | 201 | `CreateRelationRequest` |
+| `PATCH /api/agent/v1/content-items/{item_id}/relations/{relation_id}` | 200 | `UpdateRelationRequest` |
+| `DELETE /api/agent/v1/content-items/{item_id}/relations/{relation_id}` | 200 | `AgentDeleteRequest` |
+| `POST /api/agent/v1/collection-views/types/{type_id}` | 201 | `CreateCollectionViewRequest` |
+| `PATCH /api/agent/v1/collection-views/{view_id}` | 200 | `UpdateCollectionViewRequest` |
+| `DELETE /api/agent/v1/collection-views/{view_id}` | 200 | `AgentDeleteRequest` |
 | `POST /api/agent/v1/pages/` | 201 | `CreatePageRequest` |
 | `POST /api/agent/v1/pages/{page_id}/components` | 201 | `CreateCompositionNodeRequest` |
 
@@ -231,6 +246,16 @@ authority, SQL/DDL route, or lifecycle route. Created records are visible in
 the workspace overlay and remain absent from canonical content until a later
 human-only lifecycle order; this round does not implement freeze, accept,
 discard, review, or publication routes.
+
+Definition deletion is dependency-safe. Type deletion rejects visible fields,
+items, collection views, and any surviving item translations or relations;
+field deletion rejects exact nonlocalized/localized value keys, normalized
+relations, and recursive view filter, sort, or projection references. These
+denials are stable `422` responses with `TYPE_DEPENDENCIES` or
+`FIELD_DEPENDENCIES`, consume no quota, and leave no idempotency, audit, or COW
+residue. All model/content dependency writes share one transaction-scoped
+workspace lock, so a concurrent creator and deletion has one committed winner
+and a coherent loser result.
 
 ### Capability-bound browser preview runs
 

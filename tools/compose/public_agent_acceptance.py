@@ -5,11 +5,13 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import subprocess
 import sys
 import time
+from collections import Counter
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
@@ -47,6 +49,245 @@ FIELD_PRIMITIVES = {
     "object",
 }
 
+_CAPABILITY_CONTEXTS: dict[str, tuple[str, str, str]] = {}
+_EXPECTED_SEMANTIC_AUDIT: list[dict[str, str | int | bool]] = []
+
+
+def _semantic_contract(
+    path: str, method: str, status: int
+) -> tuple[str, str, str] | None:
+    """Return the exact audit identity for a successful semantic route."""
+
+    segments = path.rstrip("/").split("/")
+    if len(segments) >= 6 and segments[:5] == [
+        "",
+        "api",
+        "agent",
+        "v1",
+        "content-model",
+    ]:
+        if segments[5] == "types":
+            if len(segments) == 6 and method == "POST":
+                return "content_type", "CONTENT_TYPE_CREATED", "mutation"
+            if len(segments) == 7 and method in {"PATCH", "DELETE"}:
+                return (
+                    "content_type",
+                    "CONTENT_TYPE_UPDATED"
+                    if method == "PATCH"
+                    else "CONTENT_TYPE_DELETED",
+                    "mutation" if method == "PATCH" else "delete",
+                )
+            if len(segments) == 8 and segments[7] == "fields":
+                if method == "POST":
+                    return "field_definition", "FIELD_DEFINITION_CREATED", "mutation"
+            if len(segments) == 9 and segments[7] == "fields":
+                if method in {"PATCH", "DELETE"}:
+                    return (
+                        "field_definition",
+                        "FIELD_DEFINITION_UPDATED"
+                        if method == "PATCH"
+                        else "FIELD_DEFINITION_DELETED",
+                        "mutation" if method == "PATCH" else "delete",
+                    )
+    if len(segments) >= 4 and segments[:4] == [
+        "",
+        "api",
+        "agent",
+        "v1",
+    ]:
+        if (
+            len(segments) == 7
+            and segments[4] == "content-items"
+            and segments[5] == "types"
+        ):
+            if method == "POST":
+                return "content_item", "CONTENT_ITEM_CREATED", "mutation"
+        if len(segments) == 6 and segments[4] == "content-items":
+            if method in {"PATCH", "DELETE"}:
+                return (
+                    "content_item",
+                    "CONTENT_ITEM_UPDATED"
+                    if method == "PATCH"
+                    else "CONTENT_ITEM_DELETED",
+                    "mutation" if method == "PATCH" else "delete",
+                )
+        if (
+            len(segments) == 7
+            and segments[4] == "content-items"
+            and segments[6]
+            in {
+                "translations",
+                "relations",
+            }
+        ):
+            resource_type = (
+                "content_item_translation"
+                if segments[6] == "translations"
+                else "item_relation"
+            )
+            prefix = (
+                "CONTENT_ITEM_TRANSLATION"
+                if resource_type == "content_item_translation"
+                else "ITEM_RELATION"
+            )
+            if method == "POST":
+                return resource_type, f"{prefix}_CREATED", "mutation"
+        if (
+            len(segments) == 8
+            and segments[4] == "content-items"
+            and segments[6]
+            in {
+                "translations",
+                "relations",
+            }
+        ):
+            resource_type = (
+                "content_item_translation"
+                if segments[6] == "translations"
+                else "item_relation"
+            )
+            prefix = (
+                "CONTENT_ITEM_TRANSLATION"
+                if resource_type == "content_item_translation"
+                else "ITEM_RELATION"
+            )
+            if method in {"PATCH", "DELETE"}:
+                return (
+                    resource_type,
+                    f"{prefix}_{'UPDATED' if method == 'PATCH' else 'DELETED'}",
+                    "mutation" if method == "PATCH" else "delete",
+                )
+        if (
+            len(segments) == 7
+            and segments[4] == "collection-views"
+            and segments[5] == "types"
+        ):
+            if method == "POST":
+                return "collection_view", "COLLECTION_VIEW_CREATED", "mutation"
+        if len(segments) == 6 and segments[4] == "collection-views":
+            if method in {"PATCH", "DELETE"}:
+                return (
+                    "collection_view",
+                    "COLLECTION_VIEW_UPDATED"
+                    if method == "PATCH"
+                    else "COLLECTION_VIEW_DELETED",
+                    "mutation" if method == "PATCH" else "delete",
+                )
+    return None
+
+
+def _record_semantic_audit_expectation(
+    *,
+    token: str,
+    path: str,
+    method: str,
+    body: dict[str, Any],
+    key: str,
+    status: int,
+    document: dict[str, Any],
+) -> None:
+    contract = _semantic_contract(path, method, status)
+    if contract is None:
+        return
+    context = _CAPABILITY_CONTEXTS.get(token)
+    if context is None:
+        raise ProofFailure("semantic-audit-capability-context-missing")
+    resource_type, action, quota_kind = contract
+    record = document.get("record")
+    if not isinstance(record, dict):
+        raise ProofFailure("semantic-audit-record-missing")
+    operation_id = _require_uuid(document.get("operation_id"), f"{key}-operation")
+    resource_id = _require_uuid(record.get("id"), f"{key}-resource")
+    digest_payload = json.dumps(
+        {
+            "method": method,
+            "path": path,
+            "body": _canonical_request_body(path, method, body),
+        },
+        sort_keys=True,
+    )
+    digest = hashlib.sha256(digest_payload.encode("utf-8")).hexdigest()
+    workspace_id, capability_id, site_id = context
+    _EXPECTED_SEMANTIC_AUDIT.append(
+        {
+            "capability_id": capability_id,
+            "workspace_id": workspace_id,
+            "site_id": site_id,
+            "operation_id": operation_id,
+            "resource_type": resource_type,
+            "resource_id": resource_id,
+            "request_digest": digest,
+            "response_status": status,
+            "action": action,
+            "http_method": method,
+            "quota_kind": quota_kind,
+            "idempotency_key": key,
+        }
+    )
+
+
+def _canonical_request_body(
+    path: str, method: str, body: dict[str, Any]
+) -> dict[str, Any]:
+    """Mirror the production Pydantic model defaults used for request digests."""
+
+    normalized = dict(body)
+    contract = _semantic_contract(path, method, 200)
+    if contract is None:
+        return normalized
+    resource_type, action, _quota_kind = contract
+    defaults: dict[str, Any] = {}
+    if action == "FIELD_DEFINITION_CREATED":
+        defaults = {
+            "required": False,
+            "localized": False,
+            "cardinality": 1,
+            "position": 0,
+            "validation": {},
+            "ui_options": {},
+        }
+    elif action == "ITEM_RELATION_CREATED":
+        defaults = {"position": 0, "metadata": {}}
+    elif action == "COLLECTION_VIEW_CREATED":
+        defaults = {"definition_version": None}
+    elif action == "CONTENT_TYPE_UPDATED":
+        defaults = {"slug_pattern": None, "settings": None}
+    elif action == "FIELD_DEFINITION_UPDATED":
+        defaults = {
+            "required": None,
+            "localized": None,
+            "cardinality": None,
+            "position": None,
+            "validation": None,
+            "ui_options": None,
+            "expected_row_version": None,
+        }
+    elif action == "CONTENT_ITEM_UPDATED":
+        defaults = {"status": None, "values": None}
+    elif action == "CONTENT_ITEM_TRANSLATION_UPDATED":
+        defaults = {"locale": None}
+    elif action == "ITEM_RELATION_UPDATED":
+        defaults = {"target_item_id": None}
+    elif action == "COLLECTION_VIEW_UPDATED":
+        defaults = {
+            "filter_spec": None,
+            "sort_spec": None,
+            "projection_spec": None,
+            "definition_version": None,
+        }
+    if resource_type == "content_type" and action == "CONTENT_TYPE_CREATED":
+        defaults = {"labels": {}, "settings": {}}
+    if resource_type == "content_item" and action == "CONTENT_ITEM_CREATED":
+        defaults = {"status": "DRAFT", "values": {}}
+    if (
+        resource_type == "content_item_translation"
+        and action == "CONTENT_ITEM_TRANSLATION_CREATED"
+    ):
+        defaults = {"localized_values": {}}
+    for key, value in defaults.items():
+        normalized.setdefault(key, value)
+    return normalized
+
 
 def _mutation(
     client: PublicClient,
@@ -69,6 +310,15 @@ def _mutation(
         raise ProofFailure(f"{key}-record-missing")
     _require_uuid(record.get("id"), f"{key}-record")
     _require_uuid(document.get("operation_id"), f"{key}-operation")
+    _record_semantic_audit_expectation(
+        token=token,
+        path=path,
+        method="POST",
+        body=body,
+        key=key,
+        status=status,
+        document=document,
+    )
     return document
 
 
@@ -94,6 +344,15 @@ def _request_mutation(
         raise ProofFailure(f"{key}-record-missing")
     _require_uuid(record.get("id"), f"{key}-record")
     _require_uuid(document.get("operation_id"), f"{key}-operation")
+    _record_semantic_audit_expectation(
+        token=token,
+        path=path,
+        method=method,
+        body=body,
+        key=key,
+        status=status,
+        document=document,
+    )
     return document
 
 
@@ -168,6 +427,7 @@ def _issue_capability(
         r"[0-9a-f]{16}", capability_id
     ):
         raise ProofFailure(f"{key}-id-invalid")
+    _CAPABILITY_CONTEXTS[token] = (workspace_id, capability_id, site_id)
     return token, capability_id
 
 
@@ -232,6 +492,86 @@ def _sql(project: str, query: str) -> str:
     return result.stdout.strip()
 
 
+def _assert_exact_semantic_audit(project: str) -> None:
+    """Check every successful semantic mutation and its durable siblings."""
+
+    workspaces = sorted({context[0] for context in _CAPABILITY_CONTEXTS.values()})
+    if not workspaces or not _EXPECTED_SEMANTIC_AUDIT:
+        raise ProofFailure("semantic-audit-expectations-empty")
+    if any(not re.fullmatch(r"[0-9a-f-]{36}", value) for value in workspaces):
+        raise ProofFailure("semantic-audit-workspace-invalid")
+    workspace_sql = ",".join(f"'{value}'::uuid" for value in workspaces)
+    actual_raw = _sql(
+        project,
+        "SELECT coalesce(json_agg(json_build_object("
+        "'capability_id',c.public_id,"
+        "'workspace_id',a.workspace_id::text,"
+        "'site_id',a.site_id::text,"
+        "'operation_id',a.operation_id::text,"
+        "'resource_type',a.resource_type,"
+        "'resource_id',a.resource_id::text,"
+        "'request_digest',a.request_digest,"
+        "'response_status',a.response_status,"
+        "'action',a.action,"
+        "'http_method',a.http_method,"
+        "'quota_kind',a.quota_kind,"
+        "'idempotency_key',i.idempotency_key,"
+        "'idempotency_completed',i.status_code IS NOT NULL,"
+        "'cow_operation',exists(SELECT 1 FROM agentcow.get_cow_session_operations("
+        "'content',a.workspace_id) AS cow(operation_id) "
+        "WHERE cow.operation_id=a.operation_id)"
+        ") ORDER BY a.occurred_at,a.operation_id),'[]'::json) "
+        f"FROM audit.agent_mutation a "
+        f"JOIN control.capability c ON c.id=a.capability_id "
+        f"JOIN control.agent_idempotency i ON i.capability_id=a.capability_id "
+        f"AND i.workspace_id=a.workspace_id AND i.operation_id=a.operation_id "
+        f"WHERE a.workspace_id IN ({workspace_sql}) AND a.http_method IS NOT NULL",
+    )
+    try:
+        actual = json.loads(actual_raw or "[]")
+    except json.JSONDecodeError as error:
+        raise ProofFailure("semantic-audit-json-invalid") from error
+    if not isinstance(actual, list):
+        raise ProofFailure("semantic-audit-result-invalid")
+    expected = [
+        {**event, "idempotency_completed": True, "cow_operation": True}
+        for event in _EXPECTED_SEMANTIC_AUDIT
+    ]
+
+    def canonical(event: object) -> str:
+        return json.dumps(event, sort_keys=True, separators=(",", ":"))
+
+    if Counter(canonical(event) for event in actual) != Counter(
+        canonical(event) for event in expected
+    ):
+        actual_counts = Counter(canonical(event) for event in actual)
+        expected_counts = Counter(canonical(event) for event in expected)
+
+        def summary(event: str) -> str:
+            decoded = json.loads(event)
+            return ":".join(
+                str(decoded.get(key))
+                for key in (
+                    "action",
+                    "http_method",
+                    "quota_kind",
+                    "idempotency_key",
+                )
+            )
+
+        missing = sorted(
+            summary(event) for event in (expected_counts - actual_counts).elements()
+        )
+        extra = sorted(
+            summary(event) for event in (actual_counts - expected_counts).elements()
+        )
+        raise ProofFailure(
+            "semantic-audit-exact-multiset-mismatch"
+            f" expected={len(expected)} actual={len(actual)}"
+            f" missing={','.join(missing)} extra={','.join(extra)}"
+        )
+
+
 def _wait_agent_ready(client: PublicClient) -> None:
     for _attempt in range(30):
         try:
@@ -259,6 +599,8 @@ def _wait_public_outage(client: PublicClient, path: str, label: str) -> None:
 def run_acceptance(project: str) -> None:
     if not re.fullmatch(r"slaif(?:007|009|010|071)[a-z0-9]+", project):
         raise ProofFailure("unsafe-project-name")
+    _CAPABILITY_CONTEXTS.clear()
+    _EXPECTED_SEMANTIC_AUDIT.clear()
     client = PublicClient()
     agent_outage = False
     nginx_outage = False
@@ -989,6 +1331,12 @@ def run_acceptance(project: str) -> None:
         )
         if dependency.status != 422:
             raise ProofFailure(f"dependency-delete-status-{dependency.status}")
+        try:
+            dependency_document = json.loads(dependency.body)
+        except json.JSONDecodeError as error:
+            raise ProofFailure("dependency-delete-response-invalid") from error
+        if dependency_document.get("error", {}).get("code") != "TYPE_DEPENDENCIES":
+            raise ProofFailure("dependency-delete-error-code-invalid")
 
         _compose(project, "restart", "agent-api")
         agent_outage = False
@@ -1146,15 +1494,35 @@ def run_acceptance(project: str) -> None:
                 != "0"
             ):
                 raise ProofFailure(f"canonical-{table}-changed")
+        _assert_exact_semantic_audit(project)
+        semantic_count_before_revoke = _sql(
+            project,
+            f"SELECT count(*) FROM audit.agent_mutation WHERE workspace_id='{primary_workspace}'::uuid",
+        )
+        idempotency_count_before_revoke = _sql(
+            project,
+            f"SELECT count(*) FROM control.agent_idempotency WHERE workspace_id='{primary_workspace}'::uuid",
+        )
+        _revoke_capability(client, site_id, primary_workspace, primary_capability)
+        revoked = client.request(
+            "/api/agent/v1/session",
+            headers={"Authorization": f"Bearer {primary_token}"},
+        )
+        if revoked.status != 401:
+            raise ProofFailure(f"revoked-capability-status-{revoked.status}")
         if (
             _sql(
                 project,
-                f"SELECT count(*) FROM audit.agent_mutation WHERE workspace_id='{primary_workspace}'::uuid AND action LIKE 'CONTENT_%'",
+                f"SELECT count(*) FROM audit.agent_mutation WHERE workspace_id='{primary_workspace}'::uuid",
             )
-            == "0"
+            != semantic_count_before_revoke
+            or _sql(
+                project,
+                f"SELECT count(*) FROM control.agent_idempotency WHERE workspace_id='{primary_workspace}'::uuid",
+            )
+            != idempotency_count_before_revoke
         ):
-            raise ProofFailure("agent-audit-assertion-empty")
-        _revoke_capability(client, site_id, primary_workspace, primary_capability)
+            raise ProofFailure("revoked-capability-left-residue")
         _revoke_capability(client, site_id, observer_workspace, observer_capability)
         _revoke_capability(client, site_id, lower_workspace, lower_capability)
         _revoke_capability(
@@ -1178,6 +1546,8 @@ def run_acceptance(project: str) -> None:
         primary_token = observer_token = lower_token = constrained_token = ""
         quota_token = quota_recovery_token = ""
         client.clear()
+        _CAPABILITY_CONTEXTS.clear()
+        _EXPECTED_SEMANTIC_AUDIT.clear()
 
 
 def main(argv: Sequence[str] | None = None) -> int:

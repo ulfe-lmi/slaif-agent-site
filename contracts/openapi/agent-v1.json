@@ -2125,6 +2125,8 @@
           }
         ],
         "summary": "List Collection Views",
+        "x-slaif-idempotency": "not-applicable",
+        "x-slaif-mutation": false,
         "x-slaif-required-scopes": [
           "collection-view:read"
         ]
@@ -2273,6 +2275,8 @@
           }
         ],
         "summary": "Create Collection View",
+        "x-slaif-idempotency": "required",
+        "x-slaif-mutation": true,
         "x-slaif-required-scopes": [
           "collection-view:create"
         ]
@@ -2423,6 +2427,8 @@
           }
         ],
         "summary": "Delete Collection View",
+        "x-slaif-idempotency": "required",
+        "x-slaif-mutation": true,
         "x-slaif-required-scopes": [
           "collection-view:delete"
         ]
@@ -2549,6 +2555,8 @@
           }
         ],
         "summary": "Get Collection View",
+        "x-slaif-idempotency": "not-applicable",
+        "x-slaif-mutation": false,
         "x-slaif-required-scopes": [
           "collection-view:read"
         ]
@@ -2697,6 +2705,8 @@
           }
         ],
         "summary": "Update Collection View",
+        "x-slaif-idempotency": "required",
+        "x-slaif-mutation": true,
         "x-slaif-required-scopes": [
           "collection-view:write"
         ]
@@ -2829,6 +2839,8 @@
           }
         ],
         "summary": "List Content Items",
+        "x-slaif-idempotency": "not-applicable",
+        "x-slaif-mutation": false,
         "x-slaif-required-scopes": [
           "content-item:read"
         ]
@@ -2978,6 +2990,8 @@
           }
         ],
         "summary": "Create Content Item",
+        "x-slaif-idempotency": "required",
+        "x-slaif-mutation": true,
         "x-slaif-required-scopes": [
           "content-item:create"
         ]
@@ -3128,6 +3142,8 @@
           }
         ],
         "summary": "Delete Content Item",
+        "x-slaif-idempotency": "required",
+        "x-slaif-mutation": true,
         "x-slaif-required-scopes": [
           "content-item:delete"
         ]
@@ -3254,6 +3270,8 @@
           }
         ],
         "summary": "Get Content Item",
+        "x-slaif-idempotency": "not-applicable",
+        "x-slaif-mutation": false,
         "x-slaif-required-scopes": [
           "content-item:read"
         ]
@@ -3402,6 +3420,8 @@
           }
         ],
         "summary": "Update Content Item",
+        "x-slaif-idempotency": "required",
+        "x-slaif-mutation": true,
         "x-slaif-required-scopes": [
           "content-item:write"
         ]
@@ -3534,6 +3554,8 @@
           }
         ],
         "summary": "List Content Item Relations",
+        "x-slaif-idempotency": "not-applicable",
+        "x-slaif-mutation": false,
         "x-slaif-required-scopes": [
           "content-item:read"
         ]
@@ -3682,6 +3704,8 @@
           }
         ],
         "summary": "Create Content Item Relation",
+        "x-slaif-idempotency": "required",
+        "x-slaif-mutation": true,
         "x-slaif-required-scopes": [
           "relationship:write"
         ]
@@ -3842,6 +3866,8 @@
           }
         ],
         "summary": "Delete Content Item Relation",
+        "x-slaif-idempotency": "required",
+        "x-slaif-mutation": true,
         "x-slaif-required-scopes": [
           "relationship:write"
         ]
@@ -3978,6 +4004,8 @@
           }
         ],
         "summary": "Get Content Item Relation",
+        "x-slaif-idempotency": "not-applicable",
+        "x-slaif-mutation": false,
         "x-slaif-required-scopes": [
           "content-item:read"
         ]
@@ -4136,6 +4164,8 @@
           }
         ],
         "summary": "Update Content Item Relation",
+        "x-slaif-idempotency": "required",
+        "x-slaif-mutation": true,
         "x-slaif-required-scopes": [
           "relationship:write"
         ]
@@ -4268,6 +4298,8 @@
           }
         ],
         "summary": "List Content Item Translations",
+        "x-slaif-idempotency": "not-applicable",
+        "x-slaif-mutation": false,
         "x-slaif-required-scopes": [
           "translation:read"
         ]
@@ -4416,6 +4448,8 @@
           }
         ],
         "summary": "Create Content Item Translation",
+        "x-slaif-idempotency": "required",
+        "x-slaif-mutation": true,
         "x-slaif-required-scopes": [
           "translation:write"
         ]
@@ -4576,6 +4610,8 @@
           }
         ],
         "summary": "Delete Content Item Translation",
+        "x-slaif-idempotency": "required",
+        "x-slaif-mutation": true,
         "x-slaif-required-scopes": [
           "translation:write"
         ]
@@ -4712,6 +4748,8 @@
           }
         ],
         "summary": "Get Content Item Translation",
+        "x-slaif-idempotency": "not-applicable",
+        "x-slaif-mutation": false,
         "x-slaif-required-scopes": [
           "translation:read"
         ]
@@ -4870,6 +4908,8 @@
           }
         ],
         "summary": "Update Content Item Translation",
+        "x-slaif-idempotency": "required",
+        "x-slaif-mutation": true,
         "x-slaif-required-scopes": [
           "translation:write"
         ]
@@ -4990,6 +5030,8 @@
           }
         ],
         "summary": "List Field Primitives",
+        "x-slaif-idempotency": "not-applicable",
+        "x-slaif-mutation": false,
         "x-slaif-required-scopes": [
           "validation:read"
         ]
@@ -5111,6 +5153,8 @@
           }
         ],
         "summary": "List Content Types",
+        "x-slaif-idempotency": "not-applicable",
+        "x-slaif-mutation": false,
         "x-slaif-required-scopes": [
           "content-model:read"
         ]
@@ -5250,6 +5294,8 @@
           }
         ],
         "summary": "Create Content Type",
+        "x-slaif-idempotency": "required",
+        "x-slaif-mutation": true,
         "x-slaif-required-scopes": [
           "content-model:create"
         ]
@@ -5400,6 +5446,8 @@
           }
         ],
         "summary": "Delete Content Type",
+        "x-slaif-idempotency": "required",
+        "x-slaif-mutation": true,
         "x-slaif-required-scopes": [
           "content-model:delete"
         ]
@@ -5526,6 +5574,8 @@
           }
         ],
         "summary": "Get Content Type",
+        "x-slaif-idempotency": "not-applicable",
+        "x-slaif-mutation": false,
         "x-slaif-required-scopes": [
           "content-model:read"
         ]
@@ -5674,6 +5724,8 @@
           }
         ],
         "summary": "Update Content Type",
+        "x-slaif-idempotency": "required",
+        "x-slaif-mutation": true,
         "x-slaif-required-scopes": [
           "content-model:write"
         ]
@@ -5806,6 +5858,8 @@
           }
         ],
         "summary": "List Field Definitions",
+        "x-slaif-idempotency": "not-applicable",
+        "x-slaif-mutation": false,
         "x-slaif-required-scopes": [
           "content-model:read"
         ]
@@ -5954,6 +6008,8 @@
           }
         ],
         "summary": "Create Field Definition",
+        "x-slaif-idempotency": "required",
+        "x-slaif-mutation": true,
         "x-slaif-required-scopes": [
           "field-definition:create"
         ]
@@ -6114,6 +6170,8 @@
           }
         ],
         "summary": "Delete Field Definition",
+        "x-slaif-idempotency": "required",
+        "x-slaif-mutation": true,
         "x-slaif-required-scopes": [
           "field-definition:delete"
         ]
@@ -6250,6 +6308,8 @@
           }
         ],
         "summary": "Get Field Definition",
+        "x-slaif-idempotency": "not-applicable",
+        "x-slaif-mutation": false,
         "x-slaif-required-scopes": [
           "content-model:read"
         ]
@@ -6408,6 +6468,8 @@
           }
         ],
         "summary": "Update Field Definition",
+        "x-slaif-idempotency": "required",
+        "x-slaif-mutation": true,
         "x-slaif-required-scopes": [
           "field-definition:write"
         ]
@@ -6528,6 +6590,8 @@
           }
         ],
         "summary": "List Media",
+        "x-slaif-idempotency": "not-applicable",
+        "x-slaif-mutation": false,
         "x-slaif-required-scopes": [
           "media:read"
         ]
@@ -6639,6 +6703,8 @@
         },
         "security": [],
         "summary": "Agent Openapi",
+        "x-slaif-idempotency": "not-applicable",
+        "x-slaif-mutation": false,
         "x-slaif-required-scopes": []
       }
     },
@@ -6757,6 +6823,8 @@
           }
         ],
         "summary": "List Pages",
+        "x-slaif-idempotency": "not-applicable",
+        "x-slaif-mutation": false,
         "x-slaif-required-scopes": [
           "page:read"
         ]
@@ -6896,6 +6964,8 @@
           }
         ],
         "summary": "Create Page",
+        "x-slaif-idempotency": "required",
+        "x-slaif-mutation": true,
         "x-slaif-required-scopes": [
           "page:create"
         ]
@@ -7028,6 +7098,8 @@
           }
         ],
         "summary": "List Components",
+        "x-slaif-idempotency": "not-applicable",
+        "x-slaif-mutation": false,
         "x-slaif-required-scopes": [
           "composition:read"
         ]
@@ -7176,6 +7248,8 @@
           }
         ],
         "summary": "Create Component",
+        "x-slaif-idempotency": "required",
+        "x-slaif-mutation": true,
         "x-slaif-required-scopes": [
           "component-structure:create"
         ]
@@ -7293,6 +7367,8 @@
           }
         ],
         "summary": "Get Permissions",
+        "x-slaif-idempotency": "not-applicable",
+        "x-slaif-mutation": false,
         "x-slaif-required-scopes": [
           "site:read"
         ]
@@ -7441,6 +7517,8 @@
           }
         ],
         "summary": "Create Preview Run",
+        "x-slaif-idempotency": "required",
+        "x-slaif-mutation": true,
         "x-slaif-required-scopes": [
           "preview:inspect"
         ]
@@ -7577,6 +7655,8 @@
           }
         ],
         "summary": "Get Preview Run",
+        "x-slaif-idempotency": "not-applicable",
+        "x-slaif-mutation": false,
         "x-slaif-required-scopes": [
           "preview:inspect"
         ]
@@ -7709,6 +7789,8 @@
           }
         ],
         "summary": "List Preview Run Artifacts",
+        "x-slaif-idempotency": "not-applicable",
+        "x-slaif-mutation": false,
         "x-slaif-required-scopes": [
           "preview:inspect"
         ]
@@ -7848,6 +7930,8 @@
           }
         ],
         "summary": "Get Preview Run Artifact Bytes",
+        "x-slaif-idempotency": "not-applicable",
+        "x-slaif-mutation": false,
         "x-slaif-required-scopes": [
           "preview:inspect"
         ]
@@ -7965,6 +8049,8 @@
           }
         ],
         "summary": "Get Session",
+        "x-slaif-idempotency": "not-applicable",
+        "x-slaif-mutation": false,
         "x-slaif-required-scopes": []
       }
     }

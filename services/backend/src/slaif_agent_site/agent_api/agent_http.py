@@ -80,6 +80,7 @@ from slaif_agent_site.errors import (
     AuthenticationError,
     AuthorizationError,
     DomainValidationError,
+    FieldDependenciesError,
     IdempotencyKeyInvalidError,
     IdempotencyKeyRequiredError,
     IdempotencyMismatchError,
@@ -87,6 +88,7 @@ from slaif_agent_site.errors import (
     ResourceConflictError,
     ResourceNotFoundError,
     ServiceUnavailableError,
+    TypeDependenciesError,
 )
 
 router = APIRouter(prefix="/api/agent/v1")
@@ -366,6 +368,10 @@ async def _execute_mutation(
         if exc.reason is ContentModelServiceReason.CONFLICT:
             raise ResourceConflictError() from None
         if exc.reason is ContentModelServiceReason.VALIDATION:
+            if exc.code == "FIELD_DEPENDENCIES":
+                raise FieldDependenciesError() from None
+            if exc.code == "TYPE_DEPENDENCIES":
+                raise TypeDependenciesError() from None
             raise DomainValidationError() from None
         if exc.reason is ContentModelServiceReason.AUTHORIZATION:
             raise AuthorizationError() from None
