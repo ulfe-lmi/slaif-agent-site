@@ -76,6 +76,27 @@ def _semantic_constraint_sql() -> str:
                 OR (action = 'CONTENT_ITEM_TRANSLATION_DELETED'
                     AND resource_type = 'content_item_translation' AND http_method = 'DELETE'
                     AND response_status = 200 AND quota_kind = 'delete')
+                -- 047 cannot create these later actions, but its predecessor
+                -- state must retain immutable rows created by 048 before a
+                -- 048 -> 047 -> 048 migration round trip.
+                OR (action = 'ITEM_RELATION_CREATED'
+                    AND resource_type = 'item_relation' AND http_method = 'POST'
+                    AND response_status = 201 AND quota_kind = 'mutation')
+                OR (action = 'ITEM_RELATION_UPDATED'
+                    AND resource_type = 'item_relation' AND http_method = 'PATCH'
+                    AND response_status = 200 AND quota_kind = 'mutation')
+                OR (action = 'ITEM_RELATION_DELETED'
+                    AND resource_type = 'item_relation' AND http_method = 'DELETE'
+                    AND response_status = 200 AND quota_kind = 'delete')
+                OR (action = 'COLLECTION_VIEW_CREATED'
+                    AND resource_type = 'collection_view' AND http_method = 'POST'
+                    AND response_status = 201 AND quota_kind = 'mutation')
+                OR (action = 'COLLECTION_VIEW_UPDATED'
+                    AND resource_type = 'collection_view' AND http_method = 'PATCH'
+                    AND response_status = 200 AND quota_kind = 'mutation')
+                OR (action = 'COLLECTION_VIEW_DELETED'
+                    AND resource_type = 'collection_view' AND http_method = 'DELETE'
+                    AND response_status = 200 AND quota_kind = 'delete')
             )
     """
 

@@ -30,7 +30,7 @@ from slaif_agent_site.agent_state.mutations import (
     mutation_digest,
 )
 from slaif_agent_site.agent_state.reads import execute_agent_read
-from slaif_agent_site.bootstrap.service import reconcile, upgrade
+from slaif_agent_site.bootstrap.service import reconcile, status, upgrade
 from slaif_agent_site.config import ServiceSettings
 from slaif_agent_site.content_model.models import (
     CreateContentTypeRequest,
@@ -1310,6 +1310,339 @@ async def test_agent_046_047_migration_round_trip_preserves_contract_and_state(
 
 
 @pytest.mark.asyncio
+async def test_agent_048_data_bearing_round_trip_preserves_relations_views_and_audit(
+    agent_site_database: AgentSiteDatabase,
+) -> None:
+    """A 048 workspace survives a real 048 -> 047 -> 048 transition."""
+
+    database = agent_site_database
+    _token, seeded = await _seed(database)
+    scopes = [
+        "content-model:create",
+        "content-model:read",
+        "field-definition:create",
+        "content-item:create",
+        "content-item:read",
+        "relationship:write",
+        "collection-view:read",
+        "collection-view:create",
+        "collection-view:write",
+        "collection-view:delete",
+    ]
+    token, workspace_id = await _workspace_capability(
+        database, seeded, scopes, "Agent 048 Data Round Trip Workspace"
+    )
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        capability_id = await owner.fetchval(
+            "SELECT id FROM control.capability WHERE workspace_id=$1", workspace_id
+        )
+        await owner.execute(
+            "UPDATE control.capability SET request_quota=100, mutation_quota=100, "
+            "delete_quota=20 WHERE id=$1",
+            capability_id,
+        )
+
+    agent_pool = await database.role_pool("slaif_agent_runtime")
+    reviewer_pool = await database.role_pool("slaif_reviewer")
+    app = create_agent_app(
+        settings=ServiceSettings.for_test(),
+        database_settings=_agent_settings(database),
+    )
+    headers = {"Authorization": f"Bearer {token}"}
+
+    async def cow_rows() -> tuple[tuple[Any, ...], tuple[Any, ...]]:
+        async with asyncpg_cow_session(
+            agent_pool, session_id=workspace_id, operation_id=uuid4()
+        ) as cow:
+            relations = tuple(
+                tuple(row)
+                for row in await cow.native.fetch(
+                    "SELECT id,site_id,source_item_id,field_definition_id,"
+                    "target_item_id,position,metadata,row_version "
+                    "FROM content.item_relation ORDER BY id"
+                )
+            )
+            views = tuple(
+                tuple(row)
+                for row in await cow.native.fetch(
+                    "SELECT id,site_id,type_id,key,filter_spec,sort_spec,"
+                    "projection_spec,pagination_spec,definition_version,row_version "
+                    "FROM content.collection_view ORDER BY id"
+                )
+            )
+        return relations, views
+
+    async def durable_rows() -> tuple[tuple[Any, ...], tuple[Any, ...]]:
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            idempotency = tuple(
+                tuple(row)
+                for row in await owner.fetch(
+                    "SELECT idempotency_key,operation_id,request_digest,status_code,"
+                    "resource_type,resource_id,response_body::text "
+                    "FROM control.agent_idempotency WHERE workspace_id=$1 "
+                    "ORDER BY idempotency_key",
+                    workspace_id,
+                )
+            )
+            audit = tuple(
+                tuple(row)
+                for row in await owner.fetch(
+                    "SELECT operation_id,capability_id,workspace_id,site_id,"
+                    "resource_type,resource_id,request_digest,response_status,action,"
+                    "http_method,quota_kind FROM audit.agent_mutation "
+                    "WHERE workspace_id=$1 ORDER BY operation_id",
+                    workspace_id,
+                )
+            )
+        return idempotency, audit
+
+    try:
+        async with app.router.lifespan_context(app):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://agent.test"
+            ) as client:
+                type_response = await client.post(
+                    "/api/agent/v1/content-model/types",
+                    headers={**headers, "Idempotency-Key": "roundtrip-type"},
+                    json={
+                        "key": "roundtrip-relations",
+                        "labels": {"en": "Round trip relations"},
+                        "slug_pattern": "/roundtrip/{slug}",
+                        "settings": {},
+                    },
+                )
+                assert type_response.status_code == 201, type_response.text
+                type_id = UUID(type_response.json()["record"]["id"])
+                field_response = await client.post(
+                    f"/api/agent/v1/content-model/types/{type_id}/fields",
+                    headers={**headers, "Idempotency-Key": "roundtrip-field"},
+                    json={
+                        "key": "related",
+                        "label": "Related",
+                        "field_type": "reference",
+                    },
+                )
+                assert field_response.status_code == 201, field_response.text
+                field_id = UUID(field_response.json()["record"]["id"])
+
+                async def create_item(slug: str) -> UUID:
+                    response = await client.post(
+                        f"/api/agent/v1/content-items/types/{type_id}",
+                        headers={**headers, "Idempotency-Key": f"roundtrip-{slug}"},
+                        json={
+                            "type_id": str(type_id),
+                            "slug": slug,
+                            "status": "DRAFT",
+                            "values": {},
+                        },
+                    )
+                    assert response.status_code == 201, response.text
+                    return UUID(response.json()["record"]["id"])
+
+                source_id = await create_item("source")
+                target_id = await create_item("target")
+                relation_path = f"/api/agent/v1/content-items/{source_id}/relations"
+                relation_payload = {
+                    "field_definition_id": str(field_id),
+                    "target_item_id": str(target_id),
+                }
+                relation_response = await client.post(
+                    relation_path,
+                    headers={**headers, "Idempotency-Key": "roundtrip-relation"},
+                    json=relation_payload,
+                )
+                assert relation_response.status_code == 201, relation_response.text
+                relation_result = relation_response.json()
+                relation_id = UUID(relation_result["record"]["id"])
+                relation_operation_id = UUID(relation_result["operation_id"])
+
+                view_path = f"/api/agent/v1/collection-views/types/{type_id}"
+                view_payload = {
+                    "type_id": str(type_id),
+                    "key": "roundtrip",
+                    "filter_spec": {},
+                    "sort_spec": {"field": "slug", "direction": "asc"},
+                    "projection_spec": {},
+                    "pagination_spec": {"limit": 10, "offset": 0},
+                }
+                view_response = await client.post(
+                    view_path,
+                    headers={**headers, "Idempotency-Key": "roundtrip-view"},
+                    json=view_payload,
+                )
+                assert view_response.status_code == 201, view_response.text
+                view_result = view_response.json()
+                view_id = UUID(view_result["record"]["id"])
+
+        content_before = await cow_rows()
+        durable_before = await durable_rows()
+        async with asyncpg_cow_reviewer(reviewer_pool) as reviewer:
+            operations_before = tuple(
+                sorted(await reviewer.operations(workspace_id, schema="content"))
+            )
+
+        await run_migration(
+            database.settings.resolved_owner_dsn(),
+            expected_database=database.name,
+            operation="downgrade",
+            revision="047_001",
+        )
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            assert (
+                await owner.fetchval(
+                    "SELECT version_num::text FROM control.alembic_version"
+                )
+                == "047_001"
+            )
+            assert await owner.fetchval(
+                "SELECT to_regprocedure($1)",
+                "control.slaif_agent_require_capability(uuid,text)",
+            )
+            assert not await owner.fetchval(
+                "SELECT to_regprocedure($1)",
+                "control.slaif_agent_require_capability(uuid)",
+            )
+            for signature in (
+                "content.slaif_agent_item_relation_create(uuid,uuid,uuid,uuid,integer,jsonb)",
+                "content.slaif_agent_collection_view_create(uuid,uuid,text,jsonb,jsonb,jsonb,jsonb,integer)",
+                "content.slaif_agent_relation_assert(uuid,uuid,uuid,uuid,text,boolean)",
+                "content.slaif_agent_collection_view_query_validate(uuid,jsonb,jsonb,jsonb,jsonb)",
+            ):
+                assert not await owner.fetchval("SELECT to_regprocedure($1)", signature)
+            constraint = await owner.fetchval(
+                "SELECT pg_get_constraintdef(oid) FROM pg_constraint "
+                "WHERE conrelid='audit.agent_mutation'::regclass "
+                "AND conname='agent_mutation_semantic_shape'"
+            )
+            assert "ITEM_RELATION_CREATED" in constraint
+            assert "COLLECTION_VIEW_CREATED" in constraint
+            assert "CONTENT_ITEM_TRANSLATION_CREATED" in constraint
+
+        assert await cow_rows() == content_before
+        assert await durable_rows() == durable_before
+        async with asyncpg_cow_reviewer(reviewer_pool) as reviewer:
+            assert (
+                tuple(sorted(await reviewer.operations(workspace_id, schema="content")))
+                == operations_before
+            )
+
+        relation_audit = next(
+            row for row in durable_before[1] if row[0] == relation_operation_id
+        )
+        invalid_response = {
+            "record": {"id": str(relation_id)},
+            "operation_id": str(relation_operation_id),
+            "action": "ITEM_RELATION_CREATED",
+        }
+        with pytest.raises(asyncpg.PostgresError, match="INVALID_SEMANTIC_COMPLETION"):
+            async with agent_pool.acquire() as connection:
+                await connection.fetchval(
+                    "SELECT control.slaif_agent_idempotency_complete("
+                    "$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)",
+                    capability_id,
+                    workspace_id,
+                    relation_audit[0].hex,
+                    relation_audit[6],
+                    relation_operation_id,
+                    201,
+                    json.dumps(invalid_response),
+                    "item_relation",
+                    relation_id,
+                    seeded["site_id"],
+                    "ITEM_RELATION_CREATED",
+                    "POST",
+                    "mutation",
+                )
+        assert await durable_rows() == durable_before
+
+        await run_migration(
+            database.settings.resolved_owner_dsn(),
+            expected_database=database.name,
+            operation="upgrade",
+            revision="head",
+        )
+        await reconcile(database.settings)
+        final_status = await status(database.settings)
+        assert final_status.revision == "048_001"
+        assert final_status.state.value == "HARDENED"
+        assert final_status.safe
+        assert await cow_rows() == content_before
+        assert await durable_rows() == durable_before
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            for signature in (
+                "content.slaif_agent_item_relation_create(uuid,uuid,uuid,uuid,integer,jsonb)",
+                "content.slaif_agent_collection_view_create(uuid,uuid,text,jsonb,jsonb,jsonb,jsonb,integer)",
+            ):
+                grant = await owner.fetchrow(
+                    "SELECT pg_get_userbyid(proowner), "
+                    "has_function_privilege('slaif_agent_runtime',$1,'EXECUTE'), "
+                    "has_function_privilege('public',$1,'EXECUTE') "
+                    "FROM pg_proc WHERE oid=$1::regprocedure",
+                    signature,
+                )
+                assert tuple(grant) == ("slaif_owner", True, False)
+            for signature in (
+                "content.slaif_agent_relation_assert(uuid,uuid,uuid,uuid,text,boolean)",
+                "content.slaif_agent_collection_view_query_validate(uuid,jsonb,jsonb,jsonb,jsonb)",
+            ):
+                assert not await owner.fetchval(
+                    "SELECT has_function_privilege('slaif_agent_runtime',$1,'EXECUTE')",
+                    signature,
+                )
+
+        app_after = create_agent_app(
+            settings=ServiceSettings.for_test(),
+            database_settings=_agent_settings(database),
+        )
+        async with app_after.router.lifespan_context(app_after):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app_after),
+                base_url="http://agent-after-migration.test",
+            ) as client:
+                relation_item_path = f"{relation_path}/{relation_id}"
+                assert (await client.get(relation_path, headers=headers)).json() == [
+                    relation_result["record"]
+                ]
+                assert (
+                    await client.get(relation_item_path, headers=headers)
+                ).json() == relation_result["record"]
+                assert (
+                    await client.get(
+                        f"/api/agent/v1/collection-views/{view_id}",
+                        headers=headers,
+                    )
+                ).json() == view_result["record"]
+                assert (
+                    await client.post(
+                        relation_path,
+                        headers={
+                            **headers,
+                            "Idempotency-Key": "roundtrip-relation",
+                        },
+                        json=relation_payload,
+                    )
+                ).json() == relation_result
+                assert (
+                    await client.post(
+                        view_path,
+                        headers={**headers, "Idempotency-Key": "roundtrip-view"},
+                        json=view_payload,
+                    )
+                ).json() == view_result
+    finally:
+        await reviewer_pool.close()
+        await agent_pool.close()
+
+
+@pytest.mark.asyncio
 async def test_agent_model_and_translation_wrappers_require_exact_scopes(
     agent_site_database: AgentSiteDatabase,
 ) -> None:
@@ -2079,6 +2412,1076 @@ async def test_agent_relation_and_collection_view_crud_is_cow_bound_and_audited(
             ]
     finally:
         pass
+
+
+@pytest.mark.asyncio
+async def test_agent_relation_and_view_hostile_matrix_and_races(
+    agent_site_database: AgentSiteDatabase,
+) -> None:
+    """Prove relation/view wrappers deny hostile inputs without residue."""
+
+    database = agent_site_database
+    _token, seeded = await _seed(database)
+    scopes = [
+        "content-model:create",
+        "content-model:read",
+        "content-model:write",
+        "field-definition:create",
+        "field-definition:write",
+        "content-item:create",
+        "content-item:read",
+        "relationship:write",
+        "collection-view:read",
+        "collection-view:create",
+        "collection-view:write",
+        "collection-view:delete",
+    ]
+    token, workspace_id = await _workspace_capability(
+        database, seeded, scopes, "Agent Relation View Hostile Matrix Workspace"
+    )
+    other_token, other_workspace_id = await _workspace_capability(
+        database, seeded, scopes, "Agent Relation View Other Workspace"
+    )
+    read_only_token, _read_only_workspace_id = await _workspace_capability(
+        database,
+        seeded,
+        ["content-item:read", "collection-view:read"],
+        "Agent Relation View Read Only Workspace",
+    )
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        capability_id = await owner.fetchval(
+            "SELECT id FROM control.capability WHERE workspace_id=$1", workspace_id
+        )
+        other_capability_id = await owner.fetchval(
+            "SELECT id FROM control.capability WHERE workspace_id=$1",
+            other_workspace_id,
+        )
+        await owner.execute(
+            "UPDATE control.capability SET request_quota=500, mutation_quota=200, "
+            "delete_quota=100 WHERE id=$1",
+            capability_id,
+        )
+        foreign_item_id = uuid4()
+        await owner.execute(
+            "INSERT INTO content.content_item_base "
+            '(id,site_id,type_id,slug,status,type_definition_version,"values") '
+            "VALUES ($1,$2,$3,'foreign-target','DRAFT',1,'{}'::jsonb)",
+            foreign_item_id,
+            seeded["site_b_id"],
+            seeded["type_b_id"],
+        )
+
+    agent_pool = await database.role_pool("slaif_agent_runtime")
+    reviewer_pool = await database.role_pool("slaif_reviewer")
+    app_one = create_agent_app(
+        settings=ServiceSettings.for_test(),
+        database_settings=_agent_settings(database),
+    )
+    app_two = create_agent_app(
+        settings=ServiceSettings.for_test(),
+        database_settings=_agent_settings(database),
+    )
+    headers = {"Authorization": f"Bearer {token}"}
+
+    async def relation_ids(source_id: UUID) -> tuple[UUID, ...]:
+        async with asyncpg_cow_session(
+            agent_pool, session_id=workspace_id, operation_id=uuid4()
+        ) as cow:
+            return tuple(
+                row[0]
+                for row in await cow.native.fetch(
+                    "SELECT id FROM content.item_relation "
+                    "WHERE source_item_id=$1 ORDER BY id",
+                    source_id,
+                )
+            )
+
+    async def durable_state() -> tuple[int, int, int, int]:
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            row = await owner.fetchrow(
+                "SELECT "
+                "(SELECT count(*) FROM control.agent_idempotency "
+                "WHERE workspace_id=$1),"
+                "(SELECT count(*) FROM audit.agent_mutation "
+                "WHERE workspace_id=$1),"
+                "(SELECT mutation_used FROM control.capability WHERE id=$2),"
+                "(SELECT delete_used FROM control.capability WHERE id=$2)",
+                workspace_id,
+                capability_id,
+            )
+        return tuple(row)
+
+    async def assert_rejected_without_residue(
+        response: httpx.Response,
+        *,
+        expected_status: int | tuple[int, ...],
+        source_id: UUID,
+        relations_before: tuple[UUID, ...],
+        durable_before: tuple[int, int, int, int],
+    ) -> None:
+        expected = (
+            (expected_status,) if isinstance(expected_status, int) else expected_status
+        )
+        assert response.status_code in expected, response.text
+        assert await relation_ids(source_id) == relations_before
+        assert await durable_state() == durable_before
+
+    try:
+        async with app_one.router.lifespan_context(app_one):
+            async with app_two.router.lifespan_context(app_two):
+                async with (
+                    httpx.AsyncClient(
+                        transport=httpx.ASGITransport(app=app_one),
+                        base_url="http://agent-one.test",
+                    ) as client_one,
+                    httpx.AsyncClient(
+                        transport=httpx.ASGITransport(app=app_two),
+                        base_url="http://agent-two.test",
+                    ) as client_two,
+                ):
+
+                    async def create_type(
+                        client: httpx.AsyncClient,
+                        auth_token: str,
+                        key: str,
+                        idempotency_key: str,
+                    ) -> UUID:
+                        response = await client.post(
+                            "/api/agent/v1/content-model/types",
+                            headers={
+                                "Authorization": f"Bearer {auth_token}",
+                                "Idempotency-Key": idempotency_key,
+                            },
+                            json={
+                                "key": key,
+                                "labels": {"en": key},
+                                "slug_pattern": f"/{key}/{{slug}}",
+                                "settings": {},
+                            },
+                        )
+                        assert response.status_code == 201, response.text
+                        return UUID(response.json()["record"]["id"])
+
+                    async def create_item(
+                        client: httpx.AsyncClient,
+                        auth_token: str,
+                        type_id: UUID,
+                        slug: str,
+                        idempotency_key: str,
+                    ) -> UUID:
+                        response = await client.post(
+                            f"/api/agent/v1/content-items/types/{type_id}",
+                            headers={
+                                "Authorization": f"Bearer {auth_token}",
+                                "Idempotency-Key": idempotency_key,
+                            },
+                            json={
+                                "type_id": str(type_id),
+                                "slug": slug,
+                                "status": "DRAFT",
+                                "values": {},
+                            },
+                        )
+                        assert response.status_code == 201, response.text
+                        return UUID(response.json()["record"]["id"])
+
+                    source_type_id = await create_type(
+                        client_one, token, "matrix-source", "matrix-source-type"
+                    )
+                    target_type_id = await create_type(
+                        client_one, token, "matrix-target", "matrix-target-type"
+                    )
+                    related_field_response = await client_one.post(
+                        f"/api/agent/v1/content-model/types/{source_type_id}/fields",
+                        headers={
+                            **headers,
+                            "Idempotency-Key": "matrix-related-field",
+                        },
+                        json={
+                            "key": "related",
+                            "label": "Related",
+                            "field_type": "reference",
+                            "validation": {"target_type_id": str(target_type_id)},
+                        },
+                    )
+                    assert related_field_response.status_code == 201, (
+                        related_field_response.text
+                    )
+                    related_field_id = UUID(
+                        related_field_response.json()["record"]["id"]
+                    )
+                    plain_field_response = await client_one.post(
+                        f"/api/agent/v1/content-model/types/{source_type_id}/fields",
+                        headers={**headers, "Idempotency-Key": "matrix-plain-field"},
+                        json={
+                            "key": "plain",
+                            "label": "Plain",
+                            "field_type": "short_text",
+                        },
+                    )
+                    assert plain_field_response.status_code == 201, (
+                        plain_field_response.text
+                    )
+                    _plain_field_id = UUID(plain_field_response.json()["record"]["id"])
+                    localized_field_response = await client_one.post(
+                        f"/api/agent/v1/content-model/types/{source_type_id}/fields",
+                        headers={
+                            **headers,
+                            "Idempotency-Key": "matrix-localized-field",
+                        },
+                        json={
+                            "key": "localized",
+                            "label": "Localized",
+                            "field_type": "short_text",
+                            "localized": True,
+                        },
+                    )
+                    assert localized_field_response.status_code == 201, (
+                        localized_field_response.text
+                    )
+                    target_field_response = await client_one.post(
+                        f"/api/agent/v1/content-model/types/{target_type_id}/fields",
+                        headers={
+                            **headers,
+                            "Idempotency-Key": "matrix-target-field",
+                        },
+                        json={
+                            "key": "target-only",
+                            "label": "Target only",
+                            "field_type": "short_text",
+                        },
+                    )
+                    assert target_field_response.status_code == 201, (
+                        target_field_response.text
+                    )
+                    target_field_id = UUID(target_field_response.json()["record"]["id"])
+
+                    source_id = await create_item(
+                        client_one,
+                        token,
+                        source_type_id,
+                        "source",
+                        "matrix-source-item",
+                    )
+                    probe_source_id = await create_item(
+                        client_one, token, source_type_id, "probe", "matrix-probe-item"
+                    )
+                    race_source_id = await create_item(
+                        client_one, token, source_type_id, "race", "matrix-race-item"
+                    )
+                    stale_source_id = await create_item(
+                        client_one, token, source_type_id, "stale", "matrix-stale-item"
+                    )
+                    target_one_id = await create_item(
+                        client_one,
+                        token,
+                        target_type_id,
+                        "target-one",
+                        "matrix-target-one",
+                    )
+                    target_two_id = await create_item(
+                        client_one,
+                        token,
+                        target_type_id,
+                        "target-two",
+                        "matrix-target-two",
+                    )
+                    target_three_id = await create_item(
+                        client_one,
+                        token,
+                        target_type_id,
+                        "target-three",
+                        "matrix-target-three",
+                    )
+                    wrong_target_id = await create_item(
+                        client_one,
+                        token,
+                        source_type_id,
+                        "wrong-target",
+                        "matrix-wrong-target",
+                    )
+
+                    other_type_id = await create_type(
+                        client_two,
+                        other_token,
+                        "other-workspace-type",
+                        "other-workspace-type",
+                    )
+                    other_item_id = await create_item(
+                        client_two,
+                        other_token,
+                        other_type_id,
+                        "other-workspace-item",
+                        "other-workspace-item",
+                    )
+
+                    relation_path = f"/api/agent/v1/content-items/{source_id}/relations"
+                    relation_payload = {
+                        "field_definition_id": str(related_field_id),
+                        "target_item_id": str(target_one_id),
+                    }
+                    relation_response = await client_one.post(
+                        relation_path,
+                        headers={**headers, "Idempotency-Key": "matrix-valid-relation"},
+                        json=relation_payload,
+                    )
+                    assert relation_response.status_code == 201, relation_response.text
+                    relation_result = relation_response.json()
+                    relation_id = UUID(relation_result["record"]["id"])
+
+                    async def reject_relation(
+                        key: str,
+                        payload: dict[str, Any],
+                        source: UUID = probe_source_id,
+                    ) -> None:
+                        before_relations = await relation_ids(source)
+                        before_durable = await durable_state()
+                        response = await client_one.post(
+                            f"/api/agent/v1/content-items/{source}/relations",
+                            headers={**headers, "Idempotency-Key": key},
+                            json=payload,
+                        )
+                        await assert_rejected_without_residue(
+                            response,
+                            expected_status=(403, 404, 422),
+                            source_id=source,
+                            relations_before=before_relations,
+                            durable_before=before_durable,
+                        )
+
+                    await reject_relation(
+                        "matrix-wrong-field",
+                        {
+                            "field_definition_id": str(target_field_id),
+                            "target_item_id": str(target_one_id),
+                        },
+                    )
+                    await reject_relation(
+                        "matrix-wrong-target-type",
+                        {
+                            "field_definition_id": str(related_field_id),
+                            "target_item_id": str(wrong_target_id),
+                        },
+                    )
+                    await reject_relation(
+                        "matrix-invalid-position",
+                        {
+                            **relation_payload,
+                            "position": -1,
+                        },
+                    )
+                    await reject_relation(
+                        "matrix-metadata-array",
+                        {
+                            **relation_payload,
+                            "metadata": [],
+                        },
+                    )
+                    await reject_relation(
+                        "matrix-metadata-marker",
+                        {
+                            **relation_payload,
+                            "metadata": {"constructor": "prototype"},
+                        },
+                    )
+                    await reject_relation(
+                        "matrix-metadata-size",
+                        {
+                            **relation_payload,
+                            "metadata": {"blob": "x" * 5000},
+                        },
+                    )
+                    await reject_relation(
+                        "matrix-cross-site-target",
+                        {
+                            **relation_payload,
+                            "target_item_id": str(foreign_item_id),
+                        },
+                    )
+                    await reject_relation(
+                        "matrix-cross-workspace-target",
+                        {
+                            **relation_payload,
+                            "target_item_id": str(other_item_id),
+                        },
+                    )
+
+                    before_relations = await relation_ids(source_id)
+                    before_durable = await durable_state()
+                    cardinality = await client_one.post(
+                        relation_path,
+                        headers={**headers, "Idempotency-Key": "matrix-cardinality"},
+                        json={
+                            **relation_payload,
+                            "target_item_id": str(target_two_id),
+                        },
+                    )
+                    await assert_rejected_without_residue(
+                        cardinality,
+                        expected_status=(403, 422),
+                        source_id=source_id,
+                        relations_before=before_relations,
+                        durable_before=before_durable,
+                    )
+                    before_relations = await relation_ids(source_id)
+                    before_durable = await durable_state()
+                    mismatch = await client_one.post(
+                        relation_path,
+                        headers={
+                            **headers,
+                            "Idempotency-Key": "matrix-valid-relation",
+                        },
+                        json={**relation_payload, "target_item_id": str(target_two_id)},
+                    )
+                    assert mismatch.status_code == 409, mismatch.text
+                    assert await relation_ids(source_id) == before_relations
+                    assert await durable_state() == before_durable
+                    wrong_relation_path = (
+                        f"/api/agent/v1/content-items/{target_one_id}"
+                        f"/relations/{relation_id}"
+                    )
+                    wrong_relation_get = await client_one.get(
+                        wrong_relation_path, headers=headers
+                    )
+                    assert wrong_relation_get.status_code == 404, (
+                        wrong_relation_get.text
+                    )
+
+                    await _set_resource_constraints(
+                        database,
+                        workspace_id,
+                        {
+                            "allowed_type_ids": [str(target_type_id)],
+                            "allowed_type_keys": ["matrix-target"],
+                        },
+                    )
+                    denied_before = await durable_state()
+                    denied_source = await client_one.get(relation_path, headers=headers)
+                    assert denied_source.status_code == 403, denied_source.text
+                    assert await durable_state() == denied_before
+                    await _set_resource_constraints(
+                        database,
+                        workspace_id,
+                        {
+                            "allowed_type_ids": [str(source_type_id)],
+                            "allowed_type_keys": ["matrix-source"],
+                        },
+                    )
+                    denied_before = await durable_state()
+                    denied_target = await client_one.post(
+                        f"/api/agent/v1/content-items/{probe_source_id}/relations",
+                        headers={**headers, "Idempotency-Key": "matrix-target-denied"},
+                        json=relation_payload,
+                    )
+                    assert denied_target.status_code == 403, denied_target.text
+                    assert await durable_state() == denied_before
+
+                    await _set_resource_constraints(database, workspace_id, {})
+                    async with owner_connection(
+                        database.settings.resolved_owner_dsn(),
+                        expected_database=database.name,
+                    ) as owner:
+                        await owner.execute(
+                            "UPDATE control.capability SET "
+                            "mutation_quota=mutation_used "
+                            "WHERE id=$1",
+                            capability_id,
+                        )
+                    exhausted_before = await durable_state()
+                    exhausted = await client_one.post(
+                        f"/api/agent/v1/content-items/{probe_source_id}/relations",
+                        headers={
+                            **headers,
+                            "Idempotency-Key": "matrix-mutation-exhausted",
+                        },
+                        json=relation_payload,
+                    )
+                    await assert_rejected_without_residue(
+                        exhausted,
+                        expected_status=429,
+                        source_id=probe_source_id,
+                        relations_before=(),
+                        durable_before=exhausted_before,
+                    )
+                    async with owner_connection(
+                        database.settings.resolved_owner_dsn(),
+                        expected_database=database.name,
+                    ) as owner:
+                        await owner.execute(
+                            "UPDATE control.capability SET mutation_quota=200 "
+                            "WHERE id=$1",
+                            capability_id,
+                        )
+
+                    view_path = f"/api/agent/v1/collection-views/types/{source_type_id}"
+                    valid_view_payload = {
+                        "type_id": str(source_type_id),
+                        "key": "matrix-valid-view",
+                        "filter_spec": {"field": "plain", "op": "eq", "value": "ok"},
+                        "sort_spec": {"field": "slug", "direction": "asc"},
+                        "projection_spec": {"fields": ["plain"]},
+                        "pagination_spec": {"limit": 10, "offset": 0},
+                    }
+                    valid_view_response = await client_one.post(
+                        view_path,
+                        headers={**headers, "Idempotency-Key": "matrix-valid-view"},
+                        json=valid_view_payload,
+                    )
+                    assert valid_view_response.status_code == 201, (
+                        valid_view_response.text
+                    )
+                    valid_view_result = valid_view_response.json()
+                    view_id = UUID(valid_view_result["record"]["id"])
+
+                    async def reject_view(
+                        key: str, payload: dict[str, Any], expected_status: int = 422
+                    ) -> None:
+                        before = await durable_state()
+                        response = await client_one.post(
+                            view_path,
+                            headers={**headers, "Idempotency-Key": key},
+                            json={**valid_view_payload, **payload, "key": key},
+                        )
+                        assert response.status_code == expected_status, response.text
+                        assert await durable_state() == before
+
+                    await reject_view(
+                        "matrix-view-unknown-field",
+                        {"filter_spec": {"field": "missing", "op": "eq", "value": "x"}},
+                    )
+                    await reject_view(
+                        "matrix-view-localized",
+                        {
+                            "filter_spec": {
+                                "field": "localized",
+                                "op": "eq",
+                                "value": "x",
+                            }
+                        },
+                    )
+                    await reject_view(
+                        "matrix-view-operator",
+                        {"filter_spec": {"field": "plain", "op": "gt", "value": "x"}},
+                    )
+                    await reject_view(
+                        "matrix-view-value-type",
+                        {"filter_spec": {"field": "plain", "op": "eq", "value": 1}},
+                    )
+                    await reject_view(
+                        "matrix-view-sql",
+                        {
+                            "filter_spec": {
+                                "field": "plain",
+                                "op": "eq",
+                                "value": "x; SELECT 1",
+                            }
+                        },
+                    )
+                    await reject_view(
+                        "matrix-view-prototype",
+                        {
+                            "filter_spec": {
+                                "field": "plain",
+                                "op": "eq",
+                                "value": "__proto__",
+                            }
+                        },
+                    )
+                    await reject_view(
+                        "matrix-view-clauses",
+                        {
+                            "filter_spec": {
+                                "or": [{"status": "DRAFT"}] * 33,
+                            }
+                        },
+                    )
+                    deep_filter: dict[str, Any] = {"status": "DRAFT"}
+                    for _ in range(6):
+                        deep_filter = {"and": [deep_filter]}
+                    await reject_view("matrix-view-depth", {"filter_spec": deep_filter})
+                    await reject_view(
+                        "matrix-view-size",
+                        {
+                            "filter_spec": {
+                                "field": "plain",
+                                "op": "eq",
+                                "value": "x" * 5000,
+                            }
+                        },
+                    )
+                    await reject_view(
+                        "matrix-view-limit",
+                        {"pagination_spec": {"limit": 101, "offset": 0}},
+                    )
+                    await reject_view(
+                        "matrix-view-offset",
+                        {"pagination_spec": {"limit": 10, "offset": 10001}},
+                    )
+                    await reject_view(
+                        "matrix-view-float-pagination",
+                        {"pagination_spec": {"limit": 1.5, "offset": 0}},
+                    )
+                    await reject_view(
+                        "matrix-view-projection-duplicate",
+                        {"projection_spec": {"fields": ["plain", "plain"]}},
+                    )
+                    await reject_view(
+                        "matrix-view-projection-localized",
+                        {"projection_spec": {"fields": ["localized"]}},
+                    )
+                    await reject_view(
+                        "matrix-view-projection-unknown",
+                        {"projection_spec": {"fields": ["missing"]}},
+                    )
+                    duplicate_before = await durable_state()
+                    duplicate = await client_one.post(
+                        view_path,
+                        headers={**headers, "Idempotency-Key": "matrix-view-duplicate"},
+                        json=valid_view_payload,
+                    )
+                    assert duplicate.status_code == 409, duplicate.text
+                    assert await durable_state() == duplicate_before
+
+                    await _set_resource_constraints(
+                        database, workspace_id, {"delete_enabled": False}
+                    )
+                    delete_disabled_before = await durable_state()
+                    delete_disabled = await client_one.request(
+                        "DELETE",
+                        f"/api/agent/v1/content-items/{source_id}/relations/{relation_id}",
+                        headers={
+                            **headers,
+                            "Idempotency-Key": "matrix-delete-disabled",
+                        },
+                        json={"expected_row_version": 1},
+                    )
+                    assert delete_disabled.status_code == 403, delete_disabled.text
+                    assert await durable_state() == delete_disabled_before
+                    await _set_resource_constraints(
+                        database,
+                        workspace_id,
+                        {"delete_enabled": True, "max_deletes": 0},
+                    )
+                    delete_limit_before = await durable_state()
+                    delete_limited = await client_one.request(
+                        "DELETE",
+                        f"/api/agent/v1/content-items/{source_id}/relations/{relation_id}",
+                        headers={**headers, "Idempotency-Key": "matrix-delete-limited"},
+                        json={"expected_row_version": 1},
+                    )
+                    assert delete_limited.status_code == 429, delete_limited.text
+                    assert await durable_state() == delete_limit_before
+                    await _set_resource_constraints(database, workspace_id, {})
+
+                    read_only_create = await client_one.post(
+                        f"/api/agent/v1/content-items/{source_id}/relations",
+                        headers={
+                            "Authorization": f"Bearer {read_only_token}",
+                            "Idempotency-Key": "matrix-read-only-relation",
+                        },
+                        json=relation_payload,
+                    )
+                    assert read_only_create.status_code == 403, read_only_create.text
+                    read_only_view = await client_one.post(
+                        view_path,
+                        headers={
+                            "Authorization": f"Bearer {read_only_token}",
+                            "Idempotency-Key": "matrix-read-only-view",
+                        },
+                        json=valid_view_payload,
+                    )
+                    assert read_only_view.status_code == 403, read_only_view.text
+
+                    direct_calls: tuple[tuple[str, tuple[object, ...]], ...] = (
+                        (
+                            "SELECT * FROM content.slaif_agent_item_relation_list("
+                            "$1,$2)",
+                            (seeded["site_id"], source_id),
+                        ),
+                        (
+                            "SELECT * FROM content.slaif_agent_item_relation_get("
+                            "$1,$2,$3)",
+                            (seeded["site_id"], source_id, relation_id),
+                        ),
+                        (
+                            "SELECT * FROM content.slaif_agent_item_relation_create("
+                            "$1,$2,$3,$4,$5,$6)",
+                            (
+                                seeded["site_id"],
+                                probe_source_id,
+                                related_field_id,
+                                target_two_id,
+                                0,
+                                "{}",
+                            ),
+                        ),
+                        (
+                            "SELECT * FROM content.slaif_agent_item_relation_update("
+                            "$1,$2,$3,$4,$5,$6,$7)",
+                            (
+                                seeded["site_id"],
+                                source_id,
+                                relation_id,
+                                target_two_id,
+                                0,
+                                "{}",
+                                1,
+                            ),
+                        ),
+                        (
+                            "SELECT * FROM content.slaif_agent_item_relation_delete("
+                            "$1,$2,$3,$4)",
+                            (seeded["site_id"], source_id, relation_id, 1),
+                        ),
+                        (
+                            "SELECT * FROM content.slaif_agent_collection_view_list("
+                            "$1,$2)",
+                            (seeded["site_id"], source_type_id),
+                        ),
+                        (
+                            "SELECT * FROM content.slaif_agent_collection_view_get("
+                            "$1,$2)",
+                            (seeded["site_id"], view_id),
+                        ),
+                        (
+                            "SELECT * FROM content.slaif_agent_collection_view_create("
+                            "$1,$2,$3,$4,$5,$6,$7,$8)",
+                            (
+                                seeded["site_id"],
+                                source_type_id,
+                                "direct-view",
+                                "{}",
+                                "{}",
+                                "{}",
+                                "{}",
+                                1,
+                            ),
+                        ),
+                        (
+                            "SELECT * FROM content.slaif_agent_collection_view_current("
+                            "$1,$2,$3)",
+                            (seeded["site_id"], view_id, "collection-view:write"),
+                        ),
+                        (
+                            "SELECT * FROM content.slaif_agent_collection_view_fields("
+                            "$1,$2,$3)",
+                            (
+                                seeded["site_id"],
+                                source_type_id,
+                                "collection-view:create",
+                            ),
+                        ),
+                        (
+                            "SELECT * FROM content.slaif_agent_collection_view_update("
+                            "$1,$2,$3,$4,$5,$6,$7,$8)",
+                            (
+                                seeded["site_id"],
+                                view_id,
+                                "{}",
+                                "{}",
+                                "{}",
+                                "{}",
+                                1,
+                                1,
+                            ),
+                        ),
+                        (
+                            "SELECT * FROM content.slaif_agent_collection_view_delete("
+                            "$1,$2,$3)",
+                            (seeded["site_id"], view_id, 1),
+                        ),
+                    )
+                    for sql, arguments in direct_calls:
+                        async with _asyncpg_cow_session(
+                            agent_pool,
+                            session_id=workspace_id,
+                            operation_id=uuid4(),
+                        ) as cow:
+                            with pytest.raises(
+                                asyncpg.PostgresError,
+                                match="AGENT_CAPABILITY_CONTEXT_REQUIRED",
+                            ):
+                                await cow.native.fetch(sql, *arguments)
+                            await cow.rollback()
+
+                    async with agent_pool.acquire() as connection:
+                        with pytest.raises(asyncpg.InsufficientPrivilegeError):
+                            await connection.fetch(
+                                "SELECT * FROM content.slaif_agent_relation_assert("
+                                "$1,$2,$3,$4,$5,$6)",
+                                seeded["site_id"],
+                                source_id,
+                                related_field_id,
+                                target_one_id,
+                                "relationship:write",
+                                True,
+                            )
+                        with pytest.raises(asyncpg.InsufficientPrivilegeError):
+                            await connection.fetch(
+                                "SELECT * FROM content.slaif_agent_collection_view_"
+                                "query_validate("
+                                "$1,$2,$3,$4,$5)",
+                                source_type_id,
+                                "{}",
+                                "{}",
+                                "{}",
+                                "{}",
+                            )
+                        await connection.execute(
+                            "SELECT set_config('app.session_id',$1,true)",
+                            str(workspace_id),
+                        )
+                        await connection.execute(
+                            "SELECT set_config('app.operation_id',$1,true)",
+                            str(uuid4()),
+                        )
+                        await connection.execute(
+                            "SELECT set_config('app.capability_id',$1,true)",
+                            str(other_capability_id),
+                        )
+                        with pytest.raises(asyncpg.PostgresError):
+                            await connection.fetch(
+                                "SELECT * FROM content.slaif_agent_item_relation_list("
+                                "$1,$2)",
+                                seeded["site_id"],
+                                source_id,
+                            )
+
+                    async with owner_connection(
+                        database.settings.resolved_owner_dsn(),
+                        expected_database=database.name,
+                    ) as owner:
+                        neutral_type_id = uuid4()
+                        _neutral_field_id = uuid4()
+                        await owner.execute(
+                            "INSERT INTO content.content_type_base "
+                            '(id,site_id,"key",labels,slug_pattern,status,'
+                            "definition_version,settings) "
+                            "VALUES ($1,$2,'neutral-query',$3::jsonb,"
+                            "'/neutral/{slug}','ACTIVE',1,'{}'::jsonb)",
+                            neutral_type_id,
+                            seeded["site_id"],
+                            json.dumps({"en": "Neutral query"}),
+                        )
+                        await owner.execute(
+                            "INSERT INTO content.field_definition_base "
+                            '(id,site_id,type_id,"key",label,field_type,required,'
+                            'localized,cardinality,"position",validation,ui_options,'
+                            "definition_version) "
+                            "VALUES ($1,$2,$3,'neutral','Neutral','short_text',"
+                            "false,false,1,0,'{}'::jsonb,'{}'::jsonb,1)",
+                            _neutral_field_id,
+                            seeded["site_id"],
+                            neutral_type_id,
+                        )
+                        await owner.fetchval(
+                            "SELECT content.slaif_agent_collection_view_"
+                            "query_validate("
+                            "$1,$2::jsonb,$3::jsonb,$4::jsonb,$5::jsonb)",
+                            neutral_type_id,
+                            '{"field":"neutral","op":"eq","value":"ok"}',
+                            '{"field":"slug","direction":"asc"}',
+                            "{}",
+                            '{"limit":10,"offset":0}',
+                        )
+                        with pytest.raises(
+                            asyncpg.PostgresError, match="QUERY_FILTER_VALUE"
+                        ):
+                            await owner.fetchval(
+                                "SELECT content.slaif_agent_collection_view_"
+                                "query_validate("
+                                "$1,$2::jsonb,$3::jsonb,$4::jsonb,$5::jsonb)",
+                                neutral_type_id,
+                                '{"field":"neutral","op":"eq","value":1}',
+                                '{"field":"slug"}',
+                                "{}",
+                                '{"limit":10,"offset":0}',
+                            )
+                        with pytest.raises(
+                            asyncpg.PostgresError, match="QUERY_PAGINATION"
+                        ):
+                            await owner.fetchval(
+                                "SELECT content.slaif_agent_collection_view_"
+                                "query_validate("
+                                "$1,$2::jsonb,$3::jsonb,$4::jsonb,$5::jsonb)",
+                                neutral_type_id,
+                                "{}",
+                                "{}",
+                                "{}",
+                                '{"limit":1.5,"offset":0}',
+                            )
+
+                    lock_context = _asyncpg_cow_session(
+                        agent_pool, session_id=workspace_id, operation_id=uuid4()
+                    )
+                    lock_holder = await lock_context.__aenter__()
+                    try:
+                        await lock_holder.native.fetchval(
+                            "SELECT pg_advisory_xact_lock(hashtextextended($1,994))",
+                            f"{workspace_id}:{race_source_id}:{related_field_id}_item_relation",
+                        )
+                        cancellation_before = await durable_state()
+                        cancellation_task = asyncio.create_task(
+                            client_one.post(
+                                f"/api/agent/v1/content-items/{race_source_id}/relations",
+                                headers={
+                                    **headers,
+                                    "Idempotency-Key": "matrix-cancelled-relation",
+                                },
+                                json={
+                                    "field_definition_id": str(related_field_id),
+                                    "target_item_id": str(target_one_id),
+                                },
+                            )
+                        )
+                        await asyncio.sleep(0.2)
+                        assert not cancellation_task.done()
+                        cancellation_task.cancel()
+                        with contextlib.suppress(asyncio.CancelledError):
+                            await cancellation_task
+                    finally:
+                        await lock_context.__aexit__(None, None, None)
+                    assert await relation_ids(race_source_id) == ()
+                    assert await durable_state() == cancellation_before
+
+                    race_path = (
+                        f"/api/agent/v1/content-items/{race_source_id}/relations"
+                    )
+                    race_responses = await asyncio.gather(
+                        client_one.post(
+                            race_path,
+                            headers={
+                                **headers,
+                                "Idempotency-Key": "matrix-race-create-one",
+                            },
+                            json={
+                                "field_definition_id": str(related_field_id),
+                                "target_item_id": str(target_two_id),
+                            },
+                        ),
+                        client_two.post(
+                            race_path,
+                            headers={
+                                **headers,
+                                "Idempotency-Key": "matrix-race-create-two",
+                            },
+                            json={
+                                "field_definition_id": str(related_field_id),
+                                "target_item_id": str(target_three_id),
+                            },
+                        ),
+                    )
+                    assert [response.status_code for response in race_responses].count(
+                        201
+                    ) == 1, [response.text for response in race_responses]
+                    assert (
+                        sum(
+                            response.status_code in {409, 422}
+                            for response in race_responses
+                        )
+                        == 1
+                    ), [response.text for response in race_responses]
+                    race_relation_id = UUID(
+                        next(
+                            response.json()["record"]["id"]
+                            for response in race_responses
+                            if response.status_code == 201
+                        )
+                    )
+                    assert len(await relation_ids(race_source_id)) == 1
+                    before_update_race = await durable_state()
+                    update_race = await asyncio.gather(
+                        client_one.patch(
+                            f"{race_path}/{race_relation_id}",
+                            headers={
+                                **headers,
+                                "Idempotency-Key": "matrix-race-update-one",
+                            },
+                            json={
+                                "metadata": {"winner": "one"},
+                                "expected_row_version": 1,
+                            },
+                        ),
+                        client_two.patch(
+                            f"{race_path}/{race_relation_id}",
+                            headers={
+                                **headers,
+                                "Idempotency-Key": "matrix-race-update-two",
+                            },
+                            json={
+                                "metadata": {"winner": "two"},
+                                "expected_row_version": 1,
+                            },
+                        ),
+                    )
+                    assert sorted(response.status_code for response in update_race) == [
+                        200,
+                        409,
+                    ], [response.text for response in update_race]
+                    winning_update = next(
+                        response.json()
+                        for response in update_race
+                        if response.status_code == 200
+                    )
+                    assert winning_update["record"]["row_version"] == 2
+                    after_update_race = await durable_state()
+                    assert after_update_race == (
+                        before_update_race[0] + 1,
+                        before_update_race[1] + 1,
+                        before_update_race[2] + 1,
+                        before_update_race[3],
+                    )
+                    async with owner_connection(
+                        database.settings.resolved_owner_dsn(),
+                        expected_database=database.name,
+                    ) as owner:
+                        actions = await owner.fetch(
+                            "SELECT action,http_method,response_status,quota_kind "
+                            "FROM audit.agent_mutation WHERE workspace_id=$1 "
+                            "AND resource_id=$2 ORDER BY operation_id",
+                            workspace_id,
+                            race_relation_id,
+                        )
+                        assert [tuple(row) for row in actions] == [
+                            ("ITEM_RELATION_CREATED", "POST", 201, "mutation"),
+                            ("ITEM_RELATION_UPDATED", "PATCH", 200, "mutation"),
+                        ]
+
+                    later_field = await client_one.post(
+                        f"/api/agent/v1/content-model/types/{source_type_id}/fields",
+                        headers={**headers, "Idempotency-Key": "matrix-later-field"},
+                        json={
+                            "key": "later",
+                            "label": "Later",
+                            "field_type": "short_text",
+                        },
+                    )
+                    assert later_field.status_code == 201, later_field.text
+                    stale_relation = await client_one.post(
+                        f"/api/agent/v1/content-items/{stale_source_id}/relations",
+                        headers={**headers, "Idempotency-Key": "matrix-stale-relation"},
+                        json=relation_payload,
+                    )
+                    assert stale_relation.status_code == 422, stale_relation.text
+
+                    stale_view_before = await durable_state()
+                    stale_view = await client_one.patch(
+                        f"/api/agent/v1/collection-views/{view_id}",
+                        headers={**headers, "Idempotency-Key": "matrix-stale-view"},
+                        json={
+                            "pagination_spec": {"limit": 9, "offset": 0},
+                            "expected_row_version": 1,
+                        },
+                    )
+                    assert stale_view.status_code == 422, stale_view.text
+                    assert await durable_state() == stale_view_before
+    finally:
+        await reviewer_pool.close()
+        await agent_pool.close()
 
 
 @pytest.mark.asyncio

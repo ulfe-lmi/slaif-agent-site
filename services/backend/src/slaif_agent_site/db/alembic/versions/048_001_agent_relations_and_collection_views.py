@@ -304,7 +304,7 @@ def upgrade() -> None:
             capability_id := control.slaif_agent_require_capability(p_site_id,'relationship:write');
             workspace_id := NULLIF(current_setting('app.session_id',true),'')::uuid;
             PERFORM pg_advisory_xact_lock(hashtextextended(workspace_id::text||':'||p_source::text||':'||p_field::text||'_item_relation',994));
-            IF p_position IS NULL OR p_position NOT BETWEEN 0 AND 999 OR p_metadata IS NULL OR jsonb_typeof(p_metadata)<>'object' OR octet_length(p_metadata::text)>16384 THEN RAISE EXCEPTION 'RELATION_INVALID' USING ERRCODE='P0003'; END IF;
+            IF p_position IS NULL OR p_position NOT BETWEEN 0 AND 999 OR p_metadata IS NULL OR jsonb_typeof(p_metadata)<>'object' OR octet_length(p_metadata::text)>16384 OR p_metadata::text ~* '(;|--|/\\*|\\*/|<script|javascript:|__proto__|constructor|prototype)' THEN RAISE EXCEPTION 'RELATION_INVALID' USING ERRCODE='P0003'; END IF;
             PERFORM content.slaif_agent_relation_assert(p_site_id,p_source,p_field,p_target,'relationship:write',true);
             SELECT f.* INTO field FROM content.field_definition f WHERE f.id=p_field AND f.site_id=p_site_id;
             SELECT count(*) INTO relation_count FROM content.item_relation r WHERE r.site_id=p_site_id AND r.source_item_id=p_source AND r.field_definition_id=p_field;
@@ -362,7 +362,7 @@ def upgrade() -> None:
             PERFORM pg_advisory_xact_lock(hashtextextended(workspace_id::text||':'||old.source_item_id::text||':'||old.field_definition_id::text||'_item_relation',994));
             IF p_expected IS NULL OR p_expected <= 0 THEN RAISE EXCEPTION 'ROW_VERSION_REQUIRED' USING ERRCODE='P0003'; END IF;
             IF old.row_version <> p_expected THEN RAISE EXCEPTION 'ROW_VERSION_MISMATCH' USING ERRCODE='P0004'; END IF;
-            IF (p_position IS NOT NULL AND p_position NOT BETWEEN 0 AND 999) OR (p_metadata IS NOT NULL AND (jsonb_typeof(p_metadata)<>'object' OR octet_length(p_metadata::text)>16384)) THEN RAISE EXCEPTION 'RELATION_INVALID' USING ERRCODE='P0003'; END IF;
+            IF (p_position IS NOT NULL AND p_position NOT BETWEEN 0 AND 999) OR (p_metadata IS NOT NULL AND (jsonb_typeof(p_metadata)<>'object' OR octet_length(p_metadata::text)>16384 OR p_metadata::text ~* '(;|--|/\\*|\\*/|<script|javascript:|__proto__|constructor|prototype)')) THEN RAISE EXCEPTION 'RELATION_INVALID' USING ERRCODE='P0003'; END IF;
             PERFORM content.slaif_agent_relation_assert(p_site_id,p_source,old.field_definition_id,coalesce(p_target,old.target_item_id),'relationship:write',true);
             SELECT f.* INTO field FROM content.field_definition f WHERE f.id=old.field_definition_id AND f.site_id=p_site_id;
             SELECT count(*) INTO relation_count FROM content.item_relation r WHERE r.site_id=p_site_id AND r.source_item_id=p_source AND r.field_definition_id=old.field_definition_id AND r.id<>p_relation;
@@ -431,7 +431,21 @@ def upgrade() -> None:
                     IF NOT FOUND OR field.localized THEN RAISE EXCEPTION 'QUERY_FILTER_FIELD' USING ERRCODE='P0003'; END IF;
                     IF (field.field_type IN ('short_text','url','email') AND op_name NOT IN ('eq','contains','prefix')) OR (field.field_type IN ('long_text','rich_text') AND op_name NOT IN ('eq','contains')) OR (field.field_type IN ('integer','decimal','date','datetime') AND op_name NOT IN ('eq','lt','lte','gt','gte')) OR (field.field_type='boolean' AND op_name<>'eq') OR (field.field_type='enum' AND op_name NOT IN ('eq','in')) OR field.field_type IN ('reference','multi_reference','media','document','location','object') THEN RAISE EXCEPTION 'QUERY_FILTER_OPERATOR' USING ERRCODE='P0003'; END IF;
                     value_kind := jsonb_typeof(node.value->'value');
-                    IF op_name='in' THEN IF value_kind<>'array' OR jsonb_array_length(node.value->'value')<1 OR jsonb_array_length(node.value->'value')>32 THEN RAISE EXCEPTION 'QUERY_FILTER_VALUE' USING ERRCODE='P0003'; END IF; ELSE IF value_kind IN ('object','array','null') THEN RAISE EXCEPTION 'QUERY_FILTER_VALUE' USING ERRCODE='P0003'; END IF; END IF;
+                    IF op_name='in' THEN
+                        IF field.field_type <> 'enum' OR value_kind <> 'array' THEN RAISE EXCEPTION 'QUERY_FILTER_VALUE' USING ERRCODE='P0003'; END IF;
+                        IF jsonb_array_length(node.value->'value')<1 OR jsonb_array_length(node.value->'value')>32 THEN RAISE EXCEPTION 'QUERY_FILTER_VALUE' USING ERRCODE='P0003'; END IF;
+                        IF EXISTS (SELECT 1 FROM jsonb_array_elements(node.value->'value') item WHERE jsonb_typeof(item.value)<>'string' OR btrim(item.value #>> '{}')='') THEN RAISE EXCEPTION 'QUERY_FILTER_VALUE' USING ERRCODE='P0003'; END IF;
+                        IF coalesce(field.validation->'choices',field.validation->'values',field.validation->'enum') IS NOT NULL AND EXISTS (SELECT 1 FROM jsonb_array_elements(node.value->'value') item WHERE NOT EXISTS (SELECT 1 FROM jsonb_array_elements(coalesce(field.validation->'choices',field.validation->'values',field.validation->'enum')) choice WHERE choice #>> '{}'=item.value #>> '{}')) THEN RAISE EXCEPTION 'QUERY_FILTER_VALUE' USING ERRCODE='P0003'; END IF;
+                    ELSE
+                        IF value_kind IN ('object','array','null') THEN RAISE EXCEPTION 'QUERY_FILTER_VALUE' USING ERRCODE='P0003'; END IF;
+                        IF field.field_type IN ('short_text','long_text','rich_text','url','email','enum') AND (value_kind<>'string' OR btrim(node.value->>'value')='') THEN RAISE EXCEPTION 'QUERY_FILTER_VALUE' USING ERRCODE='P0003'; END IF;
+                        IF field.field_type='integer' AND (value_kind<>'number' OR node.value->>'value' !~ '^-?(0|[1-9][0-9]*)$') THEN RAISE EXCEPTION 'QUERY_FILTER_VALUE' USING ERRCODE='P0003'; END IF;
+                        IF field.field_type='decimal' AND value_kind<>'number' THEN RAISE EXCEPTION 'QUERY_FILTER_VALUE' USING ERRCODE='P0003'; END IF;
+                        IF field.field_type='boolean' AND value_kind<>'boolean' THEN RAISE EXCEPTION 'QUERY_FILTER_VALUE' USING ERRCODE='P0003'; END IF;
+                        IF field.field_type='date' AND (value_kind<>'string' OR node.value->>'value' !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$') THEN RAISE EXCEPTION 'QUERY_FILTER_VALUE' USING ERRCODE='P0003'; END IF;
+                        IF field.field_type='datetime' AND (value_kind<>'string' OR node.value->>'value' !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T') THEN RAISE EXCEPTION 'QUERY_FILTER_VALUE' USING ERRCODE='P0003'; END IF;
+                        IF field.field_type='enum' AND coalesce(field.validation->'choices',field.validation->'values',field.validation->'enum') IS NOT NULL AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(coalesce(field.validation->'choices',field.validation->'values',field.validation->'enum')) choice WHERE choice #>> '{}' = node.value->>'value') THEN RAISE EXCEPTION 'QUERY_FILTER_VALUE' USING ERRCODE='P0003'; END IF;
+                    END IF;
                 END IF;
             END LOOP;
             IF EXISTS (SELECT 1 FROM jsonb_object_keys(p_sort) k WHERE k NOT IN ('field','direction')) OR jsonb_typeof(coalesce(p_sort->'field','"slug"'::jsonb))<>'string' OR jsonb_typeof(coalesce(p_sort->'direction','"asc"'::jsonb))<>'string' OR coalesce(p_sort->>'direction','asc') NOT IN ('asc','desc') THEN RAISE EXCEPTION 'QUERY_SORT' USING ERRCODE='P0003'; END IF;
@@ -441,7 +455,9 @@ def upgrade() -> None:
             IF EXISTS (SELECT 1 FROM jsonb_object_keys(p_projection) k WHERE k<>'fields') OR jsonb_typeof(projection)<>'array' OR jsonb_array_length(projection)>16 THEN RAISE EXCEPTION 'QUERY_PROJECTION' USING ERRCODE='P0003'; END IF;
             IF EXISTS (SELECT value FROM jsonb_array_elements(projection) WHERE jsonb_typeof(value)<>'string') OR EXISTS (SELECT value FROM jsonb_array_elements(projection) GROUP BY value HAVING count(*)>1) THEN RAISE EXCEPTION 'QUERY_PROJECTION' USING ERRCODE='P0003'; END IF;
             FOR name IN SELECT value #>> '{}' FROM jsonb_array_elements(projection) LOOP SELECT f.* INTO field FROM content.field_definition f WHERE f.type_id=p_type_id AND f."key"=name AND NOT f.localized; IF name IN ('id','site_id','type_id','slug','status','values') OR NOT FOUND THEN RAISE EXCEPTION 'QUERY_PROJECTION_FIELD' USING ERRCODE='P0003'; END IF; END LOOP;
-            IF EXISTS (SELECT 1 FROM jsonb_object_keys(p_pagination) k WHERE k NOT IN ('limit','offset')) OR jsonb_typeof(coalesce(p_pagination->'limit','24'::jsonb))<>'number' OR jsonb_typeof(coalesce(p_pagination->'offset','0'::jsonb))<>'number' OR coalesce((p_pagination->>'limit')::integer,24) NOT BETWEEN 1 AND 100 OR coalesce((p_pagination->>'offset')::integer,0) NOT BETWEEN 0 AND 10000 THEN RAISE EXCEPTION 'QUERY_PAGINATION' USING ERRCODE='P0003'; END IF;
+            IF EXISTS (SELECT 1 FROM jsonb_object_keys(p_pagination) k WHERE k NOT IN ('limit','offset')) OR jsonb_typeof(coalesce(p_pagination->'limit','24'::jsonb))<>'number' OR jsonb_typeof(coalesce(p_pagination->'offset','0'::jsonb))<>'number' THEN RAISE EXCEPTION 'QUERY_PAGINATION' USING ERRCODE='P0003'; END IF;
+            IF (p_pagination ? 'limit' AND p_pagination->>'limit' !~ '^-?[0-9]+$') OR (p_pagination ? 'offset' AND p_pagination->>'offset' !~ '^-?[0-9]+$') THEN RAISE EXCEPTION 'QUERY_PAGINATION' USING ERRCODE='P0003'; END IF;
+            IF coalesce((p_pagination->>'limit')::numeric,24) NOT BETWEEN 1 AND 100 OR coalesce((p_pagination->>'offset')::numeric,0) NOT BETWEEN 0 AND 10000 THEN RAISE EXCEPTION 'QUERY_PAGINATION' USING ERRCODE='P0003'; END IF;
         END; $fn$
         """
     )
@@ -535,6 +551,7 @@ def upgrade() -> None:
             IF coalesce(cardinality(constraints.allowed_type_ids),0)>0 AND NOT parent.id=ANY(constraints.allowed_type_ids) THEN RAISE EXCEPTION 'AGENT_RESOURCE_TYPE_ID_DENIED' USING ERRCODE='P0007'; END IF;
             IF coalesce(cardinality(constraints.allowed_type_keys),0)>0 AND NOT parent."key"=ANY(constraints.allowed_type_keys) THEN RAISE EXCEPTION 'AGENT_RESOURCE_TYPE_KEY_DENIED' USING ERRCODE='P0007'; END IF;
             IF p_key IS NULL OR btrim(p_key)='' OR length(p_key)>63 OR p_filter IS NULL OR p_sort IS NULL OR p_projection IS NULL OR p_pagination IS NULL THEN RAISE EXCEPTION 'VIEW_INVALID' USING ERRCODE='P0003'; END IF;
+            IF EXISTS (SELECT 1 FROM content.collection_view v WHERE v.site_id=p_site_id AND v.type_id=p_type_id AND v.key=p_key) THEN RAISE EXCEPTION 'VIEW_DUPLICATE' USING ERRCODE='23505'; END IF;
             PERFORM content.slaif_agent_collection_view_query_validate(p_type_id,p_filter,p_sort,p_projection,p_pagination);
             IF NOT control.slaif_agent_quota_consume(capability_id,workspace_id,'mutation') THEN RAISE EXCEPTION 'AGENT_MUTATION_QUOTA_EXCEEDED' USING ERRCODE='P0005'; END IF;
             created_id := gen_random_uuid();
@@ -630,14 +647,10 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     _drop_agent_functions()
-    op.execute(
-        "ALTER TABLE audit.agent_mutation DROP CONSTRAINT agent_mutation_semantic_shape"
-    )
-    # 047's upgrade begins by replacing its historical constraint. Keep a
-    # valid placeholder while replaying that canonical predecessor upgrade.
-    op.execute(
-        "ALTER TABLE audit.agent_mutation ADD CONSTRAINT agent_mutation_semantic_shape CHECK (true)"
-    )
+    # Leave the current exact constraint in place while the canonical 047
+    # upgrade replaces it with its forward-compatible historical shape. This
+    # keeps immutable 048 audit rows valid throughout the transition without a
+    # permissive intermediate CHECK or any audit-row replay.
     op.execute(
         "DROP FUNCTION IF EXISTS control.slaif_agent_require_capability(uuid,text) CASCADE"
     )

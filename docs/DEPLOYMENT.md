@@ -49,9 +49,9 @@ same service graph.
 ### PostgreSQL baseline
 
 Initial supported PostgreSQL installations use fresh volumes created by the
-Alpine/musl image pinned in this repository. Raw database volumes are not
-portable between glibc and musl image families, and this pre-alpha release has
-no legacy-installation or cross-family migration support. Never delete a
+official Trixie/glibc image pinned in this repository. Raw database volumes
+are not portable between glibc and musl image families, and this pre-alpha
+release has no legacy-installation or cross-family migration support. Never delete a
 non-disposable volume merely to bypass this boundary; a future real migration
 requires a separately designed and tested logical process.
 
@@ -140,7 +140,7 @@ The reviewed OCI inputs are:
 | `ghcr.io/astral-sh/uv:0.12.5` | `sha256:e85be844203885286c60ffad8a858d48afb6c5a5c237ca0e67f12e74b8f174b1` | Apache-2.0 or MIT | amd64, arm64 |
 | `node:24.14.1-alpine3.23` | `sha256:8510330d3eb72c804231a834b1a8ebb55cb3796c3e4431297a24d246b8add4d5` | MIT | official multi-platform index |
 | `mcr.microsoft.com/playwright:v1.62.1-noble` | `sha256:dcc5531e97840b9b5e794f2814476b21571c5124a3fca2267d73041f56e7580e` | Apache-2.0 application package plus inventoried Ubuntu/runtime aggregation | amd64, arm64 |
-| `postgres:18.6-alpine3.23` | `sha256:697c180dbf244d3ce4a8f4cbc0156cde840af055c1bf8b76aebe422a4822086f` | PostgreSQL | official multi-platform index |
+| `postgres:18.6-trixie` | `sha256:4ef4dbc939d61acea57712655ddb4b4ab27419c913f94cca0cd57cb3ea3c2280` | PostgreSQL | official multi-platform index |
 | `nginx:1.29.7-alpine3.23` | `sha256:e7257f1ef28ba17cf7c248cb8ccf6f0c6e0228ab9c315c152f9c203cd34cf6d1` | two-clause BSD | official multi-platform index |
 | `httpd:2.4.68-alpine3.23` | `sha256:4a15e9c73f25334bc03cfb3c692c9adfc103bb46ca89cee1f0b9a5fcbc7b21f6` | Apache-2.0 | official multi-platform index |
 

@@ -65,8 +65,8 @@ EXPECTED_IMAGES = {
     "browser-worker": "slaif-agent-site-browser-worker:local",
     "nginx": "slaif-agent-site-nginx:local",
     "postgres": (
-        "postgres:18.6-alpine3.23@sha256:"
-        "697c180dbf244d3ce4a8f4cbc0156cde840af055c1bf8b76aebe422a4822086f"
+        "postgres:18.6-trixie@sha256:"
+        "4ef4dbc939d61acea57712655ddb4b4ab27419c913f94cca0cd57cb3ea3c2280"
     ),
     "web": "slaif-agent-site-web:local",
 }

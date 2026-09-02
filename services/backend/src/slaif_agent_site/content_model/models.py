@@ -37,6 +37,35 @@ def _bounded_json(value: Any, max_depth: int = 8) -> Any:
     return value
 
 
+_EXECUTABLE_DATA_MARKERS = (
+    ";",
+    "--",
+    "/*",
+    "*/",
+    "<script",
+    "javascript:",
+    "__proto__",
+    "constructor",
+    "prototype",
+)
+
+
+def _reject_executable_data(value: Any) -> None:
+    """Reject executable-looking relation metadata before it reaches SQL."""
+    if isinstance(value, dict):
+        for key, child in value.items():
+            if any(marker in key.casefold() for marker in _EXECUTABLE_DATA_MARKERS):
+                raise ValueError("metadata contains an executable marker")
+            _reject_executable_data(child)
+    elif isinstance(value, list):
+        for child in value:
+            _reject_executable_data(child)
+    elif isinstance(value, str) and any(
+        marker in value.casefold() for marker in _EXECUTABLE_DATA_MARKERS
+    ):
+        raise ValueError("metadata contains an executable marker")
+
+
 class CreateContentTypeRequest(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -400,6 +429,7 @@ class CreateRelationRequest(BaseModel):
     @classmethod
     def metadata_is_bounded(cls, value: dict[str, Any]) -> dict[str, Any]:
         result = _bounded_json(value)
+        _reject_executable_data(result)
         assert isinstance(result, dict)
         return result
 
@@ -432,6 +462,7 @@ class UpdateRelationRequest(BaseModel):
         if value is None:
             return None
         result = _bounded_json(value)
+        _reject_executable_data(result)
         assert isinstance(result, dict)
         return result
 
