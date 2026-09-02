@@ -234,7 +234,11 @@ def _sql(project: str, query: str) -> str:
 
 def _wait_agent_ready(client: PublicClient) -> None:
     for _attempt in range(30):
-        if _is_ready_service(client.request("/api/agent/health/ready"), "agent-api"):
+        try:
+            response = client.request("/api/agent/health/ready")
+        except ProofFailure:
+            response = None
+        if response is not None and _is_ready_service(response, "agent-api"):
             return
         time.sleep(1)
     raise ProofFailure("agent-readiness-timeout")
