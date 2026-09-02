@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections.abc import Iterable
 from enum import StrEnum
 from typing import Any, Protocol
 from uuid import UUID
@@ -75,12 +76,26 @@ class ContentModelServiceReason(StrEnum):
     NOT_FOUND = "not_found"
     UNAVAILABLE = "unavailable"
     VALIDATION = "validation"
+    QUOTA = "quota"
+    AUTHORIZATION = "authorization"
 
 
 class ContentModelServiceError(RuntimeError):
-    def __init__(self, reason: ContentModelServiceReason) -> None:
+    def __init__(
+        self, reason: ContentModelServiceReason, *, code: str | None = None
+    ) -> None:
         super().__init__(reason.value)
         self.reason = reason
+        self.code = code
+
+
+def _semantic_database_error_code(error: asyncpg.PostgresError) -> str | None:
+    """Preserve only stable, non-sensitive dependency denial identifiers."""
+
+    message = getattr(error, "message", str(error)).split("\n", 1)[0]
+    if message in {"FIELD_DEPENDENCIES", "TYPE_DEPENDENCIES"}:
+        return message
+    return None
 
 
 class _Pool(Protocol):
@@ -503,6 +518,17 @@ class ContentItemMixin:
         if item.type_definition_version != content_type.definition_version:
             raise ContentModelServiceError(ContentModelServiceReason.VALIDATION)
 
+    @staticmethod
+    def _validate_item_values(
+        values: dict[str, Any], fields: Iterable[FieldDefinitionRecord]
+    ) -> None:
+        try:
+            validate_values(values, fields)
+        except (ValueError, TypeError):
+            raise ContentModelServiceError(
+                ContentModelServiceReason.VALIDATION
+            ) from None
+
     async def create_item(
         self,
         site_id: UUID,
@@ -518,12 +544,7 @@ class ContentItemMixin:
             or type_definition_version != content_type.definition_version
         ):
             raise ContentModelServiceError(ContentModelServiceReason.VALIDATION)
-        try:
-            validate_values(values, await self.list_fields(type_id))
-        except (ValueError, TypeError):
-            raise ContentModelServiceError(
-                ContentModelServiceReason.VALIDATION
-            ) from None
+        self._validate_item_values(values, await self.list_fields(type_id))
         row = await self._fetchrow(
             CI_CREATE_SQL,
             site_id,
@@ -558,12 +579,7 @@ class ContentItemMixin:
         current = await self.get_item(item_id)
         await self._assert_item_definition_current(current)
         if values is not None:
-            try:
-                validate_values(values, await self.list_fields(current.type_id))
-            except (ValueError, TypeError):
-                raise ContentModelServiceError(
-                    ContentModelServiceReason.VALIDATION
-                ) from None
+            self._validate_item_values(values, await self.list_fields(current.type_id))
         row = await self._fetchrow(
             CI_UPDATE_SQL,
             item_id,
@@ -1178,11 +1194,24 @@ class ContentModelService(
                 ) from None
             if getattr(error, "sqlstate", None) == "P0003":
                 raise ContentModelServiceError(
-                    ContentModelServiceReason.VALIDATION
+                    ContentModelServiceReason.VALIDATION,
+                    code=_semantic_database_error_code(error),
                 ) from None
             if getattr(error, "sqlstate", None) == "P0004":
                 raise ContentModelServiceError(
                     ContentModelServiceReason.CONFLICT
+                ) from None
+            if getattr(error, "sqlstate", None) == "P0005":
+                raise ContentModelServiceError(
+                    ContentModelServiceReason.QUOTA
+                ) from None
+            if getattr(error, "sqlstate", None) == "P0006":
+                raise ContentModelServiceError(
+                    ContentModelServiceReason.QUOTA
+                ) from None
+            if getattr(error, "sqlstate", None) == "P0007":
+                raise ContentModelServiceError(
+                    ContentModelServiceReason.AUTHORIZATION
                 ) from None
             if getattr(error, "sqlstate", None) == "P0001" or isinstance(
                 error, asyncpg.RaiseError
@@ -1208,7 +1237,32 @@ class ContentModelService(
                 return list(await connection.fetch(sql, *arguments))
         except asyncio.CancelledError:
             raise
-        except (asyncpg.PostgresError, OSError, TimeoutError):
+        except asyncpg.PostgresError as error:
+            if getattr(error, "sqlstate", None) == "P0002":
+                raise ContentModelServiceError(
+                    ContentModelServiceReason.NOT_FOUND
+                ) from None
+            if getattr(error, "sqlstate", None) == "P0003":
+                raise ContentModelServiceError(
+                    ContentModelServiceReason.VALIDATION,
+                    code=_semantic_database_error_code(error),
+                ) from None
+            if getattr(error, "sqlstate", None) == "P0004":
+                raise ContentModelServiceError(
+                    ContentModelServiceReason.CONFLICT
+                ) from None
+            if getattr(error, "sqlstate", None) in {"P0005", "P0006"}:
+                raise ContentModelServiceError(
+                    ContentModelServiceReason.QUOTA
+                ) from None
+            if getattr(error, "sqlstate", None) == "P0007":
+                raise ContentModelServiceError(
+                    ContentModelServiceReason.AUTHORIZATION
+                ) from None
+            raise ContentModelServiceError(
+                ContentModelServiceReason.UNAVAILABLE
+            ) from None
+        except (OSError, TimeoutError):
             raise ContentModelServiceError(
                 ContentModelServiceReason.UNAVAILABLE
             ) from None

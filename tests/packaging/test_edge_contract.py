@@ -13,6 +13,13 @@ ROUTES = {
     "/media/": "media-service:8000",
     "/": "web:3000",
 }
+NGINX_UPSTREAMS = {
+    "/api/editor/": "slaif_editor_api",
+    "/api/agent/": "slaif_agent_api",
+    "/mcp/": "slaif_mcp_adapter",
+    "/media/": "slaif_media_service",
+    "/": "slaif_web",
+}
 
 
 class EdgeContractTests(unittest.TestCase):
@@ -23,7 +30,7 @@ class EdgeContractTests(unittest.TestCase):
         )
         for prefix, upstream in ROUTES.items():
             self.assertIn(f"location {prefix}", nginx)
-            self.assertIn(f"http://{upstream}", nginx)
+            self.assertIn(f"http://{NGINX_UPSTREAMS[prefix]}", nginx)
             if prefix == "/api/editor/":
                 self.assertIn(
                     "ProxyPass        /api/editor/v1/ http://editor-api:8000/api/editor/v1/",
@@ -57,9 +64,9 @@ class EdgeContractTests(unittest.TestCase):
         )
         for leaf in ("live", "ready"):
             self.assertIn(f"location = /api/control/health/{leaf}", nginx)
-            self.assertIn(f"control-api:8000/health/{leaf}", nginx)
+            self.assertIn(f"slaif_control_api/health/{leaf}", nginx)
             self.assertIn(f"/api/control/health/{leaf}", apache)
-        self.assertIn("proxy_pass http://control-api:8000;", nginx)
+        self.assertIn("proxy_pass http://slaif_control_api;", nginx)
         self.assertIn("location /api/control/v1/", nginx)
         self.assertIn(
             "ProxyPass        /api/control/v1/ http://control-api:8000/api/control/v1/",
@@ -72,11 +79,11 @@ class EdgeContractTests(unittest.TestCase):
         nginx = (ROOT / "infra/nginx/nginx.conf").read_text(encoding="utf-8")
         for leaf in ("live", "ready"):
             self.assertIn(f"location = /api/agent/health/{leaf}", nginx)
-            self.assertIn(f"proxy_pass http://agent-api:8000/health/{leaf};", nginx)
+            self.assertIn(f"proxy_pass http://slaif_agent_api/health/{leaf};", nginx)
         self.assertIn("location /api/agent/", nginx)
-        self.assertIn("proxy_pass http://agent-api:8000;", nginx)
+        self.assertIn("proxy_pass http://slaif_agent_api;", nginx)
         self.assertNotIn(
-            "location /api/agent/ {\n            proxy_pass http://agent-api:8000/;",
+            "location /api/agent/ {\n            proxy_pass http://slaif_agent_api/;",
             nginx,
         )
 
@@ -87,15 +94,33 @@ class EdgeContractTests(unittest.TestCase):
         )
         for leaf in ("live", "ready"):
             self.assertIn(f"location = /api/editor/health/{leaf}", nginx)
-            self.assertIn(f"proxy_pass http://editor-api:8000/health/{leaf};", nginx)
+            self.assertIn(f"proxy_pass http://slaif_editor_api/health/{leaf};", nginx)
             self.assertIn(f"/api/editor/health/{leaf}", apache)
         self.assertIn("location /api/editor/v1/", nginx)
-        self.assertIn("proxy_pass http://editor-api:8000;", nginx)
+        self.assertIn("proxy_pass http://slaif_editor_api;", nginx)
         self.assertIn(
             "ProxyPass        /api/editor/v1/ http://editor-api:8000/api/editor/v1/",
             apache,
         )
         self.assertIn("ProxyPass        /api/editor/ !", apache)
+
+    def test_nginx_re_resolves_every_compose_upstream(self) -> None:
+        nginx = (ROOT / "infra/nginx/nginx.conf").read_text(encoding="utf-8")
+        self.assertIn("resolver 127.0.0.11 valid=5s ipv6=off;", nginx)
+        self.assertIn("resolver_timeout 5s;", nginx)
+        targets = {
+            "slaif_control_api": "control-api:8000",
+            "slaif_editor_api": "editor-api:8000",
+            "slaif_agent_api": "agent-api:8000",
+            "slaif_mcp_adapter": "mcp-adapter:8000",
+            "slaif_media_service": "media-service:8000",
+            "slaif_web": "web:3000",
+        }
+        for upstream, target in targets.items():
+            self.assertIn(f"upstream {upstream} {{", nginx)
+            self.assertIn(f"zone {upstream} 64k;", nginx)
+            self.assertIn(f"server {target} resolve;", nginx)
+        self.assertEqual(nginx.count(" resolve;"), len(targets))
 
     def test_browser_and_render_are_not_edge_upstreams(self) -> None:
         for path in (

@@ -72,6 +72,17 @@ AGENT_CONTROL_FUNCTIONS = {
         "p_site_id uuid",
     ): "uuid, uuid, text, text, uuid, integer, jsonb, text, uuid, uuid",
     (
+        "slaif_agent_idempotency_complete",
+        "p_capability_id uuid, p_workspace_id uuid, p_idempotency_key text, "
+        "p_request_digest text, p_operation_id uuid, p_status_code integer, "
+        "p_response_body jsonb, p_resource_type text, p_resource_id uuid, "
+        "p_site_id uuid, p_action text, p_http_method text, "
+        "p_quota_kind text",
+    ): (
+        "uuid, uuid, text, text, uuid, integer, jsonb, text, uuid, uuid, "
+        "text, text, text"
+    ),
+    (
         "slaif_agent_browser_run_begin",
         "p_capability_id uuid, p_site_id uuid, p_workspace_id uuid, "
         "p_delegator_id uuid, p_idempotency_key text, p_request_digest text, "
@@ -194,6 +205,10 @@ AGENT_CONTENT_FUNCTIONS = {
         "p_site_id uuid, p_type_id uuid",
     ): "uuid, uuid",
     (
+        "slaif_agent_content_item_get",
+        "p_site_id uuid, p_item_id uuid",
+    ): "uuid, uuid",
+    (
         "slaif_agent_page_list",
         "p_site_id uuid",
     ): "uuid",
@@ -211,6 +226,14 @@ AGENT_CONTENT_FUNCTIONS = {
         "p_slug_pattern text, p_settings jsonb",
     ): "uuid, text, jsonb, text, jsonb",
     (
+        "slaif_agent_content_type_update",
+        "p_site_id uuid, p_type_id uuid, p_labels jsonb, p_slug_pattern text, p_settings jsonb, p_expected integer",
+    ): "uuid, uuid, jsonb, text, jsonb, integer",
+    (
+        "slaif_agent_content_type_delete",
+        "p_site_id uuid, p_type_id uuid, p_expected integer",
+    ): "uuid, uuid, integer",
+    (
         "slaif_agent_field_definition_create",
         "p_site_id uuid, p_type_id uuid, p_key text, p_label text, "
         "p_field_type text, p_required boolean, p_localized boolean, "
@@ -218,10 +241,98 @@ AGENT_CONTENT_FUNCTIONS = {
         "p_ui_options jsonb",
     ): "uuid, uuid, text, text, text, boolean, boolean, integer, integer, jsonb, jsonb",
     (
+        "slaif_agent_field_definition_update",
+        "p_site_id uuid, p_type_id uuid, p_field_id uuid, p_label text, p_required boolean, p_localized boolean, p_cardinality integer, p_position integer, p_validation jsonb, p_ui_options jsonb, p_expected integer",
+    ): "uuid, uuid, uuid, text, boolean, boolean, integer, integer, jsonb, jsonb, integer",
+    (
+        "slaif_agent_field_definition_delete",
+        "p_site_id uuid, p_type_id uuid, p_field_id uuid, p_expected integer",
+    ): "uuid, uuid, uuid, integer",
+    (
         "slaif_agent_content_item_create",
-        "p_site_id uuid, p_type_id uuid, p_slug text, p_status text, "
-        "p_values jsonb, p_type_definition_version integer",
+        "p_site_id uuid, p_type_id uuid, p_slug text, p_status text, p_values jsonb",
+    ): "uuid, uuid, text, text, jsonb",
+    (
+        "slaif_agent_content_item_update",
+        "p_site_id uuid, p_item_id uuid, p_slug text, p_status text, "
+        "p_values jsonb, p_expected_row_version integer",
     ): "uuid, uuid, text, text, jsonb, integer",
+    (
+        "slaif_agent_content_item_delete",
+        "p_site_id uuid, p_item_id uuid, p_expected_row_version integer",
+    ): "uuid, uuid, integer",
+    (
+        "slaif_agent_content_item_translation_fields_for_write",
+        "p_site_id uuid, p_item_id uuid",
+    ): "uuid, uuid",
+    (
+        "slaif_agent_content_item_translation_list",
+        "p_site_id uuid, p_item_id uuid",
+    ): "uuid, uuid",
+    (
+        "slaif_agent_content_item_translation_get",
+        "p_site_id uuid, p_item_id uuid, p_translation_id uuid",
+    ): "uuid, uuid, uuid",
+    (
+        "slaif_agent_content_item_translation_create",
+        "p_site_id uuid, p_item_id uuid, p_locale text, p_values jsonb",
+    ): "uuid, uuid, text, jsonb",
+    (
+        "slaif_agent_content_item_translation_update",
+        "p_site_id uuid, p_item_id uuid, p_translation_id uuid, p_locale text, p_values jsonb, p_expected_row_version integer",
+    ): "uuid, uuid, uuid, text, jsonb, integer",
+    (
+        "slaif_agent_content_item_translation_delete",
+        "p_site_id uuid, p_item_id uuid, p_translation_id uuid, p_expected_row_version integer",
+    ): "uuid, uuid, uuid, integer",
+    (
+        "slaif_agent_item_relation_create",
+        "p_site_id uuid, p_source uuid, p_field uuid, p_target uuid, p_position integer, p_metadata jsonb",
+    ): "uuid, uuid, uuid, uuid, integer, jsonb",
+    (
+        "slaif_agent_item_relation_list",
+        "p_site_id uuid, p_source uuid",
+    ): "uuid, uuid",
+    (
+        "slaif_agent_item_relation_get",
+        "p_site_id uuid, p_source uuid, p_relation uuid",
+    ): "uuid, uuid, uuid",
+    (
+        "slaif_agent_item_relation_update",
+        "p_site_id uuid, p_source uuid, p_relation uuid, p_target uuid, p_position integer, p_metadata jsonb, p_expected integer",
+    ): "uuid, uuid, uuid, uuid, integer, jsonb, integer",
+    (
+        "slaif_agent_item_relation_delete",
+        "p_site_id uuid, p_source uuid, p_relation uuid, p_expected integer",
+    ): "uuid, uuid, uuid, integer",
+    (
+        "slaif_agent_collection_view_create",
+        "p_site_id uuid, p_type_id uuid, p_key text, p_filter jsonb, p_sort jsonb, p_projection jsonb, p_pagination jsonb, p_expected_definition integer",
+    ): "uuid, uuid, text, jsonb, jsonb, jsonb, jsonb, integer",
+    (
+        "slaif_agent_collection_view_list",
+        "p_site_id uuid, p_type_id uuid",
+    ): "uuid, uuid",
+    (
+        "slaif_agent_collection_view_get",
+        "p_site_id uuid, p_view_id uuid",
+    ): "uuid, uuid",
+    (
+        "slaif_agent_collection_view_current",
+        "p_site_id uuid, p_view_id uuid, p_scope text",
+    ): "uuid, uuid, text",
+    (
+        "slaif_agent_collection_view_fields",
+        "p_site_id uuid, p_type_id uuid, p_scope text",
+    ): "uuid, uuid, text",
+    (
+        "slaif_agent_collection_view_update",
+        "p_site_id uuid, p_view_id uuid, p_filter jsonb, p_sort jsonb, p_projection jsonb, p_pagination jsonb, p_expected_row_version integer, p_expected_definition integer",
+    ): "uuid, uuid, jsonb, jsonb, jsonb, jsonb, integer, integer",
+    (
+        "slaif_agent_collection_view_delete",
+        "p_site_id uuid, p_view_id uuid, p_expected integer",
+    ): "uuid, uuid, integer",
     (
         "slaif_agent_page_create",
         "p_site_id uuid, p_slug text, p_title text, p_status text, "
@@ -747,6 +858,11 @@ async def apply_product_privileges(
             'TO "slaif_media"'
         )
     for (name, _identity), signature in AGENT_CONTENT_FUNCTIONS.items():
+        exists = await connection.fetchval(
+            "SELECT to_regprocedure($1)", f"content.{name}({signature})"
+        )
+        if exists is None:
+            continue
         await connection.execute(
             "GRANT EXECUTE ON FUNCTION "
             f'"content".{quote_identifier(name)}({signature}) '

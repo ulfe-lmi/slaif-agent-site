@@ -259,7 +259,7 @@ def validate_policy(policy: dict[str, Any]) -> None:
         raise PolicyError("policy: Alpine package overrides are malformed")
     if overrides["registry"] != "https://dl-cdn.alpinelinux.org/alpine/v3.23":
         raise PolicyError("policy: Alpine package registry is not exact and approved")
-    expected_override_images = {"apache", "backend", "nginx", "web"}
+    expected_override_images = {"apache", "backend", "nginx", "postgres", "web"}
     if (
         not isinstance(overrides["images"], dict)
         or set(overrides["images"]) != expected_override_images
@@ -716,6 +716,7 @@ def validate_dependency_sources(root: Path, policy: dict[str, Any]) -> dict[str,
         "apache": root / "infra/apache/Dockerfile",
         "backend": root / "services/backend/Dockerfile",
         "nginx": root / "infra/nginx/Dockerfile",
+        "postgres": root / "infra/postgres/Dockerfile",
         "web": root / "apps/web/Dockerfile",
     }
     for name, configuration in policy["alpine_package_overrides"]["images"].items():

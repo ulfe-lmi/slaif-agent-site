@@ -27,6 +27,7 @@ class RouteAuthorityKind(StrEnum):
     AUTHENTICATED_SESSION = "AUTHENTICATED_SESSION"
     PLATFORM_ADMINISTRATOR = "PLATFORM_ADMINISTRATOR"
     SITE_PERMISSION = "SITE_PERMISSION"
+    AGENT_CAPABILITY = "AGENT_CAPABILITY"
 
 
 class RoutePolicyKind(StrEnum):
@@ -40,6 +41,7 @@ class RoutePolicyKind(StrEnum):
     AUTHENTICATED_CATALOG_READ = "AUTHENTICATED_CATALOG_READ"
     CURRENT_HUMAN_READ = "CURRENT_HUMAN_READ"
     SITE_PERMISSION = "SITE_PERMISSION"
+    AGENT_CAPABILITY = "AGENT_CAPABILITY"
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,6 +55,7 @@ class RoutePolicy:
     authority_kind: RouteAuthorityKind
     policy_kind: RoutePolicyKind
     required_permissions: tuple[str, ...] = ()
+    required_scopes: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if self.process not in {
@@ -77,6 +80,8 @@ class RoutePolicy:
             raise ValueError("permission policy requires site session authority")
         if len(set(self.required_permissions)) != len(self.required_permissions):
             raise ValueError("route policy repeats a permission")
+        if len(set(self.required_scopes)) != len(self.required_scopes):
+            raise ValueError("route policy repeats a scope")
         if not set(self.required_permissions) <= set(PERMISSION_BY_KEY):
             raise ValueError("route policy names an unknown permission")
         if any(
@@ -109,12 +114,14 @@ class RoutePolicy:
                 RouteAuthorityKind.AUTHENTICATED_SESSION
             ),
             RoutePolicyKind.SITE_PERMISSION: RouteAuthorityKind.SITE_PERMISSION,
+            RoutePolicyKind.AGENT_CAPABILITY: RouteAuthorityKind.AGENT_CAPABILITY,
         }[self.policy_kind]
         if self.authority_kind is not expected_authority:
             raise ValueError("route policy kind and authority mismatch")
         expected_session = self.authority_kind not in {
             RouteAuthorityKind.SYSTEM_EXEMPTION,
             RouteAuthorityKind.PUBLIC,
+            RouteAuthorityKind.AGENT_CAPABILITY,
         }
         if self.session_required is not expected_session:
             raise ValueError("route policy session shape mismatch")
@@ -158,6 +165,25 @@ def _policy(
     )
 
 
+def _agent_policy(
+    method: str,
+    path: str,
+    mutation: RouteMutationClass,
+    *scopes: str,
+) -> RoutePolicy:
+    return RoutePolicy(
+        process=_AGENT,
+        method=method,
+        path_template=path,
+        mutation_class=mutation,
+        session_required=False,
+        csrf_required=False,
+        authority_kind=RouteAuthorityKind.AGENT_CAPABILITY,
+        policy_kind=RoutePolicyKind.AGENT_CAPABILITY,
+        required_scopes=tuple(scopes),
+    )
+
+
 _R = RouteMutationClass.READ
 _M = RouteMutationClass.MUTATION
 _CONTROL = ProcessKind.CONTROL_API
@@ -181,7 +207,7 @@ ROUTE_POLICIES: Final[tuple[RoutePolicy, ...]] = (
             _HEALTH,
             RoutePolicyKind.SYSTEM_HEALTH,
         )
-        for process in (_CONTROL, _EDITOR)
+        for process in (_CONTROL, _EDITOR, _AGENT)
         for path in ("/health/live", "/health/ready")
     ),
     _policy(
@@ -958,46 +984,182 @@ ROUTE_POLICIES: Final[tuple[RoutePolicy, ...]] = (
             ),
         )
     ),
+    _agent_policy("GET", "/api/agent/v1/openapi.json", _R),
     *(
-        _policy(
-            _AGENT,
-            method,
-            path,
-            _R,
-            False,
-            False,
-            RouteAuthorityKind.SYSTEM_EXEMPTION,
-            RoutePolicyKind.SYSTEM_HEALTH,
-        )
-        for method, path in (
-            ("GET", "/api/agent/v1/session"),
-            ("GET", "/api/agent/v1/permissions"),
-            ("GET", "/api/agent/v1/content-model/types"),
-            ("GET", "/api/agent/v1/content-model/types/{type_id}"),
-            ("GET", "/api/agent/v1/content-model/types/{type_id}/fields"),
-            ("GET", "/api/agent/v1/content-items/types/{type_id}"),
-            ("GET", "/api/agent/v1/pages/"),
-            ("GET", "/api/agent/v1/pages/{page_id}/components"),
-            ("GET", "/api/agent/v1/media/"),
+        _agent_policy(method, path, _R, *scopes)
+        for method, path, scopes in (
+            ("GET", "/api/agent/v1/session", ()),
+            ("GET", "/api/agent/v1/permissions", ("site:read",)),
+            (
+                "GET",
+                "/api/agent/v1/content-model/primitives",
+                ("validation:read",),
+            ),
+            ("GET", "/api/agent/v1/content-model/types", ("content-model:read",)),
+            (
+                "GET",
+                "/api/agent/v1/content-model/types/{type_id}",
+                ("content-model:read",),
+            ),
+            (
+                "GET",
+                "/api/agent/v1/content-model/types/{type_id}/fields",
+                ("content-model:read",),
+            ),
+            (
+                "GET",
+                "/api/agent/v1/content-model/types/{type_id}/fields/{field_id}",
+                ("content-model:read",),
+            ),
+            (
+                "GET",
+                "/api/agent/v1/content-items/types/{type_id}",
+                ("content-item:read",),
+            ),
+            (
+                "GET",
+                "/api/agent/v1/content-items/{item_id}",
+                ("content-item:read",),
+            ),
+            (
+                "GET",
+                "/api/agent/v1/content-items/{item_id}/translations",
+                ("translation:read",),
+            ),
+            (
+                "GET",
+                "/api/agent/v1/content-items/{item_id}/translations/{translation_id}",
+                ("translation:read",),
+            ),
+            (
+                "GET",
+                "/api/agent/v1/content-items/{item_id}/relations",
+                ("content-item:read",),
+            ),
+            (
+                "GET",
+                "/api/agent/v1/content-items/{item_id}/relations/{relation_id}",
+                ("content-item:read",),
+            ),
+            (
+                "GET",
+                "/api/agent/v1/collection-views/types/{type_id}",
+                ("collection-view:read",),
+            ),
+            (
+                "GET",
+                "/api/agent/v1/collection-views/{view_id}",
+                ("collection-view:read",),
+            ),
+            ("GET", "/api/agent/v1/pages/", ("page:read",)),
+            ("GET", "/api/agent/v1/pages/{page_id}/components", ("composition:read",)),
+            ("GET", "/api/agent/v1/media/", ("media:read",)),
         )
     ),
     *(
-        _policy(
-            _AGENT,
-            method,
-            path,
-            mutation,
-            False,
-            False,
-            RouteAuthorityKind.SYSTEM_EXEMPTION,
-            RoutePolicyKind.SYSTEM_HEALTH,
+        _agent_policy(method, path, _M, scope)
+        for method, path, scope in (
+            ("POST", "/api/agent/v1/content-model/types", "content-model:create"),
+            (
+                "POST",
+                "/api/agent/v1/content-model/types/{type_id}/fields",
+                "field-definition:create",
+            ),
+            (
+                "PATCH",
+                "/api/agent/v1/content-model/types/{type_id}",
+                "content-model:write",
+            ),
+            (
+                "PATCH",
+                "/api/agent/v1/content-model/types/{type_id}/fields/{field_id}",
+                "field-definition:write",
+            ),
+            (
+                "DELETE",
+                "/api/agent/v1/content-model/types/{type_id}",
+                "content-model:delete",
+            ),
+            (
+                "DELETE",
+                "/api/agent/v1/content-model/types/{type_id}/fields/{field_id}",
+                "field-definition:delete",
+            ),
+            (
+                "POST",
+                "/api/agent/v1/content-items/types/{type_id}",
+                "content-item:create",
+            ),
+            (
+                "PATCH",
+                "/api/agent/v1/content-items/{item_id}",
+                "content-item:write",
+            ),
+            (
+                "DELETE",
+                "/api/agent/v1/content-items/{item_id}",
+                "content-item:delete",
+            ),
+            (
+                "POST",
+                "/api/agent/v1/content-items/{item_id}/translations",
+                "translation:write",
+            ),
+            (
+                "PATCH",
+                "/api/agent/v1/content-items/{item_id}/translations/{translation_id}",
+                "translation:write",
+            ),
+            (
+                "DELETE",
+                "/api/agent/v1/content-items/{item_id}/translations/{translation_id}",
+                "translation:write",
+            ),
+            (
+                "POST",
+                "/api/agent/v1/content-items/{item_id}/relations",
+                "relationship:write",
+            ),
+            (
+                "PATCH",
+                "/api/agent/v1/content-items/{item_id}/relations/{relation_id}",
+                "relationship:write",
+            ),
+            (
+                "DELETE",
+                "/api/agent/v1/content-items/{item_id}/relations/{relation_id}",
+                "relationship:write",
+            ),
+            (
+                "POST",
+                "/api/agent/v1/collection-views/types/{type_id}",
+                "collection-view:create",
+            ),
+            (
+                "PATCH",
+                "/api/agent/v1/collection-views/{view_id}",
+                "collection-view:write",
+            ),
+            (
+                "DELETE",
+                "/api/agent/v1/collection-views/{view_id}",
+                "collection-view:delete",
+            ),
+            ("POST", "/api/agent/v1/pages/", "page:create"),
+            (
+                "POST",
+                "/api/agent/v1/pages/{page_id}/components",
+                "component-structure:create",
+            ),
         )
+    ),
+    *(
+        _agent_policy(method, path, mutation, "preview:inspect")
         for method, path, mutation in (
-            ("POST", "/api/agent/v1/content-model/types", _M),
-            ("POST", "/api/agent/v1/content-model/types/{type_id}/fields", _M),
-            ("POST", "/api/agent/v1/content-items/types/{type_id}", _M),
-            ("POST", "/api/agent/v1/pages/", _M),
-            ("POST", "/api/agent/v1/pages/{page_id}/components", _M),
+            ("POST", "/api/agent/v1/preview-runs", _M),
+            ("GET", "/api/agent/v1/preview-runs/{run_id}", _R),
+            ("GET", "/api/agent/v1/preview-runs/{run_id}/artifacts", _R),
+            ("GET", "/api/agent/v1/preview-runs/{run_id}/artifacts/{artifact_id}", _R),
         )
     ),
 )

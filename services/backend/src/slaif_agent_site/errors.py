@@ -118,6 +118,16 @@ class DomainValidationError(AppError):
     public_message = "The request failed domain validation."
 
 
+class FieldDependenciesError(DomainValidationError):
+    code = "FIELD_DEPENDENCIES"
+    public_message = "The field is still referenced by workspace content."
+
+
+class TypeDependenciesError(DomainValidationError):
+    code = "TYPE_DEPENDENCIES"
+    public_message = "The content type is still referenced by workspace content."
+
+
 class QuotaExceededError(AppError):
     code = "QUOTA_EXCEEDED"
     status_code = 429

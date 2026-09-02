@@ -19,8 +19,9 @@ contain no profile, credential, token, cookie, digest, or database locator.
 
 The Control service exposes a bounded local-authentication boundary under
 `/api/control/v1`. Existing NGINX routing makes these backend endpoints
-externally reachable in the default topology. Public OpenAPI and documentation
-URLs remain disabled.
+externally reachable in the default topology. Interactive Swagger/ReDoc and
+generic FastAPI documentation URLs remain disabled; the versioned Agent
+contract is deliberately exposed at the public path documented below.
 
 - `GET /setup/status` returns only `initialized` and `setup_available`.
 - `POST /setup` consumes the one-time setup token and creates the first local administrator.
@@ -167,6 +168,17 @@ style policy. No user-controlled raw CSS/style payload is accepted.
 
 ## Capability-bound Agent semantic API
 
+### Deterministic public Agent contract
+
+`GET /api/agent/v1/openapi.json` is unauthenticated and returns the exact
+committed bytes of [`contracts/openapi/agent-v1.json`](../contracts/openapi/agent-v1.json).
+It grants no operation authority. The document is OpenAPI 3.1, contains only
+the versioned Agent paths, uses the `AgentCapability` bearer scheme with
+empty OpenAPI bearer requirement values, and publishes exact operation scopes
+in `x-slaif-required-scopes`. Mutations require a bounded `Idempotency-Key`
+header in the contract. Regenerate and check it with the commands in
+[`contracts/README.md`](../contracts/README.md).
+
 The Agent API authenticates a bearer capability and derives the site and
 workspace exclusively from that trusted capability. Semantic GETs and bounded
 mutations use different server paths: reads enter one request-scoped COW
@@ -178,6 +190,7 @@ The capability-bound read surface is:
 | Route | Success | Required scope |
 | --- | --- | --- |
 | `GET /api/agent/v1/content-model/types` | 200 | `content-model:read` |
+| `GET /api/agent/v1/content-model/primitives` | 200 | `validation:read` |
 | `GET /api/agent/v1/content-model/types/{type_id}` | 200 | `content-model:read` |
 | `GET /api/agent/v1/content-model/types/{type_id}/fields` | 200 | `content-model:read` |
 | `GET /api/agent/v1/content-items/types/{type_id}` | 200 | `content-item:read` |
@@ -199,7 +212,22 @@ The bounded mutation surface is:
 | --- | --- | --- |
 | `POST /api/agent/v1/content-model/types` | 201 | `CreateContentTypeRequest` |
 | `POST /api/agent/v1/content-model/types/{type_id}/fields` | 201 | `CreateFieldDefinitionRequest` |
+| `PATCH /api/agent/v1/content-model/types/{type_id}` | 200 | `UpdateContentTypeRequest` |
+| `PATCH /api/agent/v1/content-model/types/{type_id}/fields/{field_id}` | 200 | `UpdateFieldDefinitionRequest` |
+| `DELETE /api/agent/v1/content-model/types/{type_id}` | 200 | `DeleteDefinitionRequest` |
+| `DELETE /api/agent/v1/content-model/types/{type_id}/fields/{field_id}` | 200 | `DeleteDefinitionRequest` |
 | `POST /api/agent/v1/content-items/types/{type_id}` | 201 | `CreateContentItemRequest`; its `type_id` must match the path |
+| `PATCH /api/agent/v1/content-items/{item_id}` | 200 | `AgentUpdateContentItemRequest` |
+| `DELETE /api/agent/v1/content-items/{item_id}` | 200 | `DeleteContentItemRequest` |
+| `POST /api/agent/v1/content-items/{item_id}/translations` | 201 | `CreateTranslationRequest` |
+| `PATCH /api/agent/v1/content-items/{item_id}/translations/{translation_id}` | 200 | `UpdateTranslationRequest` |
+| `DELETE /api/agent/v1/content-items/{item_id}/translations/{translation_id}` | 200 | `DeleteTranslationRequest` |
+| `POST /api/agent/v1/content-items/{item_id}/relations` | 201 | `CreateRelationRequest` |
+| `PATCH /api/agent/v1/content-items/{item_id}/relations/{relation_id}` | 200 | `UpdateRelationRequest` |
+| `DELETE /api/agent/v1/content-items/{item_id}/relations/{relation_id}` | 200 | `AgentDeleteRequest` |
+| `POST /api/agent/v1/collection-views/types/{type_id}` | 201 | `CreateCollectionViewRequest` |
+| `PATCH /api/agent/v1/collection-views/{view_id}` | 200 | `UpdateCollectionViewRequest` |
+| `DELETE /api/agent/v1/collection-views/{view_id}` | 200 | `AgentDeleteRequest` |
 | `POST /api/agent/v1/pages/` | 201 | `CreatePageRequest` |
 | `POST /api/agent/v1/pages/{page_id}/components` | 201 | `CreateCompositionNodeRequest` |
 
@@ -218,6 +246,16 @@ authority, SQL/DDL route, or lifecycle route. Created records are visible in
 the workspace overlay and remain absent from canonical content until a later
 human-only lifecycle order; this round does not implement freeze, accept,
 discard, review, or publication routes.
+
+Definition deletion is dependency-safe. Type deletion rejects visible fields,
+items, collection views, and any surviving item translations or relations;
+field deletion rejects exact nonlocalized/localized value keys, normalized
+relations, and recursive view filter, sort, or projection references. These
+denials are stable `422` responses with `TYPE_DEPENDENCIES` or
+`FIELD_DEPENDENCIES`, consume no quota, and leave no idempotency, audit, or COW
+residue. All model/content dependency writes share one transaction-scoped
+workspace lock, so a concurrent creator and deletion has one committed winner
+and a coherent loser result.
 
 ### Capability-bound browser preview runs
 

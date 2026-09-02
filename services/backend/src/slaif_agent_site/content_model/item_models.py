@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from .models import _bounded_json, _bounded_text
 
@@ -71,6 +71,18 @@ class UpdateContentItemRequest(BaseModel):
         result = _bounded_json(value)
         assert isinstance(result, dict)
         return result
+
+
+class AgentUpdateContentItemRequest(UpdateContentItemRequest):
+    """Agent PATCH requires an explicit positive optimistic-lock token."""
+
+    expected_row_version: int = Field(gt=0)
+
+
+class DeleteContentItemRequest(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    expected_row_version: int = Field(gt=0)
 
 
 class ContentItemRecord(BaseModel):

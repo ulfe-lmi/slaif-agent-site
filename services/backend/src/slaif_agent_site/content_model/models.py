@@ -11,7 +11,7 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .primitives import FieldPrimitive, FieldPrimitiveError
 
@@ -35,6 +35,35 @@ def _bounded_json(value: Any, max_depth: int = 8) -> Any:
     if isinstance(value, str) and len(value) > 4096:
         raise ValueError("string too long")
     return value
+
+
+_EXECUTABLE_DATA_MARKERS = (
+    ";",
+    "--",
+    "/*",
+    "*/",
+    "<script",
+    "javascript:",
+    "__proto__",
+    "constructor",
+    "prototype",
+)
+
+
+def _reject_executable_data(value: Any) -> None:
+    """Reject executable-looking relation metadata before it reaches SQL."""
+    if isinstance(value, dict):
+        for key, child in value.items():
+            if any(marker in key.casefold() for marker in _EXECUTABLE_DATA_MARKERS):
+                raise ValueError("metadata contains an executable marker")
+            _reject_executable_data(child)
+    elif isinstance(value, list):
+        for child in value:
+            _reject_executable_data(child)
+    elif isinstance(value, str) and any(
+        marker in value.casefold() for marker in _EXECUTABLE_DATA_MARKERS
+    ):
+        raise ValueError("metadata contains an executable marker")
 
 
 class CreateContentTypeRequest(BaseModel):
@@ -81,6 +110,7 @@ class UpdateContentTypeRequest(BaseModel):
     labels: dict[str, str] | None = None
     slug_pattern: str | None = None
     settings: dict[str, Any] | None = None
+    expected_definition_version: int = Field(default=1, ge=1)
 
     @field_validator("slug_pattern")
     @classmethod
@@ -108,6 +138,12 @@ class UpdateContentTypeRequest(BaseModel):
         result = _bounded_json(value)
         assert isinstance(result, dict)
         return result
+
+
+class DeleteDefinitionRequest(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    expected_definition_version: int = Field(default=1, ge=1)
 
 
 class ContentTypeRecord(BaseModel):
@@ -222,6 +258,8 @@ class UpdateFieldDefinitionRequest(BaseModel):
     position: int | None = None
     validation: dict[str, Any] | None = None
     ui_options: dict[str, Any] | None = None
+    expected_definition_version: int = Field(default=1, ge=1)
+    expected_row_version: int | None = Field(default=None, ge=1)
 
     @field_validator("label")
     @classmethod
@@ -353,6 +391,12 @@ class UpdateTranslationRequest(BaseModel):
         return value
 
 
+class DeleteTranslationRequest(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    expected_row_version: int = Field(gt=0)
+
+
 class TranslationRecord(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -385,6 +429,7 @@ class CreateRelationRequest(BaseModel):
     @classmethod
     def metadata_is_bounded(cls, value: dict[str, Any]) -> dict[str, Any]:
         result = _bounded_json(value)
+        _reject_executable_data(result)
         assert isinstance(result, dict)
         return result
 
@@ -417,6 +462,7 @@ class UpdateRelationRequest(BaseModel):
         if value is None:
             return None
         result = _bounded_json(value)
+        _reject_executable_data(result)
         assert isinstance(result, dict)
         return result
 
@@ -442,6 +488,7 @@ __all__ = [
     "CreateFieldDefinitionRequest",
     "FieldDefinitionRecord",
     "CreateTranslationRequest",
+    "DeleteTranslationRequest",
     "UpdateTranslationRequest",
     "TranslationRecord",
     "CreateRelationRequest",

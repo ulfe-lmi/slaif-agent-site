@@ -207,10 +207,19 @@ async def test_each_app_has_only_typed_health_routes(
         expected_routes |= {
             "/api/agent/v1/session",
             "/api/agent/v1/permissions",
+            "/api/agent/v1/content-model/primitives",
             "/api/agent/v1/content-model/types",
             "/api/agent/v1/content-model/types/{type_id}",
             "/api/agent/v1/content-model/types/{type_id}/fields",
+            "/api/agent/v1/content-model/types/{type_id}/fields/{field_id}",
             "/api/agent/v1/content-items/types/{type_id}",
+            "/api/agent/v1/content-items/{item_id}",
+            "/api/agent/v1/content-items/{item_id}/translations",
+            "/api/agent/v1/content-items/{item_id}/translations/{translation_id}",
+            "/api/agent/v1/content-items/{item_id}/relations",
+            "/api/agent/v1/content-items/{item_id}/relations/{relation_id}",
+            "/api/agent/v1/collection-views/types/{type_id}",
+            "/api/agent/v1/collection-views/{view_id}",
             "/api/agent/v1/pages/",
             "/api/agent/v1/pages/{page_id}/components",
             "/api/agent/v1/media/",
@@ -218,6 +227,7 @@ async def test_each_app_has_only_typed_health_routes(
             "/api/agent/v1/preview-runs/{run_id}",
             "/api/agent/v1/preview-runs/{run_id}/artifacts",
             "/api/agent/v1/preview-runs/{run_id}/artifacts/{artifact_id}",
+            "/api/agent/v1/openapi.json",
         }
     if process is ProcessKind.RENDER_API:
         expected_routes.add("/internal/render/v1/site-context")

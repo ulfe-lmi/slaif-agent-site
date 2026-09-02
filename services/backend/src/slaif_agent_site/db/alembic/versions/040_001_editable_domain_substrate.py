@@ -269,56 +269,52 @@ def upgrade() -> None:
         "GRANT EXECUTE ON FUNCTION content.slaif_content_item_translation_create(uuid,uuid,text,jsonb) TO slaif_editor_runtime,slaif_control"
     )
 
+    op.execute("""
+      CREATE FUNCTION content.slaif_agent_content_type_update(p_site_id uuid,p_type_id uuid,p_labels jsonb,p_slug_pattern text,p_settings jsonb,p_expected integer)
+      RETURNS SETOF content.content_type LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $$ DECLARE updated content.content_type;
+      BEGIN PERFORM control.slaif_agent_require_cow_site(p_site_id); IF NOT EXISTS(SELECT 1 FROM content.content_type WHERE id=p_type_id AND site_id=p_site_id AND status='ACTIVE' AND definition_version=p_expected) THEN RAISE EXCEPTION 'STALE_DEFINITION' USING ERRCODE='P0003'; END IF; UPDATE content.content_type SET labels=coalesce(p_labels,labels),slug_pattern=coalesce(p_slug_pattern,slug_pattern),settings=coalesce(p_settings,settings),definition_version=definition_version+1,updated_at=now() WHERE id=p_type_id AND site_id=p_site_id RETURNING * INTO updated; RETURN NEXT updated; END $$
+    """)
+    op.execute("""
+      CREATE FUNCTION content.slaif_agent_content_type_delete(p_site_id uuid,p_type_id uuid,p_expected integer) RETURNS SETOF content.content_type LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $$ DECLARE deleted content.content_type; BEGIN PERFORM control.slaif_agent_require_cow_site(p_site_id); IF NOT EXISTS(SELECT 1 FROM content.content_type WHERE id=p_type_id AND site_id=p_site_id AND status='ACTIVE' AND definition_version=p_expected) THEN RAISE EXCEPTION 'STALE_DEFINITION' USING ERRCODE='P0003'; END IF; IF EXISTS(SELECT 1 FROM content.content_item WHERE site_id=p_site_id AND type_id=p_type_id) THEN RAISE EXCEPTION 'TYPE_DEPENDENCIES' USING ERRCODE='P0003'; END IF; UPDATE content.content_type SET status='DELETED',definition_version=definition_version+1,updated_at=now() WHERE id=p_type_id AND site_id=p_site_id RETURNING * INTO deleted; RETURN NEXT deleted; END $$
+    """)
+    op.execute("""
+      CREATE FUNCTION content.slaif_agent_field_definition_update(p_site_id uuid,p_type_id uuid,p_field_id uuid,p_label text,p_required boolean,p_localized boolean,p_cardinality integer,p_position integer,p_validation jsonb,p_ui_options jsonb,p_expected integer) RETURNS SETOF content.field_definition LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $$ DECLARE updated content.field_definition;
+      BEGIN PERFORM control.slaif_agent_require_cow_site(p_site_id); IF NOT EXISTS(SELECT 1 FROM content.field_definition f JOIN content.content_type t ON t.id=f.type_id WHERE f.id=p_field_id AND f.site_id=p_site_id AND f.type_id=p_type_id AND f.definition_version=p_expected AND t.status='ACTIVE') THEN RAISE EXCEPTION 'STALE_DEFINITION' USING ERRCODE='P0003'; END IF; UPDATE content.field_definition SET label=coalesce(p_label,label),required=coalesce(p_required,required),localized=coalesce(p_localized,localized),cardinality=coalesce(p_cardinality,cardinality),position=coalesce(p_position,position),validation=coalesce(p_validation,validation),ui_options=coalesce(p_ui_options,ui_options),definition_version=definition_version+1,updated_at=now() WHERE id=p_field_id AND site_id=p_site_id RETURNING * INTO updated; RETURN NEXT updated; END $$
+    """)
+    op.execute("""
+      CREATE FUNCTION content.slaif_agent_field_definition_delete(p_site_id uuid,p_type_id uuid,p_field_id uuid,p_expected integer) RETURNS SETOF content.field_definition LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $$ DECLARE deleted content.field_definition; BEGIN PERFORM control.slaif_agent_require_cow_site(p_site_id); IF NOT EXISTS(SELECT 1 FROM content.field_definition WHERE id=p_field_id AND site_id=p_site_id AND type_id=p_type_id AND definition_version=p_expected) THEN RAISE EXCEPTION 'STALE_DEFINITION' USING ERRCODE='P0003'; END IF; IF EXISTS(SELECT 1 FROM content.content_item i WHERE i.site_id=p_site_id AND i.type_id=p_type_id AND (i."values" ? (SELECT key FROM content.field_definition WHERE id=p_field_id))) THEN RAISE EXCEPTION 'FIELD_DEPENDENCIES' USING ERRCODE='P0003'; END IF; DELETE FROM content.field_definition WHERE id=p_field_id AND site_id=p_site_id RETURNING * INTO deleted; RETURN NEXT deleted; END $$
+    """)
+    op.execute(
+        "GRANT EXECUTE ON FUNCTION content.slaif_agent_content_type_update(uuid,uuid,jsonb,text,jsonb,integer),content.slaif_agent_content_type_delete(uuid,uuid,integer),content.slaif_agent_field_definition_update(uuid,uuid,uuid,text,boolean,boolean,integer,integer,jsonb,jsonb,integer),content.slaif_agent_field_definition_delete(uuid,uuid,uuid,integer) TO slaif_agent_runtime"
+    )
+
     # Definition versions are immutable compatibility boundaries.  Every
-    # item/translation/relation write rechecks the persisted item version
-    # against the current active type before touching COW state.
+    # item/translation/relation write rechecks the persisted item version.
     op.execute("""
       CREATE OR REPLACE FUNCTION content.slaif_content_item_update(p_item_id uuid,p_slug text,p_status text,p_values jsonb,p_expected_row_version integer,_unused text)
       RETURNS TABLE(id uuid,site_id uuid,type_id uuid,slug text,status text,type_definition_version integer,"values" jsonb,row_version integer,created_at timestamptz,updated_at timestamptz)
       LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $$ DECLARE old content.content_item;
-      BEGIN
-        SELECT * INTO old FROM content.content_item WHERE id=p_item_id FOR UPDATE; IF NOT FOUND THEN RAISE EXCEPTION 'NOT_FOUND' USING ERRCODE='P0002'; END IF;
-        IF NOT EXISTS(SELECT 1 FROM content.content_type t WHERE t.id=old.type_id AND t.status='ACTIVE' AND t.definition_version=old.type_definition_version) THEN RAISE EXCEPTION 'STALE_DEFINITION' USING ERRCODE='P0003'; END IF;
-        IF p_expected_row_version IS NOT NULL AND old.row_version<>p_expected_row_version THEN RAISE EXCEPTION 'ROW_VERSION_MISMATCH' USING ERRCODE='P0004'; END IF;
-        UPDATE content.content_item SET slug=coalesce(p_slug,slug),status=coalesce(p_status,status),"values"=coalesce(p_values,"values"),row_version=row_version+1,updated_at=now() WHERE id=p_item_id RETURNING * INTO old; RETURN QUERY SELECT old.id,old.site_id,old.type_id,old.slug,old.status,old.type_definition_version,old."values",old.row_version,old.created_at,old.updated_at;
-      END $$
+      BEGIN SELECT * INTO old FROM content.content_item WHERE id=p_item_id FOR UPDATE; IF NOT FOUND THEN RAISE EXCEPTION 'NOT_FOUND' USING ERRCODE='P0002'; END IF; IF NOT EXISTS(SELECT 1 FROM content.content_type t WHERE t.id=old.type_id AND t.status='ACTIVE' AND t.definition_version=old.type_definition_version) THEN RAISE EXCEPTION 'STALE_DEFINITION' USING ERRCODE='P0003'; END IF; IF p_expected_row_version IS NOT NULL AND old.row_version<>p_expected_row_version THEN RAISE EXCEPTION 'ROW_VERSION_MISMATCH' USING ERRCODE='P0004'; END IF; UPDATE content.content_item SET slug=coalesce(p_slug,slug),status=coalesce(p_status,status),"values"=coalesce(p_values,"values"),row_version=row_version+1,updated_at=now() WHERE id=p_item_id RETURNING * INTO old; RETURN QUERY SELECT old.id,old.site_id,old.type_id,old.slug,old.status,old.type_definition_version,old."values",old.row_version,old.created_at,old.updated_at; END $$
     """)
     op.execute("""
       CREATE OR REPLACE FUNCTION content.slaif_content_item_translation_create(p_site_id uuid,p_item_id uuid,p_locale text,p_values jsonb)
       RETURNS SETOF content.content_item_translation LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $$ DECLARE item content.content_item; created content.content_item_translation;
-      BEGIN
-        SELECT * INTO item FROM content.content_item WHERE id=p_item_id AND site_id=p_site_id; IF NOT FOUND THEN RAISE EXCEPTION 'NOT_FOUND' USING ERRCODE='P0002'; END IF;
-        IF NOT EXISTS(SELECT 1 FROM content.content_type t WHERE t.id=item.type_id AND t.status='ACTIVE' AND t.definition_version=item.type_definition_version) THEN RAISE EXCEPTION 'STALE_DEFINITION' USING ERRCODE='P0003'; END IF;
-        IF p_locale !~ '^[A-Za-z]{2,8}(-[A-Za-z0-9]{1,8}){0,3}$' OR jsonb_typeof(p_values)<>'object' THEN RAISE EXCEPTION 'TRANSLATION_INVALID' USING ERRCODE='P0003'; END IF;
-        INSERT INTO content.content_item_translation(site_id,item_id,locale,localized_values) VALUES(p_site_id,p_item_id,p_locale,p_values) RETURNING * INTO created; RETURN NEXT created;
-      END $$
+      BEGIN SELECT * INTO item FROM content.content_item WHERE id=p_item_id AND site_id=p_site_id; IF NOT FOUND THEN RAISE EXCEPTION 'NOT_FOUND' USING ERRCODE='P0002'; END IF; IF NOT EXISTS(SELECT 1 FROM content.content_type t WHERE t.id=item.type_id AND t.status='ACTIVE' AND t.definition_version=item.type_definition_version) THEN RAISE EXCEPTION 'STALE_DEFINITION' USING ERRCODE='P0003'; END IF; IF p_locale !~ '^[A-Za-z]{2,8}(-[A-Za-z0-9]{1,8}){0,3}$' OR jsonb_typeof(p_values)<>'object' THEN RAISE EXCEPTION 'TRANSLATION_INVALID' USING ERRCODE='P0003'; END IF; INSERT INTO content.content_item_translation(site_id,item_id,locale,localized_values) VALUES(p_site_id,p_item_id,p_locale,p_values) RETURNING * INTO created; RETURN NEXT created; END $$
     """)
     op.execute("""
       CREATE OR REPLACE FUNCTION content.slaif_content_item_translation_update(p_site_id uuid,p_id uuid,p_locale text,p_values jsonb,p_expected integer)
       RETURNS SETOF content.content_item_translation LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $$ DECLARE old content.content_item_translation; item content.content_item; updated content.content_item_translation;
-      BEGIN
-        SELECT * INTO old FROM content.content_item_translation WHERE site_id=p_site_id AND id=p_id FOR UPDATE; IF NOT FOUND THEN RAISE EXCEPTION 'NOT_FOUND' USING ERRCODE='P0002'; END IF; SELECT * INTO item FROM content.content_item WHERE site_id=p_site_id AND id=old.item_id; IF NOT EXISTS(SELECT 1 FROM content.content_type t WHERE t.id=item.type_id AND t.status='ACTIVE' AND t.definition_version=item.type_definition_version) THEN RAISE EXCEPTION 'STALE_DEFINITION' USING ERRCODE='P0003'; END IF; IF old.row_version<>p_expected THEN RAISE EXCEPTION 'ROW_VERSION_MISMATCH' USING ERRCODE='P0004'; END IF;
-        UPDATE content.content_item_translation SET locale=coalesce(p_locale,locale),localized_values=coalesce(p_values,localized_values),row_version=row_version+1,updated_at=now() WHERE site_id=p_site_id AND id=p_id RETURNING * INTO updated; RETURN NEXT updated;
-      END $$
+      BEGIN SELECT * INTO old FROM content.content_item_translation WHERE site_id=p_site_id AND id=p_id FOR UPDATE; IF NOT FOUND THEN RAISE EXCEPTION 'NOT_FOUND' USING ERRCODE='P0002'; END IF; SELECT * INTO item FROM content.content_item WHERE site_id=p_site_id AND id=old.item_id; IF NOT EXISTS(SELECT 1 FROM content.content_type t WHERE t.id=item.type_id AND t.status='ACTIVE' AND t.definition_version=item.type_definition_version) THEN RAISE EXCEPTION 'STALE_DEFINITION' USING ERRCODE='P0003'; END IF; IF old.row_version<>p_expected THEN RAISE EXCEPTION 'ROW_VERSION_MISMATCH' USING ERRCODE='P0004'; END IF; UPDATE content.content_item_translation SET locale=coalesce(p_locale,locale),localized_values=coalesce(p_values,localized_values),row_version=row_version+1,updated_at=now() WHERE site_id=p_site_id AND id=p_id RETURNING * INTO updated; RETURN NEXT updated; END $$
     """)
     op.execute("""
       CREATE OR REPLACE FUNCTION content.slaif_item_relation_create(p_site_id uuid,p_source uuid,p_field uuid,p_target uuid,p_position integer,p_metadata jsonb)
       RETURNS SETOF content.item_relation LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $$ DECLARE source content.content_item; target content.content_item; field content.field_definition; created content.item_relation;
-      BEGIN
-        SELECT * INTO source FROM content.content_item WHERE site_id=p_site_id AND id=p_source; SELECT * INTO target FROM content.content_item WHERE site_id=p_site_id AND id=p_target; SELECT * INTO field FROM content.field_definition WHERE site_id=p_site_id AND id=p_field; IF source.id IS NULL OR target.id IS NULL OR field.id IS NULL OR field.type_id<>source.type_id THEN RAISE EXCEPTION 'RELATION_INVALID' USING ERRCODE='P0003'; END IF; IF NOT EXISTS(SELECT 1 FROM content.content_type t WHERE t.id IN (source.type_id,target.type_id) AND t.status='ACTIVE' AND t.definition_version=CASE WHEN t.id=source.type_id THEN source.type_definition_version ELSE target.type_definition_version END) THEN RAISE EXCEPTION 'STALE_DEFINITION' USING ERRCODE='P0003'; END IF; IF field.field_type NOT IN ('reference','multi_reference') OR p_position NOT BETWEEN 0 AND 999 OR jsonb_typeof(p_metadata)<>'object' THEN RAISE EXCEPTION 'RELATION_INVALID' USING ERRCODE='P0003'; END IF; INSERT INTO content.item_relation(site_id,source_item_id,field_definition_id,target_item_id,position,metadata) VALUES(p_site_id,p_source,p_field,p_target,p_position,p_metadata) RETURNING * INTO created; RETURN NEXT created;
-      END $$
+      BEGIN SELECT * INTO source FROM content.content_item WHERE site_id=p_site_id AND id=p_source; SELECT * INTO target FROM content.content_item WHERE site_id=p_site_id AND id=p_target; SELECT * INTO field FROM content.field_definition WHERE site_id=p_site_id AND id=p_field; IF source.id IS NULL OR target.id IS NULL OR field.id IS NULL OR field.type_id<>source.type_id THEN RAISE EXCEPTION 'RELATION_INVALID' USING ERRCODE='P0003'; END IF; IF NOT EXISTS(SELECT 1 FROM content.content_type t WHERE t.id IN (source.type_id,target.type_id) AND t.status='ACTIVE' AND t.definition_version=CASE WHEN t.id=source.type_id THEN source.type_definition_version ELSE target.type_definition_version END) THEN RAISE EXCEPTION 'STALE_DEFINITION' USING ERRCODE='P0003'; END IF; INSERT INTO content.item_relation(site_id,source_item_id,field_definition_id,target_item_id,position,metadata) VALUES(p_site_id,p_source,p_field,p_target,p_position,p_metadata) RETURNING * INTO created; RETURN NEXT created; END $$
     """)
     op.execute("""
       CREATE OR REPLACE FUNCTION content.slaif_item_relation_update(p_site_id uuid,p_id uuid,p_target uuid,p_position integer,p_metadata jsonb,p_expected integer)
       RETURNS SETOF content.item_relation LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $$ DECLARE old content.item_relation; source content.content_item; target content.content_item; field content.field_definition; updated content.item_relation;
-      BEGIN
-        SELECT * INTO old FROM content.item_relation WHERE site_id=p_site_id AND id=p_id FOR UPDATE; IF NOT FOUND THEN RAISE EXCEPTION 'NOT_FOUND' USING ERRCODE='P0002'; END IF; IF old.row_version<>p_expected THEN RAISE EXCEPTION 'ROW_VERSION_MISMATCH' USING ERRCODE='P0004'; END IF; SELECT * INTO source FROM content.content_item WHERE site_id=p_site_id AND id=old.source_item_id; SELECT * INTO target FROM content.content_item WHERE site_id=p_site_id AND id=coalesce(p_target,old.target_item_id); SELECT * INTO field FROM content.field_definition WHERE site_id=p_site_id AND id=old.field_definition_id; IF source.id IS NULL OR target.id IS NULL OR field.id IS NULL OR field.type_id<>source.type_id OR NOT EXISTS(SELECT 1 FROM content.content_type t WHERE t.id IN (source.type_id,target.type_id) AND t.status='ACTIVE' AND t.definition_version=CASE WHEN t.id=source.type_id THEN source.type_definition_version ELSE target.type_definition_version END) THEN RAISE EXCEPTION 'STALE_DEFINITION' USING ERRCODE='P0003'; END IF; UPDATE content.item_relation SET target_item_id=coalesce(p_target,target_item_id),position=coalesce(p_position,position),metadata=coalesce(p_metadata,metadata),row_version=row_version+1,updated_at=now() WHERE site_id=p_site_id AND id=p_id RETURNING * INTO updated; RETURN NEXT updated;
-      END $$
-    """)
-    op.execute("""
-      CREATE OR REPLACE FUNCTION content.slaif_field_definition_create(p_type_id uuid,p_key text,p_label text,p_field_type text,p_required boolean,p_localized boolean,p_cardinality integer,p_position integer,p_validation jsonb,p_ui_options jsonb)
-      RETURNS TABLE(id uuid,site_id uuid,type_id uuid,key text,label text,field_type text,required boolean,localized boolean,cardinality integer,"position" integer,validation jsonb,ui_options jsonb,definition_version integer,created_at timestamptz,updated_at timestamptz)
-      LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $$ BEGIN INSERT INTO content.field_definition(site_id,type_id,key,label,field_type,required,localized,cardinality,"position",validation,ui_options) SELECT t.site_id,p_type_id,p_key,p_label,p_field_type,p_required,p_localized,p_cardinality,p_position,p_validation,p_ui_options FROM content.content_type t WHERE t.id=p_type_id; IF NOT FOUND THEN RAISE EXCEPTION 'NOT_FOUND' USING ERRCODE='P0002'; END IF; RETURN QUERY SELECT f.id,f.site_id,f.type_id,f.key,f.label,f.field_type,f.required,f.localized,f.cardinality,f.position,f.validation,f.ui_options,f.definition_version,f.created_at,f.updated_at FROM content.field_definition f WHERE f.type_id=p_type_id AND f.key=p_key; END $$
+      BEGIN SELECT * INTO old FROM content.item_relation WHERE site_id=p_site_id AND id=p_id FOR UPDATE; IF NOT FOUND THEN RAISE EXCEPTION 'NOT_FOUND' USING ERRCODE='P0002'; END IF; IF old.row_version<>p_expected THEN RAISE EXCEPTION 'ROW_VERSION_MISMATCH' USING ERRCODE='P0004'; END IF; SELECT * INTO source FROM content.content_item WHERE site_id=p_site_id AND id=old.source_item_id; SELECT * INTO target FROM content.content_item WHERE site_id=p_site_id AND id=coalesce(p_target,old.target_item_id); SELECT * INTO field FROM content.field_definition WHERE site_id=p_site_id AND id=old.field_definition_id; IF source.id IS NULL OR target.id IS NULL OR field.id IS NULL OR field.type_id<>source.type_id OR NOT EXISTS(SELECT 1 FROM content.content_type t WHERE t.id IN (source.type_id,target.type_id) AND t.status='ACTIVE' AND t.definition_version=CASE WHEN t.id=source.type_id THEN source.type_definition_version ELSE target.type_definition_version END) THEN RAISE EXCEPTION 'STALE_DEFINITION' USING ERRCODE='P0003'; END IF; UPDATE content.item_relation SET target_item_id=coalesce(p_target,target_item_id),position=coalesce(p_position,position),metadata=coalesce(p_metadata,metadata),row_version=row_version+1,updated_at=now() WHERE site_id=p_site_id AND id=p_id RETURNING * INTO updated; RETURN NEXT updated; END $$
     """)
 
 
@@ -340,6 +336,16 @@ def downgrade() -> None:
         ("slaif_item_relation_get", "uuid,uuid"),
         ("slaif_item_relation_update", "uuid,uuid,uuid,integer,jsonb,integer"),
         ("slaif_item_relation_delete", "uuid,uuid,integer"),
+    ):
+        op.execute(f"DROP FUNCTION IF EXISTS content.{name}({signature}) CASCADE")
+    for name, signature in (
+        ("slaif_agent_content_type_update", "uuid,uuid,jsonb,text,jsonb,integer"),
+        ("slaif_agent_content_type_delete", "uuid,uuid,integer"),
+        (
+            "slaif_agent_field_definition_update",
+            "uuid,uuid,uuid,text,boolean,boolean,integer,integer,jsonb,jsonb,integer",
+        ),
+        ("slaif_agent_field_definition_delete", "uuid,uuid,uuid,integer"),
     ):
         op.execute(f"DROP FUNCTION IF EXISTS content.{name}({signature}) CASCADE")
     op.execute("DROP TABLE IF EXISTS content.item_relation CASCADE")

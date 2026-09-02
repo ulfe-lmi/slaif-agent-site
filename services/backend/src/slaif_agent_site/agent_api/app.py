@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import argparse
+import copy
+import json
 from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 
 import uvicorn
 from fastapi import FastAPI
+from fastapi.responses import Response
+from fastapi.routing import APIRoute
 
 from ..application import create_http_application
 from ..authority import ProcessKind
@@ -22,6 +26,12 @@ from ..browser_worker_client import (
     load_browser_worker_credential,
 )
 from ..config import ConfigurationError, ServiceSettings
+from ..control_api.route_policy import (
+    RouteMutationClass,
+    route_policies_for,
+    validate_route_policy_coverage,
+)
+from ..errors import ErrorEnvelope
 from ..health import ProbeResult, ReadinessProbe
 from ..logging import configure_json_logging
 from .agent_http import router as agent_router
@@ -30,6 +40,254 @@ from .browser_service import AgentBrowserRunService
 from .config import AgentDatabaseConfigurationError, AgentDatabaseSettings
 from .database import AgentDatabase, AgentDatabaseAdapter
 from .dispatcher import AgentBrowserDispatcher
+
+_AGENT_HTTP_METHODS = ("get", "post", "patch", "delete")
+_AGENT_ERROR_RESPONSES = {
+    "400": "Malformed request or missing/invalid idempotency key.",
+    "401": "Authentication is required.",
+    "403": "The capability scope or resource constraint is not sufficient.",
+    "404": "The resource is not available to this capability.",
+    "409": "The request conflicts with current state or idempotency.",
+    "413": "The request exceeds the bounded body limit.",
+    "422": "The request failed domain validation.",
+    "429": "The request exceeds an enforced quota.",
+    "503": "The service is temporarily unavailable.",
+}
+_IDEMPOTENCY_HEADER_SCHEMA = {
+    "type": "string",
+    "minLength": 1,
+    "maxLength": 128,
+    "pattern": "^[A-Za-z0-9._~-]+$",
+    "title": "Idempotency-Key",
+}
+
+
+def _sorted_json(value: object) -> object:
+    if isinstance(value, dict):
+        return {key: _sorted_json(value[key]) for key in sorted(value)}
+    if isinstance(value, list):
+        return [_sorted_json(item) for item in value]
+    return value
+
+
+def build_public_agent_openapi_document(app: FastAPI) -> dict[str, object]:
+    """Build the one deterministic public Agent contract from live handlers."""
+    raw = copy.deepcopy(app.openapi())
+    paths = {
+        path: operations
+        for path, operations in raw.get("paths", {}).items()
+        if path.startswith("/api/agent/v1/")
+    }
+    policies = {
+        (policy.method, policy.path_template): policy
+        for policy in route_policies_for(ProcessKind.AGENT_API)
+        if policy.path_template.startswith("/api/agent/v1/")
+    }
+    live_routes: dict[tuple[str, str], APIRoute] = {}
+    routes_to_visit: list[object] = list(app.routes)
+    while routes_to_visit:
+        route = routes_to_visit.pop()
+        original_router = getattr(route, "original_router", None)
+        if original_router is not None:
+            routes_to_visit.extend(original_router.routes)
+            continue
+        if not isinstance(route, APIRoute) or not route.path.startswith(
+            "/api/agent/v1/"
+        ):
+            continue
+        for method in route.methods or ():
+            if method.lower() in _AGENT_HTTP_METHODS:
+                key = (method.upper(), route.path)
+                if key in live_routes:
+                    raise RuntimeError(f"duplicate Agent handler: {key}")
+                live_routes[key] = route
+    openapi_inventory = {
+        (method.upper(), path)
+        for path, operations in paths.items()
+        for method in operations
+        if method in _AGENT_HTTP_METHODS
+    }
+    expected_inventory = set(policies)
+    if (
+        openapi_inventory != expected_inventory
+        or set(live_routes) != expected_inventory
+    ):
+        raise RuntimeError("Agent OpenAPI/policy/handler inventory mismatch")
+    document: dict[str, object] = {
+        "openapi": "3.1.0",
+        "info": {
+            "title": "SLAIF Agent API",
+            "version": "v1",
+            "description": "Capability-authenticated semantic Agent contract.",
+        },
+        "paths": paths,
+        "components": raw.get("components", {}),
+    }
+    components = document["components"]
+    if not isinstance(components, dict):
+        components = {}
+        document["components"] = components
+    schemas = components.setdefault("schemas", {})
+    if not isinstance(schemas, dict):
+        schemas = {}
+        components["schemas"] = schemas
+    error_schema = ErrorEnvelope.model_json_schema(
+        ref_template="#/components/schemas/{model}"
+    )
+    definitions = error_schema.pop("$defs", {})
+    if isinstance(definitions, dict):
+        schemas.update(definitions)
+    schemas["ErrorEnvelope"] = error_schema
+    components["securitySchemes"] = {
+        "AgentCapability": {
+            "type": "http",
+            "scheme": "bearer",
+            "bearerFormat": "sas2_",
+        }
+    }
+
+    typed_paths = document["paths"]
+    assert isinstance(typed_paths, dict)
+    for path, operations in typed_paths.items():
+        if not isinstance(operations, dict):
+            raise RuntimeError(f"Agent OpenAPI path is malformed: {path}")
+        for method in _AGENT_HTTP_METHODS:
+            operation = operations.get(method)
+            if not isinstance(operation, dict) or "responses" not in operation:
+                continue
+            policy = policies.get((method.upper(), path))
+            if policy is None:
+                raise RuntimeError(
+                    f"Agent OpenAPI route has no policy: {method.upper()} {path}"
+                )
+            route = live_routes[(method.upper(), path)]
+            scopes = list(policy.required_scopes)
+            operation["x-slaif-required-scopes"] = scopes
+            operation["x-slaif-mutation"] = (
+                policy.mutation_class is RouteMutationClass.MUTATION
+            )
+            operation["x-slaif-idempotency"] = (
+                "required"
+                if policy.mutation_class is RouteMutationClass.MUTATION
+                else "not-applicable"
+            )
+            if path == "/api/agent/v1/openapi.json":
+                operation["security"] = []
+            else:
+                # OpenAPI bearer values are empty arrays; exact operation scopes
+                # are published separately in the stable extension above.
+                operation["security"] = [{"AgentCapability": []}]
+            if policy.mutation_class is RouteMutationClass.MUTATION:
+                parameters = operation.setdefault("parameters", [])
+                if not isinstance(parameters, list):
+                    raise RuntimeError(
+                        f"Agent OpenAPI parameters are malformed: {path}"
+                    )
+                header = next(
+                    (
+                        parameter
+                        for parameter in parameters
+                        if isinstance(parameter, dict)
+                        and parameter.get("in") == "header"
+                        and parameter.get("name") == "Idempotency-Key"
+                    ),
+                    None,
+                )
+                if header is None:
+                    header = {"in": "header", "name": "Idempotency-Key"}
+                    parameters.append(header)
+                header["required"] = True
+                header["schema"] = copy.deepcopy(_IDEMPOTENCY_HEADER_SCHEMA)
+                if "requestBody" not in operation:
+                    raise RuntimeError(
+                        f"Agent mutation has no request body: {method.upper()} {path}"
+                    )
+            elif "requestBody" in operation:
+                raise RuntimeError(
+                    "Agent read unexpectedly has a request body: "
+                    f"{method.upper()} {path}"
+                )
+            if (
+                path == "/api/agent/v1/preview-runs/{run_id}/artifacts/{artifact_id}"
+                and method == "get"
+            ):
+                operation.setdefault("responses", {})["200"] = {
+                    "description": "Private browser artifact bytes",
+                    "content": {
+                        "application/octet-stream": {
+                            "schema": {"type": "string", "format": "binary"}
+                        }
+                    },
+                }
+            responses = operation["responses"]
+            if not isinstance(responses, dict):
+                raise RuntimeError(f"Agent OpenAPI responses are malformed: {path}")
+            expected_status = str(
+                route.status_code
+                or {"GET": 200, "POST": 201, "PUT": 200, "PATCH": 200, "DELETE": 200}[
+                    method.upper()
+                ]
+            )
+            success = responses.get(expected_status)
+            if not isinstance(success, dict):
+                raise RuntimeError(
+                    f"Agent handler success status missing: {method.upper()} {path}"
+                )
+            if route.response_model is not None:
+                content = success.get("content")
+                if not isinstance(content, dict) or not any(
+                    isinstance(value, dict) and "schema" in value
+                    for value in content.values()
+                ):
+                    raise RuntimeError(
+                        f"Agent handler success schema missing: {method.upper()} {path}"
+                    )
+            for status, description in _AGENT_ERROR_RESPONSES.items():
+                responses[status] = {
+                    "description": description,
+                    "content": {
+                        "application/json": {
+                            "schema": {"$ref": "#/components/schemas/ErrorEnvelope"}
+                        }
+                    },
+                }
+    # Only schemas reachable from the public Agent paths are exposed. This
+    # removes health/internal models from the product contract.
+    referenced: set[str] = set()
+    pending = [typed_paths]
+    while pending:
+        value = pending.pop()
+        if isinstance(value, dict):
+            for key, child in value.items():
+                if key == "$ref" and isinstance(child, str):
+                    prefix = "#/components/schemas/"
+                    if child.startswith(prefix):
+                        name = child.removeprefix(prefix)
+                        if name not in referenced:
+                            referenced.add(name)
+                            if name in schemas:
+                                pending.append(schemas[name])
+                else:
+                    pending.append(child)
+        elif isinstance(value, list):
+            pending.extend(value)
+    components["schemas"] = {
+        name: schemas[name] for name in sorted(referenced) if name in schemas
+    }
+    return _sorted_json(document)  # type: ignore[return-value]
+
+
+def public_agent_openapi_bytes(app: FastAPI) -> bytes:
+    """Serialize the public Agent contract with stable bytes and newline."""
+    return (
+        json.dumps(
+            build_public_agent_openapi_document(app),
+            indent=2,
+            sort_keys=True,
+            ensure_ascii=True,
+        )
+        + "\n"
+    ).encode("utf-8")
 
 
 def create_app(
@@ -133,6 +391,16 @@ def create_app(
     app.state.browser_dispatcher = dispatcher
     app.include_router(agent_router)
     app.include_router(browser_router)
+
+    @app.get("/api/agent/v1/openapi.json")
+    async def agent_openapi() -> Response:
+        """Return the stable, versioned public Agent contract only."""
+        return Response(
+            content=public_agent_openapi_bytes(app),
+            media_type="application/json",
+        )
+
+    validate_route_policy_coverage(app, ProcessKind.AGENT_API)
     return app
 
 

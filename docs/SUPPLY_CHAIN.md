@@ -104,9 +104,11 @@ saved image archive. For Web runtime files only, the gate normalizes the three
 named Next.js preview keys and the named server-action encryption key in their
 three exact manifest files. An unrelated file or field difference still fails.
 
-Generated OpenAPI or product contracts are currently absent and must remain so
-until an owning product objective defines them. Build caches and generated
-distributions are ignored and must not become tracked source.
+The one approved generated product contract is
+`contracts/openapi/agent-v1.json`. The frozen contract generator and `--check`
+drift test are the only permitted source-generated OpenAPI path; arbitrary
+`openapi.json`, `openapi.yaml`, `generated/`, build-cache, and distribution
+outputs remain rejected and must not become tracked source.
 
 ## Image and SBOM coverage
 
@@ -117,7 +119,8 @@ The evidence covers exactly:
 3. `slaif-agent-site-web:local`;
 4. `slaif-agent-site-nginx:local`;
 5. `slaif-agent-site-apache:test`; and
-6. the exact PostgreSQL image pinned by Compose.
+6. the project-owned PostgreSQL overlay image, whose exact official base and
+   signed package revisions are pinned in `supply-chain/policy.json`.
 
 Each image has normalized SPDX 2.3 JSON under `sboms/`. The SPDX document is
 the interoperable retained inventory and includes packages, relationships,

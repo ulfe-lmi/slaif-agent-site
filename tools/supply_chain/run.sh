@@ -285,20 +285,7 @@ build_and_compare browser-worker services/browser-worker/Dockerfile
 build_and_compare web apps/web/Dockerfile
 build_and_compare nginx infra/nginx/Dockerfile
 build_and_compare apache infra/apache/Dockerfile
-
-inspect_image "$postgres_reference" "$evidence_directory/images/postgres.json"
-postgres_archive="$temporary_root/first/postgres.image.tar"
-archive_image "$postgres_reference" "$postgres_archive"
-generate_sbom \
-  postgres \
-  "$postgres_archive" \
-  "$evidence_directory/images/postgres.json" \
-  "$evidence_directory/sboms/postgres.spdx.json"
-generate_scan_sbom \
-  postgres \
-  "$postgres_archive" \
-  "$evidence_directory/images/postgres.json" \
-  "$evidence_directory/scan-sboms/postgres.syft.json"
+build_and_compare postgres infra/postgres/Dockerfile
 
 docker_run run \
   --rm \

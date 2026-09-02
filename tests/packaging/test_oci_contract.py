@@ -11,6 +11,7 @@ DOCKERFILES = (
     ROOT / "apps/web/Dockerfile",
     ROOT / "infra/apache/Dockerfile",
     ROOT / "infra/nginx/Dockerfile",
+    ROOT / "infra/postgres/Dockerfile",
     ROOT / "services/backend/Dockerfile",
     ROOT / "services/browser-worker/Dockerfile",
 )
@@ -68,6 +69,19 @@ class OciContractTests(unittest.TestCase):
         self.assertIn("USER 10001:10001", runtime)
         self.assertNotIn("uv sync", runtime)
         self.assertNotIn("tests", runtime)
+
+    def test_postgres_overlay_is_exact_and_does_not_rebuild_postgres(self) -> None:
+        content = (ROOT / "infra/postgres/Dockerfile").read_text(encoding="utf-8")
+        self.assertIn(
+            "postgres:18.6-alpine3.23@sha256:"
+            "697c180dbf244d3ce4a8f4cbc0156cde840af055c1bf8b76aebe422a4822086f",
+            content,
+        )
+        self.assertIn("libcrypto3=3.5.8-r0", content)
+        self.assertIn("libssl3=3.5.8-r0", content)
+        self.assertIn("https://dl-cdn.alpinelinux.org/alpine/v3.23/main", content)
+        self.assertNotIn("apk upgrade", content)
+        self.assertNotIn("postgresql-", content)
 
     def test_web_runtime_is_filtered_standalone_and_telemetry_free(self) -> None:
         content = (ROOT / "apps/web/Dockerfile").read_text(encoding="utf-8")

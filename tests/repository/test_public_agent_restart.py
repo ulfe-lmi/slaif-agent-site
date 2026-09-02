@@ -5,6 +5,7 @@ import subprocess
 import unittest
 from collections.abc import Mapping
 from typing import Any
+from unittest.mock import patch
 
 from tools.compose.public_agent_restart import (
     CAPABILITY_KEY,
@@ -12,6 +13,7 @@ from tools.compose.public_agent_restart import (
     ProofFailure,
     ProofResult,
     PublicResponse,
+    _wait_public_ready,
     restart_control_and_agent,
     run_public_restart_proof,
 )
@@ -97,7 +99,11 @@ class FakePublicClient:
                 ).encode(),
             )
         if path in {"/api/control/health/ready", "/api/agent/health/ready"}:
-            return PublicResponse(200, b'{"status":"ready"}')
+            service = "control-api" if "/control/" in path else "agent-api"
+            return PublicResponse(
+                200,
+                json.dumps({"status": "ready", "service": service}).encode(),
+            )
         raise AssertionError(f"unexpected public path: {path}")
 
     def csrf_token(self) -> str | None:
@@ -222,6 +228,27 @@ class PublicAgentRestartTests(unittest.TestCase):
         with self.assertRaisesRegex(ProofFailure, "compose-recreate-failed"):
             restart_control_and_agent("slaif-test", run=failed_run)
         self.assertEqual(seen[0][-2:], ["control-api", "agent-api"])
+
+    def test_crosswired_readiness_cannot_masquerade_as_ready(self) -> None:
+        client = FakePublicClient()
+        original = client.request
+
+        def crosswired(*args: Any, **kwargs: Any) -> PublicResponse:
+            path = args[0]
+            if path == "/api/control/health/ready":
+                return PublicResponse(200, b'{"status":"ready","service":"agent-api"}')
+            if path == "/api/agent/health/ready":
+                return PublicResponse(
+                    200, b'{"status":"ready","service":"control-api"}'
+                )
+            return original(*args, **kwargs)
+
+        client.request = crosswired  # type: ignore[method-assign]
+        with (
+            patch("tools.compose.public_agent_restart.time.sleep"),
+            self.assertRaisesRegex(ProofFailure, "public-readiness-timeout"),
+        ):
+            _wait_public_ready(client)
 
 
 if __name__ == "__main__":
