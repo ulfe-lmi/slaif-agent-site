@@ -1389,6 +1389,15 @@ def run_acceptance(project: str) -> None:
             != "sl-SI"
         ):
             raise ProofFailure("locale-read-invalid")
+        refreshed_internal_page = _agent_request(
+            client,
+            primary_token,
+            f"/api/agent/v1/pages/{internal_page_id}",
+            label="navigation-internal-page-after-locale",
+        )
+        internal_target = refreshed_internal_page.get("effective_route")
+        if not isinstance(internal_target, str) or not internal_target.startswith("/"):
+            raise ProofFailure("navigation-internal-page-route-after-locale-missing")
         navigation_create = _mutation(
             client,
             primary_token,
