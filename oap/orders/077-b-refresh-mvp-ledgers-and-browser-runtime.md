@@ -13,7 +13,7 @@ Remote `main` remains the accepted Objective 076 merge
 This order exists because the human supplied new mandatory control-state and
 security-maintenance prerequisites after 077-a had already been immutably
 activated. It supersedes 077-a's then-current instruction to defer GitHub issue
-#67. Preserve 077-a implementation and report history, but do not claim that
+GitHub issue #67. Preserve 077-a implementation and report history, but do not claim that
 077-a or Objective 077 is accepted: report-head CI was still running at first
 strategic review, later 077 information-architecture scope remains, and
 separate concrete page-review defects are reserved for a subsequent order.
