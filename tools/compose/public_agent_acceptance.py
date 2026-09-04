@@ -361,6 +361,15 @@ def _canonical_request_body(
         }
     elif action == "NAVIGATION_ITEM_MOVED":
         defaults = {"parent_id": None, "before_item_id": None, "after_item_id": None}
+    elif action == "REDIRECT_CREATED":
+        defaults = {"status_code": 302, "locale": None}
+    elif action == "REDIRECT_UPDATED":
+        defaults = {
+            "source_route": None,
+            "target": None,
+            "status_code": None,
+            "locale": None,
+        }
     if resource_type == "content_type" and action == "CONTENT_TYPE_CREATED":
         defaults = {"labels": {}, "settings": {}}
     if resource_type == "content_item" and action == "CONTENT_ITEM_CREATED":
