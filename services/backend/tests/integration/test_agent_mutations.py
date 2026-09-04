@@ -520,6 +520,492 @@ async def test_agent_create_type_is_cow_only_and_durablely_idempotent(
 
 
 @pytest.mark.asyncio
+async def test_agent_locale_navigation_structural_races_and_cancellation(
+    agent_site_database: AgentSiteDatabase,
+) -> None:
+    """Prove coupled page, locale, and navigation writes serialize in PostgreSQL."""
+
+    database = agent_site_database
+    _token, seeded = await _seed(database)
+    scopes = [
+        "site:read",
+        "page:create",
+        "page:read",
+        "page:delete",
+        "locale:configure",
+        "navigation:read",
+        "navigation:create",
+        "navigation:write",
+        "navigation:delete",
+    ]
+    token, workspace_id = await _workspace_capability(
+        database, seeded, scopes, "Agent Locale Navigation Race Workspace"
+    )
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        await owner.execute(
+            "UPDATE control.capability SET request_quota=1000, mutation_quota=1000, "
+            "delete_quota=1000 WHERE workspace_id=$1",
+            workspace_id,
+        )
+
+    app = create_agent_app(
+        settings=ServiceSettings.for_test(),
+        database_settings=_agent_settings(database),
+    )
+    agent_pool = await database.role_pool("slaif_agent_runtime")
+
+    async def request(
+        client: httpx.AsyncClient,
+        method: str,
+        path: str,
+        key: str | None = None,
+        body: Mapping[str, object] | None = None,
+    ) -> httpx.Response:
+        headers = {"Authorization": f"Bearer {token}"}
+        if key is not None:
+            headers["Idempotency-Key"] = key
+        return await client.request(method, path, headers=headers, json=body)
+
+    @asynccontextmanager
+    async def structural_lock(expected_waiters: int) -> Any:
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as blocker:
+            async with blocker.transaction():
+                lock_key = await blocker.fetchval(
+                    "SELECT hashtextextended($1,994)",
+                    f"{workspace_id}:{seeded['site_id']}:page-structure",
+                )
+                await blocker.execute(
+                    "SELECT pg_advisory_xact_lock($1::bigint)", lock_key
+                )
+                yield blocker, expected_waiters
+
+    async def durable_counts() -> tuple[int, int, int, int]:
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            row = await owner.fetchrow(
+                "SELECT "
+                "(SELECT count(*) FROM control.agent_idempotency "
+                "WHERE workspace_id=$1),"
+                "(SELECT count(*) FROM audit.agent_mutation WHERE workspace_id=$1),"
+                "(SELECT count(*) FROM content.site_locale_changes "
+                "WHERE session_id=$1),"
+                "(SELECT count(*) FROM content.navigation_item_changes "
+                "WHERE session_id=$1)",
+                workspace_id,
+            )
+        return (int(row[0]), int(row[1]), int(row[2]), int(row[3]))
+
+    try:
+        async with app.router.lifespan_context(app):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://agent.test"
+            ) as client:
+                page = await request(
+                    client,
+                    "POST",
+                    "/api/agent/v1/pages",
+                    "race-reference-page",
+                    {
+                        "slug": "race-reference",
+                        "title": "Race reference",
+                        "locale": "en-US",
+                    },
+                )
+                assert page.status_code == 201, page.text
+                page_id = page.json()["record"]["id"]
+                navigation = await request(
+                    client,
+                    "POST",
+                    "/api/agent/v1/navigation",
+                    "race-reference-navigation",
+                    {"key": "race-reference", "label": "Race reference"},
+                )
+                assert navigation.status_code == 201, navigation.text
+                navigation_id = navigation.json()["record"]["id"]
+
+                async with structural_lock(2) as (blocker, expected_waiters):
+                    delete_task = asyncio.create_task(
+                        request(
+                            client,
+                            "DELETE",
+                            f"/api/agent/v1/pages/{page_id}",
+                            "race-reference-page-delete",
+                            {"expected_row_version": 1},
+                        )
+                    )
+                    reference_task = asyncio.create_task(
+                        request(
+                            client,
+                            "POST",
+                            f"/api/agent/v1/navigation/{navigation_id}/items",
+                            "race-reference-item-create",
+                            {
+                                "page_id": page_id,
+                                "target_kind": "PAGE",
+                                "target_value": page_id,
+                                "labels": {"en-US": "Reference"},
+                            },
+                        )
+                    )
+                    await _wait_for_page_structure_waiters(blocker, expected_waiters)
+                delete_result, reference_result = await asyncio.gather(
+                    delete_task, reference_task
+                )
+                assert sorted(
+                    (delete_result.status_code, reference_result.status_code)
+                ) in ([200, 422], [201, 422]), (
+                    delete_result.text,
+                    reference_result.text,
+                )
+                page_after = await request(
+                    client, "GET", f"/api/agent/v1/pages/{page_id}"
+                )
+                items_after = await request(
+                    client,
+                    "GET",
+                    f"/api/agent/v1/navigation/{navigation_id}/items",
+                )
+                assert page_after.status_code == (
+                    404 if delete_result.status_code == 200 else 200
+                )
+                assert len(items_after.json()) == (
+                    0 if reference_result.status_code == 422 else 1
+                )
+
+                locale = await request(
+                    client,
+                    "POST",
+                    "/api/agent/v1/locales",
+                    "race-disable-locale",
+                    {"tag": "fr-FR", "position": 1},
+                )
+                assert locale.status_code == 201, locale.text
+                locale_id = locale.json()["record"]["id"]
+                async with structural_lock(2) as (blocker, expected_waiters):
+                    disable_task = asyncio.create_task(
+                        request(
+                            client,
+                            "PATCH",
+                            f"/api/agent/v1/locales/{locale_id}",
+                            "race-disable-locale-write",
+                            {"enabled": False, "expected_row_version": 1},
+                        )
+                    )
+                    localized_page_task = asyncio.create_task(
+                        request(
+                            client,
+                            "POST",
+                            "/api/agent/v1/pages",
+                            "race-disable-locale-page",
+                            {
+                                "slug": "locale-race",
+                                "title": "Locale race",
+                                "locale": "fr-FR",
+                            },
+                        )
+                    )
+                    await _wait_for_page_structure_waiters(blocker, expected_waiters)
+                disable_result, localized_page_result = await asyncio.gather(
+                    disable_task, localized_page_task
+                )
+                assert sorted(
+                    (disable_result.status_code, localized_page_result.status_code)
+                ) in ([200, 422], [201, 422]), (
+                    disable_result.text,
+                    localized_page_result.text,
+                )
+
+                de = await request(
+                    client,
+                    "POST",
+                    "/api/agent/v1/locales",
+                    "race-default-de-create",
+                    {"tag": "de-DE", "position": 2},
+                )
+                it = await request(
+                    client,
+                    "POST",
+                    "/api/agent/v1/locales",
+                    "race-default-it-create",
+                    {"tag": "it-IT", "position": 3},
+                )
+                assert de.status_code == 201, de.text
+                assert it.status_code == 201, it.text
+                de_id = de.json()["record"]["id"]
+                it_id = it.json()["record"]["id"]
+                async with structural_lock(2) as (blocker, expected_waiters):
+                    de_task = asyncio.create_task(
+                        request(
+                            client,
+                            "PATCH",
+                            f"/api/agent/v1/locales/{de_id}",
+                            "race-default-de-switch",
+                            {"is_default": True, "expected_row_version": 1},
+                        )
+                    )
+                    it_task = asyncio.create_task(
+                        request(
+                            client,
+                            "PATCH",
+                            f"/api/agent/v1/locales/{it_id}",
+                            "race-default-it-switch",
+                            {"is_default": True, "expected_row_version": 1},
+                        )
+                    )
+                    await _wait_for_page_structure_waiters(blocker, expected_waiters)
+                de_result, it_result = await asyncio.gather(de_task, it_task)
+                assert (de_result.status_code, it_result.status_code) == (200, 200), (
+                    de_result.text,
+                    it_result.text,
+                )
+                locale_rows = await request(client, "GET", "/api/agent/v1/locales")
+                assert locale_rows.status_code == 200, locale_rows.text
+                assert sum(row["is_default"] for row in locale_rows.json()) == 1
+                assert next(row for row in locale_rows.json() if row["is_default"])[
+                    "tag"
+                ] in {
+                    "de-DE",
+                    "it-IT",
+                }
+
+                cycle_navigation = await request(
+                    client,
+                    "POST",
+                    "/api/agent/v1/navigation",
+                    "race-cycle-navigation",
+                    {"key": "race-cycle", "label": "Cycle race"},
+                )
+                assert cycle_navigation.status_code == 201, cycle_navigation.text
+                cycle_navigation_id = cycle_navigation.json()["record"]["id"]
+                cycle_items = []
+                for name in ("cycle-a", "cycle-b"):
+                    item = await request(
+                        client,
+                        "POST",
+                        f"/api/agent/v1/navigation/{cycle_navigation_id}/items",
+                        f"{name}-create",
+                        {
+                            "target_kind": "INTERNAL",
+                            "target_value": "/",
+                            "labels": {"en-US": name},
+                        },
+                    )
+                    assert item.status_code == 201, item.text
+                    cycle_items.append(item.json()["record"]["id"])
+                async with structural_lock(2) as (blocker, expected_waiters):
+                    first_move = asyncio.create_task(
+                        request(
+                            client,
+                            "POST",
+                            f"/api/agent/v1/navigation-items/{cycle_items[0]}:move",
+                            "race-cycle-first",
+                            {"parent_id": cycle_items[1], "expected_row_version": 1},
+                        )
+                    )
+                    second_move = asyncio.create_task(
+                        request(
+                            client,
+                            "POST",
+                            f"/api/agent/v1/navigation-items/{cycle_items[1]}:move",
+                            "race-cycle-second",
+                            {"parent_id": cycle_items[0], "expected_row_version": 1},
+                        )
+                    )
+                    await _wait_for_page_structure_waiters(blocker, expected_waiters)
+                first_result, second_result = await asyncio.gather(
+                    first_move, second_move
+                )
+                assert sorted(
+                    (first_result.status_code, second_result.status_code)
+                ) == [200, 422], (
+                    first_result.text,
+                    second_result.text,
+                )
+                cycle_rows = await request(
+                    client,
+                    "GET",
+                    f"/api/agent/v1/navigation/{cycle_navigation_id}/items",
+                )
+                parents = {row["id"]: row["parent_id"] for row in cycle_rows.json()}
+                for item_id in parents:
+                    seen: set[str] = set()
+                    cursor = item_id
+                    while cursor is not None:
+                        assert cursor not in seen
+                        seen.add(cursor)
+                        cursor = parents[cursor]
+
+                ordering_navigation = await request(
+                    client,
+                    "POST",
+                    "/api/agent/v1/navigation",
+                    "race-order-navigation",
+                    {"key": "race-order", "label": "Order race"},
+                )
+                assert ordering_navigation.status_code == 201, ordering_navigation.text
+                ordering_navigation_id = ordering_navigation.json()["record"]["id"]
+                ordering_items = []
+                for name in ("order-a", "order-b"):
+                    item = await request(
+                        client,
+                        "POST",
+                        f"/api/agent/v1/navigation/{ordering_navigation_id}/items",
+                        f"{name}-create",
+                        {
+                            "target_kind": "INTERNAL",
+                            "target_value": "/",
+                            "labels": {"en-US": name},
+                        },
+                    )
+                    assert item.status_code == 201, item.text
+                    ordering_items.append(item.json()["record"]["id"])
+                async with structural_lock(2) as (blocker, expected_waiters):
+                    reorder_task = asyncio.create_task(
+                        request(
+                            client,
+                            "POST",
+                            f"/api/agent/v1/navigation-items/{ordering_items[1]}:move",
+                            "race-order-move",
+                            {
+                                "before_item_id": ordering_items[0],
+                                "expected_row_version": 1,
+                            },
+                        )
+                    )
+                    create_task = asyncio.create_task(
+                        request(
+                            client,
+                            "POST",
+                            f"/api/agent/v1/navigation/{ordering_navigation_id}/items",
+                            "race-order-create",
+                            {
+                                "target_kind": "INTERNAL",
+                                "target_value": "/",
+                                "labels": {"en-US": "order-c"},
+                            },
+                        )
+                    )
+                    await _wait_for_page_structure_waiters(blocker, expected_waiters)
+                reorder_result, create_result = await asyncio.gather(
+                    reorder_task, create_task
+                )
+                assert (reorder_result.status_code, create_result.status_code) == (
+                    200,
+                    201,
+                ), (
+                    reorder_result.text,
+                    create_result.text,
+                )
+                ordering_rows = await request(
+                    client,
+                    "GET",
+                    f"/api/agent/v1/navigation/{ordering_navigation_id}/items",
+                )
+                assert [row["position"] for row in ordering_rows.json()] == [0, 1, 2]
+
+                cancellable_locale = await request(
+                    client,
+                    "POST",
+                    "/api/agent/v1/locales",
+                    "cancel-default-locale-create",
+                    {"tag": "nl-NL", "position": 4},
+                )
+                assert cancellable_locale.status_code == 201, cancellable_locale.text
+                cancellable_locale_id = cancellable_locale.json()["record"]["id"]
+                before_cancel = await durable_counts()
+                async with structural_lock(1) as (blocker, expected_waiters):
+                    cancelled_default = asyncio.create_task(
+                        request(
+                            client,
+                            "PATCH",
+                            f"/api/agent/v1/locales/{cancellable_locale_id}",
+                            "cancel-default-locale",
+                            {"is_default": True, "expected_row_version": 1},
+                        )
+                    )
+                    await _wait_for_page_structure_waiters(blocker, expected_waiters)
+                    cancelled_default.cancel()
+                    with pytest.raises(asyncio.CancelledError):
+                        await cancelled_default
+                assert await durable_counts() == before_cancel
+                cancelled_locale_state = await request(
+                    client, "GET", f"/api/agent/v1/locales/{cancellable_locale_id}"
+                )
+                assert cancelled_locale_state.status_code == 200
+                assert cancelled_locale_state.json()["is_default"] is False
+                assert cancelled_locale_state.json()["row_version"] == 1
+
+                cancellation_navigation = await request(
+                    client,
+                    "POST",
+                    "/api/agent/v1/navigation",
+                    "cancel-reorder-navigation",
+                    {"key": "cancel-reorder", "label": "Cancel reorder"},
+                )
+                assert cancellation_navigation.status_code == 201, (
+                    cancellation_navigation.text
+                )
+                cancellation_navigation_id = cancellation_navigation.json()["record"][
+                    "id"
+                ]
+                cancellation_items = []
+                for name in ("cancel-a", "cancel-b"):
+                    item = await request(
+                        client,
+                        "POST",
+                        f"/api/agent/v1/navigation/{cancellation_navigation_id}/items",
+                        f"{name}-create",
+                        {
+                            "target_kind": "INTERNAL",
+                            "target_value": "/",
+                            "labels": {"en-US": name},
+                        },
+                    )
+                    assert item.status_code == 201, item.text
+                    cancellation_items.append(item.json()["record"]["id"])
+                before_move_cancel = await durable_counts()
+                async with structural_lock(1) as (blocker, expected_waiters):
+                    cancelled_move = asyncio.create_task(
+                        request(
+                            client,
+                            "POST",
+                            f"/api/agent/v1/navigation-items/{cancellation_items[1]}:move",
+                            "cancel-reorder",
+                            {
+                                "before_item_id": cancellation_items[0],
+                                "expected_row_version": 1,
+                            },
+                        )
+                    )
+                    await _wait_for_page_structure_waiters(blocker, expected_waiters)
+                    cancelled_move.cancel()
+                    with pytest.raises(asyncio.CancelledError):
+                        await cancelled_move
+                assert await durable_counts() == before_move_cancel
+                cancelled_move_retry = await request(
+                    client,
+                    "POST",
+                    f"/api/agent/v1/navigation-items/{cancellation_items[1]}:move",
+                    "cancel-reorder-retry",
+                    {
+                        "before_item_id": cancellation_items[0],
+                        "expected_row_version": 1,
+                    },
+                )
+                assert cancelled_move_retry.status_code == 200, (
+                    cancelled_move_retry.text
+                )
+                assert cancelled_move_retry.json()["record"]["row_version"] == 2
+    finally:
+        await agent_pool.close()
+
+
+@pytest.mark.asyncio
 async def test_agent_049_downgrade_rejects_page_data_atomically(
     agent_site_database: AgentSiteDatabase,
 ) -> None:
@@ -628,7 +1114,7 @@ async def test_agent_049_plain_page_data_downgrade_and_upgrade_preserves_data(
             await owner.fetchval(
                 "SELECT version_num::text FROM control.alembic_version"
             )
-            == "049_001"
+            == "050_001"
         )
         row = await owner.fetchrow(
             "SELECT title, route_template, deleted_at FROM content.page_base "
@@ -733,9 +1219,9 @@ async def test_agent_page_structure_hierarchy_routes_and_cow_lifecycle(
         "site:read",
         "page:create",
         "page:read",
+        "page:delete",
         "page:write",
         "page:move",
-        "page:delete",
         "page:restore",
         "route:write",
     ]
@@ -2783,7 +3269,7 @@ async def test_agent_046_047_migration_round_trip_preserves_contract_and_state(
                 await owner.fetchval(
                     "SELECT version_num::text FROM control.alembic_version"
                 )
-                == "049_001"
+                == "050_001"
             )
             assert await owner.fetchval(
                 "SELECT to_regprocedure($1)",
@@ -3112,7 +3598,7 @@ async def test_agent_048_data_bearing_round_trip_preserves_relations_views_and_a
         )
         await reconcile(database.settings)
         final_status = await status(database.settings)
-        assert final_status.revision == "049_001"
+        assert final_status.revision == "050_001"
         assert final_status.state.value == "HARDENED"
         assert final_status.safe
         assert await cow_rows() == content_before
@@ -9559,7 +10045,7 @@ async def test_semantic_audit_contract_is_strict_and_reversible(
                 await owner.fetchval(
                     "SELECT version_num::text FROM control.alembic_version"
                 )
-                == "049_001"
+                == "050_001"
             )
             assert (
                 await owner.fetchval(
@@ -9611,6 +10097,245 @@ async def test_semantic_audit_contract_is_strict_and_reversible(
     finally:
         await reviewer_pool.close()
         await agent_pool.close()
+
+
+@pytest.mark.asyncio
+async def test_agent_locale_navigation_journey_is_cow_bound_and_semantic(
+    agent_site_database: AgentSiteDatabase,
+) -> None:
+    database = agent_site_database
+    _token, seeded = await _seed(database)
+    scopes = [
+        "site:read",
+        "page:create",
+        "page:read",
+        "page:delete",
+        "locale:configure",
+        "navigation:read",
+        "navigation:create",
+        "navigation:write",
+        "navigation:delete",
+    ]
+    token, workspace_id = await _workspace_capability(
+        database, seeded, scopes, "Agent Locale Navigation Workspace"
+    )
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        await owner.execute(
+            "UPDATE control.capability SET request_quota=100, mutation_quota=100, "
+            "delete_quota=4 WHERE workspace_id=$1",
+            workspace_id,
+        )
+    app = create_agent_app(
+        settings=ServiceSettings.for_test(),
+        database_settings=_agent_settings(database),
+    )
+    headers = {"Authorization": f"Bearer {token}"}
+    try:
+        async with app.router.lifespan_context(app):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://agent.test"
+            ) as client:
+                locales = await client.get("/api/agent/v1/locales", headers=headers)
+                assert locales.status_code == 200, locales.text
+                default_locale = next(
+                    row for row in locales.json() if row["is_default"]
+                )
+                created_locale = await client.post(
+                    "/api/agent/v1/locales",
+                    headers={**headers, "Idempotency-Key": "journey-locale"},
+                    json={"tag": "sl-SI", "position": 1},
+                )
+                assert created_locale.status_code == 201, created_locale.text
+                sl_locale_id = UUID(created_locale.json()["record"]["id"])
+                switched = await client.patch(
+                    f"/api/agent/v1/locales/{sl_locale_id}",
+                    headers={**headers, "Idempotency-Key": "journey-locale-default"},
+                    json={"is_default": True, "expected_row_version": 1},
+                )
+                assert switched.status_code == 200, switched.text
+                assert switched.json()["record"]["is_default"] is True
+                assert (
+                    await client.get(
+                        f"/api/agent/v1/locales/{default_locale['id']}",
+                        headers=headers,
+                    )
+                ).json()["is_default"] is False
+
+                page = await client.post(
+                    "/api/agent/v1/pages",
+                    headers={**headers, "Idempotency-Key": "journey-page"},
+                    json={
+                        "slug": "home",
+                        "title": "Home",
+                        "locale": "sl-SI",
+                    },
+                )
+                assert page.status_code == 201, page.text
+                page_id = UUID(page.json()["record"]["id"])
+                assert page.json()["record"]["effective_route"] == "/"
+
+                navigation = await client.post(
+                    "/api/agent/v1/navigation",
+                    headers={**headers, "Idempotency-Key": "journey-navigation"},
+                    json={
+                        "key": "primary",
+                        "label": "Primary",
+                        "labels": {"sl-SI": "Glavni meni"},
+                    },
+                )
+                assert navigation.status_code == 201, navigation.text
+                navigation_id = UUID(navigation.json()["record"]["id"])
+                assert navigation.json()["record"]["row_version"] == 1
+
+                page_item = await client.post(
+                    f"/api/agent/v1/navigation/{navigation_id}/items",
+                    headers={**headers, "Idempotency-Key": "journey-page-item"},
+                    json={
+                        "page_id": str(page_id),
+                        "target_kind": "PAGE",
+                        "target_value": str(page_id),
+                        "labels": {"sl-SI": "Domov"},
+                        "locale": "sl-SI",
+                    },
+                )
+                assert page_item.status_code == 201, page_item.text
+                page_item_id = UUID(page_item.json()["record"]["id"])
+                child = await client.post(
+                    f"/api/agent/v1/navigation/{navigation_id}/items",
+                    headers={**headers, "Idempotency-Key": "journey-child-item"},
+                    json={
+                        "parent_id": str(page_item_id),
+                        "target_kind": "INTERNAL",
+                        "target_value": "/about",
+                        "labels": {"sl-SI": "O nas"},
+                        "locale": "sl-SI",
+                    },
+                )
+                assert child.status_code == 201, child.text
+                child_id = UUID(child.json()["record"]["id"])
+                external = await client.post(
+                    f"/api/agent/v1/navigation/{navigation_id}/items",
+                    headers={**headers, "Idempotency-Key": "journey-external-item"},
+                    json={
+                        "target_kind": "EXTERNAL",
+                        "target_value": "https://example.test/docs",
+                        "labels": {"sl-SI": "Dokumentacija"},
+                    },
+                )
+                assert external.status_code == 201, external.text
+                external_id = UUID(external.json()["record"]["id"])
+
+                reordered = await client.post(
+                    f"/api/agent/v1/navigation-items/{external_id}:move",
+                    headers={**headers, "Idempotency-Key": "journey-reorder"},
+                    json={
+                        "before_item_id": str(page_item_id),
+                        "expected_row_version": 1,
+                    },
+                )
+                assert reordered.status_code == 200, reordered.text
+                assert reordered.json()["action"] == "NAVIGATION_ITEM_MOVED"
+                assert reordered.json()["record"]["position"] == 0
+                external_row_version = reordered.json()["record"]["row_version"]
+
+                replay = await client.post(
+                    f"/api/agent/v1/navigation/{navigation_id}/items",
+                    headers={**headers, "Idempotency-Key": "journey-page-item"},
+                    json={
+                        "page_id": str(page_id),
+                        "target_kind": "PAGE",
+                        "target_value": str(page_id),
+                        "labels": {"sl-SI": "Domov"},
+                        "locale": "sl-SI",
+                    },
+                )
+                assert replay.status_code == 201
+                assert replay.json() == page_item.json()
+
+                listed = await client.get(
+                    f"/api/agent/v1/navigation/{navigation_id}/items",
+                    headers=headers,
+                )
+                assert listed.status_code == 200, listed.text
+                assert {row["id"] for row in listed.json()} == {
+                    str(page_item_id),
+                    str(child_id),
+                    str(external_id),
+                }
+                updated_item = await client.patch(
+                    f"/api/agent/v1/navigation-items/{page_item_id}",
+                    headers={**headers, "Idempotency-Key": "journey-page-item-update"},
+                    json={
+                        "labels": {"sl-SI": "Domov posodobljen"},
+                        "expected_row_version": 1,
+                    },
+                )
+                assert updated_item.status_code == 200, updated_item.text
+                assert updated_item.json()["record"]["row_version"] == 2
+
+                page_delete = await client.request(
+                    "DELETE",
+                    f"/api/agent/v1/pages/{page_id}",
+                    headers={**headers, "Idempotency-Key": "journey-page-delete"},
+                    json={"expected_row_version": 1},
+                )
+                assert page_delete.status_code == 422, page_delete.text
+                navigation_delete = await client.request(
+                    "DELETE",
+                    f"/api/agent/v1/navigation/{navigation_id}",
+                    headers={**headers, "Idempotency-Key": "journey-nav-delete"},
+                    json={"expected_row_version": 1},
+                )
+                assert navigation_delete.status_code == 409, navigation_delete.text
+
+                for item_id, expected_row_version, key in (
+                    (child_id, 1, "journey-child-delete"),
+                    (external_id, external_row_version, "journey-external-delete"),
+                    (page_item_id, 2, "journey-page-item-delete"),
+                ):
+                    deleted = await client.request(
+                        "DELETE",
+                        f"/api/agent/v1/navigation-items/{item_id}",
+                        headers={**headers, "Idempotency-Key": key},
+                        json={"expected_row_version": expected_row_version},
+                    )
+                    assert deleted.status_code == 200, f"{key}: {deleted.text}"
+                deleted_navigation = await client.request(
+                    "DELETE",
+                    f"/api/agent/v1/navigation/{navigation_id}",
+                    headers={**headers, "Idempotency-Key": "journey-nav-delete-2"},
+                    json={"expected_row_version": 1},
+                )
+                assert deleted_navigation.status_code == 200, deleted_navigation.text
+
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            assert (
+                await owner.fetchval(
+                    "SELECT count(*) FROM content.navigation_base WHERE id=$1",
+                    navigation_id,
+                )
+                == 0
+            )
+            actions = await owner.fetch(
+                "SELECT action FROM audit.agent_mutation WHERE workspace_id=$1 "
+                "ORDER BY occurred_at,operation_id",
+                workspace_id,
+            )
+            assert {row[0] for row in actions} >= {
+                "LOCALE_CREATED",
+                "LOCALE_UPDATED",
+                "NAVIGATION_CREATED",
+                "NAVIGATION_ITEM_CREATED",
+                "NAVIGATION_ITEM_MOVED",
+                "NAVIGATION_ITEM_DELETED",
+                "NAVIGATION_DELETED",
+            }
+    finally:
+        _TEST_CAPABILITY_BY_WORKSPACE.pop(workspace_id, None)
 
 
 @pytest.mark.asyncio

@@ -365,6 +365,69 @@ AGENT_CONTENT_FUNCTIONS = {
         "p_site_id uuid, p_page_id uuid, p_component_type text, "
         "p_parent_id uuid, p_slot_key text, p_order_key integer, p_props jsonb",
     ): "uuid, uuid, text, uuid, text, integer, jsonb",
+    ("slaif_agent_locale_list", "p_site_id uuid"): "uuid",
+    ("slaif_agent_locale_get", "p_site_id uuid, p_locale_id uuid"): "uuid, uuid",
+    (
+        "slaif_agent_locale_create",
+        "p_site_id uuid, p_tag text, p_enabled boolean, p_default boolean, "
+        "p_position integer, p_metadata jsonb",
+    ): "uuid, text, boolean, boolean, integer, jsonb",
+    (
+        "slaif_agent_locale_update",
+        "p_site_id uuid, p_locale_id uuid, p_tag text, p_enabled boolean, "
+        "p_default boolean, p_position integer, p_metadata jsonb, p_expected integer",
+    ): "uuid, uuid, text, boolean, boolean, integer, jsonb, integer",
+    (
+        "slaif_agent_locale_delete",
+        "p_site_id uuid, p_locale_id uuid, p_expected integer",
+    ): "uuid, uuid, integer",
+    ("slaif_agent_navigation_list", "p_site_id uuid"): "uuid",
+    (
+        "slaif_agent_navigation_get",
+        "p_site_id uuid, p_navigation_id uuid",
+    ): "uuid, uuid",
+    (
+        "slaif_agent_navigation_create",
+        "p_site_id uuid, p_key text, p_label text, p_labels jsonb, p_settings jsonb",
+    ): "uuid, text, text, jsonb, jsonb",
+    (
+        "slaif_agent_navigation_update",
+        "p_site_id uuid, p_navigation_id uuid, p_label text, p_labels jsonb, "
+        "p_settings jsonb, p_expected integer",
+    ): "uuid, uuid, text, jsonb, jsonb, integer",
+    (
+        "slaif_agent_navigation_delete",
+        "p_site_id uuid, p_navigation_id uuid, p_expected integer",
+    ): "uuid, uuid, integer",
+    (
+        "slaif_agent_navigation_item_list",
+        "p_site_id uuid, p_navigation_id uuid",
+    ): "uuid, uuid",
+    (
+        "slaif_agent_navigation_item_get",
+        "p_site_id uuid, p_item_id uuid",
+    ): "uuid, uuid",
+    (
+        "slaif_agent_navigation_item_create",
+        "p_site_id uuid, p_navigation_id uuid, p_parent_id uuid, p_page_id uuid, "
+        "p_target_kind text, p_target_value text, p_labels jsonb, p_locale text, "
+        "p_before uuid, p_after uuid",
+    ): "uuid, uuid, uuid, uuid, text, text, jsonb, text, uuid, uuid",
+    (
+        "slaif_agent_navigation_item_update",
+        "p_site_id uuid, p_item_id uuid, p_navigation_id uuid, p_parent_id uuid, "
+        "p_page_id uuid, p_target_kind text, p_target_value text, p_labels jsonb, "
+        "p_locale text, p_before uuid, p_after uuid, p_expected integer",
+    ): "uuid, uuid, uuid, uuid, uuid, text, text, jsonb, text, uuid, uuid, integer",
+    (
+        "slaif_agent_navigation_item_move",
+        "p_site_id uuid, p_item_id uuid, p_parent_id uuid, p_before uuid, "
+        "p_after uuid, p_expected integer",
+    ): "uuid, uuid, uuid, uuid, uuid, integer",
+    (
+        "slaif_agent_navigation_item_delete",
+        "p_site_id uuid, p_item_id uuid, p_expected integer",
+    ): "uuid, uuid, integer",
 }
 HUMAN_EDITOR_FUNCTIONS = {
     (

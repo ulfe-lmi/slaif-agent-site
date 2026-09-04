@@ -50,6 +50,12 @@ class AgentCapabilityContext(BaseModel):
             "allowed_page_root_ids",
             "max_visible_pages",
             "max_page_depth",
+            "allowed_navigation_keys",
+            "allowed_navigation_ids",
+            "max_visible_locales",
+            "max_visible_navigations",
+            "max_visible_navigation_items",
+            "max_navigation_depth",
         }
         unknown = set(self.resource_constraints) - allowed
         if unknown:
@@ -78,6 +84,21 @@ class AgentCapabilityContext(BaseModel):
                     validate_locale_tag(locale)
             except ValueError:
                 raise ValueError("locale allowlist is malformed") from None
+        for key in ("allowed_navigation_keys", "allowed_navigation_ids"):
+            value = constraints.get(key)
+            if value is not None and (
+                not isinstance(value, list)
+                or len(value) > 256
+                or any(not isinstance(item, str) or not item for item in value)
+            ):
+                raise ValueError("navigation allowlist is malformed")
+        allowed_navigation_ids = constraints.get("allowed_navigation_ids")
+        if allowed_navigation_ids is not None:
+            try:
+                for navigation_id in allowed_navigation_ids:
+                    UUID(navigation_id)
+            except (TypeError, ValueError):
+                raise ValueError("navigation allowlist is malformed") from None
         allowed_page_roots = constraints.get("allowed_page_root_ids")
         if allowed_page_roots is not None:
             if (
@@ -107,6 +128,10 @@ class AgentCapabilityContext(BaseModel):
             "max_deletes",
             "max_visible_pages",
             "max_page_depth",
+            "max_visible_locales",
+            "max_visible_navigations",
+            "max_visible_navigation_items",
+            "max_navigation_depth",
         ):
             value = constraints.get(key)
             if value is not None and (

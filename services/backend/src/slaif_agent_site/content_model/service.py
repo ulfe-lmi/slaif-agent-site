@@ -33,6 +33,7 @@ from .models import (
 )
 from .query_dsl import validate_query_contract
 from .site_data_models import (
+    AgentNavigationRecord,
     CreateLocaleRequest,
     CreateNavigationItemRequest,
     CreateProposedSideEffectRequest,
@@ -97,6 +98,24 @@ def _semantic_database_error_code(error: asyncpg.PostgresError) -> str | None:
         "FIELD_DEPENDENCIES",
         "TYPE_DEPENDENCIES",
         "PAGE_ROUTE_CONFLICT",
+        "PAGE_DEPENDENCIES",
+        "LOCALE_REFERENCED",
+        "LOCALE_DEFAULT_REQUIRED",
+        "LOCALE_TAG_IMMUTABLE",
+        "NAVIGATION_CHILDREN",
+        "NAVIGATION_PAGE_INVALID",
+        "NAVIGATION_PARENT_INVALID",
+        "NAVIGATION_TARGET_UNSAFE",
+        "NAVIGATION_INVALID",
+        "NAVIGATION_ANCHORS_INVALID",
+        "NAVIGATION_ANCHOR_INVALID",
+        "NAVIGATION_CYCLE",
+        "NAVIGATION_DEPTH",
+        "NAVIGATION_POSITION_LIMIT",
+        "NAVIGATION_LABEL_REQUIRED",
+        "NAVIGATION_KEY_CONFLICT",
+        "NAVIGATION_UPDATE_EMPTY",
+        "LOCALE_INVALID",
     }:
         return message
     return None
@@ -1611,6 +1630,20 @@ def _nv(row: Any) -> Any:
         settings=json.loads(row[4]) if isinstance(row[4], str) else row[4],
         created_at=row[5],
         updated_at=row[6],
+    )
+
+
+def _agent_nav(row: Any) -> AgentNavigationRecord:
+    return AgentNavigationRecord(
+        id=row[0],
+        site_id=row[1],
+        key=row[2],
+        label=row[3],
+        labels=json.loads(row[4]) if isinstance(row[4], str) else row[4],
+        settings=json.loads(row[5]) if isinstance(row[5], str) else row[5],
+        row_version=row[6],
+        created_at=row[7],
+        updated_at=row[8],
     )
 
 

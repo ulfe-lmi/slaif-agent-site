@@ -441,9 +441,9 @@ async def upgrade(settings: BootstrapSettings) -> None:
 async def _assert_downgrade_compatible(
     connection: Any, executor: AsyncpgExecutor, revision: str | None
 ) -> None:
-    """Reject known 049-only state before any downgrade mutation begins."""
+    """Reject page-structure state before any post-048 downgrade mutation."""
 
-    if revision != _PAGE_STRUCTURE_REVISION:
+    if revision not in {_PAGE_STRUCTURE_REVISION, "050_001"}:
         return
     workspace_rows = await connection.fetch(
         "SELECT id FROM control.workspace WHERE status NOT IN ('ACCEPTED','DISCARDED')"

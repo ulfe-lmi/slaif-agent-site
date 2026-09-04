@@ -78,6 +78,18 @@ from slaif_agent_site.content_model.service import (
     ContentModelServiceError,
     ContentModelServiceReason,
 )
+from slaif_agent_site.content_model.site_data_models import (
+    AgentCreateLocaleRequest,
+    AgentCreateNavigationItemRequest,
+    AgentCreateNavigationRequest,
+    AgentMoveNavigationItemRequest,
+    AgentNavigationRecord,
+    AgentUpdateLocaleRequest,
+    AgentUpdateNavigationItemRequest,
+    AgentUpdateNavigationRequest,
+    LocaleRecord,
+    NavigationItemRecord,
+)
 from slaif_agent_site.content_model.view_models import (
     CollectionViewRecord,
     CreateCollectionViewRequest,
@@ -310,6 +322,78 @@ async def get_page(page_id: UUID, request: Request) -> PageRecord:
     return cast(PageRecord, record.model_dump(mode="json"))
 
 
+@router.get("/locales")
+async def list_locales(request: Request) -> list[LocaleRecord]:
+    context = await _authenticate(request)
+    _require_scope(context, "site:read")
+    records = await _execute_read(
+        request, context, lambda service: service.list_locales(context.site_id)
+    )
+    return [record.model_dump(mode="json") for record in records]
+
+
+@router.get("/locales/{locale_id}")
+async def get_locale(locale_id: UUID, request: Request) -> LocaleRecord:
+    context = await _authenticate(request)
+    _require_scope(context, "site:read")
+    record = await _execute_read(
+        request,
+        context,
+        lambda service: service.get_locale(context.site_id, locale_id),
+    )
+    return cast(LocaleRecord, record.model_dump(mode="json"))
+
+
+@router.get("/navigation")
+async def list_navigation(request: Request) -> list[AgentNavigationRecord]:
+    context = await _authenticate(request)
+    _require_scope(context, "navigation:read")
+    records = await _execute_read(
+        request, context, lambda service: service.list_navigation(context.site_id)
+    )
+    return [record.model_dump(mode="json") for record in records]
+
+
+@router.get("/navigation/{navigation_id}/items")
+async def list_navigation_items(
+    navigation_id: UUID, request: Request
+) -> list[NavigationItemRecord]:
+    context = await _authenticate(request)
+    _require_scope(context, "navigation:read")
+    records = await _execute_read(
+        request,
+        context,
+        lambda service: service.list_navigation_items(context.site_id, navigation_id),
+    )
+    return [record.model_dump(mode="json") for record in records]
+
+
+@router.get("/navigation/{navigation_id}")
+async def get_navigation(
+    navigation_id: UUID, request: Request
+) -> AgentNavigationRecord:
+    context = await _authenticate(request)
+    _require_scope(context, "navigation:read")
+    record = await _execute_read(
+        request,
+        context,
+        lambda service: service.get_navigation(context.site_id, navigation_id),
+    )
+    return cast(AgentNavigationRecord, record.model_dump(mode="json"))
+
+
+@router.get("/navigation-items/{item_id}")
+async def get_navigation_item(item_id: UUID, request: Request) -> NavigationItemRecord:
+    context = await _authenticate(request)
+    _require_scope(context, "navigation:read")
+    record = await _execute_read(
+        request,
+        context,
+        lambda service: service.get_navigation_item(context.site_id, item_id),
+    )
+    return cast(NavigationItemRecord, record.model_dump(mode="json"))
+
+
 @router.get("/pages/{page_id}/components")
 async def list_components(
     page_id: UUID, request: Request
@@ -392,6 +476,14 @@ async def _execute_mutation(
             if exc.code == "TYPE_DEPENDENCIES":
                 raise TypeDependenciesError() from None
             if exc.code == "PAGE_ROUTE_CONFLICT":
+                raise ResourceConflictError() from None
+            if exc.code in {
+                "LOCALE_REFERENCED",
+                "LOCALE_DEFAULT_REQUIRED",
+                "NAVIGATION_CHILDREN",
+                "NAVIGATION_KEY_CONFLICT",
+                "NAVIGATION_POSITION_LIMIT",
+            }:
                 raise ResourceConflictError() from None
             raise DomainValidationError() from None
         if exc.reason is ContentModelServiceReason.AUTHORIZATION:
@@ -951,6 +1043,236 @@ async def delete_collection_view(
         action="COLLECTION_VIEW_DELETED",
         mutate=lambda service: service.delete_view_for_site(
             context.site_id, view_id, body.expected_row_version
+        ),
+    )
+
+
+@router.post("/locales", status_code=201)
+async def create_locale(
+    request: Request,
+    body: AgentCreateLocaleRequest,
+    idempotency_key: IdempotencyHeader = None,
+) -> AgentMutationResponse:
+    context = await _authenticate(request)
+    _require_scope(context, "locale:configure")
+    return await _execute_mutation(
+        request,
+        context,
+        body,
+        idempotency_key,
+        resource_type="locale",
+        action="LOCALE_CREATED",
+        mutate=lambda service: service.create_locale(context.site_id, body),
+    )
+
+
+@router.patch("/locales/{locale_id}")
+async def update_locale(
+    locale_id: UUID,
+    request: Request,
+    body: AgentUpdateLocaleRequest,
+    idempotency_key: IdempotencyHeader = None,
+) -> AgentMutationResponse:
+    context = await _authenticate(request)
+    _require_scope(context, "locale:configure")
+    return await _execute_mutation(
+        request,
+        context,
+        body,
+        idempotency_key,
+        resource_type="locale",
+        status_code=200,
+        action="LOCALE_UPDATED",
+        mutate=lambda service: service.update_locale(context.site_id, locale_id, body),
+    )
+
+
+@router.delete("/locales/{locale_id}")
+async def delete_locale(
+    locale_id: UUID,
+    request: Request,
+    body: AgentDeleteRequest,
+    idempotency_key: IdempotencyHeader = None,
+) -> AgentMutationResponse:
+    context = await _authenticate(request)
+    _require_scope(context, "locale:configure")
+    if _constraint(context, "delete_enabled", True) is False:
+        raise AuthorizationError()
+    return await _execute_mutation(
+        request,
+        context,
+        body,
+        idempotency_key,
+        resource_type="locale",
+        status_code=200,
+        quota_kind="delete",
+        action="LOCALE_DELETED",
+        mutate=lambda service: service.delete_locale(
+            context.site_id, locale_id, body.expected_row_version
+        ),
+    )
+
+
+@router.post("/navigation", status_code=201)
+async def create_navigation(
+    request: Request,
+    body: AgentCreateNavigationRequest,
+    idempotency_key: IdempotencyHeader = None,
+) -> AgentMutationResponse:
+    context = await _authenticate(request)
+    _require_scope(context, "navigation:create")
+    return await _execute_mutation(
+        request,
+        context,
+        body,
+        idempotency_key,
+        resource_type="navigation",
+        action="NAVIGATION_CREATED",
+        mutate=lambda service: service.create_navigation(context.site_id, body),
+    )
+
+
+@router.patch("/navigation/{navigation_id}")
+async def update_navigation(
+    navigation_id: UUID,
+    request: Request,
+    body: AgentUpdateNavigationRequest,
+    idempotency_key: IdempotencyHeader = None,
+) -> AgentMutationResponse:
+    context = await _authenticate(request)
+    _require_scope(context, "navigation:write")
+    return await _execute_mutation(
+        request,
+        context,
+        body,
+        idempotency_key,
+        resource_type="navigation",
+        status_code=200,
+        action="NAVIGATION_UPDATED",
+        mutate=lambda service: service.update_navigation(
+            context.site_id, navigation_id, body
+        ),
+    )
+
+
+@router.delete("/navigation/{navigation_id}")
+async def delete_navigation(
+    navigation_id: UUID,
+    request: Request,
+    body: AgentDeleteRequest,
+    idempotency_key: IdempotencyHeader = None,
+) -> AgentMutationResponse:
+    context = await _authenticate(request)
+    _require_scope(context, "navigation:delete")
+    if _constraint(context, "delete_enabled", True) is False:
+        raise AuthorizationError()
+    return await _execute_mutation(
+        request,
+        context,
+        body,
+        idempotency_key,
+        resource_type="navigation",
+        status_code=200,
+        quota_kind="delete",
+        action="NAVIGATION_DELETED",
+        mutate=lambda service: service.delete_navigation(
+            context.site_id, navigation_id, body.expected_row_version
+        ),
+    )
+
+
+@router.post("/navigation/{navigation_id}/items", status_code=201)
+async def create_navigation_item(
+    navigation_id: UUID,
+    request: Request,
+    body: AgentCreateNavigationItemRequest,
+    idempotency_key: IdempotencyHeader = None,
+) -> AgentMutationResponse:
+    context = await _authenticate(request)
+    _require_scope(context, "navigation:write")
+    if body.navigation_id is not None and body.navigation_id != navigation_id:
+        raise ResourceNotFoundError()
+    return await _execute_mutation(
+        request,
+        context,
+        body,
+        idempotency_key,
+        resource_type="navigation_item",
+        action="NAVIGATION_ITEM_CREATED",
+        mutate=lambda service: service.create_navigation_item(
+            context.site_id, navigation_id, body
+        ),
+    )
+
+
+@router.patch("/navigation-items/{item_id}")
+async def update_navigation_item(
+    item_id: UUID,
+    request: Request,
+    body: AgentUpdateNavigationItemRequest,
+    idempotency_key: IdempotencyHeader = None,
+) -> AgentMutationResponse:
+    context = await _authenticate(request)
+    _require_scope(context, "navigation:write")
+    return await _execute_mutation(
+        request,
+        context,
+        body,
+        idempotency_key,
+        resource_type="navigation_item",
+        status_code=200,
+        action="NAVIGATION_ITEM_UPDATED",
+        mutate=lambda service: service.update_navigation_item(
+            context.site_id, item_id, body
+        ),
+    )
+
+
+@router.post("/navigation-items/{item_id}:move", status_code=200)
+async def move_navigation_item(
+    item_id: UUID,
+    request: Request,
+    body: AgentMoveNavigationItemRequest,
+    idempotency_key: IdempotencyHeader = None,
+) -> AgentMutationResponse:
+    context = await _authenticate(request)
+    _require_scope(context, "navigation:write")
+    return await _execute_mutation(
+        request,
+        context,
+        body,
+        idempotency_key,
+        resource_type="navigation_item",
+        status_code=200,
+        action="NAVIGATION_ITEM_MOVED",
+        mutate=lambda service: service.move_navigation_item(
+            context.site_id, item_id, body
+        ),
+    )
+
+
+@router.delete("/navigation-items/{item_id}")
+async def delete_navigation_item(
+    item_id: UUID,
+    request: Request,
+    body: AgentDeleteRequest,
+    idempotency_key: IdempotencyHeader = None,
+) -> AgentMutationResponse:
+    context = await _authenticate(request)
+    _require_scope(context, "navigation:delete")
+    if _constraint(context, "delete_enabled", True) is False:
+        raise AuthorizationError()
+    return await _execute_mutation(
+        request,
+        context,
+        body,
+        idempotency_key,
+        resource_type="navigation_item",
+        status_code=200,
+        quota_kind="delete",
+        action="NAVIGATION_ITEM_DELETED",
+        mutate=lambda service: service.delete_navigation_item(
+            context.site_id, item_id, body.expected_row_version
         ),
     )
 

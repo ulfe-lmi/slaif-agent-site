@@ -1126,6 +1126,16 @@ ROUTE_POLICIES: Final[tuple[RoutePolicy, ...]] = (
             ("GET", "/api/agent/v1/pages/{page_id}", ("page:read",)),
             ("GET", "/api/agent/v1/pages/{page_id}/components", ("composition:read",)),
             ("GET", "/api/agent/v1/media/", ("media:read",)),
+            ("GET", "/api/agent/v1/locales", ("site:read",)),
+            ("GET", "/api/agent/v1/locales/{locale_id}", ("site:read",)),
+            ("GET", "/api/agent/v1/navigation", ("navigation:read",)),
+            ("GET", "/api/agent/v1/navigation/{navigation_id}", ("navigation:read",)),
+            (
+                "GET",
+                "/api/agent/v1/navigation/{navigation_id}/items",
+                ("navigation:read",),
+            ),
+            ("GET", "/api/agent/v1/navigation-items/{item_id}", ("navigation:read",)),
         )
     ),
     *(
@@ -1226,6 +1236,24 @@ ROUTE_POLICIES: Final[tuple[RoutePolicy, ...]] = (
                 "/api/agent/v1/pages/{page_id}/components",
                 "component-structure:create",
             ),
+            ("POST", "/api/agent/v1/locales", "locale:configure"),
+            ("PATCH", "/api/agent/v1/locales/{locale_id}", "locale:configure"),
+            ("DELETE", "/api/agent/v1/locales/{locale_id}", "locale:configure"),
+            ("POST", "/api/agent/v1/navigation", "navigation:create"),
+            ("PATCH", "/api/agent/v1/navigation/{navigation_id}", "navigation:write"),
+            ("DELETE", "/api/agent/v1/navigation/{navigation_id}", "navigation:delete"),
+            (
+                "POST",
+                "/api/agent/v1/navigation/{navigation_id}/items",
+                "navigation:write",
+            ),
+            ("PATCH", "/api/agent/v1/navigation-items/{item_id}", "navigation:write"),
+            (
+                "POST",
+                "/api/agent/v1/navigation-items/{item_id}:move",
+                "navigation:write",
+            ),
+            ("DELETE", "/api/agent/v1/navigation-items/{item_id}", "navigation:delete"),
         )
     ),
     _agent_policy(

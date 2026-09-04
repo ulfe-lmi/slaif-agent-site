@@ -200,6 +200,12 @@ The capability-bound read surface is:
 | `GET /api/agent/v1/pages/{page_id}` | 200 | `page:read` |
 | `GET /api/agent/v1/pages/{page_id}/components` | 200 | `composition:read` |
 | `GET /api/agent/v1/media/` | 200 | `media:read` |
+| `GET /api/agent/v1/locales` | 200 | `site:read` |
+| `GET /api/agent/v1/locales/{locale_id}` | 200 | `site:read` |
+| `GET /api/agent/v1/navigation` | 200 | `navigation:read` |
+| `GET /api/agent/v1/navigation/{navigation_id}` | 200 | `navigation:read` |
+| `GET /api/agent/v1/navigation/{navigation_id}/items` | 200 | `navigation:read` |
+| `GET /api/agent/v1/navigation-items/{item_id}` | 200 | `navigation:read` |
 
 Read results use the capability's workspace overlay: workspace-created or
 modified rows shadow canonical rows, unchanged canonical rows remain fallback,
@@ -247,6 +253,16 @@ The bounded mutation surface is:
 | `POST /api/agent/v1/pages/{page_id}:move` | 200 | `MovePageRequest` (parent-only hierarchy move) |
 | `POST /api/agent/v1/pages/{page_id}:restore` | 200 | `RestorePageRequest` with the exact tombstone row version |
 | `POST /api/agent/v1/pages/{page_id}/components` | 201 | `CreateCompositionNodeRequest` |
+| `POST /api/agent/v1/locales` | 201 | `AgentCreateLocaleRequest` |
+| `PATCH /api/agent/v1/locales/{locale_id}` | 200 | `AgentUpdateLocaleRequest` |
+| `DELETE /api/agent/v1/locales/{locale_id}` | 200 | `AgentDeleteRequest` |
+| `POST /api/agent/v1/navigation` | 201 | `AgentCreateNavigationRequest` |
+| `PATCH /api/agent/v1/navigation/{navigation_id}` | 200 | `AgentUpdateNavigationRequest` |
+| `DELETE /api/agent/v1/navigation/{navigation_id}` | 200 | `AgentDeleteRequest` |
+| `POST /api/agent/v1/navigation/{navigation_id}/items` | 201 | `AgentCreateNavigationItemRequest` |
+| `PATCH /api/agent/v1/navigation-items/{item_id}` | 200 | `AgentUpdateNavigationItemRequest` |
+| `POST /api/agent/v1/navigation-items/{item_id}:move` | 200 | `AgentMoveNavigationItemRequest` |
+| `DELETE /api/agent/v1/navigation-items/{item_id}` | 200 | `AgentDeleteRequest` |
 
 Every mutation requires an `Idempotency-Key` containing 1–128 bounded ASCII
 key characters. The response is `{ "record": <semantic record>,
@@ -273,6 +289,17 @@ denials are stable `422` responses with `TYPE_DEPENDENCIES` or
 residue. All model/content dependency writes share one transaction-scoped
 workspace lock, so a concurrent creator and deletion has one committed winner
 and a coherent loser result.
+
+Locale and navigation records are site-scoped workspace COW data. Locale
+configuration preserves one enabled default locale, and effective page routes
+derive their root locale from the visible workspace locale set. Navigation
+containers and items use bounded labels/settings, same-site page targets,
+allowlisted internal or HTTPS external targets, explicit locale bindings, and
+server-assigned dense sibling positions. Before/after anchors are mutually
+exclusive; item moves and all page/navigation structural writes share one
+transaction-scoped structural lock. Navigation item deletion and page/locale/
+navigation deletion reject surviving dependencies, while the Agent role can
+only reach these records through capability-bound semantic functions.
 
 ### Capability-bound browser preview runs
 

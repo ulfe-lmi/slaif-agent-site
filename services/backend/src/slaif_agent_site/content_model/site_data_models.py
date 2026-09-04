@@ -38,8 +38,243 @@ class CreateLocaleRequest(BaseModel):
         return result
 
 
+class AgentCreateLocaleRequest(CreateLocaleRequest):
+    """Agent-facing alias with the same bounded locale-create contract."""
+
+
 class UpdateLocaleRequest(CreateLocaleRequest):
     expected_row_version: int = Field(ge=1)
+
+
+class AgentUpdateLocaleRequest(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    tag: str | None = None
+    enabled: bool | None = None
+    is_default: bool | None = None
+    position: int | None = Field(default=None, ge=0, le=999)
+    metadata: dict[str, Any] | None = None
+    expected_row_version: int = Field(ge=1)
+
+    @field_validator("tag")
+    @classmethod
+    def tag_is_normalized(cls, value: str | None) -> str | None:
+        return validate_locale_tag(value) if value is not None else None
+
+    @field_validator("metadata")
+    @classmethod
+    def metadata_is_bounded(cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
+        if value is None:
+            return None
+        result = _bounded_json(value)
+        assert isinstance(result, dict)
+        return result
+
+
+class AgentCreateNavigationRequest(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    key: str
+    label: str
+    labels: dict[str, str] = {}
+    settings: dict[str, Any] = {}
+
+    @field_validator("key")
+    @classmethod
+    def key_is_bounded(cls, value: str) -> str:
+        return _bounded_text(value, 63)
+
+    @field_validator("label")
+    @classmethod
+    def label_is_bounded(cls, value: str) -> str:
+        return _bounded_text(value, 256)
+
+    @field_validator("labels")
+    @classmethod
+    def labels_are_bounded(cls, value: dict[str, str]) -> dict[str, str]:
+        if len(value) > 16:
+            raise ValueError("too many navigation labels")
+        return {
+            validate_locale_tag(key): _bounded_text(label, 256)
+            for key, label in value.items()
+        }
+
+    @field_validator("settings")
+    @classmethod
+    def settings_are_bounded(cls, value: dict[str, Any]) -> dict[str, Any]:
+        result = _bounded_json(value)
+        assert isinstance(result, dict)
+        return result
+
+
+class AgentUpdateNavigationRequest(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    label: str | None = None
+    labels: dict[str, str] | None = None
+    settings: dict[str, Any] | None = None
+    expected_row_version: int = Field(ge=1)
+
+    @field_validator("label")
+    @classmethod
+    def label_is_bounded(cls, value: str | None) -> str | None:
+        return _bounded_text(value, 256) if value is not None else None
+
+    @field_validator("labels")
+    @classmethod
+    def labels_are_bounded(cls, value: dict[str, str] | None) -> dict[str, str] | None:
+        if value is None:
+            return None
+        if len(value) > 16:
+            raise ValueError("too many navigation labels")
+        return {
+            validate_locale_tag(key): _bounded_text(label, 256)
+            for key, label in value.items()
+        }
+
+    @field_validator("settings")
+    @classmethod
+    def settings_are_bounded(
+        cls, value: dict[str, Any] | None
+    ) -> dict[str, Any] | None:
+        if value is None:
+            return None
+        result = _bounded_json(value)
+        assert isinstance(result, dict)
+        return result
+
+
+class AgentCreateNavigationItemRequest(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    navigation_id: UUID | None = None
+    parent_id: UUID | None = None
+    page_id: UUID | None = None
+    target_kind: str = "INTERNAL"
+    target_value: str = "/"
+    labels: dict[str, str] = {}
+    locale: str | None = None
+    before_item_id: UUID | None = None
+    after_item_id: UUID | None = None
+
+    @field_validator("target_kind")
+    @classmethod
+    def target_kind_is_safe(cls, value: str) -> str:
+        if value not in {"PAGE", "INTERNAL", "EXTERNAL"}:
+            raise ValueError("invalid navigation target kind")
+        return value
+
+    @field_validator("target_value")
+    @classmethod
+    def target_is_bounded(cls, value: str) -> str:
+        return _bounded_text(value, 2048)
+
+    @field_validator("labels")
+    @classmethod
+    def labels_are_bounded(cls, value: dict[str, str]) -> dict[str, str]:
+        if len(value) > 16:
+            raise ValueError("too many navigation labels")
+        return {
+            validate_locale_tag(key): _bounded_text(label, 256)
+            for key, label in value.items()
+        }
+
+    @field_validator("locale")
+    @classmethod
+    def locale_is_normalized(cls, value: str | None) -> str | None:
+        return validate_locale_tag(value) if value is not None else None
+
+    @model_validator(mode="after")
+    def target_is_safe(self) -> AgentCreateNavigationItemRequest:
+        validate_target(self.target_kind, self.target_value)
+        if self.target_kind == "PAGE":
+            if self.page_id is None or self.target_value != str(self.page_id):
+                raise ValueError("page target must match page_id")
+        elif self.page_id is not None:
+            raise ValueError("non-page navigation target cannot have page_id")
+        if self.before_item_id is not None and self.after_item_id is not None:
+            raise ValueError("navigation item cannot have both anchors")
+        if not self.labels and self.locale is None:
+            raise ValueError("navigation item needs a label")
+        return self
+
+
+class AgentUpdateNavigationItemRequest(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    parent_id: UUID | None = None
+    page_id: UUID | None = None
+    target_kind: str | None = None
+    target_value: str | None = None
+    labels: dict[str, str] | None = None
+    locale: str | None = None
+    before_item_id: UUID | None = None
+    after_item_id: UUID | None = None
+    expected_row_version: int = Field(ge=1)
+
+    @field_validator("target_kind")
+    @classmethod
+    def target_kind_is_safe(cls, value: str | None) -> str | None:
+        if value is not None and value not in {"PAGE", "INTERNAL", "EXTERNAL"}:
+            raise ValueError("invalid navigation target kind")
+        return value
+
+    @field_validator("target_value")
+    @classmethod
+    def target_is_bounded(cls, value: str | None) -> str | None:
+        return _bounded_text(value, 2048) if value is not None else None
+
+    @field_validator("labels")
+    @classmethod
+    def labels_are_bounded(cls, value: dict[str, str] | None) -> dict[str, str] | None:
+        if value is None:
+            return None
+        if len(value) > 16:
+            raise ValueError("too many navigation labels")
+        return {
+            validate_locale_tag(key): _bounded_text(label, 256)
+            for key, label in value.items()
+        }
+
+    @field_validator("locale")
+    @classmethod
+    def locale_is_normalized(cls, value: str | None) -> str | None:
+        return validate_locale_tag(value) if value is not None else None
+
+    @model_validator(mode="after")
+    def anchors_are_exclusive(self) -> AgentUpdateNavigationItemRequest:
+        if self.before_item_id is not None and self.after_item_id is not None:
+            raise ValueError("navigation item cannot have both anchors")
+        return self
+
+
+class AgentMoveNavigationItemRequest(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    parent_id: UUID | None = None
+    before_item_id: UUID | None = None
+    after_item_id: UUID | None = None
+    expected_row_version: int = Field(ge=1)
+
+    @model_validator(mode="after")
+    def anchors_are_exclusive(self) -> AgentMoveNavigationItemRequest:
+        if self.before_item_id is not None and self.after_item_id is not None:
+            raise ValueError("navigation item cannot have both anchors")
+        return self
+
+
+class AgentNavigationRecord(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    id: UUID
+    site_id: UUID
+    key: str
+    label: str
+    labels: dict[str, str]
+    settings: dict[str, Any]
+    row_version: int
+    created_at: datetime
+    updated_at: datetime
 
 
 class LocaleRecord(BaseModel):
@@ -230,6 +465,14 @@ class ProposedSideEffectRecord(BaseModel):
 
 
 __all__ = [
+    "AgentCreateLocaleRequest",
+    "AgentCreateNavigationItemRequest",
+    "AgentCreateNavigationRequest",
+    "AgentMoveNavigationItemRequest",
+    "AgentNavigationRecord",
+    "AgentUpdateLocaleRequest",
+    "AgentUpdateNavigationItemRequest",
+    "AgentUpdateNavigationRequest",
     "CreateLocaleRequest",
     "CreateNavigationItemRequest",
     "CreateProposedSideEffectRequest",
