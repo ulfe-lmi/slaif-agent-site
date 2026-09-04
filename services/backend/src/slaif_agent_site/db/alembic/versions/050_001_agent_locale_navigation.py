@@ -39,7 +39,7 @@ def _resource_constraint_sql() -> str:
             max_page_depth integer, allowed_navigation_keys text[],
             allowed_navigation_ids uuid[], max_visible_locales integer,
             max_visible_navigations integer, max_visible_navigation_items integer,
-            max_navigation_depth integer
+            max_navigation_depth integer, max_visible_redirects integer
         ) LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $fn$
         DECLARE
             workspace_id uuid; result jsonb;
@@ -72,7 +72,7 @@ def _resource_constraint_sql() -> str:
                     'max_visible_pages','max_page_depth','allowed_navigation_keys',
                     'allowed_navigation_ids','max_visible_locales',
                     'max_visible_navigations','max_visible_navigation_items',
-                    'max_navigation_depth'
+                    'max_navigation_depth','max_visible_redirects'
                 )
             ) THEN
                 RAISE EXCEPTION 'INVALID_RESOURCE_CONSTRAINTS' USING ERRCODE='P0001';
@@ -90,7 +90,8 @@ def _resource_constraint_sql() -> str:
                        ('max_content_types'),('max_fields_per_type'),('max_deletes'),
                        ('max_visible_pages'),('max_page_depth'),
                        ('max_visible_locales'),('max_visible_navigations'),
-                       ('max_visible_navigation_items'),('max_navigation_depth')
+                       ('max_visible_navigation_items'),('max_navigation_depth'),
+                       ('max_visible_redirects')
                    ) AS numeric_key(key)
                    WHERE result ? numeric_key.key
                      AND jsonb_typeof(result->numeric_key.key) <> 'number'
@@ -103,7 +104,7 @@ def _resource_constraint_sql() -> str:
                     'max_content_types','max_fields_per_type','max_deletes',
                     'max_visible_pages','max_page_depth','max_visible_locales',
                     'max_visible_navigations','max_visible_navigation_items',
-                    'max_navigation_depth'
+                    'max_navigation_depth','max_visible_redirects'
                 ) AND (item.value !~ '^[0-9]+$' OR item.value::numeric>2147483647)
             ) THEN
                 RAISE EXCEPTION 'INVALID_RESOURCE_CONSTRAINTS' USING ERRCODE='P0001';
@@ -150,6 +151,7 @@ def _resource_constraint_sql() -> str:
             max_visible_navigations := CASE WHEN result ? 'max_visible_navigations' THEN (result->>'max_visible_navigations')::integer END;
             max_visible_navigation_items := CASE WHEN result ? 'max_visible_navigation_items' THEN (result->>'max_visible_navigation_items')::integer END;
             max_navigation_depth := CASE WHEN result ? 'max_navigation_depth' THEN (result->>'max_navigation_depth')::integer END;
+            max_visible_redirects := CASE WHEN result ? 'max_visible_redirects' THEN (result->>'max_visible_redirects')::integer END;
             RETURN NEXT;
         END;
         $fn$

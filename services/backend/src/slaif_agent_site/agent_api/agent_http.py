@@ -82,13 +82,16 @@ from slaif_agent_site.content_model.site_data_models import (
     AgentCreateLocaleRequest,
     AgentCreateNavigationItemRequest,
     AgentCreateNavigationRequest,
+    AgentCreateRedirectRequest,
     AgentMoveNavigationItemRequest,
     AgentNavigationRecord,
     AgentUpdateLocaleRequest,
     AgentUpdateNavigationItemRequest,
     AgentUpdateNavigationRequest,
+    AgentUpdateRedirectRequest,
     LocaleRecord,
     NavigationItemRecord,
+    RedirectRecord,
 )
 from slaif_agent_site.content_model.view_models import (
     CollectionViewRecord,
@@ -344,6 +347,30 @@ async def get_locale(locale_id: UUID, request: Request) -> LocaleRecord:
     return cast(LocaleRecord, record.model_dump(mode="json"))
 
 
+@router.get("/redirects")
+async def list_redirects(request: Request) -> list[RedirectRecord]:
+    context = await _authenticate(request)
+    _require_scope(context, "redirect:read")
+    records = await _execute_read(
+        request,
+        context,
+        lambda service: service.list_redirects_for_site(context.site_id),
+    )
+    return [record.model_dump(mode="json") for record in records]
+
+
+@router.get("/redirects/{redirect_id}")
+async def get_redirect(redirect_id: UUID, request: Request) -> RedirectRecord:
+    context = await _authenticate(request)
+    _require_scope(context, "redirect:read")
+    record = await _execute_read(
+        request,
+        context,
+        lambda service: service.get_redirect_for_site(context.site_id, redirect_id),
+    )
+    return cast(RedirectRecord, record.model_dump(mode="json"))
+
+
 @router.get("/navigation")
 async def list_navigation(request: Request) -> list[AgentNavigationRecord]:
     context = await _authenticate(request)
@@ -483,8 +510,15 @@ async def _execute_mutation(
                 "NAVIGATION_CHILDREN",
                 "NAVIGATION_KEY_CONFLICT",
                 "NAVIGATION_POSITION_LIMIT",
+                "REDIRECT_SOURCE_CONFLICT",
+                "REDIRECT_TARGET_DANGLING",
+                "REDIRECT_CYCLE",
+                "REDIRECT_CHAIN_LIMIT",
+                "REDIRECT_DEPENDENCY",
             }:
                 raise ResourceConflictError() from None
+            if exc.code == "REDIRECT_ROUTE_PREFIX_DENIED":
+                raise AuthorizationError() from None
             raise DomainValidationError() from None
         if exc.reason is ContentModelServiceReason.AUTHORIZATION:
             raise AuthorizationError() from None
@@ -1109,6 +1143,74 @@ async def delete_locale(
         action="LOCALE_DELETED",
         mutate=lambda service: service.delete_locale(
             context.site_id, locale_id, body.expected_row_version
+        ),
+    )
+
+
+@router.post("/redirects", status_code=201)
+async def create_redirect(
+    request: Request,
+    body: AgentCreateRedirectRequest,
+    idempotency_key: IdempotencyHeader = None,
+) -> AgentMutationResponse:
+    context = await _authenticate(request)
+    _require_scope(context, "redirect:create")
+    return await _execute_mutation(
+        request,
+        context,
+        body,
+        idempotency_key,
+        resource_type="redirect",
+        action="REDIRECT_CREATED",
+        mutate=lambda service: service.create_redirect_for_site(context.site_id, body),
+    )
+
+
+@router.patch("/redirects/{redirect_id}")
+async def update_redirect(
+    redirect_id: UUID,
+    request: Request,
+    body: AgentUpdateRedirectRequest,
+    idempotency_key: IdempotencyHeader = None,
+) -> AgentMutationResponse:
+    context = await _authenticate(request)
+    _require_scope(context, "redirect:write")
+    return await _execute_mutation(
+        request,
+        context,
+        body,
+        idempotency_key,
+        resource_type="redirect",
+        status_code=200,
+        action="REDIRECT_UPDATED",
+        mutate=lambda service: service.update_redirect_for_site(
+            context.site_id, redirect_id, body
+        ),
+    )
+
+
+@router.delete("/redirects/{redirect_id}")
+async def delete_redirect(
+    redirect_id: UUID,
+    request: Request,
+    body: AgentDeleteRequest,
+    idempotency_key: IdempotencyHeader = None,
+) -> AgentMutationResponse:
+    context = await _authenticate(request)
+    _require_scope(context, "redirect:delete")
+    if _constraint(context, "delete_enabled", True) is False:
+        raise AuthorizationError()
+    return await _execute_mutation(
+        request,
+        context,
+        body,
+        idempotency_key,
+        resource_type="redirect",
+        status_code=200,
+        quota_kind="delete",
+        action="REDIRECT_DELETED",
+        mutate=lambda service: service.delete_redirect_for_site(
+            context.site_id, redirect_id, body.expected_row_version
         ),
     )
 

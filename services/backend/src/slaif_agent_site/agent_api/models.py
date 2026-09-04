@@ -56,6 +56,7 @@ class AgentCapabilityContext(BaseModel):
             "max_visible_navigations",
             "max_visible_navigation_items",
             "max_navigation_depth",
+            "max_visible_redirects",
         }
         unknown = set(self.resource_constraints) - allowed
         if unknown:
@@ -132,6 +133,7 @@ class AgentCapabilityContext(BaseModel):
             "max_visible_navigations",
             "max_visible_navigation_items",
             "max_navigation_depth",
+            "max_visible_redirects",
         ):
             value = constraints.get(key)
             if value is not None and (

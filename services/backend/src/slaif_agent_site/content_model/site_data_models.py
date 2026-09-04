@@ -13,6 +13,8 @@ from .site_data_validators import (
     validate_agent_target,
     validate_locale_tag,
     validate_redirect,
+    validate_redirect_source,
+    validate_redirect_target,
     validate_target,
 )
 
@@ -401,7 +403,7 @@ class CreateRedirectRequest(BaseModel):
     @field_validator("source_route")
     @classmethod
     def source_is_normalized(cls, value: str) -> str:
-        return value
+        return validate_redirect_source(value)
 
     @field_validator("target")
     @classmethod
@@ -415,8 +417,59 @@ class CreateRedirectRequest(BaseModel):
 
     @model_validator(mode="after")
     def redirect_is_safe(self) -> CreateRedirectRequest:
-        source, _ = validate_redirect(self.source_route, self.target)
+        source, target = validate_redirect(self.source_route, self.target)
         object.__setattr__(self, "source_route", source)
+        object.__setattr__(self, "target", target)
+        return self
+
+
+class AgentCreateRedirectRequest(CreateRedirectRequest):
+    """Agent-facing redirect creation contract."""
+
+
+class AgentUpdateRedirectRequest(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    source_route: str | None = None
+    target: str | None = None
+    status_code: int | None = None
+    locale: str | None = None
+    expected_row_version: int = Field(ge=1)
+
+    @field_validator("source_route")
+    @classmethod
+    def source_is_normalized(cls, value: str | None) -> str | None:
+        return validate_redirect_source(value) if value is not None else None
+
+    @field_validator("target")
+    @classmethod
+    def target_is_safe(cls, value: str | None) -> str | None:
+        return validate_redirect_target(value) if value is not None else None
+
+    @field_validator("status_code")
+    @classmethod
+    def status_is_redirect(cls, value: int | None) -> int | None:
+        if value is not None and value not in {301, 302, 303, 307, 308}:
+            raise ValueError("unsupported redirect status")
+        return value
+
+    @field_validator("locale")
+    @classmethod
+    def locale_is_normalized(cls, value: str | None) -> str | None:
+        return validate_locale_tag(value) if value is not None else None
+
+    @model_validator(mode="after")
+    def update_is_nonempty(self) -> AgentUpdateRedirectRequest:
+        fields = self.model_fields_set.intersection(
+            {"source_route", "target", "status_code", "locale"}
+        )
+        if not fields:
+            raise ValueError("redirect update cannot be empty")
+        if any(
+            field in self.model_fields_set and getattr(self, field) is None
+            for field in ("source_route", "target", "status_code")
+        ):
+            raise ValueError("redirect source, target, and status cannot be cleared")
         return self
 
 
@@ -477,11 +530,13 @@ __all__ = [
     "AgentCreateLocaleRequest",
     "AgentCreateNavigationItemRequest",
     "AgentCreateNavigationRequest",
+    "AgentCreateRedirectRequest",
     "AgentMoveNavigationItemRequest",
     "AgentNavigationRecord",
     "AgentUpdateLocaleRequest",
     "AgentUpdateNavigationItemRequest",
     "AgentUpdateNavigationRequest",
+    "AgentUpdateRedirectRequest",
     "CreateLocaleRequest",
     "CreateNavigationItemRequest",
     "CreateProposedSideEffectRequest",

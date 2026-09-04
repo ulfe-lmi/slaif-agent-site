@@ -70,6 +70,7 @@ from slaif_agent_site.content_model.service import (
     _locale,
     _nav_item,
     _pg,
+    _redirect,
     _rel,
     _tr,
 )
@@ -77,13 +78,16 @@ from slaif_agent_site.content_model.site_data_models import (
     AgentCreateLocaleRequest,
     AgentCreateNavigationItemRequest,
     AgentCreateNavigationRequest,
+    AgentCreateRedirectRequest,
     AgentMoveNavigationItemRequest,
     AgentNavigationRecord,
     AgentUpdateLocaleRequest,
     AgentUpdateNavigationItemRequest,
     AgentUpdateNavigationRequest,
+    AgentUpdateRedirectRequest,
     LocaleRecord,
     NavigationItemRecord,
+    RedirectRecord,
 )
 from slaif_agent_site.content_model.site_data_validators import validate_agent_target
 from slaif_agent_site.content_model.validators import validate_values
@@ -192,6 +196,21 @@ AGENT_NAVIGATION_ITEM_MOVE_SQL = (
 AGENT_NAVIGATION_ITEM_DELETE_SQL = (
     "SELECT * FROM content.slaif_agent_navigation_item_delete($1,$2,$3)"
 )
+AGENT_REDIRECT_CREATE_SQL = (
+    "SELECT * FROM content.slaif_agent_redirect_create($1,$2,$3,$4,$5)"
+)
+AGENT_REDIRECT_EXACT_SQL = (
+    "SELECT * FROM content.redirect WHERE site_id=$1 AND source_route=$2 "
+    "AND locale IS NOT DISTINCT FROM $3 ORDER BY id DESC LIMIT 1"
+)
+AGENT_REDIRECT_LIST_SQL = "SELECT * FROM content.slaif_agent_redirect_list($1)"
+AGENT_REDIRECT_GET_SQL = "SELECT * FROM content.slaif_agent_redirect_get($1,$2)"
+AGENT_REDIRECT_UPDATE_SQL = (
+    "SELECT * FROM content.slaif_agent_redirect_update($1,$2,$3,$4,$5,$6,$7)"
+)
+AGENT_REDIRECT_DELETE_SQL = (
+    "SELECT * FROM content.slaif_agent_redirect_delete($1,$2,$3)"
+)
 AGENT_COMPONENT_CREATE_SQL = (
     "SELECT * FROM content.slaif_agent_composition_node_add($1,$2,$3,$4,$5,$6,$7)"
 )
@@ -291,6 +310,9 @@ AGENT_SEMANTIC_CONTRACTS = {
     "NAVIGATION_ITEM_UPDATED": ("navigation_item", "PATCH", 200, "mutation"),
     "NAVIGATION_ITEM_MOVED": ("navigation_item", "POST", 200, "mutation"),
     "NAVIGATION_ITEM_DELETED": ("navigation_item", "DELETE", 200, "delete"),
+    "REDIRECT_CREATED": ("redirect", "POST", 201, "mutation"),
+    "REDIRECT_UPDATED": ("redirect", "PATCH", 200, "mutation"),
+    "REDIRECT_DELETED": ("redirect", "DELETE", 200, "delete"),
 }
 AGENT_SEMANTIC_ACTIONS = frozenset(AGENT_SEMANTIC_CONTRACTS)
 
@@ -1052,6 +1074,80 @@ class AgentCowContentModelService(ContentModelService):
         if row is None:
             raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
         return _nav_item(row)
+
+    async def create_redirect_for_site(
+        self, site_id: UUID, request: AgentCreateRedirectRequest
+    ) -> RedirectRecord:
+        row = await self._fetchrow(
+            AGENT_REDIRECT_CREATE_SQL,
+            site_id,
+            request.source_route,
+            request.target,
+            request.status_code,
+            request.locale,
+        )
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.CONFLICT)
+        if row[0] is None:
+            row = await self._fetchrow(
+                AGENT_REDIRECT_EXACT_SQL,
+                site_id,
+                request.source_route,
+                request.locale,
+            )
+            if row is None:
+                raise ContentModelServiceError(ContentModelServiceReason.CONFLICT)
+        return _redirect(row)
+
+    async def list_redirects_for_site(
+        self, site_id: UUID
+    ) -> tuple[RedirectRecord, ...]:
+        return tuple(
+            _redirect(row)
+            for row in await self._fetch(AGENT_REDIRECT_LIST_SQL, site_id)
+        )
+
+    async def get_redirect_for_site(
+        self, site_id: UUID, redirect_id: UUID
+    ) -> RedirectRecord:
+        row = await self._fetchrow(AGENT_REDIRECT_GET_SQL, site_id, redirect_id)
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
+        return _redirect(row)
+
+    async def update_redirect_for_site(
+        self,
+        site_id: UUID,
+        redirect_id: UUID,
+        request: AgentUpdateRedirectRequest,
+    ) -> RedirectRecord:
+        current = await self.get_redirect_for_site(site_id, redirect_id)
+        fields = request.model_fields_set
+        row = await self._fetchrow(
+            AGENT_REDIRECT_UPDATE_SQL,
+            site_id,
+            redirect_id,
+            request.source_route if "source_route" in fields else current.source_route,
+            request.target if "target" in fields else current.target,
+            request.status_code if "status_code" in fields else current.status_code,
+            request.locale if "locale" in fields else current.locale,
+            request.expected_row_version,
+        )
+        if row is None or row[0] is None:
+            row = await self._fetchrow(AGENT_REDIRECT_GET_SQL, site_id, redirect_id)
+            if row is None:
+                raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
+        return _redirect(row)
+
+    async def delete_redirect_for_site(
+        self, site_id: UUID, redirect_id: UUID, expected_row_version: int
+    ) -> RedirectRecord:
+        row = await self._fetchrow(
+            AGENT_REDIRECT_DELETE_SQL, site_id, redirect_id, expected_row_version
+        )
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
+        return _redirect(row)
 
     async def add_component_for_site(
         self,

@@ -1253,7 +1253,11 @@ async def test_editor_http_site_data_substrate_is_cow_and_versioned(
                 redirect = await client.post(
                     redirects,
                     headers=mutation("site-redirect"),
-                    json={"source_route": "/old", "target": "/new", "status_code": 301},
+                    json={
+                        "source_route": "/old",
+                        "target": "https://example.test/new",
+                        "status_code": 301,
+                    },
                 )
                 assert redirect.status_code == 201, redirect.text
                 redirect_id = redirect.json()["id"]
@@ -1262,7 +1266,7 @@ async def test_editor_http_site_data_substrate_is_cow_and_versioned(
                     headers=mutation("site-redirect-update"),
                     json={
                         "source_route": "/old",
-                        "target": "/newer",
+                        "target": "https://example.test/newer",
                         "status_code": 302,
                         "expected_row_version": 1,
                     },

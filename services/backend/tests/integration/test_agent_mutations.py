@@ -520,6 +520,388 @@ async def test_agent_create_type_is_cow_only_and_durablely_idempotent(
 
 
 @pytest.mark.asyncio
+async def test_agent_redirect_crud_graph_constraints_and_page_dependencies(
+    agent_site_database: AgentSiteDatabase,
+) -> None:
+    """Prove redirects are typed, bounded, graph-safe, and site-confined."""
+
+    database = agent_site_database
+    _token, seeded = await _seed(database)
+    scopes = [
+        "site:read",
+        "redirect:read",
+        "redirect:create",
+        "redirect:write",
+        "redirect:delete",
+        "page:create",
+        "page:read",
+        "page:delete",
+        "route:write",
+    ]
+    token, workspace_id = await _workspace_capability(
+        database, seeded, scopes, "Agent Redirect Semantics Workspace"
+    )
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        await owner.execute(
+            "UPDATE control.capability SET request_quota=100, mutation_quota=100, "
+            "delete_quota=100 WHERE workspace_id=$1",
+            workspace_id,
+        )
+    app = create_agent_app(
+        settings=ServiceSettings.for_test(),
+        database_settings=_agent_settings(database),
+    )
+    agent_pool = await database.role_pool("slaif_agent_runtime")
+    try:
+
+        async def request(
+            client: httpx.AsyncClient,
+            method: str,
+            path: str,
+            key: str | None = None,
+            body: Mapping[str, object] | None = None,
+        ) -> httpx.Response:
+            headers = {"Authorization": f"Bearer {token}"}
+            if key is not None:
+                headers["Idempotency-Key"] = key
+            return await client.request(method, path, headers=headers, json=body)
+
+        @asynccontextmanager
+        async def structural_lock(expected_waiters: int) -> Any:
+            async with owner_connection(
+                database.settings.resolved_owner_dsn(), expected_database=database.name
+            ) as blocker:
+                async with blocker.transaction():
+                    lock_key = await blocker.fetchval(
+                        "SELECT hashtextextended($1,994)",
+                        f"{workspace_id}:{seeded['site_id']}:page-structure",
+                    )
+                    await blocker.execute(
+                        "SELECT pg_advisory_xact_lock($1::bigint)", lock_key
+                    )
+                    yield blocker, expected_waiters
+
+        async with app.router.lifespan_context(app):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://agent.test"
+            ) as client:
+                empty = await request(client, "GET", "/api/agent/v1/redirects")
+                assert empty.status_code == 200, empty.text
+                assert empty.json() == []
+
+                page = await request(
+                    client,
+                    "POST",
+                    "/api/agent/v1/pages",
+                    "redirect-target-page",
+                    {"slug": "destination", "title": "Destination", "locale": "en-US"},
+                )
+                assert page.status_code == 201, page.text
+                destination = page.json()["record"]
+                assert destination["effective_route"] == "/destination"
+
+                external = await request(
+                    client,
+                    "POST",
+                    "/api/agent/v1/redirects",
+                    "redirect-external-create",
+                    {
+                        "source_route": "/external",
+                        "target": "https://example.test/landing",
+                        "status_code": 301,
+                    },
+                )
+                assert external.status_code == 201, external.text
+                external_record = external.json()["record"]
+                assert external.json()["action"] == "REDIRECT_CREATED"
+                redirect_id = external_record["id"]
+                assert external_record["row_version"] == 1
+
+                listed = await request(client, "GET", "/api/agent/v1/redirects")
+                assert listed.status_code == 200, listed.text
+                assert [row["id"] for row in listed.json()] == [redirect_id]
+                fetched = await request(
+                    client, "GET", f"/api/agent/v1/redirects/{redirect_id}"
+                )
+                assert fetched.status_code == 200, fetched.text
+
+                updated = await request(
+                    client,
+                    "PATCH",
+                    f"/api/agent/v1/redirects/{redirect_id}",
+                    "redirect-external-update",
+                    {
+                        "target": "https://example.test/updated",
+                        "expected_row_version": 1,
+                    },
+                )
+                assert updated.status_code == 200, updated.text
+                assert updated.json()["action"] == "REDIRECT_UPDATED"
+                assert updated.json()["record"]["source_route"] == "/external"
+                assert updated.json()["record"]["row_version"] == 2
+
+                invalid = await request(
+                    client,
+                    "POST",
+                    "/api/agent/v1/redirects",
+                    "redirect-invalid-http",
+                    {"source_route": "/unsafe", "target": "http://example.test"},
+                )
+                assert invalid.status_code == 422, invalid.text
+                missing_key = await request(
+                    client,
+                    "POST",
+                    "/api/agent/v1/redirects",
+                    body={"source_route": "/missing-key", "target": "/destination"},
+                )
+                assert missing_key.status_code == 400, missing_key.text
+
+                internal = await request(
+                    client,
+                    "POST",
+                    "/api/agent/v1/redirects",
+                    "redirect-internal-create",
+                    {"source_route": "/old", "target": "/destination"},
+                )
+                assert internal.status_code == 201, internal.text
+                chain = await request(
+                    client,
+                    "POST",
+                    "/api/agent/v1/redirects",
+                    "redirect-chain-create",
+                    {"source_route": "/older", "target": "/old"},
+                )
+                assert chain.status_code == 201, chain.text
+                old_id = internal.json()["record"]["id"]
+                chain_id = chain.json()["record"]["id"]
+
+                dangling = await request(
+                    client,
+                    "POST",
+                    "/api/agent/v1/redirects",
+                    "redirect-dangling-create",
+                    {"source_route": "/dangling", "target": "/missing"},
+                )
+                assert dangling.status_code == 409, dangling.text
+                source_collision = await request(
+                    client,
+                    "POST",
+                    "/api/agent/v1/redirects",
+                    "redirect-page-collision",
+                    {"source_route": "/destination", "target": "/old"},
+                )
+                assert source_collision.status_code == 409, source_collision.text
+                cycle = await request(
+                    client,
+                    "PATCH",
+                    f"/api/agent/v1/redirects/{old_id}",
+                    "redirect-cycle-update",
+                    {"target": "/older", "expected_row_version": 1},
+                )
+                assert cycle.status_code == 409, cycle.text
+                unchanged = await request(
+                    client, "GET", f"/api/agent/v1/redirects/{old_id}"
+                )
+                assert unchanged.status_code == 200
+                assert unchanged.json()["target"] == "/destination"
+
+                dependent_delete = await request(
+                    client,
+                    "DELETE",
+                    f"/api/agent/v1/redirects/{old_id}",
+                    "redirect-dependent-delete",
+                    {"expected_row_version": 1},
+                )
+                assert dependent_delete.status_code == 409, dependent_delete.text
+                page_delete = await request(
+                    client,
+                    "DELETE",
+                    f"/api/agent/v1/pages/{destination['id']}",
+                    "redirect-page-dependent-delete",
+                    {"expected_row_version": 1},
+                )
+                assert page_delete.status_code == 409, page_delete.text
+                assert (
+                    await request(
+                        client, "GET", f"/api/agent/v1/pages/{destination['id']}"
+                    )
+                ).status_code == 200
+
+                deleted_chain = await request(
+                    client,
+                    "DELETE",
+                    f"/api/agent/v1/redirects/{chain_id}",
+                    "redirect-chain-delete",
+                    {"expected_row_version": 1},
+                )
+                assert deleted_chain.status_code == 200, deleted_chain.text
+                deleted_old = await request(
+                    client,
+                    "DELETE",
+                    f"/api/agent/v1/redirects/{old_id}",
+                    "redirect-old-delete",
+                    {"expected_row_version": 1},
+                )
+                assert deleted_old.status_code == 200, deleted_old.text
+                deleted_external = await request(
+                    client,
+                    "DELETE",
+                    f"/api/agent/v1/redirects/{redirect_id}",
+                    "redirect-external-delete",
+                    {"expected_row_version": 2},
+                )
+                assert deleted_external.status_code == 200, deleted_external.text
+
+                await _set_resource_constraints(database, workspace_id, {})
+                race_a = await request(
+                    client,
+                    "POST",
+                    "/api/agent/v1/redirects",
+                    "redirect-race-a-create",
+                    {"source_route": "/race-a", "target": "/destination"},
+                )
+                race_b = await request(
+                    client,
+                    "POST",
+                    "/api/agent/v1/redirects",
+                    "redirect-race-b-create",
+                    {"source_route": "/race-b", "target": "/destination"},
+                )
+                assert race_a.status_code == 201, race_a.text
+                assert race_b.status_code == 201, race_b.text
+                race_a_id = race_a.json()["record"]["id"]
+                race_b_id = race_b.json()["record"]["id"]
+                async with structural_lock(2) as (blocker, _expected_waiters):
+                    update_a = asyncio.create_task(
+                        request(
+                            client,
+                            "PATCH",
+                            f"/api/agent/v1/redirects/{race_a_id}",
+                            "redirect-race-a-update",
+                            {"target": "/race-b", "expected_row_version": 1},
+                        )
+                    )
+                    update_b = asyncio.create_task(
+                        request(
+                            client,
+                            "PATCH",
+                            f"/api/agent/v1/redirects/{race_b_id}",
+                            "redirect-race-b-update",
+                            {"target": "/race-a", "expected_row_version": 1},
+                        )
+                    )
+                    await _wait_for_page_structure_waiters(blocker, 1)
+                race_results = await asyncio.gather(update_a, update_b)
+                assert sorted(result.status_code for result in race_results) == [
+                    200,
+                    409,
+                ], [result.text for result in race_results]
+                final_a = await request(
+                    client, "GET", f"/api/agent/v1/redirects/{race_a_id}"
+                )
+                final_b = await request(
+                    client, "GET", f"/api/agent/v1/redirects/{race_b_id}"
+                )
+                assert final_a.status_code == final_b.status_code == 200
+                assert {final_a.json()["target"], final_b.json()["target"]} == {
+                    "/destination",
+                    "/race-a",
+                } or {final_a.json()["target"], final_b.json()["target"]} == {
+                    "/destination",
+                    "/race-b",
+                }
+                first_delete_id, first_delete_version = (
+                    (race_a_id, final_a.json()["row_version"])
+                    if final_a.json()["target"] == "/race-b"
+                    else (race_b_id, final_b.json()["row_version"])
+                )
+                second_delete_id, second_delete_version = (
+                    (race_b_id, final_b.json()["row_version"])
+                    if first_delete_id == race_a_id
+                    else (race_a_id, final_a.json()["row_version"])
+                )
+                assert (
+                    await request(
+                        client,
+                        "DELETE",
+                        f"/api/agent/v1/redirects/{first_delete_id}",
+                        "redirect-race-first-delete",
+                        {"expected_row_version": first_delete_version},
+                    )
+                ).status_code == 200
+                assert (
+                    await request(
+                        client,
+                        "DELETE",
+                        f"/api/agent/v1/redirects/{second_delete_id}",
+                        "redirect-race-second-delete",
+                        {"expected_row_version": second_delete_version},
+                    )
+                ).status_code == 200
+
+                await _set_resource_constraints(
+                    database, workspace_id, {"max_visible_redirects": 1}
+                )
+                async with structural_lock(2) as (blocker, _expected_waiters):
+                    limited_a = asyncio.create_task(
+                        request(
+                            client,
+                            "POST",
+                            "/api/agent/v1/redirects",
+                            "redirect-limit-race-a",
+                            {"source_route": "/limit-a", "target": "/destination"},
+                        )
+                    )
+                    limited_b = asyncio.create_task(
+                        request(
+                            client,
+                            "POST",
+                            "/api/agent/v1/redirects",
+                            "redirect-limit-race-b",
+                            {"source_route": "/limit-b", "target": "/destination"},
+                        )
+                    )
+                    await _wait_for_page_structure_waiters(blocker, 1)
+                limited_results = await asyncio.gather(limited_a, limited_b)
+                assert sorted(result.status_code for result in limited_results) == [
+                    201,
+                    403,
+                ], [result.text for result in limited_results]
+
+                await _set_resource_constraints(
+                    database, workspace_id, {"max_visible_redirects": 0}
+                )
+                limited = await request(client, "GET", "/api/agent/v1/redirects")
+                assert limited.status_code == 403, limited.text
+                limited_create = await request(
+                    client,
+                    "POST",
+                    "/api/agent/v1/redirects",
+                    "redirect-limit-create",
+                    {"source_route": "/limited", "target": "/destination"},
+                )
+                assert limited_create.status_code == 403, limited_create.text
+                await _set_resource_constraints(
+                    database, workspace_id, {"route_prefix": "/managed"}
+                )
+                prefixed = await request(
+                    client,
+                    "POST",
+                    "/api/agent/v1/redirects",
+                    "redirect-prefix-denied",
+                    {
+                        "source_route": "/outside",
+                        "target": "https://example.test/outside",
+                    },
+                )
+                assert prefixed.status_code == 403, prefixed.text
+    finally:
+        await agent_pool.close()
+
+
+@pytest.mark.asyncio
 async def test_agent_locale_navigation_structural_races_and_cancellation(
     agent_site_database: AgentSiteDatabase,
 ) -> None:
@@ -1117,7 +1499,7 @@ async def test_agent_049_plain_page_data_downgrade_and_upgrade_preserves_data(
             await owner.fetchval(
                 "SELECT version_num::text FROM control.alembic_version"
             )
-            == "050_001"
+            == "051_001"
         )
         row = await owner.fetchrow(
             "SELECT title, route_template, deleted_at FROM content.page_base "
@@ -3272,7 +3654,7 @@ async def test_agent_046_047_migration_round_trip_preserves_contract_and_state(
                 await owner.fetchval(
                     "SELECT version_num::text FROM control.alembic_version"
                 )
-                == "050_001"
+                == "051_001"
             )
             assert await owner.fetchval(
                 "SELECT to_regprocedure($1)",
@@ -3601,7 +3983,7 @@ async def test_agent_048_data_bearing_round_trip_preserves_relations_views_and_a
         )
         await reconcile(database.settings)
         final_status = await status(database.settings)
-        assert final_status.revision == "050_001"
+        assert final_status.revision == "051_001"
         assert final_status.state.value == "HARDENED"
         assert final_status.safe
         assert await cow_rows() == content_before
@@ -10048,7 +10430,7 @@ async def test_semantic_audit_contract_is_strict_and_reversible(
                 await owner.fetchval(
                     "SELECT version_num::text FROM control.alembic_version"
                 )
-                == "050_001"
+                == "051_001"
             )
             assert (
                 await owner.fetchval(

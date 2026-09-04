@@ -217,6 +217,26 @@ AGENT_CONTENT_FUNCTIONS = {
         "p_site_id uuid, p_page_id uuid",
     ): "uuid, uuid",
     (
+        "slaif_agent_redirect_list",
+        "p_site_id uuid",
+    ): "uuid",
+    (
+        "slaif_agent_redirect_get",
+        "p_site_id uuid, p_id uuid",
+    ): "uuid, uuid",
+    (
+        "slaif_agent_redirect_create",
+        "p_site_id uuid, p_source text, p_target text, p_status integer, p_locale text",
+    ): "uuid, text, text, integer, text",
+    (
+        "slaif_agent_redirect_update",
+        "p_site_id uuid, p_id uuid, p_source text, p_target text, p_status integer, p_locale text, p_expected integer",
+    ): "uuid, uuid, text, text, integer, text, integer",
+    (
+        "slaif_agent_redirect_delete",
+        "p_site_id uuid, p_id uuid, p_expected integer",
+    ): "uuid, uuid, integer",
+    (
         "slaif_agent_composition_list",
         "p_site_id uuid, p_page_id uuid",
     ): "uuid, uuid",

@@ -443,7 +443,7 @@ async def _assert_downgrade_compatible(
 ) -> None:
     """Reject page-structure state before any post-048 downgrade mutation."""
 
-    if revision not in {_PAGE_STRUCTURE_REVISION, "050_001"}:
+    if revision not in {_PAGE_STRUCTURE_REVISION, "050_001", "051_001"}:
         return
     workspace_rows = await connection.fetch(
         "SELECT id FROM control.workspace WHERE status NOT IN ('ACCEPTED','DISCARDED')"

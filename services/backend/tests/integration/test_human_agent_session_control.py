@@ -515,4 +515,4 @@ async def test_session_migrations_round_trip_through_037(
         revision="head",
     )
     await reconcile(database.settings)
-    assert (await status(database.settings)).revision == "050_001"
+    assert (await status(database.settings)).revision == "051_001"

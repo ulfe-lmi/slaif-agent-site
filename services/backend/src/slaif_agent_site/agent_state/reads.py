@@ -40,6 +40,7 @@ from slaif_agent_site.content_model.service import (
     _md,
     _nav_item,
     _pg,
+    _redirect,
     _rel,
     _tr,
 )
@@ -47,6 +48,7 @@ from slaif_agent_site.content_model.site_data_models import (
     AgentNavigationRecord,
     LocaleRecord,
     NavigationItemRecord,
+    RedirectRecord,
 )
 from slaif_agent_site.content_model.view_models import CollectionViewRecord
 
@@ -87,6 +89,8 @@ AGENT_NAVIGATION_ITEM_LIST_SQL = (
 AGENT_NAVIGATION_ITEM_GET_SQL = (
     "SELECT * FROM content.slaif_agent_navigation_item_get($1,$2)"
 )
+AGENT_REDIRECT_LIST_SQL = "SELECT * FROM content.slaif_agent_redirect_list($1)"
+AGENT_REDIRECT_GET_SQL = "SELECT * FROM content.slaif_agent_redirect_get($1,$2)"
 
 AgentRead = Callable[["AgentSemanticReadService"], Awaitable[Any]]
 
@@ -254,6 +258,20 @@ class AgentSemanticReadService:
         if row is None:
             raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
         return cast(PageRecord, _pg(row))
+
+    async def list_redirects_for_site(
+        self, site_id: UUID
+    ) -> tuple[RedirectRecord, ...]:
+        rows = await self._fetch(AGENT_REDIRECT_LIST_SQL, site_id)
+        return tuple(_redirect(row) for row in rows)
+
+    async def get_redirect_for_site(
+        self, site_id: UUID, redirect_id: UUID
+    ) -> RedirectRecord:
+        row = await self._fetchrow(AGENT_REDIRECT_GET_SQL, site_id, redirect_id)
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
+        return _redirect(row)
 
     async def list_composition(
         self, site_id: UUID, page_id: UUID

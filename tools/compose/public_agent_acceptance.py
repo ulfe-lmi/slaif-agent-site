@@ -770,6 +770,8 @@ def run_acceptance(project: str) -> None:
             "/api/agent/v1/pages/",
             "/api/agent/v1/locales",
             "/api/agent/v1/locales/{locale_id}",
+            "/api/agent/v1/redirects",
+            "/api/agent/v1/redirects/{redirect_id}",
             "/api/agent/v1/navigation",
             "/api/agent/v1/navigation/{navigation_id}",
             "/api/agent/v1/navigation/{navigation_id}/items",
@@ -1167,6 +1169,46 @@ def run_acceptance(project: str) -> None:
             internal_page["record"]["id"], "navigation-internal-page"
         )
         internal_target = f"/en/docs-{tag}"
+        redirect = _mutation(
+            client,
+            primary_token,
+            "/api/agent/v1/redirects",
+            {
+                "source_route": f"/oap-redirect-{tag}",
+                "target": internal_target,
+                "status_code": 301,
+            },
+            f"oap-redirect-create-{tag}",
+        )
+        redirect_id = _require_uuid(redirect["record"]["id"], "redirect")
+        if redirect["record"].get("row_version") != 1:
+            raise ProofFailure("redirect-version-invalid")
+        _agent_list(
+            client, primary_token, "/api/agent/v1/redirects", label="redirect-list"
+        )
+        _agent_request(
+            client,
+            primary_token,
+            f"/api/agent/v1/redirects/{redirect_id}",
+            label="redirect-get",
+        )
+        redirect_update = _request_mutation(
+            client,
+            primary_token,
+            f"/api/agent/v1/redirects/{redirect_id}",
+            {"status_code": 302, "expected_row_version": 1},
+            f"oap-redirect-update-{tag}",
+        )
+        if redirect_update["record"].get("row_version") != 2:
+            raise ProofFailure("redirect-update-version-invalid")
+        _request_mutation(
+            client,
+            primary_token,
+            f"/api/agent/v1/redirects/{redirect_id}",
+            {"expected_row_version": 2},
+            f"oap-redirect-delete-{tag}",
+            method="DELETE",
+        )
 
         lifecycle_slug = f"oap-lifecycle-{tag}"
         lifecycle_path = f"/s/demo/{lifecycle_slug}"

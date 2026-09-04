@@ -40,7 +40,7 @@ class PolicyDatabase:
 
 def test_registry_exact_inventory_and_policy_shapes() -> None:
     keys = [policy.key for policy in ROUTE_POLICIES]
-    assert len(keys) == len(set(keys)) == 168
+    assert len(keys) == len(set(keys)) == 173
     assert {policy.process for policy in ROUTE_POLICIES} == {
         ProcessKind.CONTROL_API,
         ProcessKind.EDITOR_API,
@@ -49,7 +49,7 @@ def test_registry_exact_inventory_and_policy_shapes() -> None:
     control = route_policies_for(ProcessKind.CONTROL_API)
     editor = route_policies_for(ProcessKind.EDITOR_API)
     agent = route_policies_for(ProcessKind.AGENT_API)
-    assert len(agent) == 68
+    assert len(agent) == 73
     assert all(
         policy.authority_kind
         in {RouteAuthorityKind.AGENT_CAPABILITY, RouteAuthorityKind.SYSTEM_EXEMPTION}

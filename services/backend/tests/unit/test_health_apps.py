@@ -222,6 +222,8 @@ async def test_each_app_has_only_typed_health_routes(
             "/api/agent/v1/collection-views/{view_id}",
             "/api/agent/v1/locales",
             "/api/agent/v1/locales/{locale_id}",
+            "/api/agent/v1/redirects",
+            "/api/agent/v1/redirects/{redirect_id}",
             "/api/agent/v1/navigation",
             "/api/agent/v1/navigation/{navigation_id}",
             "/api/agent/v1/navigation/{navigation_id}/items",

@@ -2,6 +2,8 @@ from uuid import uuid4
 
 import pytest
 from slaif_agent_site.content_model.site_data_models import (
+    AgentCreateRedirectRequest,
+    AgentUpdateRedirectRequest,
     CreateLocaleRequest,
     CreateNavigationItemRequest,
     CreateProposedSideEffectRequest,
@@ -41,6 +43,23 @@ def test_redirects_reject_unsafe_targets_and_self_loops() -> None:
             target_kind="EXTERNAL",
             target_value="https://user:password@example.test",
             labels={"en": "Unsafe"},
+        )
+
+
+def test_agent_redirect_models_normalize_and_require_meaningful_patch() -> None:
+    created = AgentCreateRedirectRequest(
+        source_route="/Old",
+        target="/Destination",
+    )
+    assert created.source_route == "/old"
+    assert created.target == "/destination"
+    with pytest.raises(ValueError):
+        AgentUpdateRedirectRequest(expected_row_version=1)
+    with pytest.raises(ValueError):
+        AgentUpdateRedirectRequest(target=None, expected_row_version=1)
+    with pytest.raises(ValueError):
+        AgentCreateRedirectRequest(
+            source_route="/download.php", target="https://example.test/download"
         )
 
 
