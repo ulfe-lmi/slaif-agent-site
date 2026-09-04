@@ -173,6 +173,8 @@ def _semantic_contract(
                     else "COLLECTION_VIEW_DELETED",
                     "mutation" if method == "PATCH" else "delete",
                 )
+        if len(segments) == 5 and segments[4] == "pages" and method == "POST":
+            return "page", "PAGE_CREATED", "mutation"
     return None
 
 
@@ -279,6 +281,13 @@ def _canonical_request_body(
         defaults = {"labels": {}, "settings": {}}
     if resource_type == "content_item" and action == "CONTENT_ITEM_CREATED":
         defaults = {"status": "DRAFT", "values": {}}
+    if resource_type == "page" and action == "PAGE_CREATED":
+        defaults = {
+            "status": "DRAFT",
+            "locale": "en",
+            "parent_id": None,
+            "route_template": None,
+        }
     if (
         resource_type == "content_item_translation"
         and action == "CONTENT_ITEM_TRANSLATION_CREATED"
