@@ -1168,7 +1168,9 @@ def run_acceptance(project: str) -> None:
         internal_page_id = _require_uuid(
             internal_page["record"]["id"], "navigation-internal-page"
         )
-        internal_target = f"/en/docs-{tag}"
+        internal_target = internal_page["record"].get("effective_route")
+        if not isinstance(internal_target, str) or not internal_target.startswith("/"):
+            raise ProofFailure("navigation-internal-page-route-missing")
         redirect = _mutation(
             client,
             primary_token,
