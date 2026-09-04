@@ -47,6 +47,16 @@ from .config import BootstrapSettings
 from .setup_token import digest_setup_token, generate_setup_token
 
 FailurePoint = Literal["after-harden", "before-marker"]
+_PAGE_STRUCTURE_REVISION = "049_001"
+_DOWNGRADE_INCOMPATIBLE = (
+    "bootstrap downgrade refused: active COW operations or migration 049 page "
+    "state is incompatible; resolve the state and retry"
+)
+_DOWNGRADE_FAILURE = (
+    "bootstrap downgrade failed after the public COW disable step; readiness "
+    "is unsafe; fix the migration failure and run bootstrap reconcile before "
+    "serving traffic"
+)
 
 
 class BootstrapStateError(RuntimeError):
@@ -428,33 +438,63 @@ async def upgrade(settings: BootstrapSettings) -> None:
     )
 
 
+async def _assert_downgrade_compatible(
+    connection: Any, executor: AsyncpgExecutor, revision: str | None
+) -> None:
+    """Reject known 049-only state before any downgrade mutation begins."""
+
+    if revision != _PAGE_STRUCTURE_REVISION:
+        return
+    workspace_rows = await connection.fetch(
+        "SELECT id FROM control.workspace WHERE status NOT IN ('ACCEPTED','DISCARDED')"
+    )
+    for row in workspace_rows:
+        if await get_session_operations(executor, row[0], schema="content"):
+            raise BootstrapStateError(_DOWNGRADE_INCOMPATIBLE)
+    incompatible_page_state = await connection.fetchval(
+        "SELECT EXISTS ("
+        "SELECT 1 FROM content.page "
+        "WHERE route_template IS NOT NULL OR deleted_at IS NOT NULL"
+        ") OR EXISTS ("
+        "SELECT 1 FROM audit.agent_mutation "
+        "WHERE action LIKE 'PAGE_%'"
+        ")"
+    )
+    if incompatible_page_state:
+        raise BootstrapStateError(_DOWNGRADE_INCOMPATIBLE)
+
+
+async def _mark_downgrade_unready(connection: Any) -> None:
+    """Make a post-disable migration failure fail closed at readiness."""
+
+    await _mark_pending(connection, deployed=False)
+
+
 async def downgrade(settings: BootstrapSettings) -> None:
     async with owner_connection(
         settings.resolved_owner_dsn(), expected_database=settings.expected_database
     ) as connection:
         executor = AsyncpgExecutor(connection)
+        revision = await connection.fetchval(
+            "SELECT version_num::text FROM control.alembic_version"
+        )
+        await _assert_downgrade_compatible(connection, executor, revision)
         cow_status = await get_cow_status(executor, schema="content")
         if cow_status["enabled"]:
-            workspace_rows = await connection.fetch(
-                "SELECT id FROM control.workspace "
-                "WHERE status NOT IN ('ACCEPTED','DISCARDED')"
-            )
-            for row in workspace_rows:
-                pending = await get_session_operations(
-                    executor, row[0], schema="content"
-                )
-                if pending:
-                    raise BootstrapStateError(
-                        "cannot downgrade while a workspace has pending COW operations"
-                    )
             async with connection.transaction():
+                await _mark_downgrade_unready(connection)
                 await disable_cow_schema(executor, schema="content")
-    await run_migration(
-        settings.resolved_owner_dsn(),
-        expected_database=settings.expected_database,
-        operation="downgrade",
-        revision="base",
-    )
+        else:
+            await _mark_downgrade_unready(connection)
+    try:
+        await run_migration(
+            settings.resolved_owner_dsn(),
+            expected_database=settings.expected_database,
+            operation="downgrade",
+            revision="base",
+        )
+    except Exception as error:
+        raise BootstrapStateError(_DOWNGRADE_FAILURE) from error
 
 
 async def rebuild(settings: BootstrapSettings) -> None:

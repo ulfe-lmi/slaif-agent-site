@@ -8,16 +8,21 @@ import os
 import subprocess
 import sys
 import uuid
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import asyncpg
 import pytest
+import slaif_agent_site.bootstrap.service as bootstrap_service
 from conftest import AgentSiteDatabase
 from slaif_agent_site.agent_state.foundation import (
     asyncpg_cow_reviewer,
     asyncpg_cow_session,
     deploy_cow_functions,
+    get_cow_status,
+    get_session_operations,
+    validate_cow_schema_privileges,
 )
 from slaif_agent_site.bootstrap.service import (
     BootstrapStateError,
@@ -37,7 +42,9 @@ from slaif_agent_site.db.readiness import ReadinessState
 from slaif_agent_site.db.roles import (
     DATABASE_LOGINS,
     LOCAL_LOGIN_CONNECTION_LIMIT,
+    REVIEWER_ROLES,
     ROLE_NAMES,
+    RUNTIME_ROLES,
     local_login_violations,
     provision_database_roles,
     quote_identifier,
@@ -449,6 +456,239 @@ async def _prepare_hardened_database(database: AgentSiteDatabase) -> None:
     await _create_qualification_table(database)
     result = await reconcile(database.settings)
     _assert_hardened(result)
+
+
+async def _create_049_only_state(
+    database: AgentSiteDatabase, state_kind: str
+) -> uuid.UUID:
+    """Create one real 049-only state class for bootstrap preflight proof."""
+
+    user_id, site_id, workspace_id, page_id = (uuid.uuid4() for _ in range(4))
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as connection:
+        await connection.execute(
+            "INSERT INTO control.user_account("
+            "id,identity_kind,oidc_issuer,oidc_subject,display_name) "
+            "VALUES ($1,'OIDC','https://issuer.test',$2,'Downgrade fixture')",
+            user_id,
+            str(user_id),
+        )
+        await connection.execute(
+            "INSERT INTO control.site("
+            "id,site_key,display_name,default_locale,component_catalog_version) "
+            "VALUES ($1,$2,'Downgrade fixture','en','catalog-v1')",
+            site_id,
+            f"downgrade-{site_id.hex}",
+        )
+        await connection.execute(
+            "INSERT INTO control.workspace("
+            "id,site_id,created_by,actor_type,title,delegation_preset,"
+            "effective_scopes,status,expires_at) "
+            "VALUES ($1,$2,$3,'AGENT','Downgrade fixture','L4','[]','ACTIVE',"
+            "CURRENT_TIMESTAMP + interval '1 hour')",
+            workspace_id,
+            site_id,
+            user_id,
+        )
+        if state_kind in {"route_template", "tombstone"}:
+            await connection.execute(
+                "INSERT INTO content.page_base("
+                "id,site_id,slug,title,status,locale,route_template,deleted_at) "
+                "VALUES ($1,$2,$3,'Downgrade page','DRAFT','en',$4,$5)",
+                page_id,
+                site_id,
+                f"page-{page_id.hex[:12]}",
+                "{slug}" if state_kind == "route_template" else None,
+                datetime.now(UTC) if state_kind == "tombstone" else None,
+            )
+        elif state_kind == "page_audit":
+            await connection.execute(
+                "INSERT INTO audit.agent_mutation("
+                "operation_id,capability_id,workspace_id,site_id,resource_type,"
+                "resource_id,request_digest,response_status,action,http_method,"
+                "quota_kind) VALUES ($1,$2,$3,$4,'page',$5,$6,201,'PAGE_CREATED',"
+                "'POST','mutation')",
+                uuid.uuid4(),
+                uuid.uuid4(),
+                workspace_id,
+                site_id,
+                page_id,
+                "0" * 64,
+            )
+    if state_kind == "pending_operations":
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as connection:
+            async with asyncpg_cow_session(
+                connection, session_id=workspace_id, operation_id=uuid.uuid4()
+            ) as cow:
+                await cow.native.execute(
+                    "INSERT INTO content.qualification_item(id,title) "
+                    "VALUES (9001,'pending downgrade fixture')"
+                )
+    return workspace_id
+
+
+async def _downgrade_snapshot(database: AgentSiteDatabase) -> tuple[Any, ...]:
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as connection:
+        executor = AsyncpgExecutor(connection)
+        revision = await connection.fetchval(
+            "SELECT version_num::text FROM control.alembic_version"
+        )
+        cow_status = await get_cow_status(executor, schema="content")
+        readiness = tuple(
+            await connection.fetchrow(
+                "SELECT readiness_state,migration_revision,content_object_count,"
+                "content_object_fingerprint,foundation_object_count,"
+                "foundation_object_fingerprint,foundation_deployed,"
+                "foundation_hardened,foundation_privileges_validated,"
+                "product_privileges_validated,safe,updated_at "
+                "FROM control.bootstrap_readiness WHERE singleton"
+            )
+        )
+        pages = tuple(
+            tuple(row)
+            for row in await connection.fetch(
+                "SELECT id,site_id,slug,route_template,deleted_at,row_version "
+                "FROM content.page ORDER BY id"
+            )
+        )
+        audit = tuple(
+            tuple(row)
+            for row in await connection.fetch(
+                "SELECT operation_id,workspace_id,site_id,resource_type,resource_id,"
+                "response_status,action,http_method,quota_kind "
+                "FROM audit.agent_mutation ORDER BY operation_id"
+            )
+        )
+        functions = tuple(
+            tuple(row)
+            for row in await connection.fetch(
+                "SELECT namespace.nspname,proc.proname,"
+                "pg_get_function_identity_arguments(proc.oid),"
+                "pg_get_functiondef(proc.oid) "
+                "FROM pg_catalog.pg_proc proc "
+                "JOIN pg_catalog.pg_namespace namespace "
+                "ON namespace.oid=proc.pronamespace "
+                "WHERE namespace.nspname IN ('audit','content','control') "
+                "ORDER BY namespace.nspname,proc.proname,proc.oid"
+            )
+        )
+        workspaces = await connection.fetch(
+            "SELECT id FROM control.workspace ORDER BY id"
+        )
+        operations_list: list[tuple[Any, tuple[Any, ...]]] = []
+        for row in workspaces:
+            operations_list.append(
+                (
+                    row[0],
+                    tuple(
+                        await get_session_operations(executor, row[0], schema="content")
+                    ),
+                )
+            )
+        operations = tuple(operations_list)
+        privileges = await validate_cow_schema_privileges(
+            executor,
+            schema="content",
+            runtime_roles=list(RUNTIME_ROLES),
+            reviewer_roles=list(REVIEWER_ROLES),
+        )
+    return (
+        revision,
+        tuple(sorted((str(key), repr(value)) for key, value in cow_status.items())),
+        readiness,
+        pages,
+        audit,
+        functions,
+        operations,
+        bool(privileges["safe"]),
+        tuple(str(item) for item in privileges["violations"]),
+    )
+
+
+@pytest.mark.parametrize(
+    "state_kind", ("pending_operations", "route_template", "tombstone", "page_audit")
+)
+async def test_bootstrap_downgrade_049_preflight_is_atomic(
+    agent_site_database: AgentSiteDatabase,
+    state_kind: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database = agent_site_database
+    await _prepare_hardened_database(database)
+    await _create_049_only_state(database, state_kind)
+    disable_calls = 0
+
+    async def forbidden_disable(*_args: Any, **_kwargs: Any) -> None:
+        nonlocal disable_calls
+        disable_calls += 1
+        raise AssertionError("public COW disable must not run during preflight")
+
+    service_module = cast(Any, bootstrap_service)
+    monkeypatch.setattr(service_module, "disable_cow_schema", forbidden_disable)
+    before = await _downgrade_snapshot(database)
+    with pytest.raises(BootstrapStateError, match="bootstrap downgrade refused"):
+        await downgrade(database.settings)
+    after = await _downgrade_snapshot(database)
+    assert after == before
+    assert disable_calls == 0
+
+
+async def test_bootstrap_downgrade_compatible_path_rehardens_after_round_trip(
+    agent_site_database: AgentSiteDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database = agent_site_database
+    await _prepare_hardened_database(database)
+    service_module = cast(Any, bootstrap_service)
+    real_disable = service_module.disable_cow_schema
+    disable_calls = 0
+
+    async def observed_disable(*args: Any, **kwargs: Any) -> Any:
+        nonlocal disable_calls
+        disable_calls += 1
+        return await real_disable(*args, **kwargs)
+
+    monkeypatch.setattr(service_module, "disable_cow_schema", observed_disable)
+    await downgrade(database.settings)
+    assert disable_calls == 1
+    await upgrade(database.settings)
+    rebuilt = await reconcile(database.settings)
+    _assert_hardened(rebuilt)
+    marker, validation = await validate(database.settings)
+    _assert_hardened(marker)
+    assert validation.safe, validation.violations
+
+
+async def test_bootstrap_downgrade_failure_after_disable_fails_readiness_closed(
+    agent_site_database: AgentSiteDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database = agent_site_database
+    await _prepare_hardened_database(database)
+
+    async def failed_migration(*_args: Any, **_kwargs: Any) -> None:
+        raise RuntimeError("injected downgrade failure")
+
+    monkeypatch.setattr(cast(Any, bootstrap_service), "run_migration", failed_migration)
+    with pytest.raises(
+        BootstrapStateError, match="readiness is unsafe.*bootstrap reconcile"
+    ):
+        await downgrade(database.settings)
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as connection:
+        cow_status = await get_cow_status(AsyncpgExecutor(connection), schema="content")
+        assert not cow_status["enabled"]
+    marker = await status(database.settings)
+    assert marker.state is ReadinessState.PENDING
+    assert not marker.safe
+    _, validation = await validate(database.settings)
+    assert not validation.safe
 
 
 async def test_clean_migration_current_repeat_downgrade_and_rebuild(
