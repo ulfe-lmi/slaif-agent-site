@@ -1242,30 +1242,6 @@
       "MovePageRequest": {
         "additionalProperties": false,
         "properties": {
-          "after_page_id": {
-            "anyOf": [
-              {
-                "format": "uuid",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "After Page Id"
-          },
-          "before_page_id": {
-            "anyOf": [
-              {
-                "format": "uuid",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Before Page Id"
-          },
           "expected_row_version": {
             "exclusiveMinimum": 0.0,
             "title": "Expected Row Version",
@@ -1296,6 +1272,18 @@
             "format": "date-time",
             "title": "Created At",
             "type": "string"
+          },
+          "deleted_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deleted At"
           },
           "effective_route": {
             "anyOf": [
@@ -1703,18 +1691,14 @@
         "additionalProperties": false,
         "properties": {
           "expected_row_version": {
-            "anyOf": [
-              {
-                "exclusiveMinimum": 0.0,
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Expected Row Version"
+            "exclusiveMinimum": 0.0,
+            "title": "Expected Row Version",
+            "type": "integer"
           }
         },
+        "required": [
+          "expected_row_version"
+        ],
         "title": "RestorePageRequest",
         "type": "object"
       },
@@ -2298,6 +2282,7 @@
           }
         ],
         "summary": "List Collection Views",
+        "x-slaif-conditional-scopes": [],
         "x-slaif-idempotency": "not-applicable",
         "x-slaif-mutation": false,
         "x-slaif-required-scopes": [
@@ -2448,6 +2433,7 @@
           }
         ],
         "summary": "Create Collection View",
+        "x-slaif-conditional-scopes": [],
         "x-slaif-idempotency": "required",
         "x-slaif-mutation": true,
         "x-slaif-required-scopes": [
@@ -2600,6 +2586,7 @@
           }
         ],
         "summary": "Delete Collection View",
+        "x-slaif-conditional-scopes": [],
         "x-slaif-idempotency": "required",
         "x-slaif-mutation": true,
         "x-slaif-required-scopes": [
@@ -2728,6 +2715,7 @@
           }
         ],
         "summary": "Get Collection View",
+        "x-slaif-conditional-scopes": [],
         "x-slaif-idempotency": "not-applicable",
         "x-slaif-mutation": false,
         "x-slaif-required-scopes": [
@@ -2878,6 +2866,7 @@
           }
         ],
         "summary": "Update Collection View",
+        "x-slaif-conditional-scopes": [],
         "x-slaif-idempotency": "required",
         "x-slaif-mutation": true,
         "x-slaif-required-scopes": [
@@ -3012,6 +3001,7 @@
           }
         ],
         "summary": "List Content Items",
+        "x-slaif-conditional-scopes": [],
         "x-slaif-idempotency": "not-applicable",
         "x-slaif-mutation": false,
         "x-slaif-required-scopes": [
@@ -3163,6 +3153,7 @@
           }
         ],
         "summary": "Create Content Item",
+        "x-slaif-conditional-scopes": [],
         "x-slaif-idempotency": "required",
         "x-slaif-mutation": true,
         "x-slaif-required-scopes": [
@@ -3315,6 +3306,7 @@
           }
         ],
         "summary": "Delete Content Item",
+        "x-slaif-conditional-scopes": [],
         "x-slaif-idempotency": "required",
         "x-slaif-mutation": true,
         "x-slaif-required-scopes": [
@@ -3443,6 +3435,7 @@
           }
         ],
         "summary": "Get Content Item",
+        "x-slaif-conditional-scopes": [],
         "x-slaif-idempotency": "not-applicable",
         "x-slaif-mutation": false,
         "x-slaif-required-scopes": [
@@ -3593,6 +3586,7 @@
           }
         ],
         "summary": "Update Content Item",
+        "x-slaif-conditional-scopes": [],
         "x-slaif-idempotency": "required",
         "x-slaif-mutation": true,
         "x-slaif-required-scopes": [
@@ -3727,6 +3721,7 @@
           }
         ],
         "summary": "List Content Item Relations",
+        "x-slaif-conditional-scopes": [],
         "x-slaif-idempotency": "not-applicable",
         "x-slaif-mutation": false,
         "x-slaif-required-scopes": [
@@ -3877,6 +3872,7 @@
           }
         ],
         "summary": "Create Content Item Relation",
+        "x-slaif-conditional-scopes": [],
         "x-slaif-idempotency": "required",
         "x-slaif-mutation": true,
         "x-slaif-required-scopes": [
@@ -4039,6 +4035,7 @@
           }
         ],
         "summary": "Delete Content Item Relation",
+        "x-slaif-conditional-scopes": [],
         "x-slaif-idempotency": "required",
         "x-slaif-mutation": true,
         "x-slaif-required-scopes": [
@@ -4177,6 +4174,7 @@
           }
         ],
         "summary": "Get Content Item Relation",
+        "x-slaif-conditional-scopes": [],
         "x-slaif-idempotency": "not-applicable",
         "x-slaif-mutation": false,
         "x-slaif-required-scopes": [
@@ -4337,6 +4335,7 @@
           }
         ],
         "summary": "Update Content Item Relation",
+        "x-slaif-conditional-scopes": [],
         "x-slaif-idempotency": "required",
         "x-slaif-mutation": true,
         "x-slaif-required-scopes": [
@@ -4471,6 +4470,7 @@
           }
         ],
         "summary": "List Content Item Translations",
+        "x-slaif-conditional-scopes": [],
         "x-slaif-idempotency": "not-applicable",
         "x-slaif-mutation": false,
         "x-slaif-required-scopes": [
@@ -4621,6 +4621,7 @@
           }
         ],
         "summary": "Create Content Item Translation",
+        "x-slaif-conditional-scopes": [],
         "x-slaif-idempotency": "required",
         "x-slaif-mutation": true,
         "x-slaif-required-scopes": [
@@ -4783,6 +4784,7 @@
           }
         ],
         "summary": "Delete Content Item Translation",
+        "x-slaif-conditional-scopes": [],
         "x-slaif-idempotency": "required",
         "x-slaif-mutation": true,
         "x-slaif-required-scopes": [
@@ -4921,6 +4923,7 @@
           }
         ],
         "summary": "Get Content Item Translation",
+        "x-slaif-conditional-scopes": [],
         "x-slaif-idempotency": "not-applicable",
         "x-slaif-mutation": false,
         "x-slaif-required-scopes": [
@@ -5081,6 +5084,7 @@
           }
         ],
         "summary": "Update Content Item Translation",
+        "x-slaif-conditional-scopes": [],
         "x-slaif-idempotency": "required",
         "x-slaif-mutation": true,
         "x-slaif-required-scopes": [
@@ -5203,6 +5207,7 @@
           }
         ],
         "summary": "List Field Primitives",
+        "x-slaif-conditional-scopes": [],
         "x-slaif-idempotency": "not-applicable",
         "x-slaif-mutation": false,
         "x-slaif-required-scopes": [
@@ -5326,6 +5331,7 @@
           }
         ],
         "summary": "List Content Types",
+        "x-slaif-conditional-scopes": [],
         "x-slaif-idempotency": "not-applicable",
         "x-slaif-mutation": false,
         "x-slaif-required-scopes": [
@@ -5467,6 +5473,7 @@
           }
         ],
         "summary": "Create Content Type",
+        "x-slaif-conditional-scopes": [],
         "x-slaif-idempotency": "required",
         "x-slaif-mutation": true,
         "x-slaif-required-scopes": [
@@ -5619,6 +5626,7 @@
           }
         ],
         "summary": "Delete Content Type",
+        "x-slaif-conditional-scopes": [],
         "x-slaif-idempotency": "required",
         "x-slaif-mutation": true,
         "x-slaif-required-scopes": [
@@ -5747,6 +5755,7 @@
           }
         ],
         "summary": "Get Content Type",
+        "x-slaif-conditional-scopes": [],
         "x-slaif-idempotency": "not-applicable",
         "x-slaif-mutation": false,
         "x-slaif-required-scopes": [
@@ -5897,6 +5906,7 @@
           }
         ],
         "summary": "Update Content Type",
+        "x-slaif-conditional-scopes": [],
         "x-slaif-idempotency": "required",
         "x-slaif-mutation": true,
         "x-slaif-required-scopes": [
@@ -6031,6 +6041,7 @@
           }
         ],
         "summary": "List Field Definitions",
+        "x-slaif-conditional-scopes": [],
         "x-slaif-idempotency": "not-applicable",
         "x-slaif-mutation": false,
         "x-slaif-required-scopes": [
@@ -6181,6 +6192,7 @@
           }
         ],
         "summary": "Create Field Definition",
+        "x-slaif-conditional-scopes": [],
         "x-slaif-idempotency": "required",
         "x-slaif-mutation": true,
         "x-slaif-required-scopes": [
@@ -6343,6 +6355,7 @@
           }
         ],
         "summary": "Delete Field Definition",
+        "x-slaif-conditional-scopes": [],
         "x-slaif-idempotency": "required",
         "x-slaif-mutation": true,
         "x-slaif-required-scopes": [
@@ -6481,6 +6494,7 @@
           }
         ],
         "summary": "Get Field Definition",
+        "x-slaif-conditional-scopes": [],
         "x-slaif-idempotency": "not-applicable",
         "x-slaif-mutation": false,
         "x-slaif-required-scopes": [
@@ -6641,6 +6655,7 @@
           }
         ],
         "summary": "Update Field Definition",
+        "x-slaif-conditional-scopes": [],
         "x-slaif-idempotency": "required",
         "x-slaif-mutation": true,
         "x-slaif-required-scopes": [
@@ -6763,6 +6778,7 @@
           }
         ],
         "summary": "List Media",
+        "x-slaif-conditional-scopes": [],
         "x-slaif-idempotency": "not-applicable",
         "x-slaif-mutation": false,
         "x-slaif-required-scopes": [
@@ -6876,6 +6892,7 @@
         },
         "security": [],
         "summary": "Agent Openapi",
+        "x-slaif-conditional-scopes": [],
         "x-slaif-idempotency": "not-applicable",
         "x-slaif-mutation": false,
         "x-slaif-required-scopes": []
@@ -6996,6 +7013,7 @@
           }
         ],
         "summary": "List Pages",
+        "x-slaif-conditional-scopes": [],
         "x-slaif-idempotency": "not-applicable",
         "x-slaif-mutation": false,
         "x-slaif-required-scopes": [
@@ -7137,6 +7155,7 @@
           }
         ],
         "summary": "Create Page",
+        "x-slaif-conditional-scopes": [],
         "x-slaif-idempotency": "required",
         "x-slaif-mutation": true,
         "x-slaif-required-scopes": [
@@ -7259,6 +7278,7 @@
           }
         ],
         "summary": "List Pages",
+        "x-slaif-conditional-scopes": [],
         "x-slaif-idempotency": "not-applicable",
         "x-slaif-mutation": false,
         "x-slaif-required-scopes": [
@@ -7400,6 +7420,7 @@
           }
         ],
         "summary": "Create Page",
+        "x-slaif-conditional-scopes": [],
         "x-slaif-idempotency": "required",
         "x-slaif-mutation": true,
         "x-slaif-required-scopes": [
@@ -7552,6 +7573,7 @@
           }
         ],
         "summary": "Delete Page",
+        "x-slaif-conditional-scopes": [],
         "x-slaif-idempotency": "required",
         "x-slaif-mutation": true,
         "x-slaif-required-scopes": [
@@ -7680,6 +7702,7 @@
           }
         ],
         "summary": "Get Page",
+        "x-slaif-conditional-scopes": [],
         "x-slaif-idempotency": "not-applicable",
         "x-slaif-mutation": false,
         "x-slaif-required-scopes": [
@@ -7830,6 +7853,18 @@
           }
         ],
         "summary": "Update Page",
+        "x-slaif-conditional-scopes": [
+          {
+            "required_scopes": [
+              "route:write"
+            ],
+            "when_fields": [
+              "slug",
+              "locale",
+              "route_template"
+            ]
+          }
+        ],
         "x-slaif-idempotency": "required",
         "x-slaif-mutation": true,
         "x-slaif-required-scopes": [
@@ -7964,6 +7999,7 @@
           }
         ],
         "summary": "List Components",
+        "x-slaif-conditional-scopes": [],
         "x-slaif-idempotency": "not-applicable",
         "x-slaif-mutation": false,
         "x-slaif-required-scopes": [
@@ -8114,6 +8150,7 @@
           }
         ],
         "summary": "Create Component",
+        "x-slaif-conditional-scopes": [],
         "x-slaif-idempotency": "required",
         "x-slaif-mutation": true,
         "x-slaif-required-scopes": [
@@ -8266,6 +8303,7 @@
           }
         ],
         "summary": "Move Page",
+        "x-slaif-conditional-scopes": [],
         "x-slaif-idempotency": "required",
         "x-slaif-mutation": true,
         "x-slaif-required-scopes": [
@@ -8305,18 +8343,11 @@
           "content": {
             "application/json": {
               "schema": {
-                "anyOf": [
-                  {
-                    "$ref": "#/components/schemas/RestorePageRequest"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "title": "Body"
+                "$ref": "#/components/schemas/RestorePageRequest"
               }
             }
-          }
+          },
+          "required": true
         },
         "responses": {
           "200": {
@@ -8426,6 +8457,7 @@
           }
         ],
         "summary": "Restore Page",
+        "x-slaif-conditional-scopes": [],
         "x-slaif-idempotency": "required",
         "x-slaif-mutation": true,
         "x-slaif-required-scopes": [
@@ -8545,6 +8577,7 @@
           }
         ],
         "summary": "Get Permissions",
+        "x-slaif-conditional-scopes": [],
         "x-slaif-idempotency": "not-applicable",
         "x-slaif-mutation": false,
         "x-slaif-required-scopes": [
@@ -8695,6 +8728,7 @@
           }
         ],
         "summary": "Create Preview Run",
+        "x-slaif-conditional-scopes": [],
         "x-slaif-idempotency": "required",
         "x-slaif-mutation": true,
         "x-slaif-required-scopes": [
@@ -8833,6 +8867,7 @@
           }
         ],
         "summary": "Get Preview Run",
+        "x-slaif-conditional-scopes": [],
         "x-slaif-idempotency": "not-applicable",
         "x-slaif-mutation": false,
         "x-slaif-required-scopes": [
@@ -8967,6 +9002,7 @@
           }
         ],
         "summary": "List Preview Run Artifacts",
+        "x-slaif-conditional-scopes": [],
         "x-slaif-idempotency": "not-applicable",
         "x-slaif-mutation": false,
         "x-slaif-required-scopes": [
@@ -9108,6 +9144,7 @@
           }
         ],
         "summary": "Get Preview Run Artifact Bytes",
+        "x-slaif-conditional-scopes": [],
         "x-slaif-idempotency": "not-applicable",
         "x-slaif-mutation": false,
         "x-slaif-required-scopes": [
@@ -9227,6 +9264,7 @@
           }
         ],
         "summary": "Get Session",
+        "x-slaif-conditional-scopes": [],
         "x-slaif-idempotency": "not-applicable",
         "x-slaif-mutation": false,
         "x-slaif-required-scopes": []

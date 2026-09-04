@@ -138,10 +138,10 @@ AGENT_PAGE_CREATE_SQL = (
     "SELECT * FROM content.slaif_agent_page_create($1,$2,$3,$4,$5,$6,$7)"
 )
 AGENT_PAGE_UPDATE_SQL = (
-    "SELECT * FROM content.slaif_agent_page_update($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)"
+    "SELECT * FROM content.slaif_agent_page_update($1,$2,$3,$4,$5,$6,$7,$8,$9)"
 )
 AGENT_PAGE_DELETE_SQL = "SELECT * FROM content.slaif_agent_page_delete($1,$2,$3)"
-AGENT_PAGE_MOVE_SQL = "SELECT * FROM content.slaif_agent_page_move($1,$2,$3,$4,$5,$6)"
+AGENT_PAGE_MOVE_SQL = "SELECT * FROM content.slaif_agent_page_move($1,$2,$3,$4)"
 AGENT_PAGE_RESTORE_SQL = "SELECT * FROM content.slaif_agent_page_restore($1,$2,$3)"
 AGENT_COMPONENT_CREATE_SQL = (
     "SELECT * FROM content.slaif_agent_composition_node_add($1,$2,$3,$4,$5,$6,$7)"
@@ -753,11 +753,6 @@ class AgentCowContentModelService(ContentModelService):
     async def update_page_for_site(
         self, site_id: UUID, page_id: UUID, request: UpdatePageRequest
     ) -> PageRecord:
-        route_affecting = (
-            request.slug is not None
-            or request.locale is not None
-            or "route_template" in request.model_fields_set
-        )
         row = await self._fetchrow(
             AGENT_PAGE_UPDATE_SQL,
             site_id,
@@ -769,7 +764,6 @@ class AgentCowContentModelService(ContentModelService):
             request.route_template,
             "route_template" in request.model_fields_set,
             request.expected_row_version,
-            route_affecting,
         )
         if row is None:
             raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
@@ -793,8 +787,6 @@ class AgentCowContentModelService(ContentModelService):
             site_id,
             page_id,
             request.parent_id,
-            request.before_page_id,
-            request.after_page_id,
             request.expected_row_version,
         )
         if row is None:

@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from .models import _bounded_text
 from .site_data_validators import validate_locale_tag
@@ -35,9 +35,7 @@ def _normalize_route_template(value: str | None) -> str | None:
     normalized = value.strip()
     if normalized == "{slug}":
         return normalized
-    if normalized.startswith("/") or normalized.endswith("/"):
-        raise ValueError("invalid route template")
-    return _normalize_page_segment(normalized.lower())
+    raise ValueError("route template must be null or {slug}")
 
 
 class CreatePageRequest(BaseModel):
@@ -132,21 +130,13 @@ class MovePageRequest(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     parent_id: UUID | None = None
-    before_page_id: UUID | None = None
-    after_page_id: UUID | None = None
     expected_row_version: int = Field(gt=0)
-
-    @model_validator(mode="after")
-    def one_relative_target(self) -> MovePageRequest:
-        if self.before_page_id is not None and self.after_page_id is not None:
-            raise ValueError("move accepts at most one relative page")
-        return self
 
 
 class RestorePageRequest(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    expected_row_version: int | None = Field(default=None, gt=0)
+    expected_row_version: int = Field(gt=0)
 
 
 class PageRecord(BaseModel):
@@ -161,6 +151,7 @@ class PageRecord(BaseModel):
     parent_id: UUID | None
     route_template: str | None = None
     effective_route: str | None = None
+    deleted_at: datetime | None = None
     row_version: int
     created_at: datetime
     updated_at: datetime

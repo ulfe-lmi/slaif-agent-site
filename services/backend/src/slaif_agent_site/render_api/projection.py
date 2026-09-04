@@ -680,7 +680,11 @@ class RenderProjectionService:
             "SELECT id, site_id, slug, title, status, locale, parent_id, row_version, "
             "created_at, updated_at FROM content.page "
             "WHERE site_id = $1 AND slug = $2 AND locale = $3 "
-            "AND status = ANY($4::text[]) ORDER BY id LIMIT 2",
+            "AND deleted_at IS NULL AND status = ANY($4::text[]) "
+            "AND EXISTS (SELECT 1 FROM content.site_locale locale "
+            "WHERE locale.site_id = content.page.site_id "
+            "AND locale.tag = content.page.locale AND locale.enabled) "
+            "ORDER BY id LIMIT 2",
             context.site_id,
             slug,
             locale,
@@ -692,7 +696,12 @@ class RenderProjectionService:
         # canonical/overlay state and must never pick an arbitrary page.
         duplicate = await connection.fetch(
             "SELECT id FROM content.page WHERE site_id = $1 AND slug = $2 "
-            "AND locale = $3 AND status = ANY($4::text[]) ORDER BY id LIMIT 2",
+            "AND locale = $3 AND deleted_at IS NULL "
+            "AND status = ANY($4::text[]) "
+            "AND EXISTS (SELECT 1 FROM content.site_locale locale "
+            "WHERE locale.site_id = content.page.site_id "
+            "AND locale.tag = content.page.locale AND locale.enabled) "
+            "ORDER BY id LIMIT 2",
             context.site_id,
             slug,
             locale,

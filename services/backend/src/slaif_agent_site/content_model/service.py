@@ -93,7 +93,11 @@ def _semantic_database_error_code(error: asyncpg.PostgresError) -> str | None:
     """Preserve only stable, non-sensitive dependency denial identifiers."""
 
     message = getattr(error, "message", str(error)).split("\n", 1)[0]
-    if message in {"FIELD_DEPENDENCIES", "TYPE_DEPENDENCIES"}:
+    if message in {
+        "FIELD_DEPENDENCIES",
+        "TYPE_DEPENDENCIES",
+        "PAGE_ROUTE_CONFLICT",
+    }:
         return message
     return None
 
@@ -1638,10 +1642,11 @@ def _pg(row: Any) -> Any:
     from .page_models import PageRecord
 
     # Legacy Editor/Control functions return the original ten-column page
-    # shape. Agent page wrappers return the two route columns appended by the
-    # page-structure migration; accept both while the public Agent surface
-    # remains the only caller that needs derived routes.
+    # shape. Agent page wrappers return route columns and the product-owned
+    # tombstone appended by the page-structure migration; accept all shapes so
+    # the human surface remains independent of the Agent return contract.
     extended = len(row) >= 12
+    tombstone = len(row) >= 13
     return PageRecord(
         id=row[0],
         site_id=row[1],
@@ -1652,9 +1657,10 @@ def _pg(row: Any) -> Any:
         parent_id=row[6],
         route_template=row[7] if extended else None,
         effective_route=row[8] if extended else None,
-        row_version=row[9] if extended else row[7],
-        created_at=row[10] if extended else row[8],
-        updated_at=row[11] if extended else row[9],
+        deleted_at=row[9] if tombstone else None,
+        row_version=(row[10] if tombstone else row[9]) if extended else row[7],
+        created_at=(row[11] if tombstone else row[10]) if extended else row[8],
+        updated_at=(row[12] if tombstone else row[11]) if extended else row[9],
     )
 
 

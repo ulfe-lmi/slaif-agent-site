@@ -163,6 +163,13 @@ def build_public_agent_openapi_document(app: FastAPI) -> dict[str, object]:
             route = live_routes[(method.upper(), path)]
             scopes = list(policy.required_scopes)
             operation["x-slaif-required-scopes"] = scopes
+            operation["x-slaif-conditional-scopes"] = [
+                {
+                    "when_fields": list(condition.when_fields),
+                    "required_scopes": list(condition.required_scopes),
+                }
+                for condition in policy.conditional_scopes
+            ]
             operation["x-slaif-mutation"] = (
                 policy.mutation_class is RouteMutationClass.MUTATION
             )

@@ -45,6 +45,22 @@ class RoutePolicyKind(StrEnum):
 
 
 @dataclass(frozen=True, slots=True)
+class RouteConditionalScope:
+    """Additional capability scopes required when request fields are supplied."""
+
+    when_fields: tuple[str, ...]
+    required_scopes: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        if not self.when_fields or not self.required_scopes:
+            raise ValueError("conditional scope declaration cannot be empty")
+        if len(set(self.when_fields)) != len(self.when_fields):
+            raise ValueError("conditional scope repeats a request field")
+        if len(set(self.required_scopes)) != len(self.required_scopes):
+            raise ValueError("conditional scope repeats a scope")
+
+
+@dataclass(frozen=True, slots=True)
 class RoutePolicy:
     process: ProcessKind
     method: str
@@ -56,6 +72,7 @@ class RoutePolicy:
     policy_kind: RoutePolicyKind
     required_permissions: tuple[str, ...] = ()
     required_scopes: tuple[str, ...] = ()
+    conditional_scopes: tuple[RouteConditionalScope, ...] = ()
 
     def __post_init__(self) -> None:
         if self.process not in {
@@ -82,6 +99,13 @@ class RoutePolicy:
             raise ValueError("route policy repeats a permission")
         if len(set(self.required_scopes)) != len(self.required_scopes):
             raise ValueError("route policy repeats a scope")
+        if len(self.conditional_scopes) != len(
+            {
+                (condition.when_fields, condition.required_scopes)
+                for condition in self.conditional_scopes
+            }
+        ):
+            raise ValueError("route policy repeats a conditional scope")
         if not set(self.required_permissions) <= set(PERMISSION_BY_KEY):
             raise ValueError("route policy names an unknown permission")
         if any(
@@ -170,6 +194,7 @@ def _agent_policy(
     path: str,
     mutation: RouteMutationClass,
     *scopes: str,
+    conditional_scopes: tuple[RouteConditionalScope, ...] = (),
 ) -> RoutePolicy:
     return RoutePolicy(
         process=_AGENT,
@@ -181,6 +206,7 @@ def _agent_policy(
         authority_kind=RouteAuthorityKind.AGENT_CAPABILITY,
         policy_kind=RoutePolicyKind.AGENT_CAPABILITY,
         required_scopes=tuple(scopes),
+        conditional_scopes=conditional_scopes,
     )
 
 
@@ -1149,7 +1175,6 @@ ROUTE_POLICIES: Final[tuple[RoutePolicy, ...]] = (
             ),
             ("POST", "/api/agent/v1/pages", "page:create"),
             ("POST", "/api/agent/v1/pages/", "page:create"),
-            ("PATCH", "/api/agent/v1/pages/{page_id}", "page:write"),
             ("DELETE", "/api/agent/v1/pages/{page_id}", "page:delete"),
             ("POST", "/api/agent/v1/pages/{page_id}:restore", "page:restore"),
             (
@@ -1158,6 +1183,18 @@ ROUTE_POLICIES: Final[tuple[RoutePolicy, ...]] = (
                 "component-structure:create",
             ),
         )
+    ),
+    _agent_policy(
+        "PATCH",
+        "/api/agent/v1/pages/{page_id}",
+        _M,
+        "page:write",
+        conditional_scopes=(
+            RouteConditionalScope(
+                when_fields=("slug", "locale", "route_template"),
+                required_scopes=("route:write",),
+            ),
+        ),
     ),
     _agent_policy(
         "POST",
@@ -1184,6 +1221,27 @@ if len(_POLICY_BY_KEY) != len(ROUTE_POLICIES):
 
 def route_policies_for(process: ProcessKind) -> tuple[RoutePolicy, ...]:
     return tuple(policy for policy in ROUTE_POLICIES if policy.process is process)
+
+
+def conditional_scopes_for_fields(
+    process: ProcessKind,
+    method: str,
+    path_template: str,
+    supplied_fields: set[str] | frozenset[str],
+) -> tuple[str, ...]:
+    """Return policy-declared additional scopes for supplied request fields."""
+
+    policy = _POLICY_BY_KEY.get((process, method, path_template))
+    if policy is None:
+        raise KeyError(f"unregistered route policy: {method} {path_template}")
+    result: list[str] = []
+    for condition in policy.conditional_scopes:
+        if supplied_fields.isdisjoint(condition.when_fields):
+            continue
+        for scope in condition.required_scopes:
+            if scope not in result:
+                result.append(scope)
+    return tuple(result)
 
 
 def _api_routes(routes: list[Any]) -> tuple[APIRoute, ...]:
@@ -1231,8 +1289,10 @@ __all__ = [
     "ROUTE_POLICIES",
     "RouteAuthorityKind",
     "RouteMutationClass",
+    "RouteConditionalScope",
     "RoutePolicy",
     "RoutePolicyKind",
     "route_policies_for",
+    "conditional_scopes_for_fields",
     "validate_route_policy_coverage",
 ]

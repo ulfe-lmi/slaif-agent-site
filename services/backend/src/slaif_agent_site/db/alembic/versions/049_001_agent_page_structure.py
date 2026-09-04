@@ -16,7 +16,8 @@ depends_on = None
 _AGENT_PAGE_RETURN = """
     id uuid, site_id uuid, slug text, title text, status text, locale text,
     parent_id uuid, route_template text, effective_route text,
-    row_version integer, created_at timestamptz, updated_at timestamptz
+    deleted_at timestamptz, row_version integer, created_at timestamptz,
+    updated_at timestamptz
 """
 
 _DOLLAR_TAG = re.compile(r"\$(?:[A-Za-z_][A-Za-z0-9_]*|)\$")
@@ -342,13 +343,7 @@ def _page_functions_sql() -> str:
                 SELECT 1 FROM content.site_locale
                 WHERE site_id=p_site_id AND tag=p_locale AND enabled
             ) THEN
-                INSERT INTO content.site_locale(
-                    site_id,tag,enabled,is_default,position
-                ) VALUES (
-                    p_site_id,p_locale,true,
-                    p_locale=(SELECT default_locale FROM control.site WHERE id=p_site_id),
-                    coalesce((SELECT max(position)+1 FROM content.site_locale WHERE site_id=p_site_id),0)
-                );
+                RAISE EXCEPTION 'LOCALE_INVALID' USING ERRCODE='P0003';
             END IF;
         END;
         $fn$;
@@ -362,7 +357,8 @@ def _page_functions_sql() -> str:
             depth integer := 0; index integer; default_locale text;
             page_locale text; segment text;
         BEGIN
-            SELECT p.* INTO current_page FROM content.page p WHERE p.id = p_page_id;
+            SELECT p.* INTO current_page FROM content.page p
+            WHERE p.id = p_page_id AND p.deleted_at IS NULL;
             IF NOT FOUND THEN
                 RAISE EXCEPTION 'PAGE_NOT_FOUND' USING ERRCODE='P0002';
             END IF;
@@ -371,6 +367,12 @@ def _page_functions_sql() -> str:
             FROM control.site s WHERE s.id = current_page.site_id;
             IF default_locale IS NULL THEN
                 RAISE EXCEPTION 'PAGE_SITE_NOT_FOUND' USING ERRCODE='P0002';
+            END IF;
+            IF NOT EXISTS (
+                SELECT 1 FROM content.site_locale
+                WHERE site_id=current_page.site_id AND tag=current_page.locale AND enabled
+            ) THEN
+                RAISE EXCEPTION 'LOCALE_INVALID' USING ERRCODE='P0003';
             END IF;
             LOOP
                 depth := depth + 1;
@@ -383,7 +385,8 @@ def _page_functions_sql() -> str:
                 SELECT p.* INTO current_page
                 FROM content.page p
                 WHERE p.id = current_page.parent_id
-                  AND p.site_id = current_page.site_id;
+                  AND p.site_id = current_page.site_id
+                  AND p.deleted_at IS NULL;
                 IF NOT FOUND OR current_page.locale IS DISTINCT FROM page_locale THEN
                     RAISE EXCEPTION 'PAGE_PARENT_INVALID' USING ERRCODE='P0003';
                 END IF;
@@ -419,6 +422,7 @@ def _page_functions_sql() -> str:
                 FROM content.page p
                 WHERE p.site_id = (SELECT site_id FROM content.page WHERE id=p_page_id)
                   AND p.locale = (SELECT locale FROM content.page WHERE id=p_page_id)
+                  AND p.deleted_at IS NULL
                   AND p.id <> p_page_id
             LOOP
                 IF existing.route = p_candidate THEN RETURN true; END IF;
@@ -451,14 +455,13 @@ def _page_functions_sql() -> str:
             depth integer := 0; route text; first_segment text;
         BEGIN
             SELECT p.* INTO current_page FROM content.page p
-            WHERE p.id=p_page_id AND p.site_id=p_site_id;
+            WHERE p.id=p_page_id AND p.site_id=p_site_id AND p.deleted_at IS NULL;
             IF NOT FOUND THEN
                 RAISE EXCEPTION 'PAGE_NOT_FOUND' USING ERRCODE='P0002';
             END IF;
             IF current_page.slug !~ '^[a-z0-9][a-z0-9._~-]{0,62}$'
                OR (current_page.route_template IS NOT NULL
-                   AND current_page.route_template <> '{slug}'
-                   AND current_page.route_template !~ '^[a-z0-9][a-z0-9._~-]{0,62}$')
+                   AND current_page.route_template <> '{slug}')
             THEN
                 RAISE EXCEPTION 'PAGE_ROUTE_INVALID' USING ERRCODE='P0003';
             END IF;
@@ -480,7 +483,8 @@ def _page_functions_sql() -> str:
                     RAISE EXCEPTION 'PAGE_DEPTH_EXCEEDED' USING ERRCODE='P0003';
                 END IF;
                 SELECT p.* INTO parent_page FROM content.page p
-                WHERE p.id=cursor_id AND p.site_id=p_site_id;
+                WHERE p.id=cursor_id AND p.site_id=p_site_id
+                  AND p.deleted_at IS NULL;
                 IF NOT FOUND OR parent_page.locale IS DISTINCT FROM current_page.locale THEN
                     RAISE EXCEPTION 'PAGE_PARENT_INVALID' USING ERRCODE='P0003';
                 END IF;
@@ -535,10 +539,11 @@ def _page_functions_sql() -> str:
                 WITH RECURSIVE descendants(id) AS (
                     SELECT p.id FROM content.page p
                     WHERE p.site_id=p_site_id AND p.parent_id=p_page_id
+                      AND p.deleted_at IS NULL
                     UNION ALL
                     SELECT p.id FROM content.page p
                     JOIN descendants d ON d.id=p.parent_id
-                    WHERE p.site_id=p_site_id
+                    WHERE p.site_id=p_site_id AND p.deleted_at IS NULL
                 ) SELECT id FROM descendants
             LOOP
                 PERFORM content.slaif_agent_page_validate(p_site_id,child.id);
@@ -555,8 +560,15 @@ def _page_functions_sql() -> str:
             depth integer := 0; route text;
         BEGIN
             SELECT p.* INTO page_row FROM content.page p
-            WHERE p.id=p_page_id AND p.site_id=p_site_id;
+            WHERE p.id=p_page_id AND p.site_id=p_site_id
+              AND p.deleted_at IS NULL;
             IF NOT FOUND THEN RETURN false; END IF;
+            IF NOT EXISTS (
+                SELECT 1 FROM content.site_locale
+                WHERE site_id=p_site_id AND tag=page_row.locale AND enabled
+            ) THEN
+                RETURN false;
+            END IF;
             SELECT * INTO STRICT constraints FROM control.slaif_agent_resource_constraints(p_site_id);
             IF cardinality(constraints.allowed_locales) > 0
                AND NOT page_row.locale = ANY(constraints.allowed_locales) THEN RETURN false; END IF;
@@ -565,7 +577,8 @@ def _page_functions_sql() -> str:
                 IF cursor_id = ANY(visited) OR depth >= 64 THEN RETURN false; END IF;
                 visited := array_append(visited,cursor_id); depth := depth+1;
                 SELECT p.* INTO ancestor FROM content.page p
-                WHERE p.id=cursor_id AND p.site_id=p_site_id;
+                WHERE p.id=cursor_id AND p.site_id=p_site_id
+                  AND p.deleted_at IS NULL;
                 IF NOT FOUND OR ancestor.locale IS DISTINCT FROM page_row.locale THEN RETURN false; END IF;
                 IF ancestor.parent_id IS NULL THEN root_id := ancestor.id; EXIT; END IF;
                 cursor_id := ancestor.parent_id;
@@ -604,6 +617,7 @@ def _page_functions_sql() -> str:
             IF p_parent_id IS NOT NULL AND NOT EXISTS (
                 SELECT 1 FROM content.page p
                 WHERE p.id=p_parent_id AND p.site_id=p_site_id AND p.locale=p_locale
+                  AND p.deleted_at IS NULL
             ) THEN RAISE EXCEPTION 'PAGE_PARENT_NOT_FOUND' USING ERRCODE='P0002'; END IF;
             IF NOT control.slaif_agent_quota_consume(capability_id,workspace_id,'mutation') THEN
                 RAISE EXCEPTION 'AGENT_MUTATION_QUOTA_EXCEEDED' USING ERRCODE='P0005';
@@ -614,7 +628,7 @@ def _page_functions_sql() -> str:
             PERFORM content.slaif_agent_page_validate(p_site_id,page_id);
             RETURN QUERY SELECT p.id,p.site_id,p.slug,p.title,p.status,p.locale,p.parent_id,
                 p.route_template,content.slaif_agent_page_effective_route(p.id),
-                p.row_version,p.created_at,p.updated_at
+                p.deleted_at,p.row_version,p.created_at,p.updated_at
             FROM content.page p WHERE p.id=page_id;
         END;
         $fn$;
@@ -631,7 +645,7 @@ def _page_functions_sql() -> str:
             END IF;
             RETURN QUERY SELECT p.id,p.site_id,p.slug,p.title,p.status,p.locale,p.parent_id,
                 p.route_template,content.slaif_agent_page_effective_route(p.id),
-                p.row_version,p.created_at,p.updated_at
+                p.deleted_at,p.row_version,p.created_at,p.updated_at
             FROM content.page p WHERE p.id=p_page_id AND p.site_id=p_site_id;
         END;
         $fn$;
@@ -652,7 +666,7 @@ def _page_functions_sql() -> str:
             END IF;
             RETURN QUERY SELECT p.id,p.site_id,p.slug,p.title,p.status,p.locale,p.parent_id,
                 p.route_template,content.slaif_agent_page_effective_route(p.id),
-                p.row_version,p.created_at,p.updated_at
+                p.deleted_at,p.row_version,p.created_at,p.updated_at
             FROM content.page p
             WHERE p.site_id=p_site_id AND content.slaif_agent_page_accessible(p_site_id,p.id)
             ORDER BY content.slaif_agent_page_effective_route(p.id) COLLATE "C",p.id;
@@ -662,7 +676,7 @@ def _page_functions_sql() -> str:
         CREATE FUNCTION content.slaif_agent_page_update(
             p_site_id uuid,p_page_id uuid,p_slug text,p_title text,p_status text,
             p_locale text,p_route_template text,p_route_template_set boolean,
-            p_expected integer,p_route_affecting boolean
+            p_expected integer
         ) RETURNS TABLE("""
         + _AGENT_PAGE_RETURN
         + """)
@@ -670,7 +684,7 @@ def _page_functions_sql() -> str:
         DECLARE workspace_id uuid; capability_id uuid; old_page record;
         BEGIN
             capability_id := control.slaif_agent_require_capability(p_site_id,'page:write');
-            IF p_route_affecting THEN
+            IF p_slug IS NOT NULL OR p_locale IS NOT NULL OR p_route_template_set THEN
                 PERFORM control.slaif_agent_require_capability(p_site_id,'route:write');
             END IF;
             workspace_id := NULLIF(current_setting('app.session_id',true),'')::uuid;
@@ -682,11 +696,12 @@ def _page_functions_sql() -> str:
                 RAISE EXCEPTION 'ROW_VERSION_REQUIRED' USING ERRCODE='P0003';
             END IF;
             SELECT p.* INTO old_page FROM content.page p
-            WHERE p.id=p_page_id AND p.site_id=p_site_id;
+            WHERE p.id=p_page_id AND p.site_id=p_site_id AND p.deleted_at IS NULL;
             IF NOT FOUND THEN RAISE EXCEPTION 'PAGE_NOT_FOUND' USING ERRCODE='P0002'; END IF;
             IF old_page.row_version <> p_expected THEN
                 RAISE EXCEPTION 'ROW_VERSION_MISMATCH' USING ERRCODE='P0004';
             END IF;
+            PERFORM content.slaif_agent_page_ensure_locale(p_site_id,old_page.locale);
             IF p_slug IS NULL AND p_title IS NULL AND p_status IS NULL AND p_locale IS NULL AND NOT p_route_template_set THEN
                 RAISE EXCEPTION 'PAGE_UPDATE_EMPTY' USING ERRCODE='P0003';
             END IF;
@@ -703,52 +718,41 @@ def _page_functions_sql() -> str:
             PERFORM content.slaif_agent_page_validate_subtree(p_site_id,p_page_id);
             RETURN QUERY SELECT p.id,p.site_id,p.slug,p.title,p.status,p.locale,p.parent_id,
                 p.route_template,content.slaif_agent_page_effective_route(p.id),
-                p.row_version,p.created_at,p.updated_at
+                p.deleted_at,p.row_version,p.created_at,p.updated_at
             FROM content.page p WHERE p.id=p_page_id AND p.site_id=p_site_id;
         END;
         $fn$;
 
         CREATE FUNCTION content.slaif_agent_page_move(
-            p_site_id uuid,p_page_id uuid,p_parent_id uuid,
-            p_before_page_id uuid,p_after_page_id uuid,p_expected integer
+            p_site_id uuid,p_page_id uuid,p_parent_id uuid,p_expected integer
         ) RETURNS TABLE("""
         + _AGENT_PAGE_RETURN
         + """)
         LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $fn$
         DECLARE workspace_id uuid; capability_id uuid; old_page record;
-            target_page record; descendant boolean;
         BEGIN
             capability_id := control.slaif_agent_require_capability(p_site_id,'page:move');
             PERFORM control.slaif_agent_require_capability(p_site_id,'route:write');
             workspace_id := NULLIF(current_setting('app.session_id',true),'')::uuid;
             PERFORM pg_advisory_xact_lock(hashtextextended(workspace_id::text || chr(58) || p_site_id::text || chr(58) || 'page-structure',994));
             SELECT p.* INTO old_page FROM content.page p
-            WHERE p.id=p_page_id AND p.site_id=p_site_id;
+            WHERE p.id=p_page_id AND p.site_id=p_site_id AND p.deleted_at IS NULL;
             IF NOT FOUND THEN RAISE EXCEPTION 'PAGE_NOT_FOUND' USING ERRCODE='P0002'; END IF;
             IF p_expected IS NULL OR p_expected <= 0 THEN RAISE EXCEPTION 'ROW_VERSION_REQUIRED' USING ERRCODE='P0003'; END IF;
             IF old_page.row_version <> p_expected THEN RAISE EXCEPTION 'ROW_VERSION_MISMATCH' USING ERRCODE='P0004'; END IF;
             PERFORM content.slaif_agent_page_ensure_locale(p_site_id,old_page.locale);
             IF p_parent_id IS NOT NULL AND NOT EXISTS (
-                SELECT 1 FROM content.page p WHERE p.id=p_parent_id AND p.site_id=p_site_id AND p.locale=old_page.locale
+                SELECT 1 FROM content.page p WHERE p.id=p_parent_id AND p.site_id=p_site_id
+                  AND p.locale=old_page.locale AND p.deleted_at IS NULL
             ) THEN RAISE EXCEPTION 'PAGE_PARENT_INVALID' USING ERRCODE='P0003'; END IF;
             IF p_parent_id = p_page_id OR EXISTS (
                 WITH RECURSIVE descendants(id) AS (
                     SELECT p.id FROM content.page p WHERE p.parent_id=p_page_id AND p.site_id=p_site_id
-                    UNION ALL SELECT p.id FROM content.page p JOIN descendants d ON d.id=p.parent_id WHERE p.site_id=p_site_id
+                      AND p.deleted_at IS NULL
+                    UNION ALL SELECT p.id FROM content.page p JOIN descendants d ON d.id=p.parent_id
+                    WHERE p.site_id=p_site_id AND p.deleted_at IS NULL
                 ) SELECT 1 FROM descendants WHERE descendants.id=p_parent_id
             ) THEN RAISE EXCEPTION 'PAGE_HIERARCHY_CYCLE' USING ERRCODE='P0003'; END IF;
-            IF p_before_page_id IS NOT NULL AND p_after_page_id IS NOT NULL THEN
-                RAISE EXCEPTION 'PAGE_RELATIVE_AMBIGUOUS' USING ERRCODE='P0003';
-            END IF;
-            IF p_before_page_id IS NOT NULL OR p_after_page_id IS NOT NULL THEN
-                SELECT p.* INTO target_page FROM content.page p
-                WHERE p.id=coalesce(p_before_page_id,p_after_page_id) AND p.site_id=p_site_id;
-                IF NOT FOUND OR target_page.locale IS DISTINCT FROM old_page.locale
-                   OR target_page.parent_id IS DISTINCT FROM p_parent_id
-                   OR target_page.id=p_page_id THEN
-                    RAISE EXCEPTION 'PAGE_RELATIVE_INVALID' USING ERRCODE='P0003';
-                END IF;
-            END IF;
             IF NOT control.slaif_agent_quota_consume(capability_id,workspace_id,'mutation') THEN
                 RAISE EXCEPTION 'AGENT_MUTATION_QUOTA_EXCEEDED' USING ERRCODE='P0005';
             END IF;
@@ -758,7 +762,7 @@ def _page_functions_sql() -> str:
             PERFORM content.slaif_agent_page_validate_subtree(p_site_id,p_page_id);
             RETURN QUERY SELECT p.id,p.site_id,p.slug,p.title,p.status,p.locale,p.parent_id,
                 p.route_template,content.slaif_agent_page_effective_route(p.id),
-                p.row_version,p.created_at,p.updated_at
+                p.deleted_at,p.row_version,p.created_at,p.updated_at
             FROM content.page p WHERE p.id=p_page_id AND p.site_id=p_site_id;
         END;
         $fn$;
@@ -776,10 +780,11 @@ def _page_functions_sql() -> str:
             workspace_id := NULLIF(current_setting('app.session_id',true),'')::uuid;
             PERFORM pg_advisory_xact_lock(hashtextextended(workspace_id::text || chr(58) || p_site_id::text || chr(58) || 'page-structure',994));
             SELECT p.* INTO old_page FROM content.page p
-            WHERE p.id=p_page_id AND p.site_id=p_site_id;
+            WHERE p.id=p_page_id AND p.site_id=p_site_id AND p.deleted_at IS NULL;
             IF NOT FOUND THEN RAISE EXCEPTION 'PAGE_NOT_FOUND' USING ERRCODE='P0002'; END IF;
             IF p_expected IS NULL OR p_expected <= 0 THEN RAISE EXCEPTION 'ROW_VERSION_REQUIRED' USING ERRCODE='P0003'; END IF;
             IF old_page.row_version <> p_expected THEN RAISE EXCEPTION 'ROW_VERSION_MISMATCH' USING ERRCODE='P0004'; END IF;
+            PERFORM content.slaif_agent_page_ensure_locale(p_site_id,old_page.locale);
             IF EXISTS (SELECT 1 FROM content.page p WHERE p.site_id=p_site_id AND p.parent_id=p_page_id)
                OR EXISTS (SELECT 1 FROM content.page_composition c WHERE c.site_id=p_site_id AND c.page_id=p_page_id)
                OR EXISTS (SELECT 1 FROM content.navigation_item n WHERE n.site_id=p_site_id AND n.page_id=p_page_id)
@@ -795,13 +800,14 @@ def _page_functions_sql() -> str:
             IF NOT control.slaif_agent_quota_consume(capability_id,workspace_id,'delete') THEN
                 RAISE EXCEPTION 'AGENT_DELETE_QUOTA_EXCEEDED' USING ERRCODE='P0005';
             END IF;
-            DELETE FROM content.page p
-            WHERE p.id=p_page_id AND p.site_id=p_site_id AND p.row_version=p_expected;
+            UPDATE content.page p SET deleted_at=now(), row_version=p.row_version+1,
+                updated_at=now()
+            WHERE p.id=p_page_id AND p.site_id=p_site_id
+              AND p.row_version=p_expected AND p.deleted_at IS NULL;
             IF NOT FOUND THEN RAISE EXCEPTION 'ROW_VERSION_MISMATCH' USING ERRCODE='P0004'; END IF;
-            RETURN QUERY SELECT old_page.id,old_page.site_id,old_page.slug,old_page.title,
-                old_page.status,old_page.locale,old_page.parent_id,old_page.route_template,
-                old_route,old_page.row_version,
-                old_page.created_at,old_page.updated_at;
+            RETURN QUERY SELECT p.id,p.site_id,p.slug,p.title,p.status,p.locale,p.parent_id,
+                p.route_template,old_route,p.deleted_at,p.row_version,p.created_at,p.updated_at
+            FROM content.page p WHERE p.id=p_page_id AND p.site_id=p_site_id;
         END;
         $fn$;
 
@@ -816,40 +822,31 @@ def _page_functions_sql() -> str:
             capability_id := control.slaif_agent_require_capability(p_site_id,'page:restore');
             workspace_id := NULLIF(current_setting('app.session_id',true),'')::uuid;
             PERFORM pg_advisory_xact_lock(hashtextextended(workspace_id::text || chr(58) || p_site_id::text || chr(58) || 'page-structure',994));
-            IF EXISTS (SELECT 1 FROM content.page p WHERE p.id=p_page_id AND p.site_id=p_site_id) THEN
+            SELECT p.* INTO deleted FROM content.page p
+            WHERE p.id=p_page_id AND p.site_id=p_site_id AND p.deleted_at IS NOT NULL;
+            IF NOT FOUND THEN
                 RAISE EXCEPTION 'PAGE_NOT_DELETED' USING ERRCODE='P0003';
             END IF;
-            SELECT c.id,c.site_id,c.slug,c.title,c.status,c.locale,c.parent_id,
-                c.route_template,c.row_version,c.created_at,c.updated_at
-            INTO deleted
-            FROM content.page_changes c
-            WHERE c.session_id=workspace_id AND c.id=p_page_id AND c.site_id=p_site_id
-              AND c._cow_deleted
-            ORDER BY c._cow_order DESC LIMIT 1;
-            IF NOT FOUND THEN RAISE EXCEPTION 'PAGE_NOT_DELETED' USING ERRCODE='P0002'; END IF;
             PERFORM content.slaif_agent_page_ensure_locale(p_site_id,deleted.locale);
-            IF p_expected IS NOT NULL AND deleted.row_version <> p_expected THEN
+            IF deleted.row_version <> p_expected THEN
                 RAISE EXCEPTION 'ROW_VERSION_MISMATCH' USING ERRCODE='P0004';
             END IF;
             IF deleted.parent_id IS NOT NULL AND NOT EXISTS (
                 SELECT 1 FROM content.page p
                 WHERE p.id=deleted.parent_id AND p.site_id=p_site_id AND p.locale=deleted.locale
+                  AND p.deleted_at IS NULL
             ) THEN RAISE EXCEPTION 'PAGE_PARENT_INVALID' USING ERRCODE='P0003'; END IF;
             IF NOT control.slaif_agent_quota_consume(capability_id,workspace_id,'mutation') THEN
                 RAISE EXCEPTION 'AGENT_MUTATION_QUOTA_EXCEEDED' USING ERRCODE='P0005';
             END IF;
-            INSERT INTO content.page(
-                id,site_id,slug,title,status,locale,parent_id,route_template,
-                row_version,created_at,updated_at
-            ) VALUES (
-                deleted.id,deleted.site_id,deleted.slug,deleted.title,deleted.status,
-                deleted.locale,deleted.parent_id,deleted.route_template,
-                deleted.row_version,deleted.created_at,deleted.updated_at
-            );
+            UPDATE content.page p SET deleted_at=NULL,row_version=p.row_version+1,updated_at=now()
+            WHERE p.id=p_page_id AND p.site_id=p_site_id
+              AND p.deleted_at IS NOT NULL AND p.row_version=p_expected;
+            IF NOT FOUND THEN RAISE EXCEPTION 'ROW_VERSION_MISMATCH' USING ERRCODE='P0004'; END IF;
             PERFORM content.slaif_agent_page_validate_subtree(p_site_id,p_page_id);
             RETURN QUERY SELECT p.id,p.site_id,p.slug,p.title,p.status,p.locale,p.parent_id,
                 p.route_template,content.slaif_agent_page_effective_route(p.id),
-                p.row_version,p.created_at,p.updated_at
+                p.deleted_at,p.row_version,p.created_at,p.updated_at
             FROM content.page p WHERE p.id=p_page_id AND p.site_id=p_site_id;
         END;
         $fn$;
@@ -862,10 +859,15 @@ def upgrade() -> None:
     # the canonical page table and the next reconcile recreates matching COW
     # change columns/triggers from the public foundation API.
     op.execute("ALTER TABLE content.page ADD COLUMN route_template text")
+    op.execute("ALTER TABLE content.page ADD COLUMN deleted_at timestamptz")
+    op.execute("ALTER TABLE content.page DROP CONSTRAINT uq_page_site_locale_slug")
+    op.execute(
+        "CREATE UNIQUE INDEX uq_page_site_locale_slug_active "
+        "ON content.page(site_id,locale,slug) WHERE deleted_at IS NULL"
+    )
     op.execute(
         "ALTER TABLE content.page ADD CONSTRAINT page_route_template_bounded "
-        "CHECK (route_template IS NULL OR route_template = '{slug}' OR "
-        "route_template ~ '^[a-z0-9][a-z0-9._~\\-]{0,62}$')"
+        "CHECK (route_template IS NULL OR route_template = '{slug}')"
     )
 
     # Adding a column makes the old SELECT * page functions invalid against
@@ -900,7 +902,12 @@ def upgrade() -> None:
         ) LANGUAGE sql SECURITY DEFINER SET search_path=pg_catalog STABLE AS $fn$
             SELECT p.id,p.site_id,p.slug,p.title,p.status,p.locale,p.parent_id,
                 p.row_version,p.created_at,p.updated_at FROM content.page p
-            WHERE p.site_id=p_site_id ORDER BY p.slug COLLATE "C"
+            WHERE p.site_id=p_site_id AND p.deleted_at IS NULL
+              AND EXISTS (
+                  SELECT 1 FROM content.site_locale l
+                  WHERE l.site_id=p.site_id AND l.tag=p.locale AND l.enabled
+              )
+            ORDER BY p.slug COLLATE "C"
         $fn$
         """
     )
@@ -914,7 +921,11 @@ def upgrade() -> None:
         ) LANGUAGE sql SECURITY DEFINER SET search_path=pg_catalog STABLE AS $fn$
             SELECT p.id,p.site_id,p.slug,p.title,p.status,p.locale,p.parent_id,
                 p.row_version,p.created_at,p.updated_at FROM content.page p
-            WHERE p.id=p_page_id
+            WHERE p.id=p_page_id AND p.deleted_at IS NULL
+              AND EXISTS (
+                  SELECT 1 FROM content.site_locale l
+                  WHERE l.site_id=p.site_id AND l.tag=p.locale AND l.enabled
+              )
         $fn$
         """
     )
@@ -934,10 +945,12 @@ def upgrade() -> None:
                 status=coalesce(p_status,page.status), row_version=page.row_version+1,
                 updated_at=CURRENT_TIMESTAMP
             WHERE page.id=p_page_id
+              AND page.deleted_at IS NULL
               AND (p_expected_row_version IS NULL OR page.row_version=p_expected_row_version);
             IF NOT FOUND THEN RAISE EXCEPTION 'NOT_FOUND' USING ERRCODE='P0002'; END IF;
             RETURN QUERY SELECT p.id,p.site_id,p.slug,p.title,p.status,p.locale,p.parent_id,
-                p.row_version,p.created_at,p.updated_at FROM content.page p WHERE p.id=p_page_id;
+                p.row_version,p.created_at,p.updated_at FROM content.page p
+            WHERE p.id=p_page_id AND p.deleted_at IS NULL;
         END; $fn$
         """
     )
@@ -959,15 +972,15 @@ def upgrade() -> None:
     for statement in _split_sql_statements(_page_functions_sql()):
         op.execute(statement)
 
-    # The old function's return contract is replaced by the new seven-column
-    # input and route-aware output. Keep every new function narrow and grant
+    # The old function's return contract is replaced by the route-aware input
+    # and output. Keep every new function narrow and grant
     # only EXECUTE to the Agent runtime role.
     for function in (
         "content.slaif_agent_page_create(uuid,text,text,text,text,uuid,text)",
         "content.slaif_agent_page_get(uuid,uuid)",
         "content.slaif_agent_page_list(uuid)",
-        "content.slaif_agent_page_update(uuid,uuid,text,text,text,text,text,boolean,integer,boolean)",
-        "content.slaif_agent_page_move(uuid,uuid,uuid,uuid,uuid,integer)",
+        "content.slaif_agent_page_update(uuid,uuid,text,text,text,text,text,boolean,integer)",
+        "content.slaif_agent_page_move(uuid,uuid,uuid,integer)",
         "content.slaif_agent_page_delete(uuid,uuid,integer)",
         "content.slaif_agent_page_restore(uuid,uuid,integer)",
     ):
@@ -990,6 +1003,28 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    # 048 has no representation for route templates, product tombstones, or
+    # the PAGE_* semantic audit actions. Refuse before any teardown so a
+    # data-bearing downgrade is atomic and never discards review history.
+    op.execute(
+        """
+        DO $$
+        BEGIN
+            IF EXISTS (
+                SELECT 1 FROM content.page
+                WHERE route_template IS NOT NULL OR deleted_at IS NOT NULL
+            ) OR EXISTS (
+                SELECT 1 FROM audit.agent_mutation
+                WHERE action LIKE 'PAGE_%'
+            ) THEN
+                RAISE EXCEPTION '049_DOWNGRADE_PAGE_DATA_PRESENT'
+                    USING ERRCODE='P0003';
+            END IF;
+        END;
+        $$
+        """
+    )
+
     # Direct migration tests and operators may invoke Alembic without the
     # bootstrap wrapper.  Remove the page overlay first so the base-table
     # column change below is valid; reconcile recreates the COW view later.
@@ -1022,8 +1057,8 @@ def downgrade() -> None:
     for function in (
         "content.slaif_agent_page_restore(uuid,uuid,integer)",
         "content.slaif_agent_page_delete(uuid,uuid,integer)",
-        "content.slaif_agent_page_move(uuid,uuid,uuid,uuid,uuid,integer)",
-        "content.slaif_agent_page_update(uuid,uuid,text,text,text,text,text,boolean,integer,boolean)",
+        "content.slaif_agent_page_move(uuid,uuid,uuid,integer)",
+        "content.slaif_agent_page_update(uuid,uuid,text,text,text,text,text,boolean,integer)",
         "content.slaif_agent_page_list(uuid)",
         "content.slaif_agent_page_get(uuid,uuid)",
         "content.slaif_agent_page_create(uuid,text,text,text,text,uuid,text)",
@@ -1074,7 +1109,13 @@ def downgrade() -> None:
     op.execute(
         "ALTER TABLE content.page DROP CONSTRAINT IF EXISTS page_route_template_bounded"
     )
+    op.execute("DROP INDEX IF EXISTS content.uq_page_site_locale_slug_active")
+    op.execute("ALTER TABLE content.page DROP COLUMN IF EXISTS deleted_at")
     op.execute("ALTER TABLE content.page DROP COLUMN IF EXISTS route_template")
+    op.execute(
+        "ALTER TABLE content.page ADD CONSTRAINT uq_page_site_locale_slug "
+        "UNIQUE (site_id, locale, slug)"
+    )
     op.execute(
         """
         CREATE FUNCTION content.slaif_agent_page_create(

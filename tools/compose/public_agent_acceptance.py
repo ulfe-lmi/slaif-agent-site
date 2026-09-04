@@ -175,6 +175,15 @@ def _semantic_contract(
                 )
         if len(segments) == 5 and segments[4] == "pages" and method == "POST":
             return "page", "PAGE_CREATED", "mutation"
+        if len(segments) == 6 and segments[4] == "pages":
+            if method == "PATCH":
+                return "page", "PAGE_UPDATED", "mutation"
+            if method == "DELETE":
+                return "page", "PAGE_DELETED", "delete"
+            if segments[5].endswith(":move") and method == "POST":
+                return "page", "PAGE_MOVED", "mutation"
+            if segments[5].endswith(":restore") and method == "POST":
+                return "page", "PAGE_RESTORED", "mutation"
     return None
 
 
@@ -288,6 +297,16 @@ def _canonical_request_body(
             "parent_id": None,
             "route_template": None,
         }
+    if resource_type == "page" and action == "PAGE_UPDATED":
+        defaults = {
+            "slug": None,
+            "title": None,
+            "status": None,
+            "locale": None,
+            "route_template": None,
+        }
+    if resource_type == "page" and action == "PAGE_MOVED":
+        defaults = {"parent_id": None}
     if (
         resource_type == "content_item_translation"
         and action == "CONTENT_ITEM_TRANSLATION_CREATED"
@@ -605,6 +624,18 @@ def _wait_public_outage(client: PublicClient, path: str, label: str) -> None:
     raise ProofFailure(f"{label}-still-available")
 
 
+def _wait_public_not_found(client: PublicClient, path: str, label: str) -> None:
+    for _attempt in range(30):
+        try:
+            response = client.request(path)
+        except ProofFailure:
+            response = None
+        if response is not None and response.status == 404:
+            return
+        time.sleep(1)
+    raise ProofFailure(f"{label}-not-404")
+
+
 def run_acceptance(project: str) -> None:
     if not re.fullmatch(r"slaif(?:007|009|010|071)[a-z0-9]+", project):
         raise ProofFailure("unsafe-project-name")
@@ -762,6 +793,11 @@ def run_acceptance(project: str) -> None:
             "collection-view:delete",
             "page:create",
             "page:read",
+            "page:write",
+            "page:move",
+            "page:delete",
+            "page:restore",
+            "route:write",
             "composition:read",
             "component-structure:create",
             "validation:read",
@@ -1034,6 +1070,156 @@ def run_acceptance(project: str) -> None:
             f"oap-component-create-{tag}",
         )
         component_id = _require_uuid(component["record"]["id"], "component")
+
+        lifecycle_slug = f"oap-lifecycle-{tag}"
+        lifecycle_path = f"/s/demo/{lifecycle_slug}"
+        lifecycle = _mutation(
+            client,
+            primary_token,
+            "/api/agent/v1/pages/",
+            {
+                "slug": lifecycle_slug,
+                "title": "OAP lifecycle",
+                "status": "PUBLISHED",
+                "locale": "en",
+                "parent_id": page_id,
+            },
+            f"oap-page-lifecycle-create-{tag}",
+        )
+        lifecycle_id = _require_uuid(lifecycle["record"]["id"], "lifecycle-page")
+        if client.request(lifecycle_path).status != 404:
+            raise ProofFailure("workspace-page-visible-on-canonical-edge")
+        lifecycle_update = _request_mutation(
+            client,
+            primary_token,
+            f"/api/agent/v1/pages/{lifecycle_id}",
+            {"title": "OAP lifecycle updated", "expected_row_version": 1},
+            f"oap-page-lifecycle-update-{tag}",
+        )
+        if lifecycle_update["record"].get("row_version") != 2:
+            raise ProofFailure("page-version-invalid")
+        lifecycle_move = _request_mutation(
+            client,
+            primary_token,
+            f"/api/agent/v1/pages/{lifecycle_id}:move",
+            {"parent_id": None, "expected_row_version": 2},
+            f"oap-page-lifecycle-move-{tag}",
+            method="POST",
+        )
+        if lifecycle_move["record"].get("row_version") != 3:
+            raise ProofFailure("page-move-version-invalid")
+        if client.request(lifecycle_path).status != 404:
+            raise ProofFailure("workspace-moved-page-visible-on-canonical-edge")
+        lifecycle_delete = _request_mutation(
+            client,
+            primary_token,
+            f"/api/agent/v1/pages/{lifecycle_id}",
+            {"expected_row_version": 3},
+            f"oap-page-lifecycle-delete-{tag}",
+            method="DELETE",
+        )
+        if (
+            lifecycle_delete["record"].get("deleted_at") is None
+            or lifecycle_delete["record"].get("row_version") != 4
+        ):
+            raise ProofFailure("page-tombstone-invalid")
+        if (
+            client.request(
+                f"/api/agent/v1/pages/{lifecycle_id}",
+                headers={"Authorization": f"Bearer {primary_token}"},
+            ).status
+            != 404
+            or client.request(lifecycle_path).status != 404
+        ):
+            raise ProofFailure("page-tombstone-visible")
+        if lifecycle_id in {
+            item.get("id")
+            for item in _agent_list(
+                client,
+                primary_token,
+                "/api/agent/v1/pages/",
+                label="page-list-after-delete",
+            )
+        }:
+            raise ProofFailure("page-tombstone-in-list")
+        lifecycle_restore = _request_mutation(
+            client,
+            primary_token,
+            f"/api/agent/v1/pages/{lifecycle_id}:restore",
+            {"expected_row_version": 4},
+            f"oap-page-lifecycle-restore-{tag}",
+            method="POST",
+        )
+        if (
+            lifecycle_restore["record"].get("id") != lifecycle_id
+            or lifecycle_restore["record"].get("deleted_at") is not None
+            or lifecycle_restore["record"].get("row_version") != 5
+        ):
+            raise ProofFailure("page-restore-invalid")
+        if client.request(lifecycle_path).status != 404:
+            raise ProofFailure("restored-workspace-page-visible-on-canonical-edge")
+        lifecycle_delete_again = _request_mutation(
+            client,
+            primary_token,
+            f"/api/agent/v1/pages/{lifecycle_id}",
+            {"expected_row_version": 5},
+            f"oap-page-lifecycle-delete-again-{tag}",
+            method="DELETE",
+        )
+        if lifecycle_delete_again["record"].get("row_version") != 6:
+            raise ProofFailure("page-second-tombstone-version-invalid")
+        replacement = _mutation(
+            client,
+            primary_token,
+            "/api/agent/v1/pages/",
+            {
+                "slug": lifecycle_slug,
+                "title": "OAP replacement",
+                "status": "PUBLISHED",
+                "locale": "en",
+            },
+            f"oap-page-replacement-create-{tag}",
+        )
+        replacement_id = _require_uuid(replacement["record"]["id"], "replacement-page")
+        if replacement_id == lifecycle_id:
+            raise ProofFailure("tombstone-reused-page-id")
+        restore_conflict = client.request(
+            f"/api/agent/v1/pages/{lifecycle_id}:restore",
+            method="POST",
+            body={"expected_row_version": 6},
+            headers={
+                "Authorization": f"Bearer {primary_token}",
+                "Idempotency-Key": f"oap-page-lifecycle-restore-conflict-{tag}",
+            },
+        )
+        if restore_conflict.status != 409:
+            raise ProofFailure(
+                f"page-restore-conflict-status-{restore_conflict.status}"
+            )
+        _request_mutation(
+            client,
+            primary_token,
+            f"/api/agent/v1/pages/{replacement_id}",
+            {"expected_row_version": 1},
+            f"oap-page-replacement-delete-{tag}",
+            method="DELETE",
+        )
+        _compose(project, "restart", "agent-api")
+        agent_outage = False
+        _wait_agent_ready(client)
+        if (
+            _agent_request(
+                client,
+                primary_token,
+                f"/api/agent/v1/pages/{page_id}",
+                label="page-restart-read",
+            ).get("id")
+            != page_id
+            or client.request(lifecycle_path).status != 404
+        ):
+            raise ProofFailure("page-canonical-independence-after-agent-restart")
+        _compose(project, "restart", "render-api")
+        _wait_public_not_found(client, lifecycle_path, "render-restart-page")
         current_types = _agent_list(
             client,
             primary_token,
@@ -1545,7 +1731,8 @@ def run_acceptance(project: str) -> None:
             "translations=1 relations=1 views=1 pages=1 components=1 "
             "openapi=exact restart=verified nginx-outage=verified "
             "crud=public quotas=mutation-429,max-delete-429 "
-            "dependency-delete=422 tombstones=verified"
+            "dependency-delete=422 page-delete-restore=verified "
+            "canonical-independence=verified render-restart=verified"
         )
     finally:
         if agent_outage:

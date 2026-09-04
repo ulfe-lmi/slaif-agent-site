@@ -38,6 +38,7 @@ from slaif_agent_site.agent_state.reads import (
     AgentRead,
     execute_agent_read,
 )
+from slaif_agent_site.authority import ProcessKind
 from slaif_agent_site.content_model.composition_models import (
     CompositionNodeRecord,
     CreateCompositionNodeRequest,
@@ -82,6 +83,7 @@ from slaif_agent_site.content_model.view_models import (
     CreateCollectionViewRequest,
     UpdateCollectionViewRequest,
 )
+from slaif_agent_site.control_api.route_policy import conditional_scopes_for_fields
 from slaif_agent_site.errors import (
     AuthenticationError,
     AuthorizationError,
@@ -389,6 +391,8 @@ async def _execute_mutation(
                 raise FieldDependenciesError() from None
             if exc.code == "TYPE_DEPENDENCIES":
                 raise TypeDependenciesError() from None
+            if exc.code == "PAGE_ROUTE_CONFLICT":
+                raise ResourceConflictError() from None
             raise DomainValidationError() from None
         if exc.reason is ContentModelServiceReason.AUTHORIZATION:
             raise AuthorizationError() from None
@@ -981,12 +985,13 @@ async def update_page(
 ) -> AgentMutationResponse:
     context = await _authenticate(request)
     _require_scope(context, "page:write")
-    if (
-        body.slug is not None
-        or body.locale is not None
-        or "route_template" in body.model_fields_set
+    for scope in conditional_scopes_for_fields(
+        ProcessKind.AGENT_API,
+        "PATCH",
+        "/api/agent/v1/pages/{page_id}",
+        body.model_fields_set,
     ):
-        _require_scope(context, "route:write")
+        _require_scope(context, scope)
     return await _execute_mutation(
         request,
         context,
@@ -1055,22 +1060,21 @@ async def move_page(
 async def restore_page(
     page_id: UUID,
     request: Request,
-    body: RestorePageRequest | None = None,
+    body: RestorePageRequest,
     idempotency_key: IdempotencyHeader = None,
 ) -> AgentMutationResponse:
     context = await _authenticate(request)
     _require_scope(context, "page:restore")
-    restore_body = body or RestorePageRequest()
     return await _execute_mutation(
         request,
         context,
-        restore_body,
+        body,
         idempotency_key,
         resource_type="page",
         status_code=200,
         action="PAGE_RESTORED",
         mutate=lambda service: service.restore_page_for_site(
-            context.site_id, page_id, restore_body
+            context.site_id, page_id, body
         ),
     )
 

@@ -89,6 +89,23 @@ async def test_canonical_projection_is_site_confined_and_typed(
         assert projection.page.title == "Docs home"
         assert projection.composition.nodes[0].component_type == "Heading"
         assert projection.composition.nodes[0].props["text"] == "Escaped <heading>"
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            await owner.execute(
+                "UPDATE content.page_base SET deleted_at=CURRENT_TIMESTAMP WHERE id=$1",
+                page_id,
+            )
+        with pytest.raises(ProjectionError, match="not_found"):
+            await RenderProjectionService(_RenderAdapter(public_pool)).canonical(
+                RenderPageRequest(authority="localhost", path="/s/docs/")
+            )
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            await owner.execute(
+                "UPDATE content.page_base SET deleted_at=NULL WHERE id=$1", page_id
+            )
     finally:
         await public_pool.close()
         await control_pool.close()

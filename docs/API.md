@@ -176,7 +176,9 @@ It grants no operation authority. The document is OpenAPI 3.1, contains only
 the versioned Agent paths, uses the `AgentCapability` bearer scheme with
 empty OpenAPI bearer requirement values, and publishes exact operation scopes
 in `x-slaif-required-scopes`. Mutations require a bounded `Idempotency-Key`
-header in the contract. Regenerate and check it with the commands in
+header in the contract. Conditional mutation scope requirements are published
+in `x-slaif-conditional-scopes` with their exact triggering request fields.
+Regenerate and check it with the commands in
 [`contracts/README.md`](../contracts/README.md).
 
 The Agent API authenticates a bearer capability and derives the site and
@@ -207,11 +209,15 @@ the stable not-found envelope. Reads create no idempotency row, mutation audit
 row, or pending COW operation, and the foundation context is cleared before the
 Agent pool connection is reused.
 
-Page records expose normalized slug/parent metadata, an optional bounded
-`route_template`, and the server-derived `effective_route`. Routes are derived
-from the site locale and ancestor hierarchy; the only accepted dynamic
-declaration in this round is a terminal literal `{slug}`. Page deletes are
-workspace COW tombstones and restore the same page ID and prior hierarchy.
+Page records expose normalized slug/parent metadata, an optional `route_template`,
+the server-derived `effective_route`, and `deleted_at` on a deleted record.
+Routes are derived from an already-enabled site locale and the ancestor
+hierarchy; `route_template` is either absent or the terminal literal `{slug}`.
+Page operations never create or configure locales. Page deletes are workspace
+COW tombstones; restore requires the tombstone's exact row version and restores
+the same page ID and prior hierarchy. Tombstoned pages are absent from Agent
+reads and active Render, while canonical state remains unchanged until review
+and promotion.
 
 The bounded mutation surface is:
 
@@ -238,8 +244,8 @@ The bounded mutation surface is:
 | `POST /api/agent/v1/pages` (trailing slash alias) | 201 | `CreatePageRequest` |
 | `PATCH /api/agent/v1/pages/{page_id}` | 200 | `UpdatePageRequest` |
 | `DELETE /api/agent/v1/pages/{page_id}` | 200 | `AgentDeleteRequest` |
-| `POST /api/agent/v1/pages/{page_id}:move` | 200 | `MovePageRequest` |
-| `POST /api/agent/v1/pages/{page_id}:restore` | 200 | `RestorePageRequest` (optional) |
+| `POST /api/agent/v1/pages/{page_id}:move` | 200 | `MovePageRequest` (parent-only hierarchy move) |
+| `POST /api/agent/v1/pages/{page_id}:restore` | 200 | `RestorePageRequest` with the exact tombstone row version |
 | `POST /api/agent/v1/pages/{page_id}/components` | 201 | `CreateCompositionNodeRequest` |
 
 Every mutation requires an `Idempotency-Key` containing 1–128 bounded ASCII

@@ -12,9 +12,11 @@ from slaif_agent_site.control_api.app import create_app as create_control_app
 from slaif_agent_site.control_api.route_policy import (
     ROUTE_POLICIES,
     RouteAuthorityKind,
+    RouteConditionalScope,
     RouteMutationClass,
     RoutePolicy,
     RoutePolicyKind,
+    conditional_scopes_for_fields,
     route_policies_for,
     validate_route_policy_coverage,
 )
@@ -117,6 +119,36 @@ def test_registry_rejects_unknown_permission_and_invalid_csrf_shape() -> None:
             RouteAuthorityKind.AUTHENTICATED_SESSION,
             RoutePolicyKind.AUTHENTICATED_SESSION_READ,
         )
+
+
+def test_agent_page_patch_conditional_route_scope_is_machine_auditable() -> None:
+    page_patch = next(
+        policy
+        for policy in route_policies_for(ProcessKind.AGENT_API)
+        if policy.method == "PATCH"
+        and policy.path_template == "/api/agent/v1/pages/{page_id}"
+    )
+    assert page_patch.conditional_scopes == (
+        RouteConditionalScope(
+            when_fields=("slug", "locale", "route_template"),
+            required_scopes=("route:write",),
+        ),
+    )
+    assert (
+        conditional_scopes_for_fields(
+            ProcessKind.AGENT_API,
+            "PATCH",
+            "/api/agent/v1/pages/{page_id}",
+            {"title", "status"},
+        )
+        == ()
+    )
+    assert conditional_scopes_for_fields(
+        ProcessKind.AGENT_API,
+        "PATCH",
+        "/api/agent/v1/pages/{page_id}",
+        {"route_template"},
+    ) == ("route:write",)
 
 
 def test_actual_control_and_editor_routes_have_exact_policy_coverage() -> None:

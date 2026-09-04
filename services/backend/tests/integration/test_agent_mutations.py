@@ -129,6 +129,12 @@ async def _seed(database: AgentSiteDatabase) -> tuple[str, dict[str, UUID]]:
             delegator_id,
             site_b_id,
         )
+        await owner.execute(
+            "INSERT INTO content.site_locale_base "
+            "(site_id,tag,enabled,is_default,position) VALUES "
+            "($1,'en-US',true,true,0),($1,'en',true,false,1)",
+            site_id,
+        )
         type_b_id = uuid4()
         page_b_id = uuid4()
         await owner.execute(
@@ -287,6 +293,19 @@ async def _set_resource_constraints(
             workspace_id,
             encoded,
         )
+
+
+async def _wait_for_page_structure_waiters(owner: Any, expected: int) -> None:
+    """Use the database lock table as a deterministic barrier, never a timer."""
+
+    for _ in range(500):
+        waiting = await owner.fetchval(
+            "SELECT count(*) FROM pg_locks WHERE locktype='advisory' AND NOT granted"
+        )
+        if waiting >= expected:
+            return
+        await asyncio.sleep(0)
+    raise AssertionError(f"expected {expected} structural lock waiters, got {waiting}")
 
 
 @pytest.mark.asyncio
@@ -479,6 +498,106 @@ async def test_agent_create_type_is_cow_only_and_durablely_idempotent(
     finally:
         await reviewer_pool.close()
         await agent_pool.close()
+
+
+@pytest.mark.asyncio
+async def test_agent_049_downgrade_rejects_page_data_atomically(
+    agent_site_database: AgentSiteDatabase,
+) -> None:
+    database = agent_site_database
+    _token, seeded = await _seed(database)
+    page_id = uuid4()
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        await owner.execute(
+            "INSERT INTO content.page_base "
+            "(id,site_id,slug,title,status,locale,route_template) "
+            "VALUES ($1,$2,'downgrade-page','Downgrade page','DRAFT','en-US','{slug}')",
+            page_id,
+            seeded["site_id"],
+        )
+        before = await owner.fetchrow(
+            "SELECT version_num::text, route_template, deleted_at "
+            "FROM control.alembic_version CROSS JOIN content.page_base WHERE id=$1",
+            page_id,
+        )
+    with pytest.raises(Exception, match="049_DOWNGRADE_PAGE_DATA_PRESENT"):
+        await run_migration(
+            database.settings.resolved_owner_dsn(),
+            expected_database=database.name,
+            operation="downgrade",
+            revision="048_001",
+        )
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        after = await owner.fetchrow(
+            "SELECT version_num::text, route_template, deleted_at "
+            "FROM control.alembic_version CROSS JOIN content.page_base WHERE id=$1",
+            page_id,
+        )
+    assert tuple(after) == tuple(before)
+
+
+@pytest.mark.asyncio
+async def test_agent_049_plain_page_data_downgrade_and_upgrade_preserves_data(
+    agent_site_database: AgentSiteDatabase,
+) -> None:
+    database = agent_site_database
+    _token, seeded = await _seed(database)
+    page_id = uuid4()
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        await owner.execute(
+            "INSERT INTO content.page_base "
+            "(id,site_id,slug,title,status,locale) "
+            "VALUES ($1,$2,'round-trip-page','Round trip','DRAFT','en-US')",
+            page_id,
+            seeded["site_id"],
+        )
+    await run_migration(
+        database.settings.resolved_owner_dsn(),
+        expected_database=database.name,
+        operation="downgrade",
+        revision="048_001",
+    )
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        assert (
+            await owner.fetchval(
+                "SELECT version_num::text FROM control.alembic_version"
+            )
+            == "048_001"
+        )
+        assert (
+            await owner.fetchval("SELECT title FROM content.page WHERE id=$1", page_id)
+            == "Round trip"
+        )
+    await run_migration(
+        database.settings.resolved_owner_dsn(),
+        expected_database=database.name,
+        operation="upgrade",
+        revision="head",
+    )
+    await reconcile(database.settings)
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        assert (
+            await owner.fetchval(
+                "SELECT version_num::text FROM control.alembic_version"
+            )
+            == "049_001"
+        )
+        row = await owner.fetchrow(
+            "SELECT title, route_template, deleted_at FROM content.page_base "
+            "WHERE id=$1",
+            page_id,
+        )
+    assert tuple(row) == ("Round trip", None, None)
 
 
 @pytest.mark.asyncio
@@ -751,6 +870,8 @@ async def test_agent_page_structure_hierarchy_routes_and_cow_lifecycle(
                 )
                 assert deleted_detail.status_code == 200, deleted_detail.text
                 assert deleted_detail.json()["action"] == "PAGE_DELETED"
+                assert deleted_detail.json()["record"]["deleted_at"] is not None
+                assert deleted_detail.json()["record"]["row_version"] == 2
                 assert (
                     await request_page(
                         client, "GET", f"/api/agent/v1/pages/{detail_id}"
@@ -761,10 +882,12 @@ async def test_agent_page_structure_hierarchy_routes_and_cow_lifecycle(
                     "POST",
                     f"/api/agent/v1/pages/{detail_id}:restore",
                     key="page-detail-restore",
-                    json_body={"expected_row_version": 1},
+                    json_body={"expected_row_version": 2},
                 )
                 assert restored.status_code == 200, restored.text
                 assert restored.json()["record"]["id"] == detail_id
+                assert restored.json()["record"]["deleted_at"] is None
+                assert restored.json()["record"]["row_version"] == 3
                 assert (
                     restored.json()["record"]["effective_route"] == "/docs/news/{slug}"
                 )
@@ -777,11 +900,25 @@ async def test_agent_page_structure_hierarchy_routes_and_cow_lifecycle(
                     json_body={"expected_row_version": 1},
                 )
                 assert deleted_canonical.status_code == 200, deleted_canonical.text
+                assert deleted_canonical.json()["record"]["deleted_at"] is not None
                 assert (
                     await request_page(
                         client, "GET", f"/api/agent/v1/pages/{canonical_page_id}"
                     )
                 ).status_code == 404
+
+                restored_canonical = await request_page(
+                    client,
+                    "POST",
+                    f"/api/agent/v1/pages/{canonical_page_id}:restore",
+                    key="page-canonical-restore",
+                    json_body={"expected_row_version": 2},
+                )
+                assert restored_canonical.status_code == 200, restored_canonical.text
+                assert restored_canonical.json()["record"]["id"] == str(
+                    canonical_page_id
+                )
+                assert restored_canonical.json()["record"]["deleted_at"] is None
                 invalid_dynamic = await request_page(
                     client,
                     "POST",
@@ -851,13 +988,14 @@ async def test_agent_page_structure_hierarchy_routes_and_cow_lifecycle(
                 "PAGE_DELETED",
                 "PAGE_RESTORED",
                 "PAGE_DELETED",
+                "PAGE_RESTORED",
             ]
             quota = await owner.fetchrow(
                 "SELECT mutation_used,delete_used FROM control.capability "
                 "WHERE workspace_id=$1 ORDER BY created_at DESC LIMIT 1",
                 workspace_id,
             )
-            assert tuple(quota) == (7, 2)
+            assert tuple(quota) == (8, 2)
             assert (
                 await owner.fetchval(
                     "SELECT count(*) FROM audit.agent_mutation WHERE workspace_id=$1",
@@ -865,6 +1003,596 @@ async def test_agent_page_structure_hierarchy_routes_and_cow_lifecycle(
                 )
                 == 0
             )
+    finally:
+        await agent_pool.close()
+
+
+@pytest.mark.asyncio
+async def test_agent_page_tombstone_route_reuse_and_locale_authority(
+    agent_site_database: AgentSiteDatabase,
+) -> None:
+    database = agent_site_database
+    _token, seeded = await _seed(database)
+    scopes = [
+        "site:read",
+        "page:create",
+        "page:read",
+        "page:delete",
+        "page:restore",
+    ]
+    token, workspace_id = await _workspace_capability(
+        database, seeded, scopes, "Agent Page Tombstone Workspace"
+    )
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        await owner.execute(
+            "UPDATE control.capability SET delete_quota=2 WHERE workspace_id=$1",
+            workspace_id,
+        )
+    app = create_agent_app(
+        settings=ServiceSettings.for_test(),
+        database_settings=_agent_settings(database),
+    )
+    agent_pool = await database.role_pool("slaif_agent_runtime")
+    try:
+
+        async def request_page(
+            client: httpx.AsyncClient,
+            method: str,
+            path: str,
+            *,
+            key: str | None = None,
+            json_body: Mapping[str, object] | None = None,
+        ) -> httpx.Response:
+            headers = {"Authorization": f"Bearer {token}"}
+            if key is not None:
+                headers["Idempotency-Key"] = key
+            return await client.request(method, path, headers=headers, json=json_body)
+
+        async with app.router.lifespan_context(app):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://agent.test"
+            ) as client:
+                created = await request_page(
+                    client,
+                    "POST",
+                    "/api/agent/v1/pages",
+                    key="tombstone-create",
+                    json_body={
+                        "slug": "reusable",
+                        "title": "Reusable",
+                        "locale": "en-US",
+                    },
+                )
+                assert created.status_code == 201, created.text
+                page_id = created.json()["record"]["id"]
+
+                deleted = await request_page(
+                    client,
+                    "DELETE",
+                    f"/api/agent/v1/pages/{page_id}",
+                    key="tombstone-delete",
+                    json_body={"expected_row_version": 1},
+                )
+                assert deleted.status_code == 200, deleted.text
+                assert deleted.json()["record"]["deleted_at"] is not None
+                assert deleted.json()["record"]["row_version"] == 2
+                assert (
+                    await request_page(client, "GET", f"/api/agent/v1/pages/{page_id}")
+                ).status_code == 404
+
+                replacement = await request_page(
+                    client,
+                    "POST",
+                    "/api/agent/v1/pages",
+                    key="tombstone-replacement",
+                    json_body={
+                        "slug": "reusable",
+                        "title": "Replacement",
+                        "locale": "en-US",
+                    },
+                )
+                assert replacement.status_code == 201, replacement.text
+                assert replacement.json()["record"]["effective_route"] == "/reusable"
+
+                route_reused = await request_page(
+                    client,
+                    "POST",
+                    f"/api/agent/v1/pages/{page_id}:restore",
+                    key="tombstone-restore-conflict",
+                    json_body={"expected_row_version": 2},
+                )
+                assert route_reused.status_code == 409, route_reused.text
+
+                async with owner_connection(
+                    database.settings.resolved_owner_dsn(),
+                    expected_database=database.name,
+                ) as owner:
+                    before = await owner.fetchrow(
+                        "SELECT mutation_used,delete_used, "
+                        "(SELECT count(*) FROM audit.agent_mutation "
+                        "WHERE workspace_id=$1 AND resource_type='page') "
+                        "FROM control.capability WHERE workspace_id=$1 "
+                        "ORDER BY created_at DESC LIMIT 1",
+                        workspace_id,
+                    )
+                    await owner.execute(
+                        "UPDATE content.site_locale_base SET enabled=false "
+                        "WHERE site_id=$1 AND tag='en-US'",
+                        seeded["site_id"],
+                    )
+
+                unknown_locale = await request_page(
+                    client,
+                    "POST",
+                    "/api/agent/v1/pages",
+                    key="tombstone-unknown-locale",
+                    json_body={
+                        "slug": "unknown-locale",
+                        "title": "Unknown locale",
+                        "locale": "fr-FR",
+                    },
+                )
+                assert unknown_locale.status_code == 422
+                disabled_locale = await request_page(
+                    client,
+                    "POST",
+                    "/api/agent/v1/pages",
+                    key="tombstone-disabled-locale",
+                    json_body={
+                        "slug": "disabled-locale",
+                        "title": "Disabled locale",
+                        "locale": "en-US",
+                    },
+                )
+                assert disabled_locale.status_code == 422
+
+                async with owner_connection(
+                    database.settings.resolved_owner_dsn(),
+                    expected_database=database.name,
+                ) as owner:
+                    await owner.execute(
+                        "UPDATE content.site_locale_base SET enabled=true "
+                        "WHERE site_id=$1 AND tag='en-US'",
+                        seeded["site_id"],
+                    )
+                    after = await owner.fetchrow(
+                        "SELECT mutation_used,delete_used, "
+                        "(SELECT count(*) FROM audit.agent_mutation "
+                        "WHERE workspace_id=$1 AND resource_type='page') "
+                        "FROM control.capability WHERE workspace_id=$1 "
+                        "ORDER BY created_at DESC LIMIT 1",
+                        workspace_id,
+                    )
+                    assert tuple(after) == tuple(before)
+                    assert (
+                        await owner.fetchval(
+                            "SELECT count(*) FROM control.agent_idempotency "
+                            "WHERE workspace_id=$1 AND idempotency_key IN "
+                            "('tombstone-unknown-locale','tombstone-disabled-locale')",
+                            workspace_id,
+                        )
+                        == 0
+                    )
+    finally:
+        await agent_pool.close()
+
+
+@pytest.mark.asyncio
+async def test_agent_page_patch_route_scope_is_conditional(
+    agent_site_database: AgentSiteDatabase,
+) -> None:
+    database = agent_site_database
+    _token, seeded = await _seed(database)
+    token, workspace_id = await _workspace_capability(
+        database,
+        seeded,
+        ["site:read", "page:create", "page:read", "page:write"],
+        "Agent Page Conditional Scope Workspace",
+    )
+    app = create_agent_app(
+        settings=ServiceSettings.for_test(),
+        database_settings=_agent_settings(database),
+    )
+    agent_pool = await database.role_pool("slaif_agent_runtime")
+    try:
+        async with app.router.lifespan_context(app):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://agent.test"
+            ) as client:
+                headers = {"Authorization": f"Bearer {token}"}
+                created = await client.post(
+                    "/api/agent/v1/pages",
+                    headers={**headers, "Idempotency-Key": "conditional-create"},
+                    json={"slug": "conditional", "title": "Initial", "locale": "en-US"},
+                )
+                assert created.status_code == 201, created.text
+                page_id = created.json()["record"]["id"]
+                metadata = await client.patch(
+                    f"/api/agent/v1/pages/{page_id}",
+                    headers={**headers, "Idempotency-Key": "conditional-title"},
+                    json={"title": "Updated", "expected_row_version": 1},
+                )
+                assert metadata.status_code == 200, metadata.text
+                route_change = await client.patch(
+                    f"/api/agent/v1/pages/{page_id}",
+                    headers={**headers, "Idempotency-Key": "conditional-slug"},
+                    json={"slug": "changed", "expected_row_version": 2},
+                )
+                assert route_change.status_code == 403, route_change.text
+
+                async with owner_connection(
+                    database.settings.resolved_owner_dsn(),
+                    expected_database=database.name,
+                ) as owner:
+                    assert (
+                        await owner.fetchval(
+                            "SELECT count(*) FROM control.agent_idempotency "
+                            "WHERE workspace_id=$1 "
+                            "AND idempotency_key='conditional-slug'",
+                            workspace_id,
+                        )
+                        == 0
+                    )
+    finally:
+        await agent_pool.close()
+
+
+@pytest.mark.asyncio
+async def test_agent_page_route_patch_and_move_race_has_serialized_outcome(
+    agent_site_database: AgentSiteDatabase,
+) -> None:
+    database = agent_site_database
+    _token, seeded = await _seed(database)
+    parent_a, parent_b, child = uuid4(), uuid4(), uuid4()
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        await owner.executemany(
+            "INSERT INTO content.page_base "
+            "(id,site_id,slug,title,status,locale,parent_id) VALUES "
+            "($1,$2,$3,$4,'DRAFT','en-US',$5)",
+            [
+                (parent_a, seeded["site_id"], "alpha", "Alpha", None),
+                (parent_b, seeded["site_id"], "beta", "Beta", None),
+                (child, seeded["site_id"], "child", "Child", parent_a),
+            ],
+        )
+    token, workspace_id = await _workspace_capability(
+        database,
+        seeded,
+        ["site:read", "page:read", "page:write", "page:move", "route:write"],
+        "Agent Page Route Move Race",
+    )
+    app = create_agent_app(
+        settings=ServiceSettings.for_test(), database_settings=_agent_settings(database)
+    )
+    agent_pool = await database.role_pool("slaif_agent_runtime")
+    try:
+        async with app.router.lifespan_context(app):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://agent.test"
+            ) as client:
+                headers = {"Authorization": f"Bearer {token}"}
+                async with owner_connection(
+                    database.settings.resolved_owner_dsn(),
+                    expected_database=database.name,
+                ) as blocker:
+                    async with blocker.transaction():
+                        lock_key = await blocker.fetchval(
+                            "SELECT hashtextextended($1,994)",
+                            f"{workspace_id}:{seeded['site_id']}:page-structure",
+                        )
+                        await blocker.execute(
+                            "SELECT pg_advisory_xact_lock($1::bigint)", lock_key
+                        )
+                        patch_task = asyncio.create_task(
+                            client.patch(
+                                f"/api/agent/v1/pages/{parent_b}",
+                                headers={
+                                    **headers,
+                                    "Idempotency-Key": "race-route-patch",
+                                },
+                                json={"slug": "alpha", "expected_row_version": 1},
+                            )
+                        )
+                        move_task = asyncio.create_task(
+                            client.post(
+                                f"/api/agent/v1/pages/{child}:move",
+                                headers={**headers, "Idempotency-Key": "race-move"},
+                                json={
+                                    "parent_id": str(parent_b),
+                                    "expected_row_version": 1,
+                                },
+                            )
+                        )
+                        await _wait_for_page_structure_waiters(blocker, 2)
+                    patched, moved = await asyncio.gather(patch_task, move_task)
+                assert patched.status_code == 409, patched.text
+                assert moved.status_code == 200, moved.text
+                final_child = await client.get(
+                    f"/api/agent/v1/pages/{child}", headers=headers
+                )
+                assert final_child.status_code == 200, final_child.text
+                assert final_child.json()["parent_id"] == str(parent_b)
+    finally:
+        await agent_pool.close()
+
+
+@pytest.mark.asyncio
+async def test_agent_page_competing_moves_cannot_create_cycle(
+    agent_site_database: AgentSiteDatabase,
+) -> None:
+    database = agent_site_database
+    _token, seeded = await _seed(database)
+    first, second = uuid4(), uuid4()
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        await owner.executemany(
+            "INSERT INTO content.page_base "
+            "(id,site_id,slug,title,status,locale) VALUES "
+            "($1,$2,$3,$4,'DRAFT','en-US')",
+            [
+                (first, seeded["site_id"], "first", "First"),
+                (second, seeded["site_id"], "second", "Second"),
+            ],
+        )
+    token, workspace_id = await _workspace_capability(
+        database,
+        seeded,
+        ["site:read", "page:read", "page:move", "route:write"],
+        "Agent Page Cycle Race",
+    )
+    app = create_agent_app(
+        settings=ServiceSettings.for_test(), database_settings=_agent_settings(database)
+    )
+    agent_pool = await database.role_pool("slaif_agent_runtime")
+    try:
+        async with app.router.lifespan_context(app):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://agent.test"
+            ) as client:
+                headers = {"Authorization": f"Bearer {token}"}
+                async with owner_connection(
+                    database.settings.resolved_owner_dsn(),
+                    expected_database=database.name,
+                ) as blocker:
+                    async with blocker.transaction():
+                        lock_key = await blocker.fetchval(
+                            "SELECT hashtextextended($1,994)",
+                            f"{workspace_id}:{seeded['site_id']}:page-structure",
+                        )
+                        await blocker.execute(
+                            "SELECT pg_advisory_xact_lock($1::bigint)", lock_key
+                        )
+                        first_task = asyncio.create_task(
+                            client.post(
+                                f"/api/agent/v1/pages/{first}:move",
+                                headers={**headers, "Idempotency-Key": "cycle-first"},
+                                json={
+                                    "parent_id": str(second),
+                                    "expected_row_version": 1,
+                                },
+                            )
+                        )
+                        second_task = asyncio.create_task(
+                            client.post(
+                                f"/api/agent/v1/pages/{second}:move",
+                                headers={**headers, "Idempotency-Key": "cycle-second"},
+                                json={
+                                    "parent_id": str(first),
+                                    "expected_row_version": 1,
+                                },
+                            )
+                        )
+                        await _wait_for_page_structure_waiters(blocker, 2)
+                    moved, rejected = await asyncio.gather(first_task, second_task)
+                assert sorted((moved.status_code, rejected.status_code)) == [200, 422]
+                first_record = await client.get(
+                    f"/api/agent/v1/pages/{first}", headers=headers
+                )
+                second_record = await client.get(
+                    f"/api/agent/v1/pages/{second}", headers=headers
+                )
+                assert first_record.status_code == second_record.status_code == 200
+                assert not (
+                    first_record.json()["parent_id"] == str(second)
+                    and second_record.json()["parent_id"] == str(first)
+                )
+    finally:
+        await agent_pool.close()
+
+
+@pytest.mark.asyncio
+async def test_agent_page_restore_races_route_reuse_with_one_active_result(
+    agent_site_database: AgentSiteDatabase,
+) -> None:
+    database = agent_site_database
+    _token, seeded = await _seed(database)
+    token, workspace_id = await _workspace_capability(
+        database,
+        seeded,
+        ["site:read", "page:create", "page:read", "page:delete", "page:restore"],
+        "Agent Page Restore Race",
+    )
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        await owner.execute(
+            "UPDATE control.capability SET delete_quota=1 WHERE workspace_id=$1",
+            workspace_id,
+        )
+    app = create_agent_app(
+        settings=ServiceSettings.for_test(), database_settings=_agent_settings(database)
+    )
+    agent_pool = await database.role_pool("slaif_agent_runtime")
+    try:
+        async with app.router.lifespan_context(app):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://agent.test"
+            ) as client:
+                headers = {"Authorization": f"Bearer {token}"}
+                created = await client.post(
+                    "/api/agent/v1/pages",
+                    headers={**headers, "Idempotency-Key": "restore-race-create"},
+                    json={
+                        "slug": "restore-race",
+                        "title": "Original",
+                        "locale": "en-US",
+                    },
+                )
+                assert created.status_code == 201, created.text
+                page_id = created.json()["record"]["id"]
+                deleted = await client.request(
+                    "DELETE",
+                    f"/api/agent/v1/pages/{page_id}",
+                    headers={**headers, "Idempotency-Key": "restore-race-delete"},
+                    json={"expected_row_version": 1},
+                )
+                assert deleted.status_code == 200, deleted.text
+                async with owner_connection(
+                    database.settings.resolved_owner_dsn(),
+                    expected_database=database.name,
+                ) as blocker:
+                    async with blocker.transaction():
+                        lock_key = await blocker.fetchval(
+                            "SELECT hashtextextended($1,994)",
+                            f"{workspace_id}:{seeded['site_id']}:page-structure",
+                        )
+                        await blocker.execute(
+                            "SELECT pg_advisory_xact_lock($1::bigint)", lock_key
+                        )
+                        restore_task = asyncio.create_task(
+                            client.post(
+                                f"/api/agent/v1/pages/{page_id}:restore",
+                                headers={
+                                    **headers,
+                                    "Idempotency-Key": "restore-race-restore",
+                                },
+                                json={"expected_row_version": 2},
+                            )
+                        )
+                        replacement_task = asyncio.create_task(
+                            client.post(
+                                "/api/agent/v1/pages",
+                                headers={
+                                    **headers,
+                                    "Idempotency-Key": "restore-race-replacement",
+                                },
+                                json={
+                                    "slug": "restore-race",
+                                    "title": "Replacement",
+                                    "locale": "en-US",
+                                },
+                            )
+                        )
+                        await _wait_for_page_structure_waiters(blocker, 2)
+                    restored, replacement = await asyncio.gather(
+                        restore_task, replacement_task
+                    )
+                assert sorted((restored.status_code, replacement.status_code)) == [
+                    200,
+                    409,
+                ]
+                pages = await client.get("/api/agent/v1/pages", headers=headers)
+                assert pages.status_code == 200
+                assert [
+                    page for page in pages.json() if page["slug"] == "restore-race"
+                ].__len__() == 1
+    finally:
+        await agent_pool.close()
+
+
+@pytest.mark.asyncio
+async def test_agent_page_cancellation_while_structural_lock_waits_leaves_no_residue(
+    agent_site_database: AgentSiteDatabase,
+) -> None:
+    database = agent_site_database
+    _token, seeded = await _seed(database)
+    token, workspace_id = await _workspace_capability(
+        database,
+        seeded,
+        ["site:read", "page:create", "page:read"],
+        "Agent Page Cancellation Lock",
+    )
+    app = create_agent_app(
+        settings=ServiceSettings.for_test(), database_settings=_agent_settings(database)
+    )
+    agent_pool = await database.role_pool("slaif_agent_runtime")
+    try:
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            before = await owner.fetchrow(
+                "SELECT "
+                "(SELECT count(*) FROM control.agent_idempotency "
+                "WHERE workspace_id=$1),"
+                "(SELECT count(*) FROM audit.agent_mutation WHERE workspace_id=$1),"
+                "(SELECT count(*) FROM content.page_changes WHERE session_id=$1)",
+                workspace_id,
+            )
+        async with app.router.lifespan_context(app):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://agent.test"
+            ) as client:
+                headers = {"Authorization": f"Bearer {token}"}
+                async with owner_connection(
+                    database.settings.resolved_owner_dsn(),
+                    expected_database=database.name,
+                ) as blocker:
+                    async with blocker.transaction():
+                        lock_key = await blocker.fetchval(
+                            "SELECT hashtextextended($1,994)",
+                            f"{workspace_id}:{seeded['site_id']}:page-structure",
+                        )
+                        await blocker.execute(
+                            "SELECT pg_advisory_xact_lock($1::bigint)", lock_key
+                        )
+                        cancelled = asyncio.create_task(
+                            client.post(
+                                "/api/agent/v1/pages",
+                                headers={
+                                    **headers,
+                                    "Idempotency-Key": "cancelled-page",
+                                },
+                                json={
+                                    "slug": "cancelled-page",
+                                    "title": "Cancelled",
+                                    "locale": "en-US",
+                                },
+                            )
+                        )
+                        await _wait_for_page_structure_waiters(blocker, 1)
+                        cancelled.cancel()
+                        with pytest.raises(asyncio.CancelledError):
+                            await cancelled
+                async with owner_connection(
+                    database.settings.resolved_owner_dsn(),
+                    expected_database=database.name,
+                ) as owner:
+                    after = await owner.fetchrow(
+                        "SELECT "
+                        "(SELECT count(*) FROM control.agent_idempotency "
+                        "WHERE workspace_id=$1),"
+                        "(SELECT count(*) FROM audit.agent_mutation "
+                        "WHERE workspace_id=$1),"
+                        "(SELECT count(*) FROM content.page_changes "
+                        "WHERE session_id=$1)",
+                        workspace_id,
+                    )
+                    assert tuple(after) == tuple(before)
+                later = await client.post(
+                    "/api/agent/v1/pages",
+                    headers={**headers, "Idempotency-Key": "cancelled-page-retry"},
+                    json={
+                        "slug": "cancelled-page",
+                        "title": "Retry",
+                        "locale": "en-US",
+                    },
+                )
+                assert later.status_code == 201, later.text
     finally:
         await agent_pool.close()
 

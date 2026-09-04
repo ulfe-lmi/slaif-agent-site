@@ -346,14 +346,12 @@ AGENT_CONTENT_FUNCTIONS = {
         "slaif_agent_page_update",
         "p_site_id uuid, p_page_id uuid, p_slug text, p_title text, "
         "p_status text, p_locale text, p_route_template text, "
-        "p_route_template_set boolean, p_expected integer, "
-        "p_route_affecting boolean",
-    ): "uuid, uuid, text, text, text, text, text, boolean, integer, boolean",
+        "p_route_template_set boolean, p_expected integer",
+    ): "uuid, uuid, text, text, text, text, text, boolean, integer",
     (
         "slaif_agent_page_move",
-        "p_site_id uuid, p_page_id uuid, p_parent_id uuid, "
-        "p_before_page_id uuid, p_after_page_id uuid, p_expected integer",
-    ): "uuid, uuid, uuid, uuid, uuid, integer",
+        "p_site_id uuid, p_page_id uuid, p_parent_id uuid, p_expected integer",
+    ): "uuid, uuid, uuid, integer",
     (
         "slaif_agent_page_delete",
         "p_site_id uuid, p_page_id uuid, p_expected integer",
