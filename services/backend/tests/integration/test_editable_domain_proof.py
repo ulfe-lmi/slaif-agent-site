@@ -8,6 +8,7 @@ import pytest
 from conftest import AgentSiteDatabase
 from slaif_agent_site.agent_state.foundation import (
     deploy_cow_functions,
+    disable_cow_schema,
     enable_cow_schema,
 )
 from slaif_agent_site.bootstrap.service import reconcile, upgrade
@@ -23,6 +24,11 @@ async def test_editable_domain_migration_round_trip_restores_field_contract(
     database = agent_site_database
     await upgrade(database.settings)
     await reconcile(database.settings)
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        async with owner.transaction():
+            await disable_cow_schema(AsyncpgExecutor(owner), schema="content")
     async with owner_connection(
         database.settings.resolved_owner_dsn(), expected_database=database.name
     ) as owner:
@@ -112,6 +118,11 @@ async def test_site_data_substrate_downgrades_from_head_to_041_and_back(
     database = agent_site_database
     await upgrade(database.settings)
     await reconcile(database.settings)
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        async with owner.transaction():
+            await disable_cow_schema(AsyncpgExecutor(owner), schema="content")
     async with owner_connection(
         database.settings.resolved_owner_dsn(), expected_database=database.name
     ) as owner:

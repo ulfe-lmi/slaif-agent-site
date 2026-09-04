@@ -28,7 +28,9 @@ from ..browser_worker_client import (
 from ..config import ConfigurationError, ServiceSettings
 from ..control_api.route_policy import (
     RouteMutationClass,
+    conditional_scope_metadata,
     route_policies_for,
+    validate_conditional_scope_openapi_document,
     validate_route_policy_coverage,
 )
 from ..errors import ErrorEnvelope
@@ -163,13 +165,7 @@ def build_public_agent_openapi_document(app: FastAPI) -> dict[str, object]:
             route = live_routes[(method.upper(), path)]
             scopes = list(policy.required_scopes)
             operation["x-slaif-required-scopes"] = scopes
-            operation["x-slaif-conditional-scopes"] = [
-                {
-                    "when_fields": list(condition.when_fields),
-                    "required_scopes": list(condition.required_scopes),
-                }
-                for condition in policy.conditional_scopes
-            ]
+            operation["x-slaif-conditional-scopes"] = conditional_scope_metadata(policy)
             operation["x-slaif-mutation"] = (
                 policy.mutation_class is RouteMutationClass.MUTATION
             )
@@ -258,6 +254,9 @@ def build_public_agent_openapi_document(app: FastAPI) -> dict[str, object]:
                         }
                     },
                 }
+    validate_conditional_scope_openapi_document(
+        document, route_policies_for(ProcessKind.AGENT_API)
+    )
     # Only schemas reachable from the public Agent paths are exposed. This
     # removes health/internal models from the product contract.
     referenced: set[str] = set()

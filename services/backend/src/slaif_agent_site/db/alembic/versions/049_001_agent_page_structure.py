@@ -390,6 +390,9 @@ def _page_functions_sql() -> str:
                 IF NOT FOUND OR current_page.locale IS DISTINCT FROM page_locale THEN
                     RAISE EXCEPTION 'PAGE_PARENT_INVALID' USING ERRCODE='P0003';
                 END IF;
+                IF current_page.route_template = '{slug}' THEN
+                    RAISE EXCEPTION 'PAGE_DYNAMIC_PARENT' USING ERRCODE='P0003';
+                END IF;
             END LOOP;
             IF page_locale IS DISTINCT FROM default_locale THEN
                 route := '/' || page_locale;
@@ -471,6 +474,13 @@ def _page_functions_sql() -> str:
             ) THEN
                 RAISE EXCEPTION 'LOCALE_INVALID' USING ERRCODE='P0003';
             END IF;
+            IF current_page.route_template = '{slug}' AND EXISTS (
+                SELECT 1 FROM content.page child
+                WHERE child.site_id=p_site_id AND child.parent_id=p_page_id
+                  AND child.deleted_at IS NULL
+            ) THEN
+                RAISE EXCEPTION 'PAGE_DYNAMIC_PARENT' USING ERRCODE='P0003';
+            END IF;
 
             cursor_id := p_page_id;
             LOOP
@@ -487,6 +497,9 @@ def _page_functions_sql() -> str:
                   AND p.deleted_at IS NULL;
                 IF NOT FOUND OR parent_page.locale IS DISTINCT FROM current_page.locale THEN
                     RAISE EXCEPTION 'PAGE_PARENT_INVALID' USING ERRCODE='P0003';
+                END IF;
+                IF parent_page.route_template = '{slug}' AND parent_page.id <> p_page_id THEN
+                    RAISE EXCEPTION 'PAGE_DYNAMIC_PARENT' USING ERRCODE='P0003';
                 END IF;
                 IF parent_page.parent_id IS NULL THEN
                     root_id := parent_page.id;
@@ -580,6 +593,12 @@ def _page_functions_sql() -> str:
                 WHERE p.id=cursor_id AND p.site_id=p_site_id
                   AND p.deleted_at IS NULL;
                 IF NOT FOUND OR ancestor.locale IS DISTINCT FROM page_row.locale THEN RETURN false; END IF;
+                IF ancestor.route_template = '{slug}' AND ancestor.id <> p_page_id THEN RETURN false; END IF;
+                IF ancestor.route_template = '{slug}' AND EXISTS (
+                    SELECT 1 FROM content.page child
+                    WHERE child.site_id=p_site_id AND child.parent_id=ancestor.id
+                      AND child.deleted_at IS NULL
+                ) THEN RETURN false; END IF;
                 IF ancestor.parent_id IS NULL THEN root_id := ancestor.id; EXIT; END IF;
                 cursor_id := ancestor.parent_id;
             END LOOP;
@@ -862,8 +881,9 @@ def upgrade() -> None:
     op.execute("ALTER TABLE content.page ADD COLUMN deleted_at timestamptz")
     op.execute("ALTER TABLE content.page DROP CONSTRAINT uq_page_site_locale_slug")
     op.execute(
-        "CREATE UNIQUE INDEX uq_page_site_locale_slug_active "
-        "ON content.page(site_id,locale,slug) WHERE deleted_at IS NULL"
+        "CREATE UNIQUE INDEX uq_page_site_locale_parent_slug_active "
+        "ON content.page(site_id,locale,coalesce(parent_id,'00000000-0000-0000-0000-000000000000'::uuid),slug) "
+        "WHERE deleted_at IS NULL"
     )
     op.execute(
         "ALTER TABLE content.page ADD CONSTRAINT page_route_template_bounded "
@@ -1003,6 +1023,28 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    # Direct Alembic invocation must use the bootstrap's public COW disable
+    # path. Detect a view generically without naming foundation base/change
+    # relations, and fail before any function, data, or privilege mutation.
+    op.execute(
+        """
+        DO $$
+        DECLARE relation_kind "char";
+        BEGIN
+            SELECT c.relkind INTO relation_kind
+            FROM pg_catalog.pg_class c
+            JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
+            WHERE n.nspname='content' AND c.relname='page';
+            IF relation_kind = 'v' THEN
+                RAISE EXCEPTION '049_DOWNGRADE_REQUIRES_PUBLIC_COW_DISABLE'
+                    USING ERRCODE='P0003',
+                    HINT='Run the product bootstrap downgrade so agentcow.postgres.disable_cow_schema disables COW before Alembic.';
+            END IF;
+        END;
+        $$
+        """
+    )
+
     # 048 has no representation for route templates, product tombstones, or
     # the PAGE_* semantic audit actions. Refuse before any teardown so a
     # data-bearing downgrade is atomic and never discards review history.
@@ -1025,35 +1067,6 @@ def downgrade() -> None:
         """
     )
 
-    # Direct migration tests and operators may invoke Alembic without the
-    # bootstrap wrapper.  Remove the page overlay first so the base-table
-    # column change below is valid; reconcile recreates the COW view later.
-    op.execute(
-        """
-        DO $$
-        BEGIN
-            IF EXISTS (
-                SELECT 1 FROM pg_class c
-                JOIN pg_namespace n ON n.oid=c.relnamespace
-                WHERE n.nspname='content' AND c.relname='page' AND c.relkind='v'
-            ) THEN
-                PERFORM agentcow.teardown_cow('content','page');
-            END IF;
-            IF EXISTS (
-                SELECT 1 FROM pg_class c
-                JOIN pg_namespace n ON n.oid=c.relnamespace
-                WHERE n.nspname='content' AND c.relname='page_base' AND c.relkind='r'
-            ) AND NOT EXISTS (
-                SELECT 1 FROM pg_class c
-                JOIN pg_namespace n ON n.oid=c.relnamespace
-                WHERE n.nspname='content' AND c.relname='page'
-            ) THEN
-                ALTER TABLE content.page_base RENAME TO page;
-            END IF;
-        END;
-        $$
-        """
-    )
     for function in (
         "content.slaif_agent_page_restore(uuid,uuid,integer)",
         "content.slaif_agent_page_delete(uuid,uuid,integer)",
@@ -1109,7 +1122,7 @@ def downgrade() -> None:
     op.execute(
         "ALTER TABLE content.page DROP CONSTRAINT IF EXISTS page_route_template_bounded"
     )
-    op.execute("DROP INDEX IF EXISTS content.uq_page_site_locale_slug_active")
+    op.execute("DROP INDEX IF EXISTS content.uq_page_site_locale_parent_slug_active")
     op.execute("ALTER TABLE content.page DROP COLUMN IF EXISTS deleted_at")
     op.execute("ALTER TABLE content.page DROP COLUMN IF EXISTS route_template")
     op.execute(

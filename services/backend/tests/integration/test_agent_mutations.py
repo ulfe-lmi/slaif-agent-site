@@ -22,6 +22,8 @@ from slaif_agent_site.agent_api.config import AgentDatabaseMode, AgentDatabaseSe
 from slaif_agent_site.agent_state.capability import generate_capability_token
 from slaif_agent_site.agent_state.foundation import (
     asyncpg_cow_reviewer,
+    disable_cow_schema,
+    enable_cow_schema,
 )
 from slaif_agent_site.agent_state.foundation import (
     asyncpg_cow_session as _asyncpg_cow_session,
@@ -41,6 +43,7 @@ from slaif_agent_site.content_model.models import (
     UpdateFieldDefinitionRequest,
 )
 from slaif_agent_site.db.connections import owner_connection
+from slaif_agent_site.db.executor import AsyncpgExecutor
 from slaif_agent_site.db.migrations import run_migration
 
 _TEST_CAPABILITY_BY_WORKSPACE: dict[UUID, UUID] = {}
@@ -200,6 +203,22 @@ async def _seed(database: AgentSiteDatabase) -> tuple[str, dict[str, UUID]]:
         "type_b_id": type_b_id,
         "page_b_id": page_b_id,
     }
+
+
+async def _disable_content_cow(database: AgentSiteDatabase) -> None:
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        async with owner.transaction():
+            await disable_cow_schema(AsyncpgExecutor(owner), schema="content")
+
+
+async def _enable_content_cow(database: AgentSiteDatabase) -> None:
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        async with owner.transaction():
+            await enable_cow_schema(AsyncpgExecutor(owner), schema="content")
 
 
 async def _capability_with_scopes(
@@ -522,7 +541,7 @@ async def test_agent_049_downgrade_rejects_page_data_atomically(
             "FROM control.alembic_version CROSS JOIN content.page_base WHERE id=$1",
             page_id,
         )
-    with pytest.raises(Exception, match="049_DOWNGRADE_PAGE_DATA_PRESENT"):
+    with pytest.raises(Exception, match="049_DOWNGRADE_REQUIRES_PUBLIC_COW_DISABLE"):
         await run_migration(
             database.settings.resolved_owner_dsn(),
             expected_database=database.name,
@@ -538,6 +557,24 @@ async def test_agent_049_downgrade_rejects_page_data_atomically(
             page_id,
         )
     assert tuple(after) == tuple(before)
+
+    await _disable_content_cow(database)
+    with pytest.raises(Exception, match="049_DOWNGRADE_PAGE_DATA_PRESENT"):
+        await run_migration(
+            database.settings.resolved_owner_dsn(),
+            expected_database=database.name,
+            operation="downgrade",
+            revision="048_001",
+        )
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        after_public_disable = await owner.fetchrow(
+            "SELECT version_num::text, route_template, deleted_at "
+            "FROM control.alembic_version CROSS JOIN content.page WHERE id=$1",
+            page_id,
+        )
+    assert tuple(after_public_disable) == tuple(before)
 
 
 @pytest.mark.asyncio
@@ -557,6 +594,7 @@ async def test_agent_049_plain_page_data_downgrade_and_upgrade_preserves_data(
             page_id,
             seeded["site_id"],
         )
+    await _disable_content_cow(database)
     await run_migration(
         database.settings.resolved_owner_dsn(),
         expected_database=database.name,
@@ -1235,6 +1273,343 @@ async def test_agent_page_patch_route_scope_is_conditional(
                         )
                         == 0
                     )
+    finally:
+        await agent_pool.close()
+
+
+@pytest.mark.asyncio
+async def test_agent_page_sibling_routes_and_dynamic_leaf_contract(
+    agent_site_database: AgentSiteDatabase,
+) -> None:
+    database = agent_site_database
+    _token, seeded = await _seed(database)
+    scopes = [
+        "site:read",
+        "page:create",
+        "page:read",
+        "page:write",
+        "page:move",
+        "page:delete",
+        "page:restore",
+        "route:write",
+    ]
+    token, workspace_id = await _workspace_capability(
+        database, seeded, scopes, "Agent Page Sibling and Dynamic Workspace"
+    )
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        await owner.execute(
+            "UPDATE control.capability SET request_quota=100, mutation_quota=100, "
+            "delete_quota=100 "
+            "WHERE workspace_id=$1",
+            workspace_id,
+        )
+    app = create_agent_app(
+        settings=ServiceSettings.for_test(),
+        database_settings=_agent_settings(database),
+    )
+    agent_pool = await database.role_pool("slaif_agent_runtime")
+    reviewer_pool = await database.role_pool("slaif_reviewer")
+    try:
+        async with app.router.lifespan_context(app):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://agent.test"
+            ) as client:
+                headers = {"Authorization": f"Bearer {token}"}
+
+                async def create(
+                    key: str,
+                    slug: str,
+                    *,
+                    locale: str = "en-US",
+                    parent_id: str | None = None,
+                    route_template: str | None = None,
+                ) -> httpx.Response:
+                    body: dict[str, object] = {
+                        "slug": slug,
+                        "title": slug.title(),
+                        "locale": locale,
+                    }
+                    if parent_id is not None:
+                        body["parent_id"] = parent_id
+                    if route_template is not None:
+                        body["route_template"] = route_template
+                    return await client.post(
+                        "/api/agent/v1/pages",
+                        headers={**headers, "Idempotency-Key": key},
+                        json=body,
+                    )
+
+                research = await create("sibling-research", "research")
+                teaching = await create("sibling-teaching", "teaching")
+                assert research.status_code == teaching.status_code == 201
+                research_id = research.json()["record"]["id"]
+                teaching_id = teaching.json()["record"]["id"]
+                research_news = await create(
+                    "sibling-research-news", "news", parent_id=research_id
+                )
+                teaching_news = await create(
+                    "sibling-teaching-news", "news", parent_id=teaching_id
+                )
+                assert research_news.status_code == teaching_news.status_code == 201
+                assert (
+                    research_news.json()["record"]["effective_route"]
+                    == "/research/news"
+                )
+                assert (
+                    teaching_news.json()["record"]["effective_route"]
+                    == "/teaching/news"
+                )
+
+                async with owner_connection(
+                    database.settings.resolved_owner_dsn(),
+                    expected_database=database.name,
+                ) as owner:
+                    before = await owner.fetchrow(
+                        "SELECT mutation_used,delete_used, "
+                        "(SELECT count(*) FROM audit.agent_mutation "
+                        "WHERE workspace_id=$1), "
+                        "(SELECT count(*) FROM control.agent_idempotency "
+                        "WHERE workspace_id=$1) "
+                        "FROM control.capability WHERE workspace_id=$1 "
+                        "ORDER BY created_at DESC LIMIT 1",
+                        workspace_id,
+                    )
+                async with asyncpg_cow_reviewer(reviewer_pool) as reviewer:
+                    operations_before_duplicate = tuple(
+                        sorted(
+                            await reviewer.operations(workspace_id, schema="content")
+                        )
+                    )
+                duplicate = await create(
+                    "sibling-duplicate", "news", parent_id=research_id
+                )
+                assert duplicate.status_code == 409, duplicate.text
+                async with owner_connection(
+                    database.settings.resolved_owner_dsn(),
+                    expected_database=database.name,
+                ) as owner:
+                    after = await owner.fetchrow(
+                        "SELECT mutation_used,delete_used, "
+                        "(SELECT count(*) FROM audit.agent_mutation "
+                        "WHERE workspace_id=$1), "
+                        "(SELECT count(*) FROM control.agent_idempotency "
+                        "WHERE workspace_id=$1) "
+                        "FROM control.capability WHERE workspace_id=$1 "
+                        "ORDER BY created_at DESC LIMIT 1",
+                        workspace_id,
+                    )
+                assert tuple(after) == tuple(before)
+                async with asyncpg_cow_reviewer(reviewer_pool) as reviewer:
+                    assert (
+                        tuple(
+                            sorted(
+                                await reviewer.operations(
+                                    workspace_id, schema="content"
+                                )
+                            )
+                        )
+                        == operations_before_duplicate
+                    )
+                assert (
+                    await client.get("/api/agent/v1/pages", headers=headers)
+                ).status_code == 200
+                async with owner_connection(
+                    database.settings.resolved_owner_dsn(),
+                    expected_database=database.name,
+                ) as owner:
+                    assert (
+                        await owner.fetchval(
+                            "SELECT count(*) FROM control.agent_idempotency "
+                            "WHERE workspace_id=$1 "
+                            "AND idempotency_key='sibling-duplicate'",
+                            workspace_id,
+                        )
+                        == 0
+                    )
+
+                cross_locale = await create(
+                    "sibling-cross-locale", "research", locale="en"
+                )
+                assert cross_locale.status_code == 201, cross_locale.text
+                cross_site = await create("sibling-cross-site", "other-page")
+                assert cross_site.status_code == 201, cross_site.text
+
+                branch_root = await create("dynamic-branch-root", "branch-root")
+                assert branch_root.status_code == 201, branch_root.text
+                branch_root_id = branch_root.json()["record"]["id"]
+                branch = await create(
+                    "dynamic-branch", "branch", parent_id=branch_root_id
+                )
+                assert branch.status_code == 201, branch.text
+                branch_id = branch.json()["record"]["id"]
+                leaf = await create("dynamic-leaf", "leaf", parent_id=branch_id)
+                assert leaf.status_code == 201, leaf.text
+                leaf_id = leaf.json()["record"]["id"]
+                branch_dynamic = await client.patch(
+                    f"/api/agent/v1/pages/{branch_id}",
+                    headers={**headers, "Idempotency-Key": "dynamic-branch-template"},
+                    json={
+                        "route_template": "{slug}",
+                        "expected_row_version": 1,
+                    },
+                )
+                assert branch_dynamic.status_code == 422, branch_dynamic.text
+                leaf_delete = await client.request(
+                    "DELETE",
+                    f"/api/agent/v1/pages/{leaf_id}",
+                    headers={**headers, "Idempotency-Key": "dynamic-leaf-delete"},
+                    json={"expected_row_version": 1},
+                )
+                assert leaf_delete.status_code == 200, leaf_delete.text
+                branch_dynamic = await client.patch(
+                    f"/api/agent/v1/pages/{branch_id}",
+                    headers={
+                        **headers,
+                        "Idempotency-Key": "dynamic-branch-template-ok",
+                    },
+                    json={
+                        "route_template": "{slug}",
+                        "expected_row_version": 1,
+                    },
+                )
+                assert branch_dynamic.status_code == 200, branch_dynamic.text
+                assert (
+                    branch_dynamic.json()["record"]["effective_route"]
+                    == "/branch-root/{slug}"
+                )
+                restore_leaf = await client.post(
+                    f"/api/agent/v1/pages/{leaf_id}:restore",
+                    headers={**headers, "Idempotency-Key": "dynamic-leaf-restore"},
+                    json={"expected_row_version": 2},
+                )
+                assert restore_leaf.status_code == 422, restore_leaf.text
+                assert (
+                    await client.get(f"/api/agent/v1/pages/{leaf_id}", headers=headers)
+                ).status_code == 404
+
+                detail = await create("dynamic-root", "detail")
+                assert detail.status_code == 201, detail.text
+                detail_id = detail.json()["record"]["id"]
+                dynamic = await create(
+                    "dynamic-parent",
+                    "entry",
+                    parent_id=detail_id,
+                    route_template="{slug}",
+                )
+                assert dynamic.status_code == 201, dynamic.text
+                dynamic_id = dynamic.json()["record"]["id"]
+                assert dynamic.json()["record"]["effective_route"] == "/detail/{slug}"
+                dynamic_child = await create(
+                    "dynamic-child", "child", parent_id=dynamic_id
+                )
+                assert dynamic_child.status_code == 422, dynamic_child.text
+    finally:
+        await agent_pool.close()
+        await reviewer_pool.close()
+
+
+@pytest.mark.asyncio
+async def test_agent_page_dynamic_parent_race_keeps_valid_leaf_or_child_tree(
+    agent_site_database: AgentSiteDatabase,
+) -> None:
+    database = agent_site_database
+    _token, seeded = await _seed(database)
+    token, workspace_id = await _workspace_capability(
+        database,
+        seeded,
+        ["site:read", "page:create", "page:read", "page:write", "route:write"],
+        "Agent Page Dynamic Parent Race",
+    )
+    app = create_agent_app(
+        settings=ServiceSettings.for_test(),
+        database_settings=_agent_settings(database),
+    )
+    agent_pool = await database.role_pool("slaif_agent_runtime")
+    try:
+        async with app.router.lifespan_context(app):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://agent.test"
+            ) as client:
+                headers = {"Authorization": f"Bearer {token}"}
+                parent = await client.post(
+                    "/api/agent/v1/pages",
+                    headers={**headers, "Idempotency-Key": "dynamic-race-parent"},
+                    json={
+                        "slug": "race-detail",
+                        "title": "Race detail",
+                        "locale": "en-US",
+                    },
+                )
+                assert parent.status_code == 201, parent.text
+                parent_id = parent.json()["record"]["id"]
+                async with owner_connection(
+                    database.settings.resolved_owner_dsn(),
+                    expected_database=database.name,
+                ) as blocker:
+                    async with blocker.transaction():
+                        lock_key = await blocker.fetchval(
+                            "SELECT hashtextextended($1,994)",
+                            f"{workspace_id}:{seeded['site_id']}:page-structure",
+                        )
+                        await blocker.execute(
+                            "SELECT pg_advisory_xact_lock($1::bigint)", lock_key
+                        )
+                        dynamic_task = asyncio.create_task(
+                            client.patch(
+                                f"/api/agent/v1/pages/{parent_id}",
+                                headers={
+                                    **headers,
+                                    "Idempotency-Key": "dynamic-race-template",
+                                },
+                                json={
+                                    "route_template": "{slug}",
+                                    "expected_row_version": 1,
+                                },
+                            )
+                        )
+                        child_task = asyncio.create_task(
+                            client.post(
+                                "/api/agent/v1/pages",
+                                headers={
+                                    **headers,
+                                    "Idempotency-Key": "dynamic-race-child",
+                                },
+                                json={
+                                    "slug": "race-child",
+                                    "title": "Race child",
+                                    "locale": "en-US",
+                                    "parent_id": parent_id,
+                                },
+                            )
+                        )
+                        await _wait_for_page_structure_waiters(blocker, 2)
+                    dynamic_result, child_result = await asyncio.gather(
+                        dynamic_task, child_task
+                    )
+                assert sorted(
+                    (dynamic_result.status_code, child_result.status_code)
+                ) == [
+                    200,
+                    422,
+                ]
+                final_parent = await client.get(
+                    f"/api/agent/v1/pages/{parent_id}", headers=headers
+                )
+                assert final_parent.status_code == 200, final_parent.text
+                if dynamic_result.status_code == 200:
+                    assert final_parent.json()["route_template"] == "{slug}"
+                    assert child_result.status_code == 422
+                else:
+                    assert final_parent.json()["route_template"] is None
+                    child_id = child_result.json()["record"]["id"]
+                    assert child_result.json()["record"]["parent_id"] == parent_id
+                    assert (
+                        await client.get(
+                            f"/api/agent/v1/pages/{child_id}", headers=headers
+                        )
+                    ).status_code == 200
     finally:
         await agent_pool.close()
 
@@ -2291,6 +2666,7 @@ async def test_agent_046_047_migration_round_trip_preserves_contract_and_state(
         database_settings=_agent_settings(database),
     )
     agent_pool = await database.role_pool("slaif_agent_runtime")
+    reviewer_pool = await database.role_pool("slaif_reviewer")
     try:
         async with app.router.lifespan_context(app):
             async with httpx.AsyncClient(
@@ -2326,6 +2702,20 @@ async def test_agent_046_047_migration_round_trip_preserves_contract_and_state(
                 )
                 assert created_item.status_code == 201, created_item.text
                 item_id = UUID(created_item.json()["record"]["id"])
+
+        with pytest.raises(
+            Exception, match="049_DOWNGRADE_REQUIRES_PUBLIC_COW_DISABLE"
+        ):
+            await run_migration(
+                database.settings.resolved_owner_dsn(),
+                expected_database=database.name,
+                operation="downgrade",
+                revision="046_001",
+            )
+        async with asyncpg_cow_reviewer(reviewer_pool) as reviewer:
+            promoted = await reviewer.commit_session(workspace_id, schema="content")
+            assert not promoted.has_pending_operations
+        await _disable_content_cow(database)
 
         await run_migration(
             database.settings.resolved_owner_dsn(),
@@ -2369,11 +2759,11 @@ async def test_agent_046_047_migration_round_trip_preserves_contract_and_state(
                 "AND conname='agent_mutation_semantic_shape'"
             )
             assert "CONTENT_ITEM_TRANSLATION_CREATED" not in constraint
-        async with asyncpg_cow_session(
-            agent_pool, session_id=workspace_id, operation_id=uuid4()
-        ) as cow:
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
             assert (
-                await cow.native.fetchval(
+                await owner.fetchval(
                     "SELECT count(*) FROM content.content_item WHERE id=$1", item_id
                 )
                 == 1
@@ -2423,6 +2813,7 @@ async def test_agent_046_047_migration_round_trip_preserves_contract_and_state(
                 == 1
             )
     finally:
+        await reviewer_pool.close()
         await agent_pool.close()
 
 
@@ -2469,13 +2860,23 @@ async def test_agent_048_data_bearing_round_trip_preserves_relations_views_and_a
     )
     headers = {"Authorization": f"Bearer {token}"}
 
-    async def cow_rows() -> tuple[tuple[Any, ...], tuple[Any, ...]]:
-        async with asyncpg_cow_session(
-            agent_pool, session_id=workspace_id, operation_id=uuid4()
-        ) as cow:
+    async def cow_rows(
+        *, canonical: bool = False
+    ) -> tuple[tuple[Any, ...], tuple[Any, ...]]:
+        if canonical:
+            connection_context = owner_connection(
+                database.settings.resolved_owner_dsn(),
+                expected_database=database.name,
+            )
+        else:
+            connection_context = asyncpg_cow_session(
+                agent_pool, session_id=workspace_id, operation_id=uuid4()
+            )
+        async with connection_context as connection_or_cow:
+            connection = getattr(connection_or_cow, "native", connection_or_cow)
             relations = tuple(
                 tuple(row)
-                for row in await cow.native.fetch(
+                for row in await connection.fetch(
                     "SELECT id,site_id,source_item_id,field_definition_id,"
                     "target_item_id,position,metadata,row_version "
                     "FROM content.item_relation ORDER BY id"
@@ -2483,7 +2884,7 @@ async def test_agent_048_data_bearing_round_trip_preserves_relations_views_and_a
             )
             views = tuple(
                 tuple(row)
-                for row in await cow.native.fetch(
+                for row in await connection.fetch(
                     "SELECT id,site_id,type_id,key,filter_spec,sort_spec,"
                     "projection_spec,pagination_spec,definition_version,row_version "
                     "FROM content.collection_view ORDER BY id"
@@ -2598,9 +2999,34 @@ async def test_agent_048_data_bearing_round_trip_preserves_relations_views_and_a
         content_before = await cow_rows()
         durable_before = await durable_rows()
         async with asyncpg_cow_reviewer(reviewer_pool) as reviewer:
+            pending_operations = tuple(
+                sorted(await reviewer.operations(workspace_id, schema="content"))
+            )
+        with pytest.raises(
+            Exception, match="049_DOWNGRADE_REQUIRES_PUBLIC_COW_DISABLE"
+        ):
+            await run_migration(
+                database.settings.resolved_owner_dsn(),
+                expected_database=database.name,
+                operation="downgrade",
+                revision="047_001",
+            )
+        assert await cow_rows() == content_before
+        assert await durable_rows() == durable_before
+        async with asyncpg_cow_reviewer(reviewer_pool) as reviewer:
+            assert (
+                tuple(sorted(await reviewer.operations(workspace_id, schema="content")))
+                == pending_operations
+            )
+            promoted = await reviewer.commit_session(workspace_id, schema="content")
+            assert not promoted.has_pending_operations
+        content_before = await cow_rows()
+        durable_before = await durable_rows()
+        async with asyncpg_cow_reviewer(reviewer_pool) as reviewer:
             operations_before = tuple(
                 sorted(await reviewer.operations(workspace_id, schema="content"))
             )
+        await _disable_content_cow(database)
 
         await run_migration(
             database.settings.resolved_owner_dsn(),
@@ -2641,7 +3067,7 @@ async def test_agent_048_data_bearing_round_trip_preserves_relations_views_and_a
             assert "COLLECTION_VIEW_CREATED" in constraint
             assert "CONTENT_ITEM_TRANSLATION_CREATED" in constraint
 
-        assert await cow_rows() == content_before
+        assert await cow_rows(canonical=True) == content_before
         assert await durable_rows() == durable_before
         async with asyncpg_cow_reviewer(reviewer_pool) as reviewer:
             assert (
@@ -6040,6 +6466,11 @@ async def test_content_type_create_resource_limits_are_db_serialized(
                 "max_content_types": 0,
             },
         )
+        for workspace in (seeded["workspace_id"], race_workspace, http_workspace):
+            async with asyncpg_cow_reviewer(reviewer_pool) as reviewer:
+                discarded = await reviewer.discard_session(workspace, schema="content")
+                assert not discarded.has_pending_operations
+        await _disable_content_cow(database)
         await run_migration(
             database.settings.resolved_owner_dsn(),
             expected_database=database.name,
@@ -6113,6 +6544,7 @@ async def test_content_type_create_resource_limits_are_db_serialized(
                 "SELECT has_function_privilege('public', $1, 'EXECUTE')",
                 field_signature,
             )
+        await _enable_content_cow(database)
         downgrade_created = await create_type(
             agent_pool, roundtrip_workspace, "downgrade-create"
         )
@@ -8642,6 +9074,7 @@ async def test_semantic_audit_contract_is_strict_and_reversible(
             capability_id,
         )
     agent_pool = await database.role_pool("slaif_agent_runtime")
+    reviewer_pool = await database.role_pool("slaif_reviewer")
 
     async def audit_row(operation_id: UUID) -> Any:
         async with owner_connection(
@@ -9060,6 +9493,20 @@ async def test_semantic_audit_contract_is_strict_and_reversible(
                 await connection.execute("DELETE FROM audit.agent_mutation")
         assert await owner_counts() == counts_before_direct
 
+        with pytest.raises(
+            Exception, match="049_DOWNGRADE_REQUIRES_PUBLIC_COW_DISABLE"
+        ):
+            await run_migration(
+                database.settings.resolved_owner_dsn(),
+                expected_database=database.name,
+                operation="downgrade",
+                revision="044_001",
+            )
+        async with asyncpg_cow_reviewer(reviewer_pool) as reviewer:
+            promoted = await reviewer.commit_session(workspace_id, schema="content")
+            assert not promoted.has_pending_operations
+        await _disable_content_cow(database)
+
         await run_migration(
             database.settings.resolved_owner_dsn(),
             expected_database=database.name,
@@ -9162,6 +9609,7 @@ async def test_semantic_audit_contract_is_strict_and_reversible(
                     signature,
                 )
     finally:
+        await reviewer_pool.close()
         await agent_pool.close()
 
 

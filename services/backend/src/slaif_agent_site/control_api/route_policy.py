@@ -13,7 +13,19 @@ from typing import Any, Final
 from fastapi.routing import APIRoute
 
 from slaif_agent_site.authority import ProcessKind
-from slaif_agent_site.human_authorization.catalog import PERMISSION_BY_KEY
+from slaif_agent_site.human_authorization.catalog import (
+    L1_SCOPES,
+    L2_SCOPES,
+    L3_SCOPES,
+    L4_SCOPES,
+    PERMISSION_BY_KEY,
+    READ_SCOPES,
+)
+
+_AGENT_DELEGATABLE_SCOPES = frozenset(
+    READ_SCOPES | L1_SCOPES | L2_SCOPES | L3_SCOPES | L4_SCOPES
+)
+_CONDITIONAL_SCOPE_EXTENSION = "x-slaif-conditional-scopes"
 
 
 class RouteMutationClass(StrEnum):
@@ -54,10 +66,20 @@ class RouteConditionalScope:
     def __post_init__(self) -> None:
         if not self.when_fields or not self.required_scopes:
             raise ValueError("conditional scope declaration cannot be empty")
+        if any(
+            field != field.strip() or not field.isidentifier()
+            for field in self.when_fields
+        ):
+            raise ValueError("conditional scope field is not normalized")
         if len(set(self.when_fields)) != len(self.when_fields):
             raise ValueError("conditional scope repeats a request field")
         if len(set(self.required_scopes)) != len(self.required_scopes):
             raise ValueError("conditional scope repeats a scope")
+        if any(
+            scope != scope.strip() or scope not in _AGENT_DELEGATABLE_SCOPES
+            for scope in self.required_scopes
+        ):
+            raise ValueError("conditional scope names an invalid Agent scope")
 
 
 @dataclass(frozen=True, slots=True)
@@ -106,6 +128,28 @@ class RoutePolicy:
             }
         ):
             raise ValueError("route policy repeats a conditional scope")
+        if self.conditional_scopes and (
+            self.authority_kind is not RouteAuthorityKind.AGENT_CAPABILITY
+            or self.mutation_class is not RouteMutationClass.MUTATION
+        ):
+            raise ValueError("conditional scope requires an Agent mutation")
+        conditional_fields = [
+            field
+            for condition in self.conditional_scopes
+            for field in condition.when_fields
+        ]
+        if len(conditional_fields) != len(set(conditional_fields)):
+            raise ValueError("conditional scopes overlap request fields")
+        all_scopes = set(self.required_scopes) | {
+            scope
+            for condition in self.conditional_scopes
+            for scope in condition.required_scopes
+        }
+        if self.authority_kind is RouteAuthorityKind.AGENT_CAPABILITY:
+            if not all_scopes <= _AGENT_DELEGATABLE_SCOPES:
+                raise ValueError("route policy names an invalid Agent scope")
+        elif all_scopes:
+            raise ValueError("non-Agent route policy names capability scopes")
         if not set(self.required_permissions) <= set(PERMISSION_BY_KEY):
             raise ValueError("route policy names an unknown permission")
         if any(
@@ -1244,6 +1288,107 @@ def conditional_scopes_for_fields(
     return tuple(result)
 
 
+def _schema_fields(schema: Any, definitions: dict[str, Any] | None = None) -> set[str]:
+    if not isinstance(schema, dict):
+        return set()
+    reference = schema.get("$ref")
+    if isinstance(reference, str) and definitions:
+        name = reference.removeprefix("#/$defs/")
+        if name in definitions:
+            return _schema_fields(definitions[name], definitions)
+    properties = schema.get("properties")
+    fields = set(properties) if isinstance(properties, dict) else set()
+    for key in ("allOf", "anyOf", "oneOf"):
+        alternatives = schema.get(key)
+        if isinstance(alternatives, list):
+            for alternative in alternatives:
+                fields.update(_schema_fields(alternative, definitions))
+    return fields
+
+
+def _request_body_fields(route: APIRoute) -> set[str]:
+    body_field = getattr(route, "body_field", None)
+    adapter = getattr(body_field, "_type_adapter", None)
+    if adapter is None:
+        body_params = getattr(getattr(route, "dependant", None), "body_params", ())
+        adapter = (
+            getattr(body_params[0], "_type_adapter", None) if body_params else None
+        )
+    if adapter is None:
+        return set()
+    schema = adapter.json_schema()
+    definitions = schema.get("$defs", {}) if isinstance(schema, dict) else {}
+    return _schema_fields(
+        schema, definitions if isinstance(definitions, dict) else None
+    )
+
+
+def validate_conditional_scope_schema(route: APIRoute, policy: RoutePolicy) -> None:
+    """Prove conditional trigger fields belong to the typed request body."""
+
+    if not policy.conditional_scopes:
+        return
+    if policy.authority_kind is not RouteAuthorityKind.AGENT_CAPABILITY:
+        raise RuntimeError("conditional scope is not an Agent capability policy")
+    if policy.mutation_class is not RouteMutationClass.MUTATION:
+        raise RuntimeError("conditional scope is not a mutation policy")
+    body_fields = _request_body_fields(route)
+    if not body_fields:
+        raise RuntimeError("conditional scope requires a typed request body")
+    for condition in policy.conditional_scopes:
+        missing = set(condition.when_fields) - body_fields
+        if missing:
+            raise RuntimeError(
+                "conditional scope names a field absent from the request schema: "
+                + ",".join(sorted(missing))
+            )
+
+
+def conditional_scope_metadata(policy: RoutePolicy) -> list[dict[str, list[str]]]:
+    return [
+        {
+            "when_fields": list(condition.when_fields),
+            "required_scopes": list(condition.required_scopes),
+        }
+        for condition in policy.conditional_scopes
+    ]
+
+
+def validate_conditional_scope_openapi_document(
+    document: dict[str, Any], policies: tuple[RoutePolicy, ...]
+) -> None:
+    """Compare every published conditional extension in both directions."""
+
+    paths = document.get("paths")
+    if not isinstance(paths, dict):
+        raise RuntimeError("Agent OpenAPI paths are malformed")
+    expected = {
+        (policy.method, policy.path_template): policy
+        for policy in policies
+        if policy.process is ProcessKind.AGENT_API
+        and policy.path_template.startswith("/api/agent/v1/")
+    }
+    seen: set[tuple[str, str]] = set()
+    for path, operations in paths.items():
+        if not isinstance(operations, dict) or not path.startswith("/api/agent/v1/"):
+            continue
+        for method, operation in operations.items():
+            if method.upper() not in {"GET", "POST", "PATCH", "DELETE"}:
+                continue
+            key = (method.upper(), path)
+            policy = expected.get(key)
+            if policy is None or not isinstance(operation, dict):
+                raise RuntimeError(
+                    "Agent OpenAPI conditional policy inventory mismatch"
+                )
+            actual = operation.get(_CONDITIONAL_SCOPE_EXTENSION)
+            if actual != conditional_scope_metadata(policy):
+                raise RuntimeError("Agent OpenAPI conditional scope metadata mismatch")
+            seen.add(key)
+    if seen != set(expected):
+        raise RuntimeError("Agent OpenAPI conditional policy inventory mismatch")
+
+
 def _api_routes(routes: list[Any]) -> tuple[APIRoute, ...]:
     found: list[APIRoute] = []
     for route in routes:
@@ -1282,6 +1427,7 @@ def validate_route_policy_coverage(app: Any, process: ProcessKind) -> None:
             policy.mutation_class is not _M
         ):
             raise RuntimeError("mutating method declared as read")
+        validate_conditional_scope_schema(route, policy)
     app.state.route_policies = route_policies_for(process)
 
 
@@ -1292,7 +1438,10 @@ __all__ = [
     "RouteConditionalScope",
     "RoutePolicy",
     "RoutePolicyKind",
+    "conditional_scope_metadata",
     "route_policies_for",
     "conditional_scopes_for_fields",
+    "validate_conditional_scope_openapi_document",
+    "validate_conditional_scope_schema",
     "validate_route_policy_coverage",
 ]

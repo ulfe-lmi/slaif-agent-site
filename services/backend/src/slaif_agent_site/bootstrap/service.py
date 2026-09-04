@@ -429,6 +429,26 @@ async def upgrade(settings: BootstrapSettings) -> None:
 
 
 async def downgrade(settings: BootstrapSettings) -> None:
+    async with owner_connection(
+        settings.resolved_owner_dsn(), expected_database=settings.expected_database
+    ) as connection:
+        executor = AsyncpgExecutor(connection)
+        cow_status = await get_cow_status(executor, schema="content")
+        if cow_status["enabled"]:
+            workspace_rows = await connection.fetch(
+                "SELECT id FROM control.workspace "
+                "WHERE status NOT IN ('ACCEPTED','DISCARDED')"
+            )
+            for row in workspace_rows:
+                pending = await get_session_operations(
+                    executor, row[0], schema="content"
+                )
+                if pending:
+                    raise BootstrapStateError(
+                        "cannot downgrade while a workspace has pending COW operations"
+                    )
+            async with connection.transaction():
+                await disable_cow_schema(executor, schema="content")
     await run_migration(
         settings.resolved_owner_dsn(),
         expected_database=settings.expected_database,

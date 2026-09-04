@@ -6,8 +6,11 @@ from typing import Any, cast
 
 import httpx
 import pytest
+from fastapi import FastAPI
+from fastapi.routing import APIRoute
 from slaif_agent_site.authority import ProcessKind
 from slaif_agent_site.config import ServiceSettings
+from slaif_agent_site.content_model.page_models import UpdatePageRequest
 from slaif_agent_site.control_api.app import create_app as create_control_app
 from slaif_agent_site.control_api.route_policy import (
     ROUTE_POLICIES,
@@ -18,6 +21,8 @@ from slaif_agent_site.control_api.route_policy import (
     RoutePolicyKind,
     conditional_scopes_for_fields,
     route_policies_for,
+    validate_conditional_scope_openapi_document,
+    validate_conditional_scope_schema,
     validate_route_policy_coverage,
 )
 from slaif_agent_site.editor_api import create_app as create_editor_app
@@ -149,6 +154,76 @@ def test_agent_page_patch_conditional_route_scope_is_machine_auditable() -> None
         "/api/agent/v1/pages/{page_id}",
         {"route_template"},
     ) == ("route:write",)
+
+
+def test_conditional_scope_validation_rejects_scope_field_read_and_metadata_drift() -> (
+    None
+):
+    with pytest.raises(ValueError, match="invalid Agent scope"):
+        RouteConditionalScope(("title",), ("not-a-scope",))
+
+    app = FastAPI()
+
+    @app.patch("/api/agent/v1/synthetic")
+    async def synthetic(body: UpdatePageRequest) -> dict[str, str]:
+        return {"title": body.title or ""}
+
+    route = next(
+        route
+        for route in app.routes
+        if isinstance(route, APIRoute) and route.path.endswith("synthetic")
+    )
+    policy = RoutePolicy(
+        ProcessKind.AGENT_API,
+        "PATCH",
+        "/api/agent/v1/synthetic",
+        RouteMutationClass.MUTATION,
+        False,
+        False,
+        RouteAuthorityKind.AGENT_CAPABILITY,
+        RoutePolicyKind.AGENT_CAPABILITY,
+        required_scopes=("page:write",),
+        conditional_scopes=(RouteConditionalScope(("missing",), ("route:write",)),),
+    )
+    with pytest.raises(RuntimeError, match="absent from the request schema"):
+        validate_conditional_scope_schema(route, policy)
+
+    with pytest.raises(ValueError, match="Agent mutation"):
+        RoutePolicy(
+            ProcessKind.AGENT_API,
+            "GET",
+            "/api/agent/v1/synthetic-read",
+            RouteMutationClass.READ,
+            False,
+            False,
+            RouteAuthorityKind.AGENT_CAPABILITY,
+            RoutePolicyKind.AGENT_CAPABILITY,
+            conditional_scopes=(RouteConditionalScope(("title",), ("route:write",)),),
+        )
+
+    metadata_policy = RoutePolicy(
+        ProcessKind.AGENT_API,
+        "PATCH",
+        "/api/agent/v1/synthetic",
+        RouteMutationClass.MUTATION,
+        False,
+        False,
+        RouteAuthorityKind.AGENT_CAPABILITY,
+        RoutePolicyKind.AGENT_CAPABILITY,
+        required_scopes=("page:write",),
+        conditional_scopes=(RouteConditionalScope(("title",), ("route:write",)),),
+    )
+    with pytest.raises(RuntimeError, match="metadata mismatch"):
+        validate_conditional_scope_openapi_document(
+            {
+                "paths": {
+                    "/api/agent/v1/synthetic": {
+                        "patch": {"x-slaif-conditional-scopes": []}
+                    }
+                }
+            },
+            (metadata_policy,),
+        )
 
 
 def test_actual_control_and_editor_routes_have_exact_policy_coverage() -> None:
