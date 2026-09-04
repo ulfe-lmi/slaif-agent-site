@@ -49,7 +49,13 @@ from slaif_agent_site.content_model.models import (
     UpdateRelationRequest,
     UpdateTranslationRequest,
 )
-from slaif_agent_site.content_model.page_models import CreatePageRequest, PageRecord
+from slaif_agent_site.content_model.page_models import (
+    CreatePageRequest,
+    MovePageRequest,
+    PageRecord,
+    RestorePageRequest,
+    UpdatePageRequest,
+)
 from slaif_agent_site.content_model.query_dsl import validate_query_contract
 from slaif_agent_site.content_model.service import (
     ContentModelService,
@@ -129,8 +135,14 @@ AGENT_TRANSLATION_DELETE_SQL = (
 AGENT_TYPE_GET_SQL = "SELECT * FROM content.slaif_agent_content_type_get($1,$2)"
 AGENT_FIELD_LIST_SQL = "SELECT * FROM content.slaif_agent_field_definition_list($1,$2)"
 AGENT_PAGE_CREATE_SQL = (
-    "SELECT * FROM content.slaif_agent_page_create($1,$2,$3,$4,$5,$6)"
+    "SELECT * FROM content.slaif_agent_page_create($1,$2,$3,$4,$5,$6,$7)"
 )
+AGENT_PAGE_UPDATE_SQL = (
+    "SELECT * FROM content.slaif_agent_page_update($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)"
+)
+AGENT_PAGE_DELETE_SQL = "SELECT * FROM content.slaif_agent_page_delete($1,$2,$3)"
+AGENT_PAGE_MOVE_SQL = "SELECT * FROM content.slaif_agent_page_move($1,$2,$3,$4,$5,$6)"
+AGENT_PAGE_RESTORE_SQL = "SELECT * FROM content.slaif_agent_page_restore($1,$2,$3)"
 AGENT_COMPONENT_CREATE_SQL = (
     "SELECT * FROM content.slaif_agent_composition_node_add($1,$2,$3,$4,$5,$6,$7)"
 )
@@ -215,6 +227,11 @@ AGENT_SEMANTIC_CONTRACTS = {
     "COLLECTION_VIEW_CREATED": ("collection_view", "POST", 201, "mutation"),
     "COLLECTION_VIEW_UPDATED": ("collection_view", "PATCH", 200, "mutation"),
     "COLLECTION_VIEW_DELETED": ("collection_view", "DELETE", 200, "delete"),
+    "PAGE_CREATED": ("page", "POST", 201, "mutation"),
+    "PAGE_UPDATED": ("page", "PATCH", 200, "mutation"),
+    "PAGE_DELETED": ("page", "DELETE", 200, "delete"),
+    "PAGE_MOVED": ("page", "POST", 200, "mutation"),
+    "PAGE_RESTORED": ("page", "POST", 200, "mutation"),
 }
 AGENT_SEMANTIC_ACTIONS = frozenset(AGENT_SEMANTIC_CONTRACTS)
 
@@ -727,9 +744,74 @@ class AgentCowContentModelService(ContentModelService):
             request.status,
             request.locale,
             request.parent_id,
+            request.route_template,
         )
         if row is None:
             raise ContentModelServiceError(ContentModelServiceReason.CONFLICT)
+        return cast(PageRecord, _pg(row))
+
+    async def update_page_for_site(
+        self, site_id: UUID, page_id: UUID, request: UpdatePageRequest
+    ) -> PageRecord:
+        route_affecting = (
+            request.slug is not None
+            or request.locale is not None
+            or "route_template" in request.model_fields_set
+        )
+        row = await self._fetchrow(
+            AGENT_PAGE_UPDATE_SQL,
+            site_id,
+            page_id,
+            request.slug,
+            request.title,
+            request.status,
+            request.locale,
+            request.route_template,
+            "route_template" in request.model_fields_set,
+            request.expected_row_version,
+            route_affecting,
+        )
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
+        return cast(PageRecord, _pg(row))
+
+    async def delete_page_for_site(
+        self, site_id: UUID, page_id: UUID, expected_row_version: int
+    ) -> PageRecord:
+        row = await self._fetchrow(
+            AGENT_PAGE_DELETE_SQL, site_id, page_id, expected_row_version
+        )
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
+        return cast(PageRecord, _pg(row))
+
+    async def move_page_for_site(
+        self, site_id: UUID, page_id: UUID, request: MovePageRequest
+    ) -> PageRecord:
+        row = await self._fetchrow(
+            AGENT_PAGE_MOVE_SQL,
+            site_id,
+            page_id,
+            request.parent_id,
+            request.before_page_id,
+            request.after_page_id,
+            request.expected_row_version,
+        )
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
+        return cast(PageRecord, _pg(row))
+
+    async def restore_page_for_site(
+        self, site_id: UUID, page_id: UUID, request: RestorePageRequest
+    ) -> PageRecord:
+        row = await self._fetchrow(
+            AGENT_PAGE_RESTORE_SQL,
+            site_id,
+            page_id,
+            request.expected_row_version,
+        )
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
         return cast(PageRecord, _pg(row))
 
     async def add_component_for_site(
@@ -910,6 +992,7 @@ async def execute_agent_mutation(
                 "content_item_translation",
                 "item_relation",
                 "collection_view",
+                "page",
             }:
                 try:
                     mutation_allowed = await cow.native.fetchval(

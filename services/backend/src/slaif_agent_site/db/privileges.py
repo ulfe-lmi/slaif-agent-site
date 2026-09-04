@@ -213,6 +213,10 @@ AGENT_CONTENT_FUNCTIONS = {
         "p_site_id uuid",
     ): "uuid",
     (
+        "slaif_agent_page_get",
+        "p_site_id uuid, p_page_id uuid",
+    ): "uuid, uuid",
+    (
         "slaif_agent_composition_list",
         "p_site_id uuid, p_page_id uuid",
     ): "uuid, uuid",
@@ -336,8 +340,28 @@ AGENT_CONTENT_FUNCTIONS = {
     (
         "slaif_agent_page_create",
         "p_site_id uuid, p_slug text, p_title text, p_status text, "
-        "p_locale text, p_parent_id uuid",
-    ): "uuid, text, text, text, text, uuid",
+        "p_locale text, p_parent_id uuid, p_route_template text",
+    ): "uuid, text, text, text, text, uuid, text",
+    (
+        "slaif_agent_page_update",
+        "p_site_id uuid, p_page_id uuid, p_slug text, p_title text, "
+        "p_status text, p_locale text, p_route_template text, "
+        "p_route_template_set boolean, p_expected integer, "
+        "p_route_affecting boolean",
+    ): "uuid, uuid, text, text, text, text, text, boolean, integer, boolean",
+    (
+        "slaif_agent_page_move",
+        "p_site_id uuid, p_page_id uuid, p_parent_id uuid, "
+        "p_before_page_id uuid, p_after_page_id uuid, p_expected integer",
+    ): "uuid, uuid, uuid, uuid, uuid, integer",
+    (
+        "slaif_agent_page_delete",
+        "p_site_id uuid, p_page_id uuid, p_expected integer",
+    ): "uuid, uuid, integer",
+    (
+        "slaif_agent_page_restore",
+        "p_site_id uuid, p_page_id uuid, p_expected integer",
+    ): "uuid, uuid, integer",
     (
         "slaif_agent_composition_node_add",
         "p_site_id uuid, p_page_id uuid, p_component_type text, "

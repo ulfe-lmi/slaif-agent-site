@@ -1051,7 +1051,9 @@ ROUTE_POLICIES: Final[tuple[RoutePolicy, ...]] = (
                 "/api/agent/v1/collection-views/{view_id}",
                 ("collection-view:read",),
             ),
+            ("GET", "/api/agent/v1/pages", ("page:read",)),
             ("GET", "/api/agent/v1/pages/", ("page:read",)),
+            ("GET", "/api/agent/v1/pages/{page_id}", ("page:read",)),
             ("GET", "/api/agent/v1/pages/{page_id}/components", ("composition:read",)),
             ("GET", "/api/agent/v1/media/", ("media:read",)),
         )
@@ -1145,13 +1147,24 @@ ROUTE_POLICIES: Final[tuple[RoutePolicy, ...]] = (
                 "/api/agent/v1/collection-views/{view_id}",
                 "collection-view:delete",
             ),
+            ("POST", "/api/agent/v1/pages", "page:create"),
             ("POST", "/api/agent/v1/pages/", "page:create"),
+            ("PATCH", "/api/agent/v1/pages/{page_id}", "page:write"),
+            ("DELETE", "/api/agent/v1/pages/{page_id}", "page:delete"),
+            ("POST", "/api/agent/v1/pages/{page_id}:restore", "page:restore"),
             (
                 "POST",
                 "/api/agent/v1/pages/{page_id}/components",
                 "component-structure:create",
             ),
         )
+    ),
+    _agent_policy(
+        "POST",
+        "/api/agent/v1/pages/{page_id}:move",
+        _M,
+        "page:move",
+        "route:write",
     ),
     *(
         _agent_policy(method, path, mutation, "preview:inspect")

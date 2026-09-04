@@ -5,9 +5,39 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .models import _bounded_text
+from .site_data_validators import validate_locale_tag
+
+
+def _normalize_page_segment(value: str) -> str:
+    normalized = value.strip().strip("/").lower()
+    if (
+        not normalized
+        or len(normalized) > 63
+        or not normalized.isascii()
+        or any(marker in normalized for marker in ("/", "\\", "%", "?", "#"))
+        or normalized in {".", ".."}
+        or any(
+            not (character.isalnum() or character in {"-", "_", ".", "~"})
+            for character in normalized
+        )
+        or not normalized[0].isalnum()
+    ):
+        raise ValueError("invalid page slug")
+    return normalized
+
+
+def _normalize_route_template(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = value.strip()
+    if normalized == "{slug}":
+        return normalized
+    if normalized.startswith("/") or normalized.endswith("/"):
+        raise ValueError("invalid route template")
+    return _normalize_page_segment(normalized.lower())
 
 
 class CreatePageRequest(BaseModel):
@@ -18,16 +48,12 @@ class CreatePageRequest(BaseModel):
     status: str = "DRAFT"
     locale: str = "en"
     parent_id: UUID | None = None
+    route_template: str | None = None
 
     @field_validator("slug")
     @classmethod
     def slug_is_valid(cls, value: str) -> str:
-        normalized = value.strip().strip("/")
-        if not normalized or ".." in normalized or "\x00" in normalized:
-            raise ValueError("invalid page slug")
-        if len(normalized) > 512:
-            raise ValueError("slug too long")
-        return normalized
+        return _normalize_page_segment(value)
 
     @field_validator("title")
     @classmethod
@@ -44,10 +70,15 @@ class CreatePageRequest(BaseModel):
     @field_validator("locale")
     @classmethod
     def locale_is_valid(cls, value: str) -> str:
-        normalized = value.strip().lower()
-        if not normalized or len(normalized) > 10:
-            raise ValueError("invalid locale")
-        return normalized
+        try:
+            return validate_locale_tag(value)
+        except ValueError:
+            raise ValueError("invalid locale") from None
+
+    @field_validator("route_template")
+    @classmethod
+    def route_template_is_safe(cls, value: str | None) -> str | None:
+        return _normalize_route_template(value)
 
 
 class UpdatePageRequest(BaseModel):
@@ -56,18 +87,16 @@ class UpdatePageRequest(BaseModel):
     slug: str | None = None
     title: str | None = None
     status: str | None = None
-    parent_id: UUID | None = None
-    expected_row_version: int | None = None
+    locale: str | None = None
+    route_template: str | None = None
+    expected_row_version: int = Field(gt=0)
 
     @field_validator("slug")
     @classmethod
     def slug_is_valid(cls, value: str | None) -> str | None:
         if value is None:
             return None
-        normalized = value.strip().strip("/")
-        if not normalized or ".." in normalized:
-            raise ValueError("invalid page slug")
-        return normalized
+        return _normalize_page_segment(value)
 
     @field_validator("title")
     @classmethod
@@ -75,6 +104,49 @@ class UpdatePageRequest(BaseModel):
         if value is None:
             return None
         return _bounded_text(value, 256)
+
+    @field_validator("status")
+    @classmethod
+    def status_is_valid(cls, value: str | None) -> str | None:
+        if value is not None and value not in ("DRAFT", "PUBLISHED", "ARCHIVED"):
+            raise ValueError("status must be DRAFT, PUBLISHED, or ARCHIVED")
+        return value
+
+    @field_validator("locale")
+    @classmethod
+    def locale_is_valid(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        try:
+            return validate_locale_tag(value)
+        except ValueError:
+            raise ValueError("invalid locale") from None
+
+    @field_validator("route_template")
+    @classmethod
+    def route_template_is_safe(cls, value: str | None) -> str | None:
+        return _normalize_route_template(value)
+
+
+class MovePageRequest(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    parent_id: UUID | None = None
+    before_page_id: UUID | None = None
+    after_page_id: UUID | None = None
+    expected_row_version: int = Field(gt=0)
+
+    @model_validator(mode="after")
+    def one_relative_target(self) -> MovePageRequest:
+        if self.before_page_id is not None and self.after_page_id is not None:
+            raise ValueError("move accepts at most one relative page")
+        return self
+
+
+class RestorePageRequest(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    expected_row_version: int | None = Field(default=None, gt=0)
 
 
 class PageRecord(BaseModel):
@@ -87,6 +159,8 @@ class PageRecord(BaseModel):
     status: str
     locale: str
     parent_id: UUID | None
+    route_template: str | None = None
+    effective_route: str | None = None
     row_version: int
     created_at: datetime
     updated_at: datetime

@@ -194,7 +194,8 @@ The capability-bound read surface is:
 | `GET /api/agent/v1/content-model/types/{type_id}` | 200 | `content-model:read` |
 | `GET /api/agent/v1/content-model/types/{type_id}/fields` | 200 | `content-model:read` |
 | `GET /api/agent/v1/content-items/types/{type_id}` | 200 | `content-item:read` |
-| `GET /api/agent/v1/pages/` | 200 | `page:read` |
+| `GET /api/agent/v1/pages` (trailing slash alias) | 200 | `page:read` |
+| `GET /api/agent/v1/pages/{page_id}` | 200 | `page:read` |
 | `GET /api/agent/v1/pages/{page_id}/components` | 200 | `composition:read` |
 | `GET /api/agent/v1/media/` | 200 | `media:read` |
 
@@ -205,6 +206,12 @@ against the trusted workspace context; foreign-site/workspace resources return
 the stable not-found envelope. Reads create no idempotency row, mutation audit
 row, or pending COW operation, and the foundation context is cleared before the
 Agent pool connection is reused.
+
+Page records expose normalized slug/parent metadata, an optional bounded
+`route_template`, and the server-derived `effective_route`. Routes are derived
+from the site locale and ancestor hierarchy; the only accepted dynamic
+declaration in this round is a terminal literal `{slug}`. Page deletes are
+workspace COW tombstones and restore the same page ID and prior hierarchy.
 
 The bounded mutation surface is:
 
@@ -228,7 +235,11 @@ The bounded mutation surface is:
 | `POST /api/agent/v1/collection-views/types/{type_id}` | 201 | `CreateCollectionViewRequest` |
 | `PATCH /api/agent/v1/collection-views/{view_id}` | 200 | `UpdateCollectionViewRequest` |
 | `DELETE /api/agent/v1/collection-views/{view_id}` | 200 | `AgentDeleteRequest` |
-| `POST /api/agent/v1/pages/` | 201 | `CreatePageRequest` |
+| `POST /api/agent/v1/pages` (trailing slash alias) | 201 | `CreatePageRequest` |
+| `PATCH /api/agent/v1/pages/{page_id}` | 200 | `UpdatePageRequest` |
+| `DELETE /api/agent/v1/pages/{page_id}` | 200 | `AgentDeleteRequest` |
+| `POST /api/agent/v1/pages/{page_id}:move` | 200 | `MovePageRequest` |
+| `POST /api/agent/v1/pages/{page_id}:restore` | 200 | `RestorePageRequest` (optional) |
 | `POST /api/agent/v1/pages/{page_id}/components` | 201 | `CreateCompositionNodeRequest` |
 
 Every mutation requires an `Idempotency-Key` containing 1–128 bounded ASCII

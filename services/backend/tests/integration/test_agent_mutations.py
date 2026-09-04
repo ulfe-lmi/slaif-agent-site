@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+from collections.abc import Mapping
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -477,6 +478,394 @@ async def test_agent_create_type_is_cow_only_and_durablely_idempotent(
             )
     finally:
         await reviewer_pool.close()
+        await agent_pool.close()
+
+
+@pytest.mark.asyncio
+async def test_agent_page_duplicate_create_race_is_serialized_by_postgres(
+    agent_site_database: AgentSiteDatabase,
+) -> None:
+    database = agent_site_database
+    _token, seeded = await _seed(database)
+    scopes = ["site:read", "page:create", "page:read"]
+    token, workspace_id = await _workspace_capability(
+        database, seeded, scopes, "Agent Page Race Workspace"
+    )
+    app = create_agent_app(
+        settings=ServiceSettings.for_test(),
+        database_settings=_agent_settings(database),
+    )
+    agent_pool = await database.role_pool("slaif_agent_runtime")
+    try:
+        async with app.router.lifespan_context(app):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://agent.test"
+            ) as client:
+                headers = {"Authorization": f"Bearer {token}"}
+                body = {"slug": "race-page", "title": "Race", "locale": "en-US"}
+                async with owner_connection(
+                    database.settings.resolved_owner_dsn(),
+                    expected_database=database.name,
+                ) as owner:
+                    lock_key = await owner.fetchval(
+                        "SELECT hashtextextended($1,994)",
+                        f"{workspace_id}:{seeded['site_id']}:page-structure",
+                    )
+                    async with owner.transaction():
+                        await owner.execute(
+                            "SELECT pg_advisory_xact_lock($1::bigint)", lock_key
+                        )
+                        tasks = [
+                            asyncio.create_task(
+                                client.post(
+                                    "/api/agent/v1/pages",
+                                    headers={
+                                        **headers,
+                                        "Idempotency-Key": f"race-page-{index}",
+                                    },
+                                    json=body,
+                                )
+                            )
+                            for index in range(2)
+                        ]
+                        waiting = 0
+                        for _ in range(200):
+                            await asyncio.sleep(0)
+                            waiting = await owner.fetchval(
+                                "SELECT count(*) FROM pg_locks "
+                                "WHERE locktype='advisory' AND NOT granted"
+                            )
+                            if waiting >= 2:
+                                break
+                        assert waiting >= 2
+                    first, second = await asyncio.gather(*tasks)
+                assert sorted((first.status_code, second.status_code)) in (
+                    [201, 409],
+                    [201, 422],
+                )
+                pages = await client.get("/api/agent/v1/pages", headers=headers)
+                assert pages.status_code == 200
+                assert [
+                    page["slug"] for page in pages.json() if page["slug"] == "race-page"
+                ] == ["race-page"]
+    finally:
+        await agent_pool.close()
+
+
+@pytest.mark.asyncio
+async def test_agent_page_structure_hierarchy_routes_and_cow_lifecycle(
+    agent_site_database: AgentSiteDatabase,
+) -> None:
+    database = agent_site_database
+    _token, seeded = await _seed(database)
+    canonical_page_id = uuid4()
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        await owner.execute(
+            """
+            INSERT INTO content.page_base(
+                id,site_id,slug,title,status,locale
+            ) VALUES ($1,$2,'canonical-page','Canonical page','DRAFT','en')
+            """,
+            canonical_page_id,
+            seeded["site_id"],
+        )
+
+    scopes = [
+        "site:read",
+        "page:create",
+        "page:read",
+        "page:write",
+        "page:move",
+        "page:delete",
+        "page:restore",
+        "route:write",
+    ]
+    token, workspace_id = await _workspace_capability(
+        database, seeded, scopes, "Agent Page Structure Workspace"
+    )
+    other_token, other_workspace_id = await _workspace_capability(
+        database, seeded, ["site:read", "page:read"], "Agent Page Other Workspace"
+    )
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        await owner.execute(
+            "UPDATE control.capability SET delete_quota=2 WHERE workspace_id=$1",
+            workspace_id,
+        )
+    app = create_agent_app(
+        settings=ServiceSettings.for_test(),
+        database_settings=_agent_settings(database),
+    )
+    agent_pool = await database.role_pool("slaif_agent_runtime")
+    try:
+
+        async def request_page(
+            client: httpx.AsyncClient,
+            method: str,
+            path: str,
+            *,
+            key: str | None = None,
+            json_body: Mapping[str, object] | None = None,
+            bearer: str = token,
+        ) -> httpx.Response:
+            headers = {"Authorization": f"Bearer {bearer}"}
+            if key is not None:
+                headers["Idempotency-Key"] = key
+            return await client.request(method, path, headers=headers, json=json_body)
+
+        async with app.router.lifespan_context(app):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://agent.test"
+            ) as client:
+                initial = await request_page(client, "GET", "/api/agent/v1/pages")
+                assert initial.status_code == 200, initial.text
+                assert str(canonical_page_id) in {row["id"] for row in initial.json()}
+
+                home_body = {
+                    "slug": "home",
+                    "title": "Home",
+                    "locale": "en-US",
+                }
+                home = await request_page(
+                    client,
+                    "POST",
+                    "/api/agent/v1/pages",
+                    key="page-home",
+                    json_body=home_body,
+                )
+                assert home.status_code == 201, home.text
+                home_record = home.json()["record"]
+                home_id = home_record["id"]
+                assert home_record["slug"] == "home"
+                assert home_record["effective_route"] == "/"
+                replay = await request_page(
+                    client,
+                    "POST",
+                    "/api/agent/v1/pages",
+                    key="page-home",
+                    json_body=home_body,
+                )
+                assert replay.status_code == 201
+                assert replay.json() == home.json()
+                mismatch = await request_page(
+                    client,
+                    "POST",
+                    "/api/agent/v1/pages",
+                    key="page-home",
+                    json_body={**home_body, "title": "Changed"},
+                )
+                assert mismatch.status_code == 409
+
+                docs = await request_page(
+                    client,
+                    "POST",
+                    "/api/agent/v1/pages",
+                    key="page-docs",
+                    json_body={
+                        "slug": "Docs",
+                        "title": "Docs",
+                        "parent_id": home_id,
+                        "locale": "en-US",
+                    },
+                )
+                assert docs.status_code == 201, docs.text
+                docs_record = docs.json()["record"]
+                docs_id = docs_record["id"]
+                assert docs_record["slug"] == "docs"
+                assert docs_record["effective_route"] == "/docs"
+
+                news = await request_page(
+                    client,
+                    "POST",
+                    "/api/agent/v1/pages",
+                    key="page-news",
+                    json_body={
+                        "slug": "news",
+                        "title": "News",
+                        "parent_id": home_id,
+                        "locale": "en-US",
+                    },
+                )
+                assert news.status_code == 201, news.text
+                news_id = news.json()["record"]["id"]
+                detail = await request_page(
+                    client,
+                    "POST",
+                    "/api/agent/v1/pages",
+                    key="page-news-detail",
+                    json_body={
+                        "slug": "detail",
+                        "title": "News detail",
+                        "parent_id": news_id,
+                        "route_template": "{slug}",
+                        "locale": "en-US",
+                    },
+                )
+                assert detail.status_code == 201, detail.text
+                detail_record = detail.json()["record"]
+                detail_id = detail_record["id"]
+                assert detail_record["effective_route"] == "/news/{slug}"
+
+                updated = await request_page(
+                    client,
+                    "PATCH",
+                    f"/api/agent/v1/pages/{docs_id}",
+                    key="page-docs-update",
+                    json_body={
+                        "title": "Documentation",
+                        "expected_row_version": 1,
+                    },
+                )
+                assert updated.status_code == 200, updated.text
+                assert updated.json()["record"]["row_version"] == 2
+
+                moved = await request_page(
+                    client,
+                    "POST",
+                    f"/api/agent/v1/pages/{news_id}:move",
+                    key="page-news-move",
+                    json_body={
+                        "parent_id": docs_id,
+                        "expected_row_version": 1,
+                    },
+                )
+                assert moved.status_code == 200, moved.text
+                assert moved.json()["record"]["parent_id"] == docs_id
+                assert moved.json()["record"]["effective_route"] == "/docs/news"
+
+                exact = await request_page(
+                    client, "GET", f"/api/agent/v1/pages/{detail_id}"
+                )
+                assert exact.status_code == 200, exact.text
+                assert exact.json()["effective_route"] == "/docs/news/{slug}"
+
+                deleted_detail = await request_page(
+                    client,
+                    "DELETE",
+                    f"/api/agent/v1/pages/{detail_id}",
+                    key="page-detail-delete",
+                    json_body={"expected_row_version": 1},
+                )
+                assert deleted_detail.status_code == 200, deleted_detail.text
+                assert deleted_detail.json()["action"] == "PAGE_DELETED"
+                assert (
+                    await request_page(
+                        client, "GET", f"/api/agent/v1/pages/{detail_id}"
+                    )
+                ).status_code == 404
+                restored = await request_page(
+                    client,
+                    "POST",
+                    f"/api/agent/v1/pages/{detail_id}:restore",
+                    key="page-detail-restore",
+                    json_body={"expected_row_version": 1},
+                )
+                assert restored.status_code == 200, restored.text
+                assert restored.json()["record"]["id"] == detail_id
+                assert (
+                    restored.json()["record"]["effective_route"] == "/docs/news/{slug}"
+                )
+
+                deleted_canonical = await request_page(
+                    client,
+                    "DELETE",
+                    f"/api/agent/v1/pages/{canonical_page_id}",
+                    key="page-canonical-delete",
+                    json_body={"expected_row_version": 1},
+                )
+                assert deleted_canonical.status_code == 200, deleted_canonical.text
+                assert (
+                    await request_page(
+                        client, "GET", f"/api/agent/v1/pages/{canonical_page_id}"
+                    )
+                ).status_code == 404
+                invalid_dynamic = await request_page(
+                    client,
+                    "POST",
+                    "/api/agent/v1/pages",
+                    key="page-invalid-dynamic",
+                    json_body={
+                        "slug": "unsafe",
+                        "title": "Unsafe",
+                        "route_template": "/news/{slug}",
+                    },
+                )
+                assert invalid_dynamic.status_code == 422
+
+                dependency_delete = await request_page(
+                    client,
+                    "DELETE",
+                    f"/api/agent/v1/pages/{docs_id}",
+                    key="page-docs-delete",
+                    json_body={"expected_row_version": 2},
+                )
+                assert dependency_delete.status_code == 422
+
+        async with app.router.lifespan_context(app):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://agent.test"
+            ) as client:
+                restarted = await request_page(
+                    client, "GET", f"/api/agent/v1/pages/{detail_id}"
+                )
+                assert restarted.status_code == 200, restarted.text
+                other_workspace = await request_page(
+                    client,
+                    "GET",
+                    f"/api/agent/v1/pages/{canonical_page_id}",
+                    bearer=other_token,
+                )
+                assert other_workspace.status_code == 200, other_workspace.text
+                foreign = await request_page(
+                    client,
+                    "GET",
+                    f"/api/agent/v1/pages/{seeded['page_b_id']}",
+                )
+                assert foreign.status_code == 404
+
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            assert (
+                await owner.fetchval(
+                    "SELECT count(*) FROM content.page_base WHERE id=$1",
+                    canonical_page_id,
+                )
+                == 1
+            )
+            actions = await owner.fetch(
+                "SELECT action FROM audit.agent_mutation WHERE workspace_id=$1 "
+                "AND resource_type='page' ORDER BY occurred_at,operation_id",
+                workspace_id,
+            )
+            assert [row[0] for row in actions] == [
+                "PAGE_CREATED",
+                "PAGE_CREATED",
+                "PAGE_CREATED",
+                "PAGE_CREATED",
+                "PAGE_UPDATED",
+                "PAGE_MOVED",
+                "PAGE_DELETED",
+                "PAGE_RESTORED",
+                "PAGE_DELETED",
+            ]
+            quota = await owner.fetchrow(
+                "SELECT mutation_used,delete_used FROM control.capability "
+                "WHERE workspace_id=$1 ORDER BY created_at DESC LIMIT 1",
+                workspace_id,
+            )
+            assert tuple(quota) == (7, 2)
+            assert (
+                await owner.fetchval(
+                    "SELECT count(*) FROM audit.agent_mutation WHERE workspace_id=$1",
+                    other_workspace_id,
+                )
+                == 0
+            )
+    finally:
         await agent_pool.close()
 
 
@@ -1276,7 +1665,7 @@ async def test_agent_046_047_migration_round_trip_preserves_contract_and_state(
                 await owner.fetchval(
                     "SELECT version_num::text FROM control.alembic_version"
                 )
-                == "048_001"
+                == "049_001"
             )
             assert await owner.fetchval(
                 "SELECT to_regprocedure($1)",
@@ -1569,7 +1958,7 @@ async def test_agent_048_data_bearing_round_trip_preserves_relations_views_and_a
         )
         await reconcile(database.settings)
         final_status = await status(database.settings)
-        assert final_status.revision == "048_001"
+        assert final_status.revision == "049_001"
         assert final_status.state.value == "HARDENED"
         assert final_status.safe
         assert await cow_rows() == content_before
@@ -7995,7 +8384,7 @@ async def test_semantic_audit_contract_is_strict_and_reversible(
                 await owner.fetchval(
                     "SELECT version_num::text FROM control.alembic_version"
                 )
-                == "048_001"
+                == "049_001"
             )
             assert (
                 await owner.fetchval(

@@ -66,6 +66,7 @@ AGENT_COLLECTION_VIEW_GET_SQL = (
     "SELECT * FROM content.slaif_agent_collection_view_get($1,$2)"
 )
 AGENT_PAGE_LIST_SQL = "SELECT * FROM content.slaif_agent_page_list($1)"
+AGENT_PAGE_GET_SQL = "SELECT * FROM content.slaif_agent_page_get($1,$2)"
 AGENT_COMPOSITION_LIST_SQL = "SELECT * FROM content.slaif_agent_composition_list($1,$2)"
 AGENT_MEDIA_LIST_SQL = "SELECT * FROM content.slaif_agent_media_list($1)"
 
@@ -93,6 +94,12 @@ class AgentSemanticReadService:
                 raise ContentModelServiceError(
                     ContentModelServiceReason.VALIDATION
                 ) from None
+            if getattr(error, "sqlstate", None) in {"P0004", "P0005", "P0006"}:
+                raise ContentModelServiceError(
+                    ContentModelServiceReason.CONFLICT
+                    if getattr(error, "sqlstate", None) == "P0004"
+                    else ContentModelServiceReason.QUOTA
+                ) from None
             if getattr(error, "sqlstate", None) == "P0007":
                 raise ContentModelServiceError(
                     ContentModelServiceReason.AUTHORIZATION
@@ -119,6 +126,12 @@ class AgentSemanticReadService:
             if getattr(error, "sqlstate", None) == "P0003":
                 raise ContentModelServiceError(
                     ContentModelServiceReason.VALIDATION
+                ) from None
+            if getattr(error, "sqlstate", None) in {"P0004", "P0005", "P0006"}:
+                raise ContentModelServiceError(
+                    ContentModelServiceReason.CONFLICT
+                    if getattr(error, "sqlstate", None) == "P0004"
+                    else ContentModelServiceReason.QUOTA
                 ) from None
             if getattr(error, "sqlstate", None) == "P0007":
                 raise ContentModelServiceError(
@@ -217,6 +230,12 @@ class AgentSemanticReadService:
     async def list_pages(self, site_id: UUID) -> tuple[PageRecord, ...]:
         rows = await self._fetch(AGENT_PAGE_LIST_SQL, site_id)
         return tuple(_pg(row) for row in rows)
+
+    async def get_page(self, site_id: UUID, page_id: UUID) -> PageRecord:
+        row = await self._fetchrow(AGENT_PAGE_GET_SQL, site_id, page_id)
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
+        return cast(PageRecord, _pg(row))
 
     async def list_composition(
         self, site_id: UUID, page_id: UUID

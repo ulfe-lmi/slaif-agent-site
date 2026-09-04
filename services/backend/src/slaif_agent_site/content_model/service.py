@@ -1637,6 +1637,11 @@ PG_DELETE_SQL = "SELECT content.slaif_page_delete($1)"
 def _pg(row: Any) -> Any:
     from .page_models import PageRecord
 
+    # Legacy Editor/Control functions return the original ten-column page
+    # shape. Agent page wrappers return the two route columns appended by the
+    # page-structure migration; accept both while the public Agent surface
+    # remains the only caller that needs derived routes.
+    extended = len(row) >= 12
     return PageRecord(
         id=row[0],
         site_id=row[1],
@@ -1645,9 +1650,11 @@ def _pg(row: Any) -> Any:
         status=row[4],
         locale=row[5],
         parent_id=row[6],
-        row_version=row[7],
-        created_at=row[8],
-        updated_at=row[9],
+        route_template=row[7] if extended else None,
+        effective_route=row[8] if extended else None,
+        row_version=row[9] if extended else row[7],
+        created_at=row[10] if extended else row[8],
+        updated_at=row[11] if extended else row[9],
     )
 
 

@@ -65,7 +65,13 @@ from slaif_agent_site.content_model.models import (
     UpdateRelationRequest,
     UpdateTranslationRequest,
 )
-from slaif_agent_site.content_model.page_models import CreatePageRequest, PageRecord
+from slaif_agent_site.content_model.page_models import (
+    CreatePageRequest,
+    MovePageRequest,
+    PageRecord,
+    RestorePageRequest,
+    UpdatePageRequest,
+)
 from slaif_agent_site.content_model.primitives import FieldPrimitive
 from slaif_agent_site.content_model.service import (
     ContentModelServiceError,
@@ -281,6 +287,7 @@ async def list_content_items(
     return [record.model_dump(mode="json") for record in records]
 
 
+@router.get("/pages")
 @router.get("/pages/")
 async def list_pages(request: Request) -> list[PageRecord]:
     context = await _authenticate(request)
@@ -289,6 +296,16 @@ async def list_pages(request: Request) -> list[PageRecord]:
         request, context, lambda service: service.list_pages(context.site_id)
     )
     return [record.model_dump(mode="json") for record in records]
+
+
+@router.get("/pages/{page_id}")
+async def get_page(page_id: UUID, request: Request) -> PageRecord:
+    context = await _authenticate(request)
+    _require_scope(context, "page:read")
+    record = await _execute_read(
+        request, context, lambda service: service.get_page(context.site_id, page_id)
+    )
+    return cast(PageRecord, record.model_dump(mode="json"))
 
 
 @router.get("/pages/{page_id}/components")
@@ -934,6 +951,7 @@ async def delete_collection_view(
     )
 
 
+@router.post("/pages", status_code=201)
 @router.post("/pages/", status_code=201)
 async def create_page(
     request: Request,
@@ -949,7 +967,111 @@ async def create_page(
         body,
         idempotency_key,
         resource_type="page",
+        action="PAGE_CREATED",
         mutate=lambda service: service.create_page_for_site(context.site_id, body),
+    )
+
+
+@router.patch("/pages/{page_id}")
+async def update_page(
+    page_id: UUID,
+    request: Request,
+    body: UpdatePageRequest,
+    idempotency_key: IdempotencyHeader = None,
+) -> AgentMutationResponse:
+    context = await _authenticate(request)
+    _require_scope(context, "page:write")
+    if (
+        body.slug is not None
+        or body.locale is not None
+        or "route_template" in body.model_fields_set
+    ):
+        _require_scope(context, "route:write")
+    return await _execute_mutation(
+        request,
+        context,
+        body,
+        idempotency_key,
+        resource_type="page",
+        status_code=200,
+        action="PAGE_UPDATED",
+        mutate=lambda service: service.update_page_for_site(
+            context.site_id, page_id, body
+        ),
+    )
+
+
+@router.delete("/pages/{page_id}")
+async def delete_page(
+    page_id: UUID,
+    request: Request,
+    body: AgentDeleteRequest,
+    idempotency_key: IdempotencyHeader = None,
+) -> AgentMutationResponse:
+    context = await _authenticate(request)
+    _require_scope(context, "page:delete")
+    if _constraint(context, "delete_enabled", True) is False:
+        raise AuthorizationError()
+    return await _execute_mutation(
+        request,
+        context,
+        body,
+        idempotency_key,
+        resource_type="page",
+        status_code=200,
+        quota_kind="delete",
+        action="PAGE_DELETED",
+        mutate=lambda service: service.delete_page_for_site(
+            context.site_id, page_id, body.expected_row_version
+        ),
+    )
+
+
+@router.post("/pages/{page_id}:move", status_code=200)
+async def move_page(
+    page_id: UUID,
+    request: Request,
+    body: MovePageRequest,
+    idempotency_key: IdempotencyHeader = None,
+) -> AgentMutationResponse:
+    context = await _authenticate(request)
+    _require_scope(context, "page:move")
+    _require_scope(context, "route:write")
+    return await _execute_mutation(
+        request,
+        context,
+        body,
+        idempotency_key,
+        resource_type="page",
+        status_code=200,
+        action="PAGE_MOVED",
+        mutate=lambda service: service.move_page_for_site(
+            context.site_id, page_id, body
+        ),
+    )
+
+
+@router.post("/pages/{page_id}:restore", status_code=200)
+async def restore_page(
+    page_id: UUID,
+    request: Request,
+    body: RestorePageRequest | None = None,
+    idempotency_key: IdempotencyHeader = None,
+) -> AgentMutationResponse:
+    context = await _authenticate(request)
+    _require_scope(context, "page:restore")
+    restore_body = body or RestorePageRequest()
+    return await _execute_mutation(
+        request,
+        context,
+        restore_body,
+        idempotency_key,
+        resource_type="page",
+        status_code=200,
+        action="PAGE_RESTORED",
+        mutate=lambda service: service.restore_page_for_site(
+            context.site_id, page_id, restore_body
+        ),
     )
 
 
