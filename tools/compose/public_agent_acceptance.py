@@ -323,7 +323,6 @@ def _canonical_request_body(
         }
     elif action == "LOCALE_UPDATED":
         defaults = {
-            "tag": None,
             "enabled": None,
             "is_default": None,
             "position": None,
@@ -347,14 +346,11 @@ def _canonical_request_body(
         }
     elif action == "NAVIGATION_ITEM_UPDATED":
         defaults = {
-            "parent_id": None,
             "page_id": None,
             "target_kind": None,
             "target_value": None,
             "labels": None,
             "locale": None,
-            "before_item_id": None,
-            "after_item_id": None,
         }
     elif action == "NAVIGATION_ITEM_MOVED":
         defaults = {"parent_id": None, "before_item_id": None, "after_item_id": None}
@@ -1155,6 +1151,23 @@ def run_acceptance(project: str) -> None:
         )
         component_id = _require_uuid(component["record"]["id"], "component")
 
+        internal_page = _mutation(
+            client,
+            primary_token,
+            "/api/agent/v1/pages/",
+            {
+                "slug": f"docs-{tag}",
+                "title": "Documentation",
+                "status": "DRAFT",
+                "locale": "en",
+            },
+            f"oap-navigation-internal-page-{tag}",
+        )
+        internal_page_id = _require_uuid(
+            internal_page["record"]["id"], "navigation-internal-page"
+        )
+        internal_target = f"/en/docs-{tag}"
+
         lifecycle_slug = f"oap-lifecycle-{tag}"
         lifecycle_path = f"/s/demo/{lifecycle_slug}"
         lifecycle = _mutation(
@@ -1372,7 +1385,7 @@ def run_acceptance(project: str) -> None:
                 "navigation_id": navigation_id,
                 "parent_id": page_item_id,
                 "target_kind": "INTERNAL",
-                "target_value": "/docs",
+                "target_value": internal_target,
                 "labels": {"sl-SI": "Dokumentacija"},
                 "locale": "sl-SI",
                 "before_item_id": None,
@@ -1428,7 +1441,11 @@ def run_acceptance(project: str) -> None:
             client,
             primary_token,
             f"/api/agent/v1/navigation-items/{external_item_id}:move",
-            {"before_item_id": page_item_id, "expected_row_version": 1},
+            {
+                "parent_id": None,
+                "before_item_id": page_item_id,
+                "expected_row_version": 1,
+            },
             f"oap-navigation-move-{tag}",
             method="POST",
         )
@@ -1443,11 +1460,11 @@ def run_acceptance(project: str) -> None:
             f"/api/agent/v1/navigation-items/{page_item_id}",
             {
                 "labels": {"sl-SI": "Domov updated"},
-                "expected_row_version": 1,
+                "expected_row_version": 2,
             },
             f"oap-navigation-item-update-{tag}",
         )
-        if navigation_item_update["record"].get("row_version") != 2:
+        if navigation_item_update["record"].get("row_version") != 3:
             raise ProofFailure("navigation-item-update-version-invalid")
         _compose(project, "restart", "agent-api")
         agent_outage = False
@@ -1493,7 +1510,7 @@ def run_acceptance(project: str) -> None:
             ),
             (
                 f"/api/agent/v1/navigation-items/{page_item_id}",
-                {"expected_row_version": 2},
+                {"expected_row_version": 4},
                 f"oap-navigation-page-item-delete-{tag}",
             ),
         ):
@@ -1509,15 +1526,23 @@ def run_acceptance(project: str) -> None:
         _request_mutation(
             client,
             primary_token,
+            f"/api/agent/v1/pages/{internal_page_id}",
+            {"expected_row_version": 1},
+            f"oap-navigation-internal-page-delete-{tag}",
+            method="DELETE",
+        )
+        _request_mutation(
+            client,
+            primary_token,
             f"/api/agent/v1/locales/{default_locale['id']}",
-            {"is_default": True, "expected_row_version": 1},
+            {"is_default": True, "expected_row_version": 2},
             f"oap-locale-restore-default-{tag}",
         )
         _request_mutation(
             client,
             primary_token,
             f"/api/agent/v1/locales/{locale_id}",
-            {"expected_row_version": 2},
+            {"expected_row_version": 3},
             f"oap-locale-delete-{tag}",
             method="DELETE",
         )

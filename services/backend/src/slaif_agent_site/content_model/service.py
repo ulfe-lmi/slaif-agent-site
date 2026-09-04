@@ -102,6 +102,8 @@ def _semantic_database_error_code(error: asyncpg.PostgresError) -> str | None:
         "LOCALE_REFERENCED",
         "LOCALE_DEFAULT_REQUIRED",
         "LOCALE_TAG_IMMUTABLE",
+        "LOCALE_UPDATE_EMPTY",
+        "NAVIGATION_LABEL_LOCALE_INVALID",
         "NAVIGATION_CHILDREN",
         "NAVIGATION_PAGE_INVALID",
         "NAVIGATION_PARENT_INVALID",

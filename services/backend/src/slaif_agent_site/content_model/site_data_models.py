@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from .models import _bounded_json, _bounded_text
 from .site_data_validators import (
+    validate_agent_target,
     validate_locale_tag,
     validate_redirect,
     validate_target,
@@ -49,17 +50,11 @@ class UpdateLocaleRequest(CreateLocaleRequest):
 class AgentUpdateLocaleRequest(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    tag: str | None = None
     enabled: bool | None = None
     is_default: bool | None = None
     position: int | None = Field(default=None, ge=0, le=999)
     metadata: dict[str, Any] | None = None
     expected_row_version: int = Field(ge=1)
-
-    @field_validator("tag")
-    @classmethod
-    def tag_is_normalized(cls, value: str | None) -> str | None:
-        return validate_locale_tag(value) if value is not None else None
 
     @field_validator("metadata")
     @classmethod
@@ -69,6 +64,14 @@ class AgentUpdateLocaleRequest(BaseModel):
         result = _bounded_json(value)
         assert isinstance(result, dict)
         return result
+
+    @model_validator(mode="after")
+    def update_is_nonempty(self) -> AgentUpdateLocaleRequest:
+        if not self.model_fields_set.intersection(
+            {"enabled", "is_default", "position", "metadata"}
+        ):
+            raise ValueError("locale update cannot be empty")
+        return self
 
 
 class AgentCreateNavigationRequest(BaseModel):
@@ -143,6 +146,12 @@ class AgentUpdateNavigationRequest(BaseModel):
         assert isinstance(result, dict)
         return result
 
+    @model_validator(mode="after")
+    def update_is_nonempty(self) -> AgentUpdateNavigationRequest:
+        if not self.model_fields_set.intersection({"label", "labels", "settings"}):
+            raise ValueError("navigation update cannot be empty")
+        return self
+
 
 class AgentCreateNavigationItemRequest(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -186,7 +195,7 @@ class AgentCreateNavigationItemRequest(BaseModel):
 
     @model_validator(mode="after")
     def target_is_safe(self) -> AgentCreateNavigationItemRequest:
-        validate_target(self.target_kind, self.target_value)
+        validate_agent_target(self.target_kind, self.target_value)
         if self.target_kind == "PAGE":
             if self.page_id is None or self.target_value != str(self.page_id):
                 raise ValueError("page target must match page_id")
@@ -202,14 +211,11 @@ class AgentCreateNavigationItemRequest(BaseModel):
 class AgentUpdateNavigationItemRequest(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    parent_id: UUID | None = None
     page_id: UUID | None = None
     target_kind: str | None = None
     target_value: str | None = None
     labels: dict[str, str] | None = None
     locale: str | None = None
-    before_item_id: UUID | None = None
-    after_item_id: UUID | None = None
     expected_row_version: int = Field(ge=1)
 
     @field_validator("target_kind")
@@ -242,16 +248,19 @@ class AgentUpdateNavigationItemRequest(BaseModel):
         return validate_locale_tag(value) if value is not None else None
 
     @model_validator(mode="after")
-    def anchors_are_exclusive(self) -> AgentUpdateNavigationItemRequest:
-        if self.before_item_id is not None and self.after_item_id is not None:
-            raise ValueError("navigation item cannot have both anchors")
+    def update_is_nonempty(self) -> AgentUpdateNavigationItemRequest:
+        if not self.model_fields_set.intersection(
+            {"page_id", "target_kind", "target_value", "labels", "locale"}
+        ):
+            raise ValueError("navigation item update cannot be empty")
         return self
 
 
 class AgentMoveNavigationItemRequest(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    parent_id: UUID | None = None
+    # Required even when null: root placement must be an explicit client intent.
+    parent_id: UUID | None
     before_item_id: UUID | None = None
     after_item_id: UUID | None = None
     expected_row_version: int = Field(ge=1)

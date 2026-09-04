@@ -294,12 +294,16 @@ Locale and navigation records are site-scoped workspace COW data. Locale
 configuration preserves one enabled default locale, and effective page routes
 derive their root locale from the visible workspace locale set. Navigation
 containers and items use bounded labels/settings, same-site page targets,
-allowlisted internal or HTTPS external targets, explicit locale bindings, and
-server-assigned dense sibling positions. Before/after anchors are mutually
-exclusive; item moves and all page/navigation structural writes share one
-transaction-scoped structural lock. Navigation item deletion and page/locale/
-navigation deletion reject surviving dependencies, while the Agent role can
-only reach these records through capability-bound semantic functions.
+configured-locale labels, and server-assigned dense sibling positions. Agent
+INTERNAL targets must resolve to one visible, non-tombstoned static page route
+within the capability's locale/root/prefix constraints; EXTERNAL targets are
+HTTPS-only. Before/after anchors are mutually exclusive and `parent_id` is
+required on moves, while item PATCH changes only target/labels/locale and
+preserves parent/order. Shifted siblings receive new row versions and
+timestamps. Item moves and all page/locale/navigation structural writes share
+one transaction-scoped structural lock. Navigation item deletion and
+page/locale/navigation deletion reject surviving dependencies, while the Agent
+role can only reach these records through capability-bound semantic functions.
 
 ### Capability-bound browser preview runs
 

@@ -85,6 +85,7 @@ from slaif_agent_site.content_model.site_data_models import (
     LocaleRecord,
     NavigationItemRecord,
 )
+from slaif_agent_site.content_model.site_data_validators import validate_agent_target
 from slaif_agent_site.content_model.validators import validate_values
 from slaif_agent_site.content_model.view_models import (
     CollectionViewRecord,
@@ -162,7 +163,7 @@ AGENT_LOCALE_CREATE_SQL = (
     "SELECT * FROM content.slaif_agent_locale_create($1,$2,$3,$4,$5,$6)"
 )
 AGENT_LOCALE_UPDATE_SQL = (
-    "SELECT * FROM content.slaif_agent_locale_update($1,$2,$3,$4,$5,$6,$7,$8)"
+    "SELECT * FROM content.slaif_agent_locale_update($1,$2,$3,$4,$5,$6,$7)"
 )
 AGENT_LOCALE_DELETE_SQL = "SELECT * FROM content.slaif_agent_locale_delete($1,$2,$3)"
 AGENT_NAVIGATION_CREATE_SQL = (
@@ -183,7 +184,7 @@ AGENT_NAVIGATION_ITEM_GET_SQL = (
 )
 AGENT_NAVIGATION_ITEM_UPDATE_SQL = (
     "SELECT * FROM content.slaif_agent_navigation_item_update("
-    "$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)"
+    "$1,$2,$3,$4,$5,$6,$7,$8,$9)"
 )
 AGENT_NAVIGATION_ITEM_MOVE_SQL = (
     "SELECT * FROM content.slaif_agent_navigation_item_move($1,$2,$3,$4,$5,$6)"
@@ -887,7 +888,6 @@ class AgentCowContentModelService(ContentModelService):
             AGENT_LOCALE_UPDATE_SQL,
             site_id,
             locale_id,
-            request.tag,
             request.enabled,
             request.is_default,
             request.position,
@@ -989,7 +989,6 @@ class AgentCowContentModelService(ContentModelService):
             raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
         current = _nav_item(row)
         fields = request.model_fields_set
-        parent_id = request.parent_id if "parent_id" in fields else current.parent_id
         page_id = request.page_id if "page_id" in fields else current.page_id
         target_kind = (
             request.target_kind if "target_kind" in fields else current.target_kind
@@ -1001,19 +1000,24 @@ class AgentCowContentModelService(ContentModelService):
         locale = request.locale if "locale" in fields else current.locale
         if target_kind != "PAGE":
             page_id = None
+        if target_kind is None or target_value is None:
+            raise ContentModelServiceError(ContentModelServiceReason.VALIDATION)
+        try:
+            validate_agent_target(target_kind, target_value)
+        except ValueError:
+            raise ContentModelServiceError(
+                ContentModelServiceReason.VALIDATION
+            ) from None
         row = await self._fetchrow(
             AGENT_NAVIGATION_ITEM_UPDATE_SQL,
             site_id,
             item_id,
             current.navigation_id,
-            parent_id,
             page_id,
             target_kind,
             target_value,
             json.dumps(labels, sort_keys=True),
             locale,
-            request.before_item_id,
-            request.after_item_id,
             request.expected_row_version,
         )
         if row is None:

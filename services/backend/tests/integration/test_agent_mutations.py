@@ -790,8 +790,8 @@ async def test_agent_locale_navigation_structural_races_and_cancellation(
                         f"/api/agent/v1/navigation/{cycle_navigation_id}/items",
                         f"{name}-create",
                         {
-                            "target_kind": "INTERNAL",
-                            "target_value": "/",
+                            "target_kind": "EXTERNAL",
+                            "target_value": "https://example.test/cycle",
                             "labels": {"en-US": name},
                         },
                     )
@@ -822,7 +822,7 @@ async def test_agent_locale_navigation_structural_races_and_cancellation(
                 )
                 assert sorted(
                     (first_result.status_code, second_result.status_code)
-                ) == [200, 422], (
+                ) in ([200, 409], [200, 422]), (
                     first_result.text,
                     second_result.text,
                 )
@@ -857,8 +857,8 @@ async def test_agent_locale_navigation_structural_races_and_cancellation(
                         f"/api/agent/v1/navigation/{ordering_navigation_id}/items",
                         f"{name}-create",
                         {
-                            "target_kind": "INTERNAL",
-                            "target_value": "/",
+                            "target_kind": "EXTERNAL",
+                            "target_value": "https://example.test/order",
                             "labels": {"en-US": name},
                         },
                     )
@@ -872,6 +872,7 @@ async def test_agent_locale_navigation_structural_races_and_cancellation(
                             f"/api/agent/v1/navigation-items/{ordering_items[1]}:move",
                             "race-order-move",
                             {
+                                "parent_id": None,
                                 "before_item_id": ordering_items[0],
                                 "expected_row_version": 1,
                             },
@@ -884,8 +885,8 @@ async def test_agent_locale_navigation_structural_races_and_cancellation(
                             f"/api/agent/v1/navigation/{ordering_navigation_id}/items",
                             "race-order-create",
                             {
-                                "target_kind": "INTERNAL",
-                                "target_value": "/",
+                                "target_kind": "EXTERNAL",
+                                "target_value": "https://example.test/order-c",
                                 "labels": {"en-US": "order-c"},
                             },
                         )
@@ -961,8 +962,8 @@ async def test_agent_locale_navigation_structural_races_and_cancellation(
                         f"/api/agent/v1/navigation/{cancellation_navigation_id}/items",
                         f"{name}-create",
                         {
-                            "target_kind": "INTERNAL",
-                            "target_value": "/",
+                            "target_kind": "EXTERNAL",
+                            "target_value": "https://example.test/cancel",
                             "labels": {"en-US": name},
                         },
                     )
@@ -977,6 +978,7 @@ async def test_agent_locale_navigation_structural_races_and_cancellation(
                             f"/api/agent/v1/navigation-items/{cancellation_items[1]}:move",
                             "cancel-reorder",
                             {
+                                "parent_id": None,
                                 "before_item_id": cancellation_items[0],
                                 "expected_row_version": 1,
                             },
@@ -993,6 +995,7 @@ async def test_agent_locale_navigation_structural_races_and_cancellation(
                     f"/api/agent/v1/navigation-items/{cancellation_items[1]}:move",
                     "cancel-reorder-retry",
                     {
+                        "parent_id": None,
                         "before_item_id": cancellation_items[0],
                         "expected_row_version": 1,
                     },
@@ -10156,12 +10159,30 @@ async def test_agent_locale_navigation_journey_is_cow_bound_and_semantic(
                 )
                 assert switched.status_code == 200, switched.text
                 assert switched.json()["record"]["is_default"] is True
-                assert (
-                    await client.get(
-                        f"/api/agent/v1/locales/{default_locale['id']}",
-                        headers=headers,
-                    )
-                ).json()["is_default"] is False
+                old_default = await client.get(
+                    f"/api/agent/v1/locales/{default_locale['id']}",
+                    headers=headers,
+                )
+                assert old_default.status_code == 200, old_default.text
+                assert old_default.json()["is_default"] is False
+                assert old_default.json()["row_version"] == 2
+                stale_default = await client.patch(
+                    f"/api/agent/v1/locales/{default_locale['id']}",
+                    headers={**headers, "Idempotency-Key": "journey-stale-default"},
+                    json={"is_default": True, "expected_row_version": 1},
+                )
+                assert stale_default.status_code == 409, stale_default.text
+
+                invalid_label_navigation = await client.post(
+                    "/api/agent/v1/navigation",
+                    headers={**headers, "Idempotency-Key": "journey-invalid-label"},
+                    json={
+                        "key": "invalid-labels",
+                        "label": "Invalid labels",
+                        "labels": {"zz-ZZ": "Unknown"},
+                    },
+                )
+                assert invalid_label_navigation.status_code == 422
 
                 page = await client.post(
                     "/api/agent/v1/pages",
@@ -10188,6 +10209,38 @@ async def test_agent_locale_navigation_journey_is_cow_bound_and_semantic(
                 assert navigation.status_code == 201, navigation.text
                 navigation_id = UUID(navigation.json()["record"]["id"])
                 assert navigation.json()["record"]["row_version"] == 1
+                empty_navigation_update = await client.patch(
+                    f"/api/agent/v1/navigation/{navigation_id}",
+                    headers={**headers, "Idempotency-Key": "journey-empty-nav-update"},
+                    json={"expected_row_version": 1},
+                )
+                assert empty_navigation_update.status_code == 422
+                navigation_labels_update = await client.patch(
+                    f"/api/agent/v1/navigation/{navigation_id}",
+                    headers={**headers, "Idempotency-Key": "journey-label-update"},
+                    json={
+                        "labels": {
+                            "sl-SI": "Glavni meni",
+                            "en-US": "Primary menu",
+                        },
+                        "expected_row_version": 1,
+                    },
+                )
+                assert navigation_labels_update.status_code == 200, (
+                    navigation_labels_update.text
+                )
+                assert navigation_labels_update.json()["record"]["row_version"] == 2
+                disable_labeled_locale = await client.patch(
+                    f"/api/agent/v1/locales/{default_locale['id']}",
+                    headers={
+                        **headers,
+                        "Idempotency-Key": "journey-disable-labeled-locale",
+                    },
+                    json={"enabled": False, "expected_row_version": 2},
+                )
+                assert disable_labeled_locale.status_code == 409, (
+                    disable_labeled_locale.text
+                )
 
                 page_item = await client.post(
                     f"/api/agent/v1/navigation/{navigation_id}/items",
@@ -10208,13 +10261,33 @@ async def test_agent_locale_navigation_journey_is_cow_bound_and_semantic(
                     json={
                         "parent_id": str(page_item_id),
                         "target_kind": "INTERNAL",
-                        "target_value": "/about",
+                        "target_value": "/",
                         "labels": {"sl-SI": "O nas"},
                         "locale": "sl-SI",
                     },
                 )
                 assert child.status_code == 201, child.text
                 child_id = UUID(child.json()["record"]["id"])
+                invalid_external = await client.post(
+                    f"/api/agent/v1/navigation/{navigation_id}/items",
+                    headers={**headers, "Idempotency-Key": "journey-http-external"},
+                    json={
+                        "target_kind": "EXTERNAL",
+                        "target_value": "http://example.test/docs",
+                        "labels": {"sl-SI": "Unsafe"},
+                    },
+                )
+                assert invalid_external.status_code == 422
+                invalid_internal = await client.post(
+                    f"/api/agent/v1/navigation/{navigation_id}/items",
+                    headers={**headers, "Idempotency-Key": "journey-unknown-internal"},
+                    json={
+                        "target_kind": "INTERNAL",
+                        "target_value": "/does-not-exist",
+                        "labels": {"sl-SI": "Unknown"},
+                    },
+                )
+                assert invalid_internal.status_code == 422
                 external = await client.post(
                     f"/api/agent/v1/navigation/{navigation_id}/items",
                     headers={**headers, "Idempotency-Key": "journey-external-item"},
@@ -10231,6 +10304,7 @@ async def test_agent_locale_navigation_journey_is_cow_bound_and_semantic(
                     f"/api/agent/v1/navigation-items/{external_id}:move",
                     headers={**headers, "Idempotency-Key": "journey-reorder"},
                     json={
+                        "parent_id": None,
                         "before_item_id": str(page_item_id),
                         "expected_row_version": 1,
                     },
@@ -10264,16 +10338,28 @@ async def test_agent_locale_navigation_journey_is_cow_bound_and_semantic(
                     str(child_id),
                     str(external_id),
                 }
+                assert (
+                    next(
+                        row for row in listed.json() if row["id"] == str(page_item_id)
+                    )["row_version"]
+                    == 2
+                )
+                empty_item_update = await client.patch(
+                    f"/api/agent/v1/navigation-items/{page_item_id}",
+                    headers={**headers, "Idempotency-Key": "journey-empty-item-update"},
+                    json={"expected_row_version": 2},
+                )
+                assert empty_item_update.status_code == 422
                 updated_item = await client.patch(
                     f"/api/agent/v1/navigation-items/{page_item_id}",
                     headers={**headers, "Idempotency-Key": "journey-page-item-update"},
                     json={
                         "labels": {"sl-SI": "Domov posodobljen"},
-                        "expected_row_version": 1,
+                        "expected_row_version": 2,
                     },
                 )
                 assert updated_item.status_code == 200, updated_item.text
-                assert updated_item.json()["record"]["row_version"] == 2
+                assert updated_item.json()["record"]["row_version"] == 3
 
                 page_delete = await client.request(
                     "DELETE",
@@ -10293,7 +10379,7 @@ async def test_agent_locale_navigation_journey_is_cow_bound_and_semantic(
                 for item_id, expected_row_version, key in (
                     (child_id, 1, "journey-child-delete"),
                     (external_id, external_row_version, "journey-external-delete"),
-                    (page_item_id, 2, "journey-page-item-delete"),
+                    (page_item_id, 4, "journey-page-item-delete"),
                 ):
                     deleted = await client.request(
                         "DELETE",
@@ -10306,7 +10392,7 @@ async def test_agent_locale_navigation_journey_is_cow_bound_and_semantic(
                     "DELETE",
                     f"/api/agent/v1/navigation/{navigation_id}",
                     headers={**headers, "Idempotency-Key": "journey-nav-delete-2"},
-                    json={"expected_row_version": 1},
+                    json={"expected_row_version": 2},
                 )
                 assert deleted_navigation.status_code == 200, deleted_navigation.text
 
@@ -10334,6 +10420,178 @@ async def test_agent_locale_navigation_journey_is_cow_bound_and_semantic(
                 "NAVIGATION_ITEM_DELETED",
                 "NAVIGATION_DELETED",
             }
+    finally:
+        _TEST_CAPABILITY_BY_WORKSPACE.pop(workspace_id, None)
+
+
+@pytest.mark.asyncio
+async def test_agent_navigation_constraints_count_only_visible_resources(
+    agent_site_database: AgentSiteDatabase,
+) -> None:
+    """Navigation allowlists constrain both containers and their item wrappers."""
+
+    database = agent_site_database
+    _token, seeded = await _seed(database)
+    scopes = [
+        "site:read",
+        "navigation:read",
+        "navigation:create",
+        "navigation:write",
+        "navigation:delete",
+    ]
+    token, workspace_id = await _workspace_capability(
+        database, seeded, scopes, "Agent Navigation Resource Constraint Workspace"
+    )
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        await owner.execute(
+            "UPDATE control.capability SET request_quota=100, mutation_quota=100, "
+            "delete_quota=100 WHERE workspace_id=$1",
+            workspace_id,
+        )
+    app = create_agent_app(
+        settings=ServiceSettings.for_test(),
+        database_settings=_agent_settings(database),
+    )
+    headers = {"Authorization": f"Bearer {token}"}
+    try:
+        async with app.router.lifespan_context(app):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://agent.test"
+            ) as client:
+
+                async def request(
+                    method: str,
+                    path: str,
+                    *,
+                    key: str | None = None,
+                    body: Mapping[str, object] | None = None,
+                ) -> httpx.Response:
+                    request_headers = dict(headers)
+                    if key is not None:
+                        request_headers["Idempotency-Key"] = key
+                    return await client.request(
+                        method, path, headers=request_headers, json=body
+                    )
+
+                allowed = await request(
+                    "POST",
+                    "/api/agent/v1/navigation",
+                    key="constraint-allowed-navigation",
+                    body={"key": "allowed", "label": "Allowed"},
+                )
+                hidden = await request(
+                    "POST",
+                    "/api/agent/v1/navigation",
+                    key="constraint-hidden-navigation",
+                    body={"key": "hidden", "label": "Hidden"},
+                )
+                assert allowed.status_code == 201, allowed.text
+                assert hidden.status_code == 201, hidden.text
+                allowed_id = allowed.json()["record"]["id"]
+                hidden_id = hidden.json()["record"]["id"]
+                allowed_item = await request(
+                    "POST",
+                    f"/api/agent/v1/navigation/{allowed_id}/items",
+                    key="constraint-allowed-item",
+                    body={
+                        "target_kind": "EXTERNAL",
+                        "target_value": "https://example.test/allowed",
+                        "labels": {"en-US": "Allowed"},
+                    },
+                )
+                hidden_items = []
+                for suffix in ("one", "two"):
+                    hidden_item = await request(
+                        "POST",
+                        f"/api/agent/v1/navigation/{hidden_id}/items",
+                        key=f"constraint-hidden-item-{suffix}",
+                        body={
+                            "target_kind": "EXTERNAL",
+                            "target_value": f"https://example.test/{suffix}",
+                            "labels": {"en-US": f"Hidden {suffix}"},
+                        },
+                    )
+                    assert hidden_item.status_code == 201, hidden_item.text
+                    hidden_items.append(hidden_item.json()["record"]["id"])
+                assert allowed_item.status_code == 201, allowed_item.text
+
+                await _set_resource_constraints(
+                    database,
+                    workspace_id,
+                    {
+                        "allowed_locales": ["en-US"],
+                        "allowed_navigation_keys": ["allowed"],
+                        "max_visible_navigations": 1,
+                        "max_visible_navigation_items": 1,
+                    },
+                )
+                listed = await request("GET", "/api/agent/v1/navigation")
+                assert listed.status_code == 200, listed.text
+                assert [row["key"] for row in listed.json()] == ["allowed"]
+                allowed_items = await request(
+                    "GET", f"/api/agent/v1/navigation/{allowed_id}/items"
+                )
+                assert allowed_items.status_code == 200, allowed_items.text
+                assert len(allowed_items.json()) == 1
+                assert (
+                    await request("GET", f"/api/agent/v1/navigation/{hidden_id}")
+                ).status_code == 404
+                assert (
+                    await request(
+                        "GET",
+                        f"/api/agent/v1/navigation-items/{hidden_items[0]}",
+                    )
+                ).status_code == 404
+
+                async with owner_connection(
+                    database.settings.resolved_owner_dsn(),
+                    expected_database=database.name,
+                ) as owner:
+                    before = await owner.fetchrow(
+                        "SELECT "
+                        "(SELECT count(*) FROM control.agent_idempotency "
+                        "WHERE workspace_id=$1),"
+                        "(SELECT count(*) FROM audit.agent_mutation "
+                        "WHERE workspace_id=$1),"
+                        "(SELECT count(*) FROM content.navigation_item_changes "
+                        "WHERE session_id=$1)",
+                        workspace_id,
+                    )
+                denied_create = await request(
+                    "POST",
+                    f"/api/agent/v1/navigation/{hidden_id}/items",
+                    key="constraint-denied-create",
+                    body={
+                        "target_kind": "EXTERNAL",
+                        "target_value": "https://example.test/denied",
+                        "labels": {"en-US": "Denied"},
+                    },
+                )
+                denied_delete = await request(
+                    "DELETE",
+                    f"/api/agent/v1/navigation-items/{hidden_items[0]}",
+                    key="constraint-denied-delete",
+                    body={"expected_row_version": 1},
+                )
+                assert denied_create.status_code == 403, denied_create.text
+                assert denied_delete.status_code == 403, denied_delete.text
+                async with owner_connection(
+                    database.settings.resolved_owner_dsn(),
+                    expected_database=database.name,
+                ) as owner:
+                    after = await owner.fetchrow(
+                        "SELECT "
+                        "(SELECT count(*) FROM control.agent_idempotency "
+                        "WHERE workspace_id=$1),"
+                        "(SELECT count(*) FROM audit.agent_mutation "
+                        "WHERE workspace_id=$1),"
+                        "(SELECT count(*) FROM content.navigation_item_changes "
+                        "WHERE session_id=$1)",
+                        workspace_id,
+                    )
+                assert tuple(after) == tuple(before)
     finally:
         _TEST_CAPABILITY_BY_WORKSPACE.pop(workspace_id, None)
 

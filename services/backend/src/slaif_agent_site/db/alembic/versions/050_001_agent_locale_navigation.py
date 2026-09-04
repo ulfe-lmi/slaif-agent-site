@@ -276,9 +276,11 @@ def upgrade() -> None:
             p_position integer
         ) RETURNS SETOF content.navigation_item
         LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $fn$
-        DECLARE parent_nav uuid; created_id uuid;
+        DECLARE parent_nav uuid; created content.navigation_item;
+            created_id uuid;
+            desired_position integer; sibling_count integer;
         BEGIN
-            PERFORM pg_advisory_xact_lock(hashtextextended(p_site_id::text || '_navigation',0));
+            PERFORM control.slaif_agent_structural_lock(p_site_id);
             IF NOT EXISTS (SELECT 1 FROM content.navigation n WHERE n.id=p_navigation_id AND n.site_id=p_site_id) THEN
                 RAISE EXCEPTION 'NOT_FOUND' USING ERRCODE='P0002';
             END IF;
@@ -296,7 +298,8 @@ def upgrade() -> None:
                 RAISE EXCEPTION 'NAVIGATION_PAGE_INVALID' USING ERRCODE='P0003';
             END IF;
             IF p_page_id IS NOT NULL AND NOT EXISTS (
-                SELECT 1 FROM content.page p WHERE p.id=p_page_id AND p.site_id=p_site_id
+                SELECT 1 FROM content.page p
+                WHERE p.id=p_page_id AND p.site_id=p_site_id AND p.deleted_at IS NULL
             ) THEN
                 RAISE EXCEPTION 'NAVIGATION_PAGE_INVALID' USING ERRCODE='P0003';
             END IF;
@@ -311,16 +314,30 @@ def upgrade() -> None:
                OR jsonb_typeof(p_labels)<>'object' THEN
                 RAISE EXCEPTION 'NAVIGATION_INVALID' USING ERRCODE='P0003';
             END IF;
-            created_id:=gen_random_uuid();
+            PERFORM content.slaif_agent_navigation_validate_labels(p_site_id,p_labels);
+            SELECT count(*)::integer INTO sibling_count
+            FROM content.navigation_item i
+            WHERE i.site_id=p_site_id AND i.navigation_id=p_navigation_id
+              AND i.parent_id IS NOT DISTINCT FROM p_parent_id;
+            IF sibling_count>=1000 THEN
+                RAISE EXCEPTION 'NAVIGATION_POSITION_LIMIT' USING ERRCODE='P0003';
+            END IF;
+            desired_position:=least(p_position,sibling_count);
+            UPDATE content.navigation_item i SET position=i.position+1,
+                row_version=i.row_version+1,updated_at=now()
+            WHERE i.site_id=p_site_id AND i.navigation_id=p_navigation_id
+              AND i.parent_id IS NOT DISTINCT FROM p_parent_id
+              AND i.position>=desired_position;
             INSERT INTO content.navigation_item(
                 id,site_id,navigation_id,parent_id,parent_key,page_id,target_kind,
                 target_value,labels,locale,position
             ) VALUES (
-                created_id,p_site_id,p_navigation_id,p_parent_id,
+                gen_random_uuid(),p_site_id,p_navigation_id,p_parent_id,
                 coalesce(p_parent_id,'00000000-0000-0000-0000-000000000000'::uuid),
-                p_page_id,p_target_kind,p_target_value,p_labels,p_locale,p_position
-            );
-            RETURN QUERY SELECT i.* FROM content.navigation_item i WHERE i.id=created_id;
+                p_page_id,p_target_kind,p_target_value,p_labels,p_locale,desired_position
+            ) RETURNING id INTO created_id;
+            SELECT i.* INTO created FROM content.navigation_item i WHERE i.id=created_id;
+            RETURN NEXT created;
         END; $fn$
         """
     )
@@ -333,8 +350,11 @@ def upgrade() -> None:
         ) RETURNS SETOF content.navigation_item
         LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $fn$
         DECLARE old content.navigation_item; parent_nav uuid;
+            target_parent uuid; target_page uuid; new_target_kind text;
+            new_target_value text; new_target_labels jsonb; new_target_locale text;
+            cursor_id uuid; desired_position integer; sibling_count integer;
         BEGIN
-            PERFORM pg_advisory_xact_lock(hashtextextended(p_site_id::text || '_navigation',0));
+            PERFORM control.slaif_agent_structural_lock(p_site_id);
             SELECT i.* INTO old FROM content.navigation_item i
             WHERE i.site_id=p_site_id AND i.id=p_id FOR UPDATE;
             IF NOT FOUND THEN RAISE EXCEPTION 'NOT_FOUND' USING ERRCODE='P0002'; END IF;
@@ -345,29 +365,77 @@ def upgrade() -> None:
                 IF parent_nav IS NULL OR parent_nav<>old.navigation_id OR p_parent_id=p_id THEN
                     RAISE EXCEPTION 'NAVIGATION_PARENT_INVALID' USING ERRCODE='P0003';
                 END IF;
+                cursor_id:=p_parent_id;
+                LOOP
+                    IF cursor_id=p_id THEN
+                        RAISE EXCEPTION 'NAVIGATION_CYCLE' USING ERRCODE='P0003';
+                    END IF;
+                    SELECT i.parent_id INTO cursor_id FROM content.navigation_item i
+                    WHERE i.site_id=p_site_id AND i.id=cursor_id;
+                    EXIT WHEN cursor_id IS NULL;
+                END LOOP;
             END IF;
-            IF coalesce(p_target_kind,old.target_kind)='PAGE'
-               AND (coalesce(p_page_id,old.page_id) IS NULL
-                    OR coalesce(p_target_value,old.target_value)<>coalesce(p_page_id,old.page_id)::text)
+            target_parent:=p_parent_id;
+            target_page:=CASE WHEN p_target_kind IS NOT NULL AND p_target_kind<>'PAGE'
+                THEN NULL ELSE coalesce(p_page_id,old.page_id) END;
+            new_target_kind:=coalesce(p_target_kind,old.target_kind);
+            new_target_value:=coalesce(p_target_value,old.target_value);
+            new_target_labels:=coalesce(p_labels,old.labels);
+            new_target_locale:=p_locale;
+            IF new_target_kind='PAGE'
+               AND (target_page IS NULL OR new_target_value<>target_page::text)
             THEN RAISE EXCEPTION 'NAVIGATION_PAGE_INVALID' USING ERRCODE='P0003'; END IF;
-            IF coalesce(p_target_kind,old.target_kind)<>'PAGE'
-               AND coalesce(p_page_id,old.page_id) IS NOT NULL
+            IF new_target_kind<>'PAGE' AND target_page IS NOT NULL
             THEN RAISE EXCEPTION 'NAVIGATION_PAGE_INVALID' USING ERRCODE='P0003'; END IF;
-            IF p_locale IS NOT NULL AND NOT EXISTS (
+            IF target_page IS NOT NULL AND NOT EXISTS (
+                SELECT 1 FROM content.page p
+                WHERE p.id=target_page AND p.site_id=p_site_id AND p.deleted_at IS NULL
+            ) THEN RAISE EXCEPTION 'NAVIGATION_PAGE_INVALID' USING ERRCODE='P0003'; END IF;
+            IF new_target_locale IS NOT NULL AND NOT EXISTS (
                 SELECT 1 FROM content.site_locale l
-                WHERE l.site_id=p_site_id AND l.tag=p_locale AND l.enabled
+                WHERE l.site_id=p_site_id AND l.tag=new_target_locale AND l.enabled
             ) THEN RAISE EXCEPTION 'LOCALE_INVALID' USING ERRCODE='P0003'; END IF;
-            UPDATE content.navigation_item AS i SET
-                parent_id=p_parent_id,
-                parent_key=coalesce(p_parent_id,'00000000-0000-0000-0000-000000000000'::uuid),
-                page_id=CASE WHEN p_target_kind IS NOT NULL AND p_target_kind<>'PAGE'
-                    THEN NULL ELSE coalesce(p_page_id,i.page_id) END,
-                target_kind=coalesce(p_target_kind,i.target_kind),
-                target_value=coalesce(p_target_value,i.target_value),
-                labels=coalesce(p_labels,i.labels),locale=p_locale,
-                position=coalesce(p_position,i.position),row_version=i.row_version+1,
-                updated_at=now()
+            IF new_target_kind NOT IN ('PAGE','INTERNAL','EXTERNAL')
+               OR p_position IS NOT NULL AND p_position NOT BETWEEN 0 AND 999
+               OR jsonb_typeof(new_target_labels)<>'object'
+            THEN RAISE EXCEPTION 'NAVIGATION_INVALID' USING ERRCODE='P0003'; END IF;
+            PERFORM content.slaif_agent_navigation_validate_labels(p_site_id,new_target_labels);
+            SELECT count(*)::integer INTO sibling_count
+            FROM content.navigation_item i
+            WHERE i.site_id=p_site_id AND i.navigation_id=old.navigation_id
+              AND i.parent_id IS NOT DISTINCT FROM target_parent AND i.id<>p_id;
+            desired_position:=least(coalesce(p_position,old.position),sibling_count);
+            UPDATE content.navigation_item i SET position=999
             WHERE i.site_id=p_site_id AND i.id=p_id;
+            WITH ranked AS (
+                SELECT i.id,(row_number() OVER (ORDER BY i.position,i.id)-1)::integer AS compact_position
+                FROM content.navigation_item i
+                WHERE i.site_id=p_site_id AND i.navigation_id=old.navigation_id
+                  AND i.parent_id IS NOT DISTINCT FROM old.parent_id AND i.id<>p_id
+            ) UPDATE content.navigation_item i SET position=ranked.compact_position,
+                row_version=CASE WHEN i.position IS DISTINCT FROM ranked.compact_position
+                    THEN i.row_version+1 ELSE i.row_version END,
+                updated_at=CASE WHEN i.position IS DISTINCT FROM ranked.compact_position
+                    THEN now() ELSE i.updated_at END
+            FROM ranked WHERE i.id=ranked.id;
+            WITH ranked AS (
+                SELECT i.id,(row_number() OVER (ORDER BY i.position,i.id)-1)::integer AS compact_position
+                FROM content.navigation_item i
+                WHERE i.site_id=p_site_id AND i.navigation_id=old.navigation_id
+                  AND i.parent_id IS NOT DISTINCT FROM target_parent AND i.id<>p_id
+            ) UPDATE content.navigation_item i SET position=ranked.compact_position+1,
+                row_version=i.row_version+1,updated_at=now()
+            FROM ranked WHERE i.id=ranked.id
+              AND ranked.compact_position>=desired_position;
+            UPDATE content.navigation_item AS i SET
+                parent_id=target_parent,
+                parent_key=coalesce(target_parent,'00000000-0000-0000-0000-000000000000'::uuid),
+                page_id=target_page,target_kind=new_target_kind,target_value=new_target_value,
+                labels=new_target_labels,locale=new_target_locale,position=desired_position,
+                row_version=i.row_version+1,
+                updated_at=now()
+            WHERE i.site_id=p_site_id AND i.id=p_id AND i.row_version=p_expected;
+            IF NOT FOUND THEN RAISE EXCEPTION 'ROW_VERSION_MISMATCH' USING ERRCODE='P0004'; END IF;
             RETURN QUERY SELECT i.* FROM content.navigation_item i
             WHERE i.site_id=p_site_id AND i.id=p_id;
         END; $fn$
@@ -393,12 +461,80 @@ def upgrade() -> None:
                 RAISE EXCEPTION 'COW_CONTEXT_REQUIRED' USING ERRCODE='22023';
             END;
             IF workspace_id IS NULL THEN RAISE EXCEPTION 'COW_CONTEXT_REQUIRED' USING ERRCODE='22023'; END IF;
-            -- This is the one workspace+site structural lock. Its key is kept
-            -- equal to the 049 page lock so page and new site-data writes join
-            -- the same deterministic serialization domain.
+            -- All online structural writes take the workspace lifecycle lock
+            -- first, then this one workspace+site structural lock.  The key is
+            -- equal to the 049 page lock so every interface shares one order.
+            PERFORM pg_advisory_xact_lock(hashtextextended(workspace_id::text,280));
             PERFORM pg_advisory_xact_lock(hashtextextended(workspace_id::text||chr(58)||p_site_id::text||chr(58)||'page-structure',994));
         END;
         $fn$
+        """
+    )
+    op.execute(
+        """
+        CREATE OR REPLACE FUNCTION control.slaif_agent_require_capability(
+            p_site_id uuid, p_required_scope text
+        ) RETURNS uuid LANGUAGE plpgsql SECURITY DEFINER
+        SET search_path = pg_catalog AS $fn$
+        DECLARE
+            cow_workspace_id uuid; capability_id uuid; operation_id uuid;
+            expected_site uuid; delegator_id uuid; preset text;
+            required_level integer; platform_admin boolean;
+            effective_ceiling integer; effective_scopes jsonb;
+        BEGIN
+            PERFORM control.slaif_agent_require_cow_site(p_site_id);
+            BEGIN
+                cow_workspace_id := NULLIF(current_setting('app.session_id', true), '')::uuid;
+                operation_id := NULLIF(current_setting('app.operation_id', true), '')::uuid;
+                capability_id := NULLIF(current_setting('app.capability_id', true), '')::uuid;
+            EXCEPTION WHEN invalid_text_representation THEN
+                RAISE EXCEPTION 'AGENT_CAPABILITY_CONTEXT_REQUIRED' USING ERRCODE = '22023';
+            END;
+            IF cow_workspace_id IS NULL OR operation_id IS NULL OR capability_id IS NULL THEN
+                RAISE EXCEPTION 'AGENT_CAPABILITY_CONTEXT_REQUIRED' USING ERRCODE = '22023';
+            END IF;
+            -- Establish the lifecycle shared lock before any structural lock.
+            PERFORM pg_advisory_xact_lock(hashtextextended(cow_workspace_id::text,280));
+            SELECT w.site_id, COALESCE(w.delegator_id,w.created_by),
+                   w.delegation_preset, c.scopes
+              INTO expected_site, delegator_id, preset, effective_scopes
+            FROM control.capability c
+            JOIN control.workspace w ON w.id=c.workspace_id
+            JOIN control.site s ON s.id=w.site_id
+            JOIN control.user_account a ON a.id=COALESCE(w.delegator_id,w.created_by)
+            WHERE c.id=capability_id AND c.workspace_id=cow_workspace_id
+              AND c.revoked_at IS NULL AND c.expires_at>CURRENT_TIMESTAMP
+              AND w.status='ACTIVE' AND w.expires_at>CURRENT_TIMESTAMP
+              AND s.status='ACTIVE' AND a.status='ACTIVE';
+            IF expected_site IS NULL OR expected_site IS DISTINCT FROM p_site_id THEN
+                RAISE EXCEPTION 'AGENT_CAPABILITY_SITE_MISMATCH' USING ERRCODE='P0002';
+            END IF;
+            IF p_required_scope IS NULL OR btrim(p_required_scope)='' OR effective_scopes IS NULL
+               OR jsonb_typeof(effective_scopes)<>'array'
+            THEN RAISE EXCEPTION 'AGENT_SCOPE_DENIED' USING ERRCODE='P0007'; END IF;
+            IF EXISTS (
+                SELECT 1 FROM jsonb_array_elements(effective_scopes) AS scope(value)
+                WHERE jsonb_typeof(scope.value)<>'string'
+            ) OR NOT EXISTS (
+                SELECT 1 FROM jsonb_array_elements(effective_scopes) AS scope(value)
+                WHERE scope.value #>> '{}'=p_required_scope
+            ) THEN RAISE EXCEPTION 'AGENT_SCOPE_DENIED' USING ERRCODE='P0007'; END IF;
+            required_level:=CASE preset
+                WHEN 'L1' THEN 1 WHEN 'L1_CONTENT_EDITOR' THEN 1
+                WHEN 'L2' THEN 2 WHEN 'L2_SITE_EDITOR' THEN 2
+                WHEN 'L3' THEN 3 WHEN 'L3_SITE_DESIGNER' THEN 3
+                WHEN 'L4' THEN 4 WHEN 'L4_SITE_ARCHITECT' THEN 4 ELSE 99 END;
+            SELECT EXISTS (SELECT 1 FROM control.platform_administrator pa
+                WHERE pa.user_account_id=delegator_id) INTO platform_admin;
+            IF NOT platform_admin THEN
+                SELECT MAX(m.effective_ceiling) INTO effective_ceiling
+                FROM control.slaif_effective_human_membership(delegator_id,p_site_id) m;
+                IF effective_ceiling IS NULL OR effective_ceiling<required_level THEN
+                    RAISE EXCEPTION 'COW_AUTHORITY_REVOKED' USING ERRCODE='P0002';
+                END IF;
+            END IF;
+            RETURN capability_id;
+        END; $fn$
         """
     )
     op.execute(
@@ -441,10 +577,79 @@ def upgrade() -> None:
     # columns are added, while making its existing update row-version-safe.
     op.execute(
         """
+        CREATE OR REPLACE FUNCTION content.slaif_page_create(
+            p_site_id uuid, p_slug text, p_title text, p_status text, p_locale text
+        ) RETURNS TABLE (
+            id uuid, site_id uuid, slug text, title text, status text, locale text,
+            parent_id uuid, row_version integer, created_at timestamptz,
+            updated_at timestamptz
+        ) LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $fn$
+        BEGIN
+            PERFORM control.slaif_agent_structural_lock(p_site_id);
+            IF NOT EXISTS (
+                SELECT 1 FROM content.site_locale l
+                WHERE l.site_id=p_site_id AND l.tag=p_locale AND l.enabled
+            ) THEN
+                RAISE EXCEPTION 'LOCALE_INVALID' USING ERRCODE='P0003';
+            END IF;
+            INSERT INTO content.page(site_id,slug,title,status,locale)
+            VALUES(p_site_id,p_slug,p_title,p_status,p_locale);
+            RETURN QUERY SELECT p.id,p.site_id,p.slug,p.title,p.status,p.locale,p.parent_id,
+                p.row_version,p.created_at,p.updated_at FROM content.page p
+            WHERE p.site_id=p_site_id AND p.slug=p_slug AND p.locale=p_locale
+            ORDER BY p.created_at DESC LIMIT 1;
+        END; $fn$
+        """
+    )
+    op.execute(
+        """
+        CREATE OR REPLACE FUNCTION content.slaif_page_update(
+            p_page_id uuid, p_slug text, p_title text, p_status text,
+            p_expected_row_version integer
+        ) RETURNS TABLE (
+            id uuid, site_id uuid, slug text, title text, status text, locale text,
+            parent_id uuid, row_version integer, created_at timestamptz,
+            updated_at timestamptz
+        ) LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $fn$
+        DECLARE target_site uuid;
+        BEGIN
+            SELECT p.site_id INTO target_site FROM content.page p WHERE p.id=p_page_id;
+            IF target_site IS NULL THEN RAISE EXCEPTION 'NOT_FOUND' USING ERRCODE='P0002'; END IF;
+            PERFORM control.slaif_agent_structural_lock(target_site);
+            UPDATE content.page AS page SET
+                slug=coalesce(p_slug,page.slug), title=coalesce(p_title,page.title),
+                status=coalesce(p_status,page.status), row_version=page.row_version+1,
+                updated_at=CURRENT_TIMESTAMP
+            WHERE page.id=p_page_id
+              AND page.deleted_at IS NULL
+              AND (p_expected_row_version IS NULL OR page.row_version=p_expected_row_version);
+            IF NOT FOUND THEN RAISE EXCEPTION 'NOT_FOUND' USING ERRCODE='P0002'; END IF;
+            RETURN QUERY SELECT p.id,p.site_id,p.slug,p.title,p.status,p.locale,p.parent_id,
+                p.row_version,p.created_at,p.updated_at FROM content.page p
+            WHERE p.id=p_page_id AND p.deleted_at IS NULL;
+        END; $fn$
+        """
+    )
+    op.execute(
+        """
+        CREATE OR REPLACE FUNCTION content.slaif_page_delete(p_page_id uuid)
+        RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $fn$
+        DECLARE target_site uuid;
+        BEGIN
+            SELECT p.site_id INTO target_site FROM content.page p WHERE p.id=p_page_id;
+            IF target_site IS NULL THEN RETURN; END IF;
+            PERFORM control.slaif_agent_structural_lock(target_site);
+            DELETE FROM content.page WHERE id=p_page_id;
+        END; $fn$
+        """
+    )
+    op.execute(
+        """
         CREATE OR REPLACE FUNCTION content.slaif_navigation_create(p_site_id uuid,p_key text,p_label text,p_settings jsonb)
         RETURNS TABLE(id uuid,site_id uuid,\"key\" text,label text,settings jsonb,created_at timestamptz,updated_at timestamptz)
         LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $fn$
         BEGIN
+            PERFORM control.slaif_agent_structural_lock(p_site_id);
             INSERT INTO content.navigation(site_id,\"key\",label,settings,labels) VALUES(p_site_id,p_key,p_label,p_settings,'{}'::jsonb);
             RETURN QUERY SELECT n.id,n.site_id,n.\"key\",n.label,n.settings,n.created_at,n.updated_at FROM content.navigation n WHERE n.site_id=p_site_id AND n.\"key\"=p_key LIMIT 1;
         END; $fn$
@@ -473,7 +678,11 @@ def upgrade() -> None:
         CREATE OR REPLACE FUNCTION content.slaif_navigation_update(p_nav_id uuid,p_label text,p_settings jsonb)
         RETURNS TABLE(id uuid,site_id uuid,\"key\" text,label text,settings jsonb,created_at timestamptz,updated_at timestamptz)
         LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $fn$
+        DECLARE target_site uuid;
         BEGIN
+            SELECT n.site_id INTO target_site FROM content.navigation n WHERE n.id=p_nav_id;
+            IF target_site IS NULL THEN RAISE EXCEPTION 'NOT_FOUND' USING ERRCODE='P0002'; END IF;
+            PERFORM control.slaif_agent_structural_lock(target_site);
             UPDATE content.navigation n SET label=coalesce(p_label,n.label),settings=coalesce(p_settings,n.settings),row_version=n.row_version+1,updated_at=current_timestamp WHERE n.id=p_nav_id;
             IF NOT FOUND THEN RAISE EXCEPTION 'NOT_FOUND' USING ERRCODE='P0002'; END IF;
             RETURN QUERY SELECT n.id,n.site_id,n.\"key\",n.label,n.settings,n.created_at,n.updated_at FROM content.navigation n WHERE n.id=p_nav_id;
@@ -483,23 +692,184 @@ def upgrade() -> None:
 
     op.execute(
         """
+        CREATE OR REPLACE FUNCTION content.slaif_locale_create(
+            p_site_id uuid,p_tag text,p_enabled boolean,p_default boolean,
+            p_position integer,p_metadata jsonb
+        ) RETURNS SETOF content.site_locale
+        LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $fn$
+        BEGIN
+            PERFORM control.slaif_agent_structural_lock(p_site_id);
+            IF p_tag IS NULL OR p_tag !~ '^[A-Za-z]{2,3}(-[A-Za-z]{4})?(-([A-Za-z]{2}|[0-9]{3}))?(-[A-Za-z0-9]{5,8})*$'
+               OR p_position IS NULL OR p_position NOT BETWEEN 0 AND 999
+               OR p_metadata IS NULL OR jsonb_typeof(p_metadata)<>'object'
+               OR p_default AND NOT p_enabled
+            THEN RAISE EXCEPTION 'LOCALE_INVALID' USING ERRCODE='P0003'; END IF;
+            IF p_default THEN
+                UPDATE content.site_locale l SET is_default=false,
+                    row_version=l.row_version+1,updated_at=now()
+                WHERE l.site_id=p_site_id AND l.is_default;
+            END IF;
+            INSERT INTO content.site_locale(site_id,tag,enabled,is_default,position,metadata)
+            VALUES(p_site_id,p_tag,p_enabled,p_default,p_position,p_metadata);
+            RETURN QUERY SELECT l.* FROM content.site_locale l
+            WHERE l.site_id=p_site_id AND l.tag=p_tag;
+        END; $fn$
+        """
+    )
+    op.execute(
+        """
+        CREATE OR REPLACE FUNCTION content.slaif_locale_update(
+            p_site_id uuid,p_id uuid,p_tag text,p_enabled boolean,p_default boolean,
+            p_position integer,p_metadata jsonb,p_expected integer
+        ) RETURNS SETOF content.site_locale
+        LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $fn$
+        DECLARE old content.site_locale;
+        BEGIN
+            PERFORM control.slaif_agent_structural_lock(p_site_id);
+            SELECT l.* INTO old FROM content.site_locale l
+            WHERE l.site_id=p_site_id AND l.id=p_id FOR UPDATE;
+            IF NOT FOUND THEN RAISE EXCEPTION 'NOT_FOUND' USING ERRCODE='P0002'; END IF;
+            IF old.row_version<>p_expected THEN RAISE EXCEPTION 'ROW_VERSION_MISMATCH' USING ERRCODE='P0004'; END IF;
+            IF p_tag IS NOT NULL AND p_tag !~ '^[A-Za-z]{2,3}(-[A-Za-z]{4})?(-([A-Za-z]{2}|[0-9]{3}))?(-[A-Za-z0-9]{5,8})*$'
+               OR coalesce(p_position,old.position) NOT BETWEEN 0 AND 999
+            THEN RAISE EXCEPTION 'LOCALE_INVALID' USING ERRCODE='P0003'; END IF;
+            IF old.is_default AND (p_enabled IS FALSE OR p_default IS FALSE)
+            THEN RAISE EXCEPTION 'LOCALE_DEFAULT_REQUIRED' USING ERRCODE='P0003'; END IF;
+            IF p_tag IS NOT NULL AND p_tag<>old.tag AND (
+                EXISTS(SELECT 1 FROM content.navigation n
+                       WHERE n.site_id=p_site_id AND n.labels ? old.tag)
+                OR EXISTS(SELECT 1 FROM content.navigation_item i
+                           WHERE i.site_id=p_site_id AND i.labels ? old.tag)
+            ) THEN RAISE EXCEPTION 'LOCALE_REFERENCED' USING ERRCODE='P0003'; END IF;
+            IF p_default IS TRUE THEN
+                UPDATE content.site_locale l SET is_default=false,
+                    row_version=l.row_version+1,updated_at=now()
+                WHERE l.site_id=p_site_id AND l.id<>p_id AND l.is_default;
+            END IF;
+            UPDATE content.site_locale l SET tag=coalesce(p_tag,l.tag),
+                enabled=coalesce(p_enabled,l.enabled),is_default=coalesce(p_default,l.is_default),
+                position=coalesce(p_position,l.position),metadata=coalesce(p_metadata,l.metadata),
+                row_version=l.row_version+1,updated_at=now()
+            WHERE l.site_id=p_site_id AND l.id=p_id AND l.row_version=p_expected;
+            IF NOT FOUND THEN RAISE EXCEPTION 'ROW_VERSION_MISMATCH' USING ERRCODE='P0004'; END IF;
+            RETURN QUERY SELECT l.* FROM content.site_locale l
+            WHERE l.site_id=p_site_id AND l.id=p_id;
+        END; $fn$
+        """
+    )
+    op.execute(
+        """
+        CREATE OR REPLACE FUNCTION content.slaif_locale_delete(
+            p_site_id uuid,p_id uuid,p_expected integer
+        ) RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $fn$
+        DECLARE old content.site_locale;
+        BEGIN
+            PERFORM control.slaif_agent_structural_lock(p_site_id);
+            SELECT l.* INTO old FROM content.site_locale l
+            WHERE l.site_id=p_site_id AND l.id=p_id FOR UPDATE;
+            IF NOT FOUND THEN RAISE EXCEPTION 'NOT_FOUND' USING ERRCODE='P0002'; END IF;
+            IF old.row_version<>p_expected THEN RAISE EXCEPTION 'ROW_VERSION_MISMATCH' USING ERRCODE='P0004'; END IF;
+            IF old.is_default OR EXISTS(SELECT 1 FROM content.page p WHERE p.site_id=p_site_id AND p.locale=old.tag)
+               OR EXISTS(SELECT 1 FROM content.navigation n WHERE n.site_id=p_site_id AND n.labels ? old.tag)
+               OR EXISTS(SELECT 1 FROM content.navigation_item n WHERE n.site_id=p_site_id AND (n.locale=old.tag OR n.labels ? old.tag))
+               OR EXISTS(SELECT 1 FROM content.redirect r WHERE r.site_id=p_site_id AND r.locale=old.tag)
+            THEN RAISE EXCEPTION 'LOCALE_REFERENCED' USING ERRCODE='P0003'; END IF;
+            DELETE FROM content.site_locale l WHERE l.site_id=p_site_id AND l.id=p_id AND l.row_version=p_expected;
+            IF NOT FOUND THEN RAISE EXCEPTION 'ROW_VERSION_MISMATCH' USING ERRCODE='P0004'; END IF;
+        END; $fn$
+        """
+    )
+    op.execute(
+        """
+        CREATE OR REPLACE FUNCTION content.slaif_navigation_delete(p_nav_id uuid)
+        RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $fn$
+        DECLARE target_site uuid;
+        BEGIN
+            SELECT n.site_id INTO target_site FROM content.navigation n WHERE n.id=p_nav_id;
+            IF target_site IS NULL THEN RETURN; END IF;
+            PERFORM control.slaif_agent_structural_lock(target_site);
+            DELETE FROM content.navigation n WHERE n.id=p_nav_id;
+        END; $fn$
+        """
+    )
+    op.execute(
+        """
+        CREATE OR REPLACE FUNCTION content.slaif_navigation_item_delete(
+            p_site_id uuid,p_id uuid,p_expected integer
+        ) RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $fn$
+        DECLARE old content.navigation_item;
+        BEGIN
+            PERFORM control.slaif_agent_structural_lock(p_site_id);
+            SELECT i.* INTO old FROM content.navigation_item i
+            WHERE i.site_id=p_site_id AND i.id=p_id FOR UPDATE;
+            IF NOT FOUND THEN RAISE EXCEPTION 'NOT_FOUND' USING ERRCODE='P0002'; END IF;
+            IF old.row_version<>p_expected
+            THEN RAISE EXCEPTION 'ROW_VERSION_MISMATCH' USING ERRCODE='P0004'; END IF;
+            IF EXISTS(SELECT 1 FROM content.navigation_item c
+                      WHERE c.site_id=p_site_id AND c.parent_id=p_id)
+            THEN RAISE EXCEPTION 'NAVIGATION_CHILDREN' USING ERRCODE='P0003'; END IF;
+            DELETE FROM content.navigation_item i WHERE i.site_id=p_site_id AND i.id=p_id AND i.row_version=p_expected;
+            IF NOT FOUND THEN RAISE EXCEPTION 'NOT_FOUND' USING ERRCODE='P0002'; END IF;
+            WITH ranked AS (
+                SELECT i.id,(row_number() OVER (ORDER BY i.position,i.id)-1)::integer AS new_position
+                FROM content.navigation_item i
+                WHERE i.site_id=p_site_id AND i.navigation_id=old.navigation_id
+                  AND i.parent_id IS NOT DISTINCT FROM old.parent_id
+            ) UPDATE content.navigation_item i SET position=ranked.new_position,
+                row_version=CASE WHEN i.position IS DISTINCT FROM ranked.new_position
+                    THEN i.row_version+1 ELSE i.row_version END,
+                updated_at=CASE WHEN i.position IS DISTINCT FROM ranked.new_position
+                    THEN now() ELSE i.updated_at END
+            FROM ranked WHERE i.id=ranked.id;
+        END; $fn$
+        """
+    )
+    op.execute(
+        """
+        CREATE FUNCTION content.slaif_agent_navigation_validate_labels(
+            p_site_id uuid, p_labels jsonb
+        ) RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $fn$
+        DECLARE constraints record; label_locale text;
+        BEGIN
+            IF p_labels IS NULL OR jsonb_typeof(p_labels)<>'object'
+               OR octet_length(p_labels::text)>16384
+               OR (SELECT count(*) FROM jsonb_object_keys(p_labels))>16
+            THEN RAISE EXCEPTION 'NAVIGATION_INVALID' USING ERRCODE='P0003'; END IF;
+            SELECT * INTO STRICT constraints
+            FROM control.slaif_agent_resource_constraints(p_site_id);
+            FOR label_locale IN SELECT key FROM jsonb_object_keys(p_labels) AS key LOOP
+                IF label_locale !~ '^[A-Za-z]{2,3}(-[A-Za-z]{4})?(-([A-Za-z]{2}|[0-9]{3}))?(-[A-Za-z0-9]{5,8})*$'
+                   OR jsonb_typeof(p_labels->label_locale)<>'string'
+                   OR octet_length(p_labels->>label_locale)>256
+                THEN RAISE EXCEPTION 'NAVIGATION_INVALID' USING ERRCODE='P0003'; END IF;
+                IF NOT EXISTS (
+                    SELECT 1 FROM content.site_locale l
+                    WHERE l.site_id=p_site_id AND l.tag=label_locale AND l.enabled
+                ) THEN RAISE EXCEPTION 'NAVIGATION_LABEL_LOCALE_INVALID' USING ERRCODE='P0003'; END IF;
+                IF cardinality(constraints.allowed_locales)>0
+                   AND NOT label_locale=ANY(constraints.allowed_locales)
+                THEN RAISE EXCEPTION 'AGENT_RESOURCE_LOCALE_DENIED' USING ERRCODE='P0007'; END IF;
+            END LOOP;
+        END;
+        $fn$
+        """
+    )
+    op.execute(
+        """
         CREATE FUNCTION content.slaif_agent_navigation_validate_target(
             p_site_id uuid,p_page_id uuid,p_target_kind text,p_target_value text,
             p_labels jsonb,p_locale text
         ) RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $fn$
+        DECLARE constraints record;
         BEGIN
             IF p_target_kind NOT IN ('PAGE','INTERNAL','EXTERNAL')
                OR p_target_value IS NULL OR octet_length(p_target_value)>2048
-               OR p_target_value ~ '[[:cntrl:] ]' OR p_labels IS NULL
-               OR jsonb_typeof(p_labels)<>'object' OR octet_length(p_labels::text)>16384
-               OR EXISTS (SELECT 1 FROM jsonb_object_keys(p_labels) k
-                          WHERE k !~ '^[A-Za-z]{2,3}(-[A-Za-z]{4})?(-([A-Za-z]{2}|[0-9]{3}))?(-[A-Za-z0-9]{5,8})*$'
-                             OR length(k)>16
-                             OR octet_length(p_labels->>k)>256)
+               OR p_target_value ~ '[[:cntrl:] ]'
             THEN RAISE EXCEPTION 'NAVIGATION_INVALID' USING ERRCODE='P0003'; END IF;
+            PERFORM content.slaif_agent_navigation_validate_labels(p_site_id,p_labels);
             IF p_target_kind='PAGE' THEN
                 IF p_page_id IS NULL OR p_target_value<>p_page_id::text
-                   OR NOT EXISTS (SELECT 1 FROM content.page p WHERE p.id=p_page_id AND p.site_id=p_site_id AND p.deleted_at IS NULL)
+                   OR NOT content.slaif_agent_page_accessible(p_site_id,p_page_id)
                 THEN RAISE EXCEPTION 'NAVIGATION_PAGE_INVALID' USING ERRCODE='P0003'; END IF;
             ELSIF p_page_id IS NOT NULL THEN
                 RAISE EXCEPTION 'NAVIGATION_PAGE_INVALID' USING ERRCODE='P0003';
@@ -508,8 +878,15 @@ def upgrade() -> None:
                    OR p_target_value ~ '//|\\.\\.|%|\\\\'
                    OR p_target_value ~ '^/(api|admin|agent|control|editor|health|internal|login|logout|mcp|media|preview|setup|_next|static)(/|$)'
                 THEN RAISE EXCEPTION 'NAVIGATION_TARGET_UNSAFE' USING ERRCODE='P0003'; END IF;
+                IF NOT EXISTS (
+                    SELECT 1 FROM content.page p
+                    WHERE p.site_id=p_site_id AND p.deleted_at IS NULL
+                      AND p.route_template IS NULL
+                      AND content.slaif_agent_page_accessible(p_site_id,p.id)
+                      AND content.slaif_agent_page_effective_route(p.id)=p_target_value
+                ) THEN RAISE EXCEPTION 'NAVIGATION_TARGET_UNSAFE' USING ERRCODE='P0003'; END IF;
             ELSE
-                IF p_target_value !~ '^https?://[^/@?#]+([/?#].*)?$'
+                IF p_target_value !~ '^https://[^/@?#]+([/?#].*)?$'
                    OR p_target_value ~ '[[:cntrl:] ]'
                 THEN RAISE EXCEPTION 'NAVIGATION_TARGET_UNSAFE' USING ERRCODE='P0003'; END IF;
             END IF;
@@ -517,6 +894,11 @@ def upgrade() -> None:
                 SELECT 1 FROM content.site_locale l
                 WHERE l.site_id=p_site_id AND l.tag=p_locale AND l.enabled
             ) THEN RAISE EXCEPTION 'LOCALE_INVALID' USING ERRCODE='P0003'; END IF;
+            SELECT * INTO STRICT constraints
+            FROM control.slaif_agent_resource_constraints(p_site_id);
+            IF p_locale IS NOT NULL AND cardinality(constraints.allowed_locales)>0
+               AND NOT p_locale=ANY(constraints.allowed_locales)
+            THEN RAISE EXCEPTION 'AGENT_RESOURCE_LOCALE_DENIED' USING ERRCODE='P0007'; END IF;
             IF NOT EXISTS (SELECT 1 FROM jsonb_object_keys(coalesce(p_labels,'{}'::jsonb)))
                AND p_locale IS NULL THEN
                 RAISE EXCEPTION 'NAVIGATION_LABEL_REQUIRED' USING ERRCODE='P0003';
@@ -537,7 +919,9 @@ def upgrade() -> None:
         BEGIN
             PERFORM control.slaif_agent_require_capability(p_site_id,'site:read');
             SELECT * INTO STRICT constraints FROM control.slaif_agent_resource_constraints(p_site_id);
-            SELECT count(*) INTO visible_count FROM content.site_locale l WHERE l.site_id=p_site_id;
+            SELECT count(*) INTO visible_count FROM content.site_locale l
+            WHERE l.site_id=p_site_id
+              AND (cardinality(constraints.allowed_locales)=0 OR l.tag=ANY(constraints.allowed_locales));
             IF constraints.max_visible_locales IS NOT NULL AND visible_count>constraints.max_visible_locales THEN
                 RAISE EXCEPTION 'AGENT_RESOURCE_LOCALE_LIMIT' USING ERRCODE='P0007';
             END IF;
@@ -589,7 +973,9 @@ def upgrade() -> None:
             SELECT * INTO STRICT constraints FROM control.slaif_agent_resource_constraints(p_site_id);
             IF cardinality(constraints.allowed_locales)>0 AND NOT p_tag=ANY(constraints.allowed_locales) THEN
                 RAISE EXCEPTION 'AGENT_RESOURCE_LOCALE_DENIED' USING ERRCODE='P0007'; END IF;
-            SELECT count(*) INTO visible_count FROM content.site_locale l WHERE l.site_id=p_site_id;
+            SELECT count(*) INTO visible_count FROM content.site_locale l
+            WHERE l.site_id=p_site_id
+              AND (cardinality(constraints.allowed_locales)=0 OR l.tag=ANY(constraints.allowed_locales));
             IF constraints.max_visible_locales IS NOT NULL AND visible_count>=constraints.max_visible_locales THEN
                 RAISE EXCEPTION 'AGENT_RESOURCE_LOCALE_LIMIT' USING ERRCODE='P0007'; END IF;
             IF p_tag IS NULL OR p_tag !~ '^[A-Za-z]{2,3}(-[A-Za-z]{4})?(-([A-Za-z]{2}|[0-9]{3}))?(-[A-Za-z0-9]{5,8})*$'
@@ -601,7 +987,11 @@ def upgrade() -> None:
                AND NOT p_default THEN RAISE EXCEPTION 'LOCALE_DEFAULT_REQUIRED' USING ERRCODE='P0003'; END IF;
             IF NOT control.slaif_agent_quota_consume(capability_id,workspace_id,'mutation') THEN
                 RAISE EXCEPTION 'AGENT_MUTATION_QUOTA_EXCEEDED' USING ERRCODE='P0005'; END IF;
-            IF p_default THEN UPDATE content.site_locale l SET is_default=false WHERE l.site_id=p_site_id; END IF;
+            IF p_default THEN
+                UPDATE content.site_locale l SET is_default=false,
+                    row_version=l.row_version+1,updated_at=now()
+                WHERE l.site_id=p_site_id AND l.is_default;
+            END IF;
             INSERT INTO content.site_locale(site_id,tag,enabled,is_default,position,metadata)
             VALUES(p_site_id,p_tag,p_enabled,p_default,p_position,p_metadata);
             SELECT l.* INTO created FROM content.site_locale l
@@ -615,7 +1005,7 @@ def upgrade() -> None:
     op.execute(
         """
         CREATE FUNCTION content.slaif_agent_locale_update(
-            p_site_id uuid,p_locale_id uuid,p_tag text,p_enabled boolean,p_default boolean,
+            p_site_id uuid,p_locale_id uuid,p_enabled boolean,p_default boolean,
             p_position integer,p_metadata jsonb,p_expected integer
         ) RETURNS TABLE(id uuid,site_id uuid,tag text,enabled boolean,is_default boolean,
             "position" integer,metadata jsonb,row_version integer,created_at timestamptz,
@@ -630,17 +1020,19 @@ def upgrade() -> None:
             SELECT l.* INTO old FROM content.site_locale l WHERE l.site_id=p_site_id AND l.id=p_locale_id FOR UPDATE;
             IF NOT FOUND THEN RAISE EXCEPTION 'LOCALE_NOT_FOUND' USING ERRCODE='P0002'; END IF;
             IF old.row_version<>p_expected THEN RAISE EXCEPTION 'ROW_VERSION_MISMATCH' USING ERRCODE='P0004'; END IF;
-            IF p_tag IS NOT NULL AND p_tag<>old.tag THEN RAISE EXCEPTION 'LOCALE_TAG_IMMUTABLE' USING ERRCODE='P0003'; END IF;
             SELECT * INTO STRICT constraints FROM control.slaif_agent_resource_constraints(p_site_id);
             IF cardinality(constraints.allowed_locales)>0 AND NOT old.tag=ANY(constraints.allowed_locales) THEN
                 RAISE EXCEPTION 'AGENT_RESOURCE_LOCALE_DENIED' USING ERRCODE='P0007'; END IF;
+            IF p_enabled IS NULL AND p_default IS NULL AND p_position IS NULL AND p_metadata IS NULL
+            THEN RAISE EXCEPTION 'LOCALE_UPDATE_EMPTY' USING ERRCODE='P0003'; END IF;
             new_enabled:=coalesce(p_enabled,old.enabled); new_default:=coalesce(p_default,old.is_default);
             IF new_default AND NOT new_enabled THEN RAISE EXCEPTION 'LOCALE_INVALID' USING ERRCODE='P0003'; END IF;
             IF old.is_default AND NOT new_default THEN RAISE EXCEPTION 'LOCALE_DEFAULT_REQUIRED' USING ERRCODE='P0003'; END IF;
             IF old.is_default AND NOT new_enabled THEN RAISE EXCEPTION 'LOCALE_REFERENCED' USING ERRCODE='P0003'; END IF;
             IF NOT new_enabled AND (
                 EXISTS (SELECT 1 FROM content.page p WHERE p.site_id=p_site_id AND p.locale=old.tag AND p.deleted_at IS NULL)
-                OR EXISTS (SELECT 1 FROM content.navigation_item n WHERE n.site_id=p_site_id AND n.locale=old.tag)
+                OR EXISTS (SELECT 1 FROM content.navigation n WHERE n.site_id=p_site_id AND n.labels ? old.tag)
+                OR EXISTS (SELECT 1 FROM content.navigation_item n WHERE n.site_id=p_site_id AND (n.locale=old.tag OR n.labels ? old.tag))
                 OR EXISTS (SELECT 1 FROM content.redirect r WHERE r.site_id=p_site_id AND r.locale=old.tag)
                 OR EXISTS (SELECT 1 FROM content.content_item_translation t
                     JOIN content.content_item i ON i.id=t.item_id AND i.site_id=p_site_id
@@ -648,7 +1040,11 @@ def upgrade() -> None:
             ) THEN RAISE EXCEPTION 'LOCALE_REFERENCED' USING ERRCODE='P0003'; END IF;
             IF p_position IS NOT NULL AND p_position NOT BETWEEN 0 AND 999 THEN RAISE EXCEPTION 'LOCALE_INVALID' USING ERRCODE='P0003'; END IF;
             IF p_metadata IS NOT NULL AND (jsonb_typeof(p_metadata)<>'object' OR octet_length(p_metadata::text)>16384) THEN RAISE EXCEPTION 'LOCALE_INVALID' USING ERRCODE='P0003'; END IF;
-            IF new_default THEN UPDATE content.site_locale l SET is_default=false WHERE l.site_id=p_site_id AND l.id<>p_locale_id; END IF;
+            IF new_default THEN
+                UPDATE content.site_locale l SET is_default=false,
+                    row_version=l.row_version+1,updated_at=now()
+                WHERE l.site_id=p_site_id AND l.id<>p_locale_id AND l.is_default;
+            END IF;
             IF NOT control.slaif_agent_quota_consume(capability_id,workspace_id,'mutation') THEN
                 RAISE EXCEPTION 'AGENT_MUTATION_QUOTA_EXCEEDED' USING ERRCODE='P0005'; END IF;
             UPDATE content.site_locale AS l SET enabled=new_enabled,is_default=new_default,
@@ -672,6 +1068,7 @@ def upgrade() -> None:
             updated_at timestamptz)
         LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $fn$
         DECLARE workspace_id uuid; capability_id uuid; old content.site_locale;
+            constraints record;
         BEGIN
             capability_id:=control.slaif_agent_require_capability(p_site_id,'locale:configure');
             workspace_id:=NULLIF(current_setting('app.session_id',true),'')::uuid;
@@ -680,8 +1077,12 @@ def upgrade() -> None:
             IF NOT FOUND THEN RAISE EXCEPTION 'LOCALE_NOT_FOUND' USING ERRCODE='P0002'; END IF;
             IF old.row_version<>p_expected THEN RAISE EXCEPTION 'ROW_VERSION_MISMATCH' USING ERRCODE='P0004'; END IF;
             IF old.is_default THEN RAISE EXCEPTION 'LOCALE_DEFAULT_REQUIRED' USING ERRCODE='P0003'; END IF;
+            SELECT * INTO STRICT constraints FROM control.slaif_agent_resource_constraints(p_site_id);
+            IF cardinality(constraints.allowed_locales)>0 AND NOT old.tag=ANY(constraints.allowed_locales) THEN
+                RAISE EXCEPTION 'AGENT_RESOURCE_LOCALE_DENIED' USING ERRCODE='P0007'; END IF;
             IF EXISTS (SELECT 1 FROM content.page p WHERE p.site_id=p_site_id AND p.locale=old.tag AND p.deleted_at IS NULL)
-               OR EXISTS (SELECT 1 FROM content.navigation_item n WHERE n.site_id=p_site_id AND n.locale=old.tag)
+               OR EXISTS (SELECT 1 FROM content.navigation n WHERE n.site_id=p_site_id AND n.labels ? old.tag)
+               OR EXISTS (SELECT 1 FROM content.navigation_item n WHERE n.site_id=p_site_id AND (n.locale=old.tag OR n.labels ? old.tag))
                OR EXISTS (SELECT 1 FROM content.redirect r WHERE r.site_id=p_site_id AND r.locale=old.tag)
                OR EXISTS (SELECT 1 FROM content.content_item_translation t JOIN content.content_item i ON i.id=t.item_id AND i.site_id=p_site_id WHERE t.locale=old.tag AND i.status<>'DELETED')
             THEN RAISE EXCEPTION 'LOCALE_REFERENCED' USING ERRCODE='P0003'; END IF;
@@ -705,7 +1106,10 @@ def upgrade() -> None:
         BEGIN
             PERFORM control.slaif_agent_require_capability(p_site_id,'navigation:read');
             SELECT * INTO STRICT constraints FROM control.slaif_agent_resource_constraints(p_site_id);
-            SELECT count(*) INTO visible_count FROM content.navigation n WHERE n.site_id=p_site_id;
+            SELECT count(*) INTO visible_count FROM content.navigation n
+            WHERE n.site_id=p_site_id
+              AND (cardinality(constraints.allowed_navigation_keys)=0 OR n."key"=ANY(constraints.allowed_navigation_keys))
+              AND (cardinality(constraints.allowed_navigation_ids)=0 OR n.id=ANY(constraints.allowed_navigation_ids));
             IF constraints.max_visible_navigations IS NOT NULL AND visible_count>constraints.max_visible_navigations THEN
                 RAISE EXCEPTION 'AGENT_RESOURCE_NAVIGATION_LIMIT' USING ERRCODE='P0007'; END IF;
             RETURN QUERY SELECT n.id,n.site_id,n.\"key\",n.label,n.labels,n.settings,n.row_version,n.created_at,n.updated_at
@@ -752,9 +1156,14 @@ def upgrade() -> None:
             workspace_id:=NULLIF(current_setting('app.session_id',true),'')::uuid;
             PERFORM control.slaif_agent_structural_lock(p_site_id);
             SELECT * INTO STRICT constraints FROM control.slaif_agent_resource_constraints(p_site_id);
-            IF cardinality(constraints.allowed_navigation_keys)>0 AND NOT p_key=ANY(constraints.allowed_navigation_keys) THEN
+            IF cardinality(constraints.allowed_navigation_keys)>0 AND NOT p_key=ANY(constraints.allowed_navigation_keys)
+               OR cardinality(constraints.allowed_navigation_ids)>0
+            THEN
                 RAISE EXCEPTION 'AGENT_RESOURCE_NAVIGATION_DENIED' USING ERRCODE='P0007'; END IF;
-            SELECT count(*) INTO visible_count FROM content.navigation n WHERE n.site_id=p_site_id;
+            SELECT count(*) INTO visible_count FROM content.navigation n
+            WHERE n.site_id=p_site_id
+              AND (cardinality(constraints.allowed_navigation_keys)=0 OR n."key"=ANY(constraints.allowed_navigation_keys))
+              AND (cardinality(constraints.allowed_navigation_ids)=0 OR n.id=ANY(constraints.allowed_navigation_ids));
             IF constraints.max_visible_navigations IS NOT NULL AND visible_count>=constraints.max_visible_navigations THEN
                 RAISE EXCEPTION 'AGENT_RESOURCE_NAVIGATION_LIMIT' USING ERRCODE='P0007'; END IF;
             IF p_key IS NULL OR p_key !~ '^[A-Za-z0-9][A-Za-z0-9._~-]{0,62}$'
@@ -762,6 +1171,7 @@ def upgrade() -> None:
                OR p_labels IS NULL OR jsonb_typeof(p_labels)<>'object' OR octet_length(p_labels::text)>16384
                OR p_settings IS NULL OR jsonb_typeof(p_settings)<>'object' OR octet_length(p_settings::text)>16384
             THEN RAISE EXCEPTION 'NAVIGATION_INVALID' USING ERRCODE='P0003'; END IF;
+            PERFORM content.slaif_agent_navigation_validate_labels(p_site_id,p_labels);
             IF EXISTS (SELECT 1 FROM content.navigation n WHERE n.site_id=p_site_id AND n.\"key\"=p_key) THEN
                 RAISE EXCEPTION 'NAVIGATION_KEY_CONFLICT' USING ERRCODE='P0003'; END IF;
             IF NOT control.slaif_agent_quota_consume(capability_id,workspace_id,'mutation') THEN
@@ -803,6 +1213,9 @@ def upgrade() -> None:
                OR p_labels IS NOT NULL AND (jsonb_typeof(p_labels)<>'object' OR octet_length(p_labels::text)>16384)
                OR p_settings IS NOT NULL AND (jsonb_typeof(p_settings)<>'object' OR octet_length(p_settings::text)>16384)
             THEN RAISE EXCEPTION 'NAVIGATION_INVALID' USING ERRCODE='P0003'; END IF;
+            IF p_labels IS NOT NULL THEN
+                PERFORM content.slaif_agent_navigation_validate_labels(p_site_id,p_labels);
+            END IF;
             IF NOT control.slaif_agent_quota_consume(capability_id,workspace_id,'mutation') THEN
                 RAISE EXCEPTION 'AGENT_MUTATION_QUOTA_EXCEEDED' USING ERRCODE='P0005'; END IF;
             UPDATE content.navigation AS n SET label=coalesce(p_label,n.label),labels=coalesce(p_labels,n.labels),
@@ -832,7 +1245,8 @@ def upgrade() -> None:
             IF NOT FOUND THEN RAISE EXCEPTION 'NAVIGATION_NOT_FOUND' USING ERRCODE='P0002'; END IF;
             IF old.row_version<>p_expected THEN RAISE EXCEPTION 'ROW_VERSION_MISMATCH' USING ERRCODE='P0004'; END IF;
             SELECT * INTO STRICT constraints FROM control.slaif_agent_resource_constraints(p_site_id);
-            IF cardinality(constraints.allowed_navigation_ids)>0 AND NOT old.id=ANY(constraints.allowed_navigation_ids) THEN
+            IF (cardinality(constraints.allowed_navigation_keys)>0 AND NOT old."key"=ANY(constraints.allowed_navigation_keys))
+               OR (cardinality(constraints.allowed_navigation_ids)>0 AND NOT old.id=ANY(constraints.allowed_navigation_ids)) THEN
                 RAISE EXCEPTION 'AGENT_RESOURCE_NAVIGATION_DENIED' USING ERRCODE='P0007'; END IF;
             IF constraints.delete_enabled IS FALSE THEN RAISE EXCEPTION 'AGENT_RESOURCE_DELETE_DISABLED' USING ERRCODE='P0007'; END IF;
             IF EXISTS (SELECT 1 FROM content.navigation_item i WHERE i.site_id=p_site_id AND i.navigation_id=p_navigation_id) THEN
@@ -896,46 +1310,36 @@ def upgrade() -> None:
                 END LOOP;
             END IF;
             IF constraints.max_visible_navigation_items IS NOT NULL THEN
-                SELECT count(*) INTO item_count FROM content.navigation_item i WHERE i.site_id=p_site_id AND i.navigation_id=p_navigation_id;
-                IF p_is_create AND item_count>=constraints.max_visible_navigation_items THEN RAISE EXCEPTION 'AGENT_RESOURCE_NAVIGATION_ITEM_LIMIT' USING ERRCODE='P0007'; END IF;
+                SELECT count(*) INTO item_count
+                FROM content.navigation_item i JOIN content.navigation n
+                  ON n.site_id=i.site_id AND n.id=i.navigation_id
+                WHERE i.site_id=p_site_id
+                  AND (cardinality(constraints.allowed_navigation_keys)=0 OR n."key"=ANY(constraints.allowed_navigation_keys))
+                  AND (cardinality(constraints.allowed_navigation_ids)=0 OR n.id=ANY(constraints.allowed_navigation_ids));
+                IF (p_is_create AND item_count>=constraints.max_visible_navigation_items)
+                   OR (NOT p_is_create AND item_count>constraints.max_visible_navigation_items) THEN
+                    RAISE EXCEPTION 'AGENT_RESOURCE_NAVIGATION_ITEM_LIMIT' USING ERRCODE='P0007';
+                END IF;
             END IF;
             IF p_before IS NOT NULL THEN
-                SELECT i.position INTO anchor_position FROM content.navigation_item i
-                WHERE i.id=p_before AND i.site_id=p_site_id AND i.navigation_id=p_navigation_id
-                  AND i.parent_id IS NOT DISTINCT FROM p_parent_id;
-                IF NOT FOUND THEN RAISE EXCEPTION 'NAVIGATION_ANCHOR_INVALID' USING ERRCODE='P0003'; END IF;
-            ELSIF p_after IS NOT NULL THEN
-                SELECT i.position INTO anchor_position FROM content.navigation_item i
-                WHERE i.id=p_after AND i.site_id=p_site_id AND i.navigation_id=p_navigation_id
-                  AND i.parent_id IS NOT DISTINCT FROM p_parent_id;
-                IF NOT FOUND THEN RAISE EXCEPTION 'NAVIGATION_ANCHOR_INVALID' USING ERRCODE='P0003'; END IF;
-            END IF;
-            -- Re-rank both affected sibling sets without a transient duplicate;
-            -- the generated parent key and deferred unique constraint enforce
-            -- the final sibling-order invariant at transaction end.
-            IF NOT p_is_create THEN
-                UPDATE content.navigation_item i SET position=999 WHERE i.id=p_item_id AND i.site_id=p_site_id;
-                WITH ranked AS (
-                    SELECT i.id,row_number() OVER (ORDER BY i.position,i.id)-1 AS new_position
+                SELECT compact_position INTO anchor_position FROM (
+                    SELECT i.id,(row_number() OVER (ORDER BY i.position,i.id)-1)::integer AS compact_position
                     FROM content.navigation_item i
-                    WHERE i.site_id=p_site_id AND i.navigation_id=old.navigation_id
-                      AND i.parent_id IS NOT DISTINCT FROM old.parent_id AND i.id<>p_item_id
-                ) UPDATE content.navigation_item i SET position=ranked.new_position
-                  FROM ranked WHERE i.id=ranked.id;
-            END IF;
-            WITH ranked AS (
-                SELECT i.id,row_number() OVER (ORDER BY i.position,i.id)-1 AS new_position
-                FROM content.navigation_item i
-                WHERE i.site_id=p_site_id AND i.navigation_id=p_navigation_id
-                  AND i.parent_id IS NOT DISTINCT FROM p_parent_id
-                  AND (p_is_create OR i.id<>p_item_id)
-            ) UPDATE content.navigation_item i SET position=ranked.new_position
-              FROM ranked WHERE i.id=ranked.id;
-            IF p_before IS NOT NULL THEN
-                SELECT i.position INTO anchor_position FROM content.navigation_item i WHERE i.id=p_before AND i.site_id=p_site_id;
+                    WHERE i.site_id=p_site_id AND i.navigation_id=p_navigation_id
+                      AND i.parent_id IS NOT DISTINCT FROM p_parent_id
+                      AND (p_is_create OR i.id<>p_item_id)
+                ) ranked WHERE ranked.id=p_before;
+                IF NOT FOUND THEN RAISE EXCEPTION 'NAVIGATION_ANCHOR_INVALID' USING ERRCODE='P0003'; END IF;
                 desired_position:=anchor_position;
             ELSIF p_after IS NOT NULL THEN
-                SELECT i.position INTO anchor_position FROM content.navigation_item i WHERE i.id=p_after AND i.site_id=p_site_id;
+                SELECT compact_position INTO anchor_position FROM (
+                    SELECT i.id,(row_number() OVER (ORDER BY i.position,i.id)-1)::integer AS compact_position
+                    FROM content.navigation_item i
+                    WHERE i.site_id=p_site_id AND i.navigation_id=p_navigation_id
+                      AND i.parent_id IS NOT DISTINCT FROM p_parent_id
+                      AND (p_is_create OR i.id<>p_item_id)
+                ) ranked WHERE ranked.id=p_after;
+                IF NOT FOUND THEN RAISE EXCEPTION 'NAVIGATION_ANCHOR_INVALID' USING ERRCODE='P0003'; END IF;
                 desired_position:=anchor_position+1;
             ELSE
                 SELECT count(*)::integer INTO desired_position FROM content.navigation_item i
@@ -944,10 +1348,43 @@ def upgrade() -> None:
                   AND (p_is_create OR i.id<>p_item_id);
             END IF;
             IF desired_position IS NULL OR desired_position>999 THEN RAISE EXCEPTION 'NAVIGATION_POSITION_LIMIT' USING ERRCODE='P0003'; END IF;
-            UPDATE content.navigation_item i SET position=i.position+1
-            WHERE i.site_id=p_site_id AND i.navigation_id=p_navigation_id
-              AND i.parent_id IS NOT DISTINCT FROM p_parent_id
-              AND (p_is_create OR i.id<>p_item_id) AND i.position>=desired_position;
+            IF NOT control.slaif_agent_quota_consume(capability_id,workspace_id,'mutation') THEN
+                RAISE EXCEPTION 'AGENT_MUTATION_QUOTA_EXCEEDED' USING ERRCODE='P0005';
+            END IF;
+            -- Remove a moved row from its old sibling set, then compact only
+            -- rows whose final position changes.  The deferred sibling
+            -- constraint permits the transaction-local reordering.
+            IF NOT p_is_create THEN
+                UPDATE content.navigation_item i SET position=999
+                WHERE i.id=p_item_id AND i.site_id=p_site_id;
+                WITH ranked AS (
+                    SELECT i.id,(row_number() OVER (ORDER BY i.position,i.id)-1)::integer AS new_position
+                    FROM content.navigation_item i
+                    WHERE i.site_id=p_site_id AND i.navigation_id=old.navigation_id
+                      AND i.parent_id IS NOT DISTINCT FROM old.parent_id AND i.id<>p_item_id
+                ) UPDATE content.navigation_item i SET position=ranked.new_position,
+                    row_version=CASE WHEN i.position IS DISTINCT FROM ranked.new_position THEN i.row_version+1 ELSE i.row_version END,
+                    updated_at=CASE WHEN i.position IS DISTINCT FROM ranked.new_position THEN now() ELSE i.updated_at END
+                  FROM ranked WHERE i.id=ranked.id;
+            END IF;
+            WITH ranked AS (
+                SELECT i.id,(row_number() OVER (ORDER BY i.position,i.id)-1)::integer AS compact_position
+                FROM content.navigation_item i
+                WHERE i.site_id=p_site_id AND i.navigation_id=p_navigation_id
+                  AND i.parent_id IS NOT DISTINCT FROM p_parent_id
+                  AND (p_is_create OR i.id<>p_item_id)
+            ), final_positions AS (
+                SELECT ranked.id,
+                    ranked.compact_position + CASE
+                        WHEN p_before IS NOT NULL AND ranked.compact_position>=desired_position THEN 1
+                        WHEN p_after IS NOT NULL AND ranked.compact_position>=desired_position THEN 1
+                        ELSE 0 END AS new_position
+                FROM ranked
+            )
+            UPDATE content.navigation_item i SET position=final_positions.new_position,
+                row_version=CASE WHEN i.position IS DISTINCT FROM final_positions.new_position THEN i.row_version+1 ELSE i.row_version END,
+                updated_at=CASE WHEN i.position IS DISTINCT FROM final_positions.new_position THEN now() ELSE i.updated_at END
+            FROM final_positions WHERE i.id=final_positions.id;
             IF p_is_create THEN
                 created_id:=gen_random_uuid();
                 INSERT INTO content.navigation_item(id,site_id,navigation_id,parent_id,parent_key,page_id,target_kind,target_value,labels,locale,position,row_version)
@@ -962,8 +1399,6 @@ def upgrade() -> None:
             END IF;
             SELECT i.* INTO created FROM content.navigation_item i
             WHERE i.site_id=p_site_id AND i.id=coalesce(created_id,p_item_id);
-            IF NOT control.slaif_agent_quota_consume(capability_id,workspace_id,'mutation') THEN
-                RAISE EXCEPTION 'AGENT_MUTATION_QUOTA_EXCEEDED' USING ERRCODE='P0005'; END IF;
             RETURN QUERY SELECT created.id,created.site_id,created.navigation_id,
                 created.parent_id,created.page_id,created.target_kind,created.target_value,
                 created.labels,created.locale,created.position,created.row_version,
@@ -990,16 +1425,52 @@ def upgrade() -> None:
     op.execute(
         """
         CREATE FUNCTION content.slaif_agent_navigation_item_update(
-            p_site_id uuid,p_item_id uuid,p_navigation_id uuid,p_parent_id uuid,p_page_id uuid,
+            p_site_id uuid,p_item_id uuid,p_navigation_id uuid,p_page_id uuid,
             p_target_kind text,p_target_value text,p_labels jsonb,p_locale text,
-            p_before uuid,p_after uuid,p_expected integer
+            p_expected integer
         ) RETURNS TABLE("""
         + _ITEM_RETURN
         + """) LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $fn$
+        DECLARE constraints record; navigation_row content.navigation; item_count bigint;
         BEGIN
-            RETURN QUERY SELECT * FROM content.slaif_agent_navigation_item_apply(
-                p_site_id,p_item_id,p_navigation_id,p_parent_id,p_page_id,p_target_kind,
-                p_target_value,p_labels,p_locale,p_before,p_after,p_expected,false);
+            PERFORM control.slaif_agent_require_capability(p_site_id,'navigation:write');
+            PERFORM control.slaif_agent_structural_lock(p_site_id);
+            SELECT n.* INTO navigation_row
+            FROM content.navigation_item i
+            JOIN content.navigation n ON n.site_id=i.site_id AND n.id=i.navigation_id
+            WHERE i.site_id=p_site_id AND i.id=p_item_id AND i.navigation_id=p_navigation_id;
+            IF NOT FOUND THEN RAISE EXCEPTION 'NAVIGATION_ITEM_NOT_FOUND' USING ERRCODE='P0002'; END IF;
+            SELECT * INTO STRICT constraints FROM control.slaif_agent_resource_constraints(p_site_id);
+            IF (cardinality(constraints.allowed_navigation_keys)>0 AND NOT navigation_row."key"=ANY(constraints.allowed_navigation_keys))
+               OR (cardinality(constraints.allowed_navigation_ids)>0 AND NOT navigation_row.id=ANY(constraints.allowed_navigation_ids))
+            THEN RAISE EXCEPTION 'NAVIGATION_ITEM_NOT_FOUND' USING ERRCODE='P0002'; END IF;
+            SELECT count(*) INTO item_count
+            FROM content.navigation_item i JOIN content.navigation n
+              ON n.site_id=i.site_id AND n.id=i.navigation_id
+            WHERE i.site_id=p_site_id
+              AND (cardinality(constraints.allowed_navigation_keys)=0 OR n."key"=ANY(constraints.allowed_navigation_keys))
+              AND (cardinality(constraints.allowed_navigation_ids)=0 OR n.id=ANY(constraints.allowed_navigation_ids));
+            IF constraints.max_visible_navigation_items IS NOT NULL AND item_count>constraints.max_visible_navigation_items
+            THEN RAISE EXCEPTION 'AGENT_RESOURCE_NAVIGATION_ITEM_LIMIT' USING ERRCODE='P0007'; END IF;
+            IF p_item_id IS NULL OR p_navigation_id IS NULL OR p_expected IS NULL OR p_expected<=0
+               OR p_target_kind IS NULL OR p_target_value IS NULL OR p_labels IS NULL
+            THEN RAISE EXCEPTION 'NAVIGATION_UPDATE_EMPTY' USING ERRCODE='P0003'; END IF;
+            PERFORM content.slaif_agent_navigation_validate_target(
+                p_site_id,p_page_id,p_target_kind,p_target_value,p_labels,p_locale);
+            RETURN QUERY
+            UPDATE content.navigation_item i SET
+                page_id=CASE WHEN p_target_kind='PAGE' THEN p_page_id ELSE NULL END,
+                target_kind=p_target_kind,target_value=p_target_value,labels=p_labels,
+                locale=p_locale,row_version=i.row_version+1,updated_at=now()
+            WHERE i.site_id=p_site_id AND i.id=p_item_id
+              AND i.navigation_id=p_navigation_id AND i.row_version=p_expected
+            RETURNING i.id,i.site_id,i.navigation_id,i.parent_id,i.page_id,i.target_kind,
+                i.target_value,i.labels,i.locale,i.position,i.row_version,i.created_at,i.updated_at;
+            IF NOT FOUND THEN
+                IF EXISTS (SELECT 1 FROM content.navigation_item i WHERE i.site_id=p_site_id AND i.id=p_item_id)
+                THEN RAISE EXCEPTION 'ROW_VERSION_MISMATCH' USING ERRCODE='P0004';
+                ELSE RAISE EXCEPTION 'NAVIGATION_ITEM_NOT_FOUND' USING ERRCODE='P0002'; END IF;
+            END IF;
         END; $fn$
         """
     )
@@ -1018,7 +1489,12 @@ def upgrade() -> None:
             IF (cardinality(constraints.allowed_navigation_keys)>0 AND NOT navigation_row.\"key\"=ANY(constraints.allowed_navigation_keys))
                OR (cardinality(constraints.allowed_navigation_ids)>0 AND NOT navigation_row.id=ANY(constraints.allowed_navigation_ids))
             THEN RAISE EXCEPTION 'NAVIGATION_NOT_FOUND' USING ERRCODE='P0002'; END IF;
-            SELECT count(*) INTO item_count FROM content.navigation_item i WHERE i.site_id=p_site_id AND i.navigation_id=p_navigation_id;
+            SELECT count(*) INTO item_count
+            FROM content.navigation_item i JOIN content.navigation n
+              ON n.site_id=i.site_id AND n.id=i.navigation_id
+            WHERE i.site_id=p_site_id
+              AND (cardinality(constraints.allowed_navigation_keys)=0 OR n."key"=ANY(constraints.allowed_navigation_keys))
+              AND (cardinality(constraints.allowed_navigation_ids)=0 OR n.id=ANY(constraints.allowed_navigation_ids));
             IF constraints.max_visible_navigation_items IS NOT NULL AND item_count>constraints.max_visible_navigation_items THEN
                 RAISE EXCEPTION 'AGENT_RESOURCE_NAVIGATION_ITEM_LIMIT' USING ERRCODE='P0007'; END IF;
             RETURN QUERY SELECT i.id,i.site_id,i.navigation_id,i.parent_id,i.page_id,i.target_kind,
@@ -1034,12 +1510,34 @@ def upgrade() -> None:
         RETURNS TABLE("""
         + _ITEM_RETURN
         + """) LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path=pg_catalog AS $fn$
+        DECLARE constraints record; navigation_row content.navigation;
+            found_item content.navigation_item; item_count bigint;
         BEGIN
             PERFORM control.slaif_agent_require_capability(p_site_id,'navigation:read');
-            RETURN QUERY SELECT i.id,i.site_id,i.navigation_id,i.parent_id,i.page_id,i.target_kind,
-                i.target_value,i.labels,i.locale,i.position,i.row_version,i.created_at,i.updated_at
-            FROM content.navigation_item i WHERE i.site_id=p_site_id AND i.id=p_item_id;
+            SELECT n.* INTO navigation_row
+            FROM content.navigation_item i
+            JOIN content.navigation n ON n.site_id=i.site_id AND n.id=i.navigation_id
+            WHERE i.site_id=p_site_id AND i.id=p_item_id;
             IF NOT FOUND THEN RAISE EXCEPTION 'NAVIGATION_ITEM_NOT_FOUND' USING ERRCODE='P0002'; END IF;
+            SELECT i.* INTO found_item FROM content.navigation_item i
+            WHERE i.site_id=p_site_id AND i.id=p_item_id;
+            SELECT * INTO STRICT constraints FROM control.slaif_agent_resource_constraints(p_site_id);
+            IF (cardinality(constraints.allowed_navigation_keys)>0 AND NOT navigation_row."key"=ANY(constraints.allowed_navigation_keys))
+               OR (cardinality(constraints.allowed_navigation_ids)>0 AND NOT navigation_row.id=ANY(constraints.allowed_navigation_ids))
+            THEN RAISE EXCEPTION 'NAVIGATION_ITEM_NOT_FOUND' USING ERRCODE='P0002'; END IF;
+            SELECT count(*) INTO item_count
+            FROM content.navigation_item i JOIN content.navigation n
+              ON n.site_id=i.site_id AND n.id=i.navigation_id
+            WHERE i.site_id=p_site_id
+              AND (cardinality(constraints.allowed_navigation_keys)=0 OR n."key"=ANY(constraints.allowed_navigation_keys))
+              AND (cardinality(constraints.allowed_navigation_ids)=0 OR n.id=ANY(constraints.allowed_navigation_ids));
+            IF constraints.max_visible_navigation_items IS NOT NULL AND item_count>constraints.max_visible_navigation_items
+            THEN RAISE EXCEPTION 'AGENT_RESOURCE_NAVIGATION_ITEM_LIMIT' USING ERRCODE='P0007'; END IF;
+            RETURN QUERY SELECT found_item.id,found_item.site_id,found_item.navigation_id,
+                found_item.parent_id,found_item.page_id,found_item.target_kind,
+                found_item.target_value,found_item.labels,found_item.locale,
+                found_item.position,found_item.row_version,found_item.created_at,
+                found_item.updated_at;
         END; $fn$
         """
     )
@@ -1067,7 +1565,8 @@ def upgrade() -> None:
         ) RETURNS TABLE("""
         + _ITEM_RETURN
         + """) LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $fn$
-        DECLARE workspace_id uuid; capability_id uuid; old content.navigation_item; constraints record;
+        DECLARE workspace_id uuid; capability_id uuid; old content.navigation_item;
+            constraints record; navigation_row content.navigation;
         BEGIN
             capability_id:=control.slaif_agent_require_capability(p_site_id,'navigation:delete');
             workspace_id:=NULLIF(current_setting('app.session_id',true),'')::uuid;
@@ -1076,7 +1575,10 @@ def upgrade() -> None:
             IF NOT FOUND THEN RAISE EXCEPTION 'NAVIGATION_ITEM_NOT_FOUND' USING ERRCODE='P0002'; END IF;
             IF old.row_version<>p_expected THEN RAISE EXCEPTION 'ROW_VERSION_MISMATCH' USING ERRCODE='P0004'; END IF;
             SELECT * INTO STRICT constraints FROM control.slaif_agent_resource_constraints(p_site_id);
-            IF cardinality(constraints.allowed_navigation_ids)>0 AND NOT old.navigation_id=ANY(constraints.allowed_navigation_ids) THEN
+            SELECT n.* INTO navigation_row FROM content.navigation n
+            WHERE n.site_id=p_site_id AND n.id=old.navigation_id;
+            IF (cardinality(constraints.allowed_navigation_keys)>0 AND NOT navigation_row."key"=ANY(constraints.allowed_navigation_keys))
+               OR (cardinality(constraints.allowed_navigation_ids)>0 AND NOT navigation_row.id=ANY(constraints.allowed_navigation_ids)) THEN
                 RAISE EXCEPTION 'AGENT_RESOURCE_NAVIGATION_DENIED' USING ERRCODE='P0007'; END IF;
             IF constraints.delete_enabled IS FALSE THEN RAISE EXCEPTION 'AGENT_RESOURCE_DELETE_DISABLED' USING ERRCODE='P0007'; END IF;
             IF EXISTS (SELECT 1 FROM content.navigation_item i WHERE i.site_id=p_site_id AND i.parent_id=p_item_id) THEN
@@ -1085,6 +1587,15 @@ def upgrade() -> None:
                 RAISE EXCEPTION 'AGENT_DELETE_QUOTA_EXCEEDED' USING ERRCODE='P0005'; END IF;
             DELETE FROM content.navigation_item i WHERE i.site_id=p_site_id AND i.id=p_item_id AND i.row_version=p_expected;
             IF NOT FOUND THEN RAISE EXCEPTION 'ROW_VERSION_MISMATCH' USING ERRCODE='P0004'; END IF;
+            WITH ranked AS (
+                SELECT i.id,(row_number() OVER (ORDER BY i.position,i.id)-1)::integer AS new_position
+                FROM content.navigation_item i
+                WHERE i.site_id=p_site_id AND i.navigation_id=old.navigation_id
+                  AND i.parent_id IS NOT DISTINCT FROM old.parent_id
+            ) UPDATE content.navigation_item i SET position=ranked.new_position,
+                row_version=CASE WHEN i.position IS DISTINCT FROM ranked.new_position THEN i.row_version+1 ELSE i.row_version END,
+                updated_at=CASE WHEN i.position IS DISTINCT FROM ranked.new_position THEN now() ELSE i.updated_at END
+            FROM ranked WHERE i.id=ranked.id;
             RETURN QUERY SELECT old.id,old.site_id,old.navigation_id,old.parent_id,
                 old.page_id,old.target_kind,old.target_value,old.labels,old.locale,
                 old.position,old.row_version,old.created_at,old.updated_at;
@@ -1096,7 +1607,7 @@ def upgrade() -> None:
         "content.slaif_agent_locale_list(uuid)",
         "content.slaif_agent_locale_get(uuid,uuid)",
         "content.slaif_agent_locale_create(uuid,text,boolean,boolean,integer,jsonb)",
-        "content.slaif_agent_locale_update(uuid,uuid,text,boolean,boolean,integer,jsonb,integer)",
+        "content.slaif_agent_locale_update(uuid,uuid,boolean,boolean,integer,jsonb,integer)",
         "content.slaif_agent_locale_delete(uuid,uuid,integer)",
         "content.slaif_agent_navigation_list(uuid)",
         "content.slaif_agent_navigation_get(uuid,uuid)",
@@ -1106,7 +1617,7 @@ def upgrade() -> None:
         "content.slaif_agent_navigation_item_list(uuid,uuid)",
         "content.slaif_agent_navigation_item_get(uuid,uuid)",
         "content.slaif_agent_navigation_item_create(uuid,uuid,uuid,uuid,text,text,jsonb,text,uuid,uuid)",
-        "content.slaif_agent_navigation_item_update(uuid,uuid,uuid,uuid,uuid,text,text,jsonb,text,uuid,uuid,integer)",
+        "content.slaif_agent_navigation_item_update(uuid,uuid,uuid,uuid,text,text,jsonb,text,integer)",
         "content.slaif_agent_navigation_item_move(uuid,uuid,uuid,uuid,uuid,integer)",
         "content.slaif_agent_navigation_item_delete(uuid,uuid,integer)",
     ):
@@ -1114,6 +1625,7 @@ def upgrade() -> None:
         op.execute(f"REVOKE ALL ON FUNCTION {function} FROM PUBLIC")
         op.execute(f"GRANT EXECUTE ON FUNCTION {function} TO slaif_agent_runtime")
     for function in (
+        "content.slaif_agent_navigation_validate_labels(uuid,jsonb)",
         "content.slaif_agent_navigation_validate_target(uuid,uuid,text,text,jsonb,text)",
         "content.slaif_agent_navigation_item_apply(uuid,uuid,uuid,uuid,uuid,text,text,jsonb,text,uuid,uuid,integer,boolean)",
         "control.slaif_agent_structural_lock(uuid)",
@@ -1122,6 +1634,10 @@ def upgrade() -> None:
         op.execute(
             f"REVOKE ALL ON FUNCTION {function} FROM PUBLIC, slaif_agent_runtime"
         )
+    op.execute(
+        "GRANT EXECUTE ON FUNCTION control.slaif_agent_structural_lock(uuid) "
+        "TO slaif_editor_runtime"
+    )
 
 
 def downgrade() -> None:
@@ -1150,7 +1666,7 @@ def downgrade() -> None:
         "content.slaif_agent_navigation_item_move(uuid,uuid,uuid,uuid,uuid,integer)",
         "content.slaif_agent_navigation_item_get(uuid,uuid)",
         "content.slaif_agent_navigation_item_list(uuid,uuid)",
-        "content.slaif_agent_navigation_item_update(uuid,uuid,uuid,uuid,uuid,text,text,jsonb,text,uuid,uuid,integer)",
+        "content.slaif_agent_navigation_item_update(uuid,uuid,uuid,uuid,text,text,jsonb,text,integer)",
         "content.slaif_agent_navigation_item_create(uuid,uuid,uuid,uuid,text,text,jsonb,text,uuid,uuid)",
         "content.slaif_agent_navigation_item_apply(uuid,uuid,uuid,uuid,uuid,text,text,jsonb,text,uuid,uuid,integer,boolean)",
         "content.slaif_agent_navigation_delete(uuid,uuid,integer)",
@@ -1159,10 +1675,11 @@ def downgrade() -> None:
         "content.slaif_agent_navigation_get(uuid,uuid)",
         "content.slaif_agent_navigation_list(uuid)",
         "content.slaif_agent_locale_delete(uuid,uuid,integer)",
-        "content.slaif_agent_locale_update(uuid,uuid,text,boolean,boolean,integer,jsonb,integer)",
+        "content.slaif_agent_locale_update(uuid,uuid,boolean,boolean,integer,jsonb,integer)",
         "content.slaif_agent_locale_create(uuid,text,boolean,boolean,integer,jsonb)",
         "content.slaif_agent_locale_get(uuid,uuid)",
         "content.slaif_agent_locale_list(uuid)",
+        "content.slaif_agent_navigation_validate_labels(uuid,jsonb)",
         "content.slaif_agent_navigation_validate_target(uuid,uuid,text,text,jsonb,text)",
         "control.slaif_agent_structural_lock(uuid)",
     ):

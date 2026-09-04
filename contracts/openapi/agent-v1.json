@@ -324,6 +324,7 @@
           }
         },
         "required": [
+          "parent_id",
           "expected_row_version"
         ],
         "title": "AgentMoveNavigationItemRequest",
@@ -555,17 +556,6 @@
               }
             ],
             "title": "Position"
-          },
-          "tag": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Tag"
           }
         },
         "required": [
@@ -577,30 +567,6 @@
       "AgentUpdateNavigationItemRequest": {
         "additionalProperties": false,
         "properties": {
-          "after_item_id": {
-            "anyOf": [
-              {
-                "format": "uuid",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "After Item Id"
-          },
-          "before_item_id": {
-            "anyOf": [
-              {
-                "format": "uuid",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Before Item Id"
-          },
           "expected_row_version": {
             "minimum": 1.0,
             "title": "Expected Row Version",
@@ -642,18 +608,6 @@
               }
             ],
             "title": "Page Id"
-          },
-          "parent_id": {
-            "anyOf": [
-              {
-                "format": "uuid",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Parent Id"
           },
           "target_kind": {
             "anyOf": [

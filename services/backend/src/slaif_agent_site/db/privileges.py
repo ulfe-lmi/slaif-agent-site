@@ -374,9 +374,9 @@ AGENT_CONTENT_FUNCTIONS = {
     ): "uuid, text, boolean, boolean, integer, jsonb",
     (
         "slaif_agent_locale_update",
-        "p_site_id uuid, p_locale_id uuid, p_tag text, p_enabled boolean, "
+        "p_site_id uuid, p_locale_id uuid, p_enabled boolean, "
         "p_default boolean, p_position integer, p_metadata jsonb, p_expected integer",
-    ): "uuid, uuid, text, boolean, boolean, integer, jsonb, integer",
+    ): "uuid, uuid, boolean, boolean, integer, jsonb, integer",
     (
         "slaif_agent_locale_delete",
         "p_site_id uuid, p_locale_id uuid, p_expected integer",
@@ -415,10 +415,10 @@ AGENT_CONTENT_FUNCTIONS = {
     ): "uuid, uuid, uuid, uuid, text, text, jsonb, text, uuid, uuid",
     (
         "slaif_agent_navigation_item_update",
-        "p_site_id uuid, p_item_id uuid, p_navigation_id uuid, p_parent_id uuid, "
+        "p_site_id uuid, p_item_id uuid, p_navigation_id uuid, "
         "p_page_id uuid, p_target_kind text, p_target_value text, p_labels jsonb, "
-        "p_locale text, p_before uuid, p_after uuid, p_expected integer",
-    ): "uuid, uuid, uuid, uuid, uuid, text, text, jsonb, text, uuid, uuid, integer",
+        "p_locale text, p_expected integer",
+    ): "uuid, uuid, uuid, uuid, text, text, jsonb, text, integer",
     (
         "slaif_agent_navigation_item_move",
         "p_site_id uuid, p_item_id uuid, p_parent_id uuid, p_before uuid, "

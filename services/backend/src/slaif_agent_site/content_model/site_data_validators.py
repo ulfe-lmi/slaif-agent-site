@@ -61,6 +61,17 @@ def validate_target(kind: str, value: str) -> str:
     raise ValueError("invalid target kind")
 
 
+def validate_agent_target(kind: str, value: str) -> str:
+    """Validate the stricter target grammar exposed by Agent navigation."""
+
+    if kind == "EXTERNAL":
+        value = validate_external_url(value)
+        if urlsplit(value).scheme != "https":
+            raise ValueError("Agent external targets must use HTTPS")
+        return value
+    return validate_target(kind, value)
+
+
 def validate_redirect(source: str, target: str) -> tuple[str, str]:
     normalized_source = validate_internal_route(source)
     if target.startswith("/"):
@@ -106,6 +117,7 @@ def validate_side_effect(kind: str, payload: dict[str, Any]) -> None:
 
 
 __all__ = [
+    "validate_agent_target",
     "validate_external_url",
     "validate_internal_route",
     "validate_locale_tag",
