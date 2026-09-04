@@ -184,6 +184,13 @@ def _semantic_contract(
                 return "page", "PAGE_MOVED", "mutation"
             if segments[5].endswith(":restore") and method == "POST":
                 return "page", "PAGE_RESTORED", "mutation"
+        if len(segments) == 5 and segments[4] == "redirects" and method == "POST":
+            return "redirect", "REDIRECT_CREATED", "mutation"
+        if len(segments) == 6 and segments[4] == "redirects":
+            if method == "PATCH":
+                return "redirect", "REDIRECT_UPDATED", "mutation"
+            if method == "DELETE":
+                return "redirect", "REDIRECT_DELETED", "delete"
         if len(segments) == 5 and segments[4] == "locales" and method == "POST":
             return "locale", "LOCALE_CREATED", "mutation"
         if len(segments) == 6 and segments[4] == "locales":
@@ -2126,7 +2133,7 @@ def run_acceptance(project: str) -> None:
             "public-agent-acceptance: OK "
             f"workspace={primary_workspace} types=2 fields=3 items=2 "
             "translations=1 relations=1 views=1 pages=1 components=1 "
-            "locales=1 navigations=1 navigation-items=3 "
+            "locales=1 redirects=1 navigations=1 navigation-items=3 "
             "openapi=exact restart=verified nginx-outage=verified "
             "crud=public quotas=mutation-429,max-delete-429 "
             "dependency-delete=422 page-delete-restore=verified "
