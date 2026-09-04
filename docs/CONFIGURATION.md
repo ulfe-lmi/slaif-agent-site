@@ -109,7 +109,7 @@ key, Render token, or human session. Reference Compose uses:
 | `BROWSER_WORKER_PREVIEW_ORIGIN` | `http://web:3000` | Fixed operator-owned internal navigation origin |
 | `SLAIF_BROWSER_PREVIEW_AUTHORITY` | `localhost:8080` | Web-only trusted site-resolution authority for browser-token mode |
 | `BROWSER_WORKER_CHROMIUM_EXECUTABLE` | `/ms-playwright/chromium-1669021/chrome-linux64/chrome` | Image-fixed executable |
-| `BROWSER_WORKER_EXPECTED_CHROMIUM_VERSION` | `152.0.7977.64` | Readiness version assertion |
+| `BROWSER_WORKER_EXPECTED_CHROMIUM_VERSION` | `152.0.7977.82` | Readiness version assertion |
 
 The Agent API's durable browser dispatcher is enabled by default in the
 development Compose profile. Its bounded settings are `SLAIF_AGENT_DISPATCHER_ENABLED`,

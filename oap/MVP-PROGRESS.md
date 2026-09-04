@@ -3,13 +3,16 @@
 This tracker uses the contract-audit status vocabulary rather than file
 presence or completion estimates. The authoritative baseline is
 [`MVP-CONTRACT-AUDIT.md`](MVP-CONTRACT-AUDIT.md), evaluated against merged
-Objective 072 commit `bcaddc41f9ef4e779dd1a8c9a41eb08462250d53`.
+Objective 076 commit `067676314e0d9664d40cb8514ea549b966a4eb2d` on
+2026-09-02.
 
 ## Current verdict
 
-**CONTRACTUAL MVP NOT COMPLETE.** Objectives 065–072 each prove a narrow,
-bounded behavior. None of those slices alone proves the broader product
-capability, review lifecycle, or publication contract.
+**CONTRACTUAL MVP NOT COMPLETE.** Merged Objectives 065–076 prove narrow,
+bounded contracts, with 073 repairing current-state claims and 074–076 adding
+real Agent control and model/content semantics. None of those slices alone
+proves the broader product capability, review lifecycle, or publication
+contract.
 
 ## Merged narrow slices
 
@@ -27,18 +30,30 @@ These statuses are narrow evidence claims. They do not make Agent semantics,
 MCP, review snapshots, promotion, publication, source reconstruction, or
 operations complete.
 
-## Dependency-correct planned sequence
+## Merged 073–076 prefix
 
-The following order files are separate inert Markdown artifacts. They remain
-inactive until strategy refreshes state, selects one exact `oap/active` value,
-and sends the protocol signal.
+These rows are credited from the merged GitHub PRs and their production-boundary
+evidence, not from the existence of files or the confidence of an execution
+report.
+
+| Objective | Merged evidence credited | Status |
+|---|---|---|
+| 073 / [PR #69](https://github.com/ulfe-lmi/slaif-agent-site/pull/69) | Truthful MVP audit/control-state and roadmap repair, merged as `74d9c189fe241356fbe03f2632197ecbb1ce53a3` | COMPLETE — CURRENT-STATE AUDITED |
+| 074 / [PR #70](https://github.com/ulfe-lmi/slaif-agent-site/pull/70) | Public human Agent workspace/capability issuance, site/CSRF/policy authority, idempotency, audit, revoke, and restart proof, merged as `ef456e63abadddfc7d90794c03be3a63677c87f9` | COMPLETE — E2E PROVEN |
+| 075 / [PR #71](https://github.com/ulfe-lmi/slaif-agent-site/pull/71) | Editable-domain substrate, validators, query contract, locale/navigation/redirect integrity, production COW upgrade, and Agent binding, merged as `0e83b26bf9a9f63bff6756d65cbfd527d215ec51` | COMPLETE — E2E PROVEN |
+| 076 / [PR #72](https://github.com/ulfe-lmi/slaif-agent-site/pull/72) | Capability-bound Agent model/type/field/item/translation/relation/collection-view REST semantics, strict policy/audit/COW/concurrency, canonical OpenAPI, public NGINX evidence, and PostgreSQL 14–18 CI, merged as `067676314e0d9664d40cb8514ea549b966a4eb2d` | COMPLETE — E2E PROVEN |
+
+## Active and remaining sequence
+
+The current active order is `077-b` on [PR #74](https://github.com/ulfe-lmi/slaif-agent-site/pull/74),
+which remains open and unmerged. The broader 077 page/navigation/redirect/
+Render contract remains `PARTIAL` on current `main`; the unmerged 077-a page
+slice is evidence under strategic review, not merged product truth. All later
+order files remain inert until strategy selects and signals them.
 
 | Order | Contractual scope | Current status |
 |---|---|---|
-| 074 | Human Agent workspace and capability control plane | SCAFFOLD ONLY |
-| 075 | Complete editable-domain substrate and validators | NOT IMPLEMENTED |
-| 076 | Agent model/content/view/relation REST and OpenAPI | PARTIAL |
-| 077 | Agent page, navigation, and redirect semantics | PARTIAL |
+| 077 | Agent page, navigation, and redirect semantics | ACTIVE — PR #74 OPEN/UNMERGED; 077-b prerequisite round |
 | 078 | Agent composition and design semantics | PARTIAL |
 | 079 | Agent media semantics and references | PARTIAL |
 | 080 | Real MCP semantic parity | SCAFFOLD ONLY |
@@ -54,8 +69,8 @@ and sends the protocol signal.
 | 090 | Backup and restore operational proof | NOT IMPLEMENTED |
 | 091 | Final hostile MVP truth gate | NOT IMPLEMENTED |
 
-No planned order above is activated by this document. Objective 088 is a
-contractual MVP objective, not post-MVP work.
+This document does not activate any order. Objective 088 is a contractual MVP
+objective, not post-MVP work.
 
 ## Evidence policy
 

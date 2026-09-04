@@ -55,11 +55,13 @@ promotion, and publication execution remain unimplemented.
 > runs with durable private artifact retrieval. Review snapshots, promotion,
 > publication, and public media finalization remain separate work.
 
-The supply-chain policy records a temporary, bounded 41-finding Critical
-exception for Chrome for Testing `152.0.7977.64` in open
-[issue #67](https://github.com/ulfe-lmi/slaif-agent-site/issues/67). It expires
-on `2026-09-04`, is limited to the isolated browser-worker, and is not release
-readiness.
+The supply-chain policy now uses qualified Chrome for Testing `152.0.7977.82`
+and has no current vulnerability exception after a fresh full six-image scan
+reported zero unexcepted Critical findings. The former 41-finding
+`152.0.7977.64` qualification remains historical evidence in
+[`supply-chain/browser-worker-critical-matrix.json`](supply-chain/browser-worker-critical-matrix.json)
+and open [issue #67](https://github.com/ulfe-lmi/slaif-agent-site/issues/67);
+this does not claim release readiness or issue closure.
 
 The current automation also migrates/rebuilds disposable databases, verifies
 the exact role/ownership/grant matrix, exercises COW runtime/reviewer paths,

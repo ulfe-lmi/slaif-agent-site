@@ -321,11 +321,11 @@ def validate_policy(policy: dict[str, Any]) -> None:
         browser_runtime["base_image"] != "playwright"
         or browser_runtime["playwright_core_version"] != "1.62.1"
         or browser_runtime["chromium_revision"] != "1669021"
-        or browser_runtime["chromium_version"] != "152.0.7977.64"
+        or browser_runtime["chromium_version"] != "152.0.7977.82"
         or browser_runtime["chromium_archive_url"]
-        != "https://storage.googleapis.com/chrome-for-testing-public/152.0.7977.64/linux64/chrome-linux64.zip"
+        != "https://storage.googleapis.com/chrome-for-testing-public/152.0.7977.82/linux64/chrome-linux64.zip"
         or browser_runtime["chromium_archive_sha256"]
-        != "8b592f066af71f054aab2cc80fc26f73c775c6d44ebb99d16ade924b24756c2e"
+        != "0704631fb3e4f741092e08f55272f90abc3e307f991f05f332924364415b02e0"
         or browser_runtime["platform"] != "linux/amd64"
         or browser_runtime["node_version"] != "24.18.1"
         or browser_runtime["chromium_executable"]

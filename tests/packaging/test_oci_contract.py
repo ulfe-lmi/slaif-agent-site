@@ -128,9 +128,9 @@ class OciContractTests(unittest.TestCase):
         runtime = content.split(" AS runtime", maxsplit=1)[1]
         self.assertNotIn("pnpm install", runtime)
         self.assertIn("rm -rf /ms-playwright/*", runtime)
-        self.assertIn("BROWSER_WORKER_EXPECTED_CHROMIUM_VERSION=152.0.7977.64", runtime)
+        self.assertIn("BROWSER_WORKER_EXPECTED_CHROMIUM_VERSION=152.0.7977.82", runtime)
         self.assertIn(
-            "8b592f066af71f054aab2cc80fc26f73c775c6d44ebb99d16ade924b24756c2e",
+            "0704631fb3e4f741092e08f55272f90abc3e307f991f05f332924364415b02e0",
             content,
         )
         self.assertIn("USER 10001:10001", content)
