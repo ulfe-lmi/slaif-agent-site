@@ -562,7 +562,10 @@ def _redirect_location(
         workspace_id = getattr(request, "workspace_id", None)
         if workspace_id is None:
             raise ProjectionError("redirect_state")
+        site_prefix = (context.matched_path_prefix or "/").rstrip("/") or "/"
         prefix = f"/preview/{workspace_id}"
+        if site_prefix != "/":
+            prefix += site_prefix
     else:
         prefix = (context.matched_path_prefix or "/").rstrip("/") or "/"
     target = redirect.target

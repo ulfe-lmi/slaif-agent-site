@@ -37,6 +37,13 @@ test("authenticated-preview-renders-overlay-and-keeps-canonical-unchanged", asyn
   expect(page.url()).not.toContain("sas2_session_");
   expect(await page.locator("body").innerText()).not.toContain(credential.setupToken);
 
+  const previewRedirect = await page.request.get(
+    `/preview/${workspaceId}/s/demo/compose-redirect`,
+    { maxRedirects: 0 },
+  );
+  expect(previewRedirect.status()).toBe(301);
+  expect(previewRedirect.headers().location).toBe(`/preview/${workspaceId}/s/demo`);
+
   const canonical = await page.goto("/s/demo/");
   expect(canonical?.status()).toBe(200);
   await expect(page.getByRole("heading", { level: 1 })).not.toHaveText(
@@ -46,6 +53,10 @@ test("authenticated-preview-renders-overlay-and-keeps-canonical-unchanged", asyn
     "Compose overlay heading",
   );
   expect(await page.locator("main").getAttribute("data-render-mode")).toBe("canonical");
+  const canonicalRedirect = await page.request.get("/s/demo/compose-redirect", {
+    maxRedirects: 0,
+  });
+  expect(canonicalRedirect.status()).toBe(404);
 
   expect(failures(), "unexpected preview browser failures").toEqual([]);
 });
