@@ -118,9 +118,9 @@ def _idempotency_completion_sql() -> str:
 
 
 def upgrade() -> None:
-    # Resource parsing is kept in 050 for fresh installs.  This migration's
-    # redirect-specific parser independently validates the immutable JSON so
-    # an installation already at 050 can safely accept the new key as well.
+    # Migration 050 owns the complete immutable resource-constraint parser.
+    # Redirect code receives only the narrow projection it needs; it must not
+    # parse a second copy of the resource JSON and drift from other callers.
     op.execute(
         """
         CREATE OR REPLACE FUNCTION control.slaif_agent_redirect_constraints(
@@ -129,92 +129,13 @@ def upgrade() -> None:
             allowed_locales text[], route_prefix text,
             max_visible_redirects integer
         ) LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $fn$
-        DECLARE workspace_id uuid; result jsonb; item record;
+        DECLARE constraints record;
         BEGIN
-            BEGIN
-                workspace_id:=NULLIF(current_setting('app.session_id',true),'')::uuid;
-            EXCEPTION WHEN invalid_text_representation THEN
-                RAISE EXCEPTION 'COW_CONTEXT_REQUIRED' USING ERRCODE='22023';
-            END;
-            IF workspace_id IS NULL
-               OR NULLIF(current_setting('app.operation_id',true),'') IS NULL THEN
-                RAISE EXCEPTION 'COW_CONTEXT_REQUIRED' USING ERRCODE='22023';
-            END IF;
-            PERFORM control.slaif_agent_require_cow_site(p_site_id);
-            SELECT w.resource_constraints INTO result
-            FROM control.workspace w
-            JOIN control.site s ON s.id=w.site_id
-            JOIN control.user_account a ON a.id=coalesce(w.delegator_id,w.created_by)
-            WHERE w.id=workspace_id AND w.site_id=p_site_id
-              AND w.status='ACTIVE' AND w.expires_at>CURRENT_TIMESTAMP
-              AND s.status='ACTIVE' AND a.status='ACTIVE';
-            IF result IS NULL OR jsonb_typeof(result)<>'object' THEN
-                RAISE EXCEPTION 'INVALID_RESOURCE_CONSTRAINTS' USING ERRCODE='P0001';
-            END IF;
-            IF EXISTS (
-                SELECT 1 FROM jsonb_object_keys(result) k
-                WHERE k NOT IN (
-                    'allowed_type_ids','allowed_type_keys','max_content_types',
-                    'max_fields_per_type','delete_enabled','max_deletes',
-                    'allowed_locales','route_prefix','allowed_page_root_ids',
-                    'max_visible_pages','max_page_depth','allowed_navigation_keys',
-                    'allowed_navigation_ids','max_visible_locales',
-                    'max_visible_navigations','max_visible_navigation_items',
-                    'max_navigation_depth','max_visible_redirects'
-                )
-            ) THEN
-                RAISE EXCEPTION 'INVALID_RESOURCE_CONSTRAINTS' USING ERRCODE='P0001';
-            END IF;
-            FOR item IN SELECT key,value FROM jsonb_each(result) LOOP
-                IF item.key IN (
-                    'allowed_type_ids','allowed_type_keys','allowed_locales',
-                    'allowed_page_root_ids','allowed_navigation_keys',
-                    'allowed_navigation_ids'
-                ) AND jsonb_typeof(item.value)<>'array' THEN
-                    RAISE EXCEPTION 'INVALID_RESOURCE_CONSTRAINTS' USING ERRCODE='P0001';
-                END IF;
-                IF item.key IN (
-                    'max_content_types','max_fields_per_type','max_deletes',
-                    'max_visible_pages','max_page_depth','max_visible_locales',
-                    'max_visible_navigations','max_visible_navigation_items',
-                    'max_navigation_depth','max_visible_redirects'
-                ) AND (jsonb_typeof(item.value)<>'number'
-                       OR item.value::text !~ '^[0-9]+$'
-                       OR (item.value::text)::numeric>2147483647) THEN
-                    RAISE EXCEPTION 'INVALID_RESOURCE_CONSTRAINTS' USING ERRCODE='P0001';
-                END IF;
-            END LOOP;
-            IF result ? 'delete_enabled' AND jsonb_typeof(result->'delete_enabled')<>'boolean' THEN
-                RAISE EXCEPTION 'INVALID_RESOURCE_CONSTRAINTS' USING ERRCODE='P0001';
-            END IF;
-            IF result ? 'route_prefix' AND (
-                jsonb_typeof(result->'route_prefix')<>'string'
-                OR result->>'route_prefix' !~ '^/[a-z0-9][a-z0-9._~-]*(/[a-z0-9][a-z0-9._~-]*)*$'
-                AND result->>'route_prefix'<>'/'
-                OR result->>'route_prefix' ~ '^/(api|admin|agent|control|editor|health|internal|login|logout|mcp|media|preview|setup|_next|static)(/|$)'
-            ) THEN
-                RAISE EXCEPTION 'INVALID_RESOURCE_CONSTRAINTS' USING ERRCODE='P0001';
-            END IF;
-            IF EXISTS (
-                SELECT 1 FROM jsonb_array_elements(coalesce(result->'allowed_locales','[]'::jsonb)) v
-                WHERE jsonb_typeof(v.value)<>'string'
-                   OR v.value #>> '{}' !~ '^[A-Za-z]{2,3}(-[A-Za-z]{4})?(-([A-Za-z]{2}|[0-9]{3}))?(-[A-Za-z0-9]{5,8})*$'
-            ) OR jsonb_array_length(coalesce(result->'allowed_locales','[]'::jsonb))>64 THEN
-                RAISE EXCEPTION 'INVALID_RESOURCE_CONSTRAINTS' USING ERRCODE='P0001';
-            END IF;
-            IF EXISTS (
-                SELECT 1 FROM jsonb_array_elements(coalesce(result->'allowed_navigation_keys','[]'::jsonb)) v
-                WHERE jsonb_typeof(v.value)<>'string'
-                   OR v.value #>> '{}' !~ '^[A-Za-z0-9._~-]{1,63}$'
-            ) OR jsonb_array_length(coalesce(result->'allowed_navigation_keys','[]'::jsonb))>256 THEN
-                RAISE EXCEPTION 'INVALID_RESOURCE_CONSTRAINTS' USING ERRCODE='P0001';
-            END IF;
-            allowed_locales:=ARRAY(
-                SELECT value FROM jsonb_array_elements_text(coalesce(result->'allowed_locales','[]'::jsonb)) value
-            );
-            route_prefix:=CASE WHEN result ? 'route_prefix' THEN result->>'route_prefix' END;
-            max_visible_redirects:=CASE WHEN result ? 'max_visible_redirects'
-                THEN (result->>'max_visible_redirects')::integer END;
+            SELECT c.* INTO STRICT constraints
+            FROM control.slaif_agent_resource_constraints(p_site_id) AS c;
+            allowed_locales:=constraints.allowed_locales;
+            route_prefix:=constraints.route_prefix;
+            max_visible_redirects:=constraints.max_visible_redirects;
             RETURN NEXT;
         END;
         $fn$
@@ -379,9 +300,6 @@ def upgrade() -> None:
             FOR redirect_row IN
                 SELECT r.* FROM content.redirect r WHERE r.site_id=p_site_id
             LOOP
-                IF p_agent AND NOT content.slaif_redirect_is_visible(
-                    p_site_id,redirect_row.source_route,redirect_row.locale
-                ) THEN CONTINUE; END IF;
                 IF content.slaif_redirect_source_conflict(
                     p_site_id,redirect_row.source_route,redirect_row.locale,redirect_row.id
                 ) THEN
@@ -405,16 +323,17 @@ def upgrade() -> None:
                          (r.locale=redirect_row.locale OR r.locale IS NULL))
                         OR (redirect_row.locale IS NULL AND r.locale IS NULL)
                       )
-                      AND (NOT p_agent OR content.slaif_redirect_is_visible(
-                          p_site_id,r.source_route,r.locale))
                     ORDER BY CASE WHEN redirect_row.locale IS NOT NULL
                                       AND r.locale=redirect_row.locale THEN 0 ELSE 1 END,
                              r.id DESC LIMIT 1;
                     IF FOUND THEN
+                        IF next_target NOT LIKE '/%' THEN
+                            EXIT;
+                        END IF;
                         cursor_route:=next_target; CONTINUE;
                     END IF;
                     IF content.slaif_redirect_static_target_exists(
-                        p_site_id,cursor_route,redirect_row.locale,p_agent
+                        p_site_id,cursor_route,redirect_row.locale,false
                     ) THEN EXIT; END IF;
                     RAISE EXCEPTION 'REDIRECT_TARGET_DANGLING' USING ERRCODE='P0003';
                 END LOOP;
@@ -448,16 +367,80 @@ def upgrade() -> None:
     )
     op.execute(
         """
+        CREATE FUNCTION content.slaif_redirect_page_target_dependency(
+            p_site_id uuid, p_route text, p_page_id uuid
+        ) RETURNS boolean LANGUAGE plpgsql STABLE SECURITY DEFINER
+        SET search_path=pg_catalog AS $fn$
+        DECLARE incoming record; default_locale text;
+        BEGIN
+            SELECT l.tag INTO default_locale FROM content.site_locale l
+            WHERE l.site_id=p_site_id AND l.enabled AND l.is_default;
+            FOR incoming IN
+                SELECT r.* FROM content.redirect r
+                WHERE r.site_id=p_site_id AND r.target=p_route
+            LOOP
+                IF EXISTS (
+                    SELECT 1 FROM content.page p
+                    WHERE p.site_id=p_site_id AND p.id<>p_page_id
+                      AND p.deleted_at IS NULL AND p.route_template IS NULL
+                      AND p.locale=coalesce(incoming.locale,default_locale)
+                      AND content.slaif_agent_page_effective_route(p.id)=p_route
+                ) THEN
+                    CONTINUE;
+                END IF;
+                IF EXISTS (
+                    SELECT 1 FROM content.redirect alternate
+                    WHERE alternate.site_id=p_site_id
+                      AND alternate.source_route=p_route
+                      AND (
+                        (incoming.locale IS NOT NULL AND
+                         (alternate.locale=incoming.locale OR alternate.locale IS NULL))
+                        OR (incoming.locale IS NULL AND alternate.locale IS NULL)
+                      )
+                ) THEN
+                    CONTINUE;
+                END IF;
+                RETURN true;
+            END LOOP;
+            RETURN false;
+        END; $fn$
+        """
+    )
+    op.execute(
+        """
         CREATE FUNCTION content.slaif_redirect_source_dependency(
             p_site_id uuid, p_source text, p_redirect_id uuid
-        ) RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER
+        ) RETURNS boolean LANGUAGE plpgsql STABLE SECURITY DEFINER
         SET search_path=pg_catalog AS $fn$
-            SELECT EXISTS (
-                SELECT 1 FROM content.redirect r
+        DECLARE incoming record;
+        BEGIN
+            FOR incoming IN
+                SELECT r.* FROM content.redirect r
                 WHERE r.site_id=p_site_id AND r.id<>p_redirect_id
                   AND r.target=p_source
-            )
-        $fn$
+            LOOP
+                IF content.slaif_redirect_static_target_exists(
+                    p_site_id,p_source,incoming.locale,false
+                ) THEN
+                    CONTINUE;
+                END IF;
+                IF EXISTS (
+                    SELECT 1 FROM content.redirect alternate
+                    WHERE alternate.site_id=p_site_id
+                      AND alternate.id<>p_redirect_id
+                      AND alternate.source_route=p_source
+                      AND (
+                        (incoming.locale IS NOT NULL AND
+                         (alternate.locale=incoming.locale OR alternate.locale IS NULL))
+                        OR (incoming.locale IS NULL AND alternate.locale IS NULL)
+                      )
+                ) THEN
+                    CONTINUE;
+                END IF;
+                RETURN true;
+            END LOOP;
+            RETURN false;
+        END; $fn$
         """
     )
 
@@ -494,6 +477,7 @@ def upgrade() -> None:
         SET search_path=pg_catalog AS $fn$
         DECLARE old_route text;
         BEGIN
+            PERFORM control.slaif_agent_structural_lock(p_site_id);
             SELECT content.slaif_agent_page_effective_route(p.id)
                 INTO old_route
             FROM content.page p
@@ -501,7 +485,9 @@ def upgrade() -> None:
             IF NOT FOUND THEN
                 RAISE EXCEPTION 'PAGE_NOT_FOUND' USING ERRCODE='P0002';
             END IF;
-            IF content.slaif_redirect_page_target_dependency(p_site_id,old_route) THEN
+            IF content.slaif_redirect_page_target_dependency(
+                p_site_id,old_route,p_page_id
+            ) THEN
                 RAISE EXCEPTION 'REDIRECT_DEPENDENCY' USING ERRCODE='P0003';
             END IF;
             RETURN QUERY SELECT * FROM content.slaif_agent_page_delete_base_051(
@@ -577,7 +563,10 @@ def upgrade() -> None:
                 INTO target_site,old_route
             FROM content.page p WHERE p.id=p_page_id;
             IF target_site IS NULL THEN RETURN; END IF;
-            IF content.slaif_redirect_page_target_dependency(target_site,old_route) THEN
+            PERFORM control.slaif_agent_structural_lock(target_site);
+            IF content.slaif_redirect_page_target_dependency(
+                target_site,old_route,p_page_id
+            ) THEN
                 RAISE EXCEPTION 'REDIRECT_DEPENDENCY' USING ERRCODE='P0003';
             END IF;
             PERFORM content.slaif_page_delete_base_051(p_page_id);
@@ -874,6 +863,7 @@ def upgrade() -> None:
         "content.slaif_redirect_validate_state(uuid,boolean)",
         "content.slaif_redirect_page_guard(uuid)",
         "content.slaif_redirect_page_target_dependency(uuid,text)",
+        "content.slaif_redirect_page_target_dependency(uuid,text,uuid)",
         "content.slaif_redirect_source_dependency(uuid,text,uuid)",
         "content.slaif_agent_page_validate(uuid,uuid)",
     ):
@@ -982,6 +972,7 @@ def downgrade() -> None:
         "content.slaif_redirect_validate_state(uuid,boolean)",
         "content.slaif_redirect_page_guard(uuid)",
         "content.slaif_redirect_page_target_dependency(uuid,text)",
+        "content.slaif_redirect_page_target_dependency(uuid,text,uuid)",
         "content.slaif_redirect_source_dependency(uuid,text,uuid)",
     ):
         op.execute(f"DROP FUNCTION IF EXISTS {function} CASCADE")

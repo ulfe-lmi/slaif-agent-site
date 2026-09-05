@@ -768,12 +768,18 @@ async def test_editor_agent_structural_races_share_workspace_site_lock(
             "page:read",
             "page:delete",
             "page:write",
+            "page:move",
+            "page:restore",
             "route:write",
             "locale:configure",
             "navigation:read",
             "navigation:create",
             "navigation:write",
             "navigation:delete",
+            "redirect:read",
+            "redirect:create",
+            "redirect:write",
+            "redirect:delete",
         ]
         async with owner_pool.acquire() as owner:
             workspace_id = await owner.fetchval(
@@ -790,6 +796,16 @@ async def test_editor_agent_structural_races_share_workspace_site_lock(
                 public_id,
                 digest,
                 json.dumps(scopes),
+            )
+            await owner.execute(
+                "UPDATE control.workspace SET request_quota=1000, "
+                "mutation_quota=1000, delete_quota=1000 WHERE id=$1",
+                workspace_id,
+            )
+            await owner.execute(
+                "UPDATE control.capability SET request_quota=1000, "
+                "mutation_quota=1000, delete_quota=1000 WHERE public_id=$1",
+                public_id,
             )
 
         control = ControlDatabase(
@@ -837,6 +853,34 @@ async def test_editor_agent_structural_races_share_workspace_site_lock(
                     tuple[httpx.Response, httpx.Response],
                     await asyncio.gather(agent_call(), editor_call()),
                 )
+
+            async def barrier_race(*calls: Any) -> tuple[httpx.Response, ...]:
+                """Start production calls behind the one shared DB lock."""
+                async with owner_pool.acquire() as blocker:
+                    async with blocker.transaction():
+                        lock_key = await blocker.fetchval(
+                            "SELECT hashtextextended($1,994)",
+                            f"{workspace_id}:{site_id}:page-structure",
+                        )
+                        await blocker.execute(
+                            "SELECT pg_advisory_xact_lock($1::bigint)", lock_key
+                        )
+                        tasks = [asyncio.create_task(call()) for call in calls]
+                        for _ in range(500):
+                            waiting = await blocker.fetchval(
+                                "SELECT count(*) FROM pg_locks "
+                                "WHERE locktype='advisory' AND NOT granted"
+                            )
+                            if waiting >= 1:
+                                break
+                            await asyncio.sleep(0)
+                        else:
+                            raise AssertionError(
+                                f"expected a structural lock waiter, got {waiting}"
+                            )
+                    return cast(
+                        tuple[httpx.Response, ...], await asyncio.gather(*tasks)
+                    )
 
             async with (
                 httpx.AsyncClient(
@@ -1027,6 +1071,376 @@ async def test_editor_agent_structural_races_share_workspace_site_lock(
                     key=lambda row: (row["position"], row["id"]),
                 )
                 assert [row["position"] for row in children] == [0, 1]
+
+                agent_source_create, editor_page_create = await barrier_race(
+                    lambda: agent_client.post(
+                        "/api/agent/v1/redirects",
+                        headers=agent_headers("cross-redirect-page-create"),
+                        json={
+                            "source_route": "/race-page-create",
+                            "target": "https://example.test/page-create",
+                        },
+                    ),
+                    lambda: editor_client.post(
+                        f"{editor_root}/pages/",
+                        headers=editor_headers("cross-page-source-create"),
+                        json={
+                            "slug": "race-page-create",
+                            "title": "Race page create",
+                            "status": "DRAFT",
+                            "locale": "en-US",
+                        },
+                    ),
+                )
+                assert sorted(
+                    (agent_source_create.status_code, editor_page_create.status_code)
+                ) == [201, 409], (
+                    agent_source_create.text,
+                    editor_page_create.text,
+                )
+
+                update_page = await editor_client.post(
+                    f"{editor_root}/pages/",
+                    headers=editor_headers("cross-update-page-create"),
+                    json={
+                        "slug": "race-update-page",
+                        "title": "Race update page",
+                        "status": "DRAFT",
+                        "locale": "en-US",
+                    },
+                )
+                assert update_page.status_code == 201, update_page.text
+                update_page_id = UUID(update_page.json()["id"])
+                update_redirect = await agent_client.post(
+                    "/api/agent/v1/redirects",
+                    headers=agent_headers("cross-update-redirect-create"),
+                    json={
+                        "source_route": "/race-update-redirect",
+                        "target": "https://example.test/update",
+                    },
+                )
+                assert update_redirect.status_code == 201, update_redirect.text
+                update_redirect_id = UUID(update_redirect.json()["record"]["id"])
+                agent_source_update, editor_route_update = await barrier_race(
+                    lambda: agent_client.patch(
+                        f"/api/agent/v1/redirects/{update_redirect_id}",
+                        headers=agent_headers("cross-source-route-update"),
+                        json={
+                            "source_route": "/race-update-new",
+                            "expected_row_version": 1,
+                        },
+                    ),
+                    lambda: editor_client.patch(
+                        f"{editor_root}/pages/{update_page_id}",
+                        headers=editor_headers("cross-page-route-update"),
+                        json={
+                            "slug": "race-update-new",
+                            "title": "Race update page",
+                            "status": "DRAFT",
+                            "expected_row_version": 1,
+                        },
+                    ),
+                )
+                assert sorted(
+                    (agent_source_update.status_code, editor_route_update.status_code)
+                ) == [200, 409], (
+                    agent_source_update.text,
+                    editor_route_update.text,
+                )
+
+                move_parent = await agent_client.post(
+                    "/api/agent/v1/pages",
+                    headers=agent_headers("cross-move-parent-create"),
+                    json={
+                        "slug": "race-move-parent",
+                        "title": "Race move parent",
+                        "locale": "en-US",
+                    },
+                )
+                move_child = await agent_client.post(
+                    "/api/agent/v1/pages",
+                    headers=agent_headers("cross-move-child-create"),
+                    json={
+                        "slug": "race-move-child",
+                        "title": "Race move child",
+                        "locale": "en-US",
+                    },
+                )
+                assert move_parent.status_code == move_child.status_code == 201
+                move_parent_id = UUID(move_parent.json()["record"]["id"])
+                move_child_id = UUID(move_child.json()["record"]["id"])
+                agent_page_move, agent_move_redirect = await barrier_race(
+                    lambda: agent_client.post(
+                        f"/api/agent/v1/pages/{move_child_id}:move",
+                        headers=agent_headers("cross-page-move-redirect"),
+                        json={
+                            "parent_id": str(move_parent_id),
+                            "expected_row_version": 1,
+                        },
+                    ),
+                    lambda: agent_client.post(
+                        "/api/agent/v1/redirects",
+                        headers=agent_headers("cross-move-redirect-create"),
+                        json={
+                            "source_route": "/race-move-parent/race-move-child",
+                            "target": "https://example.test/move",
+                        },
+                    ),
+                )
+                assert (
+                    sum(
+                        response.status_code == 200
+                        for response in (agent_page_move, agent_move_redirect)
+                    )
+                    + sum(
+                        response.status_code == 201
+                        for response in (agent_page_move, agent_move_redirect)
+                    )
+                    == 1
+                )
+                assert sorted(
+                    response.status_code
+                    for response in (agent_page_move, agent_move_redirect)
+                ) == [200, 409] or sorted(
+                    response.status_code
+                    for response in (agent_page_move, agent_move_redirect)
+                ) == [201, 409], (
+                    agent_page_move.text,
+                    agent_move_redirect.text,
+                )
+
+                restore_page = await agent_client.post(
+                    "/api/agent/v1/pages",
+                    headers=agent_headers("cross-restore-page-create"),
+                    json={
+                        "slug": "race-restore-page",
+                        "title": "Race restore page",
+                        "locale": "en-US",
+                    },
+                )
+                assert restore_page.status_code == 201, restore_page.text
+                restore_page_id = UUID(restore_page.json()["record"]["id"])
+                restored_delete = await agent_client.request(
+                    "DELETE",
+                    f"/api/agent/v1/pages/{restore_page_id}",
+                    headers=agent_headers("cross-restore-page-delete"),
+                    json={"expected_row_version": 1},
+                )
+                assert restored_delete.status_code == 200, restored_delete.text
+                agent_restore, agent_restore_redirect = await barrier_race(
+                    lambda: agent_client.post(
+                        f"/api/agent/v1/pages/{restore_page_id}:restore",
+                        headers=agent_headers("cross-page-restore-redirect"),
+                        json={"expected_row_version": 2},
+                    ),
+                    lambda: agent_client.post(
+                        "/api/agent/v1/redirects",
+                        headers=agent_headers("cross-restore-redirect-create"),
+                        json={
+                            "source_route": "/race-restore-page",
+                            "target": "https://example.test/restore",
+                        },
+                    ),
+                )
+                assert sorted(
+                    (agent_restore.status_code, agent_restore_redirect.status_code)
+                ) in ([200, 409], [409, 201]), (
+                    agent_restore.text,
+                    agent_restore_redirect.text,
+                )
+
+                delete_target_page = await agent_client.post(
+                    "/api/agent/v1/pages",
+                    headers=agent_headers("cross-delete-target-page-create"),
+                    json={
+                        "slug": "race-delete-target",
+                        "title": "Race delete target",
+                        "locale": "en-US",
+                    },
+                )
+                assert delete_target_page.status_code == 201, delete_target_page.text
+                delete_target_page_id = UUID(delete_target_page.json()["record"]["id"])
+                incoming_redirect = await agent_client.post(
+                    "/api/agent/v1/redirects",
+                    headers=agent_headers("cross-delete-target-redirect-create"),
+                    json={
+                        "source_route": "/race-delete-incoming",
+                        "target": "/race-delete-target",
+                    },
+                )
+                assert incoming_redirect.status_code == 201, incoming_redirect.text
+                incoming_redirect_id = UUID(incoming_redirect.json()["record"]["id"])
+                agent_page_delete, agent_target_update = await barrier_race(
+                    lambda: agent_client.request(
+                        "DELETE",
+                        f"/api/agent/v1/pages/{delete_target_page_id}",
+                        headers=agent_headers("cross-delete-target-page"),
+                        json={"expected_row_version": 1},
+                    ),
+                    lambda: agent_client.patch(
+                        f"/api/agent/v1/redirects/{incoming_redirect_id}",
+                        headers=agent_headers("cross-delete-target-update"),
+                        json={
+                            "target": "https://example.test/target-updated",
+                            "expected_row_version": 1,
+                        },
+                    ),
+                )
+                assert agent_target_update.status_code == 200, agent_target_update.text
+                assert agent_page_delete.status_code in (200, 409), (
+                    agent_page_delete.text
+                )
+                page_after_delete_race = await agent_client.get(
+                    f"/api/agent/v1/pages/{delete_target_page_id}",
+                    headers=agent_headers("cross-delete-target-page-read"),
+                )
+                assert page_after_delete_race.status_code == (
+                    404 if agent_page_delete.status_code == 200 else 200
+                ), page_after_delete_race.text
+
+                delete_source_redirect = await agent_client.post(
+                    "/api/agent/v1/redirects",
+                    headers=agent_headers("cross-dependent-source-create"),
+                    json={
+                        "source_route": "/race-dependent-source",
+                        "target": "https://example.test/dependent-source",
+                    },
+                )
+                assert delete_source_redirect.status_code == 201, (
+                    delete_source_redirect.text
+                )
+                delete_source_id = UUID(delete_source_redirect.json()["record"]["id"])
+                agent_redirect_delete, editor_dependent_create = await barrier_race(
+                    lambda: agent_client.request(
+                        "DELETE",
+                        f"/api/agent/v1/redirects/{delete_source_id}",
+                        headers=agent_headers("cross-dependent-delete"),
+                        json={"expected_row_version": 1},
+                    ),
+                    lambda: editor_client.post(
+                        f"{editor_root}/redirects",
+                        headers=editor_headers("cross-dependent-create"),
+                        json={
+                            "source_route": "/race-dependent-child",
+                            "target": "/race-dependent-source",
+                            "status_code": 302,
+                        },
+                    ),
+                )
+                assert sorted(
+                    (
+                        agent_redirect_delete.status_code,
+                        editor_dependent_create.status_code,
+                    )
+                ) in ([200, 409], [200, 422], [409, 201]), (
+                    agent_redirect_delete.text,
+                    editor_dependent_create.text,
+                )
+
+                restricted_redirect = await agent_client.post(
+                    "/api/agent/v1/redirects",
+                    headers=agent_headers("cross-restricted-source-create"),
+                    json={
+                        "source_route": "/managed/restricted-source",
+                        "target": "https://example.test/restricted",
+                    },
+                )
+                assert restricted_redirect.status_code == 201, restricted_redirect.text
+                restricted_id = UUID(restricted_redirect.json()["record"]["id"])
+                hidden_editor_redirect = await editor_client.post(
+                    f"{editor_root}/redirects",
+                    headers=editor_headers("cross-hidden-editor-dependency"),
+                    json={
+                        "source_route": "/outside/restricted-dependency",
+                        "target": "/managed/restricted-source",
+                        "status_code": 302,
+                    },
+                )
+                assert hidden_editor_redirect.status_code == 201, (
+                    hidden_editor_redirect.text
+                )
+                hidden_editor_id = hidden_editor_redirect.json()["id"]
+                async with owner_pool.acquire() as owner:
+                    cross_capability_id = await owner.fetchval(
+                        "SELECT id FROM control.capability WHERE public_id=$1",
+                        public_id,
+                    )
+                    before_restricted = await owner.fetchrow(
+                        "SELECT mutation_used,delete_used, "
+                        "(SELECT count(*) FROM control.agent_idempotency "
+                        "WHERE capability_id=$1), "
+                        "(SELECT count(*) FROM audit.agent_mutation "
+                        "WHERE capability_id=$1) "
+                        "FROM control.capability WHERE id=$1",
+                        cross_capability_id,
+                    )
+                    await owner.execute(
+                        "UPDATE control.workspace SET resource_constraints=$2::jsonb "
+                        "WHERE id=$1",
+                        workspace_id,
+                        json.dumps(
+                            {
+                                "allowed_locales": ["en-US"],
+                                "route_prefix": "/managed",
+                            }
+                        ),
+                    )
+                    await owner.execute(
+                        "UPDATE control.capability SET resource_constraints=$2::jsonb "
+                        "WHERE id=$1",
+                        cross_capability_id,
+                        json.dumps(
+                            {
+                                "allowed_locales": ["en-US"],
+                                "route_prefix": "/managed",
+                            }
+                        ),
+                    )
+                restricted_update = await agent_client.patch(
+                    f"/api/agent/v1/redirects/{restricted_id}",
+                    headers=agent_headers("cross-hidden-editor-source-update"),
+                    json={
+                        "source_route": "/managed/restricted-renamed",
+                        "expected_row_version": 1,
+                    },
+                )
+                assert restricted_update.status_code == 409, restricted_update.text
+                for hidden_value in (
+                    str(hidden_editor_id),
+                    "/outside/restricted-dependency",
+                ):
+                    assert hidden_value not in restricted_update.text
+                restricted_after = await agent_client.get(
+                    f"/api/agent/v1/redirects/{restricted_id}",
+                    headers=agent_headers("cross-hidden-editor-source-read"),
+                )
+                assert restricted_after.status_code == 200, restricted_after.text
+                assert (
+                    restricted_after.json()["source_route"]
+                    == "/managed/restricted-source"
+                )
+                async with owner_pool.acquire() as owner:
+                    after_restricted = await owner.fetchrow(
+                        "SELECT mutation_used,delete_used, "
+                        "(SELECT count(*) FROM control.agent_idempotency "
+                        "WHERE capability_id=$1), "
+                        "(SELECT count(*) FROM audit.agent_mutation "
+                        "WHERE capability_id=$1) "
+                        "FROM control.capability WHERE id=$1",
+                        cross_capability_id,
+                    )
+                    assert tuple(after_restricted) == tuple(before_restricted)
+                    await owner.execute(
+                        "UPDATE control.workspace SET resource_constraints='{}'::jsonb "
+                        "WHERE id=$1",
+                        workspace_id,
+                    )
+                    await owner.execute(
+                        "UPDATE control.capability SET "
+                        "resource_constraints='{}'::jsonb "
+                        "WHERE id=$1",
+                        cross_capability_id,
+                    )
     finally:
         if editor is not None:
             await editor.stop()

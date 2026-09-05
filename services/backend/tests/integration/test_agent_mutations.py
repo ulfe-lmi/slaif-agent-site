@@ -8,7 +8,7 @@ import json
 from collections.abc import Mapping
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, cast
 from urllib.parse import quote
 from uuid import UUID, uuid4
 
@@ -29,6 +29,7 @@ from slaif_agent_site.agent_state.foundation import (
     asyncpg_cow_session as _asyncpg_cow_session,
 )
 from slaif_agent_site.agent_state.mutations import (
+    AgentCowContentModelService,
     execute_agent_mutation,
     mutation_digest,
 )
@@ -42,6 +43,7 @@ from slaif_agent_site.content_model.models import (
     UpdateContentTypeRequest,
     UpdateFieldDefinitionRequest,
 )
+from slaif_agent_site.content_model.site_data_models import RedirectRecord
 from slaif_agent_site.db.connections import owner_connection
 from slaif_agent_site.db.executor import AsyncpgExecutor
 from slaif_agent_site.db.migrations import run_migration
@@ -902,6 +904,441 @@ async def test_agent_redirect_crud_graph_constraints_and_page_dependencies(
 
 
 @pytest.mark.asyncio
+async def test_agent_redirect_global_graph_is_not_capability_filtered(
+    agent_site_database: AgentSiteDatabase,
+) -> None:
+    """Hidden redirect dependencies cannot be broken by a restricted agent."""
+
+    database = agent_site_database
+    _token, seeded = await _seed(database)
+    scopes = [
+        "site:read",
+        "redirect:read",
+        "redirect:create",
+        "redirect:write",
+        "redirect:delete",
+        "locale:configure",
+    ]
+    token, workspace_id = await _workspace_capability(
+        database, seeded, scopes, "Agent Redirect Global Graph Workspace"
+    )
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        capability_id = await owner.fetchval(
+            "SELECT id FROM control.capability WHERE workspace_id=$1 "
+            "ORDER BY created_at DESC LIMIT 1",
+            workspace_id,
+        )
+        await owner.execute(
+            "UPDATE control.capability SET request_quota=200, mutation_quota=200, "
+            "delete_quota=200 WHERE workspace_id=$1",
+            workspace_id,
+        )
+    app = create_agent_app(
+        settings=ServiceSettings.for_test(),
+        database_settings=_agent_settings(database),
+    )
+    agent_pool = await database.role_pool("slaif_agent_runtime")
+    try:
+
+        async def request(
+            client: httpx.AsyncClient,
+            method: str,
+            path: str,
+            key: str | None = None,
+            body: Mapping[str, object] | None = None,
+        ) -> httpx.Response:
+            headers = {"Authorization": f"Bearer {token}"}
+            if key is not None:
+                headers["Idempotency-Key"] = key
+            return await client.request(method, path, headers=headers, json=body)
+
+        async with app.router.lifespan_context(app):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://agent.test"
+            ) as client:
+                locale = await request(
+                    client,
+                    "POST",
+                    "/api/agent/v1/locales",
+                    "global-graph-locale",
+                    {"tag": "sl-SI", "position": 1},
+                )
+                assert locale.status_code == 201, locale.text
+
+                async def create_redirect(
+                    key: str, source: str, target: str, locale_tag: str | None = None
+                ) -> dict[str, object]:
+                    response = await request(
+                        client,
+                        "POST",
+                        "/api/agent/v1/redirects",
+                        key,
+                        {
+                            "source_route": source,
+                            "target": target,
+                            **({"locale": locale_tag} if locale_tag else {}),
+                        },
+                    )
+                    assert response.status_code == 201, response.text
+                    return cast(dict[str, object], response.json()["record"])
+
+                fallback = await create_redirect(
+                    "global-fallback", "/managed/fallback", "https://example.test/final"
+                )
+                source_break = await create_redirect(
+                    "global-source",
+                    "/managed/source-break",
+                    "https://example.test/source",
+                )
+                target_break = await create_redirect(
+                    "global-target",
+                    "/managed/target-break",
+                    "https://example.test/target",
+                )
+                hidden_route = await create_redirect(
+                    "global-hidden-route",
+                    "/outside/hidden",
+                    "/managed/source-break",
+                )
+                hidden_locale = await create_redirect(
+                    "global-hidden-locale",
+                    "/managed/locale-hidden",
+                    "/managed/fallback",
+                    "sl-SI",
+                )
+                hidden_unrelated = await create_redirect(
+                    "global-hidden-unrelated",
+                    "/outside/unrelated",
+                    "https://example.test/unrelated",
+                )
+                cancel_target = await create_redirect(
+                    "global-cancel-target",
+                    "/managed/cancel-target",
+                    "https://example.test/cancel-target",
+                )
+                graph_cancel_target = await create_redirect(
+                    "global-graph-cancel-target",
+                    "/managed/graph-cancel-target",
+                    "https://example.test/graph-cancel-target",
+                )
+                hidden_ids = {
+                    str(hidden_route["id"]),
+                    str(hidden_locale["id"]),
+                    str(hidden_unrelated["id"]),
+                }
+
+                await _set_resource_constraints(
+                    database,
+                    workspace_id,
+                    {"allowed_locales": ["en-US"], "route_prefix": "/managed"},
+                )
+                visible = await request(client, "GET", "/api/agent/v1/redirects")
+                assert visible.status_code == 200, visible.text
+                visible_ids = {str(row["id"]) for row in visible.json()}
+                assert hidden_ids.isdisjoint(visible_ids)
+
+                async def assert_hidden_conflict(response: httpx.Response) -> None:
+                    assert response.status_code == 409, response.text
+                    for hidden_value in (
+                        *hidden_ids,
+                        "/outside/hidden",
+                        "/managed/locale-hidden",
+                        "sl-SI",
+                    ):
+                        assert hidden_value not in response.text
+
+                failed_source = await request(
+                    client,
+                    "PATCH",
+                    f"/api/agent/v1/redirects/{source_break['id']}",
+                    "global-hidden-source-update",
+                    {
+                        "source_route": "/managed/source-renamed",
+                        "expected_row_version": 1,
+                    },
+                )
+                await assert_hidden_conflict(failed_source)
+
+                failed_target = await request(
+                    client,
+                    "PATCH",
+                    f"/api/agent/v1/redirects/{fallback['id']}",
+                    "global-hidden-target-update",
+                    {
+                        "target": "/managed/missing",
+                        "expected_row_version": 1,
+                    },
+                )
+                await assert_hidden_conflict(failed_target)
+
+                failed_delete = await request(
+                    client,
+                    "DELETE",
+                    f"/api/agent/v1/redirects/{fallback['id']}",
+                    "global-hidden-delete",
+                    {"expected_row_version": 1},
+                )
+                await assert_hidden_conflict(failed_delete)
+
+                async with owner_connection(
+                    database.settings.resolved_owner_dsn(),
+                    expected_database=database.name,
+                ) as owner:
+                    before_retry = await owner.fetchrow(
+                        "SELECT mutation_used,delete_used, "
+                        "(SELECT count(*) FROM control.agent_idempotency "
+                        "WHERE capability_id=$1), "
+                        "(SELECT count(*) FROM audit.agent_mutation "
+                        "WHERE capability_id=$1) "
+                        "FROM control.capability WHERE id=$1",
+                        capability_id,
+                    )
+
+                retry = await request(
+                    client,
+                    "PATCH",
+                    f"/api/agent/v1/redirects/{source_break['id']}",
+                    "global-hidden-source-update",
+                    {
+                        "target": "https://example.test/source-retried",
+                        "expected_row_version": 1,
+                    },
+                )
+                assert retry.status_code == 200, retry.text
+
+                valid_unrelated = await request(
+                    client,
+                    "PATCH",
+                    f"/api/agent/v1/redirects/{target_break['id']}",
+                    "global-hidden-valid-update",
+                    {
+                        "target": "https://example.test/target-updated",
+                        "expected_row_version": 1,
+                    },
+                )
+                assert valid_unrelated.status_code == 200, valid_unrelated.text
+
+                async with owner_connection(
+                    database.settings.resolved_owner_dsn(),
+                    expected_database=database.name,
+                ) as owner:
+                    after_retry = await owner.fetchrow(
+                        "SELECT mutation_used,delete_used, "
+                        "(SELECT count(*) FROM control.agent_idempotency "
+                        "WHERE capability_id=$1), "
+                        "(SELECT count(*) FROM audit.agent_mutation "
+                        "WHERE capability_id=$1) "
+                        "FROM control.capability WHERE id=$1",
+                        capability_id,
+                    )
+                assert tuple(after_retry[:2]) == (
+                    before_retry[0] + 2,
+                    before_retry[1],
+                )
+                assert after_retry[2] == before_retry[2] + 2
+                assert after_retry[3] == before_retry[3] + 2
+
+                async with asyncpg_cow_session(
+                    app.state.database.cow_pool(),
+                    session_id=workspace_id,
+                    operation_id=uuid4(),
+                ) as cow:
+                    durable = await cow.native.fetch(
+                        "SELECT id,source_route,target,row_version "
+                        "FROM content.redirect "
+                        "WHERE id = ANY($1::uuid[]) ORDER BY id",
+                        [
+                            UUID(str(fallback["id"])),
+                            UUID(str(source_break["id"])),
+                            UUID(str(target_break["id"])),
+                        ],
+                    )
+                durable_by_id = {str(row[0]): row for row in durable}
+                assert durable_by_id[str(fallback["id"])][1:] == (
+                    "/managed/fallback",
+                    "https://example.test/final",
+                    1,
+                )
+                assert durable_by_id[str(source_break["id"])][1:] == (
+                    "/managed/source-break",
+                    "https://example.test/source-retried",
+                    2,
+                )
+
+                async def durable_counts() -> tuple[int, int, int, int]:
+                    async with owner_connection(
+                        database.settings.resolved_owner_dsn(),
+                        expected_database=database.name,
+                    ) as owner:
+                        row = await owner.fetchrow(
+                            "SELECT mutation_used,delete_used, "
+                            "(SELECT count(*) FROM control.agent_idempotency "
+                            "WHERE capability_id=$1), "
+                            "(SELECT count(*) FROM audit.agent_mutation "
+                            "WHERE capability_id=$1) "
+                            "FROM control.capability WHERE id=$1",
+                            capability_id,
+                        )
+                    return tuple(row)
+
+                async def lock_structural_mutation(
+                    key: str, body: Mapping[str, object]
+                ) -> None:
+                    async with owner_connection(
+                        database.settings.resolved_owner_dsn(),
+                        expected_database=database.name,
+                    ) as blocker:
+                        async with blocker.transaction():
+                            lock_key = await blocker.fetchval(
+                                "SELECT hashtextextended($1,994)",
+                                f"{workspace_id}:{seeded['site_id']}:page-structure",
+                            )
+                            await blocker.execute(
+                                "SELECT pg_advisory_xact_lock($1::bigint)", lock_key
+                            )
+                            cancelled = asyncio.create_task(
+                                request(
+                                    client,
+                                    "PATCH",
+                                    f"/api/agent/v1/redirects/{cancel_target['id']}",
+                                    key,
+                                    body,
+                                )
+                            )
+                            await _wait_for_page_structure_waiters(blocker, 1)
+                            cancelled.cancel()
+                            with pytest.raises(asyncio.CancelledError):
+                                await cancelled
+
+                before_wait_cancel = await durable_counts()
+                await lock_structural_mutation(
+                    "global-cancel-while-waiting",
+                    {
+                        "target": "https://example.test/wait-retry",
+                        "expected_row_version": 1,
+                    },
+                )
+                assert await durable_counts() == before_wait_cancel
+                wait_retry = await request(
+                    client,
+                    "PATCH",
+                    f"/api/agent/v1/redirects/{cancel_target['id']}",
+                    "global-cancel-while-waiting",
+                    {
+                        "target": "https://example.test/wait-retry",
+                        "expected_row_version": 1,
+                    },
+                )
+                assert wait_retry.status_code == 200, wait_retry.text
+
+                tentative = asyncio.Event()
+                release_tentative = asyncio.Event()
+                original_update = AgentCowContentModelService.update_redirect_for_site
+
+                async def pause_after_redirect_update(
+                    service: Any,
+                    site_id: UUID,
+                    redirect_id: UUID,
+                    update_request: Any,
+                ) -> RedirectRecord:
+                    record = await original_update(
+                        service, site_id, redirect_id, update_request
+                    )
+                    tentative.set()
+                    await release_tentative.wait()
+                    return record
+
+                monkeypatch = pytest.MonkeyPatch()
+                monkeypatch.setattr(
+                    AgentCowContentModelService,
+                    "update_redirect_for_site",
+                    pause_after_redirect_update,
+                )
+                try:
+                    before_graph_cancel = await durable_counts()
+                    graph_cancel = asyncio.create_task(
+                        request(
+                            client,
+                            "PATCH",
+                            f"/api/agent/v1/redirects/{graph_cancel_target['id']}",
+                            "global-cancel-after-graph",
+                            {
+                                "target": "https://example.test/graph-retry",
+                                "expected_row_version": 1,
+                            },
+                        )
+                    )
+                    await asyncio.wait_for(tentative.wait(), timeout=5)
+                    graph_cancel.cancel()
+                    release_tentative.set()
+                    with pytest.raises(asyncio.CancelledError):
+                        await graph_cancel
+                    assert await durable_counts() == before_graph_cancel
+                finally:
+                    release_tentative.set()
+                    monkeypatch.undo()
+
+                graph_retry = await request(
+                    client,
+                    "PATCH",
+                    f"/api/agent/v1/redirects/{graph_cancel_target['id']}",
+                    "global-cancel-after-graph",
+                    {
+                        "target": "https://example.test/graph-retry",
+                        "expected_row_version": 1,
+                    },
+                )
+                assert graph_retry.status_code == 200, graph_retry.text
+
+                malformed_constraints = {
+                    "allowed_type_keys": [{"not": "a-string"}],
+                    "allowed_page_root_ids": [1],
+                    "allowed_navigation_ids": ["not-a-uuid"],
+                    "allowed_locales": [False],
+                    "delete_enabled": "not-a-boolean",
+                    "max_visible_pages": "not-an-integer",
+                }
+                await _set_resource_constraints(
+                    database, workspace_id, malformed_constraints
+                )
+                malformed_read = await request(client, "GET", "/api/agent/v1/redirects")
+                assert malformed_read.status_code == 503, malformed_read.text
+                assert "not-a-uuid" not in malformed_read.text
+                await _set_resource_constraints(database, workspace_id, {})
+                async with owner_connection(
+                    database.settings.resolved_owner_dsn(),
+                    expected_database=database.name,
+                ) as owner:
+                    projection_definition = await owner.fetchval(
+                        "SELECT pg_get_functiondef($1::regprocedure)",
+                        "control.slaif_agent_redirect_constraints(uuid)",
+                    )
+                    assert "slaif_agent_resource_constraints" in projection_definition
+                    assert "jsonb_" not in projection_definition
+                    for signature in (
+                        "control.slaif_agent_resource_constraints(uuid)",
+                        "control.slaif_agent_redirect_constraints(uuid)",
+                        "content.slaif_redirect_page_target_dependency(uuid,text,uuid)",
+                    ):
+                        assert (
+                            await owner.fetchval(
+                                "SELECT pg_get_userbyid(proowner) FROM pg_proc "
+                                "WHERE oid=$1::regprocedure",
+                                signature,
+                            )
+                            == "slaif_owner"
+                        )
+                        assert not await owner.fetchval(
+                            "SELECT has_function_privilege('public',$1,'EXECUTE')",
+                            signature,
+                        )
+    finally:
+        await agent_pool.close()
+
+
+@pytest.mark.asyncio
 async def test_agent_locale_navigation_structural_races_and_cancellation(
     agent_site_database: AgentSiteDatabase,
 ) -> None:
@@ -1446,6 +1883,102 @@ async def test_agent_049_downgrade_rejects_page_data_atomically(
             page_id,
         )
     assert tuple(after_public_disable) == tuple(before)
+
+
+@pytest.mark.asyncio
+async def test_agent_redirect_051_migration_round_trip_preserves_data_and_privileges(
+    agent_site_database: AgentSiteDatabase,
+) -> None:
+    database = agent_site_database
+    _token, seeded = await _seed(database)
+    redirect_id = uuid4()
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        await owner.execute(
+            "INSERT INTO content.redirect_base "
+            "(id,site_id,source_route,target,status_code,locale) "
+            "VALUES ($1,$2,'/round-trip','https://example.test/round-trip',301,NULL)",
+            redirect_id,
+            seeded["site_id"],
+        )
+
+    await _disable_content_cow(database)
+    await run_migration(
+        database.settings.resolved_owner_dsn(),
+        expected_database=database.name,
+        operation="downgrade",
+        revision="049_001",
+    )
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        assert (
+            await owner.fetchval(
+                "SELECT version_num::text FROM control.alembic_version"
+            )
+            == "049_001"
+        )
+        assert tuple(
+            await owner.fetchrow(
+                "SELECT source_route,target,status_code,locale FROM content.redirect "
+                "WHERE id=$1",
+                redirect_id,
+            )
+        ) == ("/round-trip", "https://example.test/round-trip", 301, None)
+
+    await run_migration(
+        database.settings.resolved_owner_dsn(),
+        expected_database=database.name,
+        operation="upgrade",
+        revision="head",
+    )
+    await reconcile(database.settings)
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        assert (
+            await owner.fetchval(
+                "SELECT version_num::text FROM control.alembic_version"
+            )
+            == "051_001"
+        )
+        assert tuple(
+            await owner.fetchrow(
+                "SELECT source_route,target,status_code,locale "
+                "FROM content.redirect_base "
+                "WHERE id=$1",
+                redirect_id,
+            )
+        ) == ("/round-trip", "https://example.test/round-trip", 301, None)
+        projection_definition = await owner.fetchval(
+            "SELECT pg_get_functiondef($1::regprocedure)",
+            "control.slaif_agent_redirect_constraints(uuid)",
+        )
+        assert "control.slaif_agent_resource_constraints" in projection_definition
+        assert "jsonb_" not in projection_definition
+        for signature in (
+            "content.slaif_agent_redirect_list(uuid)",
+            "content.slaif_agent_redirect_get(uuid,uuid)",
+            "content.slaif_agent_redirect_create(uuid,text,text,integer,text)",
+            "content.slaif_agent_redirect_update(uuid,uuid,text,text,integer,text,integer)",
+            "content.slaif_agent_redirect_delete(uuid,uuid,integer)",
+        ):
+            assert (
+                await owner.fetchval(
+                    "SELECT pg_get_userbyid(proowner) FROM pg_proc "
+                    "WHERE oid=$1::regprocedure",
+                    signature,
+                )
+                == "slaif_owner"
+            )
+            assert await owner.fetchval(
+                "SELECT has_function_privilege('slaif_agent_runtime',$1,'EXECUTE')",
+                signature,
+            )
+            assert not await owner.fetchval(
+                "SELECT has_function_privilege('public',$1,'EXECUTE')", signature
+            )
 
 
 @pytest.mark.asyncio

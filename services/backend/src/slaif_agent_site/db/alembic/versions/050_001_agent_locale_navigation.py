@@ -53,6 +53,7 @@ def _resource_constraint_sql() -> str:
                OR NULLIF(current_setting('app.operation_id', true), '') IS NULL THEN
                 RAISE EXCEPTION 'COW_CONTEXT_REQUIRED' USING ERRCODE='22023';
             END IF;
+            PERFORM control.slaif_agent_require_cow_site(p_site_id);
             SELECT w.resource_constraints INTO result
             FROM control.workspace w
             JOIN control.site s ON s.id=w.site_id
@@ -125,6 +126,38 @@ def _resource_constraint_sql() -> str:
                 WHERE v !~ '^[A-Za-z]{2,3}(-[A-Za-z]{4})?(-([A-Za-z]{2}|[0-9]{3}))?(-[A-Za-z0-9]{5,8})*$'
             ) OR cardinality(ARRAY(SELECT value FROM jsonb_array_elements_text(coalesce(result->'allowed_locales','[]'::jsonb)) value))>64
             THEN
+                RAISE EXCEPTION 'INVALID_RESOURCE_CONSTRAINTS' USING ERRCODE='P0001';
+            END IF;
+            IF EXISTS (
+                SELECT 1 FROM jsonb_array_elements(coalesce(result->'allowed_type_ids','[]'::jsonb)) item
+                WHERE jsonb_typeof(item.value)<>'string'
+                   OR item.value #>> '{}' !~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+            ) OR jsonb_array_length(coalesce(result->'allowed_type_ids','[]'::jsonb))>256
+              OR EXISTS (
+                SELECT 1 FROM jsonb_array_elements(coalesce(result->'allowed_type_keys','[]'::jsonb)) item
+                WHERE jsonb_typeof(item.value)<>'string'
+                   OR item.value #>> '{}' !~ '^[A-Za-z0-9._~-]{1,63}$'
+            ) OR jsonb_array_length(coalesce(result->'allowed_type_keys','[]'::jsonb))>256
+              OR EXISTS (
+                SELECT 1 FROM jsonb_array_elements(coalesce(result->'allowed_locales','[]'::jsonb)) item
+                WHERE jsonb_typeof(item.value)<>'string'
+                   OR item.value #>> '{}' !~ '^[A-Za-z]{2,3}(-[A-Za-z]{4})?(-([A-Za-z]{2}|[0-9]{3}))?(-[A-Za-z0-9]{5,8})*$'
+            ) OR jsonb_array_length(coalesce(result->'allowed_locales','[]'::jsonb))>64
+              OR EXISTS (
+                SELECT 1 FROM jsonb_array_elements(coalesce(result->'allowed_page_root_ids','[]'::jsonb)) item
+                WHERE jsonb_typeof(item.value)<>'string'
+                   OR item.value #>> '{}' !~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+            ) OR jsonb_array_length(coalesce(result->'allowed_page_root_ids','[]'::jsonb))>256
+              OR EXISTS (
+                SELECT 1 FROM jsonb_array_elements(coalesce(result->'allowed_navigation_keys','[]'::jsonb)) item
+                WHERE jsonb_typeof(item.value)<>'string'
+                   OR item.value #>> '{}' !~ '^[A-Za-z0-9._~-]{1,63}$'
+            ) OR jsonb_array_length(coalesce(result->'allowed_navigation_keys','[]'::jsonb))>256
+              OR EXISTS (
+                SELECT 1 FROM jsonb_array_elements(coalesce(result->'allowed_navigation_ids','[]'::jsonb)) item
+                WHERE jsonb_typeof(item.value)<>'string'
+                   OR item.value #>> '{}' !~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+            ) OR jsonb_array_length(coalesce(result->'allowed_navigation_ids','[]'::jsonb))>256 THEN
                 RAISE EXCEPTION 'INVALID_RESOURCE_CONSTRAINTS' USING ERRCODE='P0001';
             END IF;
             IF result ? 'route_prefix' AND (

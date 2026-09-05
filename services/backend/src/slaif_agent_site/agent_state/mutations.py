@@ -1331,6 +1331,7 @@ async def execute_agent_mutation(
                 "locale",
                 "navigation",
                 "navigation_item",
+                "redirect",
             }:
                 try:
                     mutation_allowed = await cow.native.fetchval(
