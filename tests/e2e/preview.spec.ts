@@ -41,6 +41,12 @@ test("authenticated-preview-renders-overlay-and-keeps-canonical-unchanged", asyn
     `/preview/${workspaceId}/s/demo/compose-redirect`,
     { maxRedirects: 0 },
   );
+  test.info().annotations = [
+    {
+      type: "stage",
+      description: `preview-redirect-${previewRedirect.status()}`,
+    },
+  ];
   expect(previewRedirect.status(), await previewRedirect.text()).toBe(301);
   expect(previewRedirect.headers().location).toBe(`/preview/${workspaceId}/s/demo`);
 
