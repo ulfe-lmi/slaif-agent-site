@@ -41,7 +41,7 @@ test("authenticated-preview-renders-overlay-and-keeps-canonical-unchanged", asyn
     `/preview/${workspaceId}/s/demo/compose-redirect`,
     { maxRedirects: 0 },
   );
-  expect(previewRedirect.status()).toBe(301);
+  expect(previewRedirect.status(), await previewRedirect.text()).toBe(301);
   expect(previewRedirect.headers().location).toBe(`/preview/${workspaceId}/s/demo`);
 
   const canonical = await page.goto("/s/demo/");
