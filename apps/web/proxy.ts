@@ -1,5 +1,4 @@
 import type { NextRequest } from "next/server";
-import { normalizeBrowserPreviewRoute } from "@slaif-agent-site/browser-tool-contracts";
 
 import {
   isRedirectProjection,
@@ -8,7 +7,6 @@ import {
 } from "./src/sites/render";
 
 const WORKSPACE_ID = /^[0-9a-f-]{36}$/iu;
-const AUTHORITY = /^[a-z0-9.-]+(?::[1-9][0-9]{0,4})?$/u;
 const RESERVED =
   /^\/(?:admin|api|agent|control|editor|health|internal|login|logout|mcp|media|setup|_next|static)(?:\/|$)/u;
 
@@ -35,23 +33,17 @@ export async function proxy(request: NextRequest): Promise<Response | undefined>
       request.cookies.get("__Host-slaif_session")?.value ??
       request.cookies.get("slaif_session")?.value;
     const browserToken = request.headers.get("x-slaif-browser-preview");
-    if ((session && browserToken) || (!session && !browserToken)) return;
+    // Browser preview credentials are deliberately single-use. The preview
+    // page must make the sole render request so its authorization is consumed
+    // exactly once by the Render service.
+    if (browserToken || !session) return;
 
-    const browserAuthority = process.env.SLAIF_BROWSER_PREVIEW_AUTHORITY;
-    if (browserToken && (!browserAuthority || !AUTHORITY.test(browserAuthority)))
-      return;
-
-    const browserRoute = normalizeBrowserPreviewRoute(
-      request.nextUrl.search
-        ? `${preview.path}?${request.nextUrl.search.slice(1)}`
-        : preview.path,
-    );
     try {
       const projection = await resolvePreviewPage(
-        browserToken ? browserAuthority! : (request.headers.get("host") ?? ""),
-        browserRoute.split("?", 1)[0] ?? browserRoute,
+        request.headers.get("host") ?? "",
+        preview.path,
         preview.workspaceId,
-        browserToken ? { browserToken, browserRoute } : { humanSessionToken: session! },
+        { humanSessionToken: session },
       );
       if (
         projection &&
