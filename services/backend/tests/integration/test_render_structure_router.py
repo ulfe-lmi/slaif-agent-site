@@ -462,6 +462,19 @@ async def test_public_agent_cow_structure_is_visible_only_to_authorized_preview(
         assert nested_preview.route_kind == "page"
         assert nested_preview.page.title == "Vodnik"
         assert nested_preview.page.effective_route == "/guide"
+        preview_redirect = await service.preview(
+            RenderPreviewRequest(
+                authority="localhost",
+                path="/s/agent-structure-router/legacy",
+                workspace_id=workspace_id,
+                session_token=format_session_token(public_id, secret),
+            )
+        )
+        assert preview_redirect.route_kind == "redirect"
+        assert preview_redirect.redirect.status_code == 307
+        assert preview_redirect.redirect.target == (
+            f"/preview/{workspace_id}/s/agent-structure-router/guide"
+        )
     finally:
         await preview_pool.close()
         await public_pool.close()
