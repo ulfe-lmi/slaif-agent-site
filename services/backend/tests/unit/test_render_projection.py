@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 from slaif_agent_site.render_api.projection import (
     ProjectionError,
     RenderPageRequest,
     _node_tree,
-    _route_slug,
+    _route_parts,
 )
 from slaif_agent_site.sites.models import SiteContext
 
@@ -23,10 +23,17 @@ def _context(prefix: str = "/docs") -> SiteContext:
 
 
 def test_projection_route_is_site_prefix_confined() -> None:
-    assert _route_slug(_context(), "/docs/about/") == "about"
-    assert _route_slug(_context("/"), "/about") == "about"
+    locales = [(uuid4(), SITE_ID, "en", True, True)]
+    assert _route_parts(_context(), "/docs/about/", None, locales) == (
+        "/about",
+        "en",
+    )
+    assert _route_parts(_context("/"), "/about", None, locales) == (
+        "/about",
+        "en",
+    )
     with pytest.raises(ProjectionError):
-        _route_slug(_context(), "/docs-other/about")
+        _route_parts(_context(), "/docs-other/about", None, locales)
 
 
 def test_projection_tree_rejects_unknown_or_dangerous_nodes() -> None:

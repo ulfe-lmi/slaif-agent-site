@@ -84,6 +84,7 @@ async def test_canonical_projection_is_site_confined_and_typed(
         projection = await RenderProjectionService(
             _RenderAdapter(public_pool)
         ).canonical(RenderPageRequest(authority="localhost", path="/s/docs/"))
+        assert projection.route_kind == "page"
         assert projection.render_mode == "canonical"
         assert projection.site.id == site.site_id
         assert projection.page.title == "Docs home"
@@ -273,6 +274,7 @@ async def test_preview_projection_requires_authorized_human_session(
                 session_token=format_session_token(public_id, secret),
             )
         )
+        assert projection.route_kind == "page"
         assert projection.render_mode == "preview"
         assert projection.page.title == "Preview draft"
         collection_items = next(iter(projection.bindings.values()))
@@ -281,6 +283,7 @@ async def test_preview_projection_requires_authorized_human_session(
         canonical = await RenderProjectionService(adapter).canonical(
             RenderPageRequest(authority="localhost", path="/s/staging/")
         )
+        assert canonical.route_kind == "page"
         assert canonical.page.title == "Preview home"
         async with owner_connection(
             database.settings.resolved_owner_dsn(), expected_database=database.name
@@ -474,6 +477,7 @@ async def test_preview_projection_requires_authorized_human_session(
                     session_token=format_session_token(public_id, secret),
                 )
             )
+            assert authorized_projection.route_kind == "page"
             assert authorized_projection.page.title == "Preview home"
         with pytest.raises(ProjectionError, match="not_found"):
             await RenderProjectionService(adapter).preview(

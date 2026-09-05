@@ -501,6 +501,16 @@ PREVIEW_RENDER_FUNCTIONS = {
 RENDER_METADATA_FUNCTIONS = {
     ("slaif_site_render_catalog", "p_site_id uuid"): "uuid",
 }
+RENDER_CONTENT_FUNCTIONS = {
+    (
+        "slaif_render_page_resolve",
+        "p_site_id uuid, p_route text, p_locale text, p_statuses text[]",
+    ): "uuid, text, text, text[]",
+    (
+        "slaif_render_navigation_items",
+        "p_site_id uuid, p_locale text, p_statuses text[]",
+    ): "uuid, text, text[]",
+}
 CONTROL_FUNCTIONS = {
     (CONTROL_READINESS_FUNCTION, ""): "",
     (CONTROL_SETUP_STATUS_FUNCTION, ""): "",
@@ -998,7 +1008,7 @@ async def apply_product_privileges(
         await connection.execute(
             "GRANT EXECUTE ON FUNCTION "
             f'"control".{quote_identifier(name)}({signature}) '
-            'TO "slaif_public_reader"'
+            'TO "slaif_public_reader", "slaif_preview_reader"'
         )
     await connection.execute(
         'GRANT USAGE ON SCHEMA "control" TO "slaif_preview_reader"'
@@ -1013,6 +1023,12 @@ async def apply_product_privileges(
         await connection.execute(
             "GRANT EXECUTE ON FUNCTION "
             f'"control".{quote_identifier(name)}({signature}) '
+            'TO "slaif_public_reader", "slaif_preview_reader"'
+        )
+    for (name, _identity), signature in RENDER_CONTENT_FUNCTIONS.items():
+        await connection.execute(
+            "GRANT EXECUTE ON FUNCTION "
+            f'"content".{quote_identifier(name)}({signature}) '
             'TO "slaif_public_reader", "slaif_preview_reader"'
         )
 
@@ -1342,7 +1358,7 @@ async def _function_violations(
             public_resolver = (
                 schema == "control"
                 and (name, arguments) in PUBLIC_RESOLVER_FUNCTIONS
-                and role == "slaif_public_reader"
+                and role in {"slaif_public_reader", "slaif_preview_reader"}
             )
             preview_render = (
                 schema == "control"
@@ -1352,6 +1368,11 @@ async def _function_violations(
             render_metadata = (
                 schema == "control"
                 and (name, arguments) in RENDER_METADATA_FUNCTIONS
+                and role in {"slaif_public_reader", "slaif_preview_reader"}
+            )
+            render_content = (
+                schema == "content"
+                and (name, arguments) in RENDER_CONTENT_FUNCTIONS
                 and role in {"slaif_public_reader", "slaif_preview_reader"}
             )
             is_content_model_function = (
@@ -1394,6 +1415,7 @@ async def _function_violations(
                 or public_resolver
                 or preview_render
                 or render_metadata
+                or render_content
                 or (
                     readiness_state is ReadinessState.HARDENED
                     and schema == FOUNDATION_SCHEMA
@@ -1414,6 +1436,8 @@ async def _function_violations(
             if preview_render and not can_execute:
                 violations.append(f"function/{schema}.{name}/{role}/missing-execute")
             if render_metadata and not can_execute:
+                violations.append(f"function/{schema}.{name}/{role}/missing-execute")
+            if render_content and not can_execute:
                 violations.append(f"function/{schema}.{name}/{role}/missing-execute")
             if is_media_function and role == "slaif_media" and not can_execute:
                 violations.append(f"function/{schema}.{name}/{role}/missing-execute")

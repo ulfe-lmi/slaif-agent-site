@@ -308,6 +308,7 @@ async def test_browser_token_projects_only_bound_overlay_and_is_one_time(
                     },
                 )
                 assert response.status_code == 200
+                assert response.json()["route_kind"] == "page"
                 assert response.json()["render_mode"] == "preview"
                 assert response.json()["page"]["title"] == "Bound browser draft"
                 assert token not in response.text
@@ -325,6 +326,7 @@ async def test_browser_token_projects_only_bound_overlay_and_is_one_time(
         canonical = await service.canonical(
             RenderPageRequest(authority="localhost", path=f"{ROUTE}/")
         )
+        assert canonical.route_kind == "page"
         assert canonical.page.title == "Canonical browser page"
         async with owner_connection(
             database.settings.resolved_owner_dsn(), expected_database=database.name

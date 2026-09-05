@@ -6,8 +6,10 @@ import asyncio
 import logging
 import time
 from collections import defaultdict
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
-from typing import Any, Protocol, cast
+from typing import Annotated, Any, Literal, Protocol, cast
 from uuid import UUID
 
 import asyncpg
@@ -27,10 +29,20 @@ from slaif_agent_site.content_model.query_dsl import (
     sort_collection_items,
     validate_query_contract,
 )
+from slaif_agent_site.content_model.site_data_validators import (
+    validate_external_url,
+    validate_internal_route,
+    validate_redirect_source,
+    validate_redirect_target,
+)
 from slaif_agent_site.content_model.validators import validate_values
 from slaif_agent_site.identity.sessions import digest_secret, parse_session_token
 from slaif_agent_site.sites.models import SiteContext
-from slaif_agent_site.sites.normalization import normalize_request_path
+from slaif_agent_site.sites.normalization import (
+    normalize_locale,
+    normalize_request_path,
+    path_is_reserved,
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -204,10 +216,10 @@ class RenderPageRequest(BaseModel):
     def locale_is_bounded(cls, value: str | None) -> str | None:
         if value is None:
             return value
-        normalized = value.strip().lower()
-        if not normalized or len(normalized) > 10 or "/" in normalized:
-            raise ValueError("invalid locale")
-        return normalized
+        try:
+            return normalize_locale(value.strip())
+        except Exception:
+            raise ValueError("invalid locale") from None
 
 
 class RenderPreviewRequest(RenderPageRequest):
@@ -252,6 +264,9 @@ class ProjectionPage(BaseModel):
     title: str
     status: str
     locale: str
+    parent_id: UUID | None
+    route_template: str | None
+    effective_route: str
     row_version: int
 
 
@@ -263,9 +278,66 @@ class ProjectionSite(BaseModel):
     canonical_revision: int
 
 
+class ProjectionLocale(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    id: UUID
+    site_id: UUID
+    tag: str
+    enabled: bool
+    is_default: bool
+    position: int
+    metadata: dict[str, Any]
+
+
+class ProjectionNavigationTarget(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    kind: Literal["PAGE", "INTERNAL", "EXTERNAL"]
+    value: str
+
+
+class ProjectionNavigationItem(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    id: UUID
+    site_id: UUID
+    navigation_id: UUID
+    parent_id: UUID | None
+    page_id: UUID | None
+    locale: str | None
+    position: int
+    label: str
+    labels: dict[str, Any]
+    target: ProjectionNavigationTarget
+    children: tuple[ProjectionNavigationItem, ...] = ()
+
+
+class ProjectionNavigation(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    id: UUID
+    site_id: UUID
+    key: str
+    label: str
+    labels: dict[str, Any]
+    settings: dict[str, Any]
+    items: tuple[ProjectionNavigationItem, ...]
+
+
+class ProjectionRedirect(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    source: str
+    target: str
+    status_code: Literal[301, 302, 303, 307, 308]
+    locale: str | None
+
+
 class RenderPageProjection(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
+    route_kind: Literal["page"] = "page"
     render_mode: str
     site: ProjectionSite
     requested_path: str
@@ -274,8 +346,28 @@ class RenderPageProjection(BaseModel):
     page: ProjectionPage
     composition: ProjectionComposition
     theme: dict[str, Any] = Field(default_factory=dict)
-    navigation: tuple[dict[str, Any], ...] = ()
+    locales: tuple[ProjectionLocale, ...] = ()
+    navigation: tuple[ProjectionNavigation, ...] = ()
     bindings: dict[str, tuple[dict[str, Any], ...]] = Field(default_factory=dict)
+
+
+class RenderRedirectProjection(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    route_kind: Literal["redirect"] = "redirect"
+    render_mode: str
+    site: ProjectionSite
+    requested_path: str
+    matched_path: str
+    locale: str
+    locales: tuple[ProjectionLocale, ...] = ()
+    redirect: ProjectionRedirect
+
+
+RenderRouteProjection = Annotated[
+    RenderPageProjection | RenderRedirectProjection,
+    Field(discriminator="route_kind"),
+]
 
 
 class _Pool(Protocol):
@@ -359,22 +451,123 @@ def _validate_props(component_type: str, props: dict[str, Any]) -> None:
     _validate_nested(props)
 
 
-def _route_slug(context: SiteContext, path: str) -> str:
+MAX_LOCALES = 32
+MAX_NAVIGATIONS = 16
+MAX_NAVIGATION_ITEMS = 256
+MAX_NAVIGATION_DEPTH = 8
+MAX_REDIRECTS = 256
+MAX_REDIRECT_CHAIN = 16
+MAX_JSON_BYTES = 16_384
+
+
+@asynccontextmanager
+async def _repeatable_read_cow(
+    pool: Any, *, session_id: UUID, acquire_timeout: float
+) -> AsyncIterator[Any]:
+    """Start the foundation-owned COW transaction at repeatable-read isolation."""
+
+    async with pool.acquire(timeout=acquire_timeout) as connection:
+        await connection.execute(
+            "SET SESSION CHARACTERISTICS AS TRANSACTION ISOLATION LEVEL REPEATABLE READ"
+        )
+        try:
+            async with asyncpg_cow_session(connection, session_id=session_id) as cow:
+                yield cow
+        finally:
+            await connection.execute(
+                "SET SESSION CHARACTERISTICS AS TRANSACTION ISOLATION LEVEL "
+                "READ COMMITTED"
+            )
+
+
+def _bounded_object(value: Any, *, reason: str) -> dict[str, Any]:
+    parsed = _json_value(value)
+    if not isinstance(parsed, dict):
+        raise ProjectionError(reason)
+    import json
+
+    if (
+        len(json.dumps(parsed, separators=(",", ":"), ensure_ascii=True))
+        > MAX_JSON_BYTES
+    ):
+        raise ProjectionError(reason)
+    _validate_nested(parsed)
+    return parsed
+
+
+def _route_parts(
+    context: SiteContext, path: str, requested_locale: str | None, locales: list[Any]
+) -> tuple[str, str]:
+    """Return the exact static route and stored locale selected by the path."""
+
     try:
         normalized = normalize_request_path(path)
+        prefix = normalize_request_path(
+            (context.matched_path_prefix or "/").rstrip("/") or "/"
+        )
     except Exception:
         raise ProjectionError("not_found") from None
-    prefix = (context.matched_path_prefix or "/").rstrip("/") or "/"
+    if path_is_reserved(normalized):
+        raise ProjectionError("not_found")
     if prefix != "/":
         if normalized != prefix and not normalized.startswith(prefix + "/"):
             raise ProjectionError("not_found")
         normalized = normalized[len(prefix) :] or "/"
-    slug = normalized.strip("/")
-    if not slug:
-        # The current bounded page model has no physical root-page marker. A
-        # literal `home` page is the only honest root convention.
-        slug = "home"
-    return slug
+    if path_is_reserved(normalized):
+        raise ProjectionError("not_found")
+
+    by_lower = {str(row[2]).casefold(): row for row in locales if row[3]}
+    default_rows = [row for row in locales if row[3] and row[4]]
+    if len(default_rows) != 1:
+        raise ProjectionError("locale_state")
+    default_tag = str(default_rows[0][2])
+    segments = normalized.strip("/").split("/") if normalized != "/" else []
+    selected_tag = default_tag
+    route = normalized
+    if segments and segments[0].casefold() in by_lower:
+        selected_tag = str(by_lower[segments[0].casefold()][2])
+        if selected_tag.casefold() == default_tag.casefold():
+            # Default locales have no prefix in the effective-route contract.
+            raise ProjectionError("not_found")
+    if requested_locale is not None and (
+        requested_locale.casefold() != selected_tag.casefold()
+    ):
+        raise ProjectionError("not_found")
+    return route, selected_tag
+
+
+def _page_route(row: Any) -> str:
+    route = row[8]
+    if not isinstance(route, str) or not route.startswith("/"):
+        raise ProjectionError("invalid_route")
+    try:
+        normalized = validate_internal_route(route)
+    except ValueError:
+        raise ProjectionError("invalid_route") from None
+    if normalized.casefold() != route.casefold():
+        raise ProjectionError("invalid_route")
+    return route
+
+
+def _redirect_location(
+    redirect: ProjectionRedirect,
+    *,
+    context: SiteContext,
+    request: RenderPageRequest,
+    render_mode: str,
+) -> ProjectionRedirect:
+    if not redirect.target.startswith("/"):
+        return redirect
+    if render_mode == "preview":
+        workspace_id = getattr(request, "workspace_id", None)
+        if workspace_id is None:
+            raise ProjectionError("redirect_state")
+        prefix = f"/preview/{workspace_id}"
+    else:
+        prefix = (context.matched_path_prefix or "/").rstrip("/") or "/"
+    target = redirect.target
+    location = target if prefix == "/" else prefix + ("" if target == "/" else target)
+    return redirect.model_copy(update={"target": location})
 
 
 def _node_tree(
@@ -471,8 +664,19 @@ def _page(row: Any) -> ProjectionPage:
         title=row[3],
         status=row[4],
         locale=row[5],
-        row_version=int(row[7]),
+        parent_id=row[6],
+        route_template=row[7],
+        effective_route=_page_route(row),
+        row_version=int(row[9]),
     )
+
+
+def _label_map(value: Any) -> dict[str, Any]:
+    labels = _bounded_object(value, reason="navigation_labels")
+    for key, label in labels.items():
+        if not isinstance(key, str) or not isinstance(label, str) or not label.strip():
+            raise ProjectionError("navigation_labels")
+    return labels
 
 
 def _flatten(nodes: tuple[ProjectionNode, ...]) -> tuple[ProjectionNode, ...]:
@@ -666,6 +870,396 @@ class RenderProjectionService:
                 raise ProjectionError("not_found") from None
             raise ProjectionError("unavailable") from None
 
+    async def _context_on_connection(
+        self, connection: Any, request: RenderPageRequest
+    ) -> SiteContext:
+        try:
+            return cast(
+                SiteContext,
+                await self._database.resolver().resolve_on_connection(
+                    connection, request.authority, request.path
+                ),
+            )
+        except Exception as error:
+            if getattr(error, "reason", None) == "not_found":
+                raise ProjectionError("not_found") from None
+            if getattr(error, "reason", None) == "conflict":
+                raise ProjectionError("not_found") from None
+            raise ProjectionError("unavailable") from None
+
+    async def _locales(
+        self, connection: Any, *, site_id: UUID
+    ) -> tuple[list[Any], tuple[ProjectionLocale, ...], str]:
+        rows = list(
+            await connection.fetch(
+                'SELECT id,site_id,tag,enabled,is_default,"position",metadata '
+                "FROM content.site_locale WHERE site_id=$1 "
+                'ORDER BY "position",tag COLLATE "C"',
+                site_id,
+            )
+        )
+        if not rows or len(rows) > MAX_LOCALES:
+            raise ProjectionError("locale_state")
+        seen: set[str] = set()
+        default_rows: list[Any] = []
+        projected: list[ProjectionLocale] = []
+        for row in rows:
+            if row[1] != site_id:
+                raise ProjectionError("locale_scope")
+            try:
+                tag = normalize_locale(str(row[2]))
+            except Exception:
+                raise ProjectionError("locale_state") from None
+            if tag != row[2] or tag.casefold() in seen:
+                raise ProjectionError("locale_state")
+            seen.add(tag.casefold())
+            metadata = _bounded_object(row[6], reason="locale_metadata")
+            if bool(row[4]):
+                default_rows.append(row)
+            if bool(row[3]):
+                projected.append(
+                    ProjectionLocale(
+                        id=row[0],
+                        site_id=row[1],
+                        tag=tag,
+                        enabled=True,
+                        is_default=bool(row[4]),
+                        position=int(row[5]),
+                        metadata=metadata,
+                    )
+                )
+        if len(default_rows) != 1 or not bool(default_rows[0][3]):
+            raise ProjectionError("locale_state")
+        if len(projected) != len([row for row in rows if row[3]]):
+            raise ProjectionError("locale_state")
+        return rows, tuple(projected), str(default_rows[0][2])
+
+    async def _resolve_page(
+        self,
+        connection: Any,
+        *,
+        site_id: UUID,
+        route: str,
+        locale: str,
+        statuses: list[str],
+    ) -> Any:
+        rows = list(
+            await connection.fetch(
+                "SELECT * FROM content.slaif_render_page_resolve($1,$2,$3,$4)",
+                site_id,
+                route,
+                locale,
+                statuses,
+            )
+        )
+        if len(rows) != 1:
+            raise ProjectionError("not_found")
+        row = rows[0]
+        if row[1] != site_id or str(row[5]).casefold() != locale.casefold():
+            raise ProjectionError("not_found")
+        return row
+
+    async def _redirects(
+        self,
+        connection: Any,
+        *,
+        site_id: UUID,
+        route: str,
+        locale: str,
+        default_locale: str,
+        statuses: list[str],
+    ) -> ProjectionRedirect | None:
+        rows = list(
+            await connection.fetch(
+                "SELECT id,site_id,source_route,target,status_code,locale "
+                "FROM content.redirect WHERE site_id=$1 "
+                'ORDER BY source_route COLLATE "C",locale NULLS FIRST',
+                site_id,
+            )
+        )
+        if len(rows) > MAX_REDIRECTS:
+            raise ProjectionError("redirect_state")
+        redirects: dict[tuple[str, str | None], ProjectionRedirect] = {}
+        enabled = {
+            str(row[0]).casefold()
+            for row in await connection.fetch(
+                "SELECT tag FROM content.site_locale WHERE site_id=$1 AND enabled",
+                site_id,
+            )
+        }
+        for row in rows:
+            if row[1] != site_id:
+                raise ProjectionError("redirect_scope")
+            try:
+                source = validate_redirect_source(str(row[2]))
+                target = validate_redirect_target(str(row[3]))
+            except ValueError:
+                raise ProjectionError("redirect_state") from None
+            if source != row[2] or (target.startswith("/") and target != row[3]):
+                raise ProjectionError("redirect_state")
+            selected_locale = row[5]
+            if selected_locale is not None:
+                try:
+                    canonical_locale = normalize_locale(str(selected_locale))
+                except Exception:
+                    raise ProjectionError("redirect_state") from None
+                if (
+                    canonical_locale != selected_locale
+                    or canonical_locale.casefold() not in enabled
+                ):
+                    raise ProjectionError("redirect_state")
+            else:
+                canonical_locale = None
+            try:
+                status_code = int(row[4])
+                if status_code not in {301, 302, 303, 307, 308}:
+                    raise ValueError
+                redirect = ProjectionRedirect(
+                    source=source,
+                    target=target,
+                    status_code=cast(Literal[301, 302, 303, 307, 308], status_code),
+                    locale=canonical_locale,
+                )
+            except Exception:
+                raise ProjectionError("redirect_state") from None
+            key = (source, canonical_locale)
+            if key in redirects:
+                raise ProjectionError("redirect_ambiguous")
+            redirects[key] = redirect
+
+        for redirect in redirects.values():
+            try:
+                await self._resolve_page(
+                    connection,
+                    site_id=site_id,
+                    route=redirect.source,
+                    locale=redirect.locale or default_locale,
+                    statuses=statuses,
+                )
+            except ProjectionError as error:
+                if error.reason != "not_found":
+                    raise ProjectionError("redirect_state") from None
+            else:
+                raise ProjectionError("redirect_ambiguous")
+
+        async def validate_chain(redirect: ProjectionRedirect) -> None:
+            if not redirect.target.startswith("/"):
+                return
+            chain_locale = redirect.locale or default_locale
+            cursor = redirect.target
+            visited: set[tuple[str, str | None]] = set()
+            for _ in range(MAX_REDIRECT_CHAIN):
+                key = (cursor, chain_locale)
+                if key in visited:
+                    raise ProjectionError("redirect_cycle")
+                visited.add(key)
+                next_redirect = (
+                    redirects.get(key) if redirect.locale is not None else None
+                ) or redirects.get((cursor, None))
+                if next_redirect is not None:
+                    if not next_redirect.target.startswith("/"):
+                        return
+                    cursor = next_redirect.target
+                    continue
+                try:
+                    await self._resolve_page(
+                        connection,
+                        site_id=site_id,
+                        route=cursor,
+                        locale=chain_locale,
+                        statuses=statuses,
+                    )
+                except ProjectionError:
+                    raise ProjectionError("redirect_dangling") from None
+                return
+            raise ProjectionError("redirect_chain")
+
+        for redirect in redirects.values():
+            await validate_chain(redirect)
+        selected = redirects.get((route, locale)) or redirects.get((route, None))
+        return selected
+
+    async def _navigation(
+        self,
+        connection: Any,
+        *,
+        site_id: UUID,
+        selected_locale: str,
+        default_locale: str,
+        statuses: list[str],
+    ) -> tuple[ProjectionNavigation, ...]:
+        nav_rows = list(
+            await connection.fetch(
+                "SELECT id,site_id,key,label,labels,settings FROM content.navigation "
+                'WHERE site_id=$1 ORDER BY key COLLATE "C"',
+                site_id,
+            )
+        )
+        if len(nav_rows) > MAX_NAVIGATIONS:
+            raise ProjectionError("navigation_too_large")
+        enabled_tags = {
+            str(row[0]).casefold()
+            for row in await connection.fetch(
+                "SELECT tag FROM content.site_locale WHERE site_id=$1 AND enabled",
+                site_id,
+            )
+        }
+        nav_by_id: dict[UUID, dict[str, Any]] = {}
+        for row in nav_rows:
+            if row[1] != site_id or row[0] in nav_by_id:
+                raise ProjectionError("navigation_scope")
+            base_label = row[3]
+            if not isinstance(base_label, str) or not base_label.strip():
+                raise ProjectionError("navigation_label")
+            labels = _label_map(row[4])
+            settings = _bounded_object(row[5], reason="navigation_settings")
+            label = labels.get(selected_locale) or labels.get(default_locale)
+            if not isinstance(label, str) or not label.strip():
+                label = base_label
+            nav_by_id[row[0]] = {
+                "id": row[0],
+                "site_id": row[1],
+                "key": row[2],
+                "label": label,
+                "labels": labels,
+                "settings": settings,
+            }
+
+        item_rows = list(
+            await connection.fetch(
+                "SELECT * FROM content.slaif_render_navigation_items($1,$2,$3)",
+                site_id,
+                selected_locale,
+                statuses,
+            )
+        )
+        if len(item_rows) > MAX_NAVIGATION_ITEMS:
+            raise ProjectionError("navigation_too_large")
+        all_items: dict[UUID, dict[str, Any]] = {}
+        sibling_positions: dict[tuple[UUID, UUID | None], set[int]] = defaultdict(set)
+        children: defaultdict[UUID | None, list[dict[str, Any]]] = defaultdict(list)
+        for row in item_rows:
+            if (
+                row[1] != site_id
+                or row[2] not in nav_by_id
+                or row[0] in all_items
+                or row[3] == row[0]
+            ):
+                raise ProjectionError("navigation_scope")
+            item_locale = row[8]
+            if item_locale is not None and (
+                str(item_locale).casefold() not in enabled_tags
+            ):
+                raise ProjectionError("navigation_locale")
+            position = int(row[9])
+            sibling_key = (row[2], row[3])
+            if position in sibling_positions[sibling_key]:
+                raise ProjectionError("navigation_position")
+            sibling_positions[sibling_key].add(position)
+            labels = _label_map(row[7])
+            label = labels.get(selected_locale) or labels.get(default_locale)
+            if not isinstance(label, str) or not label.strip():
+                raise ProjectionError("navigation_label")
+            target_kind = str(row[5])
+            target_value = str(row[10])
+            try:
+                if target_kind == "EXTERNAL":
+                    target_value = validate_external_url(target_value)
+                    if not target_value.startswith("https://"):
+                        raise ValueError
+                elif target_kind == "INTERNAL":
+                    target_value = validate_internal_route(target_value)
+                elif target_kind == "PAGE":
+                    normalized_target = validate_internal_route(target_value)
+                    if normalized_target.casefold() != target_value.casefold():
+                        raise ValueError
+                else:
+                    raise ValueError
+                target_kind = cast(Literal["PAGE", "INTERNAL", "EXTERNAL"], target_kind)
+            except (TypeError, ValueError, ProjectionError):
+                raise ProjectionError("navigation_target") from None
+            item = {
+                "id": row[0],
+                "site_id": row[1],
+                "navigation_id": row[2],
+                "parent_id": row[3],
+                "page_id": row[4],
+                "locale": item_locale,
+                "position": position,
+                "label": label,
+                "labels": labels,
+                "target": ProjectionNavigationTarget(
+                    kind=target_kind, value=target_value
+                ),
+            }
+            all_items[row[0]] = item
+            children[row[3]].append(item)
+
+        for (navigation_id, parent_id), positions in sibling_positions.items():
+            if positions != set(range(len(positions))):
+                raise ProjectionError("navigation_position")
+            if parent_id is not None:
+                parent = all_items.get(parent_id)
+                if parent is None or parent["navigation_id"] != navigation_id:
+                    raise ProjectionError("navigation_parent")
+
+        visiting: set[UUID] = set()
+        visited: set[UUID] = set()
+
+        def check_tree(item: dict[str, Any], depth: int) -> None:
+            item_id = item["id"]
+            if depth > MAX_NAVIGATION_DEPTH or item_id in visiting:
+                raise ProjectionError("navigation_cycle")
+            if item_id in visited:
+                raise ProjectionError("navigation_duplicate")
+            visiting.add(item_id)
+            for child in children[item_id]:
+                check_tree(child, depth + 1)
+            visiting.remove(item_id)
+            visited.add(item_id)
+
+        for navigation_id in nav_by_id:
+            roots = [
+                item
+                for item in children[None]
+                if item["navigation_id"] == navigation_id
+            ]
+            for item in roots:
+                check_tree(item, 0)
+        if len(visited) != len(all_items):
+            raise ProjectionError("navigation_unreachable")
+
+        def project_item(item: dict[str, Any]) -> ProjectionNavigationItem:
+            if item["locale"] is not None and (
+                item["locale"].casefold() != selected_locale.casefold()
+            ):
+                raise ProjectionError("navigation_parent")
+            child_items = tuple(
+                project_item(child)
+                for child in sorted(
+                    children[item["id"]], key=lambda value: value["position"]
+                )
+                if child["locale"] is None
+                or child["locale"].casefold() == selected_locale.casefold()
+            )
+            if item["parent_id"] is not None and item["parent_id"] not in all_items:
+                raise ProjectionError("navigation_parent")
+            return ProjectionNavigationItem(**item, children=child_items)
+
+        result: list[ProjectionNavigation] = []
+        for navigation_id, navigation in nav_by_id.items():
+            projected_roots = tuple(
+                project_item(item)
+                for item in sorted(children[None], key=lambda value: value["position"])
+                if item["navigation_id"] == navigation_id
+                and (
+                    item["locale"] is None
+                    or item["locale"].casefold() == selected_locale.casefold()
+                )
+            )
+            result.append(ProjectionNavigation(**navigation, items=projected_roots))
+        return tuple(result)
+
     async def _query(
         self,
         connection: Any,
@@ -673,42 +1267,47 @@ class RenderProjectionService:
         context: SiteContext,
         request: RenderPageRequest,
         render_mode: str,
-    ) -> RenderPageProjection:
-        slug = _route_slug(context, request.path)
-        locale = request.locale or context.default_locale
-        row = await connection.fetchrow(
-            "SELECT id, site_id, slug, title, status, locale, parent_id, row_version, "
-            "created_at, updated_at FROM content.page "
-            "WHERE site_id = $1 AND slug = $2 AND locale = $3 "
-            "AND deleted_at IS NULL AND status = ANY($4::text[]) "
-            "AND EXISTS (SELECT 1 FROM content.site_locale locale "
-            "WHERE locale.site_id = content.page.site_id "
-            "AND locale.tag = content.page.locale AND locale.enabled) "
-            "ORDER BY id LIMIT 2",
-            context.site_id,
-            slug,
-            locale,
-            ["PUBLISHED", "DRAFT"] if render_mode == "preview" else ["PUBLISHED"],
+    ) -> RenderRouteProjection:
+        locales, projected_locales, default_locale = await self._locales(
+            connection, site_id=context.site_id
         )
-        if row is None:
-            raise ProjectionError("not_found")
-        # The query is deliberately bounded; a duplicate indicates corrupt
-        # canonical/overlay state and must never pick an arbitrary page.
-        duplicate = await connection.fetch(
-            "SELECT id FROM content.page WHERE site_id = $1 AND slug = $2 "
-            "AND locale = $3 AND deleted_at IS NULL "
-            "AND status = ANY($4::text[]) "
-            "AND EXISTS (SELECT 1 FROM content.site_locale locale "
-            "WHERE locale.site_id = content.page.site_id "
-            "AND locale.tag = content.page.locale AND locale.enabled) "
-            "ORDER BY id LIMIT 2",
-            context.site_id,
-            slug,
-            locale,
-            ["PUBLISHED", "DRAFT"] if render_mode == "preview" else ["PUBLISHED"],
+        route, locale = _route_parts(context, request.path, request.locale, locales)
+        statuses = ["PUBLISHED", "DRAFT"] if render_mode == "preview" else ["PUBLISHED"]
+        redirect = await self._redirects(
+            connection,
+            site_id=context.site_id,
+            route=route,
+            locale=locale,
+            default_locale=default_locale,
+            statuses=statuses,
         )
-        if len(duplicate) != 1:
-            raise ProjectionError("ambiguous_page")
+        if redirect is not None:
+            redirect = _redirect_location(
+                redirect,
+                context=context,
+                request=request,
+                render_mode=render_mode,
+            )
+            return RenderRedirectProjection(
+                render_mode=render_mode,
+                site=ProjectionSite(
+                    id=context.site_id,
+                    key=context.site_key,
+                    canonical_revision=context.canonical_revision,
+                ),
+                requested_path=request.path,
+                matched_path=route,
+                locale=locale,
+                locales=projected_locales,
+                redirect=redirect,
+            )
+        row = await self._resolve_page(
+            connection,
+            site_id=context.site_id,
+            route=route,
+            locale=locale,
+            statuses=statuses,
+        )
         page = _page(row)
         node_rows = list(
             await connection.fetch(
@@ -727,10 +1326,12 @@ class RenderProjectionService:
             site_id=context.site_id,
             render_mode=render_mode,
         )
-        nav_rows = await connection.fetch(
-            "SELECT id, site_id, key, label, settings FROM content.navigation "
-            'WHERE site_id = $1 ORDER BY key COLLATE "C" LIMIT 16',
-            context.site_id,
+        navigation = await self._navigation(
+            connection,
+            site_id=context.site_id,
+            selected_locale=locale,
+            default_locale=default_locale,
+            statuses=statuses,
         )
         theme_row = await connection.fetchrow(
             "SELECT palette, typography, layout, shape FROM content.theme "
@@ -751,7 +1352,7 @@ class RenderProjectionService:
                 canonical_revision=context.canonical_revision,
             ),
             requested_path=request.path,
-            matched_path=slug,
+            matched_path=page.effective_route,
             locale=locale,
             page=page,
             composition=ProjectionComposition(
@@ -769,31 +1370,27 @@ class RenderProjectionService:
                 if theme_row is not None
                 else {}
             ),
-            navigation=tuple(
-                {
-                    "id": row[0],
-                    "site_id": row[1],
-                    "key": row[2],
-                    "label": row[3],
-                    "settings": _json_value(row[4]),
-                }
-                for row in nav_rows
-            ),
+            locales=projected_locales,
+            navigation=navigation,
             bindings=bindings,
         )
 
-    async def canonical(self, request: RenderPageRequest) -> RenderPageProjection:
-        context = await self._context(request)
+    async def canonical(self, request: RenderPageRequest) -> RenderRouteProjection:
         try:
             async with self._database.public_pool().acquire(
                 timeout=self._database.acquire_timeout
             ) as connection:
-                return await self._query(
-                    connection,
-                    context=context,
-                    request=request,
-                    render_mode="canonical",
-                )
+                async with connection.transaction(
+                    isolation="repeatable_read", readonly=True
+                ):
+                    context = await self._context_on_connection(connection, request)
+                    projection = await self._query(
+                        connection,
+                        context=context,
+                        request=request,
+                        render_mode="canonical",
+                    )
+                    return projection
         except ProjectionError:
             raise
         except asyncio.CancelledError:
@@ -801,7 +1398,7 @@ class RenderProjectionService:
         except (asyncpg.PostgresError, OSError, TimeoutError):
             raise ProjectionError("unavailable") from None
 
-    async def preview(self, request: RenderPreviewRequest) -> RenderPageProjection:
+    async def preview(self, request: RenderPreviewRequest) -> RenderRouteProjection:
         if (request.session_token is None) == (request.browser_token is None):
             raise ProjectionError("not_found")
         if request.browser_token is not None:
@@ -816,7 +1413,7 @@ class RenderProjectionService:
 
     async def _human_preview(
         self, request: RenderPreviewRequest
-    ) -> RenderPageProjection:
+    ) -> RenderRouteProjection:
         context = await self._context(request)
         try:
             if request.session_token is None:
@@ -846,8 +1443,10 @@ class RenderProjectionService:
             if authorized is None or authorized[2] != request.workspace_id:
                 raise ProjectionError("not_found")
             trusted_workspace_id = authorized[2]
-            async with asyncpg_cow_session(
-                pool, session_id=trusted_workspace_id
+            async with _repeatable_read_cow(
+                pool,
+                session_id=trusted_workspace_id,
+                acquire_timeout=self._database.acquire_timeout,
             ) as cow:
                 await cow.validate_context()
                 reauthorized = await cow.native.fetchrow(
@@ -867,9 +1466,14 @@ class RenderProjectionService:
                     or reauthorized[3] != context.site_id
                 ):
                     raise ProjectionError("not_found")
+                snapshot_context = await self._context_on_connection(
+                    cow.native, request
+                )
+                if snapshot_context.site_id != context.site_id:
+                    raise ProjectionError("not_found")
                 return await self._query(
                     cow.native,
-                    context=context,
+                    context=snapshot_context,
                     request=request,
                     render_mode="preview",
                 )
@@ -882,7 +1486,7 @@ class RenderProjectionService:
 
     async def _browser_preview(
         self, request: RenderPreviewRequest, *, context: SiteContext
-    ) -> RenderPageProjection:
+    ) -> RenderRouteProjection:
         verifier = self._browser_verifier
         if (
             verifier is None
@@ -944,7 +1548,11 @@ class RenderProjectionService:
         ):
             raise ProjectionError("not_found")
         try:
-            async with asyncpg_cow_session(pool, session_id=claims.workspace_id) as cow:
+            async with _repeatable_read_cow(
+                pool,
+                session_id=claims.workspace_id,
+                acquire_timeout=self._database.acquire_timeout,
+            ) as cow:
                 await cow.validate_context()
                 _browser_stage("cow-context", "ok")
                 reauthorized = await cow.native.fetchrow(
@@ -973,10 +1581,15 @@ class RenderProjectionService:
                     or reauthorized[2] != claims.run_id
                 ):
                     raise ProjectionError("not_found")
+                snapshot_context = await self._context_on_connection(
+                    cow.native, request
+                )
+                if snapshot_context.site_id != context.site_id:
+                    raise ProjectionError("not_found")
                 try:
                     projection = await self._query(
                         cow.native,
-                        context=context,
+                        context=snapshot_context,
                         request=request,
                         render_mode="preview",
                     )
@@ -1009,10 +1622,17 @@ class RenderProjectionService:
 __all__ = [
     "ProjectionComposition",
     "ProjectionError",
+    "ProjectionLocale",
+    "ProjectionNavigation",
+    "ProjectionNavigationItem",
+    "ProjectionNavigationTarget",
     "ProjectionNode",
     "ProjectionPage",
+    "ProjectionRedirect",
     "RenderPageProjection",
     "RenderPageRequest",
+    "RenderRedirectProjection",
     "RenderPreviewRequest",
+    "RenderRouteProjection",
     "RenderProjectionService",
 ]

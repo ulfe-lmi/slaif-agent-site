@@ -2,7 +2,11 @@ import { cookies, headers } from "next/headers";
 import { notFound, redirect } from "next/navigation";
 import { normalizeBrowserPreviewRoute } from "@slaif-agent-site/browser-tool-contracts";
 
-import { resolvePreviewPage } from "../../../../src/sites/render";
+import {
+  isRedirectProjection,
+  redirectProjection,
+  resolvePreviewPage,
+} from "../../../../src/sites/render";
 import { PageProjectionShell } from "../../../../src/sites/shell";
 
 export const dynamic = "force-dynamic";
@@ -68,5 +72,6 @@ export default async function WorkspacePreview({
     browserToken ? { browserToken, browserRoute } : { humanSessionToken: session! },
   );
   if (!projection) notFound();
+  if (isRedirectProjection(projection)) redirectProjection(projection);
   return <PageProjectionShell projection={projection} />;
 }
