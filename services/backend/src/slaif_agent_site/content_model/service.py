@@ -33,6 +33,7 @@ from .models import (
 )
 from .query_dsl import validate_query_contract
 from .site_data_models import (
+    AgentNavigationRecord,
     CreateLocaleRequest,
     CreateNavigationItemRequest,
     CreateProposedSideEffectRequest,
@@ -93,7 +94,42 @@ def _semantic_database_error_code(error: asyncpg.PostgresError) -> str | None:
     """Preserve only stable, non-sensitive dependency denial identifiers."""
 
     message = getattr(error, "message", str(error)).split("\n", 1)[0]
-    if message in {"FIELD_DEPENDENCIES", "TYPE_DEPENDENCIES"}:
+    if message in {
+        "FIELD_DEPENDENCIES",
+        "TYPE_DEPENDENCIES",
+        "PAGE_ROUTE_CONFLICT",
+        "PAGE_DEPENDENCIES",
+        "LOCALE_REFERENCED",
+        "LOCALE_DEFAULT_REQUIRED",
+        "LOCALE_TAG_IMMUTABLE",
+        "LOCALE_UPDATE_EMPTY",
+        "REDIRECT_INVALID",
+        "REDIRECT_SOURCE_INVALID",
+        "REDIRECT_TARGET_INVALID",
+        "REDIRECT_SOURCE_CONFLICT",
+        "REDIRECT_TARGET_DANGLING",
+        "REDIRECT_CYCLE",
+        "REDIRECT_CHAIN_LIMIT",
+        "REDIRECT_DEPENDENCY",
+        "REDIRECT_LOCALE_INVALID",
+        "REDIRECT_ROUTE_PREFIX_DENIED",
+        "AGENT_RESOURCE_REDIRECT_LIMIT",
+        "NAVIGATION_LABEL_LOCALE_INVALID",
+        "NAVIGATION_CHILDREN",
+        "NAVIGATION_PAGE_INVALID",
+        "NAVIGATION_PARENT_INVALID",
+        "NAVIGATION_TARGET_UNSAFE",
+        "NAVIGATION_INVALID",
+        "NAVIGATION_ANCHORS_INVALID",
+        "NAVIGATION_ANCHOR_INVALID",
+        "NAVIGATION_CYCLE",
+        "NAVIGATION_DEPTH",
+        "NAVIGATION_POSITION_LIMIT",
+        "NAVIGATION_LABEL_REQUIRED",
+        "NAVIGATION_KEY_CONFLICT",
+        "NAVIGATION_UPDATE_EMPTY",
+        "LOCALE_INVALID",
+    }:
         return message
     return None
 
@@ -1610,6 +1646,20 @@ def _nv(row: Any) -> Any:
     )
 
 
+def _agent_nav(row: Any) -> AgentNavigationRecord:
+    return AgentNavigationRecord(
+        id=row[0],
+        site_id=row[1],
+        key=row[2],
+        label=row[3],
+        labels=json.loads(row[4]) if isinstance(row[4], str) else row[4],
+        settings=json.loads(row[5]) if isinstance(row[5], str) else row[5],
+        row_version=row[6],
+        created_at=row[7],
+        updated_at=row[8],
+    )
+
+
 def _th(row: Any) -> Any:
     import json
 
@@ -1637,6 +1687,12 @@ PG_DELETE_SQL = "SELECT content.slaif_page_delete($1)"
 def _pg(row: Any) -> Any:
     from .page_models import PageRecord
 
+    # Legacy Editor/Control functions return the original ten-column page
+    # shape. Agent page wrappers return route columns and the product-owned
+    # tombstone appended by the page-structure migration; accept all shapes so
+    # the human surface remains independent of the Agent return contract.
+    extended = len(row) >= 12
+    tombstone = len(row) >= 13
     return PageRecord(
         id=row[0],
         site_id=row[1],
@@ -1645,9 +1701,12 @@ def _pg(row: Any) -> Any:
         status=row[4],
         locale=row[5],
         parent_id=row[6],
-        row_version=row[7],
-        created_at=row[8],
-        updated_at=row[9],
+        route_template=row[7] if extended else None,
+        effective_route=row[8] if extended else None,
+        deleted_at=row[9] if tombstone else None,
+        row_version=(row[10] if tombstone else row[9]) if extended else row[7],
+        created_at=(row[11] if tombstone else row[10]) if extended else row[8],
+        updated_at=(row[12] if tombstone else row[11]) if extended else row[9],
     )
 
 

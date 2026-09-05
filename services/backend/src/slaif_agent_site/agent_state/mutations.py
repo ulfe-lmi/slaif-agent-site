@@ -49,21 +49,47 @@ from slaif_agent_site.content_model.models import (
     UpdateRelationRequest,
     UpdateTranslationRequest,
 )
-from slaif_agent_site.content_model.page_models import CreatePageRequest, PageRecord
+from slaif_agent_site.content_model.page_models import (
+    CreatePageRequest,
+    MovePageRequest,
+    PageRecord,
+    RestorePageRequest,
+    UpdatePageRequest,
+)
 from slaif_agent_site.content_model.query_dsl import validate_query_contract
 from slaif_agent_site.content_model.service import (
     ContentModelService,
     ContentModelServiceError,
     ContentModelServiceReason,
+    _agent_nav,
     _ci,
     _cmp,
     _ct,
     _cv,
     _fd,
+    _locale,
+    _nav_item,
     _pg,
+    _redirect,
     _rel,
     _tr,
 )
+from slaif_agent_site.content_model.site_data_models import (
+    AgentCreateLocaleRequest,
+    AgentCreateNavigationItemRequest,
+    AgentCreateNavigationRequest,
+    AgentCreateRedirectRequest,
+    AgentMoveNavigationItemRequest,
+    AgentNavigationRecord,
+    AgentUpdateLocaleRequest,
+    AgentUpdateNavigationItemRequest,
+    AgentUpdateNavigationRequest,
+    AgentUpdateRedirectRequest,
+    LocaleRecord,
+    NavigationItemRecord,
+    RedirectRecord,
+)
+from slaif_agent_site.content_model.site_data_validators import validate_agent_target
 from slaif_agent_site.content_model.validators import validate_values
 from slaif_agent_site.content_model.view_models import (
     CollectionViewRecord,
@@ -129,7 +155,61 @@ AGENT_TRANSLATION_DELETE_SQL = (
 AGENT_TYPE_GET_SQL = "SELECT * FROM content.slaif_agent_content_type_get($1,$2)"
 AGENT_FIELD_LIST_SQL = "SELECT * FROM content.slaif_agent_field_definition_list($1,$2)"
 AGENT_PAGE_CREATE_SQL = (
-    "SELECT * FROM content.slaif_agent_page_create($1,$2,$3,$4,$5,$6)"
+    "SELECT * FROM content.slaif_agent_page_create($1,$2,$3,$4,$5,$6,$7)"
+)
+AGENT_PAGE_UPDATE_SQL = (
+    "SELECT * FROM content.slaif_agent_page_update($1,$2,$3,$4,$5,$6,$7,$8,$9)"
+)
+AGENT_PAGE_DELETE_SQL = "SELECT * FROM content.slaif_agent_page_delete($1,$2,$3)"
+AGENT_PAGE_MOVE_SQL = "SELECT * FROM content.slaif_agent_page_move($1,$2,$3,$4)"
+AGENT_PAGE_RESTORE_SQL = "SELECT * FROM content.slaif_agent_page_restore($1,$2,$3)"
+AGENT_LOCALE_CREATE_SQL = (
+    "SELECT * FROM content.slaif_agent_locale_create($1,$2,$3,$4,$5,$6)"
+)
+AGENT_LOCALE_UPDATE_SQL = (
+    "SELECT * FROM content.slaif_agent_locale_update($1,$2,$3,$4,$5,$6,$7)"
+)
+AGENT_LOCALE_DELETE_SQL = "SELECT * FROM content.slaif_agent_locale_delete($1,$2,$3)"
+AGENT_NAVIGATION_CREATE_SQL = (
+    "SELECT * FROM content.slaif_agent_navigation_create($1,$2,$3,$4,$5)"
+)
+AGENT_NAVIGATION_UPDATE_SQL = (
+    "SELECT * FROM content.slaif_agent_navigation_update($1,$2,$3,$4,$5,$6)"
+)
+AGENT_NAVIGATION_DELETE_SQL = (
+    "SELECT * FROM content.slaif_agent_navigation_delete($1,$2,$3)"
+)
+AGENT_NAVIGATION_ITEM_CREATE_SQL = (
+    "SELECT * FROM content.slaif_agent_navigation_item_create("
+    "$1,$2,$3,$4,$5,$6,$7,$8,$9,$10)"
+)
+AGENT_NAVIGATION_ITEM_GET_SQL = (
+    "SELECT * FROM content.slaif_agent_navigation_item_get($1,$2)"
+)
+AGENT_NAVIGATION_ITEM_UPDATE_SQL = (
+    "SELECT * FROM content.slaif_agent_navigation_item_update("
+    "$1,$2,$3,$4,$5,$6,$7,$8,$9)"
+)
+AGENT_NAVIGATION_ITEM_MOVE_SQL = (
+    "SELECT * FROM content.slaif_agent_navigation_item_move($1,$2,$3,$4,$5,$6)"
+)
+AGENT_NAVIGATION_ITEM_DELETE_SQL = (
+    "SELECT * FROM content.slaif_agent_navigation_item_delete($1,$2,$3)"
+)
+AGENT_REDIRECT_CREATE_SQL = (
+    "SELECT * FROM content.slaif_agent_redirect_create($1,$2,$3,$4,$5)"
+)
+AGENT_REDIRECT_EXACT_SQL = (
+    "SELECT * FROM content.redirect WHERE site_id=$1 AND source_route=$2 "
+    "AND locale IS NOT DISTINCT FROM $3 ORDER BY id DESC LIMIT 1"
+)
+AGENT_REDIRECT_LIST_SQL = "SELECT * FROM content.slaif_agent_redirect_list($1)"
+AGENT_REDIRECT_GET_SQL = "SELECT * FROM content.slaif_agent_redirect_get($1,$2)"
+AGENT_REDIRECT_UPDATE_SQL = (
+    "SELECT * FROM content.slaif_agent_redirect_update($1,$2,$3,$4,$5,$6,$7)"
+)
+AGENT_REDIRECT_DELETE_SQL = (
+    "SELECT * FROM content.slaif_agent_redirect_delete($1,$2,$3)"
 )
 AGENT_COMPONENT_CREATE_SQL = (
     "SELECT * FROM content.slaif_agent_composition_node_add($1,$2,$3,$4,$5,$6,$7)"
@@ -215,6 +295,24 @@ AGENT_SEMANTIC_CONTRACTS = {
     "COLLECTION_VIEW_CREATED": ("collection_view", "POST", 201, "mutation"),
     "COLLECTION_VIEW_UPDATED": ("collection_view", "PATCH", 200, "mutation"),
     "COLLECTION_VIEW_DELETED": ("collection_view", "DELETE", 200, "delete"),
+    "PAGE_CREATED": ("page", "POST", 201, "mutation"),
+    "PAGE_UPDATED": ("page", "PATCH", 200, "mutation"),
+    "PAGE_DELETED": ("page", "DELETE", 200, "delete"),
+    "PAGE_MOVED": ("page", "POST", 200, "mutation"),
+    "PAGE_RESTORED": ("page", "POST", 200, "mutation"),
+    "LOCALE_CREATED": ("locale", "POST", 201, "mutation"),
+    "LOCALE_UPDATED": ("locale", "PATCH", 200, "mutation"),
+    "LOCALE_DELETED": ("locale", "DELETE", 200, "delete"),
+    "NAVIGATION_CREATED": ("navigation", "POST", 201, "mutation"),
+    "NAVIGATION_UPDATED": ("navigation", "PATCH", 200, "mutation"),
+    "NAVIGATION_DELETED": ("navigation", "DELETE", 200, "delete"),
+    "NAVIGATION_ITEM_CREATED": ("navigation_item", "POST", 201, "mutation"),
+    "NAVIGATION_ITEM_UPDATED": ("navigation_item", "PATCH", 200, "mutation"),
+    "NAVIGATION_ITEM_MOVED": ("navigation_item", "POST", 200, "mutation"),
+    "NAVIGATION_ITEM_DELETED": ("navigation_item", "DELETE", 200, "delete"),
+    "REDIRECT_CREATED": ("redirect", "POST", 201, "mutation"),
+    "REDIRECT_UPDATED": ("redirect", "PATCH", 200, "mutation"),
+    "REDIRECT_DELETED": ("redirect", "DELETE", 200, "delete"),
 }
 AGENT_SEMANTIC_ACTIONS = frozenset(AGENT_SEMANTIC_CONTRACTS)
 
@@ -727,10 +825,329 @@ class AgentCowContentModelService(ContentModelService):
             request.status,
             request.locale,
             request.parent_id,
+            request.route_template,
         )
         if row is None:
             raise ContentModelServiceError(ContentModelServiceReason.CONFLICT)
         return cast(PageRecord, _pg(row))
+
+    async def update_page_for_site(
+        self, site_id: UUID, page_id: UUID, request: UpdatePageRequest
+    ) -> PageRecord:
+        row = await self._fetchrow(
+            AGENT_PAGE_UPDATE_SQL,
+            site_id,
+            page_id,
+            request.slug,
+            request.title,
+            request.status,
+            request.locale,
+            request.route_template,
+            "route_template" in request.model_fields_set,
+            request.expected_row_version,
+        )
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
+        return cast(PageRecord, _pg(row))
+
+    async def delete_page_for_site(
+        self, site_id: UUID, page_id: UUID, expected_row_version: int
+    ) -> PageRecord:
+        row = await self._fetchrow(
+            AGENT_PAGE_DELETE_SQL, site_id, page_id, expected_row_version
+        )
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
+        return cast(PageRecord, _pg(row))
+
+    async def move_page_for_site(
+        self, site_id: UUID, page_id: UUID, request: MovePageRequest
+    ) -> PageRecord:
+        row = await self._fetchrow(
+            AGENT_PAGE_MOVE_SQL,
+            site_id,
+            page_id,
+            request.parent_id,
+            request.expected_row_version,
+        )
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
+        return cast(PageRecord, _pg(row))
+
+    async def restore_page_for_site(
+        self, site_id: UUID, page_id: UUID, request: RestorePageRequest
+    ) -> PageRecord:
+        row = await self._fetchrow(
+            AGENT_PAGE_RESTORE_SQL,
+            site_id,
+            page_id,
+            request.expected_row_version,
+        )
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
+        return cast(PageRecord, _pg(row))
+
+    async def create_locale(  # type: ignore[override]
+        self, site_id: UUID, request: AgentCreateLocaleRequest
+    ) -> LocaleRecord:
+        row = await self._fetchrow(
+            AGENT_LOCALE_CREATE_SQL,
+            site_id,
+            request.tag,
+            request.enabled,
+            request.is_default,
+            request.position,
+            json.dumps(request.metadata, sort_keys=True),
+        )
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.CONFLICT)
+        return _locale(row)
+
+    async def update_locale(  # type: ignore[override]
+        self, site_id: UUID, locale_id: UUID, request: AgentUpdateLocaleRequest
+    ) -> LocaleRecord:
+        row = await self._fetchrow(
+            AGENT_LOCALE_UPDATE_SQL,
+            site_id,
+            locale_id,
+            request.enabled,
+            request.is_default,
+            request.position,
+            json.dumps(request.metadata, sort_keys=True)
+            if request.metadata is not None
+            else None,
+            request.expected_row_version,
+        )
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
+        return _locale(row)
+
+    async def delete_locale(  # type: ignore[override]
+        self, site_id: UUID, locale_id: UUID, expected_row_version: int
+    ) -> LocaleRecord:
+        row = await self._fetchrow(
+            AGENT_LOCALE_DELETE_SQL, site_id, locale_id, expected_row_version
+        )
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
+        return _locale(row)
+
+    async def create_navigation(  # type: ignore[override]
+        self, site_id: UUID, request: AgentCreateNavigationRequest
+    ) -> AgentNavigationRecord:
+        row = await self._fetchrow(
+            AGENT_NAVIGATION_CREATE_SQL,
+            site_id,
+            request.key,
+            request.label,
+            json.dumps(request.labels, sort_keys=True),
+            json.dumps(request.settings, sort_keys=True),
+        )
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.CONFLICT)
+        return _agent_nav(row)
+
+    async def update_navigation(  # type: ignore[override]
+        self, site_id: UUID, navigation_id: UUID, request: AgentUpdateNavigationRequest
+    ) -> AgentNavigationRecord:
+        row = await self._fetchrow(
+            AGENT_NAVIGATION_UPDATE_SQL,
+            site_id,
+            navigation_id,
+            request.label,
+            json.dumps(request.labels, sort_keys=True)
+            if request.labels is not None
+            else None,
+            json.dumps(request.settings, sort_keys=True)
+            if request.settings is not None
+            else None,
+            request.expected_row_version,
+        )
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
+        return _agent_nav(row)
+
+    async def delete_navigation(  # type: ignore[override]
+        self, site_id: UUID, navigation_id: UUID, expected_row_version: int
+    ) -> AgentNavigationRecord:
+        row = await self._fetchrow(
+            AGENT_NAVIGATION_DELETE_SQL, site_id, navigation_id, expected_row_version
+        )
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
+        return _agent_nav(row)
+
+    async def create_navigation_item(  # type: ignore[override]
+        self,
+        site_id: UUID,
+        navigation_id: UUID,
+        request: AgentCreateNavigationItemRequest,
+    ) -> NavigationItemRecord:
+        row = await self._fetchrow(
+            AGENT_NAVIGATION_ITEM_CREATE_SQL,
+            site_id,
+            navigation_id,
+            request.parent_id,
+            request.page_id,
+            request.target_kind,
+            request.target_value,
+            json.dumps(request.labels, sort_keys=True),
+            request.locale,
+            request.before_item_id,
+            request.after_item_id,
+        )
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.CONFLICT)
+        return _nav_item(row)
+
+    async def update_navigation_item(  # type: ignore[override]
+        self,
+        site_id: UUID,
+        item_id: UUID,
+        request: AgentUpdateNavigationItemRequest,
+    ) -> NavigationItemRecord:
+        row = await self._fetchrow(AGENT_NAVIGATION_ITEM_GET_SQL, site_id, item_id)
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
+        current = _nav_item(row)
+        fields = request.model_fields_set
+        page_id = request.page_id if "page_id" in fields else current.page_id
+        target_kind = (
+            request.target_kind if "target_kind" in fields else current.target_kind
+        )
+        target_value = (
+            request.target_value if "target_value" in fields else current.target_value
+        )
+        labels = request.labels if "labels" in fields else current.labels
+        locale = request.locale if "locale" in fields else current.locale
+        if target_kind != "PAGE":
+            page_id = None
+        if target_kind is None or target_value is None:
+            raise ContentModelServiceError(ContentModelServiceReason.VALIDATION)
+        try:
+            validate_agent_target(target_kind, target_value)
+        except ValueError:
+            raise ContentModelServiceError(
+                ContentModelServiceReason.VALIDATION
+            ) from None
+        row = await self._fetchrow(
+            AGENT_NAVIGATION_ITEM_UPDATE_SQL,
+            site_id,
+            item_id,
+            current.navigation_id,
+            page_id,
+            target_kind,
+            target_value,
+            json.dumps(labels, sort_keys=True),
+            locale,
+            request.expected_row_version,
+        )
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
+        return _nav_item(row)
+
+    async def move_navigation_item(  # type: ignore[override]
+        self,
+        site_id: UUID,
+        item_id: UUID,
+        request: AgentMoveNavigationItemRequest,
+    ) -> NavigationItemRecord:
+        row = await self._fetchrow(
+            AGENT_NAVIGATION_ITEM_MOVE_SQL,
+            site_id,
+            item_id,
+            request.parent_id,
+            request.before_item_id,
+            request.after_item_id,
+            request.expected_row_version,
+        )
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
+        return _nav_item(row)
+
+    async def delete_navigation_item(  # type: ignore[override]
+        self, site_id: UUID, item_id: UUID, expected_row_version: int
+    ) -> NavigationItemRecord:
+        row = await self._fetchrow(
+            AGENT_NAVIGATION_ITEM_DELETE_SQL, site_id, item_id, expected_row_version
+        )
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
+        return _nav_item(row)
+
+    async def create_redirect_for_site(
+        self, site_id: UUID, request: AgentCreateRedirectRequest
+    ) -> RedirectRecord:
+        row = await self._fetchrow(
+            AGENT_REDIRECT_CREATE_SQL,
+            site_id,
+            request.source_route,
+            request.target,
+            request.status_code,
+            request.locale,
+        )
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.CONFLICT)
+        if row[0] is None:
+            row = await self._fetchrow(
+                AGENT_REDIRECT_EXACT_SQL,
+                site_id,
+                request.source_route,
+                request.locale,
+            )
+            if row is None:
+                raise ContentModelServiceError(ContentModelServiceReason.CONFLICT)
+        return _redirect(row)
+
+    async def list_redirects_for_site(
+        self, site_id: UUID
+    ) -> tuple[RedirectRecord, ...]:
+        return tuple(
+            _redirect(row)
+            for row in await self._fetch(AGENT_REDIRECT_LIST_SQL, site_id)
+        )
+
+    async def get_redirect_for_site(
+        self, site_id: UUID, redirect_id: UUID
+    ) -> RedirectRecord:
+        row = await self._fetchrow(AGENT_REDIRECT_GET_SQL, site_id, redirect_id)
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
+        return _redirect(row)
+
+    async def update_redirect_for_site(
+        self,
+        site_id: UUID,
+        redirect_id: UUID,
+        request: AgentUpdateRedirectRequest,
+    ) -> RedirectRecord:
+        current = await self.get_redirect_for_site(site_id, redirect_id)
+        fields = request.model_fields_set
+        row = await self._fetchrow(
+            AGENT_REDIRECT_UPDATE_SQL,
+            site_id,
+            redirect_id,
+            request.source_route if "source_route" in fields else current.source_route,
+            request.target if "target" in fields else current.target,
+            request.status_code if "status_code" in fields else current.status_code,
+            request.locale if "locale" in fields else current.locale,
+            request.expected_row_version,
+        )
+        if row is None or row[0] is None:
+            row = await self._fetchrow(AGENT_REDIRECT_GET_SQL, site_id, redirect_id)
+            if row is None:
+                raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
+        return _redirect(row)
+
+    async def delete_redirect_for_site(
+        self, site_id: UUID, redirect_id: UUID, expected_row_version: int
+    ) -> RedirectRecord:
+        row = await self._fetchrow(
+            AGENT_REDIRECT_DELETE_SQL, site_id, redirect_id, expected_row_version
+        )
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
+        return _redirect(row)
 
     async def add_component_for_site(
         self,
@@ -910,6 +1327,11 @@ async def execute_agent_mutation(
                 "content_item_translation",
                 "item_relation",
                 "collection_view",
+                "page",
+                "locale",
+                "navigation",
+                "navigation_item",
+                "redirect",
             }:
                 try:
                     mutation_allowed = await cow.native.fetchval(

@@ -136,6 +136,12 @@ restart durability, revocation, fake-route absence, shared-lock race recheck,
 exact `(run,idempotency,artifact,event)` counts, and no COW operation.
 Dispatcher unit coverage proves bounded settings, run/lease/site/workspace
 bindings, short-lived preview credentials, and disabled lifecycle behavior.
+The public Agent Compose acceptance additionally configures a second locale and
+workspace default, exercises navigation container/item CRUD with page,
+internal static-page, and HTTPS external targets, verifies configured-locale
+labels, nested placement, shifted row versions, and relative reorder across an
+Agent restart, then removes the workspace-only rows and checks canonical
+locale/navigation tables remain unchanged.
 The clean Compose smoke additionally proves queued-to-terminal dispatch,
 restart durability, atomic artifact registration, and real Chromium COW
 preview completion before the direct worker artifact/replay checks.

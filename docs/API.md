@@ -176,7 +176,9 @@ It grants no operation authority. The document is OpenAPI 3.1, contains only
 the versioned Agent paths, uses the `AgentCapability` bearer scheme with
 empty OpenAPI bearer requirement values, and publishes exact operation scopes
 in `x-slaif-required-scopes`. Mutations require a bounded `Idempotency-Key`
-header in the contract. Regenerate and check it with the commands in
+header in the contract. Conditional mutation scope requirements are published
+in `x-slaif-conditional-scopes` with their exact triggering request fields.
+Regenerate and check it with the commands in
 [`contracts/README.md`](../contracts/README.md).
 
 The Agent API authenticates a bearer capability and derives the site and
@@ -194,9 +196,16 @@ The capability-bound read surface is:
 | `GET /api/agent/v1/content-model/types/{type_id}` | 200 | `content-model:read` |
 | `GET /api/agent/v1/content-model/types/{type_id}/fields` | 200 | `content-model:read` |
 | `GET /api/agent/v1/content-items/types/{type_id}` | 200 | `content-item:read` |
-| `GET /api/agent/v1/pages/` | 200 | `page:read` |
+| `GET /api/agent/v1/pages` (trailing slash alias) | 200 | `page:read` |
+| `GET /api/agent/v1/pages/{page_id}` | 200 | `page:read` |
 | `GET /api/agent/v1/pages/{page_id}/components` | 200 | `composition:read` |
 | `GET /api/agent/v1/media/` | 200 | `media:read` |
+| `GET /api/agent/v1/locales` | 200 | `site:read` |
+| `GET /api/agent/v1/locales/{locale_id}` | 200 | `site:read` |
+| `GET /api/agent/v1/navigation` | 200 | `navigation:read` |
+| `GET /api/agent/v1/navigation/{navigation_id}` | 200 | `navigation:read` |
+| `GET /api/agent/v1/navigation/{navigation_id}/items` | 200 | `navigation:read` |
+| `GET /api/agent/v1/navigation-items/{item_id}` | 200 | `navigation:read` |
 
 Read results use the capability's workspace overlay: workspace-created or
 modified rows shadow canonical rows, unchanged canonical rows remain fallback,
@@ -205,6 +214,16 @@ against the trusted workspace context; foreign-site/workspace resources return
 the stable not-found envelope. Reads create no idempotency row, mutation audit
 row, or pending COW operation, and the foundation context is cleared before the
 Agent pool connection is reused.
+
+Page records expose normalized slug/parent metadata, an optional `route_template`,
+the server-derived `effective_route`, and `deleted_at` on a deleted record.
+Routes are derived from an already-enabled site locale and the ancestor
+hierarchy; `route_template` is either absent or the terminal literal `{slug}`.
+Page operations never create or configure locales. Page deletes are workspace
+COW tombstones; restore requires the tombstone's exact row version and restores
+the same page ID and prior hierarchy. Tombstoned pages are absent from Agent
+reads and active Render, while canonical state remains unchanged until review
+and promotion.
 
 The bounded mutation surface is:
 
@@ -228,8 +247,22 @@ The bounded mutation surface is:
 | `POST /api/agent/v1/collection-views/types/{type_id}` | 201 | `CreateCollectionViewRequest` |
 | `PATCH /api/agent/v1/collection-views/{view_id}` | 200 | `UpdateCollectionViewRequest` |
 | `DELETE /api/agent/v1/collection-views/{view_id}` | 200 | `AgentDeleteRequest` |
-| `POST /api/agent/v1/pages/` | 201 | `CreatePageRequest` |
+| `POST /api/agent/v1/pages` (trailing slash alias) | 201 | `CreatePageRequest` |
+| `PATCH /api/agent/v1/pages/{page_id}` | 200 | `UpdatePageRequest` |
+| `DELETE /api/agent/v1/pages/{page_id}` | 200 | `AgentDeleteRequest` |
+| `POST /api/agent/v1/pages/{page_id}:move` | 200 | `MovePageRequest` (parent-only hierarchy move) |
+| `POST /api/agent/v1/pages/{page_id}:restore` | 200 | `RestorePageRequest` with the exact tombstone row version |
 | `POST /api/agent/v1/pages/{page_id}/components` | 201 | `CreateCompositionNodeRequest` |
+| `POST /api/agent/v1/locales` | 201 | `AgentCreateLocaleRequest` |
+| `PATCH /api/agent/v1/locales/{locale_id}` | 200 | `AgentUpdateLocaleRequest` |
+| `DELETE /api/agent/v1/locales/{locale_id}` | 200 | `AgentDeleteRequest` |
+| `POST /api/agent/v1/navigation` | 201 | `AgentCreateNavigationRequest` |
+| `PATCH /api/agent/v1/navigation/{navigation_id}` | 200 | `AgentUpdateNavigationRequest` |
+| `DELETE /api/agent/v1/navigation/{navigation_id}` | 200 | `AgentDeleteRequest` |
+| `POST /api/agent/v1/navigation/{navigation_id}/items` | 201 | `AgentCreateNavigationItemRequest` |
+| `PATCH /api/agent/v1/navigation-items/{item_id}` | 200 | `AgentUpdateNavigationItemRequest` |
+| `POST /api/agent/v1/navigation-items/{item_id}:move` | 200 | `AgentMoveNavigationItemRequest` |
+| `DELETE /api/agent/v1/navigation-items/{item_id}` | 200 | `AgentDeleteRequest` |
 
 Every mutation requires an `Idempotency-Key` containing 1–128 bounded ASCII
 key characters. The response is `{ "record": <semantic record>,
@@ -256,6 +289,21 @@ denials are stable `422` responses with `TYPE_DEPENDENCIES` or
 residue. All model/content dependency writes share one transaction-scoped
 workspace lock, so a concurrent creator and deletion has one committed winner
 and a coherent loser result.
+
+Locale and navigation records are site-scoped workspace COW data. Locale
+configuration preserves one enabled default locale, and effective page routes
+derive their root locale from the visible workspace locale set. Navigation
+containers and items use bounded labels/settings, same-site page targets,
+configured-locale labels, and server-assigned dense sibling positions. Agent
+INTERNAL targets must resolve to one visible, non-tombstoned static page route
+within the capability's locale/root/prefix constraints; EXTERNAL targets are
+HTTPS-only. Before/after anchors are mutually exclusive and `parent_id` is
+required on moves, while item PATCH changes only target/labels/locale and
+preserves parent/order. Shifted siblings receive new row versions and
+timestamps. Item moves and all page/locale/navigation structural writes share
+one transaction-scoped structural lock. Navigation item deletion and
+page/locale/navigation deletion reject surviving dependencies, while the Agent
+role can only reach these records through capability-bound semantic functions.
 
 ### Capability-bound browser preview runs
 

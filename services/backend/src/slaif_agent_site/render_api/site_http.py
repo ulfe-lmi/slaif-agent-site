@@ -20,10 +20,10 @@ from slaif_agent_site.sites.resolver import SiteResolverError, SiteResolverReaso
 
 from .projection import (
     ProjectionError,
-    RenderPageProjection,
     RenderPageRequest,
     RenderPreviewRequest,
     RenderProjectionService,
+    RenderRouteProjection,
 )
 
 
@@ -95,22 +95,22 @@ def install_render_projection_routes(
     router = APIRouter(prefix="/internal/render/v1")
     service = RenderProjectionService(database, browser_verifier=browser_verifier)
 
-    @router.post("/page", response_model=RenderPageProjection)
+    @router.post("/page", response_model=RenderRouteProjection)
     async def canonical_page(
         payload: RenderPageRequest, response: Response
-    ) -> RenderPageProjection:
+    ) -> RenderRouteProjection:
         _headers(response)
         try:
             return await service.canonical(payload)
         except ProjectionError as error:
             _projection_error(error)
 
-    @router.post("/preview", response_model=RenderPageProjection)
+    @router.post("/preview", response_model=RenderRouteProjection)
     async def preview_page(
         payload: RenderPreviewRequest,
         response: Response,
         request: Request,
-    ) -> RenderPageProjection:
+    ) -> RenderRouteProjection:
         _headers(response)
         headers = request.scope.get("headers", [])
         human_values = [

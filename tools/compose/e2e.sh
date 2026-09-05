@@ -66,6 +66,8 @@ docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif \
      AND page_id = (SELECT id FROM content.page_base
                     WHERE site_id = '$site_id'::uuid AND slug = 'home' AND locale = 'en')
      AND component_type = 'Heading';
+   INSERT INTO content.redirect(site_id,source_route,target,status_code,locale)
+   VALUES ('$site_id'::uuid,'/compose-redirect','/',301,NULL);
    COMMIT;" >/dev/null
 
 if ! SLAIF_E2E_SECRET_FILE="$SECRET_FILE" \

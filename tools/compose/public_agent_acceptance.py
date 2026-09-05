@@ -173,6 +173,52 @@ def _semantic_contract(
                     else "COLLECTION_VIEW_DELETED",
                     "mutation" if method == "PATCH" else "delete",
                 )
+        if len(segments) == 5 and segments[4] == "pages" and method == "POST":
+            return "page", "PAGE_CREATED", "mutation"
+        if len(segments) == 6 and segments[4] == "pages":
+            if method == "PATCH":
+                return "page", "PAGE_UPDATED", "mutation"
+            if method == "DELETE":
+                return "page", "PAGE_DELETED", "delete"
+            if segments[5].endswith(":move") and method == "POST":
+                return "page", "PAGE_MOVED", "mutation"
+            if segments[5].endswith(":restore") and method == "POST":
+                return "page", "PAGE_RESTORED", "mutation"
+        if len(segments) == 5 and segments[4] == "redirects" and method == "POST":
+            return "redirect", "REDIRECT_CREATED", "mutation"
+        if len(segments) == 6 and segments[4] == "redirects":
+            if method == "PATCH":
+                return "redirect", "REDIRECT_UPDATED", "mutation"
+            if method == "DELETE":
+                return "redirect", "REDIRECT_DELETED", "delete"
+        if len(segments) == 5 and segments[4] == "locales" and method == "POST":
+            return "locale", "LOCALE_CREATED", "mutation"
+        if len(segments) == 6 and segments[4] == "locales":
+            if method == "PATCH":
+                return "locale", "LOCALE_UPDATED", "mutation"
+            if method == "DELETE":
+                return "locale", "LOCALE_DELETED", "delete"
+        if len(segments) == 5 and segments[4] == "navigation" and method == "POST":
+            return "navigation", "NAVIGATION_CREATED", "mutation"
+        if len(segments) == 6 and segments[4] == "navigation":
+            if method == "PATCH":
+                return "navigation", "NAVIGATION_UPDATED", "mutation"
+            if method == "DELETE":
+                return "navigation", "NAVIGATION_DELETED", "delete"
+        if (
+            len(segments) == 7
+            and segments[4] == "navigation"
+            and segments[6] == "items"
+            and method == "POST"
+        ):
+            return "navigation_item", "NAVIGATION_ITEM_CREATED", "mutation"
+        if len(segments) == 6 and segments[4] == "navigation-items":
+            if method == "PATCH":
+                return "navigation_item", "NAVIGATION_ITEM_UPDATED", "mutation"
+            if method == "DELETE":
+                return "navigation_item", "NAVIGATION_ITEM_DELETED", "delete"
+            if segments[5].endswith(":move") and method == "POST":
+                return "navigation_item", "NAVIGATION_ITEM_MOVED", "mutation"
     return None
 
 
@@ -275,10 +321,76 @@ def _canonical_request_body(
             "projection_spec": None,
             "definition_version": None,
         }
+    elif action == "LOCALE_CREATED":
+        defaults = {
+            "enabled": True,
+            "is_default": False,
+            "position": 0,
+            "metadata": {},
+        }
+    elif action == "LOCALE_UPDATED":
+        defaults = {
+            "enabled": None,
+            "is_default": None,
+            "position": None,
+            "metadata": None,
+        }
+    elif action == "NAVIGATION_CREATED":
+        defaults = {"labels": {}, "settings": {}}
+    elif action == "NAVIGATION_UPDATED":
+        defaults = {"label": None, "labels": None, "settings": None}
+    elif action == "NAVIGATION_ITEM_CREATED":
+        defaults = {
+            "navigation_id": None,
+            "parent_id": None,
+            "page_id": None,
+            "target_kind": "INTERNAL",
+            "target_value": "/",
+            "labels": {},
+            "locale": None,
+            "before_item_id": None,
+            "after_item_id": None,
+        }
+    elif action == "NAVIGATION_ITEM_UPDATED":
+        defaults = {
+            "page_id": None,
+            "target_kind": None,
+            "target_value": None,
+            "labels": None,
+            "locale": None,
+        }
+    elif action == "NAVIGATION_ITEM_MOVED":
+        defaults = {"parent_id": None, "before_item_id": None, "after_item_id": None}
+    elif action == "REDIRECT_CREATED":
+        defaults = {"status_code": 302, "locale": None}
+    elif action == "REDIRECT_UPDATED":
+        defaults = {
+            "source_route": None,
+            "target": None,
+            "status_code": None,
+            "locale": None,
+        }
     if resource_type == "content_type" and action == "CONTENT_TYPE_CREATED":
         defaults = {"labels": {}, "settings": {}}
     if resource_type == "content_item" and action == "CONTENT_ITEM_CREATED":
         defaults = {"status": "DRAFT", "values": {}}
+    if resource_type == "page" and action == "PAGE_CREATED":
+        defaults = {
+            "status": "DRAFT",
+            "locale": "en",
+            "parent_id": None,
+            "route_template": None,
+        }
+    if resource_type == "page" and action == "PAGE_UPDATED":
+        defaults = {
+            "slug": None,
+            "title": None,
+            "status": None,
+            "locale": None,
+            "route_template": None,
+        }
+    if resource_type == "page" and action == "PAGE_MOVED":
+        defaults = {"parent_id": None}
     if (
         resource_type == "content_item_translation"
         and action == "CONTENT_ITEM_TRANSLATION_CREATED"
@@ -596,6 +708,18 @@ def _wait_public_outage(client: PublicClient, path: str, label: str) -> None:
     raise ProofFailure(f"{label}-still-available")
 
 
+def _wait_public_not_found(client: PublicClient, path: str, label: str) -> None:
+    for _attempt in range(30):
+        try:
+            response = client.request(path)
+        except ProofFailure:
+            response = None
+        if response is not None and response.status == 404:
+            return
+        time.sleep(1)
+    raise ProofFailure(f"{label}-not-404")
+
+
 def run_acceptance(project: str) -> None:
     if not re.fullmatch(r"slaif(?:007|009|010|071)[a-z0-9]+", project):
         raise ProofFailure("unsafe-project-name")
@@ -660,6 +784,15 @@ def run_acceptance(project: str) -> None:
             "/api/agent/v1/content-items/{item_id}/relations",
             "/api/agent/v1/collection-views/types/{type_id}",
             "/api/agent/v1/pages/",
+            "/api/agent/v1/locales",
+            "/api/agent/v1/locales/{locale_id}",
+            "/api/agent/v1/redirects",
+            "/api/agent/v1/redirects/{redirect_id}",
+            "/api/agent/v1/navigation",
+            "/api/agent/v1/navigation/{navigation_id}",
+            "/api/agent/v1/navigation/{navigation_id}/items",
+            "/api/agent/v1/navigation-items/{item_id}",
+            "/api/agent/v1/navigation-items/{item_id}:move",
         }
         if not required_paths <= set(contract["paths"]):
             raise ProofFailure("public-openapi-route-inventory-incomplete")
@@ -753,9 +886,19 @@ def run_acceptance(project: str) -> None:
             "collection-view:delete",
             "page:create",
             "page:read",
+            "page:write",
+            "page:move",
+            "page:delete",
+            "page:restore",
+            "route:write",
             "composition:read",
             "component-structure:create",
             "validation:read",
+            "locale:configure",
+            "navigation:read",
+            "navigation:create",
+            "navigation:write",
+            "navigation:delete",
         }
         if not required_scopes <= set(permissions.get("scopes", [])):
             raise ProofFailure("permissions-incomplete")
@@ -1025,6 +1168,455 @@ def run_acceptance(project: str) -> None:
             f"oap-component-create-{tag}",
         )
         component_id = _require_uuid(component["record"]["id"], "component")
+
+        internal_page = _mutation(
+            client,
+            primary_token,
+            "/api/agent/v1/pages/",
+            {
+                "slug": f"docs-{tag}",
+                "title": "Documentation",
+                "status": "DRAFT",
+                "locale": "en",
+            },
+            f"oap-navigation-internal-page-{tag}",
+        )
+        internal_page_id = _require_uuid(
+            internal_page["record"]["id"], "navigation-internal-page"
+        )
+        internal_target = internal_page["record"].get("effective_route")
+        if not isinstance(internal_target, str) or not internal_target.startswith("/"):
+            raise ProofFailure("navigation-internal-page-route-missing")
+        redirect = _mutation(
+            client,
+            primary_token,
+            "/api/agent/v1/redirects",
+            {
+                "source_route": f"/oap-redirect-{tag}",
+                "target": internal_target,
+                "status_code": 301,
+            },
+            f"oap-redirect-create-{tag}",
+        )
+        redirect_id = _require_uuid(redirect["record"]["id"], "redirect")
+        if redirect["record"].get("row_version") != 1:
+            raise ProofFailure("redirect-version-invalid")
+        _agent_list(
+            client, primary_token, "/api/agent/v1/redirects", label="redirect-list"
+        )
+        _agent_request(
+            client,
+            primary_token,
+            f"/api/agent/v1/redirects/{redirect_id}",
+            label="redirect-get",
+        )
+        redirect_update = _request_mutation(
+            client,
+            primary_token,
+            f"/api/agent/v1/redirects/{redirect_id}",
+            {"status_code": 302, "expected_row_version": 1},
+            f"oap-redirect-update-{tag}",
+        )
+        if redirect_update["record"].get("row_version") != 2:
+            raise ProofFailure("redirect-update-version-invalid")
+        _request_mutation(
+            client,
+            primary_token,
+            f"/api/agent/v1/redirects/{redirect_id}",
+            {"expected_row_version": 2},
+            f"oap-redirect-delete-{tag}",
+            method="DELETE",
+        )
+
+        lifecycle_slug = f"oap-lifecycle-{tag}"
+        lifecycle_path = f"/s/demo/{lifecycle_slug}"
+        lifecycle = _mutation(
+            client,
+            primary_token,
+            "/api/agent/v1/pages/",
+            {
+                "slug": lifecycle_slug,
+                "title": "OAP lifecycle",
+                "status": "PUBLISHED",
+                "locale": "en",
+                "parent_id": page_id,
+            },
+            f"oap-page-lifecycle-create-{tag}",
+        )
+        lifecycle_id = _require_uuid(lifecycle["record"]["id"], "lifecycle-page")
+        if client.request(lifecycle_path).status != 404:
+            raise ProofFailure("workspace-page-visible-on-canonical-edge")
+        lifecycle_update = _request_mutation(
+            client,
+            primary_token,
+            f"/api/agent/v1/pages/{lifecycle_id}",
+            {"title": "OAP lifecycle updated", "expected_row_version": 1},
+            f"oap-page-lifecycle-update-{tag}",
+        )
+        if lifecycle_update["record"].get("row_version") != 2:
+            raise ProofFailure("page-version-invalid")
+        lifecycle_move = _request_mutation(
+            client,
+            primary_token,
+            f"/api/agent/v1/pages/{lifecycle_id}:move",
+            {"parent_id": None, "expected_row_version": 2},
+            f"oap-page-lifecycle-move-{tag}",
+            method="POST",
+        )
+        if lifecycle_move["record"].get("row_version") != 3:
+            raise ProofFailure("page-move-version-invalid")
+        if client.request(lifecycle_path).status != 404:
+            raise ProofFailure("workspace-moved-page-visible-on-canonical-edge")
+        lifecycle_delete = _request_mutation(
+            client,
+            primary_token,
+            f"/api/agent/v1/pages/{lifecycle_id}",
+            {"expected_row_version": 3},
+            f"oap-page-lifecycle-delete-{tag}",
+            method="DELETE",
+        )
+        if (
+            lifecycle_delete["record"].get("deleted_at") is None
+            or lifecycle_delete["record"].get("row_version") != 4
+        ):
+            raise ProofFailure("page-tombstone-invalid")
+        if (
+            client.request(
+                f"/api/agent/v1/pages/{lifecycle_id}",
+                headers={"Authorization": f"Bearer {primary_token}"},
+            ).status
+            != 404
+            or client.request(lifecycle_path).status != 404
+        ):
+            raise ProofFailure("page-tombstone-visible")
+        if lifecycle_id in {
+            item.get("id")
+            for item in _agent_list(
+                client,
+                primary_token,
+                "/api/agent/v1/pages/",
+                label="page-list-after-delete",
+            )
+        }:
+            raise ProofFailure("page-tombstone-in-list")
+        lifecycle_restore = _request_mutation(
+            client,
+            primary_token,
+            f"/api/agent/v1/pages/{lifecycle_id}:restore",
+            {"expected_row_version": 4},
+            f"oap-page-lifecycle-restore-{tag}",
+            method="POST",
+        )
+        if (
+            lifecycle_restore["record"].get("id") != lifecycle_id
+            or lifecycle_restore["record"].get("deleted_at") is not None
+            or lifecycle_restore["record"].get("row_version") != 5
+        ):
+            raise ProofFailure("page-restore-invalid")
+        if client.request(lifecycle_path).status != 404:
+            raise ProofFailure("restored-workspace-page-visible-on-canonical-edge")
+        lifecycle_delete_again = _request_mutation(
+            client,
+            primary_token,
+            f"/api/agent/v1/pages/{lifecycle_id}",
+            {"expected_row_version": 5},
+            f"oap-page-lifecycle-delete-again-{tag}",
+            method="DELETE",
+        )
+        if lifecycle_delete_again["record"].get("row_version") != 6:
+            raise ProofFailure("page-second-tombstone-version-invalid")
+        replacement = _mutation(
+            client,
+            primary_token,
+            "/api/agent/v1/pages/",
+            {
+                "slug": lifecycle_slug,
+                "title": "OAP replacement",
+                "status": "PUBLISHED",
+                "locale": "en",
+            },
+            f"oap-page-replacement-create-{tag}",
+        )
+        replacement_id = _require_uuid(replacement["record"]["id"], "replacement-page")
+        if replacement_id == lifecycle_id:
+            raise ProofFailure("tombstone-reused-page-id")
+        restore_conflict = client.request(
+            f"/api/agent/v1/pages/{lifecycle_id}:restore",
+            method="POST",
+            body={"expected_row_version": 6},
+            headers={
+                "Authorization": f"Bearer {primary_token}",
+                "Idempotency-Key": f"oap-page-lifecycle-restore-conflict-{tag}",
+            },
+        )
+        if restore_conflict.status != 409:
+            raise ProofFailure(
+                f"page-restore-conflict-status-{restore_conflict.status}"
+            )
+        _request_mutation(
+            client,
+            primary_token,
+            f"/api/agent/v1/pages/{replacement_id}",
+            {"expected_row_version": 1},
+            f"oap-page-replacement-delete-{tag}",
+            method="DELETE",
+        )
+        baseline_locales = _agent_list(
+            client, primary_token, "/api/agent/v1/locales", label="locale-baseline"
+        )
+        default_locale = next(
+            (locale for locale in baseline_locales if locale.get("is_default")), None
+        )
+        if default_locale is None:
+            raise ProofFailure("locale-default-missing")
+        locale_create = _mutation(
+            client,
+            primary_token,
+            "/api/agent/v1/locales",
+            {
+                "tag": "sl-SI",
+                "enabled": True,
+                "is_default": False,
+                "position": 1,
+                "metadata": {},
+            },
+            f"oap-locale-create-{tag}",
+        )
+        locale_id = _require_uuid(locale_create["record"]["id"], "locale")
+        locale_default = _request_mutation(
+            client,
+            primary_token,
+            f"/api/agent/v1/locales/{locale_id}",
+            {"is_default": True, "expected_row_version": 1},
+            f"oap-locale-default-{tag}",
+        )
+        if (
+            locale_default["record"].get("is_default") is not True
+            or locale_default["record"].get("row_version") != 2
+        ):
+            raise ProofFailure("locale-default-invalid")
+        if (
+            _agent_request(
+                client,
+                primary_token,
+                f"/api/agent/v1/locales/{locale_id}",
+                label="locale-get",
+            ).get("tag")
+            != "sl-SI"
+        ):
+            raise ProofFailure("locale-read-invalid")
+        refreshed_internal_page = _agent_request(
+            client,
+            primary_token,
+            f"/api/agent/v1/pages/{internal_page_id}",
+            label="navigation-internal-page-after-locale",
+        )
+        internal_target = refreshed_internal_page.get("effective_route")
+        if not isinstance(internal_target, str) or not internal_target.startswith("/"):
+            raise ProofFailure("navigation-internal-page-route-after-locale-missing")
+        navigation_create = _mutation(
+            client,
+            primary_token,
+            "/api/agent/v1/navigation",
+            {
+                "key": f"oap-nav-{tag}",
+                "label": "Primary navigation",
+                "labels": {"sl-SI": "Glavni meni"},
+                "settings": {},
+            },
+            f"oap-navigation-create-{tag}",
+        )
+        navigation_id = _require_uuid(navigation_create["record"]["id"], "navigation")
+        if navigation_create["record"].get("row_version") != 1:
+            raise ProofFailure("navigation-version-invalid")
+        page_item = _mutation(
+            client,
+            primary_token,
+            f"/api/agent/v1/navigation/{navigation_id}/items",
+            {
+                "navigation_id": navigation_id,
+                "page_id": page_id,
+                "target_kind": "PAGE",
+                "target_value": page_id,
+                "labels": {"sl-SI": "Domov"},
+                "locale": "sl-SI",
+                "before_item_id": None,
+                "after_item_id": None,
+            },
+            f"oap-navigation-page-item-{tag}",
+        )
+        page_item_id = _require_uuid(page_item["record"]["id"], "page-item")
+        child_item = _mutation(
+            client,
+            primary_token,
+            f"/api/agent/v1/navigation/{navigation_id}/items",
+            {
+                "navigation_id": navigation_id,
+                "parent_id": page_item_id,
+                "target_kind": "INTERNAL",
+                "target_value": internal_target,
+                "labels": {"sl-SI": "Dokumentacija"},
+                "locale": "sl-SI",
+                "before_item_id": None,
+                "after_item_id": None,
+            },
+            f"oap-navigation-child-item-{tag}",
+        )
+        child_item_id = _require_uuid(child_item["record"]["id"], "child-item")
+        external_item = _mutation(
+            client,
+            primary_token,
+            f"/api/agent/v1/navigation/{navigation_id}/items",
+            {
+                "navigation_id": navigation_id,
+                "target_kind": "EXTERNAL",
+                "target_value": "https://example.test/docs",
+                "labels": {"en": "External docs"},
+                "before_item_id": None,
+                "after_item_id": None,
+            },
+            f"oap-navigation-external-item-{tag}",
+        )
+        external_item_id = _require_uuid(external_item["record"]["id"], "external-item")
+        navigation_items = _agent_list(
+            client,
+            primary_token,
+            f"/api/agent/v1/navigation/{navigation_id}/items",
+            label="navigation-item-list",
+        )
+        if {item.get("id") for item in navigation_items} != {
+            page_item_id,
+            child_item_id,
+            external_item_id,
+        }:
+            raise ProofFailure("navigation-item-list-invalid")
+        if (
+            next(
+                item for item in navigation_items if item.get("id") == child_item_id
+            ).get("parent_id")
+            != page_item_id
+        ):
+            raise ProofFailure("navigation-parent-invalid")
+        navigation_update = _request_mutation(
+            client,
+            primary_token,
+            f"/api/agent/v1/navigation/{navigation_id}",
+            {"label": "Primary navigation updated", "expected_row_version": 1},
+            f"oap-navigation-update-{tag}",
+        )
+        if navigation_update["record"].get("row_version") != 2:
+            raise ProofFailure("navigation-update-version-invalid")
+        navigation_move = _request_mutation(
+            client,
+            primary_token,
+            f"/api/agent/v1/navigation-items/{external_item_id}:move",
+            {
+                "parent_id": None,
+                "before_item_id": page_item_id,
+                "expected_row_version": 1,
+            },
+            f"oap-navigation-move-{tag}",
+            method="POST",
+        )
+        if (
+            navigation_move["record"].get("position") != 0
+            or navigation_move["record"].get("row_version") != 2
+        ):
+            raise ProofFailure("navigation-move-invalid")
+        navigation_item_update = _request_mutation(
+            client,
+            primary_token,
+            f"/api/agent/v1/navigation-items/{page_item_id}",
+            {
+                "labels": {"sl-SI": "Domov updated"},
+                "expected_row_version": 2,
+            },
+            f"oap-navigation-item-update-{tag}",
+        )
+        if navigation_item_update["record"].get("row_version") != 3:
+            raise ProofFailure("navigation-item-update-version-invalid")
+        _compose(project, "restart", "agent-api")
+        agent_outage = False
+        _wait_agent_ready(client)
+        if (
+            _agent_request(
+                client,
+                primary_token,
+                f"/api/agent/v1/pages/{page_id}",
+                label="page-restart-read",
+            ).get("id")
+            != page_id
+            or client.request(lifecycle_path).status != 404
+        ):
+            raise ProofFailure("page-canonical-independence-after-agent-restart")
+        if (
+            _agent_request(
+                client,
+                primary_token,
+                f"/api/agent/v1/navigation/{navigation_id}",
+                label="navigation-restart-read",
+            ).get("label")
+            != "Primary navigation updated"
+            or _agent_request(
+                client,
+                primary_token,
+                f"/api/agent/v1/locales/{locale_id}",
+                label="locale-restart-read",
+            ).get("is_default")
+            is not True
+        ):
+            raise ProofFailure("locale-navigation-restart-persistence-invalid")
+        for path, body, key in (
+            (
+                f"/api/agent/v1/navigation-items/{child_item_id}",
+                {"expected_row_version": 1},
+                f"oap-navigation-child-delete-{tag}",
+            ),
+            (
+                f"/api/agent/v1/navigation-items/{external_item_id}",
+                {"expected_row_version": 2},
+                f"oap-navigation-external-delete-{tag}",
+            ),
+            (
+                f"/api/agent/v1/navigation-items/{page_item_id}",
+                {"expected_row_version": 4},
+                f"oap-navigation-page-item-delete-{tag}",
+            ),
+        ):
+            _request_mutation(client, primary_token, path, body, key, method="DELETE")
+        _request_mutation(
+            client,
+            primary_token,
+            f"/api/agent/v1/navigation/{navigation_id}",
+            {"expected_row_version": 2},
+            f"oap-navigation-delete-{tag}",
+            method="DELETE",
+        )
+        _request_mutation(
+            client,
+            primary_token,
+            f"/api/agent/v1/pages/{internal_page_id}",
+            {"expected_row_version": 1},
+            f"oap-navigation-internal-page-delete-{tag}",
+            method="DELETE",
+        )
+        _request_mutation(
+            client,
+            primary_token,
+            f"/api/agent/v1/locales/{default_locale['id']}",
+            {"is_default": True, "expected_row_version": 2},
+            f"oap-locale-restore-default-{tag}",
+        )
+        _request_mutation(
+            client,
+            primary_token,
+            f"/api/agent/v1/locales/{locale_id}",
+            {"expected_row_version": 3},
+            f"oap-locale-delete-{tag}",
+            method="DELETE",
+        )
+        _compose(project, "restart", "render-api")
+        _wait_public_not_found(client, lifecycle_path, "render-restart-page")
         current_types = _agent_list(
             client,
             primary_token,
@@ -1494,6 +2086,22 @@ def run_acceptance(project: str) -> None:
                 != "0"
             ):
                 raise ProofFailure(f"canonical-{table}-changed")
+        if (
+            _sql(
+                project,
+                f"SELECT count(*) FROM content.navigation_base WHERE id='{navigation_id}'::uuid",
+            )
+            != "0"
+        ):
+            raise ProofFailure("canonical-navigation-changed")
+        if (
+            _sql(
+                project,
+                f"SELECT count(*) FROM content.site_locale_base WHERE id='{locale_id}'::uuid",
+            )
+            != "0"
+        ):
+            raise ProofFailure("canonical-locale-changed")
         _assert_exact_semantic_audit(project)
         semantic_count_before_revoke = _sql(
             project,
@@ -1534,9 +2142,11 @@ def run_acceptance(project: str) -> None:
             "public-agent-acceptance: OK "
             f"workspace={primary_workspace} types=2 fields=3 items=2 "
             "translations=1 relations=1 views=1 pages=1 components=1 "
+            "locales=1 redirects=1 navigations=1 navigation-items=3 "
             "openapi=exact restart=verified nginx-outage=verified "
             "crud=public quotas=mutation-429,max-delete-429 "
-            "dependency-delete=422 tombstones=verified"
+            "dependency-delete=422 page-delete-restore=verified "
+            "canonical-independence=verified render-restart=verified"
         )
     finally:
         if agent_outage:

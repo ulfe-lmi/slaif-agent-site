@@ -15,6 +15,20 @@ from ..sites.normalization import (
     path_is_reserved,
 )
 
+_EXECUTABLE_ROUTE_SUFFIXES = (
+    ".asp",
+    ".aspx",
+    ".bash",
+    ".cgi",
+    ".dll",
+    ".exe",
+    ".jsp",
+    ".jspx",
+    ".php",
+    ".pl",
+    ".sh",
+)
+
 
 def validate_locale_tag(value: str) -> str:
     try:
@@ -61,15 +75,48 @@ def validate_target(kind: str, value: str) -> str:
     raise ValueError("invalid target kind")
 
 
+def validate_agent_target(kind: str, value: str) -> str:
+    """Validate the stricter target grammar exposed by Agent navigation."""
+
+    if kind == "EXTERNAL":
+        value = validate_external_url(value)
+        if urlsplit(value).scheme != "https":
+            raise ValueError("Agent external targets must use HTTPS")
+        return value
+    return validate_target(kind, value)
+
+
 def validate_redirect(source: str, target: str) -> tuple[str, str]:
-    normalized_source = validate_internal_route(source)
-    if target.startswith("/"):
-        normalized_target = validate_internal_route(target)
-    else:
-        normalized_target = validate_external_url(target)
+    normalized_source = validate_redirect_source(source)
+    normalized_target = validate_redirect_target(target)
     if normalized_target == normalized_source:
         raise ValueError("redirect loop")
     return normalized_source, normalized_target
+
+
+def validate_redirect_source(value: str) -> str:
+    if len(value.encode("utf-8")) > 512:
+        raise ValueError("redirect source is too long")
+    normalized = validate_internal_route(value)
+    if normalized == "/":
+        raise ValueError("redirect source cannot be root")
+    if any(
+        segment.endswith(_EXECUTABLE_ROUTE_SUFFIXES)
+        for segment in normalized.split("/")
+    ):
+        raise ValueError("executable redirect source")
+    return normalized
+
+
+def validate_redirect_target(value: str) -> str:
+    if len(value.encode("utf-8")) > 2048:
+        raise ValueError("redirect target is too long")
+    if value.startswith("/"):
+        return validate_internal_route(value)
+    normalized = validate_external_url(value)
+    if urlsplit(normalized).scheme != "https":
+        raise ValueError("redirect targets must use HTTPS")
+    return normalized
 
 
 def validate_redirect_graph(
@@ -106,11 +153,14 @@ def validate_side_effect(kind: str, payload: dict[str, Any]) -> None:
 
 
 __all__ = [
+    "validate_agent_target",
     "validate_external_url",
     "validate_internal_route",
     "validate_locale_tag",
     "validate_redirect",
     "validate_redirect_graph",
+    "validate_redirect_source",
+    "validate_redirect_target",
     "validate_side_effect",
     "validate_target",
 ]

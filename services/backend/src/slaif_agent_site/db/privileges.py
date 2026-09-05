@@ -213,6 +213,30 @@ AGENT_CONTENT_FUNCTIONS = {
         "p_site_id uuid",
     ): "uuid",
     (
+        "slaif_agent_page_get",
+        "p_site_id uuid, p_page_id uuid",
+    ): "uuid, uuid",
+    (
+        "slaif_agent_redirect_list",
+        "p_site_id uuid",
+    ): "uuid",
+    (
+        "slaif_agent_redirect_get",
+        "p_site_id uuid, p_id uuid",
+    ): "uuid, uuid",
+    (
+        "slaif_agent_redirect_create",
+        "p_site_id uuid, p_source text, p_target text, p_status integer, p_locale text",
+    ): "uuid, text, text, integer, text",
+    (
+        "slaif_agent_redirect_update",
+        "p_site_id uuid, p_id uuid, p_source text, p_target text, p_status integer, p_locale text, p_expected integer",
+    ): "uuid, uuid, text, text, integer, text, integer",
+    (
+        "slaif_agent_redirect_delete",
+        "p_site_id uuid, p_id uuid, p_expected integer",
+    ): "uuid, uuid, integer",
+    (
         "slaif_agent_composition_list",
         "p_site_id uuid, p_page_id uuid",
     ): "uuid, uuid",
@@ -336,13 +360,94 @@ AGENT_CONTENT_FUNCTIONS = {
     (
         "slaif_agent_page_create",
         "p_site_id uuid, p_slug text, p_title text, p_status text, "
-        "p_locale text, p_parent_id uuid",
-    ): "uuid, text, text, text, text, uuid",
+        "p_locale text, p_parent_id uuid, p_route_template text",
+    ): "uuid, text, text, text, text, uuid, text",
+    (
+        "slaif_agent_page_update",
+        "p_site_id uuid, p_page_id uuid, p_slug text, p_title text, "
+        "p_status text, p_locale text, p_route_template text, "
+        "p_route_template_set boolean, p_expected integer",
+    ): "uuid, uuid, text, text, text, text, text, boolean, integer",
+    (
+        "slaif_agent_page_move",
+        "p_site_id uuid, p_page_id uuid, p_parent_id uuid, p_expected integer",
+    ): "uuid, uuid, uuid, integer",
+    (
+        "slaif_agent_page_delete",
+        "p_site_id uuid, p_page_id uuid, p_expected integer",
+    ): "uuid, uuid, integer",
+    (
+        "slaif_agent_page_restore",
+        "p_site_id uuid, p_page_id uuid, p_expected integer",
+    ): "uuid, uuid, integer",
     (
         "slaif_agent_composition_node_add",
         "p_site_id uuid, p_page_id uuid, p_component_type text, "
         "p_parent_id uuid, p_slot_key text, p_order_key integer, p_props jsonb",
     ): "uuid, uuid, text, uuid, text, integer, jsonb",
+    ("slaif_agent_locale_list", "p_site_id uuid"): "uuid",
+    ("slaif_agent_locale_get", "p_site_id uuid, p_locale_id uuid"): "uuid, uuid",
+    (
+        "slaif_agent_locale_create",
+        "p_site_id uuid, p_tag text, p_enabled boolean, p_default boolean, "
+        "p_position integer, p_metadata jsonb",
+    ): "uuid, text, boolean, boolean, integer, jsonb",
+    (
+        "slaif_agent_locale_update",
+        "p_site_id uuid, p_locale_id uuid, p_enabled boolean, "
+        "p_default boolean, p_position integer, p_metadata jsonb, p_expected integer",
+    ): "uuid, uuid, boolean, boolean, integer, jsonb, integer",
+    (
+        "slaif_agent_locale_delete",
+        "p_site_id uuid, p_locale_id uuid, p_expected integer",
+    ): "uuid, uuid, integer",
+    ("slaif_agent_navigation_list", "p_site_id uuid"): "uuid",
+    (
+        "slaif_agent_navigation_get",
+        "p_site_id uuid, p_navigation_id uuid",
+    ): "uuid, uuid",
+    (
+        "slaif_agent_navigation_create",
+        "p_site_id uuid, p_key text, p_label text, p_labels jsonb, p_settings jsonb",
+    ): "uuid, text, text, jsonb, jsonb",
+    (
+        "slaif_agent_navigation_update",
+        "p_site_id uuid, p_navigation_id uuid, p_label text, p_labels jsonb, "
+        "p_settings jsonb, p_expected integer",
+    ): "uuid, uuid, text, jsonb, jsonb, integer",
+    (
+        "slaif_agent_navigation_delete",
+        "p_site_id uuid, p_navigation_id uuid, p_expected integer",
+    ): "uuid, uuid, integer",
+    (
+        "slaif_agent_navigation_item_list",
+        "p_site_id uuid, p_navigation_id uuid",
+    ): "uuid, uuid",
+    (
+        "slaif_agent_navigation_item_get",
+        "p_site_id uuid, p_item_id uuid",
+    ): "uuid, uuid",
+    (
+        "slaif_agent_navigation_item_create",
+        "p_site_id uuid, p_navigation_id uuid, p_parent_id uuid, p_page_id uuid, "
+        "p_target_kind text, p_target_value text, p_labels jsonb, p_locale text, "
+        "p_before uuid, p_after uuid",
+    ): "uuid, uuid, uuid, uuid, text, text, jsonb, text, uuid, uuid",
+    (
+        "slaif_agent_navigation_item_update",
+        "p_site_id uuid, p_item_id uuid, p_navigation_id uuid, "
+        "p_page_id uuid, p_target_kind text, p_target_value text, p_labels jsonb, "
+        "p_locale text, p_expected integer",
+    ): "uuid, uuid, uuid, uuid, text, text, jsonb, text, integer",
+    (
+        "slaif_agent_navigation_item_move",
+        "p_site_id uuid, p_item_id uuid, p_parent_id uuid, p_before uuid, "
+        "p_after uuid, p_expected integer",
+    ): "uuid, uuid, uuid, uuid, uuid, integer",
+    (
+        "slaif_agent_navigation_item_delete",
+        "p_site_id uuid, p_item_id uuid, p_expected integer",
+    ): "uuid, uuid, integer",
 }
 HUMAN_EDITOR_FUNCTIONS = {
     (
@@ -395,6 +500,16 @@ PREVIEW_RENDER_FUNCTIONS = {
 }
 RENDER_METADATA_FUNCTIONS = {
     ("slaif_site_render_catalog", "p_site_id uuid"): "uuid",
+}
+RENDER_CONTENT_FUNCTIONS = {
+    (
+        "slaif_render_page_resolve",
+        "p_site_id uuid, p_route text, p_locale text, p_statuses text[]",
+    ): "uuid, text, text, text[]",
+    (
+        "slaif_render_navigation_items",
+        "p_site_id uuid, p_locale text, p_statuses text[]",
+    ): "uuid, text, text[]",
 }
 CONTROL_FUNCTIONS = {
     (CONTROL_READINESS_FUNCTION, ""): "",
@@ -893,7 +1008,7 @@ async def apply_product_privileges(
         await connection.execute(
             "GRANT EXECUTE ON FUNCTION "
             f'"control".{quote_identifier(name)}({signature}) '
-            'TO "slaif_public_reader"'
+            'TO "slaif_public_reader", "slaif_preview_reader"'
         )
     await connection.execute(
         'GRANT USAGE ON SCHEMA "control" TO "slaif_preview_reader"'
@@ -908,6 +1023,12 @@ async def apply_product_privileges(
         await connection.execute(
             "GRANT EXECUTE ON FUNCTION "
             f'"control".{quote_identifier(name)}({signature}) '
+            'TO "slaif_public_reader", "slaif_preview_reader"'
+        )
+    for (name, _identity), signature in RENDER_CONTENT_FUNCTIONS.items():
+        await connection.execute(
+            "GRANT EXECUTE ON FUNCTION "
+            f'"content".{quote_identifier(name)}({signature}) '
             'TO "slaif_public_reader", "slaif_preview_reader"'
         )
 
@@ -1237,7 +1358,7 @@ async def _function_violations(
             public_resolver = (
                 schema == "control"
                 and (name, arguments) in PUBLIC_RESOLVER_FUNCTIONS
-                and role == "slaif_public_reader"
+                and role in {"slaif_public_reader", "slaif_preview_reader"}
             )
             preview_render = (
                 schema == "control"
@@ -1247,6 +1368,11 @@ async def _function_violations(
             render_metadata = (
                 schema == "control"
                 and (name, arguments) in RENDER_METADATA_FUNCTIONS
+                and role in {"slaif_public_reader", "slaif_preview_reader"}
+            )
+            render_content = (
+                schema == "content"
+                and (name, arguments) in RENDER_CONTENT_FUNCTIONS
                 and role in {"slaif_public_reader", "slaif_preview_reader"}
             )
             is_content_model_function = (
@@ -1289,6 +1415,7 @@ async def _function_violations(
                 or public_resolver
                 or preview_render
                 or render_metadata
+                or render_content
                 or (
                     readiness_state is ReadinessState.HARDENED
                     and schema == FOUNDATION_SCHEMA
@@ -1309,6 +1436,8 @@ async def _function_violations(
             if preview_render and not can_execute:
                 violations.append(f"function/{schema}.{name}/{role}/missing-execute")
             if render_metadata and not can_execute:
+                violations.append(f"function/{schema}.{name}/{role}/missing-execute")
+            if render_content and not can_execute:
                 violations.append(f"function/{schema}.{name}/{role}/missing-execute")
             if is_media_function and role == "slaif_media" and not can_execute:
                 violations.append(f"function/{schema}.{name}/{role}/missing-execute")
