@@ -242,6 +242,19 @@ export function isRedirectProjection(
 }
 
 export function redirectProjection(projection: RedirectProjection): never {
+  // Next's server-component redirect classifier only includes its default
+  // 303/307/308 values. Register the other valid HTTP redirect statuses before
+  // creating the framework error so it preserves the projection's exact code.
+  if (
+    projection.redirect.status_code === 301 ||
+    projection.redirect.status_code === 302
+  ) {
+    Object.defineProperty(RedirectStatusCode, projection.redirect.status_code, {
+      configurable: true,
+      enumerable: true,
+      value: projection.redirect.status_code,
+    });
+  }
   throw getRedirectError(
     projection.redirect.target,
     "replace",
