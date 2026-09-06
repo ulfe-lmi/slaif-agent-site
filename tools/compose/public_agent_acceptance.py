@@ -1611,6 +1611,16 @@ def run_acceptance(project: str) -> None:
                 "oap-navigation-internal-page-before-delete-row-version-"
                 f"{internal_page_document.get('row_version')}"
             )
+        internal_redirect_targets = _sql(
+            project,
+            "SELECT count(*) FROM content.redirect "
+            f"WHERE site_id='{site_id}'::uuid AND target='{internal_target}'",
+        )
+        if internal_redirect_targets != "0":
+            raise ProofFailure(
+                "oap-navigation-internal-page-redirect-dependency-count-"
+                f"{internal_redirect_targets}"
+            )
         internal_page_delete_key = f"oap-navigation-internal-page-delete-{tag}"
         internal_page_delete_response = client.request(
             f"/api/agent/v1/pages/{internal_page_id}",
