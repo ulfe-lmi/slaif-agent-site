@@ -89,10 +89,11 @@ async def _begin(
     workspace_id: UUID,
     delegator_id: UUID,
     key: str,
+    route: str = ROUTE,
 ) -> UUID:
     request = {
         "version": "browser-preview/v1",
-        "route": ROUTE,
+        "route": route,
         "target": "desktop-chromium",
         "evidence": [item.value for item in EVIDENCE],
     }
@@ -108,8 +109,8 @@ async def _begin(
         operation_id,
         run_id,
         "browser-preview/v1",
-        ROUTE,
-        hashlib.sha256(ROUTE.encode()).hexdigest(),
+        route,
+        hashlib.sha256(route.encode()).hexdigest(),
         "desktop-chromium",
         [item.value for item in EVIDENCE],
         1,
@@ -214,6 +215,13 @@ async def test_browser_token_projects_only_bound_overlay_and_is_one_time(
         async with owner_connection(
             database.settings.resolved_owner_dsn(), expected_database=database.name
         ) as owner:
+            sl_home_id, sl_guide_id = uuid4(), uuid4()
+            await owner.execute(
+                "INSERT INTO content.site_locale_base "
+                "(site_id,tag,enabled,is_default,position) VALUES "
+                "($1,'en',true,true,0),($1,'sl-SI',true,false,1)",
+                site.site_id,
+            )
             await owner.execute(
                 "INSERT INTO control.user_account "
                 "(id,identity_kind,oidc_issuer,oidc_subject,display_name) "
@@ -250,6 +258,15 @@ async def test_browser_token_projects_only_bound_overlay_and_is_one_time(
                 site.site_id,
             )
             await owner.execute(
+                "INSERT INTO content.page_base "
+                "(id,site_id,slug,title,status,locale,parent_id) VALUES "
+                "($1,$2,'home','Domov','PUBLISHED','sl-SI',NULL),"
+                "($3,$2,'guide','Vodnik','PUBLISHED','sl-SI',$1)",
+                sl_home_id,
+                site.site_id,
+                sl_guide_id,
+            )
+            await owner.execute(
                 "INSERT INTO content.page_composition_base "
                 "(site_id,page_id,component_type,schema_version,slot_key,"
                 "order_key,props) "
@@ -262,10 +279,11 @@ async def test_browser_token_projects_only_bound_overlay_and_is_one_time(
             agent_pool, session_id=workspace_id, operation_id=uuid4()
         ) as cow:
             await cow.native.execute(
-                "UPDATE content.page SET title='Bound browser draft' "
-                "WHERE site_id=$1 AND slug='home' AND locale='en'",
+                "UPDATE content.page SET title='Bound localized nested browser draft' "
+                "WHERE site_id=$1 AND slug='guide' AND locale='sl-SI'",
                 site.site_id,
             )
+        preview_route = f"{ROUTE}/sl-si/guide"
         async with agent_pool.acquire() as agent:
             run_id = await _begin(
                 agent,
@@ -274,6 +292,7 @@ async def test_browser_token_projects_only_bound_overlay_and_is_one_time(
                 workspace_id=workspace_id,
                 delegator_id=user_id,
                 key="render-valid",
+                route=preview_route,
             )
         adapter = _RenderAdapter(public_pool, preview_pool)
         service = RenderProjectionService(adapter, browser_verifier=signer)
@@ -286,6 +305,7 @@ async def test_browser_token_projects_only_bound_overlay_and_is_one_time(
             run_id=run_id,
             now=now,
             nonce="00112233445566778899aabbccddeeff",
+            route=preview_route,
         )
         render_app = create_render_app(
             settings=ServiceSettings.for_test(),
@@ -302,24 +322,28 @@ async def test_browser_token_projects_only_bound_overlay_and_is_one_time(
                     headers={"X-SLAIF-Browser-Run-Token": token},
                     json={
                         "authority": "localhost",
-                        "path": f"{ROUTE}/",
+                        "path": preview_route,
                         "workspace_id": str(workspace_id),
-                        "browser_route": ROUTE,
+                        "browser_route": preview_route,
                     },
                 )
                 assert response.status_code == 200
                 assert response.json()["route_kind"] == "page"
                 assert response.json()["render_mode"] == "preview"
-                assert response.json()["page"]["title"] == "Bound browser draft"
+                assert response.json()["page"]["title"] == (
+                    "Bound localized nested browser draft"
+                )
+                assert response.json()["page"]["locale"] == "sl-SI"
+                assert response.json()["page"]["effective_route"] == "/sl-SI/guide"
                 assert token not in response.text
                 replay = await client.post(
                     "/internal/render/v1/preview",
                     headers={"X-SLAIF-Browser-Run-Token": token},
                     json={
                         "authority": "localhost",
-                        "path": f"{ROUTE}/",
+                        "path": preview_route,
                         "workspace_id": str(workspace_id),
-                        "browser_route": ROUTE,
+                        "browser_route": preview_route,
                     },
                 )
                 assert replay.status_code == 404
@@ -328,6 +352,11 @@ async def test_browser_token_projects_only_bound_overlay_and_is_one_time(
         )
         assert canonical.route_kind == "page"
         assert canonical.page.title == "Canonical browser page"
+        canonical_nested = await service.canonical(
+            RenderPageRequest(authority="localhost", path=preview_route)
+        )
+        assert canonical_nested.route_kind == "page"
+        assert canonical_nested.page.title == "Vodnik"
         async with owner_connection(
             database.settings.resolved_owner_dsn(), expected_database=database.name
         ) as owner:

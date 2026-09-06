@@ -140,6 +140,17 @@ and `playwright-core`, rejects Firefox/WebKit inventory, and hashes the retained
 root E2E runner still installs all three test-only browser families outside the
 product image.
 
+The Apache adapter is separately qualified on the official
+`httpd:2.4.68-alpine3.24` multi-platform image, pinned by its exact index digest.
+Its Alpine 3.24 package overlay uses the versions supplied by that release
+(`apr-util`/`apr-util-ldap` 1.6.3-r2 and OpenSSL 3.5.7-r0); the other Alpine
+images retain their independently qualified 3.23 package sources. The current
+Grype database reports Apache Critical findings whose fixes require
+`libcurl` 8.21.0-r0, `apr-util` 1.6.4-r0, and OpenSSL 3.5.8-r0. Alpine 3.24
+does not currently provide the fixed libcurl package compatible with the
+official image dependency set, so this remains an explicit upstream blocker;
+no vulnerability exception or scanner weakening is permitted.
+
 ## Vulnerability gate and database freshness
 
 Grype must successfully update and report a valid database whose build time is

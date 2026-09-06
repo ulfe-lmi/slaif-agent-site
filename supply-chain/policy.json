@@ -112,7 +112,7 @@
     "pnpm/action-setup": "0977fd99725f1db4007ccb2928dbb4e90d06cc86"
   },
   "oci_sources": {
-    "apache": "docker.io/library/httpd:2.4.68-alpine3.23@sha256:4a15e9c73f25334bc03cfb3c692c9adfc103bb46ca89cee1f0b9a5fcbc7b21f6",
+    "apache": "docker.io/library/httpd:2.4.68-alpine3.24@sha256:1b766f17b84026429b7cb243317b142921b24432336e798bc881c43f45ed9567",
     "nginx": "docker.io/library/nginx:1.29.7-alpine3.23@sha256:e7257f1ef28ba17cf7c248cb8ccf6f0c6e0228ab9c315c152f9c203cd34cf6d1",
     "node": "docker.io/library/node:24.14.1-alpine3.23@sha256:8510330d3eb72c804231a834b1a8ebb55cb3796c3e4431297a24d246b8add4d5",
     "playwright": "mcr.microsoft.com/playwright:v1.62.1-noble@sha256:dcc5531e97840b9b5e794f2814476b21571c5124a3fca2267d73041f56e7580e",
@@ -124,7 +124,8 @@
     "registry": "https://dl-cdn.alpinelinux.org/alpine/v3.23",
     "images": {
       "apache": {
-        "install": ["apr-util-ldap=1.6.4-r0", "apr-util=1.6.4-r0", "libcrypto3=3.5.8-r0", "libssl3=3.5.8-r0"],
+        "registry": "https://dl-cdn.alpinelinux.org/alpine/v3.24",
+        "install": ["apr-util-ldap=1.6.3-r2", "apr-util=1.6.3-r2", "libcrypto3=3.5.7-r0", "libssl3=3.5.7-r0"],
         "remove": ["perl"]
       },
       "backend": {

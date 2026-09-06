@@ -1383,6 +1383,21 @@ def run_acceptance(project: str) -> None:
             f"oap-locale-create-{tag}",
         )
         locale_id = _require_uuid(locale_create["record"]["id"], "locale")
+        localized_home = _mutation(
+            client,
+            primary_token,
+            "/api/agent/v1/pages/",
+            {
+                "slug": "home",
+                "title": "Slovenian home",
+                "status": "DRAFT",
+                "locale": "sl-SI",
+            },
+            f"oap-locale-home-create-{tag}",
+        )
+        localized_home_id = _require_uuid(
+            localized_home["record"]["id"], "localized-home-page"
+        )
         locale_default = _request_mutation(
             client,
             primary_token,
@@ -1671,6 +1686,14 @@ def run_acceptance(project: str) -> None:
             f"/api/agent/v1/locales/{default_locale['id']}",
             {"is_default": True, "expected_row_version": 2},
             f"oap-locale-restore-default-{tag}",
+        )
+        _request_mutation(
+            client,
+            primary_token,
+            f"/api/agent/v1/pages/{localized_home_id}",
+            {"expected_row_version": 1},
+            f"oap-locale-home-delete-{tag}",
+            method="DELETE",
         )
         _request_mutation(
             client,

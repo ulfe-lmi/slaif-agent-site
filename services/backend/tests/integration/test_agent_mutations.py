@@ -1849,7 +1849,7 @@ async def test_agent_049_downgrade_rejects_page_data_atomically(
             "FROM control.alembic_version CROSS JOIN content.page_base WHERE id=$1",
             page_id,
         )
-    with pytest.raises(Exception, match="049_DOWNGRADE_REQUIRES_PUBLIC_COW_DISABLE"):
+    with pytest.raises(Exception, match="053_DOWNGRADE_REQUIRES_PUBLIC_COW_DISABLE"):
         await run_migration(
             database.settings.resolved_owner_dsn(),
             expected_database=database.name,
@@ -1941,7 +1941,7 @@ async def test_agent_redirect_051_migration_round_trip_preserves_data_and_privil
             await owner.fetchval(
                 "SELECT version_num::text FROM control.alembic_version"
             )
-            == "052_001"
+            == "053_001"
         )
         assert tuple(
             await owner.fetchrow(
@@ -2032,7 +2032,7 @@ async def test_agent_049_plain_page_data_downgrade_and_upgrade_preserves_data(
             await owner.fetchval(
                 "SELECT version_num::text FROM control.alembic_version"
             )
-            == "052_001"
+            == "053_001"
         )
         row = await owner.fetchrow(
             "SELECT title, route_template, deleted_at FROM content.page_base "
@@ -4108,7 +4108,7 @@ async def test_agent_046_047_migration_round_trip_preserves_contract_and_state(
                 item_id = UUID(created_item.json()["record"]["id"])
 
         with pytest.raises(
-            Exception, match="049_DOWNGRADE_REQUIRES_PUBLIC_COW_DISABLE"
+            Exception, match="053_DOWNGRADE_REQUIRES_PUBLIC_COW_DISABLE"
         ):
             await run_migration(
                 database.settings.resolved_owner_dsn(),
@@ -4187,7 +4187,7 @@ async def test_agent_046_047_migration_round_trip_preserves_contract_and_state(
                 await owner.fetchval(
                     "SELECT version_num::text FROM control.alembic_version"
                 )
-                == "052_001"
+                == "053_001"
             )
             assert await owner.fetchval(
                 "SELECT to_regprocedure($1)",
@@ -4407,7 +4407,7 @@ async def test_agent_048_data_bearing_round_trip_preserves_relations_views_and_a
                 sorted(await reviewer.operations(workspace_id, schema="content"))
             )
         with pytest.raises(
-            Exception, match="049_DOWNGRADE_REQUIRES_PUBLIC_COW_DISABLE"
+            Exception, match="053_DOWNGRADE_REQUIRES_PUBLIC_COW_DISABLE"
         ):
             await run_migration(
                 database.settings.resolved_owner_dsn(),
@@ -4516,7 +4516,7 @@ async def test_agent_048_data_bearing_round_trip_preserves_relations_views_and_a
         )
         await reconcile(database.settings)
         final_status = await status(database.settings)
-        assert final_status.revision == "052_001"
+        assert final_status.revision == "053_001"
         assert final_status.state.value == "HARDENED"
         assert final_status.safe
         assert await cow_rows() == content_before
@@ -10898,7 +10898,7 @@ async def test_semantic_audit_contract_is_strict_and_reversible(
         assert await owner_counts() == counts_before_direct
 
         with pytest.raises(
-            Exception, match="049_DOWNGRADE_REQUIRES_PUBLIC_COW_DISABLE"
+            Exception, match="053_DOWNGRADE_REQUIRES_PUBLIC_COW_DISABLE"
         ):
             await run_migration(
                 database.settings.resolved_owner_dsn(),
@@ -10963,7 +10963,7 @@ async def test_semantic_audit_contract_is_strict_and_reversible(
                 await owner.fetchval(
                     "SELECT version_num::text FROM control.alembic_version"
                 )
-                == "052_001"
+                == "053_001"
             )
             assert (
                 await owner.fetchval(
@@ -11811,3 +11811,148 @@ async def test_max_deletes_is_the_transactional_delete_quota_bound(
     finally:
         await reviewer_pool.close()
         await agent_pool.close()
+
+
+@pytest.mark.asyncio
+async def test_agent_locale_switch_page_delete_diagnostic(
+    agent_site_database: AgentSiteDatabase,
+) -> None:
+    """Locale graph rejection and valid cleanup preserve page deletion."""
+
+    database = agent_site_database
+    _token, seeded = await _seed(database)
+    scopes = [
+        "site:read",
+        "page:create",
+        "page:read",
+        "page:delete",
+        "locale:configure",
+        "redirect:create",
+    ]
+    token, workspace_id = await _workspace_capability(
+        database, seeded, scopes, "Agent Locale Delete Diagnostic"
+    )
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        await owner.execute(
+            "UPDATE control.capability SET request_quota=100, mutation_quota=100, "
+            "delete_quota=100 WHERE workspace_id=$1",
+            workspace_id,
+        )
+    app = create_agent_app(
+        settings=ServiceSettings.for_test(),
+        database_settings=_agent_settings(database),
+    )
+    try:
+        async with app.router.lifespan_context(app):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://agent.test"
+            ) as client:
+                headers = {"Authorization": f"Bearer {token}"}
+                home = await client.post(
+                    "/api/agent/v1/pages",
+                    headers={**headers, "Idempotency-Key": "diagnostic-home"},
+                    json={"slug": "home", "title": "Home", "locale": "en-US"},
+                )
+                assert home.status_code == 201, home.text
+                locales = await client.get("/api/agent/v1/locales", headers=headers)
+                assert locales.status_code == 200, locales.text
+                default_locale_id = UUID(
+                    next(row for row in locales.json() if row["is_default"])["id"]
+                )
+                page = await client.post(
+                    "/api/agent/v1/pages",
+                    headers={**headers, "Idempotency-Key": "diagnostic-page"},
+                    json={
+                        "slug": "diagnostic",
+                        "title": "Diagnostic",
+                        "locale": "en-US",
+                    },
+                )
+                assert page.status_code == 201, page.text
+                page_id = UUID(page.json()["record"]["id"])
+                redirect = await client.post(
+                    "/api/agent/v1/redirects",
+                    headers={**headers, "Idempotency-Key": "diagnostic-redirect"},
+                    json={
+                        "source_route": "/diagnostic-redirect",
+                        "target": "/",
+                        "status_code": 301,
+                    },
+                )
+                assert redirect.status_code == 201, redirect.text
+                locale = await client.post(
+                    "/api/agent/v1/locales",
+                    headers={**headers, "Idempotency-Key": "diagnostic-locale"},
+                    json={"tag": "sl-SI", "position": 1},
+                )
+                assert locale.status_code == 201, locale.text
+                locale_id = UUID(locale.json()["record"]["id"])
+                switched = await client.patch(
+                    f"/api/agent/v1/locales/{locale_id}",
+                    headers={**headers, "Idempotency-Key": "diagnostic-default"},
+                    json={"is_default": True, "expected_row_version": 1},
+                )
+                assert switched.status_code == 409, switched.text
+                unchanged_locale = await client.get(
+                    f"/api/agent/v1/locales/{locale_id}", headers=headers
+                )
+                assert unchanged_locale.status_code == 200
+                assert unchanged_locale.json()["row_version"] == 1
+
+                valid_home = await client.post(
+                    "/api/agent/v1/pages",
+                    headers={**headers, "Idempotency-Key": "diagnostic-valid-home"},
+                    json={"slug": "home", "title": "Slovenian home", "locale": "sl-SI"},
+                )
+                assert valid_home.status_code == 201, valid_home.text
+                valid_home_id = UUID(valid_home.json()["record"]["id"])
+                switched = await client.patch(
+                    f"/api/agent/v1/locales/{locale_id}",
+                    headers={**headers, "Idempotency-Key": "diagnostic-valid-default"},
+                    json={"is_default": True, "expected_row_version": 1},
+                )
+                assert switched.status_code == 200, switched.text
+                assert switched.json()["record"]["row_version"] == 2
+                read = await client.get(
+                    f"/api/agent/v1/pages/{page_id}", headers=headers
+                )
+                assert read.status_code == 200, read.text
+                assert read.json()["effective_route"] == "/en-US/diagnostic"
+
+                delete = await client.request(
+                    "DELETE",
+                    f"/api/agent/v1/pages/{page_id}",
+                    headers={**headers, "Idempotency-Key": "diagnostic-delete"},
+                    json={"expected_row_version": 1},
+                )
+                assert delete.status_code == 200, delete.text
+
+                restore = await client.patch(
+                    f"/api/agent/v1/locales/{default_locale_id}",
+                    headers={
+                        **headers,
+                        "Idempotency-Key": "diagnostic-restore-default",
+                    },
+                    json={"is_default": True, "expected_row_version": 2},
+                )
+                assert restore.status_code == 200, restore.text
+                assert restore.json()["record"]["row_version"] == 3
+                delete_home = await client.request(
+                    "DELETE",
+                    f"/api/agent/v1/pages/{valid_home_id}",
+                    headers={**headers, "Idempotency-Key": "diagnostic-delete-home"},
+                    json={"expected_row_version": 1},
+                )
+                assert delete_home.status_code == 200, delete_home.text
+                delete_locale = await client.request(
+                    "DELETE",
+                    f"/api/agent/v1/locales/{locale_id}",
+                    headers={**headers, "Idempotency-Key": "diagnostic-delete-locale"},
+                    json={"expected_row_version": 3},
+                )
+                assert delete_locale.status_code == 200, delete_locale.text
+
+    finally:
+        pass

@@ -1,5 +1,5 @@
-# Apache HTTP Server 2.4.68; Apache-2.0 license; official multi-platform image.
-FROM httpd:2.4.68-alpine3.23@sha256:4a15e9c73f25334bc03cfb3c692c9adfc103bb46ca89cee1f0b9a5fcbc7b21f6
+# Apache HTTP Server 2.4.68 on Alpine 3.24; Apache-2.0 license; official image.
+FROM httpd:2.4.68-alpine3.24@sha256:1b766f17b84026429b7cb243317b142921b24432336e798bc881c43f45ed9567
 ARG SOURCE_DATE_EPOCH=1704067200
 ARG SLAIF_IMAGE_CREATED=2024-01-01T00:00:00Z
 ARG SLAIF_IMAGE_REVISION=local
@@ -13,10 +13,10 @@ LABEL org.opencontainers.image.title="SLAIF Agent-Site Apache edge" \
       org.opencontainers.image.created="${SLAIF_IMAGE_CREATED}"
 ENV SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH}
 RUN apk --timeout 30 add --no-cache \
-      'apr-util=1.6.4-r0' \
-      'apr-util-ldap=1.6.4-r0' \
-      'libcrypto3=3.5.8-r0' \
-      'libssl3=3.5.8-r0' \
+      'apr-util=1.6.3-r2' \
+      'apr-util-ldap=1.6.3-r2' \
+      'libcrypto3=3.5.7-r0' \
+      'libssl3=3.5.7-r0' \
     && apk del perl \
     && sed -i \
       -e 's/^#LoadModule headers_module/LoadModule headers_module/' \

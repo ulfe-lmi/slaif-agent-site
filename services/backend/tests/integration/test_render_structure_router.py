@@ -279,8 +279,16 @@ async def test_public_agent_cow_structure_is_visible_only_to_authorized_preview(
                 default_locale="en",
             )
         )
+        other_site = await SiteService(control_pool).create(
+            CreateSiteRequest(
+                site_key="agent-structure-router-other",
+                display_name="Other Structure Router",
+                default_locale="en",
+            )
+        )
         user_id, session_id = uuid4(), uuid4()
         workspace_id = uuid4()
+        other_workspace_id = uuid4()
         secret = b"r" * 32
         public_id = f"sas2_{session_id.hex}"
         scopes = [
@@ -295,6 +303,7 @@ async def test_public_agent_cow_structure_is_visible_only_to_authorized_preview(
             "navigation:read",
             "navigation:create",
             "navigation:write",
+            "navigation:delete",
             "redirect:create",
         ]
         async with owner_connection(
@@ -303,8 +312,16 @@ async def test_public_agent_cow_structure_is_visible_only_to_authorized_preview(
             await owner.execute(
                 "INSERT INTO content.site_locale_base "
                 "(site_id,tag,enabled,is_default,position) VALUES "
-                "($1,'en',true,true,0) ON CONFLICT (site_id,tag) DO NOTHING",
+                "($1,'en',true,true,0),($2,'en',true,true,0) "
+                "ON CONFLICT (site_id,tag) DO NOTHING",
                 site.site_id,
+                other_site.site_id,
+            )
+            await owner.execute(
+                "INSERT INTO content.page_base "
+                "(site_id,slug,title,status,locale) "
+                "VALUES ($1,'home','Other home','PUBLISHED','en')",
+                other_site.site_id,
             )
             await owner.execute(
                 "INSERT INTO control.user_account "
@@ -319,6 +336,13 @@ async def test_public_agent_cow_structure_is_visible_only_to_authorized_preview(
                 "(site_id,user_account_id,role_key,delegation_ceiling) "
                 "VALUES ($1,$2,'SITE_OWNER',4)",
                 site.site_id,
+                user_id,
+            )
+            await owner.execute(
+                "INSERT INTO control.site_membership "
+                "(site_id,user_account_id,role_key,delegation_ceiling) "
+                "VALUES ($1,$2,'SITE_OWNER',4)",
+                other_site.site_id,
                 user_id,
             )
             await owner.execute(
@@ -341,6 +365,17 @@ async def test_public_agent_cow_structure_is_visible_only_to_authorized_preview(
                 site.site_id,
                 user_id,
                 json.dumps(scopes),
+                datetime.now(UTC) + timedelta(hours=1),
+            )
+            await owner.execute(
+                "INSERT INTO control.workspace "
+                "(id,site_id,created_by,actor_type,title,delegation_preset,"
+                "effective_scopes,status,expires_at) VALUES "
+                "($1,$2,$3,'HUMAN','Other workspace','L2',"
+                "'[\"preview:inspect\"]'::jsonb,'ACTIVE',$4)",
+                other_workspace_id,
+                other_site.site_id,
+                user_id,
                 datetime.now(UTC) + timedelta(hours=1),
             )
             token, capability_public_id, digest = generate_capability_token()
@@ -498,6 +533,16 @@ async def test_public_agent_cow_structure_is_visible_only_to_authorized_preview(
         assert nested_preview.route_kind == "page"
         assert nested_preview.page.title == "Vodnik"
         assert nested_preview.page.effective_route == "/guide"
+        other_before = await service.preview(
+            RenderPreviewRequest(
+                authority="localhost",
+                path=f"/s/{other_site.site_key}/",
+                workspace_id=other_workspace_id,
+                session_token=format_session_token(public_id, secret),
+            )
+        )
+        assert other_before.route_kind == "page"
+        assert other_before.page.title == "Other home"
         preview_redirect = await service.preview(
             RenderPreviewRequest(
                 authority="localhost",
@@ -541,6 +586,72 @@ async def test_public_agent_cow_structure_is_visible_only_to_authorized_preview(
                 assert moved_preview.page.id == UUID(nested_id)
                 assert moved_preview.page.parent_id == UUID(section_id)
                 assert moved_preview.page.effective_route == "/en/section/guide"
+                with pytest.raises(ProjectionError, match="not_found"):
+                    await service.canonical(
+                        RenderPageRequest(
+                            authority="localhost",
+                            path="/s/agent-structure-router/en/section/guide",
+                        )
+                    )
+
+                removed_item = await client.request(
+                    "DELETE",
+                    f"/api/agent/v1/navigation-items/"
+                    f"{second_item.json()['record']['id']}",
+                    headers={
+                        **headers,
+                        "Idempotency-Key": "router-nav-delete-before-page",
+                    },
+                    json={"expected_row_version": 2},
+                )
+                assert removed_item.status_code == 200, removed_item.text
+                deleted = await client.request(
+                    "DELETE",
+                    f"/api/agent/v1/pages/{nested_id}",
+                    headers={**headers, "Idempotency-Key": "router-page-delete"},
+                    json={"expected_row_version": 2},
+                )
+                assert deleted.status_code == 200, deleted.text
+                assert deleted.json()["record"]["row_version"] == 3
+                with pytest.raises(ProjectionError, match="not_found"):
+                    await service.preview(
+                        RenderPreviewRequest(
+                            authority="localhost",
+                            path="/s/agent-structure-router/en/section/guide",
+                            locale="en",
+                            workspace_id=workspace_id,
+                            session_token=format_session_token(public_id, secret),
+                        )
+                    )
+                restored = await client.post(
+                    f"/api/agent/v1/pages/{nested_id}:restore",
+                    headers={**headers, "Idempotency-Key": "router-page-restore"},
+                    json={"expected_row_version": 3},
+                )
+                assert restored.status_code == 200, restored.text
+                assert restored.json()["record"]["row_version"] == 4
+                restored_preview = await service.preview(
+                    RenderPreviewRequest(
+                        authority="localhost",
+                        path="/s/agent-structure-router/en/section/guide",
+                        locale="en",
+                        workspace_id=workspace_id,
+                        session_token=format_session_token(public_id, secret),
+                    )
+                )
+                assert restored_preview.route_kind == "page"
+                assert restored_preview.page.id == UUID(nested_id)
+                assert restored_preview.page.effective_route == "/en/section/guide"
+                other_after = await service.preview(
+                    RenderPreviewRequest(
+                        authority="localhost",
+                        path=f"/s/{other_site.site_key}/",
+                        workspace_id=other_workspace_id,
+                        session_token=format_session_token(public_id, secret),
+                    )
+                )
+                assert other_after.route_kind == "page"
+                assert other_after.page.title == other_before.page.title
                 with pytest.raises(ProjectionError, match="not_found"):
                     await service.canonical(
                         RenderPageRequest(
@@ -668,6 +779,344 @@ async def test_navigation_corruption_fails_closed_without_partial_projection(
                     authority="localhost", path="/s/corrupt-navigation-router/"
                 )
             )
+    finally:
+        await public_pool.close()
+        await control_pool.close()
+
+
+@pytest.mark.asyncio
+async def test_navigation_corruption_matrix_fails_closed(
+    agent_site_database: AgentSiteDatabase,
+) -> None:
+    """Corrupt every static structure edge and require a bounded failure."""
+
+    database = agent_site_database
+    await upgrade(database.settings)
+    await reconcile(database.settings)
+    control_pool = await database.role_pool("slaif_control")
+    public_pool = await database.role_pool("slaif_public_reader")
+    try:
+        site = await SiteService(control_pool).create(
+            CreateSiteRequest(
+                site_key="corrupt-navigation-matrix",
+                display_name="Corrupt Navigation Matrix",
+                default_locale="en",
+            )
+        )
+        page_id, other_page_id, dynamic_page_id = uuid4(), uuid4(), uuid4()
+        navigation_id, other_navigation_id = uuid4(), uuid4()
+        item_id, second_item_id, other_item_id = uuid4(), uuid4(), uuid4()
+        depth_ids = [uuid4() for _ in range(10)]
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            await owner.execute(
+                "INSERT INTO content.site_locale_base "
+                "(site_id,tag,enabled,is_default,position) VALUES "
+                "($1,'en',true,true,0),($1,'sl-SI',true,false,1)",
+                site.site_id,
+            )
+            await owner.execute(
+                "INSERT INTO content.page_base "
+                "(id,site_id,slug,title,status,locale,route_template) VALUES "
+                "($1,$2,'home','Home','PUBLISHED','en',NULL),"
+                "($3,$2,'other','Other','PUBLISHED','en',NULL),"
+                "($4,$2,'dynamic','Dynamic','PUBLISHED','en','{slug}')",
+                page_id,
+                site.site_id,
+                other_page_id,
+                dynamic_page_id,
+            )
+            await owner.execute(
+                "INSERT INTO content.navigation_base "
+                "(id,site_id,key,label,labels,settings) VALUES "
+                "($1,$2,'primary','Primary','{\"en\":\"Primary\"}'::jsonb,'{}'),"
+                "($3,$2,'secondary','Secondary','{\"en\":\"Secondary\"}'::jsonb,'{}')",
+                navigation_id,
+                site.site_id,
+                other_navigation_id,
+            )
+            await owner.execute(
+                "INSERT INTO content.navigation_item_base "
+                "(id,site_id,navigation_id,parent_id,parent_key,page_id,target_kind,"
+                "target_value,labels,locale,position) VALUES "
+                "($1,$2,$3,NULL,$6::uuid,$4,'PAGE',$5,'{\"en\":\"Home\"}',NULL,0),"
+                "($7,$2,$3,NULL,$6::uuid,$8,'PAGE',$9,'{\"en\":\"Other\"}',NULL,1),"
+                "($10,$2,$11,NULL,$6::uuid,NULL,'EXTERNAL',"
+                "'https://example.test/other','{\"en\":\"Other\"}',NULL,0)",
+                item_id,
+                site.site_id,
+                navigation_id,
+                page_id,
+                str(page_id),
+                "00000000-0000-0000-0000-000000000000",
+                second_item_id,
+                other_page_id,
+                str(other_page_id),
+                other_item_id,
+                other_navigation_id,
+            )
+        service = RenderProjectionService(_RenderAdapter(public_pool))
+        request = RenderPageRequest(
+            authority="localhost", path="/s/corrupt-navigation-matrix/"
+        )
+        baseline = await service.canonical(request)
+        assert baseline.route_kind == "page"
+
+        async def corrupt(sql: str, *args: object) -> None:
+            async with owner_connection(
+                database.settings.resolved_owner_dsn(), expected_database=database.name
+            ) as owner:
+                await owner.execute(sql, *args)
+
+        await corrupt(
+            "ALTER TABLE content.navigation_item_base DROP CONSTRAINT "
+            "navigation_item_sibling_position"
+        )
+        await corrupt(
+            "UPDATE content.navigation_item_base SET labels='{}'::jsonb WHERE id=$1",
+            item_id,
+        )
+        with pytest.raises(ProjectionError, match="navigation_label"):
+            await service.canonical(request)
+        await corrupt(
+            'UPDATE content.navigation_item_base SET labels=\'{"en":"Home"}\'::jsonb '
+            "WHERE id=$1",
+            item_id,
+        )
+
+        await corrupt(
+            "UPDATE content.navigation_item_base SET position=0 WHERE id=$1",
+            second_item_id,
+        )
+        with pytest.raises(ProjectionError, match="navigation_position"):
+            await service.canonical(request)
+        await corrupt(
+            "UPDATE content.navigation_item_base SET position=1 WHERE id=$1",
+            second_item_id,
+        )
+
+        await corrupt(
+            "UPDATE content.navigation_item_base SET page_id=NULL,target_value=$2 "
+            "WHERE id=$1",
+            item_id,
+            str(uuid4()),
+        )
+        with pytest.raises(ProjectionError, match="unavailable"):
+            await service.canonical(request)
+        await corrupt(
+            "UPDATE content.navigation_item_base SET "
+            "page_id=$2::uuid,target_value=$2::text "
+            "WHERE id=$1",
+            item_id,
+            page_id,
+        )
+
+        await corrupt(
+            "UPDATE content.navigation_item_base SET target_kind='INTERNAL',"
+            "page_id=NULL,target_value='//unsafe' WHERE id=$1",
+            item_id,
+        )
+        with pytest.raises(ProjectionError, match="navigation_target"):
+            await service.canonical(request)
+        await corrupt(
+            "UPDATE content.navigation_item_base SET target_kind='EXTERNAL',"
+            "page_id=NULL,target_value='http://unsafe.test' WHERE id=$1",
+            item_id,
+        )
+        with pytest.raises(ProjectionError, match="navigation_target"):
+            await service.canonical(request)
+        await corrupt(
+            "UPDATE content.navigation_item_base SET target_kind='PAGE',"
+            "page_id=$2::uuid,target_value=$2::text WHERE id=$1",
+            item_id,
+            page_id,
+        )
+
+        await corrupt(
+            "UPDATE content.navigation_item_base SET parent_id=$2,parent_key=$2 "
+            "WHERE id=$1",
+            item_id,
+            other_item_id,
+        )
+        with pytest.raises(ProjectionError, match="navigation_parent"):
+            await service.canonical(request)
+        await corrupt(
+            "UPDATE content.navigation_item_base SET parent_id=NULL,parent_key=$2 "
+            "WHERE id=$1",
+            item_id,
+            "00000000-0000-0000-0000-000000000000",
+        )
+
+        await corrupt(
+            "ALTER TABLE content.navigation_item_base DISABLE TRIGGER "
+            "navigation_item_parent_guard"
+        )
+        await corrupt(
+            "UPDATE content.navigation_item_base SET parent_id=$2,parent_key=$2,"
+            "position=0 WHERE id=$1",
+            item_id,
+            second_item_id,
+        )
+        await corrupt(
+            "UPDATE content.navigation_item_base SET parent_id=$2,parent_key=$2,"
+            "position=0 WHERE id=$1",
+            second_item_id,
+            item_id,
+        )
+        await corrupt(
+            "ALTER TABLE content.navigation_item_base ENABLE TRIGGER "
+            "navigation_item_parent_guard"
+        )
+        with pytest.raises(ProjectionError, match="navigation_(cycle|unreachable)"):
+            await service.canonical(request)
+        await corrupt(
+            "ALTER TABLE content.navigation_item_base DISABLE TRIGGER "
+            "navigation_item_parent_guard"
+        )
+        await corrupt(
+            "UPDATE content.navigation_item_base SET parent_id=NULL,parent_key=$2 "
+            "WHERE id=$1",
+            item_id,
+            "00000000-0000-0000-0000-000000000000",
+        )
+        await corrupt(
+            "UPDATE content.navigation_item_base SET parent_id=NULL,parent_key=$2 "
+            "WHERE id=$1",
+            second_item_id,
+            "00000000-0000-0000-0000-000000000000",
+        )
+        await corrupt(
+            "UPDATE content.navigation_item_base SET position=1 WHERE id=$1",
+            second_item_id,
+        )
+        await corrupt(
+            "ALTER TABLE content.navigation_item_base ENABLE TRIGGER "
+            "navigation_item_parent_guard"
+        )
+
+        await corrupt(
+            "ALTER TABLE content.navigation_item_base DROP CONSTRAINT "
+            "navigation_item_labels_bounded"
+        )
+        await corrupt(
+            "UPDATE content.navigation_item_base SET labels=$2::jsonb WHERE id=$1",
+            item_id,
+            json.dumps({"en": "x" * 17_000}),
+        )
+        with pytest.raises(ProjectionError, match="navigation_label"):
+            await service.canonical(request)
+        await corrupt(
+            'UPDATE content.navigation_item_base SET labels=\'{"en":"Home"}\'::jsonb '
+            "WHERE id=$1",
+            item_id,
+        )
+
+        await corrupt(
+            "UPDATE content.site_locale_base SET enabled=false "
+            "WHERE site_id=$1 AND tag='sl-SI'",
+            site.site_id,
+        )
+        with pytest.raises(ProjectionError, match="not_found"):
+            await service.canonical(
+                RenderPageRequest(
+                    authority="localhost", path="/s/corrupt-navigation-matrix/sl-si/"
+                )
+            )
+
+        await corrupt(
+            "UPDATE content.navigation_item_base SET locale='sl-SI' WHERE id=$1",
+            item_id,
+        )
+        await corrupt(
+            "UPDATE content.site_locale_base SET enabled=false "
+            "WHERE site_id=$1 AND tag='sl-SI'",
+            site.site_id,
+        )
+        with pytest.raises(ProjectionError, match="navigation_locale"):
+            await service.canonical(request)
+        await corrupt(
+            "UPDATE content.site_locale_base SET enabled=true WHERE site_id=$1 "
+            "AND tag='sl-SI'",
+            site.site_id,
+        )
+        await corrupt(
+            "UPDATE content.navigation_item_base SET locale=NULL WHERE id=$1", item_id
+        )
+
+        await corrupt("DROP INDEX content.site_locale_one_default")
+        await corrupt(
+            "UPDATE content.site_locale_base SET is_default=true "
+            "WHERE site_id=$1 AND tag='sl-SI'",
+            site.site_id,
+        )
+        with pytest.raises(ProjectionError, match="locale_state"):
+            await service.canonical(request)
+
+        await corrupt(
+            "UPDATE content.site_locale_base SET is_default=false "
+            "WHERE site_id=$1 AND tag='sl-SI'",
+            site.site_id,
+        )
+        await corrupt(
+            "UPDATE content.site_locale_base SET is_default=true "
+            "WHERE site_id=$1 AND tag='en'",
+            site.site_id,
+        )
+
+        with pytest.raises(ProjectionError, match="not_found"):
+            await service.canonical(
+                RenderPageRequest(
+                    authority="localhost",
+                    path="/s/corrupt-navigation-matrix/dynamic/foo",
+                )
+            )
+
+        await corrupt(
+            "ALTER TABLE content.navigation_item_base DISABLE TRIGGER "
+            "navigation_item_parent_guard"
+        )
+        for index, depth_id in enumerate(depth_ids):
+            parent_id = depth_ids[index - 1] if index else None
+            parent_key = parent_id or UUID("00000000-0000-0000-0000-000000000000")
+            await corrupt(
+                "INSERT INTO content.navigation_item_base "
+                "(id,site_id,navigation_id,parent_id,parent_key,page_id,target_kind,"
+                "target_value,labels,locale,position) VALUES "
+                "($1,$2,$3,$4,$5,NULL,'EXTERNAL','https://example.test/depth',"
+                '\'{"en":"Depth"}\'::jsonb,$6,$7)',
+                depth_id,
+                site.site_id,
+                navigation_id,
+                parent_id,
+                parent_key,
+                None,
+                2 if index == 0 else 0,
+            )
+        await corrupt(
+            "ALTER TABLE content.navigation_item_base ENABLE TRIGGER "
+            "navigation_item_parent_guard"
+        )
+        with pytest.raises(ProjectionError, match="navigation_(cycle|unreachable)"):
+            await service.canonical(request)
+        await corrupt(
+            "DELETE FROM content.navigation_item_base WHERE id=ANY($1::uuid[])",
+            depth_ids,
+        )
+
+        await corrupt(
+            "INSERT INTO content.navigation_item_base "
+            "(id,site_id,navigation_id,parent_id,parent_key,page_id,target_kind,"
+            "target_value,labels,locale,position) "
+            "SELECT gen_random_uuid(),$1,$2,NULL,$3,NULL,'EXTERNAL',"
+            "'https://example.test/count','{\"en\":\"Count\"}'::jsonb,NULL,g "
+            "FROM generate_series(2,258) AS g",
+            site.site_id,
+            navigation_id,
+            "00000000-0000-0000-0000-000000000000",
+        )
+        with pytest.raises(ProjectionError, match="navigation_too_large"):
+            await service.canonical(request)
     finally:
         await public_pool.close()
         await control_pool.close()

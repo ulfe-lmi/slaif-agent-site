@@ -268,13 +268,17 @@ def validate_policy(policy: dict[str, Any]) -> None:
             "policy: Alpine package override image coverage is incomplete"
         )
     for name, configuration in overrides["images"].items():
-        if not isinstance(configuration, dict) or set(configuration) != {
-            "install",
-            "remove",
-        }:
+        allowed_keys = {"install", "remove"}
+        if name == "apache":
+            allowed_keys.add("registry")
+        if not isinstance(configuration, dict) or set(configuration) != allowed_keys:
             raise PolicyError(
                 f"policy: Alpine package overrides for {name} are malformed"
             )
+        if name == "apache" and configuration["registry"] != (
+            "https://dl-cdn.alpinelinux.org/alpine/v3.24"
+        ):
+            raise PolicyError("policy: Apache Alpine package registry is not exact")
         installed = configuration["install"]
         removed = configuration["remove"]
         if not isinstance(installed, list) or not all(
