@@ -112,6 +112,103 @@ async def test_collection_contract_downgrades_from_head_to_040_and_back(
 
 
 @pytest.mark.asyncio
+async def test_055_downgrade_restores_054_functions_grants_and_data(
+    agent_site_database: AgentSiteDatabase,
+) -> None:
+    """Prove 054↔055 restores the exact lock/helper contract and rows."""
+
+    database = agent_site_database
+    await upgrade(database.settings)
+    await reconcile(database.settings)
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        async with owner.transaction():
+            await disable_cow_schema(AsyncpgExecutor(owner), schema="content")
+            site_id = await owner.fetchval(
+                "INSERT INTO control.site("
+                "site_key,display_name,default_locale,component_catalog_version) "
+                "VALUES ($1,'055 round trip','en-US','catalog-v1') RETURNING id",
+                f"round-trip-055-{uuid4().hex[:12]}",
+            )
+            await owner.execute(
+                "INSERT INTO content.site_locale "
+                "(site_id,tag,enabled,is_default,position) "
+                "VALUES ($1,'en-US',true,true,0)",
+                site_id,
+            )
+            await owner.execute(
+                "INSERT INTO content.page "
+                "(site_id,slug,title,status,locale) "
+                "VALUES ($1,'round-trip','Round trip','PUBLISHED','en-US')",
+                site_id,
+            )
+    function_sql = (
+        "SELECT pg_get_functiondef($1::regprocedure), "
+        "pg_get_userbyid(proowner), "
+        "has_function_privilege('public',$1,'EXECUTE'), "
+        "has_function_privilege('slaif_editor_runtime',$1,'EXECUTE') "
+        "FROM pg_proc WHERE oid=$1::regprocedure"
+    )
+    helper_signature = "content.slaif_redirect_page_target_dependency(uuid,text,uuid)"
+    editor_signature = (
+        "control.slaif_human_editor_workspace_assert(uuid,uuid,uuid,uuid,text,boolean)"
+    )
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        before = await owner.fetchrow(function_sql, helper_signature)
+        assert "candidate record" in before[0]
+        assert "pg_advisory_xact_lock_shared" in (
+            await owner.fetchval(
+                "SELECT pg_get_functiondef($1::regprocedure)", editor_signature
+            )
+        )
+    await run_migration(
+        database.settings.resolved_owner_dsn(),
+        expected_database=database.name,
+        operation="downgrade",
+        revision="054_001",
+    )
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        helper = await owner.fetchrow(function_sql, helper_signature)
+        editor = await owner.fetchrow(function_sql, editor_signature)
+        assert "candidate record" not in helper[0]
+        assert "pg_advisory_xact_lock_shared" not in editor[0]
+        assert tuple(helper[1:]) == ("slaif_owner", False, False)
+        assert tuple(editor[1:]) == ("slaif_owner", False, True)
+        assert (
+            await owner.fetchval(
+                "SELECT count(*) FROM content.page WHERE slug='round-trip'"
+            )
+            == 1
+        )
+    await run_migration(
+        database.settings.resolved_owner_dsn(),
+        expected_database=database.name,
+        operation="upgrade",
+        revision="head",
+    )
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        helper = await owner.fetchrow(function_sql, helper_signature)
+        editor = await owner.fetchrow(function_sql, editor_signature)
+        assert "candidate record" in helper[0]
+        assert "pg_advisory_xact_lock_shared" in editor[0]
+        assert tuple(helper[1:]) == ("slaif_owner", False, False)
+        assert tuple(editor[1:]) == ("slaif_owner", False, True)
+        assert (
+            await owner.fetchval(
+                "SELECT count(*) FROM content.page WHERE slug='round-trip'"
+            )
+            == 1
+        )
+
+
+@pytest.mark.asyncio
 async def test_site_data_substrate_downgrades_from_head_to_041_and_back(
     agent_site_database: AgentSiteDatabase,
 ) -> None:
@@ -207,7 +304,7 @@ async def test_upgrade_rebuilds_enabled_cow_without_pending_workspace_operations
             await owner.fetchval(
                 "SELECT version_num::text FROM control.alembic_version"
             )
-            == "055_001"
+            == "056_001"
         )
         assert await owner.fetchval("SELECT to_regclass('content.page') IS NOT NULL")
         assert await owner.fetchval("SELECT to_regclass('content.page_base') IS NULL")

@@ -73,6 +73,7 @@ export type PageProjection = Readonly<{
   requested_path: string;
   matched_path: string;
   locale: string;
+  route_parameters: Record<string, string>;
   page: {
     id: string;
     site_id: string;

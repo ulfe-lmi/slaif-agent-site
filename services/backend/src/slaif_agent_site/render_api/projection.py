@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 from collections import defaultdict
 from collections.abc import AsyncIterator
@@ -344,6 +345,7 @@ class RenderPageProjection(BaseModel):
     matched_path: str
     locale: str
     page: ProjectionPage
+    route_parameters: dict[str, str] = Field(default_factory=dict)
     composition: ProjectionComposition
     theme: dict[str, Any] = Field(default_factory=dict)
     locales: tuple[ProjectionLocale, ...] = ()
@@ -458,6 +460,7 @@ MAX_NAVIGATION_DEPTH = 8
 MAX_REDIRECTS = 256
 MAX_REDIRECT_CHAIN = 16
 MAX_JSON_BYTES = 16_384
+_DYNAMIC_SLUG = re.compile(r"^[a-z0-9][a-z0-9._~-]{0,254}$")
 
 
 @asynccontextmanager
@@ -540,6 +543,15 @@ def _page_route(row: Any) -> str:
     route = row[8]
     if not isinstance(route, str) or not route.startswith("/"):
         raise ProjectionError("invalid_route")
+    if route.endswith("/{slug}"):
+        prefix = route[:-6]
+        if not prefix.endswith("/"):
+            raise ProjectionError("invalid_route")
+        try:
+            validate_internal_route(prefix[:-1] or "/")
+        except ValueError:
+            raise ProjectionError("invalid_route") from None
+        return route
     try:
         normalized = validate_internal_route(route)
     except ValueError:
@@ -701,6 +713,9 @@ async def _collection_bindings(
     nodes: tuple[ProjectionNode, ...],
     site_id: UUID,
     render_mode: str,
+    selected_locale: str,
+    default_locale: str,
+    route_parameter: str | None,
 ) -> dict[str, tuple[dict[str, Any], ...]]:
     bindings: dict[str, tuple[dict[str, Any], ...]] = {}
     for node in _flatten(nodes):
@@ -710,6 +725,8 @@ async def _collection_bindings(
             "CollectionDetail",
         }:
             continue
+        if node.component_type == "CollectionDetail" and route_parameter is None:
+            raise ProjectionError("not_found")
         raw_view_id = node.props.get("viewId", node.props.get("view_id"))
         try:
             view_id = UUID(str(raw_view_id))
@@ -762,7 +779,12 @@ async def _collection_bindings(
         ]
         try:
             validate_query_contract(
-                filter_spec, sort_spec, projection_spec, pagination_spec, field_defs
+                filter_spec,
+                sort_spec,
+                projection_spec,
+                pagination_spec,
+                field_defs,
+                allow_localized_projection=True,
             )
         except (TypeError, ValueError):
             raise ProjectionError("unsupported_collection_query") from None
@@ -821,6 +843,11 @@ async def _collection_bindings(
                 filter_spec, values, slug=str(row[3]), status=str(row[4])
             ):
                 continue
+            if (
+                node.component_type == "CollectionDetail"
+                and str(row[3]) != route_parameter
+            ):
+                continue
             items.append(
                 {
                     "id": row[0],
@@ -837,15 +864,78 @@ async def _collection_bindings(
             sort_collection_items(items, sort_spec)
         except (TypeError, ValueError):
             raise ProjectionError("malformed_item") from None
-        page = items[offset : offset + requested_limit]
-        bindings[str(node.id)] = tuple(
-            {
-                **item,
-                "values": {field: item["values"][field] for field in projection_fields},
-            }
-            for item in page
+        if node.component_type == "CollectionDetail" and len(items) != 1:
+            raise ProjectionError("not_found")
+        page = (
+            items[:1]
+            if node.component_type == "CollectionDetail"
+            else items[offset : offset + requested_limit]
         )
+        translation_by_item: dict[UUID, dict[str, dict[str, Any]]] = defaultdict(dict)
+        if page:
+            translation_rows = await connection.fetch(
+                "SELECT item_id, locale, localized_values "
+                "FROM content.content_item_translation "
+                "WHERE site_id=$1 AND item_id=ANY($2::uuid[]) "
+                "AND locale=ANY($3::text[])",
+                site_id,
+                [item["id"] for item in page],
+                list(dict.fromkeys((selected_locale, default_locale))),
+            )
+            for translation in translation_rows:
+                item_id = translation[0]
+                locale = str(translation[1])
+                if locale in translation_by_item[item_id]:
+                    raise ProjectionError("translation_ambiguous")
+                localized_values = _json_value(translation[2])
+                if not isinstance(localized_values, dict):
+                    raise ProjectionError("malformed_translation")
+                try:
+                    validate_values(
+                        localized_values, cast(Any, field_defs), localized=True
+                    )
+                except (TypeError, ValueError):
+                    raise ProjectionError("malformed_translation") from None
+                translation_by_item[item_id][locale] = localized_values
+
+        projected_items: list[dict[str, Any]] = []
+        for item in page:
+            selected_values = translation_by_item[item["id"]].get(selected_locale, {})
+            default_values = translation_by_item[item["id"]].get(default_locale, {})
+            projected_values: dict[str, Any] = {}
+            for field in projection_fields:
+                definition = next(
+                    (candidate for candidate in field_defs if candidate.key == field),
+                    None,
+                )
+                if definition is None:
+                    raise ProjectionError("malformed_projection")
+                if definition.localized:
+                    if field in selected_values:
+                        projected_values[field] = selected_values[field]
+                    elif field in default_values:
+                        projected_values[field] = default_values[field]
+                    else:
+                        raise ProjectionError("missing_localized_value")
+                else:
+                    if field not in item["values"]:
+                        raise ProjectionError("missing_projection_value")
+                    projected_values[field] = item["values"][field]
+            projected_items.append({**item, "values": projected_values})
+        bindings[str(node.id)] = tuple(projected_items)
     return bindings
+
+
+def _dynamic_route_parameter(page_route: str, matched_route: str) -> str | None:
+    if not page_route.endswith("/{slug}"):
+        return None
+    prefix = page_route[:-6]
+    if not prefix.endswith("/") or not matched_route.startswith(prefix):
+        raise ProjectionError("not_found")
+    parameter = matched_route[len(prefix) :]
+    if _DYNAMIC_SLUG.fullmatch(parameter) is None:
+        raise ProjectionError("not_found")
+    return parameter
 
 
 class RenderProjectionService:
@@ -1311,6 +1401,7 @@ class RenderProjectionService:
             statuses=statuses,
         )
         page = _page(row)
+        route_parameter = _dynamic_route_parameter(page.effective_route, route)
         node_rows = list(
             await connection.fetch(
                 "SELECT id, site_id, page_id, component_type, schema_version, "
@@ -1322,11 +1413,21 @@ class RenderProjectionService:
             )
         )
         roots = _node_tree(node_rows, page_id=page.id, site_id=context.site_id)
+        detail_nodes = tuple(
+            node
+            for node in _flatten(roots)
+            if node.component_type == "CollectionDetail"
+        )
+        if page.route_template == "{slug}" and len(detail_nodes) != 1:
+            raise ProjectionError("not_found")
         bindings = await _collection_bindings(
             connection,
             nodes=roots,
             site_id=context.site_id,
             render_mode=render_mode,
+            selected_locale=locale,
+            default_locale=default_locale,
+            route_parameter=route_parameter,
         )
         navigation = await self._navigation(
             connection,
@@ -1354,8 +1455,11 @@ class RenderProjectionService:
                 canonical_revision=context.canonical_revision,
             ),
             requested_path=request.path,
-            matched_path=page.effective_route,
+            matched_path=route,
             locale=locale,
+            route_parameters=(
+                {"slug": route_parameter} if route_parameter is not None else {}
+            ),
             page=page,
             composition=ProjectionComposition(
                 schema_version="site-composition/v1",

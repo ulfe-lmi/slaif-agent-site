@@ -45,7 +45,7 @@ report.
 
 ## Active and remaining sequence
 
-The current active order is `077-b` on [PR #74](https://github.com/ulfe-lmi/slaif-agent-site/pull/74),
+The current active order is `077-t` on [PR #74](https://github.com/ulfe-lmi/slaif-agent-site/pull/74),
 which remains open and unmerged. The broader 077 page/navigation/redirect/
 Render contract remains `PARTIAL` on current `main`; the unmerged 077-a page
 slice is evidence under strategic review, not merged product truth. All later
@@ -53,7 +53,7 @@ order files remain inert until strategy selects and signals them.
 
 | Order | Contractual scope | Current status |
 |---|---|---|
-| 077 | Agent page, navigation, and redirect semantics | ACTIVE — PR #74 OPEN/UNMERGED; 077-b prerequisite round |
+| 077 | Agent page, navigation, redirect, and bounded dynamic collection Render semantics | ACTIVE — PR #74 OPEN/UNMERGED; 077-t evidence under strategic review |
 | 078 | Agent composition and design semantics | PARTIAL |
 | 079 | Agent media semantics and references | PARTIAL |
 | 080 | Real MCP semantic parity | SCAFFOLD ONLY |

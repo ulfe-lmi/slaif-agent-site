@@ -714,6 +714,7 @@ class AgentCowContentModelService(ContentModelService):
                 projection_spec,
                 pagination_spec,
                 fields,
+                allow_localized_projection=True,
             )
         except (ValueError, TypeError):
             raise ContentModelServiceError(

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import json
 from collections.abc import Mapping
 from contextlib import asynccontextmanager
@@ -47,8 +48,33 @@ from slaif_agent_site.content_model.site_data_models import RedirectRecord
 from slaif_agent_site.db.connections import owner_connection
 from slaif_agent_site.db.executor import AsyncpgExecutor
 from slaif_agent_site.db.migrations import run_migration
+from slaif_agent_site.identity.sessions import format_session_token
+from slaif_agent_site.render_api.projection import (
+    ProjectionError,
+    RenderPageRequest,
+    RenderPreviewRequest,
+    RenderProjectionService,
+)
+from slaif_agent_site.sites.resolver import SiteResolver
 
 _TEST_CAPABILITY_BY_WORKSPACE: dict[UUID, UUID] = {}
+
+
+class _AgentRenderAdapter:
+    def __init__(self, public_pool: Any, preview_pool: Any) -> None:
+        self._public_pool = public_pool
+        self._preview_pool = preview_pool
+        self._resolver = SiteResolver(public_pool)
+        self.acquire_timeout = 3.0
+
+    def resolver(self) -> SiteResolver:
+        return self._resolver
+
+    def public_pool(self) -> Any:
+        return self._public_pool
+
+    def preview_pool(self) -> Any:
+        return self._preview_pool
 
 
 @asynccontextmanager
@@ -2057,7 +2083,7 @@ async def test_agent_redirect_051_migration_round_trip_preserves_data_and_privil
             await owner.fetchval(
                 "SELECT version_num::text FROM control.alembic_version"
             )
-            == "055_001"
+            == "056_001"
         )
         assert tuple(
             await owner.fetchrow(
@@ -2148,7 +2174,7 @@ async def test_agent_049_plain_page_data_downgrade_and_upgrade_preserves_data(
             await owner.fetchval(
                 "SELECT version_num::text FROM control.alembic_version"
             )
-            == "055_001"
+            == "056_001"
         )
         row = await owner.fetchrow(
             "SELECT title, route_template, deleted_at FROM content.page_base "
@@ -4303,7 +4329,7 @@ async def test_agent_046_047_migration_round_trip_preserves_contract_and_state(
                 await owner.fetchval(
                     "SELECT version_num::text FROM control.alembic_version"
                 )
-                == "055_001"
+                == "056_001"
             )
             assert await owner.fetchval(
                 "SELECT to_regprocedure($1)",
@@ -4632,7 +4658,7 @@ async def test_agent_048_data_bearing_round_trip_preserves_relations_views_and_a
         )
         await reconcile(database.settings)
         final_status = await status(database.settings)
-        assert final_status.revision == "055_001"
+        assert final_status.revision == "056_001"
         assert final_status.state.value == "HARDENED"
         assert final_status.safe
         assert await cow_rows() == content_before
@@ -5475,6 +5501,372 @@ async def test_agent_relation_and_collection_view_crud_is_cow_bound_and_audited(
             ]
     finally:
         pass
+
+
+@pytest.mark.asyncio
+async def test_public_agent_builds_news_dynamic_listing_and_detail_render(
+    agent_site_database: AgentSiteDatabase,
+) -> None:
+    """Build the bounded News model and dynamic pages through Agent HTTP."""
+
+    database = agent_site_database
+    token, seeded = await _seed(database)
+    scopes = [
+        "site:read",
+        "content-model:create",
+        "content-model:read",
+        "field-definition:create",
+        "content-item:create",
+        "content-item:write",
+        "content-item:read",
+        "translation:write",
+        "collection-view:create",
+        "collection-view:read",
+        "page:create",
+        "page:read",
+        "component-structure:create",
+        "navigation:create",
+        "navigation:write",
+        "navigation:read",
+        "locale:configure",
+    ]
+    token, workspace_id = await _workspace_capability(
+        database, seeded, scopes, "Public Agent News Dynamic Render"
+    )
+    session_id = uuid4()
+    secret = b"n" * 32
+    public_id = f"sas2_{session_id.hex}"
+    expires = datetime.now(UTC) + timedelta(hours=1)
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        await owner.execute(
+            "INSERT INTO control.user_session "
+            "(id,public_id,secret_digest,csrf_secret_digest,user_account_id,"
+            "absolute_expires_at) VALUES ($1,$2,$3,$4,$5,$6)",
+            session_id,
+            public_id,
+            hashlib.sha256(secret).digest(),
+            b"n" * 32,
+            seeded["delegator_id"],
+            expires,
+        )
+    app = create_agent_app(
+        settings=ServiceSettings.for_test(),
+        database_settings=_agent_settings(database),
+    )
+    agent_pool = await database.role_pool("slaif_agent_runtime")
+    public_pool = await database.role_pool("slaif_public_reader")
+    preview_pool = await database.role_pool("slaif_preview_reader")
+    try:
+        async with app.router.lifespan_context(app):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://agent.test"
+            ) as client:
+
+                async def mutate(
+                    method: str,
+                    path: str,
+                    key: str,
+                    body: dict[str, Any],
+                ) -> dict[str, Any]:
+                    response = await client.request(
+                        method,
+                        path,
+                        headers={
+                            "Authorization": f"Bearer {token}",
+                            "Idempotency-Key": key,
+                        },
+                        json=body,
+                    )
+                    assert response.status_code in {200, 201}, response.text
+                    return response.json()["record"]
+
+                news_type = await mutate(
+                    "POST",
+                    "/api/agent/v1/content-model/types",
+                    "news-type",
+                    {
+                        "key": "news",
+                        "labels": {"en-US": "News"},
+                        "slug_pattern": "/news/{slug}",
+                        "settings": {},
+                    },
+                )
+                type_id = UUID(news_type["id"])
+                await mutate(
+                    "POST",
+                    f"/api/agent/v1/content-model/types/{type_id}/fields",
+                    "news-title-field",
+                    {
+                        "key": "title",
+                        "label": "Title",
+                        "field_type": "short_text",
+                        "required": True,
+                        "localized": True,
+                        "position": 0,
+                    },
+                )
+                await mutate(
+                    "POST",
+                    f"/api/agent/v1/content-model/types/{type_id}/fields",
+                    "news-summary-field",
+                    {
+                        "key": "summary",
+                        "label": "Summary",
+                        "field_type": "long_text",
+                        "required": True,
+                        "localized": True,
+                        "position": 1,
+                    },
+                )
+                await mutate(
+                    "POST",
+                    f"/api/agent/v1/content-model/types/{type_id}/fields",
+                    "news-rank-field",
+                    {
+                        "key": "rank",
+                        "label": "Rank",
+                        "field_type": "integer",
+                        "required": True,
+                        "position": 2,
+                    },
+                )
+                locale = await mutate(
+                    "POST",
+                    "/api/agent/v1/locales",
+                    "news-sl-locale",
+                    {"tag": "sl-SI", "position": 1},
+                )
+                assert locale["tag"] == "sl-SI"
+
+                items: dict[str, UUID] = {}
+                for slug, status, rank, key in (
+                    ("published-item", "PUBLISHED", 3, "news-published"),
+                    ("draft-item", "DRAFT", 2, "news-draft"),
+                    ("archived-item", "ARCHIVED", 1, "news-archived"),
+                ):
+                    record = await mutate(
+                        "POST",
+                        f"/api/agent/v1/content-items/types/{type_id}",
+                        f"{key}-create",
+                        {
+                            "type_id": str(type_id),
+                            "slug": slug,
+                            "status": status,
+                            "values": {"rank": rank},
+                        },
+                    )
+                    item_id = UUID(record["id"])
+                    items[slug] = item_id
+                    await mutate(
+                        "POST",
+                        f"/api/agent/v1/content-items/{item_id}/translations",
+                        f"{key}-translation-en",
+                        {
+                            "locale": "en-US",
+                            "localized_values": {
+                                "title": f"{status.title()} title",
+                                "summary": f"{status.title()} summary",
+                            },
+                        },
+                    )
+                    await mutate(
+                        "POST",
+                        f"/api/agent/v1/content-items/{item_id}/translations",
+                        f"{key}-translation-sl",
+                        {
+                            "locale": "sl-SI",
+                            "localized_values": {
+                                "title": f"{status.title()} naslov",
+                                "summary": f"{status.title()} povzetek",
+                            },
+                        },
+                    )
+
+                view = await mutate(
+                    "POST",
+                    f"/api/agent/v1/collection-views/types/{type_id}",
+                    "news-view",
+                    {
+                        "type_id": str(type_id),
+                        "key": "news",
+                        "filter_spec": {},
+                        "sort_spec": {"field": "rank", "direction": "desc"},
+                        "projection_spec": {"fields": ["title", "summary", "rank"]},
+                        "pagination_spec": {"limit": 10, "offset": 0},
+                    },
+                )
+                view_id = str(view["id"])
+                listing = await mutate(
+                    "POST",
+                    "/api/agent/v1/pages",
+                    "news-listing-page",
+                    {
+                        "slug": "news",
+                        "title": "News",
+                        "status": "PUBLISHED",
+                        "locale": "en-US",
+                    },
+                )
+                detail = await mutate(
+                    "POST",
+                    "/api/agent/v1/pages",
+                    "news-detail-page",
+                    {
+                        "slug": "detail",
+                        "title": "News detail",
+                        "status": "PUBLISHED",
+                        "locale": "en-US",
+                        "parent_id": listing["id"],
+                        "route_template": "{slug}",
+                    },
+                )
+                await mutate(
+                    "POST",
+                    f"/api/agent/v1/pages/{listing['id']}/components",
+                    "news-list-component",
+                    {
+                        "component_type": "CollectionList",
+                        "slot_key": "default",
+                        "order_key": 0,
+                        "props": {"viewId": view_id},
+                    },
+                )
+                await mutate(
+                    "POST",
+                    f"/api/agent/v1/pages/{detail['id']}/components",
+                    "news-detail-component",
+                    {
+                        "component_type": "CollectionDetail",
+                        "slot_key": "default",
+                        "order_key": 0,
+                        "props": {"viewId": view_id},
+                    },
+                )
+                navigation = await mutate(
+                    "POST",
+                    "/api/agent/v1/navigation",
+                    "news-navigation",
+                    {
+                        "key": "primary",
+                        "label": "Primary",
+                        "labels": {"en-US": "Primary"},
+                        "settings": {},
+                    },
+                )
+                await mutate(
+                    "POST",
+                    f"/api/agent/v1/navigation/{navigation['id']}/items",
+                    "news-navigation-item",
+                    {
+                        "navigation_id": navigation["id"],
+                        "page_id": listing["id"],
+                        "target_kind": "PAGE",
+                        "target_value": listing["id"],
+                        "labels": {"en-US": "News"},
+                    },
+                )
+
+            service = RenderProjectionService(
+                _AgentRenderAdapter(public_pool, preview_pool)
+            )
+            session_token = format_session_token(public_id, secret)
+            listing_preview = await service.preview(
+                RenderPreviewRequest(
+                    authority="localhost",
+                    path="/s/agent-mutation/news",
+                    workspace_id=workspace_id,
+                    session_token=session_token,
+                )
+            )
+            assert listing_preview.route_kind == "page"
+            assert listing_preview.bindings
+            assert (
+                listing_preview.bindings[next(iter(listing_preview.bindings))][0][
+                    "values"
+                ]["title"]
+                == "Published title"
+            )
+            published_preview = await service.preview(
+                RenderPreviewRequest(
+                    authority="localhost",
+                    path="/s/agent-mutation/news/published-item",
+                    workspace_id=workspace_id,
+                    session_token=session_token,
+                )
+            )
+            assert published_preview.route_kind == "page"
+            assert published_preview.route_parameters == {"slug": "published-item"}
+            assert (
+                next(iter(published_preview.bindings.values()))[0]["values"]["summary"]
+                == "Published summary"
+            )
+            draft_preview = await service.preview(
+                RenderPreviewRequest(
+                    authority="localhost",
+                    path="/s/agent-mutation/news/draft-item",
+                    workspace_id=workspace_id,
+                    session_token=session_token,
+                )
+            )
+            assert draft_preview.route_kind == "page"
+            with pytest.raises(ProjectionError, match="not_found"):
+                await service.preview(
+                    RenderPreviewRequest(
+                        authority="localhost",
+                        path="/s/agent-mutation/news/archived-item",
+                        workspace_id=workspace_id,
+                        session_token=session_token,
+                    )
+                )
+            with pytest.raises(ProjectionError, match="not_found"):
+                await service.canonical(
+                    RenderPageRequest(
+                        authority="localhost", path="/s/agent-mutation/news"
+                    )
+                )
+            with pytest.raises(ProjectionError, match="not_found"):
+                await service.canonical(
+                    RenderPageRequest(
+                        authority="localhost",
+                        path="/s/agent-mutation/news/published-item",
+                    )
+                )
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://agent.test"
+            ) as client_after:
+                updated = await client_after.patch(
+                    f"/api/agent/v1/content-items/{items['published-item']}",
+                    headers={
+                        "Authorization": f"Bearer {token}",
+                        "Idempotency-Key": "news-published-rename",
+                    },
+                    json={"slug": "renamed-item", "expected_row_version": 1},
+                )
+                assert updated.status_code == 200, updated.text
+            with pytest.raises(ProjectionError, match="not_found"):
+                await service.preview(
+                    RenderPreviewRequest(
+                        authority="localhost",
+                        path="/s/agent-mutation/news/published-item",
+                        workspace_id=workspace_id,
+                        session_token=session_token,
+                    )
+                )
+            renamed = await service.preview(
+                RenderPreviewRequest(
+                    authority="localhost",
+                    path="/s/agent-mutation/news/renamed-item",
+                    workspace_id=workspace_id,
+                    session_token=session_token,
+                )
+            )
+            assert renamed.route_kind == "page"
+    finally:
+        await preview_pool.close()
+        await public_pool.close()
+        await agent_pool.close()
 
 
 @pytest.mark.asyncio
@@ -11079,7 +11471,7 @@ async def test_semantic_audit_contract_is_strict_and_reversible(
                 await owner.fetchval(
                     "SELECT version_num::text FROM control.alembic_version"
                 )
-                == "055_001"
+                == "056_001"
             )
             assert (
                 await owner.fetchval(

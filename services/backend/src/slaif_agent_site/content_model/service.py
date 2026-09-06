@@ -218,6 +218,7 @@ class CollectionViewMixin:
                 projection_spec,
                 pagination_spec,
                 await self.list_fields(type_id),
+                allow_localized_projection=True,
             )
         except (ValueError, TypeError):
             raise ContentModelServiceError(
@@ -282,6 +283,7 @@ class CollectionViewMixin:
                 values["projection"],
                 values["pagination"],
                 await self.list_fields(current.type_id),
+                allow_localized_projection=True,
             )
         except (ValueError, TypeError):
             raise ContentModelServiceError(

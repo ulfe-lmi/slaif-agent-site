@@ -261,6 +261,160 @@ async def test_static_hierarchy_locale_navigation_and_redirect_projection(
 
 
 @pytest.mark.asyncio
+async def test_dynamic_collection_detail_route_binds_exact_published_item(
+    agent_site_database: AgentSiteDatabase,
+) -> None:
+    """Resolve one dynamic page and bind its CollectionDetail item safely."""
+
+    database = agent_site_database
+    await upgrade(database.settings)
+    await reconcile(database.settings)
+    control_pool = await database.role_pool("slaif_control")
+    public_pool = await database.role_pool("slaif_public_reader")
+    try:
+        site = await SiteService(control_pool).create(
+            CreateSiteRequest(
+                site_key="dynamic-collection-router",
+                display_name="Dynamic Collection Router",
+                default_locale="en-US",
+            )
+        )
+        root_id, detail_id = uuid4(), uuid4()
+        type_id, title_id, summary_id, rank_id, view_id = (
+            uuid4(),
+            uuid4(),
+            uuid4(),
+            uuid4(),
+            uuid4(),
+        )
+        published_id, draft_id, archived_id = uuid4(), uuid4(), uuid4()
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            await owner.execute(
+                "INSERT INTO content.site_locale_base "
+                "(site_id,tag,enabled,is_default,position) VALUES "
+                "($1,'en-US',true,true,0),($1,'sl-SI',true,false,1)",
+                site.site_id,
+            )
+            await owner.execute(
+                "INSERT INTO content.page_base "
+                "(id,site_id,slug,title,status,locale,parent_id,route_template) "
+                "VALUES ($1,$2,'news','News','PUBLISHED','en-US',NULL,NULL),"
+                "($3,$2,'detail','Detail','PUBLISHED','en-US',$1,'{slug}')",
+                root_id,
+                site.site_id,
+                detail_id,
+            )
+            await owner.execute(
+                "INSERT INTO content.content_type_base "
+                "(id,site_id,key,labels,slug_pattern,status,definition_version,"
+                "settings) "
+                "VALUES ($1,$2,'news','{}','/news/{slug}','ACTIVE',1,'{}')",
+                type_id,
+                site.site_id,
+            )
+            await owner.execute(
+                "INSERT INTO content.field_definition_base "
+                "(id,type_id,key,label,field_type,required,localized,cardinality,"
+                "position,validation,ui_options,definition_version) VALUES "
+                "($1,$2,'title','Title','short_text',true,true,1,0,'{}','{}',1),"
+                "($3,$2,'summary','Summary','long_text',true,true,1,1,'{}','{}',1),"
+                "($4,$2,'rank','Rank','integer',true,false,1,2,'{}','{}',1)",
+                title_id,
+                type_id,
+                summary_id,
+                rank_id,
+            )
+            await owner.execute(
+                "INSERT INTO content.content_item_base "
+                "(id,site_id,type_id,slug,status,type_definition_version,values) "
+                "VALUES ($1,$2,$3,'published-item','PUBLISHED',1,$6::jsonb),"
+                "($4,$2,$3,'draft-item','DRAFT',1,$7::jsonb),"
+                "($5,$2,$3,'archived-item','ARCHIVED',1,$8::jsonb)",
+                published_id,
+                site.site_id,
+                type_id,
+                draft_id,
+                archived_id,
+                '{"rank":3}',
+                '{"rank":2}',
+                '{"rank":1}',
+            )
+            await owner.execute(
+                "INSERT INTO content.content_item_translation_base "
+                "(site_id,item_id,locale,localized_values) VALUES "
+                "($1,$2,'en-US',$5::jsonb),($1,$3,'en-US',$6::jsonb),"
+                "($1,$4,'en-US',$7::jsonb)",
+                site.site_id,
+                published_id,
+                draft_id,
+                archived_id,
+                '{"title":"Published title","summary":"Published summary"}',
+                '{"title":"Draft title","summary":"Draft summary"}',
+                '{"title":"Archived title","summary":"Archived summary"}',
+            )
+            await owner.execute(
+                "INSERT INTO content.collection_view_base "
+                "(id,site_id,type_id,key,filter_spec,sort_spec,projection_spec,"
+                "pagination_spec) VALUES ($1,$2,$3,'news', '{}'::jsonb, "
+                "$4::jsonb,$5::jsonb,$6::jsonb)",
+                view_id,
+                site.site_id,
+                type_id,
+                '{"field":"rank","direction":"desc"}',
+                '{"fields":["title","summary","rank"]}',
+                '{"limit":10,"offset":0}',
+            )
+            await owner.execute(
+                "INSERT INTO content.page_composition_base "
+                "(site_id,page_id,component_type,schema_version,slot_key,"
+                "order_key,props) "
+                "VALUES ($1,$2,'CollectionList','1','default',0,$3::jsonb),"
+                "($1,$4,'CollectionDetail','1','default',0,$3::jsonb)",
+                site.site_id,
+                root_id,
+                json.dumps({"viewId": str(view_id)}),
+                detail_id,
+            )
+        service = RenderProjectionService(_RenderAdapter(public_pool))
+        listing = await service.canonical(
+            RenderPageRequest(
+                authority="localhost", path="/s/dynamic-collection-router/news"
+            )
+        )
+        assert listing.route_kind == "page"
+        assert listing.page.route_template is None
+        assert listing.bindings[next(iter(listing.bindings))][0]["values"] == {
+            "title": "Published title",
+            "summary": "Published summary",
+            "rank": 3,
+        }
+        detail = await service.canonical(
+            RenderPageRequest(
+                authority="localhost",
+                path="/s/dynamic-collection-router/news/published-item",
+            )
+        )
+        assert detail.route_kind == "page"
+        assert detail.route_parameters == {"slug": "published-item"}
+        detail_binding = next(iter(detail.bindings.values()))
+        assert detail_binding[0]["slug"] == "published-item"
+        assert detail_binding[0]["values"]["title"] == "Published title"
+        for slug in ("draft-item", "archived-item", "unknown-item"):
+            with pytest.raises(ProjectionError, match="not_found"):
+                await service.canonical(
+                    RenderPageRequest(
+                        authority="localhost",
+                        path=f"/s/dynamic-collection-router/news/{slug}",
+                    )
+                )
+    finally:
+        await public_pool.close()
+        await control_pool.close()
+
+
+@pytest.mark.asyncio
 async def test_public_agent_cow_structure_is_visible_only_to_authorized_preview(
     agent_site_database: AgentSiteDatabase,
     monkeypatch: pytest.MonkeyPatch,

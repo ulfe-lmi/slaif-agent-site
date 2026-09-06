@@ -219,6 +219,13 @@ Page records expose normalized slug/parent metadata, an optional `route_template
 the server-derived `effective_route`, and `deleted_at` on a deleted record.
 Routes are derived from an already-enabled site locale and the ancestor
 hierarchy; `route_template` is either absent or the terminal literal `{slug}`.
+The trusted Render resolver accepts a dynamic page only for one bounded ASCII
+terminal item-slug segment. Exact static routes take precedence; ambiguous,
+unsafe, stale, archived, deleted, or filter-excluded dynamic detail routes are
+404 for the whole projection. A dynamic page must contain exactly one
+CollectionDetail node, whose same-site active collection view is the sole
+item-binding authority.
+
 Page operations never create or configure locales. Page deletes are workspace
 COW tombstones; restore requires the tombstone's exact row version and restores
 the same page ID and prior hierarchy. Tombstoned pages are absent from Agent
@@ -429,6 +436,13 @@ Page responses contain site/revision, normalized route/locale, page metadata,
 a bounded normalized composition tree, catalog/schema versions,
 theme/navigation data, and same-site bounded collection bindings. Collection
 editorial fields are returned only below each item's explicit `values` object;
+Dynamic page responses additionally include the typed route_parameters map.
+CollectionDetail uses the route slug as its exact item binding and requires the
+same-site active view, type definition version, status, filter, and declared
+projection to validate. Localized projection fields are allowed, but localized
+filters and sorts remain forbidden; Render selects the requested translation
+then the explicit default-locale fallback and fails closed on missing required
+or malformed localized output.
 reserved identity metadata cannot be overwritten by content values. Render
 returns JSON only; Web owns HTML and uses the trusted React catalog renderer.
 Unknown, archived, unpublished, wrong-site, ambiguous, malformed, or

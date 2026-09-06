@@ -105,6 +105,14 @@ server-only client, exact-root shell fallback, canonical-first non-loopback
 root resolution, strict public CSP, and absence of session/service credentials
 from client-visible output or artifacts.
 
+The dynamic collection proof builds a News model, localized fields, published/
+draft/archived items, bounded view, listing/detail pages, trusted collection
+nodes, and navigation through the public Agent API. It proves sorted listing,
+exact-slug detail binding, canonical draft/archive/unknown 404s, translation
+fallback, renamed-item route movement, and unchanged canonical visibility.
+Migration tests also prove the 054-to-055-to-054-to-055 function-definition,
+grant, and data round trip.
+
 ## Browser-run contract and durable control-plane proof
 
 Python and TypeScript tests compare one committed language-neutral
