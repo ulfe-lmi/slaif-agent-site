@@ -1356,6 +1356,7 @@ async def test_agent_locale_navigation_structural_races_and_cancellation(
         "navigation:create",
         "navigation:write",
         "navigation:delete",
+        "redirect:create",
     ]
     token, workspace_id = await _workspace_capability(
         database, seeded, scopes, "Agent Locale Navigation Race Workspace"
@@ -1759,6 +1760,56 @@ async def test_agent_locale_navigation_structural_races_and_cancellation(
                 assert cancelled_locale_state.status_code == 200
                 assert cancelled_locale_state.json()["is_default"] is False
                 assert cancelled_locale_state.json()["row_version"] == 1
+                retry_default = await request(
+                    client,
+                    "PATCH",
+                    f"/api/agent/v1/locales/{cancellable_locale_id}",
+                    "cancel-default-locale",
+                    {"is_default": True, "expected_row_version": 1},
+                )
+                assert retry_default.status_code == 200, retry_default.text
+                assert retry_default.json()["record"]["row_version"] == 2
+
+                race_locale = await request(
+                    client,
+                    "POST",
+                    "/api/agent/v1/locales",
+                    "race-redirect-locale",
+                    {"tag": "pt-BR", "position": 5},
+                )
+                assert race_locale.status_code == 201, race_locale.text
+                race_locale_id = race_locale.json()["record"]["id"]
+                async with structural_lock(2) as (blocker, expected_waiters):
+                    switch_task = asyncio.create_task(
+                        request(
+                            client,
+                            "PATCH",
+                            f"/api/agent/v1/locales/{race_locale_id}",
+                            "race-redirect-default",
+                            {"is_default": True, "expected_row_version": 1},
+                        )
+                    )
+                    redirect_task = asyncio.create_task(
+                        request(
+                            client,
+                            "POST",
+                            "/api/agent/v1/redirects",
+                            "race-redirect-create",
+                            {
+                                "source_route": "/race-redirect",
+                                "target": "https://example.test/race",
+                                "status_code": 302,
+                            },
+                        )
+                    )
+                    await _wait_for_page_structure_waiters(blocker, expected_waiters)
+                switch_result, redirect_result = await asyncio.gather(
+                    switch_task, redirect_task
+                )
+                assert (switch_result.status_code, redirect_result.status_code) == (
+                    200,
+                    201,
+                ), (switch_result.text, redirect_result.text)
 
                 cancellation_navigation = await request(
                     client,

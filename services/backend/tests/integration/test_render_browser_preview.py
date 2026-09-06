@@ -18,6 +18,7 @@ import pytest
 import slaif_agent_site.render_api.projection as projection_module
 from conftest import AgentSiteDatabase, AsyncpgExecutor
 from pydantic import SecretStr
+from slaif_agent_site.agent_api.app import create_app as create_agent_app
 from slaif_agent_site.agent_api.browser_service import BEGIN_SQL
 from slaif_agent_site.agent_state.foundation import (
     asyncpg_cow_session,
@@ -46,6 +47,21 @@ from slaif_agent_site.render_api.projection import (
 from slaif_agent_site.sites import CreateSiteRequest
 from slaif_agent_site.sites.resolver import SiteResolver
 from slaif_agent_site.sites.service import SiteService
+from test_agent_browser_http import (
+    _capability as _agent_capability,
+)
+from test_agent_browser_http import (
+    _settings as _agent_settings,
+)
+from test_agent_browser_http import (
+    _site as _agent_site,
+)
+from test_agent_browser_http import (
+    _user as _agent_user,
+)
+from test_agent_browser_http import (
+    _workspace as _agent_workspace,
+)
 
 ROUTE = "/s/browser-preview"
 EVIDENCE = (BrowserEvidence.SCREENSHOT, BrowserEvidence.HEADING_SUMMARY)
@@ -624,6 +640,243 @@ async def test_browser_token_projects_only_bound_overlay_and_is_one_time(
                 )
                 == 1
             )
+    finally:
+        await agent_pool.close()
+        await preview_pool.close()
+        await public_pool.close()
+        await control_pool.close()
+
+
+@pytest.mark.asyncio
+async def test_public_agent_created_localized_browser_preview_workflow(
+    agent_site_database: AgentSiteDatabase,
+) -> None:
+    """The public Agent structure is the source of a bound browser preview."""
+
+    database = agent_site_database
+    await upgrade(database.settings)
+    await reconcile(database.settings)
+    control_pool = await database.role_pool("slaif_control")
+    public_pool = await database.role_pool("slaif_public_reader")
+    preview_pool = await database.role_pool("slaif_preview_reader")
+    agent_pool = await database.role_pool("slaif_agent_runtime")
+    signer = BrowserPreviewCredentialSigner(
+        BrowserSigningKey("0123456789abcdef", bytes(range(32)))
+    )
+    scopes = (
+        "site:read",
+        "page:create",
+        "page:read",
+        "locale:configure",
+        "navigation:read",
+        "navigation:create",
+        "navigation:write",
+        "redirect:create",
+        "preview:inspect",
+    )
+    suffix = uuid4().hex[:8]
+    site_key = f"browser-http-{suffix}"
+    route = f"/s/{site_key}/sl-si/guide"
+    try:
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            user_id = await _agent_user(owner, suffix)
+            site_id = await _agent_site(owner, suffix)
+            workspace_id = await _agent_workspace(
+                owner, site_id=site_id, user_id=user_id, suffix=suffix
+            )
+            binding = await _agent_capability(
+                owner,
+                site_id=site_id,
+                workspace_id=workspace_id,
+                delegator_id=user_id,
+                scopes=scopes,
+            )
+            await owner.execute(
+                "UPDATE control.workspace SET delegation_preset='L4', "
+                "effective_scopes=$2::jsonb WHERE id=$1",
+                workspace_id,
+                json.dumps(scopes),
+            )
+            await owner.execute(
+                "INSERT INTO content.page_base "
+                "(site_id,slug,title,status,locale) VALUES "
+                "($1,'home','Canonical browser page','PUBLISHED','en-US')",
+                site_id,
+            )
+            await owner.execute(
+                "INSERT INTO content.page_composition_base "
+                "(site_id,page_id,component_type,schema_version,slot_key,"
+                "order_key,props) SELECT $1,id,'Heading','1','default',0,"
+                '\'{"text":"Canonical browser","level":2}\'::jsonb '
+                "FROM content.page_base WHERE site_id=$1 AND slug='home' "
+                "AND locale='en-US'",
+                site_id,
+            )
+            other_workspace_id = uuid4()
+            await owner.execute(
+                "INSERT INTO control.workspace "
+                "(id,site_id,created_by,delegator_id,actor_type,title,"
+                "delegation_preset,effective_scopes,status,expires_at) VALUES "
+                "($1,$2,$3,$3,'AGENT','Other browser workspace','L4',$4::jsonb,"
+                "'ACTIVE',CURRENT_TIMESTAMP + interval '1 hour')",
+                other_workspace_id,
+                site_id,
+                user_id,
+                json.dumps(scopes),
+            )
+        agent_app = create_agent_app(
+            settings=ServiceSettings.for_test(),
+            database_settings=_agent_settings(database),
+        )
+        headers = {"Authorization": f"Bearer {binding.token}"}
+        async with agent_app.router.lifespan_context(agent_app):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=agent_app),
+                base_url="http://agent.test",
+            ) as client:
+                locale = await client.post(
+                    "/api/agent/v1/locales",
+                    headers={**headers, "Idempotency-Key": "browser-agent-locale"},
+                    json={"tag": "sl-SI", "position": 1},
+                )
+                assert locale.status_code == 201, locale.text
+                sl_home = await client.post(
+                    "/api/agent/v1/pages",
+                    headers={**headers, "Idempotency-Key": "browser-agent-home"},
+                    json={"slug": "home", "title": "Domov", "locale": "sl-SI"},
+                )
+                assert sl_home.status_code == 201, sl_home.text
+                sl_guide = await client.post(
+                    "/api/agent/v1/pages",
+                    headers={**headers, "Idempotency-Key": "browser-agent-guide"},
+                    json={
+                        "slug": "guide",
+                        "title": "Vodnik",
+                        "locale": "sl-SI",
+                        "parent_id": sl_home.json()["record"]["id"],
+                    },
+                )
+                assert sl_guide.status_code == 201, sl_guide.text
+                guide_id = sl_guide.json()["record"]["id"]
+                navigation = await client.post(
+                    "/api/agent/v1/navigation",
+                    headers={
+                        **headers,
+                        "Idempotency-Key": "browser-agent-navigation",
+                    },
+                    json={
+                        "key": "primary",
+                        "label": "Primary",
+                        "labels": {"sl-SI": "Glavni meni"},
+                        "settings": {},
+                    },
+                )
+                assert navigation.status_code == 201, navigation.text
+                navigation_id = navigation.json()["record"]["id"]
+                item = await client.post(
+                    f"/api/agent/v1/navigation/{navigation_id}/items",
+                    headers={**headers, "Idempotency-Key": "browser-agent-item"},
+                    json={
+                        "page_id": guide_id,
+                        "target_kind": "PAGE",
+                        "target_value": guide_id,
+                        "labels": {"sl-SI": "Vodnik"},
+                        "locale": "sl-SI",
+                    },
+                )
+                assert item.status_code == 201, item.text
+                redirect = await client.post(
+                    "/api/agent/v1/redirects",
+                    headers={**headers, "Idempotency-Key": "browser-agent-redirect"},
+                    json={
+                        "source_route": "/browser-after",
+                        "target": "/",
+                        "status_code": 301,
+                    },
+                )
+                assert redirect.status_code == 201, redirect.text
+                run = await client.post(
+                    "/api/agent/v1/preview-runs",
+                    headers={**headers, "Idempotency-Key": "browser-agent-run"},
+                    json={
+                        "version": "browser-preview/v1",
+                        "route": route,
+                        "target": "desktop-chromium",
+                        "evidence": ["screenshot", "heading-summary"],
+                    },
+                )
+                assert run.status_code == 202, run.text
+                run_id = UUID(run.json()["run_id"])
+
+        async with agent_pool.acquire() as agent:
+            claim = await agent.fetchrow(CLAIM_SQL, uuid4(), 30)
+            assert claim is not None and claim["run_id"] == run_id
+        token = signer.issue(
+            capability_id=binding.capability_id,
+            site_id=site_id,
+            workspace_id=workspace_id,
+            run_id=run_id,
+            route=route,
+            target=BrowserTarget.DESKTOP_CHROMIUM,
+            evidence=EVIDENCE,
+            artifact_bytes_limit=ARTIFACT_BYTES,
+            duration_seconds=DURATION_SECONDS,
+            now=int(time.time()),
+            ttl_seconds=30,
+            nonce="00112233445566778899aabbccddeeff",
+        )
+        service = RenderProjectionService(
+            _RenderAdapter(public_pool, preview_pool), browser_verifier=signer
+        )
+        projection = await service.preview(
+            RenderPreviewRequest(
+                authority="localhost",
+                path=route,
+                workspace_id=workspace_id,
+                browser_route=route,
+                browser_token=SecretStr(token),
+            )
+        )
+        assert projection.route_kind == "page"
+        assert projection.page.title == "Vodnik"
+        assert projection.page.effective_route == "/sl-SI/guide"
+        assert projection.locale == "sl-SI"
+        assert projection.navigation[0].label == "Glavni meni"
+        assert token not in repr(projection)
+        with pytest.raises(ProjectionError, match="not_found"):
+            await service.preview(
+                RenderPreviewRequest(
+                    authority="localhost",
+                    path=route,
+                    workspace_id=workspace_id,
+                    browser_route=route,
+                    browser_token=SecretStr(token),
+                )
+            )
+        with pytest.raises(ProjectionError, match="not_found"):
+            await service.preview(
+                RenderPreviewRequest(
+                    authority="localhost",
+                    path=route,
+                    workspace_id=other_workspace_id,
+                    browser_route=route,
+                    browser_token=SecretStr(token),
+                )
+            )
+        with pytest.raises(ProjectionError, match="not_found"):
+            await service.canonical(
+                RenderPageRequest(authority="localhost", path=route)
+            )
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            consumed = await owner.fetchrow(
+                "SELECT preview_token_used_at FROM control.browser_run WHERE id=$1",
+                run_id,
+            )
+            assert consumed[0] is not None
     finally:
         await agent_pool.close()
         await preview_pool.close()

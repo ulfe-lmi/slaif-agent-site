@@ -1,5 +1,5 @@
-# Apache HTTP Server 2.4.68 on Alpine 3.24; Apache-2.0 license; official image.
-FROM httpd:2.4.68-alpine3.24@sha256:1b766f17b84026429b7cb243317b142921b24432336e798bc881c43f45ed9567
+# Apache HTTP Server 2.4.68 on Debian Trixie; Apache-2.0 license; official image.
+FROM httpd:2.4.68-trixie@sha256:979c38c2228d28c2edfd45c6e27dcee1c7b4a101a5526721ae8ece454e89e99e
 ARG SOURCE_DATE_EPOCH=1704067200
 ARG SLAIF_IMAGE_CREATED=2024-01-01T00:00:00Z
 ARG SLAIF_IMAGE_REVISION=local
@@ -12,12 +12,15 @@ LABEL org.opencontainers.image.title="SLAIF Agent-Site Apache edge" \
       org.opencontainers.image.revision="${SLAIF_IMAGE_REVISION}" \
       org.opencontainers.image.created="${SLAIF_IMAGE_CREATED}"
 ENV SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH}
-RUN apk --timeout 30 add --no-cache \
-      'apr-util=1.6.3-r2' \
-      'apr-util-ldap=1.6.3-r2' \
-      'libcrypto3=3.5.7-r0' \
-      'libssl3=3.5.7-r0' \
-    && apk del perl \
+RUN apt-get update \
+    && apt-get install --no-install-recommends --yes \
+      'libaprutil1-ldap=1.6.3-3+deb13u1' \
+      'libaprutil1t64=1.6.3-3+deb13u1' \
+      'libssl3t64=3.5.7-1~deb13u2' \
+      'openssl=3.5.7-1~deb13u2' \
+    && apt-get purge --allow-remove-essential --yes \
+      libcurl4t64 libxml2 perl-base \
+    && rm -rf /var/lib/apt/lists/* \
     && sed -i \
       -e 's/^#LoadModule headers_module/LoadModule headers_module/' \
       -e 's/^#LoadModule proxy_module/LoadModule proxy_module/' \

@@ -83,21 +83,24 @@ class OciContractTests(unittest.TestCase):
         self.assertNotIn("apk upgrade", content)
         self.assertNotIn("postgresql-", content)
 
-    def test_apache_qualification_is_exact_and_uses_fixed_alpine_packages(self) -> None:
+    def test_apache_qualification_is_exact_and_uses_fixed_debian_packages(self) -> None:
         content = (ROOT / "infra/apache/Dockerfile").read_text(encoding="utf-8")
         self.assertIn(
-            "httpd:2.4.68-alpine3.24@sha256:"
-            "1b766f17b84026429b7cb243317b142921b24432336e798bc881c43f45ed9567",
+            "httpd:2.4.68-trixie@sha256:"
+            "979c38c2228d28c2edfd45c6e27dcee1c7b4a101a5526721ae8ece454e89e99e",
             content,
         )
         for package in (
-            "apr-util=1.6.3-r2",
-            "apr-util-ldap=1.6.3-r2",
-            "libcrypto3=3.5.7-r0",
-            "libssl3=3.5.7-r0",
+            "libaprutil1-ldap=1.6.3-3+deb13u1",
+            "libaprutil1t64=1.6.3-3+deb13u1",
+            "libssl3t64=3.5.7-1~deb13u2",
+            "openssl=3.5.7-1~deb13u2",
         ):
             self.assertIn(f"'{package}'", content)
         self.assertIn("httpd -t", content)
+        self.assertIn("apt-get purge --allow-remove-essential --yes", content)
+        for package in ("libcurl4t64", "libxml2", "perl-base"):
+            self.assertIn(package, content)
 
     def test_web_runtime_is_filtered_standalone_and_telemetry_free(self) -> None:
         content = (ROOT / "apps/web/Dockerfile").read_text(encoding="utf-8")

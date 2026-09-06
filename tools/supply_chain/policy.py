@@ -93,6 +93,7 @@ def validate_policy(policy: dict[str, Any]) -> None:
     required = {
         "application_licenses",
         "alpine_package_overrides",
+        "debian_package_overrides",
         "attribution_notes",
         "browser_runtime",
         "container_license_policy",
@@ -259,7 +260,7 @@ def validate_policy(policy: dict[str, Any]) -> None:
         raise PolicyError("policy: Alpine package overrides are malformed")
     if overrides["registry"] != "https://dl-cdn.alpinelinux.org/alpine/v3.23":
         raise PolicyError("policy: Alpine package registry is not exact and approved")
-    expected_override_images = {"apache", "backend", "nginx", "postgres", "web"}
+    expected_override_images = {"backend", "nginx", "postgres", "web"}
     if (
         not isinstance(overrides["images"], dict)
         or set(overrides["images"]) != expected_override_images
@@ -269,16 +270,10 @@ def validate_policy(policy: dict[str, Any]) -> None:
         )
     for name, configuration in overrides["images"].items():
         allowed_keys = {"install", "remove"}
-        if name == "apache":
-            allowed_keys.add("registry")
         if not isinstance(configuration, dict) or set(configuration) != allowed_keys:
             raise PolicyError(
                 f"policy: Alpine package overrides for {name} are malformed"
             )
-        if name == "apache" and configuration["registry"] != (
-            "https://dl-cdn.alpinelinux.org/alpine/v3.24"
-        ):
-            raise PolicyError("policy: Apache Alpine package registry is not exact")
         installed = configuration["install"]
         removed = configuration["remove"]
         if not isinstance(installed, list) or not all(
@@ -298,6 +293,40 @@ def validate_policy(policy: dict[str, Any]) -> None:
         if not isinstance(removed, list) or removed != sorted(set(removed)):
             raise PolicyError(
                 f"policy: Alpine package removals for {name} are malformed"
+            )
+
+    debian = policy["debian_package_overrides"]
+    if not isinstance(debian, dict) or set(debian) != {"images"}:
+        raise PolicyError("policy: Debian package overrides are malformed")
+    if not isinstance(debian["images"], dict) or set(debian["images"]) != {"apache"}:
+        raise PolicyError(
+            "policy: Debian package override image coverage is incomplete"
+        )
+    for name, configuration in debian["images"].items():
+        if not isinstance(configuration, dict) or set(configuration) != {
+            "install",
+            "remove",
+        }:
+            raise PolicyError(
+                f"policy: Debian package overrides for {name} are malformed"
+            )
+        installed = configuration["install"]
+        removed = configuration["remove"]
+        if (
+            not isinstance(installed, list)
+            or not all(
+                isinstance(item, str)
+                and re.fullmatch(r"[a-z0-9][a-z0-9+_.-]*=[^\s]+", item)
+                for item in installed
+            )
+            or installed != sorted(set(installed))
+        ):
+            raise PolicyError(
+                f"policy: Debian package overrides for {name} are not exact"
+            )
+        if not isinstance(removed, list) or removed != sorted(set(removed)):
+            raise PolicyError(
+                f"policy: Debian package removals for {name} are malformed"
             )
 
     browser_runtime = policy["browser_runtime"]
@@ -735,6 +764,16 @@ def validate_dependency_sources(root: Path, policy: dict[str, Any]) -> dict[str,
                 marker = f"apk del {package}"
             if marker not in dockerfile_text:
                 raise PolicyError(f"{name}: missing Alpine package removal {package}")
+
+    debian_paths = {"apache": root / "infra/apache/Dockerfile"}
+    for name, configuration in policy["debian_package_overrides"]["images"].items():
+        dockerfile_text = debian_paths[name].read_text(encoding="utf-8")
+        for package in configuration["install"]:
+            if f"'{package}'" not in dockerfile_text:
+                raise PolicyError(f"{name}: missing exact Debian package {package}")
+        for package in configuration["remove"]:
+            if package not in dockerfile_text:
+                raise PolicyError(f"{name}: missing Debian package removal {package}")
 
     browser_runtime = policy["browser_runtime"]
     worker_dockerfile = (root / "services/browser-worker/Dockerfile").read_text(

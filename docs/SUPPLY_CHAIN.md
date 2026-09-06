@@ -140,16 +140,14 @@ and `playwright-core`, rejects Firefox/WebKit inventory, and hashes the retained
 root E2E runner still installs all three test-only browser families outside the
 product image.
 
-The Apache adapter is separately qualified on the official
-`httpd:2.4.68-alpine3.24` multi-platform image, pinned by its exact index digest.
-Its Alpine 3.24 package overlay uses the versions supplied by that release
-(`apr-util`/`apr-util-ldap` 1.6.3-r2 and OpenSSL 3.5.7-r0); the other Alpine
-images retain their independently qualified 3.23 package sources. The current
-Grype database reports Apache Critical findings whose fixes require
-`libcurl` 8.21.0-r0, `apr-util` 1.6.4-r0, and OpenSSL 3.5.8-r0. Alpine 3.24
-does not currently provide the fixed libcurl package compatible with the
-official image dependency set, so this remains an explicit upstream blocker;
-no vulnerability exception or scanner weakening is permitted.
+The Apache adapter uses the official
+`httpd:2.4.68-trixie@sha256:979c38c2228d28c2edfd45c6e27dcee1c7b4a101a5526721ae8ece454e89e99e`
+multi-platform image. Its deterministic Debian Trixie package overlay pins
+`libaprutil1-ldap`/`libaprutil1t64` 1.6.3-3+deb13u1 and OpenSSL
+3.5.7-1~deb13u2. The other Alpine
+images retain their independently qualified 3.23 package sources. The Apache
+image is accepted only after two reproducible builds, parity, SBOM/license
+evidence, and a current Grype scan with zero unexcepted Critical findings.
 
 ## Vulnerability gate and database freshness
 

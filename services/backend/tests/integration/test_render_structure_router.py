@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 from datetime import UTC, datetime, timedelta
@@ -262,6 +263,7 @@ async def test_static_hierarchy_locale_navigation_and_redirect_projection(
 @pytest.mark.asyncio
 async def test_public_agent_cow_structure_is_visible_only_to_authorized_preview(
     agent_site_database: AgentSiteDatabase,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Drive the structural state through public Agent HTTP before previewing it."""
 
@@ -295,6 +297,7 @@ async def test_public_agent_cow_structure_is_visible_only_to_authorized_preview(
             "site:read",
             "page:create",
             "page:read",
+            "page:write",
             "page:delete",
             "page:move",
             "page:restore",
@@ -441,6 +444,7 @@ async def test_public_agent_cow_structure_is_visible_only_to_authorized_preview(
                     },
                 )
                 assert sl_nested.status_code == 201, sl_nested.text
+                sl_nested_id = sl_nested.json()["record"]["id"]
                 navigation = await client.post(
                     "/api/agent/v1/navigation",
                     headers={**headers, "Idempotency-Key": "router-navigation"},
@@ -560,6 +564,98 @@ async def test_public_agent_cow_structure_is_visible_only_to_authorized_preview(
             async with httpx.AsyncClient(
                 transport=httpx.ASGITransport(app=app), base_url="http://agent.test"
             ) as client:
+                snapshot_established = asyncio.Event()
+                release_snapshot = asyncio.Event()
+                original_query = service._query
+
+                async def paused_query(connection: Any, **kwargs: Any) -> Any:
+                    await connection.fetchval("SELECT 1")
+                    snapshot_established.set()
+                    await release_snapshot.wait()
+                    return await original_query(connection, **kwargs)
+
+                monkeypatch.setattr(service, "_query", paused_query)
+                snapshot_task = asyncio.create_task(
+                    service.preview(
+                        RenderPreviewRequest(
+                            authority="localhost",
+                            path="/s/agent-structure-router/guide",
+                            workspace_id=workspace_id,
+                            session_token=format_session_token(public_id, secret),
+                        )
+                    )
+                )
+                await asyncio.wait_for(snapshot_established.wait(), timeout=5)
+                page_task = asyncio.create_task(
+                    client.patch(
+                        f"/api/agent/v1/pages/{sl_nested_id}",
+                        headers={
+                            **headers,
+                            "Idempotency-Key": "router-snapshot-page",
+                        },
+                        json={"title": "Vodnik after", "expected_row_version": 1},
+                    )
+                )
+                navigation_task = asyncio.create_task(
+                    client.patch(
+                        f"/api/agent/v1/navigation/{navigation_id}",
+                        headers={
+                            **headers,
+                            "Idempotency-Key": "router-snapshot-navigation",
+                        },
+                        json={
+                            "labels": {"sl-SI": "Glavni meni after"},
+                            "expected_row_version": 1,
+                        },
+                    )
+                )
+                redirect_task = asyncio.create_task(
+                    client.post(
+                        "/api/agent/v1/redirects",
+                        headers={
+                            **headers,
+                            "Idempotency-Key": "router-snapshot-redirect",
+                        },
+                        json={
+                            "source_route": "/after",
+                            "target": "/guide",
+                            "status_code": 301,
+                        },
+                    )
+                )
+                release_snapshot.set()
+                page_update, navigation_update, redirect_after = await asyncio.gather(
+                    page_task, navigation_task, redirect_task
+                )
+                assert page_update.status_code == 200, page_update.text
+                assert navigation_update.status_code == 200, navigation_update.text
+                assert redirect_after.status_code == 201, redirect_after.text
+                snapshot_projection = await asyncio.wait_for(snapshot_task, timeout=5)
+                assert snapshot_projection.route_kind == "page"
+                assert snapshot_projection.page.title == "Vodnik"
+                assert snapshot_projection.navigation[0].label == "Glavni meni"
+                monkeypatch.setattr(service, "_query", original_query)
+                fresh_projection = await service.preview(
+                    RenderPreviewRequest(
+                        authority="localhost",
+                        path="/s/agent-structure-router/guide",
+                        workspace_id=workspace_id,
+                        session_token=format_session_token(public_id, secret),
+                    )
+                )
+                assert fresh_projection.route_kind == "page"
+                assert fresh_projection.page.title == "Vodnik after"
+                assert fresh_projection.navigation[0].label == "Glavni meni after"
+                fresh_redirect = await service.preview(
+                    RenderPreviewRequest(
+                        authority="localhost",
+                        path="/s/agent-structure-router/after",
+                        workspace_id=workspace_id,
+                        session_token=format_session_token(public_id, secret),
+                    )
+                )
+                assert fresh_redirect.route_kind == "redirect"
+                assert fresh_redirect.redirect.status_code == 301
                 section = await client.post(
                     "/api/agent/v1/pages",
                     headers={**headers, "Idempotency-Key": "router-section"},

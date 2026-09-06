@@ -48,6 +48,7 @@ class _RenderAdapter:
 
 async def test_canonical_projection_is_site_confined_and_typed(
     agent_site_database: AgentSiteDatabase,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     database = agent_site_database
     await upgrade(database.settings)
@@ -81,15 +82,39 @@ async def test_canonical_projection_is_site_confined_and_typed(
                 page_id,
                 '{"text":"Escaped <heading>","level":2}',
             )
-        projection = await RenderProjectionService(
-            _RenderAdapter(public_pool)
-        ).canonical(RenderPageRequest(authority="localhost", path="/s/docs/"))
+        service = RenderProjectionService(_RenderAdapter(public_pool))
+        projection = await service.canonical(
+            RenderPageRequest(authority="localhost", path="/s/docs/")
+        )
         assert projection.route_kind == "page"
         assert projection.render_mode == "canonical"
         assert projection.site.id == site.site_id
         assert projection.page.title == "Docs home"
         assert projection.composition.nodes[0].component_type == "Heading"
         assert projection.composition.nodes[0].props["text"] == "Escaped <heading>"
+        entered = asyncio.Event()
+        release = asyncio.Event()
+        original_query = service._query
+
+        async def paused_query(connection: Any, **kwargs: Any) -> Any:
+            entered.set()
+            await release.wait()
+            return await original_query(connection, **kwargs)
+
+        monkeypatch.setattr(service, "_query", paused_query)
+        cancelled = asyncio.create_task(
+            service.canonical(RenderPageRequest(authority="localhost", path="/s/docs/"))
+        )
+        await asyncio.wait_for(entered.wait(), timeout=5)
+        cancelled.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await cancelled
+        monkeypatch.setattr(service, "_query", original_query)
+        subsequent = await service.canonical(
+            RenderPageRequest(authority="localhost", path="/s/docs/")
+        )
+        assert subsequent.route_kind == "page"
+        assert subsequent.page.title == "Docs home"
         async with owner_connection(
             database.settings.resolved_owner_dsn(), expected_database=database.name
         ) as owner:
@@ -266,7 +291,8 @@ async def test_preview_projection_requires_authorized_human_session(
                 site.site_id,
             )
         adapter = _RenderAdapter(public_pool, preview_pool)
-        projection = await RenderProjectionService(adapter).preview(
+        service = RenderProjectionService(adapter)
+        projection = await service.preview(
             RenderPreviewRequest(
                 authority="localhost",
                 path="/s/staging/",
@@ -280,11 +306,63 @@ async def test_preview_projection_requires_authorized_human_session(
         collection_items = next(iter(projection.bindings.values()))
         assert collection_items[0]["values"] == {"title": "Second item", "rank": 1}
         assert collection_items[0]["slug"] == "second"
-        canonical = await RenderProjectionService(adapter).canonical(
+        canonical = await service.canonical(
             RenderPageRequest(authority="localhost", path="/s/staging/")
         )
         assert canonical.route_kind == "page"
         assert canonical.page.title == "Preview home"
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            before_cancel = await owner.fetchrow(
+                "SELECT (SELECT count(*) FROM content.page_changes), "
+                "(SELECT count(*) FROM control.human_editor_idempotency), "
+                "(SELECT count(*) FROM audit.human_editor_mutation)"
+            )
+        entered = asyncio.Event()
+        release = asyncio.Event()
+        original_query = service._query
+
+        async def paused_query(connection: Any, **kwargs: Any) -> Any:
+            entered.set()
+            await release.wait()
+            return await original_query(connection, **kwargs)
+
+        monkeypatch.setattr(service, "_query", paused_query)
+        cancelled = asyncio.create_task(
+            service.preview(
+                RenderPreviewRequest(
+                    authority="localhost",
+                    path="/s/staging/",
+                    workspace_id=workspace_id,
+                    session_token=format_session_token(public_id, secret),
+                )
+            )
+        )
+        await asyncio.wait_for(entered.wait(), timeout=5)
+        cancelled.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await cancelled
+        monkeypatch.setattr(service, "_query", original_query)
+        subsequent_preview = await service.preview(
+            RenderPreviewRequest(
+                authority="localhost",
+                path="/s/staging/",
+                workspace_id=workspace_id,
+                session_token=format_session_token(public_id, secret),
+            )
+        )
+        assert subsequent_preview.route_kind == "page"
+        assert subsequent_preview.page.title == "Preview draft"
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            after_cancel = await owner.fetchrow(
+                "SELECT (SELECT count(*) FROM content.page_changes), "
+                "(SELECT count(*) FROM control.human_editor_idempotency), "
+                "(SELECT count(*) FROM audit.human_editor_mutation)"
+            )
+        assert tuple(after_cancel) == tuple(before_cancel)
         async with owner_connection(
             database.settings.resolved_owner_dsn(), expected_database=database.name
         ) as owner:
