@@ -25,13 +25,18 @@ function previewRoute(request: NextRequest): {
   return { workspaceId: match[1]!, path: match[2] || "/" };
 }
 
-function redirectResponse(target: string, status: number, preview: boolean): Response {
-  const headers = new Headers({ Location: target });
+function redirectResponse(
+  target: string,
+  status: number,
+  preview: boolean,
+  requestUrl: string,
+): Response {
+  const response = Response.redirect(new URL(target, requestUrl), status);
   if (preview) {
-    headers.set("Cache-Control", "private, no-store");
-    headers.set("X-Robots-Tag", "noindex, nofollow, noarchive");
+    response.headers.set("Cache-Control", "private, no-store");
+    response.headers.set("X-Robots-Tag", "noindex, nofollow, noarchive");
   }
-  return new Response(null, { status, headers });
+  return response;
 }
 
 export async function proxy(request: NextRequest): Promise<Response | undefined> {
@@ -64,6 +69,7 @@ export async function proxy(request: NextRequest): Promise<Response | undefined>
           projection.redirect.target,
           projection.redirect.status_code,
           true,
+          request.url,
         );
       }
     } catch {
@@ -94,6 +100,7 @@ export async function proxy(request: NextRequest): Promise<Response | undefined>
         projection.redirect.target,
         projection.redirect.status_code,
         false,
+        request.url,
       );
     }
   } catch {
