@@ -309,7 +309,12 @@ def _canonical_request_body(
             "expected_row_version": None,
         }
     elif action == "CONTENT_ITEM_UPDATED":
-        defaults = {"status": None, "values": None}
+        defaults = {
+            "slug": None,
+            "status": None,
+            "values": None,
+            "expected_row_version": None,
+        }
     elif action == "CONTENT_ITEM_TRANSLATION_UPDATED":
         defaults = {"locale": None}
     elif action == "ITEM_RELATION_UPDATED":
