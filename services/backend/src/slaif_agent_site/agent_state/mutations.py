@@ -26,6 +26,10 @@ from slaif_agent_site.agent_state.foundation import (
     CowSession,
     asyncpg_cow_session,
 )
+from slaif_agent_site.agent_state.locks import (
+    acquire_workspace_lifecycle_lock,
+    prelocked_cow_session,
+)
 from slaif_agent_site.content_model.composition_models import (
     CompositionNodeRecord,
     CreateCompositionNodeRequest,
@@ -1271,6 +1275,10 @@ async def _complete(
 
 Mutation = Callable[[AgentCowContentModelService], Awaitable[Any]]
 
+_STRUCTURAL_RESOURCE_TYPES = frozenset(
+    {"page", "locale", "navigation", "navigation_item", "redirect"}
+)
+
 
 async def execute_agent_mutation(
     *,
@@ -1284,6 +1292,9 @@ async def execute_agent_mutation(
     quota_kind: str = "mutation",
     action: str | None = None,
     method: str | None = None,
+    dependency_type_id: UUID | None = None,
+    dependency_item_id: UUID | None = None,
+    dependency_view_id: UUID | None = None,
 ) -> AgentMutationResponse:
     """Reserve, execute, audit, and complete one atomic Agent mutation."""
 
@@ -1293,15 +1304,48 @@ async def execute_agent_mutation(
     except Exception as error:
         raise AgentMutationUnavailableError() from error
     try:
-        async with asyncpg_cow_session(
-            pool,
-            session_id=context.workspace_id,
-            operation_id=operation_id,
+        structural_site_id = (
+            context.site_id if resource_type in _STRUCTURAL_RESOURCE_TYPES else None
+        )
+        async with (
+            prelocked_cow_session(
+                pool,
+                session_id=context.workspace_id,
+                operation_id=operation_id,
+                site_id=structural_site_id,
+                type_id=dependency_type_id,
+            )
+            if structural_site_id is not None or dependency_type_id is not None
+            else asyncpg_cow_session(
+                pool,
+                session_id=context.workspace_id,
+                operation_id=operation_id,
+            )
         ) as cow:
             await cow.native.execute(
                 "SELECT set_config('app.capability_id', $1, true)",
                 str(context.capability_id),
             )
+            if dependency_item_id is not None or dependency_view_id is not None:
+                await acquire_workspace_lifecycle_lock(
+                    cow.native, workspace_id=context.workspace_id
+                )
+                table = (
+                    "content_item"
+                    if dependency_item_id is not None
+                    else "collection_view"
+                )
+                resource_id = dependency_item_id or dependency_view_id
+                dependency_type_id = await cow.native.fetchval(
+                    f"SELECT type_id FROM content.{table} WHERE site_id=$1 AND id=$2",
+                    context.site_id,
+                    resource_id,
+                )
+                if dependency_type_id is not None:
+                    await cow.native.fetchval(
+                        "SELECT pg_advisory_xact_lock(hashtextextended($1,994))",
+                        f"{context.workspace_id}:{dependency_type_id}:content-type-dependency",
+                    )
             reservation = await _reserve(
                 cow,
                 context=context,

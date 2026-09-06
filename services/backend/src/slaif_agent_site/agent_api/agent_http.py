@@ -459,6 +459,9 @@ async def _execute_mutation(
     status_code: int = 201,
     quota_kind: str = "mutation",
     action: str | None = None,
+    dependency_type_id: UUID | None = None,
+    dependency_item_id: UUID | None = None,
+    dependency_view_id: UUID | None = None,
 ) -> AgentMutationResponse:
     try:
         key = validate_idempotency_key(idempotency_key)
@@ -483,6 +486,9 @@ async def _execute_mutation(
             quota_kind=quota_kind,
             action=action,
             method=request.method,
+            dependency_type_id=dependency_type_id,
+            dependency_item_id=dependency_item_id,
+            dependency_view_id=dependency_view_id,
         )
     except DurableIdempotencyMismatchError:
         raise IdempotencyMismatchError() from None
@@ -564,6 +570,7 @@ async def create_field_definition(
         body,
         idempotency_key,
         resource_type="field_definition",
+        dependency_type_id=type_id,
         action="FIELD_DEFINITION_CREATED",
         mutate=lambda service: service.create_field_for_site(
             context.site_id, type_id, body
@@ -589,6 +596,7 @@ async def update_content_type(
         resource_type="content_type",
         status_code=200,
         action="CONTENT_TYPE_UPDATED",
+        dependency_type_id=type_id,
         mutate=lambda service: service.update_type_for_site(
             context.site_id, type_id, body
         ),
@@ -614,6 +622,7 @@ async def update_field_definition(
         resource_type="field_definition",
         status_code=200,
         action="FIELD_DEFINITION_UPDATED",
+        dependency_type_id=type_id,
         mutate=lambda service: service.update_field_for_site(
             context.site_id, type_id, field_id, body
         ),
@@ -641,6 +650,7 @@ async def delete_content_type(
         status_code=200,
         quota_kind="delete",
         action="CONTENT_TYPE_DELETED",
+        dependency_type_id=type_id,
         mutate=lambda service: service.delete_type_for_site(
             context.site_id, type_id, body.expected_definition_version
         ),
@@ -669,6 +679,7 @@ async def delete_field_definition(
         status_code=200,
         quota_kind="delete",
         action="FIELD_DEFINITION_DELETED",
+        dependency_type_id=type_id,
         mutate=lambda service: service.delete_field_for_site(
             context.site_id, type_id, field_id, body.expected_definition_version
         ),
@@ -695,6 +706,7 @@ async def create_content_item(
         idempotency_key,
         resource_type="content_item",
         action="CONTENT_ITEM_CREATED",
+        dependency_type_id=type_id,
         mutate=lambda service: service.create_item_for_site(
             context.site_id, type_id, body
         ),
@@ -734,6 +746,7 @@ async def update_content_item(
         resource_type="content_item",
         status_code=200,
         action="CONTENT_ITEM_UPDATED",
+        dependency_item_id=item_id,
         mutate=lambda service: service.update_item_for_site(
             context.site_id, item_id, body
         ),
@@ -760,6 +773,7 @@ async def delete_content_item(
         status_code=200,
         quota_kind="delete",
         action="CONTENT_ITEM_DELETED",
+        dependency_item_id=item_id,
         mutate=lambda service: service.delete_item_for_site(
             context.site_id, item_id, body
         ),
@@ -815,6 +829,7 @@ async def create_content_item_translation(
         idempotency_key,
         resource_type="content_item_translation",
         action="CONTENT_ITEM_TRANSLATION_CREATED",
+        dependency_item_id=item_id,
         mutate=lambda service: service.create_translation_for_site(
             context.site_id, item_id, body
         ),
@@ -839,6 +854,7 @@ async def update_content_item_translation(
         resource_type="content_item_translation",
         status_code=200,
         action="CONTENT_ITEM_TRANSLATION_UPDATED",
+        dependency_item_id=item_id,
         mutate=lambda service: service.update_translation_for_site(
             context.site_id, item_id, translation_id, body
         ),
@@ -866,6 +882,7 @@ async def delete_content_item_translation(
         status_code=200,
         quota_kind="delete",
         action="CONTENT_ITEM_TRANSLATION_DELETED",
+        dependency_item_id=item_id,
         mutate=lambda service: service.delete_translation_for_site(
             context.site_id, item_id, translation_id, body
         ),
@@ -921,6 +938,7 @@ async def create_content_item_relation(
         idempotency_key,
         resource_type="item_relation",
         action="ITEM_RELATION_CREATED",
+        dependency_item_id=item_id,
         mutate=lambda service: service.create_relation_for_site(
             context.site_id, item_id, body
         ),
@@ -945,6 +963,7 @@ async def update_content_item_relation(
         resource_type="item_relation",
         status_code=200,
         action="ITEM_RELATION_UPDATED",
+        dependency_item_id=item_id,
         mutate=lambda service: service.update_relation_for_site(
             context.site_id, item_id, relation_id, body
         ),
@@ -972,6 +991,7 @@ async def delete_content_item_relation(
         status_code=200,
         quota_kind="delete",
         action="ITEM_RELATION_DELETED",
+        dependency_item_id=item_id,
         mutate=lambda service: service.delete_relation_for_site(
             context.site_id, item_id, relation_id, body.expected_row_version
         ),
@@ -1012,6 +1032,7 @@ async def create_collection_view(
         idempotency_key,
         resource_type="collection_view",
         action="COLLECTION_VIEW_CREATED",
+        dependency_type_id=type_id,
         mutate=lambda service: service.create_view_for_site(context.site_id, body),
     )
 
@@ -1049,6 +1070,7 @@ async def update_collection_view(
         resource_type="collection_view",
         status_code=200,
         action="COLLECTION_VIEW_UPDATED",
+        dependency_view_id=view_id,
         mutate=lambda service: service.update_view_for_site(
             context.site_id, view_id, body
         ),
@@ -1075,6 +1097,7 @@ async def delete_collection_view(
         status_code=200,
         quota_kind="delete",
         action="COLLECTION_VIEW_DELETED",
+        dependency_view_id=view_id,
         mutate=lambda service: service.delete_view_for_site(
             context.site_id, view_id, body.expected_row_version
         ),

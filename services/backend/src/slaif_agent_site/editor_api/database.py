@@ -12,6 +12,7 @@ from uuid import UUID, uuid4
 import asyncpg
 
 from slaif_agent_site.agent_state.foundation import asyncpg_cow_session
+from slaif_agent_site.agent_state.locks import prelocked_cow_session
 from slaif_agent_site.content_model.service import ContentModelService
 from slaif_agent_site.db.roles import ROLE_NAMES
 from slaif_agent_site.health import ProbeResult
@@ -36,6 +37,20 @@ IDEMPOTENCY_BEGIN_SQL = (
 IDEMPOTENCY_COMPLETE_SQL = (
     "SELECT control.slaif_human_editor_idempotency_complete("
     "$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)"
+)
+_STRUCTURAL_PERMISSIONS = frozenset(
+    {
+        "page:create",
+        "page:write",
+        "page:delete",
+        "locale:configure",
+        "navigation:create",
+        "navigation:write",
+        "navigation:delete",
+        "redirect:create",
+        "redirect:write",
+        "redirect:delete",
+    }
 )
 
 
@@ -184,10 +199,19 @@ class EditorDatabase:
         if self._pool is None:
             raise RuntimeError("editor database unavailable")
         operation_id = uuid4()
-        async with asyncpg_cow_session(
-            self._pool,
-            session_id=workspace_id,
-            operation_id=operation_id,
+        async with (
+            prelocked_cow_session(
+                self._pool,
+                session_id=workspace_id,
+                operation_id=operation_id,
+                site_id=site_id,
+            )
+            if state_changing and permission_key in _STRUCTURAL_PERMISSIONS
+            else asyncpg_cow_session(
+                self._pool,
+                session_id=workspace_id,
+                operation_id=operation_id,
+            )
         ) as cow:
             await cow.native.fetchrow(
                 WORKSPACE_ASSERT_SQL,
