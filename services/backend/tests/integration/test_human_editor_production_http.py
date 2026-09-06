@@ -1249,6 +1249,97 @@ async def test_editor_agent_structural_races_share_workspace_site_lock(
                     agent_restore_redirect.text,
                 )
 
+                redirect_first_page = await agent_client.post(
+                    "/api/agent/v1/pages",
+                    headers=agent_headers("cross-ordered-redirect-first-page"),
+                    json={
+                        "slug": "race-ordered-redirect-first",
+                        "title": "Race ordered redirect first",
+                        "locale": "en-US",
+                    },
+                )
+                assert redirect_first_page.status_code == 201, redirect_first_page.text
+                redirect_first_page_id = UUID(
+                    redirect_first_page.json()["record"]["id"]
+                )
+                redirect_first = await agent_client.post(
+                    "/api/agent/v1/redirects",
+                    headers=agent_headers("cross-ordered-redirect-first-create"),
+                    json={
+                        "source_route": "/race-ordered-redirect-first-source",
+                        "target": "/race-ordered-redirect-first",
+                    },
+                )
+                assert redirect_first.status_code == 201, redirect_first.text
+                redirect_first_id = UUID(redirect_first.json()["record"]["id"])
+                redirect_first_update = await agent_client.patch(
+                    f"/api/agent/v1/redirects/{redirect_first_id}",
+                    headers=agent_headers("cross-ordered-redirect-first-update"),
+                    json={
+                        "target": "https://example.test/redirect-first",
+                        "expected_row_version": 1,
+                    },
+                )
+                assert redirect_first_update.status_code == 200, (
+                    redirect_first_update.text
+                )
+                redirect_first_delete = await agent_client.request(
+                    "DELETE",
+                    f"/api/agent/v1/pages/{redirect_first_page_id}",
+                    headers=agent_headers("cross-ordered-redirect-first-delete"),
+                    json={"expected_row_version": 1},
+                )
+                assert redirect_first_delete.status_code == 200, (
+                    redirect_first_delete.text
+                )
+
+                delete_first_page = await agent_client.post(
+                    "/api/agent/v1/pages",
+                    headers=agent_headers("cross-ordered-delete-first-page"),
+                    json={
+                        "slug": "race-ordered-delete-first",
+                        "title": "Race ordered delete first",
+                        "locale": "en-US",
+                    },
+                )
+                assert delete_first_page.status_code == 201, delete_first_page.text
+                delete_first_page_id = UUID(delete_first_page.json()["record"]["id"])
+                delete_first_redirect = await agent_client.post(
+                    "/api/agent/v1/redirects",
+                    headers=agent_headers("cross-ordered-delete-first-create"),
+                    json={
+                        "source_route": "/race-ordered-delete-first-source",
+                        "target": "/race-ordered-delete-first",
+                    },
+                )
+                assert delete_first_redirect.status_code == 201, (
+                    delete_first_redirect.text
+                )
+                delete_first_redirect_id = UUID(
+                    delete_first_redirect.json()["record"]["id"]
+                )
+                delete_first = await agent_client.request(
+                    "DELETE",
+                    f"/api/agent/v1/pages/{delete_first_page_id}",
+                    headers=agent_headers("cross-ordered-delete-first-delete"),
+                    json={"expected_row_version": 1},
+                )
+                assert delete_first.status_code == 409, delete_first.text
+                delete_first_update = await agent_client.patch(
+                    f"/api/agent/v1/redirects/{delete_first_redirect_id}",
+                    headers=agent_headers("cross-ordered-delete-first-update"),
+                    json={
+                        "target": "https://example.test/delete-first",
+                        "expected_row_version": 1,
+                    },
+                )
+                assert delete_first_update.status_code == 200, delete_first_update.text
+                delete_first_after = await agent_client.get(
+                    f"/api/agent/v1/pages/{delete_first_page_id}",
+                    headers=agent_headers("cross-ordered-delete-first-read"),
+                )
+                assert delete_first_after.status_code == 200, delete_first_after.text
+
                 delete_target_page = await agent_client.post(
                     "/api/agent/v1/pages",
                     headers=agent_headers("cross-delete-target-page-create"),
