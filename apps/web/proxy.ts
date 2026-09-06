@@ -28,18 +28,12 @@ function previewRoute(request: NextRequest): {
 function redirectResponse(
   target: string,
   status: number,
-  preview: boolean,
   requestUrl: string,
 ): Response {
-  const response = new Response(null, {
+  return new Response(null, {
     status,
     headers: { Location: new URL(target, requestUrl).toString() },
   });
-  if (preview) {
-    response.headers.set("Cache-Control", "private, no-store");
-    response.headers.set("X-Robots-Tag", "noindex, nofollow, noarchive");
-  }
-  return response;
 }
 
 export async function proxy(request: NextRequest): Promise<Response | undefined> {
@@ -71,7 +65,6 @@ export async function proxy(request: NextRequest): Promise<Response | undefined>
         return redirectResponse(
           projection.redirect.target,
           projection.redirect.status_code,
-          true,
           request.url,
         );
       }
@@ -102,7 +95,6 @@ export async function proxy(request: NextRequest): Promise<Response | undefined>
       return redirectResponse(
         projection.redirect.target,
         projection.redirect.status_code,
-        false,
         request.url,
       );
     }

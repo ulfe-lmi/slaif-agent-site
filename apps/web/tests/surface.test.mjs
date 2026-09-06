@@ -11,8 +11,10 @@ test("static redirect boundary preserves pinned Next browser fallback statuses",
     assert.match(proxy, new RegExp(String(status)));
   }
   assert.match(proxy, /browserToken \|\| !session/);
-  assert.match(proxy, /Cache-Control/);
-  assert.match(proxy, /X-Robots-Tag/);
+  const edge = await read("../../../infra/nginx/nginx.conf");
+  assert.match(edge, /map \$uri \$slaif_preview_cache_control/);
+  assert.match(edge, /private, no-store/);
+  assert.match(edge, /noindex, nofollow, noarchive/);
 
   const nextRedirect = await import("next/dist/client/components/redirect.js");
   const nextRedirectError =
