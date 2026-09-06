@@ -12,7 +12,19 @@ test("authenticated-preview-renders-overlay-and-keeps-canonical-unchanged", asyn
   await login(page, credential);
   const response = await page.goto(`/preview/${workspaceId}/s/demo/`);
   expect(response).not.toBeNull();
-  expect(response?.status()).toBe(200);
+  if (response?.status() !== 200) {
+    const body = await response?.text();
+    const bodyClass = body?.includes("NEXT_NOT_FOUND")
+      ? "next-not-found"
+      : body?.includes("Render resolution failed")
+        ? "render-error"
+        : body?.includes("Internal Server Error")
+          ? "internal-error"
+          : body?.length === 0
+            ? "empty"
+            : "other";
+    throw new Error(`preview-status-${response?.status()}-body-${bodyClass}`);
+  }
   expect(response?.headers()["cache-control"]).toContain("no-store");
   expect(response?.headers()["x-robots-tag"]).toContain("noindex");
   expect(response?.headers()["content-security-policy"]).toContain(
