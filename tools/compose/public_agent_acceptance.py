@@ -1193,7 +1193,23 @@ def _run_dynamic_news_edge_journey(
             canonical_after.status != 200
             or canonical_after.body != canonical_root_bytes
         ):
-            raise ProofFailure("news-canonical-bytes-changed")
+            first_difference = next(
+                (
+                    index
+                    for index, (before, after) in enumerate(
+                        zip(canonical_root_bytes, canonical_after.body, strict=False)
+                    )
+                    if before != after
+                ),
+                min(len(canonical_root_bytes), len(canonical_after.body)),
+            )
+            raise ProofFailure(
+                "news-canonical-bytes-changed-"
+                f"before={len(canonical_root_bytes)}-after={len(canonical_after.body)}-"
+                f"diff={first_difference}-"
+                f"before-sha={hashlib.sha256(canonical_root_bytes).hexdigest()[:12]}-"
+                f"after-sha={hashlib.sha256(canonical_after.body).hexdigest()[:12]}"
+            )
         _compose(project, "restart", "agent-api")
         _wait_agent_ready(client)
         _compose(project, "restart", "render-api")
