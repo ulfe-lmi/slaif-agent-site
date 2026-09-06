@@ -5714,6 +5714,23 @@ async def test_public_agent_builds_news_dynamic_listing_and_detail_render(
                 )
                 view_id = str(view["id"])
 
+                async def durable_mutation_counts() -> tuple[int, int, int]:
+                    async with owner_connection(
+                        database.settings.resolved_owner_dsn(),
+                        expected_database=database.name,
+                    ) as owner:
+                        row = await owner.fetchrow(
+                            "SELECT c.mutation_used, "
+                            "(SELECT count(*) FROM control.agent_idempotency "
+                            "WHERE workspace_id=$1), "
+                            "(SELECT count(*) FROM audit.agent_mutation "
+                            "WHERE workspace_id=$1) "
+                            "FROM control.capability c "
+                            "WHERE c.workspace_id=$1",
+                            workspace_id,
+                        )
+                    return tuple(row)
+
                 async def assert_database_projection_rejected(
                     key: str, projection: dict[str, Any]
                 ) -> None:
@@ -5737,6 +5754,7 @@ async def test_public_agent_builds_news_dynamic_listing_and_detail_render(
                                 1,
                             )
 
+                invalid_before = await durable_mutation_counts()
                 await assert_database_projection_rejected(
                     "news-invalid-extra",
                     {"fields": ["title"], "unexpected": "member"},
@@ -5764,6 +5782,19 @@ async def test_public_agent_builds_news_dynamic_listing_and_detail_render(
                     "news-invalid-hostile",
                     {"fields": ["title"], "evil": "<script>alert(1)</script>"},
                 )
+                assert await durable_mutation_counts() == invalid_before
+                async with asyncpg_cow_session(
+                    agent_pool,
+                    session_id=workspace_id,
+                    operation_id=uuid4(),
+                ) as cow:
+                    assert (
+                        await cow.native.fetchval(
+                            "SELECT count(*) FROM content.collection_view "
+                            "WHERE key LIKE 'news-invalid-%'"
+                        )
+                        == 0
+                    )
                 listing = await mutate(
                     "POST",
                     "/api/agent/v1/pages",
