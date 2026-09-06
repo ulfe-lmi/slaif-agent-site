@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import re
 import time
 from collections import defaultdict
 from collections.abc import AsyncIterator
@@ -460,7 +459,6 @@ MAX_NAVIGATION_DEPTH = 8
 MAX_REDIRECTS = 256
 MAX_REDIRECT_CHAIN = 16
 MAX_JSON_BYTES = 16_384
-_DYNAMIC_SLUG = re.compile(r"^[a-z0-9][a-z0-9._~-]{0,254}$")
 
 
 @asynccontextmanager
@@ -725,8 +723,6 @@ async def _collection_bindings(
             "CollectionDetail",
         }:
             continue
-        if node.component_type == "CollectionDetail" and route_parameter is None:
-            raise ProjectionError("not_found")
         raw_view_id = node.props.get("viewId", node.props.get("view_id"))
         try:
             view_id = UUID(str(raw_view_id))
@@ -819,7 +815,8 @@ async def _collection_bindings(
         if not isinstance(candidate_count, int) or candidate_count > MAX_CANDIDATES:
             raise ProjectionError("query_cost")
         rows = await connection.fetch(
-            "SELECT id, site_id, type_id, slug, status, values "
+            "SELECT id, site_id, type_id, slug, status, values, "
+            "type_definition_version "
             "FROM content.content_item WHERE site_id = $1 AND type_id = $2 "
             "AND status = ANY($3::text[]) ORDER BY id",
             site_id,
@@ -832,6 +829,8 @@ async def _collection_bindings(
         for row in rows:
             if row[1] != site_id or row[2] != view[2]:
                 raise ProjectionError("collection_scope")
+            if int(row[6]) != int(type_row[2]) or int(row[6]) != int(view[8]):
+                raise ProjectionError("stale_collection_definition")
             values = _json_value(row[5])
             if not isinstance(values, dict):
                 raise ProjectionError("malformed_item")
@@ -845,6 +844,7 @@ async def _collection_bindings(
                 continue
             if (
                 node.component_type == "CollectionDetail"
+                and route_parameter is not None
                 and str(row[3]) != route_parameter
             ):
                 continue
@@ -864,11 +864,15 @@ async def _collection_bindings(
             sort_collection_items(items, sort_spec)
         except (TypeError, ValueError):
             raise ProjectionError("malformed_item") from None
-        if node.component_type == "CollectionDetail" and len(items) != 1:
+        if (
+            node.component_type == "CollectionDetail"
+            and route_parameter is not None
+            and len(items) != 1
+        ):
             raise ProjectionError("not_found")
         page = (
             items[:1]
-            if node.component_type == "CollectionDetail"
+            if node.component_type == "CollectionDetail" and route_parameter is not None
             else items[offset : offset + requested_limit]
         )
         translation_by_item: dict[UUID, dict[str, dict[str, Any]]] = defaultdict(dict)
@@ -933,7 +937,7 @@ def _dynamic_route_parameter(page_route: str, matched_route: str) -> str | None:
     if not prefix.endswith("/") or not matched_route.startswith(prefix):
         raise ProjectionError("not_found")
     parameter = matched_route[len(prefix) :]
-    if _DYNAMIC_SLUG.fullmatch(parameter) is None:
+    if not parameter or "/" in parameter:
         raise ProjectionError("not_found")
     return parameter
 

@@ -369,7 +369,7 @@ function renderNode(
 ): ReactElement {
   const children = node.children.map((child) => renderNode(child, locale, bindings));
   return (
-    <div data-component={node.component_type} data-node-id={node.id}>
+    <div data-component={node.component_type}>
       {renderComponent(
         { componentType: node.component_type, props: node.props, children },
         locale,
@@ -383,7 +383,6 @@ export function renderProjection(projection: PageProjection): ReactElement {
   return (
     <main
       data-render-mode={projection.render_mode}
-      data-site-id={projection.site.id}
       aria-labelledby="page-title"
     >
       <h1 id="page-title">{projection.page.title}</h1>

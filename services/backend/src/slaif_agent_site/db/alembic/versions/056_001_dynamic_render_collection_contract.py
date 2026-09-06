@@ -186,19 +186,101 @@ def upgrade() -> None:
         ) RETURNS void LANGUAGE plpgsql SECURITY DEFINER
         SET search_path=pg_catalog AS $fn$
         DECLARE name text; field record; filtered_projection jsonb;
+            serialized text; projection jsonb;
         BEGIN
+            IF jsonb_typeof(p_filter)<>'object'
+               OR jsonb_typeof(p_sort)<>'object'
+               OR jsonb_typeof(p_projection)<>'object'
+               OR jsonb_typeof(p_pagination)<>'object'
+            THEN
+                RAISE EXCEPTION 'QUERY_INVALID' USING ERRCODE='P0003';
+            END IF;
+            serialized := jsonb_build_array(
+                p_filter,p_sort,p_projection,p_pagination
+            )::text;
+            IF octet_length(serialized)>16384
+               OR serialized ~* '(;|--|/\\*|\\*/|<script|javascript:|__proto__|constructor|prototype)'
+            THEN
+                RAISE EXCEPTION 'QUERY_INVALID' USING ERRCODE='P0003';
+            END IF;
+            IF EXISTS (
+                WITH RECURSIVE nodes(value,depth) AS (
+                    SELECT jsonb_build_array(
+                        p_filter,p_sort,p_projection,p_pagination
+                    ),0
+                    UNION ALL
+                    SELECT child.value,n.depth+1
+                    FROM nodes n
+                    CROSS JOIN LATERAL (
+                        SELECT a.value
+                        FROM jsonb_array_elements(
+                            CASE WHEN jsonb_typeof(n.value)='array'
+                                 THEN n.value ELSE '[]'::jsonb END
+                        ) a
+                        UNION ALL
+                        SELECT e.value
+                        FROM jsonb_each(
+                            CASE WHEN jsonb_typeof(n.value)='object'
+                                 THEN n.value ELSE '{}'::jsonb END
+                        ) e
+                    ) child
+                )
+                SELECT 1 FROM nodes WHERE depth>4
+            ) THEN
+                RAISE EXCEPTION 'QUERY_DEPTH' USING ERRCODE='P0003';
+            END IF;
+            IF (
+                WITH RECURSIVE nodes(value) AS (
+                    SELECT jsonb_build_array(
+                        p_filter,p_sort,p_projection,p_pagination
+                    )
+                    UNION ALL
+                    SELECT child.value
+                    FROM nodes n
+                    CROSS JOIN LATERAL (
+                        SELECT a.value
+                        FROM jsonb_array_elements(
+                            CASE WHEN jsonb_typeof(n.value)='array'
+                                 THEN n.value ELSE '[]'::jsonb END
+                        ) a
+                        UNION ALL
+                        SELECT e.value
+                        FROM jsonb_each(
+                            CASE WHEN jsonb_typeof(n.value)='object'
+                                 THEN n.value ELSE '{}'::jsonb END
+                        ) e
+                    ) child
+                )
+                SELECT count(*) FROM nodes
+            ) > 256 THEN
+                RAISE EXCEPTION 'QUERY_NODES' USING ERRCODE='P0003';
+            END IF;
             IF jsonb_typeof(p_projection)='object'
                AND jsonb_typeof(p_projection->'fields')='array'
             THEN
                 IF EXISTS (
-                    SELECT value FROM jsonb_array_elements(p_projection->'fields')
+                    SELECT 1 FROM jsonb_object_keys(p_projection) key
+                    WHERE key <> 'fields'
+                ) THEN
+                    RAISE EXCEPTION 'QUERY_PROJECTION' USING ERRCODE='P0003';
+                END IF;
+                projection := p_projection->'fields';
+                IF jsonb_array_length(projection)>16
+                   OR EXISTS (
+                       SELECT 1 FROM jsonb_array_elements(projection) value
+                       WHERE jsonb_typeof(value)<>'string'
+                   )
+                THEN
+                    RAISE EXCEPTION 'QUERY_PROJECTION' USING ERRCODE='P0003';
+                END IF;
+                IF EXISTS (
+                    SELECT value FROM jsonb_array_elements(projection)
                     GROUP BY value HAVING count(*)>1
                 ) THEN
                     RAISE EXCEPTION 'QUERY_PROJECTION' USING ERRCODE='P0003';
                 END IF;
                 FOR name IN
-                    SELECT value #>> '{}'
-                    FROM jsonb_array_elements(p_projection->'fields')
+                    SELECT value #>> '{}' FROM jsonb_array_elements(projection)
                 LOOP
                     SELECT f.* INTO field FROM content.field_definition f
                     WHERE f.type_id=p_type_id AND f."key"=name;
@@ -211,7 +293,7 @@ def upgrade() -> None:
                 SELECT jsonb_build_object(
                     'fields', coalesce(jsonb_agg(value), '[]'::jsonb)
                 ) INTO filtered_projection
-                FROM jsonb_array_elements(p_projection->'fields')
+                FROM jsonb_array_elements(projection)
                 WHERE NOT EXISTS (
                     SELECT 1 FROM content.field_definition f
                     WHERE f.type_id=p_type_id AND f."key"=value #>> '{}'

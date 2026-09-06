@@ -401,6 +401,31 @@ async def test_dynamic_collection_detail_route_binds_exact_published_item(
         detail_binding = next(iter(detail.bindings.values()))
         assert detail_binding[0]["slug"] == "published-item"
         assert detail_binding[0]["values"]["title"] == "Published title"
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            await owner.execute(
+                "UPDATE content.content_item_base "
+                "SET type_definition_version=99 WHERE id=$1",
+                published_id,
+            )
+        with pytest.raises(
+            ProjectionError, match="stale_collection_definition|not_found"
+        ):
+            await service.canonical(
+                RenderPageRequest(
+                    authority="localhost",
+                    path="/s/dynamic-collection-router/news/published-item",
+                )
+            )
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            await owner.execute(
+                "UPDATE content.content_item_base "
+                "SET type_definition_version=1 WHERE id=$1",
+                published_id,
+            )
         for slug in ("draft-item", "archived-item", "unknown-item"):
             with pytest.raises(ProjectionError, match="not_found"):
                 await service.canonical(

@@ -5700,6 +5700,54 @@ async def test_public_agent_builds_news_dynamic_listing_and_detail_render(
                     },
                 )
                 view_id = str(view["id"])
+
+                async def assert_database_projection_rejected(
+                    key: str, projection: dict[str, Any]
+                ) -> None:
+                    with pytest.raises(asyncpg.PostgresError):
+                        async with asyncpg_cow_session(
+                            agent_pool,
+                            session_id=workspace_id,
+                            operation_id=uuid4(),
+                        ) as cow:
+                            await cow.native.fetchrow(
+                                "SELECT * FROM "
+                                "content.slaif_agent_collection_view_create("
+                                "$1,$2,$3,$4::jsonb,$5::jsonb,$6::jsonb,$7::jsonb,$8)",
+                                seeded["site_id"],
+                                type_id,
+                                key,
+                                json.dumps({}),
+                                json.dumps({"field": "rank", "direction": "desc"}),
+                                json.dumps(projection),
+                                json.dumps({"limit": 10, "offset": 0}),
+                                1,
+                            )
+
+                await assert_database_projection_rejected(
+                    "news-invalid-extra",
+                    {"fields": ["title"], "unexpected": "member"},
+                )
+                await assert_database_projection_rejected(
+                    "news-invalid-too-many",
+                    {"fields": ["title", "summary"] + ["rank"] * 15},
+                )
+                await assert_database_projection_rejected(
+                    "news-invalid-oversized",
+                    {"fields": ["title"], "padding": "x" * 17_000},
+                )
+                await assert_database_projection_rejected(
+                    "news-invalid-duplicate",
+                    {"fields": ["title", "rank", "title"]},
+                )
+                await assert_database_projection_rejected(
+                    "news-invalid-non-string",
+                    {"fields": ["title", 1]},
+                )
+                await assert_database_projection_rejected(
+                    "news-invalid-hostile",
+                    {"fields": ["title"], "evil": "<script>alert(1)</script>"},
+                )
                 listing = await mutate(
                     "POST",
                     "/api/agent/v1/pages",

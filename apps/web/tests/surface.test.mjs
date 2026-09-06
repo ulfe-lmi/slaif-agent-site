@@ -319,6 +319,8 @@ test("site shell uses only the fixed server-side Render resolver", async () => {
   assert.match(landing, /isLoopbackAuthority/);
   assert.match(landing, /resolveCanonicalPage\(authority, "\/"\)/);
   assert.match(renderer, /renderer-image-placeholder/);
+  assert.doesNotMatch(renderer, /data-site-id|data-node-id/);
+  assert.doesNotMatch(renderer, /data-component=\{[^}]*\.id/);
   assert.doesNotMatch(renderer, /parsed\.protocol === "https:"/);
   assert.match(serviceAuth, /lstat/);
   assert.doesNotMatch(serviceAuth, /readFile\(file, "ascii"\)\)\.trim/);
