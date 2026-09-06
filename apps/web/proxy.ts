@@ -31,7 +31,10 @@ function redirectResponse(
   preview: boolean,
   requestUrl: string,
 ): Response {
-  const response = Response.redirect(new URL(target, requestUrl), status);
+  const response = new Response(null, {
+    status,
+    headers: { Location: new URL(target, requestUrl).toString() },
+  });
   if (preview) {
     response.headers.set("Cache-Control", "private, no-store");
     response.headers.set("X-Robots-Tag", "noindex, nofollow, noarchive");
