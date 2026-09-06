@@ -71,6 +71,13 @@ export async function GET(
     workspaceId,
     sitePath,
     queryRecord(request),
+    {
+      requestHeaders: request.headers,
+      session:
+        request.cookies.get("__Host-slaif_session")?.value ??
+        request.cookies.get("slaif_session")?.value,
+      browserToken: request.headers.get("x-slaif-browser-preview"),
+    },
   );
   return renderResolution(request, resolution);
 }

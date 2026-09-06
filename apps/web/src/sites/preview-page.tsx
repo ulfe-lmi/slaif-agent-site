@@ -12,6 +12,11 @@ import {
 import { PageProjectionShell } from "./shell";
 
 type PreviewQuery = Record<string, string | string[] | undefined>;
+type PreviewRequestContext = {
+  requestHeaders: { get(name: string): string | null };
+  session: string | undefined;
+  browserToken: string | null;
+};
 
 export type WorkspacePreviewResolution =
   | { kind: "login" }
@@ -23,12 +28,17 @@ export async function resolveWorkspacePreview(
   workspaceId: string,
   sitePath: string[] | undefined,
   query: PreviewQuery,
+  requestContext?: PreviewRequestContext,
 ): Promise<WorkspacePreviewResolution> {
-  const [requestHeaders, requestCookies] = await Promise.all([headers(), cookies()]);
+  const [requestHeaders, requestCookies] = requestContext
+    ? [requestContext.requestHeaders, null]
+    : await Promise.all([headers(), cookies()]);
   const session =
-    requestCookies.get("__Host-slaif_session")?.value ??
-    requestCookies.get("slaif_session")?.value;
-  const browserToken = requestHeaders.get("x-slaif-browser-preview");
+    requestContext?.session ??
+    requestCookies?.get("__Host-slaif_session")?.value ??
+    requestCookies?.get("slaif_session")?.value;
+  const browserToken =
+    requestContext?.browserToken ?? requestHeaders.get("x-slaif-browser-preview");
   if (session && browserToken) return { kind: "not_found" };
   if (!session && !browserToken) return { kind: "login" };
   if (
