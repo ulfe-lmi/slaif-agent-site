@@ -1208,7 +1208,9 @@ def _run_dynamic_news_edge_journey(
                 f"before={len(canonical_root_bytes)}-after={len(canonical_after.body)}-"
                 f"diff={first_difference}-"
                 f"before-sha={hashlib.sha256(canonical_root_bytes).hexdigest()[:12]}-"
-                f"after-sha={hashlib.sha256(canonical_after.body).hexdigest()[:12]}"
+                f"after-sha={hashlib.sha256(canonical_after.body).hexdigest()[:12]}-"
+                f"before-hex={canonical_root_bytes[max(0, first_difference - 8) : first_difference + 16].hex()}-"
+                f"after-hex={canonical_after.body[max(0, first_difference - 8) : first_difference + 16].hex()}"
             )
         _compose(project, "restart", "agent-api")
         _wait_agent_ready(client)
