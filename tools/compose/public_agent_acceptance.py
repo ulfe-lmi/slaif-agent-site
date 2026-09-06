@@ -1471,7 +1471,7 @@ def run_acceptance(project: str) -> None:
                 "navigation_id": navigation_id,
                 "target_kind": "EXTERNAL",
                 "target_value": "https://example.test/docs",
-                "labels": {"en": "External docs"},
+                "labels": {"en": "External docs", "sl-SI": "Zunanje povezave"},
                 "before_item_id": None,
                 "after_item_id": None,
             },
