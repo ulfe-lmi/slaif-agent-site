@@ -5841,6 +5841,52 @@ async def test_public_agent_builds_news_dynamic_listing_and_detail_render(
                         "props": {"viewId": view_id},
                     },
                 )
+                selected_listing = await mutate(
+                    "POST",
+                    "/api/agent/v1/pages",
+                    "news-selected-listing-page",
+                    {
+                        "slug": "news",
+                        "title": "Novice",
+                        "status": "PUBLISHED",
+                        "locale": "sl-SI",
+                    },
+                )
+                selected_detail = await mutate(
+                    "POST",
+                    "/api/agent/v1/pages",
+                    "news-selected-detail-page",
+                    {
+                        "slug": "detail",
+                        "title": "Podrobnosti",
+                        "status": "PUBLISHED",
+                        "locale": "sl-SI",
+                        "parent_id": selected_listing["id"],
+                        "route_template": "{slug}",
+                    },
+                )
+                await mutate(
+                    "POST",
+                    f"/api/agent/v1/pages/{selected_listing['id']}/components",
+                    "news-selected-list-component",
+                    {
+                        "component_type": "CollectionList",
+                        "slot_key": "default",
+                        "order_key": 0,
+                        "props": {"viewId": view_id},
+                    },
+                )
+                await mutate(
+                    "POST",
+                    f"/api/agent/v1/pages/{selected_detail['id']}/components",
+                    "news-selected-detail-component",
+                    {
+                        "component_type": "CollectionDetail",
+                        "slot_key": "default",
+                        "order_key": 0,
+                        "props": {"viewId": view_id},
+                    },
+                )
                 navigation = await mutate(
                     "POST",
                     "/api/agent/v1/navigation",
@@ -5898,6 +5944,20 @@ async def test_public_agent_builds_news_dynamic_listing_and_detail_render(
             assert (
                 next(iter(published_preview.bindings.values()))[0]["values"]["summary"]
                 == "Published summary"
+            )
+            selected_preview = await service.preview(
+                RenderPreviewRequest(
+                    authority="localhost",
+                    path="/s/agent-mutation/sl-si/news/published-item",
+                    workspace_id=workspace_id,
+                    session_token=session_token,
+                )
+            )
+            assert selected_preview.route_kind == "page"
+            assert selected_preview.locale == "sl-SI"
+            assert (
+                next(iter(selected_preview.bindings.values()))[0]["values"]["title"]
+                == "Published naslov"
             )
             draft_preview = await service.preview(
                 RenderPreviewRequest(

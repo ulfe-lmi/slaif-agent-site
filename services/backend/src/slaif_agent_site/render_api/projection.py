@@ -934,7 +934,9 @@ def _dynamic_route_parameter(page_route: str, matched_route: str) -> str | None:
     if not page_route.endswith("/{slug}"):
         return None
     prefix = page_route[:-6]
-    if not prefix.endswith("/") or not matched_route.startswith(prefix):
+    if not prefix.endswith("/") or not matched_route.casefold().startswith(
+        prefix.casefold()
+    ):
         raise ProjectionError("not_found")
     parameter = matched_route[len(prefix) :]
     if not parameter or "/" in parameter:
