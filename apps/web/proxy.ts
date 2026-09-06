@@ -1,4 +1,4 @@
-import type { NextRequest } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
 
 import {
   isRedirectProjection,
@@ -8,7 +8,7 @@ import {
 
 const WORKSPACE_ID = /^[0-9a-f-]{36}$/iu;
 const RESERVED =
-  /^\/(?:admin|api|agent|control|editor|health|internal|login|logout|mcp|media|setup|_next|static)(?:\/|$)/u;
+  /^\/(?:preview-render|admin|api|agent|control|editor|health|internal|login|logout|mcp|media|setup|_next|static)(?:\/|$)/u;
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 
 function isLoopbackAuthority(authority: string): boolean {
@@ -36,6 +36,18 @@ function redirectResponse(
   });
 }
 
+function previewRewriteResponse(
+  request: NextRequest,
+  preview: { workspaceId: string; path: string },
+): NextResponse {
+  const destination = new URL(`/preview-render${preview.path}`, request.url);
+  destination.search = request.nextUrl.search;
+  const headers = new Headers(request.headers);
+  headers.set("x-slaif-internal-preview", "1");
+  headers.set("x-slaif-preview-workspace", preview.workspaceId);
+  return NextResponse.rewrite(destination, { request: { headers } });
+}
+
 export async function proxy(request: NextRequest): Promise<Response | undefined> {
   if (request.method !== "GET" && request.method !== "HEAD") return;
 
@@ -48,30 +60,40 @@ export async function proxy(request: NextRequest): Promise<Response | undefined>
     // Browser preview credentials are deliberately single-use. The preview
     // page must make the sole render request so its authorization is consumed
     // exactly once by the Render service.
-    if (browserToken || !session) return;
+    if (session && browserToken) return;
+    if (!browserToken && !session) return;
 
-    try {
-      const projection = await resolvePreviewPage(
-        request.headers.get("host") ?? "",
-        preview.path,
-        preview.workspaceId,
-        { humanSessionToken: session },
-      );
-      if (
-        projection &&
-        isRedirectProjection(projection) &&
-        REDIRECT_STATUSES.has(projection.redirect.status_code)
-      ) {
-        return redirectResponse(
-          projection.redirect.target,
-          projection.redirect.status_code,
-          request.url,
+    if (session) {
+      try {
+        const projection = await resolvePreviewPage(
+          request.headers.get("host") ?? "",
+          preview.path,
+          preview.workspaceId,
+          { humanSessionToken: session },
         );
+        if (
+          projection &&
+          isRedirectProjection(projection) &&
+          REDIRECT_STATUSES.has(projection.redirect.status_code)
+        ) {
+          return redirectResponse(
+            projection.redirect.target,
+            projection.redirect.status_code,
+            request.url,
+          );
+        }
+      } catch {
+        // The page route remains authoritative for normal rendering and errors.
       }
-    } catch {
-      // The page route remains authoritative for normal rendering and errors.
     }
-    return;
+    return previewRewriteResponse(request, preview);
+  }
+
+  if (
+    request.nextUrl.pathname.startsWith("/preview-render") &&
+    request.headers.get("x-slaif-internal-preview") !== "1"
+  ) {
+    return new Response(null, { status: 404 });
   }
 
   if (request.nextUrl.pathname !== "/" && RESERVED.test(request.nextUrl.pathname))

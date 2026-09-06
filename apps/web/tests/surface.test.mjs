@@ -10,7 +10,7 @@ test("static redirect boundary preserves pinned Next browser fallback statuses",
   for (const status of [301, 302, 303, 307, 308]) {
     assert.match(proxy, new RegExp(String(status)));
   }
-  assert.match(proxy, /browserToken \|\| !session/);
+  assert.match(proxy, /!browserToken && !session/);
   const edge = await read("../../../infra/nginx/nginx.conf");
   assert.match(edge, /map \$uri \$slaif_preview_cache_control/);
   assert.match(edge, /private, no-store/);
@@ -296,9 +296,11 @@ test("site shell uses only the fixed server-side Render resolver", async () => {
   const landing = await read("../app/page.tsx");
   const renderer = await read("../src/renderer/components.tsx");
   const serviceAuth = await read("../src/sites/service-auth.ts");
+  const proxy = await read("../proxy.ts");
   const previewPage = await read(
     "../app/preview/[workspaceId]/[[...sitePath]]/page.tsx",
   );
+  const previewResolver = await read("../src/sites/preview-page.tsx");
   assert.match(client, /http:\/\/render-api:8000\/internal\/render\/v1\/site-context/);
   assert.match(client, /internal\/render\/v1\/page/);
   assert.match(client, /internal\/render\/v1\/preview/);
@@ -326,13 +328,15 @@ test("site shell uses only the fixed server-side Render resolver", async () => {
   assert.doesNotMatch(serviceAuth, /readFile\(file, "ascii"\)\)\.trim/);
   assert.match(landing, /resolveSiteContext\(authority, "\/"\)/);
   assert.doesNotMatch(shell, /site_id.*params|x-forwarded-host/i);
-  assert.match(previewPage, /x-slaif-browser-preview/);
-  assert.match(previewPage, /session && browserToken/);
-  assert.match(previewPage, /browserToken, browserRoute/);
-  assert.match(previewPage, /SLAIF_BROWSER_PREVIEW_AUTHORITY/);
-  assert.match(previewPage, /browserToken \? browserAuthority!/);
+  assert.match(`${previewPage}${previewResolver}`, /x-slaif-browser-preview/);
+  assert.match(`${previewPage}${previewResolver}`, /session && browserToken/);
+  assert.match(`${previewPage}${previewResolver}`, /browserToken, browserRoute/);
+  assert.match(`${previewPage}${previewResolver}`, /SLAIF_BROWSER_PREVIEW_AUTHORITY/);
+  assert.match(`${previewPage}${previewResolver}`, /browserToken \? browserAuthority!/);
+  assert.match(proxy, /NextResponse\.rewrite/);
+  assert.match(proxy, /x-slaif-preview-workspace/);
   assert.doesNotMatch(
-    `${client}${previewPage}`,
+    `${client}${previewPage}${previewResolver}`,
     /localStorage|sessionStorage|[?&](?:token|credential)=/i,
   );
 });
