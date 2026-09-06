@@ -23,7 +23,12 @@ test("authenticated-preview-renders-overlay-and-keeps-canonical-unchanged", asyn
           : body?.length === 0
             ? "empty"
             : "other";
-    console.log(`preview-diagnostic status=${response?.status()} body=${bodyClass}`);
+    test.info().annotations = [
+      {
+        type: "stage",
+        description: `preview-status-${response?.status()}-${bodyClass}`,
+      },
+    ];
     throw new Error(`preview-status-${response?.status()}-body-${bodyClass}`);
   }
   expect(response?.headers()["cache-control"]).toContain("no-store");
