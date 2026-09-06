@@ -54,16 +54,29 @@ test("authenticated-preview-renders-overlay-and-keeps-canonical-unchanged", asyn
       "/preview/" + workspaceId + "/s/demo/compose-redirect-" + redirectCase.suffix,
       { maxRedirects: 0 },
     );
+    const previewBody = await previewRedirect.text();
+    const bodyClass = previewBody.includes("Render resolution failed")
+      ? "render-error"
+      : previewBody.includes("NEXT_REDIRECT")
+        ? "next-redirect-error"
+        : previewBody.includes("Internal Server Error")
+          ? "internal-error"
+          : previewBody.length === 0
+            ? "empty"
+            : "other";
     test.info().annotations = [
       {
         type: "stage",
         description:
-          "preview-redirect-" + redirectCase.suffix + "-" + previewRedirect.status(),
+          "preview-redirect-" +
+          redirectCase.suffix +
+          "-" +
+          previewRedirect.status() +
+          "-" +
+          bodyClass,
       },
     ];
-    expect(previewRedirect.status(), await previewRedirect.text()).toBe(
-      redirectCase.status,
-    );
+    expect(previewRedirect.status(), previewBody).toBe(redirectCase.status);
     expect(previewRedirect.headers().location).toBe(redirectCase.target);
     expect(previewRedirect.headers()["cache-control"]).toBe("private, no-store");
     expect(previewRedirect.headers()["x-robots-tag"]).toBe(
@@ -72,7 +85,6 @@ test("authenticated-preview-renders-overlay-and-keeps-canonical-unchanged", asyn
     expect(previewRedirect.headers()["content-security-policy"]).toContain(
       "default-src 'self'",
     );
-    const previewBody = await previewRedirect.text();
     expect(previewBody).not.toContain(credential.setupToken);
     expect(previewBody).not.toContain("sas2_session_");
 
