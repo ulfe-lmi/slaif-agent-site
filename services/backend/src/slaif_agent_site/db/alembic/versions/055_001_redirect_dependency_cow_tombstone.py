@@ -14,6 +14,96 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
+    # Keep the pre-070 migration byte-immutable while aligning the human
+    # editor's lifecycle lock with the shared Agent lifecycle lock.
+    op.execute(
+        """
+        CREATE OR REPLACE FUNCTION control.slaif_human_editor_workspace_assert(
+            p_workspace_id uuid, p_human_user_id uuid, p_site_id uuid,
+            p_human_session_id uuid, p_permission_key text, p_lock boolean
+        ) RETURNS void LANGUAGE plpgsql SECURITY DEFINER
+        SET search_path = pg_catalog AS $fn$
+        DECLARE
+            session_text text;
+            operation_text text;
+            session_uuid uuid;
+            operation_uuid uuid;
+        BEGIN
+            session_text := NULLIF(current_setting('app.session_id', true), '');
+            operation_text := NULLIF(current_setting('app.operation_id', true), '');
+            BEGIN
+                session_uuid := session_text::uuid;
+                operation_uuid := operation_text::uuid;
+            EXCEPTION WHEN invalid_text_representation THEN
+                RAISE EXCEPTION 'HUMAN_EDITOR_COW_CONTEXT_INVALID'
+                    USING ERRCODE = '22023';
+            END;
+            IF session_uuid IS DISTINCT FROM p_workspace_id
+               OR operation_uuid IS NULL
+            THEN
+                RAISE EXCEPTION 'HUMAN_EDITOR_COW_CONTEXT_INVALID'
+                    USING ERRCODE = '22023';
+            END IF;
+            IF p_lock THEN
+                PERFORM pg_advisory_xact_lock_shared(
+                    hashtextextended(p_workspace_id::text, 280)
+                );
+            END IF;
+            IF NOT EXISTS (
+                SELECT 1
+                FROM control.workspace AS workspace
+                JOIN control.user_account AS account
+                  ON account.id = workspace.created_by
+                JOIN control.site AS site ON site.id = workspace.site_id
+                JOIN control.user_session AS session
+                  ON session.id = p_human_session_id
+                 AND session.user_account_id = p_human_user_id
+                WHERE workspace.id = p_workspace_id
+                  AND workspace.site_id = p_site_id
+                  AND workspace.created_by = p_human_user_id
+                  AND workspace.actor_type = 'HUMAN'
+                  AND workspace.status = 'ACTIVE'
+                  AND workspace.expires_at > CURRENT_TIMESTAMP
+                  AND workspace.id = (
+                      SELECT selected.id
+                      FROM control.workspace AS selected
+                      WHERE selected.site_id = p_site_id
+                        AND selected.created_by = p_human_user_id
+                        AND selected.actor_type = 'HUMAN'
+                        AND selected.status = 'ACTIVE'
+                        AND selected.expires_at > CURRENT_TIMESTAMP
+                      ORDER BY selected.created_at DESC, selected.id DESC
+                      LIMIT 1
+                  )
+                  AND account.status = 'ACTIVE'
+                  AND site.status = 'ACTIVE'
+                  AND session.revoked_at IS NULL
+                  AND session.absolute_expires_at > CURRENT_TIMESTAMP
+            ) THEN
+                RAISE EXCEPTION 'HUMAN_EDITOR_WORKSPACE_NOT_ACTIVE'
+                    USING ERRCODE = 'P0002';
+            END IF;
+            IF NOT (
+                EXISTS (
+                    SELECT 1
+                    FROM control.platform_administrator AS administrator
+                    WHERE administrator.user_account_id = p_human_user_id
+                )
+                OR EXISTS (
+                    SELECT 1
+                    FROM control.slaif_effective_human_membership(
+                        p_human_user_id, p_site_id
+                    ) AS membership
+                    WHERE p_permission_key = ANY(membership.effective_permissions)
+                )
+            ) THEN
+                RAISE EXCEPTION 'HUMAN_EDITOR_PERMISSION_REVOKED'
+                    USING ERRCODE = 'P0002';
+            END IF;
+        END;
+        $fn$
+        """
+    )
     op.execute(
         """
         CREATE OR REPLACE FUNCTION content.slaif_redirect_page_target_dependency(

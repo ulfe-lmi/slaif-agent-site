@@ -351,15 +351,15 @@ async def test_new_connection_identity_and_exact_role_are_fail_closed(
             ControlDatabaseReason.MIGRATION_MISMATCH,
         ),
         (
-            ("053_001", "053_001", "PENDING", False, "agent-cow-postgresql", "0.2.0"),
+            ("055_001", "055_001", "PENDING", False, "agent-cow-postgresql", "0.2.0"),
             ControlDatabaseReason.UNSAFE_MARKER,
         ),
         (
-            ("053_001", "053_001", "EMPTY_SAFE", True, "other", "0.2.0"),
+            ("055_001", "055_001", "EMPTY_SAFE", True, "other", "0.2.0"),
             ControlDatabaseReason.FOUNDATION_MISMATCH,
         ),
         (
-            ("053_001", "053_001", "HARDENED", True, "agent-cow-postgresql", "0.1.0"),
+            ("055_001", "055_001", "HARDENED", True, "agent-cow-postgresql", "0.1.0"),
             ControlDatabaseReason.FOUNDATION_MISMATCH,
         ),
     ),

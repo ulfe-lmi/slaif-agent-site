@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
 from uuid import UUID
@@ -50,7 +51,7 @@ async def prelocked_cow_session(
     operation_id: UUID,
     site_id: UUID | None = None,
     type_id: UUID | None = None,
-):
+) -> AsyncIterator[Any]:
     """Hold session-level locks before the COW transaction takes its snapshot."""
 
     connection = await pool.acquire()

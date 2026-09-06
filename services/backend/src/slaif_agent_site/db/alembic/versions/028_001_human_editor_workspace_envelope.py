@@ -147,7 +147,7 @@ def upgrade() -> None:
                     USING ERRCODE = '22023';
             END IF;
             IF p_lock THEN
-                PERFORM pg_advisory_xact_lock_shared(
+                PERFORM pg_advisory_xact_lock(
                     hashtextextended(p_workspace_id::text, 280)
                 );
             END IF;
