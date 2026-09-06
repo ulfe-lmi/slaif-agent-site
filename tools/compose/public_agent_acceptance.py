@@ -721,6 +721,7 @@ def _wait_public_not_found(client: PublicClient, path: str, label: str) -> None:
 
 
 def _wait_preview_html(client: PublicClient, path: str, label: str) -> bytes:
+    last_status: int | None = None
     for _attempt in range(30):
         try:
             response = client.request(path)
@@ -728,8 +729,10 @@ def _wait_preview_html(client: PublicClient, path: str, label: str) -> bytes:
             response = None
         if response is not None and response.status == 200:
             return response.body
+        if response is not None:
+            last_status = response.status
         time.sleep(1)
-    raise ProofFailure(f"{label}-not-ready")
+    raise ProofFailure(f"{label}-not-ready-status-{last_status or 0}")
 
 
 def _wait_browser_run(
