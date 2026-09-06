@@ -1171,7 +1171,7 @@ then
 fi
 
 docker build -f infra/apache/Dockerfile -t slaif-agent-site-apache:test .
-docker run --rm slaif-agent-site-apache:test httpd -t
+docker run --rm slaif-agent-site-apache:test apachectl -t
 docker run --rm \
   --add-host control-api:127.0.0.1 \
   --add-host editor-api:127.0.0.1 \

@@ -149,6 +149,13 @@ images retain their independently qualified 3.23 package sources. The Apache
 image is accepted only after two reproducible builds, parity, SBOM/license
 evidence, and a current Grype scan with zero unexcepted Critical findings.
 
+For the current 077-o qualification, the earlier Trixie paragraph above is
+historical blocker evidence. The active Apache source is the immutable Ubuntu
+24.04 LTS image `ubuntu:24.04@sha256:33ceb71981b602c1a7443a53469e4dba065f7503eab3078a2d7a57a2ab987517`,
+with standard Ubuntu Apache 2.4 security packages and glibc 2.39-0ubuntu8.8.
+The normalized Apache application-file boundary is `/etc/apache2/` for this
+base-image layout.
+
 ## Vulnerability gate and database freshness
 
 Grype must successfully update and report a valid database whose build time is

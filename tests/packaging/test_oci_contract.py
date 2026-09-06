@@ -83,24 +83,23 @@ class OciContractTests(unittest.TestCase):
         self.assertNotIn("apk upgrade", content)
         self.assertNotIn("postgresql-", content)
 
-    def test_apache_qualification_is_exact_and_uses_fixed_debian_packages(self) -> None:
+    def test_apache_qualification_is_exact_and_uses_fixed_ubuntu_packages(self) -> None:
         content = (ROOT / "infra/apache/Dockerfile").read_text(encoding="utf-8")
         self.assertIn(
-            "httpd:2.4.68-trixie@sha256:"
-            "979c38c2228d28c2edfd45c6e27dcee1c7b4a101a5526721ae8ece454e89e99e",
+            "ubuntu:24.04@sha256:"
+            "33ceb71981b602c1a7443a53469e4dba065f7503eab3078a2d7a57a2ab987517",
             content,
         )
         for package in (
-            "libaprutil1-ldap=1.6.3-3+deb13u1",
-            "libaprutil1t64=1.6.3-3+deb13u1",
-            "libssl3t64=3.5.7-1~deb13u2",
-            "openssl=3.5.7-1~deb13u2",
+            "apache2=2.4.58-1ubuntu8.15",
+            "apache2-bin=2.4.58-1ubuntu8.15",
+            "apache2-data=2.4.58-1ubuntu8.15",
+            "apache2-utils=2.4.58-1ubuntu8.15",
+            "openssl=3.0.13-0ubuntu3.15",
         ):
             self.assertIn(f"'{package}'", content)
-        self.assertIn("httpd -t", content)
-        self.assertIn("apt-get purge --allow-remove-essential --yes", content)
-        for package in ("libcurl4t64", "libxml2", "perl-base"):
-            self.assertIn(package, content)
+        self.assertIn("apachectl -t", content)
+        self.assertIn('CMD ["apachectl", "-D", "FOREGROUND"]', content)
 
     def test_web_runtime_is_filtered_standalone_and_telemetry_free(self) -> None:
         content = (ROOT / "apps/web/Dockerfile").read_text(encoding="utf-8")

@@ -93,7 +93,7 @@ def validate_policy(policy: dict[str, Any]) -> None:
     required = {
         "application_licenses",
         "alpine_package_overrides",
-        "debian_package_overrides",
+        "ubuntu_package_overrides",
         "attribution_notes",
         "browser_runtime",
         "container_license_policy",
@@ -295,20 +295,20 @@ def validate_policy(policy: dict[str, Any]) -> None:
                 f"policy: Alpine package removals for {name} are malformed"
             )
 
-    debian = policy["debian_package_overrides"]
-    if not isinstance(debian, dict) or set(debian) != {"images"}:
-        raise PolicyError("policy: Debian package overrides are malformed")
-    if not isinstance(debian["images"], dict) or set(debian["images"]) != {"apache"}:
+    ubuntu = policy["ubuntu_package_overrides"]
+    if not isinstance(ubuntu, dict) or set(ubuntu) != {"images"}:
+        raise PolicyError("policy: Ubuntu package overrides are malformed")
+    if not isinstance(ubuntu["images"], dict) or set(ubuntu["images"]) != {"apache"}:
         raise PolicyError(
-            "policy: Debian package override image coverage is incomplete"
+            "policy: Ubuntu package override image coverage is incomplete"
         )
-    for name, configuration in debian["images"].items():
+    for name, configuration in ubuntu["images"].items():
         if not isinstance(configuration, dict) or set(configuration) != {
             "install",
             "remove",
         }:
             raise PolicyError(
-                f"policy: Debian package overrides for {name} are malformed"
+                f"policy: Ubuntu package overrides for {name} are malformed"
             )
         installed = configuration["install"]
         removed = configuration["remove"]
@@ -322,11 +322,11 @@ def validate_policy(policy: dict[str, Any]) -> None:
             or installed != sorted(set(installed))
         ):
             raise PolicyError(
-                f"policy: Debian package overrides for {name} are not exact"
+                f"policy: Ubuntu package overrides for {name} are not exact"
             )
         if not isinstance(removed, list) or removed != sorted(set(removed)):
             raise PolicyError(
-                f"policy: Debian package removals for {name} are malformed"
+                f"policy: Ubuntu package removals for {name} are malformed"
             )
 
     browser_runtime = policy["browser_runtime"]
@@ -765,15 +765,15 @@ def validate_dependency_sources(root: Path, policy: dict[str, Any]) -> dict[str,
             if marker not in dockerfile_text:
                 raise PolicyError(f"{name}: missing Alpine package removal {package}")
 
-    debian_paths = {"apache": root / "infra/apache/Dockerfile"}
-    for name, configuration in policy["debian_package_overrides"]["images"].items():
-        dockerfile_text = debian_paths[name].read_text(encoding="utf-8")
+    ubuntu_paths = {"apache": root / "infra/apache/Dockerfile"}
+    for name, configuration in policy["ubuntu_package_overrides"]["images"].items():
+        dockerfile_text = ubuntu_paths[name].read_text(encoding="utf-8")
         for package in configuration["install"]:
             if f"'{package}'" not in dockerfile_text:
-                raise PolicyError(f"{name}: missing exact Debian package {package}")
+                raise PolicyError(f"{name}: missing exact Ubuntu package {package}")
         for package in configuration["remove"]:
             if package not in dockerfile_text:
-                raise PolicyError(f"{name}: missing Debian package removal {package}")
+                raise PolicyError(f"{name}: missing Ubuntu package removal {package}")
 
     browser_runtime = policy["browser_runtime"]
     worker_dockerfile = (root / "services/browser-worker/Dockerfile").read_text(
