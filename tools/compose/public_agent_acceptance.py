@@ -1611,13 +1611,39 @@ def run_acceptance(project: str) -> None:
                 "oap-navigation-internal-page-before-delete-row-version-"
                 f"{internal_page_document.get('row_version')}"
             )
-        _request_mutation(
-            client,
-            primary_token,
+        internal_page_delete_key = f"oap-navigation-internal-page-delete-{tag}"
+        internal_page_delete_response = client.request(
             f"/api/agent/v1/pages/{internal_page_id}",
-            {"expected_row_version": 1},
-            f"oap-navigation-internal-page-delete-{tag}",
             method="DELETE",
+            body={"expected_row_version": 1},
+            headers={
+                "Authorization": f"Bearer {primary_token}",
+                "Idempotency-Key": internal_page_delete_key,
+            },
+        )
+        if internal_page_delete_response.status != 200:
+            try:
+                error_document = json.loads(internal_page_delete_response.body)
+                error_code = error_document.get("error", {}).get("code", "unknown")
+            except (TypeError, ValueError, AttributeError):
+                error_code = "invalid-json"
+            raise ProofFailure(
+                f"{internal_page_delete_key}-status-"
+                f"{internal_page_delete_response.status}-code-{error_code}"
+            )
+        internal_page_delete_document = _json(
+            internal_page_delete_response,
+            status=200,
+            label=internal_page_delete_key,
+        )
+        _record_semantic_audit_expectation(
+            token=primary_token,
+            path=f"/api/agent/v1/pages/{internal_page_id}",
+            method="DELETE",
+            body={"expected_row_version": 1},
+            key=internal_page_delete_key,
+            status=200,
+            document=internal_page_delete_document,
         )
         _request_mutation(
             client,
