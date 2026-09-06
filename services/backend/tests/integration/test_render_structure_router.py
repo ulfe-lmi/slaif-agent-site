@@ -594,6 +594,7 @@ async def test_dynamic_collection_detail_route_binds_exact_published_item(
             resolved_route="/news",
             mutate=change_view_snapshot,
         )
+        assert before_view_race.route_kind == "page"
         before_view_values = next(iter(before_view_race.bindings.values()))[0]["values"]
         assert before_view_values["rank"] == 3
         after_view_race = await service.canonical(
@@ -601,6 +602,7 @@ async def test_dynamic_collection_detail_route_binds_exact_published_item(
                 authority="localhost", path="/s/dynamic-collection-router/news"
             )
         )
+        assert after_view_race.route_kind == "page"
         assert "rank" not in next(iter(after_view_race.bindings.values()))[0]["values"]
 
         async def change_type_snapshot() -> None:
@@ -618,6 +620,7 @@ async def test_dynamic_collection_detail_route_binds_exact_published_item(
             resolved_route="/news",
             mutate=change_type_snapshot,
         )
+        assert before_type_race.route_kind == "page"
         assert next(iter(before_type_race.bindings.values()))[0]["slug"] == (
             "published-item"
         )
@@ -670,6 +673,7 @@ async def test_dynamic_collection_detail_route_binds_exact_published_item(
             resolved_route="/news/published-item",
             mutate=move_page_snapshot,
         )
+        assert before_page_move.route_kind == "page"
         assert before_page_move.page.effective_route == "/news/{slug}"
         with pytest.raises(ProjectionError, match="not_found"):
             await service.canonical(
@@ -684,6 +688,7 @@ async def test_dynamic_collection_detail_route_binds_exact_published_item(
                 path="/s/dynamic-collection-router/moved/published-item",
             )
         )
+        assert moved.route_kind == "page"
         assert moved.page.effective_route == "/moved/{slug}"
 
         cancellation_snapshot = asyncio.Event()
@@ -723,6 +728,7 @@ async def test_dynamic_collection_detail_route_binds_exact_published_item(
                 path="/s/dynamic-collection-router/moved/published-item",
             )
         )
+        assert reusable.route_kind == "page"
         assert reusable.page.effective_route == "/moved/{slug}"
     finally:
         await public_pool.close()
