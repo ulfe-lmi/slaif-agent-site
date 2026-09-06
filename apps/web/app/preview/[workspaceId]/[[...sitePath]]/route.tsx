@@ -1,4 +1,4 @@
-import { renderToStaticMarkup } from "react-dom/server.edge";
+import { renderToReadableStream } from "react-dom/server.edge";
 import { NextResponse, type NextRequest } from "next/server";
 
 import {
@@ -27,7 +27,7 @@ function notFoundResponse() {
   return new NextResponse(null, { status: 404 });
 }
 
-function renderResolution(
+async function renderResolution(
   request: NextRequest,
   resolution: WorkspacePreviewResolution,
 ) {
@@ -41,7 +41,7 @@ function renderResolution(
       resolution.projection.redirect.status_code,
     );
   }
-  const markup = renderToStaticMarkup(
+  const stream = await renderToReadableStream(
     <html lang="en">
       <head>
         <meta charSet="utf-8" />
@@ -53,7 +53,7 @@ function renderResolution(
       </body>
     </html>,
   );
-  return new NextResponse(`<!DOCTYPE html>${markup}`, {
+  return new NextResponse(stream, {
     headers: { "Content-Type": "text/html; charset=utf-8" },
   });
 }

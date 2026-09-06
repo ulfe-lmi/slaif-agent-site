@@ -332,7 +332,7 @@ test("site shell uses only the fixed server-side Render resolver", async () => {
   assert.match(`${previewPage}${previewResolver}`, /browserToken, browserRoute/);
   assert.match(`${previewPage}${previewResolver}`, /SLAIF_BROWSER_PREVIEW_AUTHORITY/);
   assert.match(`${previewPage}${previewResolver}`, /browserToken \? browserAuthority!/);
-  assert.match(previewPage, /renderToStaticMarkup/);
+  assert.match(previewPage, /renderToReadableStream/);
   assert.match(previewPage, /workspaceId/);
   assert.doesNotMatch(
     `${client}${previewPage}${previewResolver}`,
