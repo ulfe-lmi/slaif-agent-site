@@ -89,13 +89,6 @@ export async function proxy(request: NextRequest): Promise<Response | undefined>
     return previewRewriteResponse(request, preview);
   }
 
-  if (
-    request.nextUrl.pathname.startsWith("/preview-render") &&
-    request.headers.get("x-slaif-internal-preview") !== "1"
-  ) {
-    return new Response(null, { status: 404 });
-  }
-
   if (request.nextUrl.pathname !== "/" && RESERVED.test(request.nextUrl.pathname))
     return;
   if (
