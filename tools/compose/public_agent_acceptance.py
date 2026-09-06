@@ -1033,7 +1033,7 @@ def _run_dynamic_news_edge_journey(
             raise ProofFailure("news-canonical-baseline-status")
         canonical_root_bytes = canonical_root.body
         default_route = f"/{news_slug}"
-        selected_route = f"/{selected_locale}/{news_slug}"
+        selected_route = f"/{selected_locale.casefold()}/{news_slug}"
         default_preview = f"/preview/{workspace}/s/demo{default_route}"
         selected_preview = f"/preview/{workspace}/s/demo{selected_route}"
         if client.request(f"/s/demo{default_route}").status != 404:
