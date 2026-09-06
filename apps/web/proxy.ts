@@ -1,4 +1,4 @@
-import { NextResponse, type NextRequest } from "next/server";
+import type { NextRequest } from "next/server";
 
 import {
   isRedirectProjection,
@@ -8,7 +8,7 @@ import {
 
 const WORKSPACE_ID = /^[0-9a-f-]{36}$/iu;
 const RESERVED =
-  /^\/(?:preview-render|admin|api|agent|control|editor|health|internal|login|logout|mcp|media|setup|_next|static)(?:\/|$)/u;
+  /^\/(?:admin|api|agent|control|editor|health|internal|login|logout|mcp|media|setup|_next|static)(?:\/|$)/u;
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 
 function isLoopbackAuthority(authority: string): boolean {
@@ -34,19 +34,6 @@ function redirectResponse(
     status,
     headers: { Location: new URL(target, requestUrl).toString() },
   });
-}
-
-function previewRewriteResponse(
-  request: NextRequest,
-  preview: { workspaceId: string; path: string },
-): NextResponse {
-  const destination = new URL(`/preview-render${preview.path}`, request.url);
-  destination.search = request.nextUrl.search;
-  destination.searchParams.set("__slaif_preview_workspace", preview.workspaceId);
-  const headers = new Headers(request.headers);
-  headers.set("x-slaif-internal-preview", "1");
-  headers.set("x-slaif-preview-workspace", preview.workspaceId);
-  return NextResponse.rewrite(destination, { request: { headers } });
 }
 
 export async function proxy(request: NextRequest): Promise<Response | undefined> {
@@ -87,7 +74,7 @@ export async function proxy(request: NextRequest): Promise<Response | undefined>
         // The page route remains authoritative for normal rendering and errors.
       }
     }
-    return previewRewriteResponse(request, preview);
+    return;
   }
 
   if (request.nextUrl.pathname !== "/" && RESERVED.test(request.nextUrl.pathname))

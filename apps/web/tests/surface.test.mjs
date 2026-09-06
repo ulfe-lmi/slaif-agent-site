@@ -296,9 +296,8 @@ test("site shell uses only the fixed server-side Render resolver", async () => {
   const landing = await read("../app/page.tsx");
   const renderer = await read("../src/renderer/components.tsx");
   const serviceAuth = await read("../src/sites/service-auth.ts");
-  const proxy = await read("../proxy.ts");
   const previewPage = await read(
-    "../app/preview/[workspaceId]/[[...sitePath]]/page.tsx",
+    "../app/preview/[workspaceId]/[[...sitePath]]/route.tsx",
   );
   const previewResolver = await read("../src/sites/preview-page.tsx");
   assert.match(client, /http:\/\/render-api:8000\/internal\/render\/v1\/site-context/);
@@ -333,8 +332,8 @@ test("site shell uses only the fixed server-side Render resolver", async () => {
   assert.match(`${previewPage}${previewResolver}`, /browserToken, browserRoute/);
   assert.match(`${previewPage}${previewResolver}`, /SLAIF_BROWSER_PREVIEW_AUTHORITY/);
   assert.match(`${previewPage}${previewResolver}`, /browserToken \? browserAuthority!/);
-  assert.match(proxy, /NextResponse\.rewrite/);
-  assert.match(proxy, /x-slaif-preview-workspace/);
+  assert.match(previewPage, /renderToStaticMarkup/);
+  assert.match(previewPage, /workspaceId/);
   assert.doesNotMatch(
     `${client}${previewPage}${previewResolver}`,
     /localStorage|sessionStorage|[?&](?:token|credential)=/i,

@@ -4,15 +4,14 @@ import { NextResponse, type NextRequest } from "next/server";
 import {
   resolveWorkspacePreview,
   type WorkspacePreviewResolution,
-} from "../../../src/sites/preview-page";
-import { PageProjectionShell } from "../../../src/sites/shell";
+} from "../../../../src/sites/preview-page";
+import { PageProjectionShell } from "../../../../src/sites/shell";
 
 export const dynamic = "force-dynamic";
 
 function queryRecord(request: NextRequest) {
   const query: Record<string, string | string[]> = {};
   for (const [key, value] of request.nextUrl.searchParams.entries()) {
-    if (key === "__slaif_preview_workspace") continue;
     const existing = query[key];
     query[key] =
       existing === undefined
@@ -61,16 +60,13 @@ function renderResolution(
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ sitePath?: string[] }> },
+  {
+    params,
+  }: {
+    params: Promise<{ workspaceId: string; sitePath?: string[] }>;
+  },
 ) {
-  const requestHeaders = request.headers;
-  const workspaceId =
-    requestHeaders.get("x-slaif-preview-workspace") ??
-    request.nextUrl.searchParams.get("__slaif_preview_workspace");
-  if (workspaceId === null) {
-    return notFoundResponse();
-  }
-  const { sitePath } = await params;
+  const { workspaceId, sitePath } = await params;
   const resolution = await resolveWorkspacePreview(
     workspaceId,
     sitePath,
