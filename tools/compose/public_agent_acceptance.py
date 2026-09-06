@@ -756,7 +756,7 @@ def _assert_preview_html(
     label: str,
     expected: tuple[str, ...],
     forbidden: tuple[str, ...],
-    known_ids: tuple[str, ...],
+    known_ids: tuple[tuple[str, str], ...],
 ) -> None:
     try:
         text = body.decode("utf-8")
@@ -770,8 +770,9 @@ def _assert_preview_html(
     for value in forbidden:
         if value in text:
             raise ProofFailure(f"{label}-forbidden-text-present")
-    if any(value and value in text for value in known_ids):
-        raise ProofFailure(f"{label}-internal-id-leak")
+    for id_label, value in known_ids:
+        if value and value in text:
+            raise ProofFailure(f"{label}-{id_label}-id-leak")
     if re.search(
         r"[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}",
         text,
@@ -1043,11 +1044,15 @@ def _run_dynamic_news_edge_journey(
             expected=("Published title", "Draft title", "Published summary"),
             forbidden=("Archived title", "sas2_", "internal"),
             known_ids=(
-                workspace,
-                site_id,
-                type_id,
-                view_id,
-                *[value for item in items.values() for value in item],
+                ("workspace", workspace),
+                ("site", site_id),
+                ("type", type_id),
+                ("view", view_id),
+                *[
+                    (f"{slug}-item-or-translation", value)
+                    for slug, item in items.items()
+                    for value in item
+                ],
             ),
         )
         if default_listing_body.find(b"Published title") > default_listing_body.find(
@@ -1062,7 +1067,16 @@ def _run_dynamic_news_edge_journey(
             label="news-default-detail",
             expected=("Published title", "Published summary"),
             forbidden=("Draft title", "Archived title"),
-            known_ids=(workspace, site_id, type_id, view_id, *items["published"]),
+            known_ids=(
+                ("workspace", workspace),
+                ("site", site_id),
+                ("type", type_id),
+                ("view", view_id),
+                *[
+                    ("published-item-or-translation", value)
+                    for value in items["published"]
+                ],
+            ),
         )
         selected_detail = _wait_preview_html(
             client, f"{selected_preview}/published", "news-selected-detail"
@@ -1072,7 +1086,16 @@ def _run_dynamic_news_edge_journey(
             label="news-selected-detail",
             expected=("Published naslov", "Published povzetek"),
             forbidden=("Published title", "Archived naslov"),
-            known_ids=(workspace, site_id, type_id, view_id, *items["published"]),
+            known_ids=(
+                ("workspace", workspace),
+                ("site", site_id),
+                ("type", type_id),
+                ("view", view_id),
+                *[
+                    ("published-item-or-translation", value)
+                    for value in items["published"]
+                ],
+            ),
         )
         browser_response = client.request(
             "/api/agent/v1/preview-runs",
@@ -1142,7 +1165,16 @@ def _run_dynamic_news_edge_journey(
             label="news-renamed-detail",
             expected=("Published title updated", "Published summary updated"),
             forbidden=('Published title"><', "Archived title"),
-            known_ids=(workspace, site_id, type_id, view_id, *items["published"]),
+            known_ids=(
+                ("workspace", workspace),
+                ("site", site_id),
+                ("type", type_id),
+                ("view", view_id),
+                *[
+                    ("published-item-or-translation", value)
+                    for value in items["published"]
+                ],
+            ),
         )
         _request_mutation(
             client,
