@@ -6484,9 +6484,33 @@ async def test_agent_relation_and_view_hostile_matrix_and_races(
                         "matrix-view-projection-duplicate",
                         {"projection_spec": {"fields": ["plain", "plain"]}},
                     )
-                    await reject_view(
-                        "matrix-view-projection-localized",
-                        {"projection_spec": {"fields": ["localized"]}},
+                    localized_view = await client_one.post(
+                        view_path,
+                        headers={
+                            **headers,
+                            "Idempotency-Key": "matrix-view-projection-localized",
+                        },
+                        json={
+                            **valid_view_payload,
+                            "key": "matrix-view-projection-localized",
+                            "projection_spec": {"fields": ["localized"]},
+                        },
+                    )
+                    assert localized_view.status_code == 201, localized_view.text
+                    localized_view_id = localized_view.json()["record"]["id"]
+                    localized_view_delete = await client_one.request(
+                        "DELETE",
+                        f"/api/agent/v1/collection-views/{localized_view_id}",
+                        headers={
+                            **headers,
+                            "Idempotency-Key": (
+                                "matrix-view-projection-localized-delete"
+                            ),
+                        },
+                        json={"expected_row_version": 1},
+                    )
+                    assert localized_view_delete.status_code == 200, (
+                        localized_view_delete.text
                     )
                     await reject_view(
                         "matrix-view-projection-unknown",
