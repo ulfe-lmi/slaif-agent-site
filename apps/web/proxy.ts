@@ -42,6 +42,7 @@ function previewRewriteResponse(
 ): NextResponse {
   const destination = new URL(`/preview-render${preview.path}`, request.url);
   destination.search = request.nextUrl.search;
+  destination.searchParams.set("__slaif_preview_workspace", preview.workspaceId);
   const headers = new Headers(request.headers);
   headers.set("x-slaif-internal-preview", "1");
   headers.set("x-slaif-preview-workspace", preview.workspaceId);

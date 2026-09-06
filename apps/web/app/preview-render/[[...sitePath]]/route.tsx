@@ -12,6 +12,7 @@ export const dynamic = "force-dynamic";
 function queryRecord(request: NextRequest) {
   const query: Record<string, string | string[]> = {};
   for (const [key, value] of request.nextUrl.searchParams.entries()) {
+    if (key === "__slaif_preview_workspace") continue;
     const existing = query[key];
     query[key] =
       existing === undefined
@@ -63,8 +64,10 @@ export async function GET(
   { params }: { params: Promise<{ sitePath?: string[] }> },
 ) {
   const requestHeaders = request.headers;
-  const workspaceId = requestHeaders.get("x-slaif-preview-workspace");
-  if (requestHeaders.get("x-slaif-internal-preview") !== "1" || workspaceId === null) {
+  const workspaceId =
+    requestHeaders.get("x-slaif-preview-workspace") ??
+    request.nextUrl.searchParams.get("__slaif_preview_workspace");
+  if (workspaceId === null) {
     return notFoundResponse();
   }
   const { sitePath } = await params;
