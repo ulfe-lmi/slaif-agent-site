@@ -1592,6 +1592,25 @@ def run_acceptance(project: str) -> None:
             f"oap-navigation-delete-{tag}",
             method="DELETE",
         )
+        internal_page_before_delete = client.request(
+            f"/api/agent/v1/pages/{internal_page_id}",
+            headers={"Authorization": f"Bearer {primary_token}"},
+        )
+        if internal_page_before_delete.status != 200:
+            raise ProofFailure(
+                "oap-navigation-internal-page-before-delete-status-"
+                f"{internal_page_before_delete.status}"
+            )
+        internal_page_document = _json(
+            internal_page_before_delete,
+            status=200,
+            label="navigation-internal-page-before-delete",
+        )
+        if internal_page_document.get("row_version") != 1:
+            raise ProofFailure(
+                "oap-navigation-internal-page-before-delete-row-version-"
+                f"{internal_page_document.get('row_version')}"
+            )
         _request_mutation(
             client,
             primary_token,
