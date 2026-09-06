@@ -57,8 +57,8 @@ class FakeConnection:
         login: str = "slaif_control_login",
         roles: tuple[str, ...] = ("slaif_control",),
         readiness_row: tuple[object, ...] | None = (
-            "053_001",
-            "053_001",
+            "055_001",
+            "055_001",
             "EMPTY_SAFE",
             True,
             "agent-cow-postgresql",

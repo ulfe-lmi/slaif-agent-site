@@ -86,8 +86,9 @@ async def prelocked_cow_session(
                 if mode == "shared"
                 else "pg_advisory_unlock"
             )
+            namespace = 280 if mode == "shared" else 994
             await connection.fetchval(
-                f"SELECT {function}(hashtextextended($1,{280 if mode == 'shared' else 994}))",
+                f"SELECT {function}(hashtextextended($1,{namespace}))",
                 key,
             )
         await pool.release(connection)

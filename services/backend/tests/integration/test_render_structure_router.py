@@ -585,7 +585,14 @@ async def test_public_agent_cow_structure_is_visible_only_to_authorized_preview(
                 original_query = service._query
 
                 async def paused_query(connection: Any, **kwargs: Any) -> Any:
-                    await connection.fetchval("SELECT 1")
+                    context = kwargs["context"]
+                    await connection.fetch(
+                        "SELECT * FROM content.slaif_render_page_resolve($1,$2,$3,$4)",
+                        context.site_id,
+                        "/guide",
+                        "en",
+                        ["PUBLISHED", "DRAFT"],
+                    )
                     snapshot_established.set()
                     await release_snapshot.wait()
                     return await original_query(connection, **kwargs)
@@ -639,13 +646,13 @@ async def test_public_agent_cow_structure_is_visible_only_to_authorized_preview(
                         },
                     )
                 )
-                release_snapshot.set()
                 page_update, navigation_update, redirect_after = await asyncio.gather(
                     page_task, navigation_task, redirect_task
                 )
                 assert page_update.status_code == 200, page_update.text
                 assert navigation_update.status_code == 200, navigation_update.text
                 assert redirect_after.status_code == 201, redirect_after.text
+                release_snapshot.set()
                 snapshot_projection = await asyncio.wait_for(snapshot_task, timeout=5)
                 assert snapshot_projection.route_kind == "page"
                 assert snapshot_projection.page.title == "Vodnik"
@@ -755,13 +762,15 @@ async def test_public_agent_cow_structure_is_visible_only_to_authorized_preview(
                         ) as owner:
                             async with owner.transaction():
                                 await owner.execute(
-                                    "UPDATE content.page_base SET title='Canonical newest' "
+                                    "UPDATE content.page_base "
+                                    "SET title='Canonical newest' "
                                     "WHERE id=$1",
                                     canonical_page_id,
                                 )
                                 await owner.execute(
                                     "UPDATE content.navigation_base "
-                                    "SET labels=jsonb_set(labels,'{en}',to_jsonb($1::text)) "
+                                    "SET labels=jsonb_set(labels,'{en}',"
+                                    "to_jsonb($1::text)) "
                                     "WHERE id=$2",
                                     "Canonical newest",
                                     canonical_navigation_id,

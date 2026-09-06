@@ -11,13 +11,17 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import uuid4
 
+import httpx
 import pytest
 import slaif_agent_site.render_api.projection as projection_module
 from conftest import AgentSiteDatabase
 from slaif_agent_site.agent_state.foundation import asyncpg_cow_session
 from slaif_agent_site.bootstrap.service import reconcile, upgrade
+from slaif_agent_site.config import ServiceSettings
 from slaif_agent_site.db.connections import owner_connection
+from slaif_agent_site.health import ProbeResult
 from slaif_agent_site.identity.sessions import format_session_token
+from slaif_agent_site.render_api.app import create_app as create_render_app
 from slaif_agent_site.render_api.projection import (
     ProjectionError,
     RenderPageRequest,
@@ -62,6 +66,43 @@ async def _assert_clean_connection(pool: Any) -> None:
                 "SELECT current_setting($1, true)", setting
             ) in (None, "")
         assert await connection.fetchval("SELECT 1") == 1
+
+
+class _RestartableRenderAdapter:
+    def __init__(self, database: AgentSiteDatabase) -> None:
+        self._database = database
+        self._public_pool: Any = None
+        self._preview_pool: Any = None
+        self._resolver: SiteResolver | None = None
+        self.acquire_timeout = 3.0
+
+    async def start(self) -> None:
+        self._public_pool = await self._database.role_pool("slaif_public_reader")
+        self._preview_pool = await self._database.role_pool("slaif_preview_reader")
+        self._resolver = SiteResolver(self._public_pool)
+
+    async def stop(self) -> None:
+        for pool in (self._preview_pool, self._public_pool):
+            if pool is not None:
+                await pool.close()
+        self._preview_pool = None
+        self._public_pool = None
+        self._resolver = None
+
+    async def readiness(self) -> ProbeResult:
+        return ProbeResult.ready()
+
+    def resolver(self) -> SiteResolver:
+        assert self._resolver is not None
+        return self._resolver
+
+    def public_pool(self) -> Any:
+        assert self._public_pool is not None
+        return self._public_pool
+
+    def preview_pool(self) -> Any:
+        assert self._preview_pool is not None
+        return self._preview_pool
 
 
 async def test_canonical_projection_is_site_confined_and_typed(
@@ -330,6 +371,41 @@ async def test_preview_projection_requires_authorized_human_session(
         )
         assert canonical.route_kind == "page"
         assert canonical.page.title == "Preview home"
+        for _ in range(2):
+            render_adapter = _RestartableRenderAdapter(database)
+            render_app = create_render_app(
+                settings=ServiceSettings.for_test(),
+                database=render_adapter,
+            )
+            async with render_app.router.lifespan_context(render_app):
+                async with httpx.AsyncClient(
+                    transport=httpx.ASGITransport(app=render_app),
+                    base_url="http://render.test",
+                ) as render_client:
+                    canonical_http = await render_client.post(
+                        "/internal/render/v1/page",
+                        json={
+                            "authority": "localhost",
+                            "path": "/s/staging/",
+                        },
+                    )
+                    assert canonical_http.status_code == 200, canonical_http.text
+                    preview_http = await render_client.post(
+                        "/internal/render/v1/preview",
+                        headers={
+                            "X-SLAIF-Human-Session": format_session_token(
+                                public_id, secret
+                            ).get_secret_value()
+                        },
+                        json={
+                            "authority": "localhost",
+                            "path": "/s/staging/",
+                            "workspace_id": str(workspace_id),
+                        },
+                    )
+                    assert preview_http.status_code == 200, preview_http.text
+                    assert canonical_http.json()["page"]["title"] == "Preview home"
+                    assert preview_http.json()["page"]["title"] == "Preview draft"
         async with owner_connection(
             database.settings.resolved_owner_dsn(), expected_database=database.name
         ) as owner:

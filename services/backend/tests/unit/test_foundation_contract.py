@@ -592,8 +592,10 @@ def test_locked_foundation_artifact_hash_constants_are_sha256() -> None:
 
 
 def test_alembic_graph_and_offline_sql_need_no_locator_or_network() -> None:
-    assert migration_heads() == ("053_001",)
+    assert migration_heads() == ("055_001",)
     assert migration_history() == (
+        "055_001",
+        "054_001",
         "053_001",
         "052_001",
         "051_001",

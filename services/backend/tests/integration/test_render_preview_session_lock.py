@@ -71,7 +71,8 @@ async def _authorize(
     site_id: UUID,
 ) -> Any:
     return await connection.fetchrow(
-        "SELECT * FROM control.slaif_render_preview_authorize_touch($1,$2,$3,$4,$5,$6,$7)",
+        "SELECT * FROM control.slaif_render_preview_authorize_touch("
+        "$1,$2,$3,$4,$5,$6,$7)",
         public_id,
         secret_digest,
         workspace_id,

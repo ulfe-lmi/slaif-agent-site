@@ -966,6 +966,7 @@ async def test_agent_redirect_global_graph_is_not_capability_filtered(
                     {"tag": "sl-SI", "position": 1},
                 )
                 assert locale.status_code == 201, locale.text
+                locale_id = locale.json()["record"]["id"]
 
                 async def create_redirect(
                     key: str, source: str, target: str, locale_tag: str | None = None
@@ -1291,6 +1292,70 @@ async def test_agent_redirect_global_graph_is_not_capability_filtered(
                     },
                 )
                 assert graph_retry.status_code == 200, graph_retry.text
+                await _set_resource_constraints(database, workspace_id, {})
+
+                tentative_locale = asyncio.Event()
+                release_tentative_locale = asyncio.Event()
+                original_update_locale = AgentCowContentModelService.update_locale
+
+                async def pause_after_locale_update(
+                    service: Any,
+                    site_id: UUID,
+                    locale_id: UUID,
+                    update_request: Any,
+                ) -> Any:
+                    record = await original_update_locale(
+                        service, site_id, locale_id, update_request
+                    )
+                    tentative_locale.set()
+                    await release_tentative_locale.wait()
+                    return record
+
+                monkeypatch_locale = pytest.MonkeyPatch()
+                monkeypatch_locale.setattr(
+                    AgentCowContentModelService,
+                    "update_locale",
+                    pause_after_locale_update,
+                )
+                try:
+                    before_locale_cancel = await durable_counts()
+                    locale_cancel = asyncio.create_task(
+                        request(
+                            client,
+                            "PATCH",
+                            f"/api/agent/v1/locales/{locale_id}",
+                            "global-cancel-locale-after-graph",
+                            {
+                                "enabled": True,
+                                "is_default": False,
+                                "position": 1,
+                                "expected_row_version": 1,
+                            },
+                        )
+                    )
+                    await asyncio.wait_for(tentative_locale.wait(), timeout=5)
+                    locale_cancel.cancel()
+                    release_tentative_locale.set()
+                    with pytest.raises(asyncio.CancelledError):
+                        await locale_cancel
+                    assert await durable_counts() == before_locale_cancel
+                finally:
+                    release_tentative_locale.set()
+                    monkeypatch_locale.undo()
+
+                locale_retry = await request(
+                    client,
+                    "PATCH",
+                    f"/api/agent/v1/locales/{locale_id}",
+                    "global-cancel-locale-after-graph",
+                    {
+                        "enabled": True,
+                        "is_default": False,
+                        "position": 1,
+                        "expected_row_version": 1,
+                    },
+                )
+                assert locale_retry.status_code == 200, locale_retry.text
 
                 malformed_constraints = {
                     "allowed_type_keys": [{"not": "a-string"}],
@@ -1992,7 +2057,7 @@ async def test_agent_redirect_051_migration_round_trip_preserves_data_and_privil
             await owner.fetchval(
                 "SELECT version_num::text FROM control.alembic_version"
             )
-            == "053_001"
+            == "055_001"
         )
         assert tuple(
             await owner.fetchrow(
@@ -2083,7 +2148,7 @@ async def test_agent_049_plain_page_data_downgrade_and_upgrade_preserves_data(
             await owner.fetchval(
                 "SELECT version_num::text FROM control.alembic_version"
             )
-            == "053_001"
+            == "055_001"
         )
         row = await owner.fetchrow(
             "SELECT title, route_template, deleted_at FROM content.page_base "
@@ -4238,7 +4303,7 @@ async def test_agent_046_047_migration_round_trip_preserves_contract_and_state(
                 await owner.fetchval(
                     "SELECT version_num::text FROM control.alembic_version"
                 )
-                == "053_001"
+                == "055_001"
             )
             assert await owner.fetchval(
                 "SELECT to_regprocedure($1)",
@@ -4567,7 +4632,7 @@ async def test_agent_048_data_bearing_round_trip_preserves_relations_views_and_a
         )
         await reconcile(database.settings)
         final_status = await status(database.settings)
-        assert final_status.revision == "053_001"
+        assert final_status.revision == "055_001"
         assert final_status.state.value == "HARDENED"
         assert final_status.safe
         assert await cow_rows() == content_before
@@ -11014,7 +11079,7 @@ async def test_semantic_audit_contract_is_strict_and_reversible(
                 await owner.fetchval(
                     "SELECT version_num::text FROM control.alembic_version"
                 )
-                == "053_001"
+                == "055_001"
             )
             assert (
                 await owner.fetchval(
