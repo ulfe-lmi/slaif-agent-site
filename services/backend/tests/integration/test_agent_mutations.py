@@ -5582,7 +5582,7 @@ async def test_public_agent_builds_news_dynamic_listing_and_detail_render(
                         json=body,
                     )
                     assert response.status_code in {200, 201}, response.text
-                    return response.json()["record"]
+                    return cast(dict[str, Any], response.json()["record"])
 
                 news_type = await mutate(
                     "POST",
