@@ -1271,23 +1271,6 @@ async def _complete(
 
 Mutation = Callable[[AgentCowContentModelService], Awaitable[Any]]
 
-_STRUCTURAL_RESOURCE_TYPES = frozenset(
-    {"page", "locale", "navigation", "navigation_item", "redirect"}
-)
-
-
-async def _acquire_structural_write_locks(cow: Any, context: Any) -> None:
-    """Acquire lifecycle then structure locks before the mutation snapshot reads."""
-
-    await cow.native.fetchval(
-        "SELECT pg_advisory_xact_lock_shared(hashtextextended($1,280))",
-        str(context.workspace_id),
-    )
-    await cow.native.fetchval(
-        "SELECT pg_advisory_xact_lock(hashtextextended($1,994))",
-        f"{context.workspace_id}:{context.site_id}:page-structure",
-    )
-
 
 async def execute_agent_mutation(
     *,
@@ -1319,8 +1302,6 @@ async def execute_agent_mutation(
                 "SELECT set_config('app.capability_id', $1, true)",
                 str(context.capability_id),
             )
-            if resource_type in _STRUCTURAL_RESOURCE_TYPES:
-                await _acquire_structural_write_locks(cow, context)
             reservation = await _reserve(
                 cow,
                 context=context,

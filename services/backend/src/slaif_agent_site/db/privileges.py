@@ -485,7 +485,13 @@ PUBLIC_RESOLVER_FUNCTIONS = {
 }
 PREVIEW_RENDER_FUNCTIONS = {
     (
-        "slaif_render_preview_authorize",
+        "slaif_render_preview_authorize_touch",
+        "p_public_id text, p_secret_digest bytea, p_workspace_id uuid, p_site_id uuid, "
+        "p_idle_seconds integer, p_touch_interval_seconds integer, "
+        "p_recent_auth_seconds integer",
+    ): "text, bytea, uuid, uuid, integer, integer, integer",
+    (
+        "slaif_render_preview_authorize_recheck",
         "p_public_id text, p_secret_digest bytea, p_workspace_id uuid, p_site_id uuid, "
         "p_idle_seconds integer, p_touch_interval_seconds integer, "
         "p_recent_auth_seconds integer",

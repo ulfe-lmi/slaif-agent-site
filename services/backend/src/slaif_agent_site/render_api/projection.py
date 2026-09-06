@@ -1432,7 +1432,7 @@ class RenderProjectionService:
                 timeout=self._database.acquire_timeout
             ) as connection:
                 authorized = await connection.fetchrow(
-                    "SELECT * FROM control.slaif_render_preview_authorize("
+                    "SELECT * FROM control.slaif_render_preview_authorize_touch("
                     "$1,$2,$3,$4,$5,$6,$7)",
                     public_id,
                     digest_secret(secret),
@@ -1452,7 +1452,7 @@ class RenderProjectionService:
             ) as cow:
                 await cow.validate_context()
                 reauthorized = await cow.native.fetchrow(
-                    "SELECT * FROM control.slaif_render_preview_authorize("
+                    "SELECT * FROM control.slaif_render_preview_authorize_recheck("
                     "$1,$2,$3,$4,$5,$6,$7)",
                     public_id,
                     digest_secret(secret),

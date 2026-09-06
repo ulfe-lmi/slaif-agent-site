@@ -46,6 +46,24 @@ class _RenderAdapter:
         return self._preview_pool
 
 
+async def _assert_clean_connection(pool: Any) -> None:
+    async with pool.acquire() as connection:
+        assert not connection.is_in_transaction()
+        assert (
+            await connection.fetchval("SHOW transaction_isolation") == "read committed"
+        )
+        for setting in (
+            "app.session_id",
+            "app.operation_id",
+            "app.visible_operations",
+            "app.capability_id",
+        ):
+            assert await connection.fetchval(
+                "SELECT current_setting($1, true)", setting
+            ) in (None, "")
+        assert await connection.fetchval("SELECT 1") == 1
+
+
 async def test_canonical_projection_is_site_confined_and_typed(
     agent_site_database: AgentSiteDatabase,
     monkeypatch: pytest.MonkeyPatch,
@@ -115,6 +133,7 @@ async def test_canonical_projection_is_site_confined_and_typed(
         )
         assert subsequent.route_kind == "page"
         assert subsequent.page.title == "Docs home"
+        await _assert_clean_connection(public_pool)
         async with owner_connection(
             database.settings.resolved_owner_dsn(), expected_database=database.name
         ) as owner:
@@ -363,6 +382,7 @@ async def test_preview_projection_requires_authorized_human_session(
                 "(SELECT count(*) FROM audit.human_editor_mutation)"
             )
         assert tuple(after_cancel) == tuple(before_cancel)
+        await _assert_clean_connection(preview_pool)
         async with owner_connection(
             database.settings.resolved_owner_dsn(), expected_database=database.name
         ) as owner:

@@ -291,6 +291,7 @@ async def test_public_agent_cow_structure_is_visible_only_to_authorized_preview(
         user_id, session_id = uuid4(), uuid4()
         workspace_id = uuid4()
         other_workspace_id = uuid4()
+        canonical_navigation_id = uuid4()
         secret = b"r" * 32
         public_id = f"sas2_{session_id.hex}"
         scopes = [
@@ -325,6 +326,21 @@ async def test_public_agent_cow_structure_is_visible_only_to_authorized_preview(
                 "(site_id,slug,title,status,locale) "
                 "VALUES ($1,'home','Other home','PUBLISHED','en')",
                 other_site.site_id,
+            )
+            canonical_page_id = await owner.fetchval(
+                "INSERT INTO content.page_base "
+                "(site_id,slug,title,status,locale) VALUES "
+                "($1,'canonical','Canonical before','PUBLISHED','en') "
+                "RETURNING id",
+                site.site_id,
+            )
+            await owner.execute(
+                "INSERT INTO content.navigation_base "
+                "(id,site_id,key,label,labels,settings) VALUES "
+                "($1,$2,'zz-canonical','Canonical', $3::jsonb, '{}'::jsonb)",
+                canonical_navigation_id,
+                site.site_id,
+                '{"en":"Canonical"}',
             )
             await owner.execute(
                 "INSERT INTO control.user_account "
@@ -656,6 +672,127 @@ async def test_public_agent_cow_structure_is_visible_only_to_authorized_preview(
                 )
                 assert fresh_redirect.route_kind == "redirect"
                 assert fresh_redirect.redirect.status_code == 301
+
+                canonical_snapshot_established = asyncio.Event()
+                canonical_release_snapshot = asyncio.Event()
+
+                async def paused_canonical_query(connection: Any, **kwargs: Any) -> Any:
+                    context = kwargs["context"]
+                    await connection.fetchrow(
+                        "SELECT "
+                        "(SELECT count(*) FROM content.site_locale WHERE site_id=$1),"
+                        "(SELECT count(*) FROM content.navigation WHERE site_id=$1),"
+                        "(SELECT count(*) FROM content.redirect WHERE site_id=$1),"
+                        "(SELECT count(*) FROM content.slaif_render_page_resolve("
+                        "$1,'/canonical',$2,$3))",
+                        context.site_id,
+                        "en",
+                        ["PUBLISHED"],
+                    )
+                    canonical_snapshot_established.set()
+                    await canonical_release_snapshot.wait()
+                    return await original_query(connection, **kwargs)
+
+                monkeypatch.setattr(service, "_query", paused_canonical_query)
+                canonical_snapshot_task = asyncio.create_task(
+                    service.canonical(
+                        RenderPageRequest(
+                            authority="localhost",
+                            path="/s/agent-structure-router/canonical",
+                        )
+                    )
+                )
+                await asyncio.wait_for(canonical_snapshot_established.wait(), timeout=5)
+                async with owner_connection(
+                    database.settings.resolved_owner_dsn(),
+                    expected_database=database.name,
+                ) as owner:
+                    async with owner.transaction():
+                        await owner.execute(
+                            "UPDATE content.page_base SET title='Canonical after' "
+                            "WHERE id=$1",
+                            canonical_page_id,
+                        )
+                        await owner.execute(
+                            "UPDATE content.navigation_base "
+                            "SET labels=jsonb_set(labels,'{en}',to_jsonb($1::text)) "
+                            "WHERE id=$2",
+                            "Canonical after",
+                            canonical_navigation_id,
+                        )
+                        await owner.execute(
+                            "INSERT INTO content.redirect_base "
+                            "(site_id,source_route,target,status_code,locale) "
+                            "VALUES ($1,'/canonical-after','/canonical',302,NULL)",
+                            site.site_id,
+                        )
+                canonical_release_snapshot.set()
+                canonical_snapshot = await asyncio.wait_for(
+                    canonical_snapshot_task, timeout=5
+                )
+                assert canonical_snapshot.route_kind == "page"
+                assert canonical_snapshot.page.title == "Canonical before"
+                assert canonical_snapshot.navigation[0].label == "Canonical"
+                monkeypatch.setattr(service, "_query", original_query)
+                canonical_after = await service.canonical(
+                    RenderPageRequest(
+                        authority="localhost",
+                        path="/s/agent-structure-router/canonical-after",
+                    )
+                )
+                assert canonical_after.route_kind == "redirect"
+                assert canonical_after.redirect.status_code == 302
+
+                async with public_pool.acquire() as read_committed:
+                    async with read_committed.transaction(isolation="read_committed"):
+                        read_before = await read_committed.fetchval(
+                            "SELECT title FROM content.page WHERE id=$1",
+                            canonical_page_id,
+                        )
+                        async with owner_connection(
+                            database.settings.resolved_owner_dsn(),
+                            expected_database=database.name,
+                        ) as owner:
+                            async with owner.transaction():
+                                await owner.execute(
+                                    "UPDATE content.page_base SET title='Canonical newest' "
+                                    "WHERE id=$1",
+                                    canonical_page_id,
+                                )
+                                await owner.execute(
+                                    "UPDATE content.navigation_base "
+                                    "SET labels=jsonb_set(labels,'{en}',to_jsonb($1::text)) "
+                                    "WHERE id=$2",
+                                    "Canonical newest",
+                                    canonical_navigation_id,
+                                )
+                        read_after = await read_committed.fetchval(
+                            "SELECT labels->>'en' FROM content.navigation WHERE id=$1",
+                            canonical_navigation_id,
+                        )
+                        assert read_before == "Canonical after"
+                        assert read_after == "Canonical newest"
+                    async with owner_connection(
+                        database.settings.resolved_owner_dsn(),
+                        expected_database=database.name,
+                    ) as owner:
+                        await owner.execute(
+                            "UPDATE content.page_base SET title='Canonical before' "
+                            "WHERE id=$1",
+                            canonical_page_id,
+                        )
+                        await owner.execute(
+                            "UPDATE content.navigation_base "
+                            "SET labels=jsonb_set(labels,'{en}',to_jsonb($1::text)) "
+                            "WHERE id=$2",
+                            "Canonical",
+                            canonical_navigation_id,
+                        )
+                        await owner.execute(
+                            "DELETE FROM content.redirect_base "
+                            "WHERE site_id=$1 AND source_route='/canonical-after'",
+                            site.site_id,
+                        )
                 section = await client.post(
                     "/api/agent/v1/pages",
                     headers={**headers, "Idempotency-Key": "router-section"},
