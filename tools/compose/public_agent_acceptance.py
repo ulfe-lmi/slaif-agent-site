@@ -786,6 +786,21 @@ def _assert_preview_html(
         raise ProofFailure(f"{label}-credential-leak")
 
 
+def _canonical_stable_bytes(body: bytes) -> bytes:
+    """Ignore only Next's per-response CSP nonce in canonical HTML bytes."""
+
+    normalized = re.sub(
+        rb'nonce":"[A-Za-z0-9_-]+"',
+        b'nonce":"<request-nonce>"',
+        body,
+    )
+    return re.sub(
+        rb'nonce="[A-Za-z0-9_-]+"',
+        b'nonce="<request-nonce>"',
+        normalized,
+    )
+
+
 def _run_dynamic_news_edge_journey(
     client: PublicClient, site_id: str, csrf: str, project: str, tag: str
 ) -> None:
@@ -1189,28 +1204,32 @@ def _run_dynamic_news_edge_journey(
         if client.request(f"{default_preview}/renamed").status != 404:
             raise ProofFailure("news-archived-detail-visible")
         canonical_after = client.request("/s/demo")
+        canonical_before_stable = _canonical_stable_bytes(canonical_root_bytes)
+        canonical_after_stable = _canonical_stable_bytes(canonical_after.body)
         if (
             canonical_after.status != 200
-            or canonical_after.body != canonical_root_bytes
+            or canonical_after_stable != canonical_before_stable
         ):
             first_difference = next(
                 (
                     index
                     for index, (before, after) in enumerate(
-                        zip(canonical_root_bytes, canonical_after.body, strict=False)
+                        zip(
+                            canonical_before_stable,
+                            canonical_after_stable,
+                            strict=False,
+                        )
                     )
                     if before != after
                 ),
-                min(len(canonical_root_bytes), len(canonical_after.body)),
+                min(len(canonical_before_stable), len(canonical_after_stable)),
             )
             raise ProofFailure(
                 "news-canonical-bytes-changed-"
-                f"before={len(canonical_root_bytes)}-after={len(canonical_after.body)}-"
+                f"before={len(canonical_before_stable)}-after={len(canonical_after_stable)}-"
                 f"diff={first_difference}-"
-                f"before-sha={hashlib.sha256(canonical_root_bytes).hexdigest()[:12]}-"
-                f"after-sha={hashlib.sha256(canonical_after.body).hexdigest()[:12]}-"
-                f"before-hex={canonical_root_bytes[max(0, first_difference - 8) : first_difference + 16].hex()}-"
-                f"after-hex={canonical_after.body[max(0, first_difference - 8) : first_difference + 16].hex()}"
+                f"before-sha={hashlib.sha256(canonical_before_stable).hexdigest()[:12]}-"
+                f"after-sha={hashlib.sha256(canonical_after_stable).hexdigest()[:12]}"
             )
         _compose(project, "restart", "agent-api")
         _wait_agent_ready(client)
