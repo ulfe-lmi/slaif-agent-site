@@ -2,29 +2,41 @@ import { cookies, headers } from "next/headers";
 import { notFound, redirect } from "next/navigation";
 import { normalizeBrowserPreviewRoute } from "@slaif-agent-site/browser-tool-contracts";
 
-import { isRedirectProjection, redirectProjection, resolvePreviewPage } from "./render";
+import {
+  isRedirectProjection,
+  redirectProjection,
+  resolvePreviewPage,
+  type PageProjection,
+  type RedirectProjection,
+} from "./render";
 import { PageProjectionShell } from "./shell";
 
 type PreviewQuery = Record<string, string | string[] | undefined>;
 
-export async function renderWorkspacePreview(
+export type WorkspacePreviewResolution =
+  | { kind: "login" }
+  | { kind: "not_found" }
+  | { kind: "page"; projection: PageProjection }
+  | { kind: "redirect"; projection: RedirectProjection };
+
+export async function resolveWorkspacePreview(
   workspaceId: string,
   sitePath: string[] | undefined,
   query: PreviewQuery,
-) {
+): Promise<WorkspacePreviewResolution> {
   const [requestHeaders, requestCookies] = await Promise.all([headers(), cookies()]);
   const session =
     requestCookies.get("__Host-slaif_session")?.value ??
     requestCookies.get("slaif_session")?.value;
   const browserToken = requestHeaders.get("x-slaif-browser-preview");
-  if (session && browserToken) notFound();
-  if (!session && !browserToken) redirect("/login");
+  if (session && browserToken) return { kind: "not_found" };
+  if (!session && !browserToken) return { kind: "login" };
   if (
     browserToken &&
     (browserToken.length > 4096 || !/^sbp1(?:\.[A-Za-z0-9_-]+){3}$/u.test(browserToken))
   )
-    notFound();
-  if (!/^[0-9a-f-]{36}$/i.test(workspaceId)) notFound();
+    return { kind: "not_found" };
+  if (!/^[0-9a-f-]{36}$/i.test(workspaceId)) return { kind: "not_found" };
   const path = `/${(sitePath ?? []).join("/")}`;
   const queryEntries = Object.entries(query)
     .flatMap(([key, value]) =>
@@ -57,14 +69,26 @@ export async function renderWorkspacePreview(
     browserToken &&
     (!browserAuthority || !/^[a-z0-9.-]+(?::[1-9][0-9]{0,4})?$/u.test(browserAuthority))
   )
-    notFound();
+    return { kind: "not_found" };
   const projection = await resolvePreviewPage(
     browserToken ? browserAuthority! : (requestHeaders.get("host") ?? ""),
     browserRoute.split("?", 1)[0] ?? browserRoute,
     workspaceId,
     browserToken ? { browserToken, browserRoute } : { humanSessionToken: session! },
   );
-  if (!projection) notFound();
-  if (isRedirectProjection(projection)) redirectProjection(projection);
-  return <PageProjectionShell projection={projection} />;
+  if (!projection) return { kind: "not_found" };
+  if (isRedirectProjection(projection)) return { kind: "redirect", projection };
+  return { kind: "page", projection };
+}
+
+export async function renderWorkspacePreview(
+  workspaceId: string,
+  sitePath: string[] | undefined,
+  query: PreviewQuery,
+) {
+  const resolution = await resolveWorkspacePreview(workspaceId, sitePath, query);
+  if (resolution.kind === "login") redirect("/login");
+  if (resolution.kind === "not_found") notFound();
+  if (resolution.kind === "redirect") redirectProjection(resolution.projection);
+  return <PageProjectionShell projection={resolution.projection} />;
 }

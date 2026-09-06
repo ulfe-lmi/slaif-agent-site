@@ -1,0 +1,77 @@
+import { renderToStaticMarkup } from "react-dom/server.edge";
+import { NextResponse, type NextRequest } from "next/server";
+
+import {
+  resolveWorkspacePreview,
+  type WorkspacePreviewResolution,
+} from "../../../src/sites/preview-page";
+import { PageProjectionShell } from "../../../src/sites/shell";
+
+export const dynamic = "force-dynamic";
+
+function queryRecord(request: NextRequest) {
+  const query: Record<string, string | string[]> = {};
+  for (const [key, value] of request.nextUrl.searchParams.entries()) {
+    const existing = query[key];
+    query[key] =
+      existing === undefined
+        ? value
+        : Array.isArray(existing)
+          ? [...existing, value]
+          : [existing, value];
+  }
+  return query;
+}
+
+function notFoundResponse() {
+  return new NextResponse(null, { status: 404 });
+}
+
+function renderResolution(
+  request: NextRequest,
+  resolution: WorkspacePreviewResolution,
+) {
+  if (resolution.kind === "login") {
+    return NextResponse.redirect(new URL("/login", request.url), 307);
+  }
+  if (resolution.kind === "not_found") return notFoundResponse();
+  if (resolution.kind === "redirect") {
+    return NextResponse.redirect(
+      new URL(resolution.projection.redirect.target, request.url),
+      resolution.projection.redirect.status_code,
+    );
+  }
+  const markup = renderToStaticMarkup(
+    <html lang="en">
+      <head>
+        <meta charSet="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>SLAIF Agent-Site</title>
+      </head>
+      <body>
+        <PageProjectionShell projection={resolution.projection} />
+      </body>
+    </html>,
+  );
+  return new NextResponse(`<!DOCTYPE html>${markup}`, {
+    headers: { "Content-Type": "text/html; charset=utf-8" },
+  });
+}
+
+export async function GET(
+  request: NextRequest,
+  { params }: { params: Promise<{ sitePath?: string[] }> },
+) {
+  const requestHeaders = request.headers;
+  const workspaceId = requestHeaders.get("x-slaif-preview-workspace");
+  if (requestHeaders.get("x-slaif-internal-preview") !== "1" || workspaceId === null) {
+    return notFoundResponse();
+  }
+  const { sitePath } = await params;
+  const resolution = await resolveWorkspacePreview(
+    workspaceId,
+    sitePath,
+    queryRecord(request),
+  );
+  return renderResolution(request, resolution);
+}
