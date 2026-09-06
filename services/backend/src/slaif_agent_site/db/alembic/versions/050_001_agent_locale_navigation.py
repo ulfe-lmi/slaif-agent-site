@@ -499,7 +499,7 @@ def upgrade() -> None:
             -- All online structural writes take the workspace lifecycle lock
             -- first, then this one workspace+site structural lock.  The key is
             -- equal to the 049 page lock so every interface shares one order.
-            PERFORM pg_advisory_xact_lock(hashtextextended(workspace_id::text,280));
+            PERFORM pg_advisory_xact_lock_shared(hashtextextended(workspace_id::text,280));
             PERFORM pg_advisory_xact_lock(hashtextextended(workspace_id::text||chr(58)||p_site_id::text||chr(58)||'page-structure',994));
         END;
         $fn$
@@ -529,7 +529,7 @@ def upgrade() -> None:
                 RAISE EXCEPTION 'AGENT_CAPABILITY_CONTEXT_REQUIRED' USING ERRCODE = '22023';
             END IF;
             -- Establish the lifecycle shared lock before any structural lock.
-            PERFORM pg_advisory_xact_lock(hashtextextended(cow_workspace_id::text,280));
+            PERFORM pg_advisory_xact_lock_shared(hashtextextended(cow_workspace_id::text,280));
             SELECT w.site_id, COALESCE(w.delegator_id,w.created_by),
                    w.delegation_preset, c.scopes
               INTO expected_site, delegator_id, preset, effective_scopes

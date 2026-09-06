@@ -82,6 +82,52 @@ async def _authorize(
     )
 
 
+@pytest.mark.asyncio
+async def test_active_workspace_lifecycle_lock_is_shared(
+    agent_site_database: AgentSiteDatabase,
+) -> None:
+    database = agent_site_database
+    await upgrade(database.settings)
+    await reconcile(database.settings)
+    lock_key = str(uuid4())
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        capability_definition = await owner.fetchval(
+            "SELECT pg_get_functiondef("
+            "'control.slaif_agent_require_capability(uuid,text)'::regprocedure)"
+        )
+        structural_definition = await owner.fetchval(
+            "SELECT pg_get_functiondef("
+            "'control.slaif_agent_structural_lock(uuid)'::regprocedure)"
+        )
+        editor_definition = await owner.fetchval(
+            "SELECT pg_get_functiondef("
+            "'control.slaif_human_editor_workspace_assert("
+            "uuid,uuid,uuid,uuid,text,boolean)'::regprocedure)"
+        )
+        assert capability_definition.count("pg_advisory_xact_lock_shared") >= 1
+        assert structural_definition.count("pg_advisory_xact_lock_shared") >= 1
+        assert editor_definition.count("pg_advisory_xact_lock_shared") >= 1
+
+        async with owner.transaction():
+            await owner.fetchval(
+                "SELECT pg_advisory_xact_lock_shared(hashtextextended($1,280))",
+                lock_key,
+            )
+            async with owner_connection(
+                database.settings.resolved_owner_dsn(),
+                expected_database=database.name,
+            ) as mutator:
+                await asyncio.wait_for(
+                    mutator.fetchval(
+                        "SELECT pg_advisory_xact_lock_shared(hashtextextended($1,280))",
+                        lock_key,
+                    ),
+                    timeout=3,
+                )
+
+
 async def _residue(connection: Any) -> tuple[int, int, int, int]:
     row = await connection.fetchrow(
         "SELECT (SELECT count(*) FROM content.page_changes), "

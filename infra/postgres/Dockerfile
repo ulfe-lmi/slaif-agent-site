@@ -18,6 +18,8 @@ LABEL org.opencontainers.image.title="SLAIF Agent-Site PostgreSQL security overl
 RUN apk add --no-cache \
       --repository=https://dl-cdn.alpinelinux.org/alpine/v3.23/main \
       'libcrypto3=3.5.8-r0' \
+      'libcurl=8.22.0-r0' \
       'libssl3=3.5.8-r0' \
     && test "$(awk '/^P:libcrypto3$/{found=1} found && /^V:/{print substr($0,3); exit}' /lib/apk/db/installed)" = "3.5.8-r0" \
+    && test "$(awk '/^P:libcurl$/{found=1} found && /^V:/{print substr($0,3); exit}' /lib/apk/db/installed)" = "8.22.0-r0" \
     && test "$(awk '/^P:libssl3$/{found=1} found && /^V:/{print substr($0,3); exit}' /lib/apk/db/installed)" = "3.5.8-r0"

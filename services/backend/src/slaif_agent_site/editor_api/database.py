@@ -37,6 +37,20 @@ IDEMPOTENCY_COMPLETE_SQL = (
     "SELECT control.slaif_human_editor_idempotency_complete("
     "$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)"
 )
+_STRUCTURAL_PERMISSIONS = frozenset(
+    {
+        "page:create",
+        "page:write",
+        "page:delete",
+        "locale:configure",
+        "navigation:create",
+        "navigation:write",
+        "navigation:delete",
+        "redirect:create",
+        "redirect:write",
+        "redirect:delete",
+    }
+)
 
 
 class EditorIdempotencyMismatchError(RuntimeError):
@@ -189,6 +203,15 @@ class EditorDatabase:
             session_id=workspace_id,
             operation_id=operation_id,
         ) as cow:
+            if state_changing and permission_key in _STRUCTURAL_PERMISSIONS:
+                await cow.native.fetchval(
+                    "SELECT pg_advisory_xact_lock_shared(hashtextextended($1,280))",
+                    str(workspace_id),
+                )
+                await cow.native.fetchval(
+                    "SELECT pg_advisory_xact_lock(hashtextextended($1,994))",
+                    f"{workspace_id}:{site_id}:page-structure",
+                )
             await cow.native.fetchrow(
                 WORKSPACE_ASSERT_SQL,
                 workspace_id,

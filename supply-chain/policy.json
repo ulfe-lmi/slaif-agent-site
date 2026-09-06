@@ -132,7 +132,11 @@
         "remove": ["curl"]
       },
       "postgres": {
-        "install": ["libcrypto3=3.5.8-r0", "libssl3=3.5.8-r0"],
+        "install": [
+          "libcrypto3=3.5.8-r0",
+          "libcurl=8.22.0-r0",
+          "libssl3=3.5.8-r0"
+        ],
         "remove": []
       },
       "web": {

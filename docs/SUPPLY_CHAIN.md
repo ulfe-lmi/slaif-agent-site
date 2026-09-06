@@ -155,6 +155,9 @@ historical blocker evidence. The active Apache source is the immutable Ubuntu
 with standard Ubuntu Apache 2.4 security packages and glibc 2.39-0ubuntu8.8.
 The normalized Apache application-file boundary is `/etc/apache2/` for this
 base-image layout.
+The PostgreSQL 18.6 Alpine 3.23 overlay keeps the official base and pins the
+standard-repository security package `libcurl=8.22.0-r0` alongside the existing
+OpenSSL pins.
 
 ## Vulnerability gate and database freshness
 
