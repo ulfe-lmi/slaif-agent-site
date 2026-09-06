@@ -579,6 +579,32 @@ def _compose(project: str, action: str, service: str) -> None:
         raise ProofFailure(f"compose-{action}-{service}-failed")
 
 
+def _compose_shell(project: str, service: str, command: str) -> None:
+    try:
+        result = subprocess.run(
+            [
+                "docker",
+                "compose",
+                "-p",
+                project,
+                "exec",
+                "-T",
+                service,
+                "sh",
+                "-c",
+                command,
+            ],
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+    except OSError as error:
+        raise ProofFailure("compose-shell-unavailable") from error
+    if result.returncode != 0:
+        raise ProofFailure("compose-shell-failed")
+
+
 def _sql(project: str, query: str) -> str:
     try:
         result = subprocess.run(
@@ -816,7 +842,7 @@ def _run_dynamic_news_edge_journey(
 ) -> None:
     """Prove the Agent-created dynamic News result through the public edge."""
 
-    workspace = capability = token = ""
+    workspace = capability = token = browser_run_id = ""
     workspace_body = {
         "title": f"OAP 077-u News {tag}",
         "task_description": "Bounded dynamic News edge proof",
@@ -1257,6 +1283,21 @@ def _run_dynamic_news_edge_journey(
             "html=uuid-token-json-free"
         )
     finally:
+        if browser_run_id:
+            run_sql = f"'{browser_run_id}'::uuid"
+            _sql(
+                project,
+                "BEGIN; "
+                f"DELETE FROM audit.browser_event WHERE run_id={run_sql}; "
+                f"DELETE FROM control.browser_artifact WHERE run_id={run_sql}; "
+                f"DELETE FROM control.browser_idempotency WHERE run_id={run_sql}; "
+                f"DELETE FROM control.browser_run WHERE id={run_sql}; COMMIT;",
+            )
+            _compose_shell(
+                project,
+                "browser-worker",
+                "find /var/lib/slaif/browser-artifacts -mindepth 1 -maxdepth 1 -delete",
+            )
         if workspace and capability:
             _revoke_capability(client, site_id, workspace, capability)
 
