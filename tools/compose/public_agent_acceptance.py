@@ -794,9 +794,14 @@ def _canonical_stable_bytes(body: bytes) -> bytes:
         b'nonce":"<request-nonce>"',
         body,
     )
-    return re.sub(
+    normalized = re.sub(
         rb'nonce="[A-Za-z0-9_-]+"',
         b'nonce="<request-nonce>"',
+        normalized,
+    )
+    return re.sub(
+        rb'ce\\":\\"[A-Za-z0-9_-]+\\"',
+        b'ce\\":\\"<request-context>\\"',
         normalized,
     )
 
