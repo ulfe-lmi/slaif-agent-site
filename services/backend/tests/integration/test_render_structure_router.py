@@ -263,6 +263,7 @@ async def test_static_hierarchy_locale_navigation_and_redirect_projection(
 @pytest.mark.asyncio
 async def test_dynamic_collection_detail_route_binds_exact_published_item(
     agent_site_database: AgentSiteDatabase,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Resolve one dynamic page and bind its CollectionDetail item safely."""
 
@@ -434,6 +435,295 @@ async def test_dynamic_collection_detail_route_binds_exact_published_item(
                         path=f"/s/dynamic-collection-router/news/{slug}",
                     )
                 )
+
+        original_query = service._query
+
+        async def run_snapshot_race(
+            *,
+            path: str,
+            resolved_route: str,
+            mutate: Any,
+        ) -> Any:
+            snapshot_established = asyncio.Event()
+            release_snapshot = asyncio.Event()
+
+            async def paused_query(connection: Any, **kwargs: Any) -> Any:
+                context = kwargs["context"]
+                await connection.fetchrow(
+                    "SELECT * FROM content.slaif_render_page_resolve($1,$2,$3,$4)",
+                    context.site_id,
+                    resolved_route,
+                    "en-US",
+                    ["PUBLISHED"],
+                )
+                snapshot_established.set()
+                await release_snapshot.wait()
+                return await original_query(connection, **kwargs)
+
+            monkeypatch.setattr(service, "_query", paused_query)
+            task = asyncio.create_task(
+                service.canonical(RenderPageRequest(authority="localhost", path=path))
+            )
+            try:
+                await asyncio.wait_for(snapshot_established.wait(), timeout=5)
+                await mutate()
+                release_snapshot.set()
+                return await asyncio.wait_for(task, timeout=5)
+            finally:
+                release_snapshot.set()
+                if not task.done():
+                    task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+                monkeypatch.setattr(service, "_query", original_query)
+
+        async def update_item_snapshot() -> None:
+            async with owner_connection(
+                database.settings.resolved_owner_dsn(), expected_database=database.name
+            ) as owner:
+                await owner.execute(
+                    "UPDATE content.content_item_base SET slug='raced-item',"
+                    "status='DRAFT' WHERE id=$1",
+                    published_id,
+                )
+                await owner.execute(
+                    "UPDATE content.content_item_translation_base "
+                    "SET localized_values=$1::jsonb "
+                    "WHERE item_id=$2 AND locale='en-US'",
+                    json.dumps({"title": "Raced title", "summary": "Raced summary"}),
+                    published_id,
+                )
+
+        before_item_race = await run_snapshot_race(
+            path="/s/dynamic-collection-router/news/published-item",
+            resolved_route="/news/published-item",
+            mutate=update_item_snapshot,
+        )
+        assert before_item_race.page.slug == "detail"
+        before_item_binding = next(iter(before_item_race.bindings.values()))[0]
+        assert before_item_binding["slug"] == "published-item"
+        assert before_item_binding["values"]["title"] == "Published title"
+        with pytest.raises(ProjectionError, match="not_found"):
+            await service.canonical(
+                RenderPageRequest(
+                    authority="localhost",
+                    path="/s/dynamic-collection-router/news/raced-item",
+                )
+            )
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            await owner.execute(
+                "UPDATE content.content_item_base SET slug='published-item',"
+                "status='PUBLISHED' WHERE id=$1",
+                published_id,
+            )
+            await owner.execute(
+                "UPDATE content.content_item_translation_base "
+                "SET localized_values=$1::jsonb "
+                "WHERE item_id=$2 AND locale='en-US'",
+                json.dumps(
+                    {"title": "Published title", "summary": "Published summary"}
+                ),
+                published_id,
+            )
+
+        delete_id = uuid4()
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            await owner.execute(
+                "INSERT INTO content.content_item_base "
+                "(id,site_id,type_id,slug,status,type_definition_version,values) "
+                "VALUES ($1,$2,$3,'delete-item','PUBLISHED',1,$4::jsonb)",
+                delete_id,
+                site.site_id,
+                type_id,
+                json.dumps({"rank": 4}),
+            )
+            await owner.execute(
+                "INSERT INTO content.content_item_translation_base "
+                "(site_id,item_id,locale,localized_values) VALUES "
+                "($1,$2,'en-US',$3::jsonb)",
+                site.site_id,
+                delete_id,
+                json.dumps({"title": "Delete title", "summary": "Delete summary"}),
+            )
+
+        async def delete_item_snapshot() -> None:
+            async with owner_connection(
+                database.settings.resolved_owner_dsn(), expected_database=database.name
+            ) as owner:
+                await owner.execute(
+                    "DELETE FROM content.content_item_translation_base "
+                    "WHERE item_id=$1",
+                    delete_id,
+                )
+                await owner.execute(
+                    "DELETE FROM content.content_item_base WHERE id=$1", delete_id
+                )
+
+        before_delete_race = await run_snapshot_race(
+            path="/s/dynamic-collection-router/news/delete-item",
+            resolved_route="/news/delete-item",
+            mutate=delete_item_snapshot,
+        )
+        assert (
+            next(iter(before_delete_race.bindings.values()))[0]["slug"] == "delete-item"
+        )
+        with pytest.raises(ProjectionError, match="not_found"):
+            await service.canonical(
+                RenderPageRequest(
+                    authority="localhost",
+                    path="/s/dynamic-collection-router/news/delete-item",
+                )
+            )
+
+        async def change_view_snapshot() -> None:
+            async with owner_connection(
+                database.settings.resolved_owner_dsn(), expected_database=database.name
+            ) as owner:
+                await owner.execute(
+                    "UPDATE content.collection_view_base SET projection_spec="
+                    "$1::jsonb WHERE id=$2",
+                    json.dumps({"fields": ["title", "summary"]}),
+                    view_id,
+                )
+
+        before_view_race = await run_snapshot_race(
+            path="/s/dynamic-collection-router/news",
+            resolved_route="/news",
+            mutate=change_view_snapshot,
+        )
+        before_view_values = next(iter(before_view_race.bindings.values()))[0]["values"]
+        assert before_view_values["rank"] == 3
+        after_view_race = await service.canonical(
+            RenderPageRequest(
+                authority="localhost", path="/s/dynamic-collection-router/news"
+            )
+        )
+        assert "rank" not in next(iter(after_view_race.bindings.values()))[0]["values"]
+
+        async def change_type_snapshot() -> None:
+            async with owner_connection(
+                database.settings.resolved_owner_dsn(), expected_database=database.name
+            ) as owner:
+                await owner.execute(
+                    "UPDATE content.content_type_base SET definition_version=2 "
+                    "WHERE id=$1",
+                    type_id,
+                )
+
+        before_type_race = await run_snapshot_race(
+            path="/s/dynamic-collection-router/news",
+            resolved_route="/news",
+            mutate=change_type_snapshot,
+        )
+        assert next(iter(before_type_race.bindings.values()))[0]["slug"] == (
+            "published-item"
+        )
+        with pytest.raises(
+            ProjectionError, match="stale_collection_definition|not_found"
+        ):
+            await service.canonical(
+                RenderPageRequest(
+                    authority="localhost", path="/s/dynamic-collection-router/news"
+                )
+            )
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            await owner.execute(
+                "UPDATE content.content_type_base SET definition_version=1 WHERE id=$1",
+                type_id,
+            )
+            await owner.execute(
+                "UPDATE content.collection_view_base SET projection_spec="
+                "$1::jsonb WHERE id=$2",
+                json.dumps({"fields": ["title", "summary", "rank"]}),
+                view_id,
+            )
+
+        moved_parent_id = uuid4()
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            await owner.execute(
+                "INSERT INTO content.page_base "
+                "(id,site_id,slug,title,status,locale,parent_id,route_template) "
+                "VALUES ($1,$2,'moved','Moved','PUBLISHED','en-US',NULL,NULL)",
+                moved_parent_id,
+                site.site_id,
+            )
+
+        async def move_page_snapshot() -> None:
+            async with owner_connection(
+                database.settings.resolved_owner_dsn(), expected_database=database.name
+            ) as owner:
+                await owner.execute(
+                    "UPDATE content.page_base SET parent_id=$1 WHERE id=$2",
+                    moved_parent_id,
+                    detail_id,
+                )
+
+        before_page_move = await run_snapshot_race(
+            path="/s/dynamic-collection-router/news/published-item",
+            resolved_route="/news/published-item",
+            mutate=move_page_snapshot,
+        )
+        assert before_page_move.page.effective_route == "/news/{slug}"
+        with pytest.raises(ProjectionError, match="not_found"):
+            await service.canonical(
+                RenderPageRequest(
+                    authority="localhost",
+                    path="/s/dynamic-collection-router/news/published-item",
+                )
+            )
+        moved = await service.canonical(
+            RenderPageRequest(
+                authority="localhost",
+                path="/s/dynamic-collection-router/moved/published-item",
+            )
+        )
+        assert moved.page.effective_route == "/moved/{slug}"
+
+        cancellation_snapshot = asyncio.Event()
+        cancellation_release = asyncio.Event()
+
+        async def cancellable_query(connection: Any, **kwargs: Any) -> Any:
+            context = kwargs["context"]
+            await connection.fetchrow(
+                "SELECT * FROM content.slaif_render_page_resolve($1,$2,$3,$4)",
+                context.site_id,
+                "/moved/published-item",
+                "en-US",
+                ["PUBLISHED"],
+            )
+            cancellation_snapshot.set()
+            await cancellation_release.wait()
+            return await original_query(connection, **kwargs)
+
+        monkeypatch.setattr(service, "_query", cancellable_query)
+        cancelled = asyncio.create_task(
+            service.canonical(
+                RenderPageRequest(
+                    authority="localhost",
+                    path="/s/dynamic-collection-router/moved/published-item",
+                )
+            )
+        )
+        await asyncio.wait_for(cancellation_snapshot.wait(), timeout=5)
+        cancelled.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await cancelled
+        cancellation_release.set()
+        monkeypatch.setattr(service, "_query", original_query)
+        reusable = await service.canonical(
+            RenderPageRequest(
+                authority="localhost",
+                path="/s/dynamic-collection-router/moved/published-item",
+            )
+        )
+        assert reusable.page.effective_route == "/moved/{slug}"
     finally:
         await public_pool.close()
         await control_pool.close()

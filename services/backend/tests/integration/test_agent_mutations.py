@@ -5634,6 +5634,19 @@ async def test_public_agent_builds_news_dynamic_listing_and_detail_render(
                         "position": 2,
                     },
                 )
+                for position in range(17):
+                    await mutate(
+                        "POST",
+                        f"/api/agent/v1/content-model/types/{type_id}/fields",
+                        f"news-localized-{position:02d}-field",
+                        {
+                            "key": f"localized-{position:02d}",
+                            "label": f"Localized {position:02d}",
+                            "field_type": "short_text",
+                            "localized": True,
+                            "position": position + 3,
+                        },
+                    )
                 locale = await mutate(
                     "POST",
                     "/api/agent/v1/locales",
@@ -5730,7 +5743,10 @@ async def test_public_agent_builds_news_dynamic_listing_and_detail_render(
                 )
                 await assert_database_projection_rejected(
                     "news-invalid-too-many",
-                    {"fields": ["title", "summary"] + ["rank"] * 15},
+                    {
+                        "fields": ["title", "summary"]
+                        + [f"localized-{position:02d}" for position in range(15)]
+                    },
                 )
                 await assert_database_projection_rejected(
                     "news-invalid-oversized",

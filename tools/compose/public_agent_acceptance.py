@@ -720,6 +720,419 @@ def _wait_public_not_found(client: PublicClient, path: str, label: str) -> None:
     raise ProofFailure(f"{label}-not-404")
 
 
+def _wait_preview_html(client: PublicClient, path: str, label: str) -> bytes:
+    for _attempt in range(30):
+        try:
+            response = client.request(path)
+        except ProofFailure:
+            response = None
+        if response is not None and response.status == 200:
+            return response.body
+        time.sleep(1)
+    raise ProofFailure(f"{label}-not-ready")
+
+
+def _assert_preview_html(
+    body: bytes,
+    *,
+    label: str,
+    expected: tuple[str, ...],
+    forbidden: tuple[str, ...],
+    known_ids: tuple[str, ...],
+) -> None:
+    try:
+        text = body.decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise ProofFailure(f"{label}-invalid-html") from error
+    if 'data-component="Collection' not in text:
+        raise ProofFailure(f"{label}-trusted-renderer-missing")
+    for value in expected:
+        if value not in text:
+            raise ProofFailure(f"{label}-expected-text-missing")
+    for value in forbidden:
+        if value in text:
+            raise ProofFailure(f"{label}-forbidden-text-present")
+    if any(value and value in text for value in known_ids):
+        raise ProofFailure(f"{label}-internal-id-leak")
+    if re.search(
+        r"[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}",
+        text,
+        re.IGNORECASE,
+    ):
+        raise ProofFailure(f"{label}-uuid-leak")
+    if any(marker in text for marker in ("sas2_", "sbp1.", "sbws1:")):
+        raise ProofFailure(f"{label}-credential-leak")
+
+
+def _run_dynamic_news_edge_journey(
+    client: PublicClient, site_id: str, csrf: str, project: str, tag: str
+) -> None:
+    """Prove the Agent-created dynamic News result through the public edge."""
+
+    workspace = capability = token = ""
+    workspace_body = {
+        "title": f"OAP 077-u News {tag}",
+        "task_description": "Bounded dynamic News edge proof",
+        "delegation_preset": "L4_SITE_ARCHITECT",
+        "duration_hours": 1,
+        "request_quota": 1000,
+        "mutation_quota": 200,
+        "delete_quota": 50,
+        "upload_quota": 0,
+        "browser_quota": 5,
+        "resource_constraints": {"delete_enabled": True, "max_deletes": 50},
+    }
+    workspace = _create_workspace(
+        client, site_id, csrf, workspace_body, f"oap-077u-news-workspace-{tag}"
+    )
+    token, capability = _issue_capability(
+        client,
+        site_id,
+        workspace,
+        csrf,
+        f"oap-077u-news-capability-{tag}",
+    )
+    try:
+        locales = _agent_list(
+            client, token, "/api/agent/v1/locales", label="news-locales"
+        )
+        default_locale = next(
+            (row.get("tag") for row in locales if row.get("is_default") is True), None
+        )
+        if not isinstance(default_locale, str):
+            raise ProofFailure("news-default-locale-missing")
+        selected_locale = "sl-SI"
+        if not any(
+            str(row.get("tag", "")).casefold() == selected_locale.casefold()
+            for row in locales
+        ):
+            _mutation(
+                client,
+                token,
+                "/api/agent/v1/locales",
+                {
+                    "tag": selected_locale,
+                    "enabled": True,
+                    "is_default": False,
+                    "position": len(locales),
+                    "metadata": {},
+                },
+                f"oap-077u-news-locale-{tag}",
+            )
+
+        news_slug = f"news-{tag}"
+        news_type = _mutation(
+            client,
+            token,
+            "/api/agent/v1/content-model/types",
+            {
+                "key": f"oap_news_{tag}",
+                "labels": {default_locale: "News"},
+                "slug_pattern": f"/{news_slug}/{{slug}}",
+                "settings": {},
+            },
+            f"oap-077u-news-type-{tag}",
+        )
+        type_id = _require_uuid(news_type["record"]["id"], "news-type")
+        for key, label, field_type, localized, position in (
+            ("title", "Title", "short_text", True, 0),
+            ("summary", "Summary", "long_text", True, 1),
+            ("rank", "Rank", "integer", False, 2),
+        ):
+            _mutation(
+                client,
+                token,
+                f"/api/agent/v1/content-model/types/{type_id}/fields",
+                {
+                    "key": key,
+                    "label": label,
+                    "field_type": field_type,
+                    "localized": localized,
+                    "required": True,
+                    "position": position,
+                },
+                f"oap-077u-news-field-{key}-{tag}",
+            )
+        items: dict[str, tuple[str, str, str]] = {}
+        for slug, status, rank in (
+            ("published", "PUBLISHED", 3),
+            ("draft", "DRAFT", 2),
+            ("archived", "ARCHIVED", 1),
+        ):
+            item = _mutation(
+                client,
+                token,
+                f"/api/agent/v1/content-items/types/{type_id}",
+                {
+                    "type_id": type_id,
+                    "slug": slug,
+                    "status": status,
+                    "values": {"rank": rank},
+                },
+                f"oap-077u-news-item-{slug}-{tag}",
+            )
+            item_id = _require_uuid(item["record"]["id"], f"news-{slug}-item")
+            translations: dict[str, str] = {}
+            for locale, title, summary in (
+                (
+                    default_locale,
+                    f"{status.title()} title",
+                    f"{status.title()} summary",
+                ),
+                (
+                    selected_locale,
+                    f"{status.title()} naslov",
+                    f"{status.title()} povzetek",
+                ),
+            ):
+                translation = _mutation(
+                    client,
+                    token,
+                    f"/api/agent/v1/content-items/{item_id}/translations",
+                    {
+                        "locale": locale,
+                        "localized_values": {"title": title, "summary": summary},
+                    },
+                    f"oap-077u-news-translation-{slug}-{locale}-{tag}",
+                )
+                translations[locale] = _require_uuid(
+                    translation["record"]["id"], f"news-{slug}-translation"
+                )
+            items[slug] = (
+                item_id,
+                translations[default_locale],
+                translations[selected_locale],
+            )
+
+        view = _mutation(
+            client,
+            token,
+            f"/api/agent/v1/collection-views/types/{type_id}",
+            {
+                "type_id": type_id,
+                "key": f"oap-news-{tag}",
+                "filter_spec": {},
+                "sort_spec": {"field": "rank", "direction": "desc"},
+                "projection_spec": {"fields": ["title", "summary", "rank"]},
+                "pagination_spec": {"limit": 10, "offset": 0},
+            },
+            f"oap-077u-news-view-{tag}",
+        )
+        view_id = _require_uuid(view["record"]["id"], "news-view")
+        pages: dict[str, str] = {}
+        for locale, suffix, title in (
+            (default_locale, "default", "News"),
+            (selected_locale, "selected", "Novice"),
+        ):
+            listing = _mutation(
+                client,
+                token,
+                "/api/agent/v1/pages/",
+                {
+                    "slug": news_slug,
+                    "title": title,
+                    "status": "PUBLISHED",
+                    "locale": locale,
+                },
+                f"oap-077u-news-listing-{suffix}-{tag}",
+            )
+            listing_id = _require_uuid(
+                listing["record"]["id"], f"news-{suffix}-listing"
+            )
+            pages[locale] = listing_id
+            detail = _mutation(
+                client,
+                token,
+                "/api/agent/v1/pages/",
+                {
+                    "slug": "detail",
+                    "title": "News detail" if suffix == "default" else "Podrobnosti",
+                    "status": "PUBLISHED",
+                    "locale": locale,
+                    "parent_id": listing_id,
+                    "route_template": "{slug}",
+                },
+                f"oap-077u-news-detail-{suffix}-{tag}",
+            )
+            detail_id = _require_uuid(detail["record"]["id"], f"news-{suffix}-detail")
+            _mutation(
+                client,
+                token,
+                f"/api/agent/v1/pages/{listing_id}/components",
+                {
+                    "component_type": "CollectionList",
+                    "slot_key": "default",
+                    "order_key": 0,
+                    "props": {"viewId": view_id},
+                },
+                f"oap-077u-news-list-node-{suffix}-{tag}",
+            )
+            _mutation(
+                client,
+                token,
+                f"/api/agent/v1/pages/{detail_id}/components",
+                {
+                    "component_type": "CollectionDetail",
+                    "slot_key": "default",
+                    "order_key": 0,
+                    "props": {"viewId": view_id},
+                },
+                f"oap-077u-news-detail-node-{suffix}-{tag}",
+            )
+        navigation = _mutation(
+            client,
+            token,
+            "/api/agent/v1/navigation",
+            {
+                "key": f"oap-news-{tag}",
+                "label": "News",
+                "labels": {default_locale: "News", selected_locale: "Novice"},
+                "settings": {},
+            },
+            f"oap-077u-news-navigation-{tag}",
+        )
+        navigation_id = _require_uuid(navigation["record"]["id"], "news-navigation")
+        _mutation(
+            client,
+            token,
+            f"/api/agent/v1/navigation/{navigation_id}/items",
+            {
+                "navigation_id": navigation_id,
+                "page_id": pages[default_locale],
+                "target_kind": "PAGE",
+                "target_value": pages[default_locale],
+                "labels": {default_locale: "News", selected_locale: "Novice"},
+            },
+            f"oap-077u-news-navigation-item-{tag}",
+        )
+
+        canonical_root = client.request("/s/demo")
+        if canonical_root.status != 200:
+            raise ProofFailure("news-canonical-baseline-status")
+        canonical_root_bytes = canonical_root.body
+        default_route = f"/{news_slug}"
+        selected_route = f"/{selected_locale}/{news_slug}"
+        default_preview = f"/preview/{workspace}/s/demo{default_route}"
+        selected_preview = f"/preview/{workspace}/s/demo{selected_route}"
+        if client.request(f"/s/demo{default_route}").status != 404:
+            raise ProofFailure("news-canonical-workspace-leak")
+        default_listing_body = _wait_preview_html(
+            client, default_preview, "news-default-listing"
+        )
+        _assert_preview_html(
+            default_listing_body,
+            label="news-default-listing",
+            expected=("Published title", "Draft title", "Published summary"),
+            forbidden=("Archived title", "sas2_", "internal"),
+            known_ids=(
+                workspace,
+                site_id,
+                type_id,
+                view_id,
+                *[value for item in items.values() for value in item],
+            ),
+        )
+        if default_listing_body.find(b"Published title") > default_listing_body.find(
+            b"Draft title"
+        ):
+            raise ProofFailure("news-default-sort-invalid")
+        default_detail = _wait_preview_html(
+            client, f"{default_preview}/published?query=kept", "news-default-detail"
+        )
+        _assert_preview_html(
+            default_detail,
+            label="news-default-detail",
+            expected=("Published title", "Published summary"),
+            forbidden=("Draft title", "Archived title"),
+            known_ids=(workspace, site_id, type_id, view_id, *items["published"]),
+        )
+        selected_detail = _wait_preview_html(
+            client, f"{selected_preview}/published", "news-selected-detail"
+        )
+        _assert_preview_html(
+            selected_detail,
+            label="news-selected-detail",
+            expected=("Published naslov", "Published povzetek"),
+            forbidden=("Published title", "Archived naslov"),
+            known_ids=(workspace, site_id, type_id, view_id, *items["published"]),
+        )
+        for invalid in (
+            f"{default_preview}/archived",
+            f"{default_preview}/unknown",
+            f"{default_preview}/published/extra",
+            f"{default_preview}/published%2Fextra",
+        ):
+            if client.request(invalid).status != 404:
+                raise ProofFailure("news-invalid-detail-route-visible")
+
+        published_item, default_translation, _selected_translation = items["published"]
+        renamed = _request_mutation(
+            client,
+            token,
+            f"/api/agent/v1/content-items/{published_item}",
+            {"slug": "renamed", "expected_row_version": 1},
+            f"oap-077u-news-rename-{tag}",
+        )
+        if renamed["record"].get("slug") != "renamed":
+            raise ProofFailure("news-rename-response-invalid")
+        _request_mutation(
+            client,
+            token,
+            f"/api/agent/v1/content-items/{published_item}/translations/{default_translation}",
+            {
+                "localized_values": {
+                    "title": "Published title updated",
+                    "summary": "Published summary updated",
+                },
+                "expected_row_version": 1,
+            },
+            f"oap-077u-news-translation-update-{tag}",
+        )
+        if client.request(f"{default_preview}/published").status != 404:
+            raise ProofFailure("news-old-slug-still-visible")
+        renamed_body = _wait_preview_html(
+            client, f"{default_preview}/renamed", "news-renamed-detail"
+        )
+        _assert_preview_html(
+            renamed_body,
+            label="news-renamed-detail",
+            expected=("Published title updated", "Published summary updated"),
+            forbidden=('Published title"><', "Archived title"),
+            known_ids=(workspace, site_id, type_id, view_id, *items["published"]),
+        )
+        _request_mutation(
+            client,
+            token,
+            f"/api/agent/v1/content-items/{published_item}",
+            {"status": "ARCHIVED", "expected_row_version": 2},
+            f"oap-077u-news-archive-{tag}",
+        )
+        if client.request(f"{default_preview}/renamed").status != 404:
+            raise ProofFailure("news-archived-detail-visible")
+        canonical_after = client.request("/s/demo")
+        if (
+            canonical_after.status != 200
+            or canonical_after.body != canonical_root_bytes
+        ):
+            raise ProofFailure("news-canonical-bytes-changed")
+        _compose(project, "restart", "agent-api")
+        _wait_agent_ready(client)
+        _compose(project, "restart", "render-api")
+        _wait_preview_html(client, default_preview, "news-render-restart")
+        _compose(project, "restart", "web")
+        _wait_preview_html(client, default_preview, "news-web-restart")
+        print(
+            "public-agent-news-edge: OK "
+            f"workspace={workspace} routes=default,non-default detail=exact "
+            "listing-sort=verified status-slug-translation=verified "
+            "canonical-isolation=byte-identical restart=agent,render,web "
+            "html=uuid-token-json-free"
+        )
+    finally:
+        if workspace and capability:
+            _revoke_capability(client, site_id, workspace, capability)
+
+
 def run_acceptance(project: str) -> None:
     if not re.fullmatch(r"slaif(?:007|009|010|071)[a-z0-9]+", project):
         raise ProofFailure("unsafe-project-name")
@@ -914,6 +1327,8 @@ def run_acceptance(project: str) -> None:
             item.get("executable") is not False for item in primitives
         ):
             raise ProofFailure("primitive-discovery-invalid")
+
+        _run_dynamic_news_edge_journey(client, site_id, csrf, project, tag)
 
         baseline_types = _agent_list(
             client,
