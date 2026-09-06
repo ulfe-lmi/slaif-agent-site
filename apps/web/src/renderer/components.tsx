@@ -381,10 +381,7 @@ function renderNode(
 
 export function renderProjection(projection: PageProjection): ReactElement {
   return (
-    <main
-      data-render-mode={projection.render_mode}
-      aria-labelledby="page-title"
-    >
+    <main data-render-mode={projection.render_mode} aria-labelledby="page-title">
       <h1 id="page-title">{projection.page.title}</h1>
       {projection.composition.nodes.map((node) =>
         renderNode(node, projection.locale, projection.bindings),
