@@ -732,6 +732,24 @@ def _wait_preview_html(client: PublicClient, path: str, label: str) -> bytes:
     raise ProofFailure(f"{label}-not-ready")
 
 
+def _wait_browser_run(
+    client: PublicClient, token: str, run_id: str, label: str
+) -> None:
+    for _attempt in range(180):
+        response = client.request(
+            f"/api/agent/v1/preview-runs/{run_id}",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        document = _json(response, status=200, label=label)
+        state = document.get("state")
+        if state in {"COMPLETED", "FAILED", "TIMED_OUT", "CANCELLED"}:
+            if state != "COMPLETED":
+                raise ProofFailure(f"{label}-terminal")
+            return
+        time.sleep(1)
+    raise ProofFailure(f"{label}-timeout")
+
+
 def _assert_preview_html(
     body: bytes,
     *,
@@ -1056,6 +1074,32 @@ def _run_dynamic_news_edge_journey(
             forbidden=("Published title", "Archived naslov"),
             known_ids=(workspace, site_id, type_id, view_id, *items["published"]),
         )
+        browser_response = client.request(
+            "/api/agent/v1/preview-runs",
+            method="POST",
+            body={
+                "version": "browser-preview/v1",
+                "route": f"/s/demo{default_route}/published",
+                "target": "desktop-chromium",
+                "evidence": ["heading-summary", "structure-summary"],
+            },
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Idempotency-Key": f"oap-077u-news-browser-run-{tag}",
+            },
+        )
+        browser_document = _json(
+            browser_response, status=202, label="news-browser-run-create"
+        )
+        browser_run_id = _require_uuid(
+            browser_document.get("run_id"), "news-browser-run"
+        )
+        if any(
+            key in browser_document
+            for key in ("workspace_id", "capability_id", "token")
+        ):
+            raise ProofFailure("news-browser-run-secret-disclosure")
+        _wait_browser_run(client, token, browser_run_id, "news-browser-run")
         for invalid in (
             f"{default_preview}/archived",
             f"{default_preview}/unknown",
