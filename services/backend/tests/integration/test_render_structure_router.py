@@ -7,7 +7,7 @@ import json
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.parse import quote
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import httpx
 import pytest
@@ -87,6 +87,9 @@ async def test_static_hierarchy_locale_navigation_and_redirect_projection(
         home_id, guide_id, sl_home_id, sl_guide_id = (uuid4() for _ in range(4))
         navigation_id = uuid4()
         root_item_id, child_item_id, external_item_id = (uuid4() for _ in range(3))
+        en_only_item_id, sl_only_item_id, hidden_parent_child_id = (
+            uuid4() for _ in range(3)
+        )
         async with owner_connection(
             database.settings.resolved_owner_dsn(), expected_database=database.name
         ) as owner:
@@ -143,6 +146,26 @@ async def test_static_hierarchy_locale_navigation_and_redirect_projection(
                 "00000000-0000-0000-0000-000000000000",
             )
             await owner.execute(
+                "INSERT INTO content.navigation_item_base "
+                "(id,site_id,navigation_id,parent_id,parent_key,page_id,target_kind,"
+                "target_value,labels,locale,position) VALUES "
+                "($1,$2,$3,NULL,$4::uuid,NULL,'INTERNAL','/guide',$5::jsonb,'en',2),"
+                "($6,$2,$3,NULL,$4::uuid,NULL,'INTERNAL','/sl-SI/guide',"
+                "$7::jsonb,'sl-SI',3),"
+                "($8,$2,$3,$9,$9::uuid,NULL,'INTERNAL','/sl-SI/guide',"
+                "$10::jsonb,'sl-SI',0)",
+                en_only_item_id,
+                site.site_id,
+                navigation_id,
+                "00000000-0000-0000-0000-000000000000",
+                '{"en":"English only"}',
+                sl_only_item_id,
+                '{"sl-SI":"Slovenski only"}',
+                hidden_parent_child_id,
+                en_only_item_id,
+                '{"sl-SI":"Hidden child"}',
+            )
+            await owner.execute(
                 "INSERT INTO content.redirect_base "
                 "(site_id,source_route,target,status_code,locale) "
                 "VALUES ($1,'/legacy','/guide',301,NULL)",
@@ -170,6 +193,10 @@ async def test_static_hierarchy_locale_navigation_and_redirect_projection(
         assert root.navigation[0].label == "Primary"
         assert root.navigation[0].items[0].target.value == "/"
         assert root.navigation[0].items[0].children[0].target.value == "/sl-SI/guide"
+        root_labels = {item.label for item in root.navigation[0].items}
+        assert "English only" in root_labels
+        assert "Slovenski only" not in root_labels
+        assert "Hidden child" not in root_labels
 
         nested = await service.canonical(
             RenderPageRequest(authority="localhost", path="/s/structure-router/guide")
@@ -188,6 +215,10 @@ async def test_static_hierarchy_locale_navigation_and_redirect_projection(
         assert translated.page.effective_route == "/sl-SI/guide"
         assert translated.locale == "sl-SI"
         assert translated.navigation[0].label == "Glavni meni"
+        translated_labels = {item.label for item in translated.navigation[0].items}
+        assert "Slovenski only" in translated_labels
+        assert "English only" not in translated_labels
+        assert "Hidden child" not in translated_labels
 
         redirect = await service.canonical(
             RenderPageRequest(authority="localhost", path="/s/structure-router/legacy")
@@ -256,6 +287,10 @@ async def test_public_agent_cow_structure_is_visible_only_to_authorized_preview(
             "site:read",
             "page:create",
             "page:read",
+            "page:delete",
+            "page:move",
+            "page:restore",
+            "route:write",
             "locale:configure",
             "navigation:read",
             "navigation:create",
@@ -312,7 +347,8 @@ async def test_public_agent_cow_structure_is_visible_only_to_authorized_preview(
             await owner.execute(
                 "INSERT INTO control.capability "
                 "(workspace_id,public_id,secret_digest,scopes,expires_at,"
-                "request_quota,mutation_quota) VALUES ($1,$2,$3,$4::jsonb,$5,100,100)",
+                "request_quota,mutation_quota,delete_quota) "
+                "VALUES ($1,$2,$3,$4::jsonb,$5,100,100,100)",
                 workspace_id,
                 capability_public_id,
                 digest,
@@ -475,7 +511,163 @@ async def test_public_agent_cow_structure_is_visible_only_to_authorized_preview(
         assert preview_redirect.redirect.target == (
             f"/preview/{workspace_id}/s/agent-structure-router/guide"
         )
+        async with app.router.lifespan_context(app):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://agent.test"
+            ) as client:
+                section = await client.post(
+                    "/api/agent/v1/pages",
+                    headers={**headers, "Idempotency-Key": "router-section"},
+                    json={"slug": "section", "title": "Section", "locale": "en"},
+                )
+                assert section.status_code == 201, section.text
+                section_id = section.json()["record"]["id"]
+                moved_page = await client.post(
+                    f"/api/agent/v1/pages/{nested_id}:move",
+                    headers={**headers, "Idempotency-Key": "router-page-move"},
+                    json={"parent_id": section_id, "expected_row_version": 1},
+                )
+                assert moved_page.status_code == 200, moved_page.text
+                moved_preview = await service.preview(
+                    RenderPreviewRequest(
+                        authority="localhost",
+                        path="/s/agent-structure-router/en/section/guide",
+                        locale="en",
+                        workspace_id=workspace_id,
+                        session_token=format_session_token(public_id, secret),
+                    )
+                )
+                assert moved_preview.route_kind == "page"
+                assert moved_preview.page.id == UUID(nested_id)
+                assert moved_preview.page.parent_id == UUID(section_id)
+                assert moved_preview.page.effective_route == "/en/section/guide"
+                with pytest.raises(ProjectionError, match="not_found"):
+                    await service.canonical(
+                        RenderPageRequest(
+                            authority="localhost",
+                            path="/s/agent-structure-router/en/section/guide",
+                        )
+                    )
+
+                with pytest.raises(ProjectionError, match="not_found"):
+                    await service.preview(
+                        RenderPreviewRequest(
+                            authority="localhost",
+                            path="/s/agent-structure-router/",
+                            workspace_id=uuid4(),
+                            session_token=format_session_token(public_id, secret),
+                        )
+                    )
     finally:
         await preview_pool.close()
+        await public_pool.close()
+        await control_pool.close()
+
+
+@pytest.mark.asyncio
+async def test_navigation_corruption_fails_closed_without_partial_projection(
+    agent_site_database: AgentSiteDatabase,
+) -> None:
+    database = agent_site_database
+    await upgrade(database.settings)
+    await reconcile(database.settings)
+    control_pool = await database.role_pool("slaif_control")
+    public_pool = await database.role_pool("slaif_public_reader")
+    try:
+        site = await SiteService(control_pool).create(
+            CreateSiteRequest(
+                site_key="corrupt-navigation-router",
+                display_name="Corrupt Navigation Router",
+                default_locale="en",
+            )
+        )
+        page_id, navigation_id, item_id = uuid4(), uuid4(), uuid4()
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            await owner.execute(
+                "INSERT INTO content.site_locale_base "
+                "(site_id,tag,enabled,is_default,position) "
+                "VALUES ($1,'en',true,true,0)",
+                site.site_id,
+            )
+            await owner.execute(
+                "INSERT INTO content.page_base "
+                "(id,site_id,slug,title,status,locale) "
+                "VALUES ($1,$2,'home','Home','PUBLISHED','en')",
+                page_id,
+                site.site_id,
+            )
+            await owner.execute(
+                "INSERT INTO content.navigation_base "
+                "(id,site_id,key,label,labels,settings) "
+                "VALUES ($1,$2,'primary','Primary','{\"en\":\"Primary\"}'::jsonb,'{}')",
+                navigation_id,
+                site.site_id,
+            )
+            await owner.execute(
+                "INSERT INTO content.navigation_item_base "
+                "(id,site_id,navigation_id,parent_id,parent_key,page_id,"
+                "target_kind,target_value,labels,locale,position) "
+                "VALUES ($1,$2,$3,NULL,$4::uuid,$5,'PAGE',$6,"
+                '\'{"en":"Home"}\'::jsonb,NULL,0)',
+                item_id,
+                site.site_id,
+                navigation_id,
+                "00000000-0000-0000-0000-000000000000",
+                page_id,
+                str(page_id),
+            )
+        service = RenderProjectionService(_RenderAdapter(public_pool))
+        baseline = await service.canonical(
+            RenderPageRequest(
+                authority="localhost", path="/s/corrupt-navigation-router/"
+            )
+        )
+        assert baseline.route_kind == "page"
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            await owner.execute(
+                "UPDATE content.navigation_item_base SET labels='{}'::jsonb "
+                "WHERE id=$1",
+                item_id,
+            )
+        with pytest.raises(ProjectionError, match="navigation_label"):
+            await service.canonical(
+                RenderPageRequest(
+                    authority="localhost", path="/s/corrupt-navigation-router/"
+                )
+            )
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            await owner.execute(
+                "UPDATE content.navigation_item_base SET "
+                'labels=\'{"en":"Home"}\'::jsonb, '
+                "position=1 WHERE id=$1",
+                item_id,
+            )
+        with pytest.raises(ProjectionError, match="navigation_position"):
+            await service.canonical(
+                RenderPageRequest(
+                    authority="localhost", path="/s/corrupt-navigation-router/"
+                )
+            )
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            await owner.execute(
+                "UPDATE content.navigation_item_base SET position=0,"
+                "target_kind='INTERNAL',target_value='//unsafe' WHERE id=$1",
+                item_id,
+            )
+        with pytest.raises(ProjectionError, match="unavailable"):
+            await service.canonical(
+                RenderPageRequest(
+                    authority="localhost", path="/s/corrupt-navigation-router/"
+                )
+            )
+    finally:
         await public_pool.close()
         await control_pool.close()

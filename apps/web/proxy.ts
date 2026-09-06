@@ -9,6 +9,7 @@ import {
 const WORKSPACE_ID = /^[0-9a-f-]{36}$/iu;
 const RESERVED =
   /^\/(?:admin|api|agent|control|editor|health|internal|login|logout|mcp|media|setup|_next|static)(?:\/|$)/u;
+const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 
 function isLoopbackAuthority(authority: string): boolean {
   const hostname = authority.split(":", 1)[0]?.replace(/^\[|\]$/gu, "");
@@ -22,6 +23,15 @@ function previewRoute(request: NextRequest): {
   const match = request.nextUrl.pathname.match(/^\/preview\/([^/]+)(\/.*)?$/u);
   if (!match || !WORKSPACE_ID.test(match[1] ?? "")) return null;
   return { workspaceId: match[1]!, path: match[2] || "/" };
+}
+
+function redirectResponse(target: string, status: number, preview: boolean): Response {
+  const headers = new Headers({ Location: target });
+  if (preview) {
+    headers.set("Cache-Control", "private, no-store");
+    headers.set("X-Robots-Tag", "noindex, nofollow, noarchive");
+  }
+  return new Response(null, { status, headers });
 }
 
 export async function proxy(request: NextRequest): Promise<Response | undefined> {
@@ -48,12 +58,12 @@ export async function proxy(request: NextRequest): Promise<Response | undefined>
       if (
         projection &&
         isRedirectProjection(projection) &&
-        (projection.redirect.status_code === 301 ||
-          projection.redirect.status_code === 302)
+        REDIRECT_STATUSES.has(projection.redirect.status_code)
       ) {
-        return Response.redirect(
-          new URL(projection.redirect.target, request.url),
+        return redirectResponse(
+          projection.redirect.target,
           projection.redirect.status_code,
+          true,
         );
       }
     } catch {
@@ -78,12 +88,12 @@ export async function proxy(request: NextRequest): Promise<Response | undefined>
     if (
       projection &&
       isRedirectProjection(projection) &&
-      (projection.redirect.status_code === 301 ||
-        projection.redirect.status_code === 302)
+      REDIRECT_STATUSES.has(projection.redirect.status_code)
     ) {
-      return Response.redirect(
-        new URL(projection.redirect.target, request.url),
+      return redirectResponse(
+        projection.redirect.target,
         projection.redirect.status_code,
+        false,
       );
     }
   } catch {

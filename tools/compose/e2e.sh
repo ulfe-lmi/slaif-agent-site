@@ -66,8 +66,25 @@ docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif \
      AND page_id = (SELECT id FROM content.page_base
                     WHERE site_id = '$site_id'::uuid AND slug = 'home' AND locale = 'en')
      AND component_type = 'Heading';
+   INSERT INTO content.redirect_base(site_id,source_route,target,status_code,locale)
+   VALUES
+     ('$site_id'::uuid,'/compose-canonical-301','/',301,NULL),
+     ('$site_id'::uuid,'/compose-canonical-302','/',302,NULL),
+     ('$site_id'::uuid,'/compose-canonical-303','/',303,NULL),
+     ('$site_id'::uuid,'/compose-canonical-307','/',307,NULL),
+     ('$site_id'::uuid,'/compose-canonical-308','/',308,NULL),
+     ('$site_id'::uuid,'/compose-canonical-external',
+      'https://example.test/compose-target',301,NULL);
    INSERT INTO content.redirect(site_id,source_route,target,status_code,locale)
-   VALUES ('$site_id'::uuid,'/compose-redirect','/',301,NULL);
+   VALUES
+     ('$site_id'::uuid,'/compose-redirect','/',301,NULL),
+     ('$site_id'::uuid,'/compose-redirect-301','/',301,NULL),
+     ('$site_id'::uuid,'/compose-redirect-302','/',302,NULL),
+     ('$site_id'::uuid,'/compose-redirect-303','/',303,NULL),
+     ('$site_id'::uuid,'/compose-redirect-307','/',307,NULL),
+     ('$site_id'::uuid,'/compose-redirect-308','/',308,NULL),
+     ('$site_id'::uuid,'/compose-redirect-external',
+      'https://example.test/compose-target',301,NULL);
    COMMIT;" >/dev/null
 
 if ! SLAIF_E2E_SECRET_FILE="$SECRET_FILE" \

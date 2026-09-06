@@ -37,18 +37,54 @@ test("authenticated-preview-renders-overlay-and-keeps-canonical-unchanged", asyn
   expect(page.url()).not.toContain("sas2_session_");
   expect(await page.locator("body").innerText()).not.toContain(credential.setupToken);
 
-  const previewRedirect = await page.request.get(
-    `/preview/${workspaceId}/s/demo/compose-redirect`,
-    { maxRedirects: 0 },
-  );
-  test.info().annotations = [
+  const redirectCases = [
+    { suffix: "301", status: 301, target: "/preview/" + workspaceId + "/s/demo" },
+    { suffix: "302", status: 302, target: "/preview/" + workspaceId + "/s/demo" },
+    { suffix: "303", status: 303, target: "/preview/" + workspaceId + "/s/demo" },
+    { suffix: "307", status: 307, target: "/preview/" + workspaceId + "/s/demo" },
+    { suffix: "308", status: 308, target: "/preview/" + workspaceId + "/s/demo" },
     {
-      type: "stage",
-      description: `preview-redirect-${previewRedirect.status()}`,
+      suffix: "external",
+      status: 301,
+      target: "https://example.test/compose-target",
     },
-  ];
-  expect(previewRedirect.status(), await previewRedirect.text()).toBe(301);
-  expect(previewRedirect.headers().location).toBe(`/preview/${workspaceId}/s/demo`);
+  ] as const;
+  for (const redirectCase of redirectCases) {
+    const previewRedirect = await page.request.get(
+      "/preview/" + workspaceId + "/s/demo/compose-redirect-" + redirectCase.suffix,
+      { maxRedirects: 0 },
+    );
+    test.info().annotations = [
+      {
+        type: "stage",
+        description:
+          "preview-redirect-" + redirectCase.suffix + "-" + previewRedirect.status(),
+      },
+    ];
+    expect(previewRedirect.status(), await previewRedirect.text()).toBe(
+      redirectCase.status,
+    );
+    expect(previewRedirect.headers().location).toBe(redirectCase.target);
+    expect(previewRedirect.headers()["cache-control"]).toBe("private, no-store");
+    expect(previewRedirect.headers()["x-robots-tag"]).toBe(
+      "noindex, nofollow, noarchive",
+    );
+    expect(previewRedirect.headers()["content-security-policy"]).toContain(
+      "default-src 'self'",
+    );
+    const previewBody = await previewRedirect.text();
+    expect(previewBody).not.toContain(credential.setupToken);
+    expect(previewBody).not.toContain("sas2_session_");
+
+    const canonicalRedirect = await page.request.get(
+      "/s/demo/compose-canonical-" + redirectCase.suffix,
+      { maxRedirects: 0 },
+    );
+    const canonicalTarget =
+      redirectCase.suffix === "external" ? redirectCase.target : "/s/demo";
+    expect(canonicalRedirect.status()).toBe(redirectCase.status);
+    expect(canonicalRedirect.headers().location).toBe(canonicalTarget);
+  }
 
   const canonical = await page.goto("/s/demo/");
   expect(canonical?.status()).toBe(200);
@@ -59,10 +95,13 @@ test("authenticated-preview-renders-overlay-and-keeps-canonical-unchanged", asyn
     "Compose overlay heading",
   );
   expect(await page.locator("main").getAttribute("data-render-mode")).toBe("canonical");
-  const canonicalRedirect = await page.request.get("/s/demo/compose-redirect", {
-    maxRedirects: 0,
-  });
-  expect(canonicalRedirect.status()).toBe(404);
+  const previewOnlyCanonicalRedirect = await page.request.get(
+    "/s/demo/compose-redirect",
+    {
+      maxRedirects: 0,
+    },
+  );
+  expect(previewOnlyCanonicalRedirect.status()).toBe(404);
 
   expect(failures(), "unexpected preview browser failures").toEqual([]);
 });

@@ -5,6 +5,25 @@ import { URL } from "node:url";
 
 const read = (path) => readFile(new URL(path, import.meta.url), "utf8");
 
+test("static redirect boundary preserves pinned Next browser fallback statuses", async () => {
+  const proxy = await read("../proxy.ts");
+  for (const status of [301, 302, 303, 307, 308]) {
+    assert.match(proxy, new RegExp(String(status)));
+  }
+  assert.match(proxy, /browserToken \|\| !session/);
+  assert.match(proxy, /Cache-Control/);
+  assert.match(proxy, /X-Robots-Tag/);
+
+  const nextRedirect = await import("next/dist/client/components/redirect.js");
+  const nextRedirectError =
+    await import("next/dist/client/components/redirect-error.js");
+  for (const status of [303, 307, 308]) {
+    const error = nextRedirect.getRedirectError("/target", "replace", status);
+    assert.equal(nextRedirectError.isRedirectError(error), true);
+    assert.equal(nextRedirect.getRedirectStatusCodeFromError(error), status);
+  }
+});
+
 test("auth routes and landing page expose truthful local flows", async () => {
   const home = await read("../app/page.tsx");
   assert.match(home, /href="\/setup"/);

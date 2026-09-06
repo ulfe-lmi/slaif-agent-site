@@ -1160,9 +1160,6 @@ class RenderProjectionService:
                 raise ProjectionError("navigation_position")
             sibling_positions[sibling_key].add(position)
             labels = _label_map(row[7])
-            label = labels.get(selected_locale) or labels.get(default_locale)
-            if not isinstance(label, str) or not label.strip():
-                raise ProjectionError("navigation_label")
             target_kind = str(row[5])
             target_value = str(row[10])
             try:
@@ -1189,7 +1186,6 @@ class RenderProjectionService:
                 "page_id": row[4],
                 "locale": item_locale,
                 "position": position,
-                "label": label,
                 "labels": labels,
                 "target": ProjectionNavigationTarget(
                     kind=target_kind, value=target_value
@@ -1233,10 +1229,11 @@ class RenderProjectionService:
             raise ProjectionError("navigation_unreachable")
 
         def project_item(item: dict[str, Any]) -> ProjectionNavigationItem:
-            if item["locale"] is not None and (
-                item["locale"].casefold() != selected_locale.casefold()
-            ):
-                raise ProjectionError("navigation_parent")
+            label = item["labels"].get(selected_locale) or item["labels"].get(
+                default_locale
+            )
+            if not isinstance(label, str) or not label.strip():
+                raise ProjectionError("navigation_label")
             child_items = tuple(
                 project_item(child)
                 for child in sorted(
@@ -1247,7 +1244,9 @@ class RenderProjectionService:
             )
             if item["parent_id"] is not None and item["parent_id"] not in all_items:
                 raise ProjectionError("navigation_parent")
-            return ProjectionNavigationItem(**item, children=child_items)
+            return ProjectionNavigationItem(
+                **{**item, "label": label}, children=child_items
+            )
 
         result: list[ProjectionNavigation] = []
         for navigation_id, navigation in nav_by_id.items():
