@@ -10316,13 +10316,12 @@ async def test_agent_final_dependency_matrix_and_two_connection_delete_races(
                         race_relation_create, race_relation_delete_field
                     )
                     assert (
-                        sum(response.status_code == 201 for response in relation_race)
-                        == 1
-                    )
-                    assert (
-                        sum(response.status_code == 422 for response in relation_race)
-                        == 1
-                    ), [response.text for response in relation_race]
+                        relation_race[0].status_code,
+                        relation_race[1].status_code,
+                    ) in {(201, 422), (422, 200)}, [
+                        (response.status_code, response.text)
+                        for response in relation_race
+                    ]
                     if relation_race[0].status_code == 201:
                         relation_id = UUID(relation_race[0].json()["record"]["id"])
                         cleanup_relation = await client_one.request(
