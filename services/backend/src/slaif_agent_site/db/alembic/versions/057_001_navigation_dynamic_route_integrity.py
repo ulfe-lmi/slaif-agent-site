@@ -468,6 +468,14 @@ def _execute_editor_navigation(*, enforce: bool) -> None:
     op.execute(marker + update_sql)
 
 
+def _drop_editor_navigation() -> None:
+    for function in (
+        "content.slaif_navigation_item_update(uuid,uuid,uuid,uuid,text,text,jsonb,text,integer,integer)",
+        "content.slaif_navigation_item_create(uuid,uuid,uuid,uuid,text,text,jsonb,text,integer)",
+    ):
+        op.execute(f"DROP FUNCTION IF EXISTS {function}")
+
+
 def _secure() -> None:
     for function, signature in (
         (
@@ -490,7 +498,15 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.execute(_render_navigation_sql(enforce=False))
+    _drop_editor_navigation()
     _execute_editor_navigation(enforce=False)
+    for function in (
+        "content.slaif_navigation_item_create(uuid,uuid,uuid,uuid,text,text,jsonb,text,integer)",
+        "content.slaif_navigation_item_update(uuid,uuid,uuid,uuid,text,text,jsonb,text,integer,integer)",
+    ):
+        op.execute(f"ALTER FUNCTION {function} OWNER TO slaif_owner")
+        op.execute(f"REVOKE ALL ON FUNCTION {function} FROM PUBLIC")
+        op.execute(f"GRANT EXECUTE ON FUNCTION {function} TO slaif_editor_runtime")
     op.execute(_agent_page_update_sql(enforce=False))
     op.execute(_agent_navigation_validator_sql(enforce=False))
     op.execute(
