@@ -3338,6 +3338,7 @@ async def test_agent_navigation_page_targets_are_concrete_and_race_safe(
                         ),
                     )
                 )
+                assert rendered.route_kind == "page"
                 assert rendered.page.id == static_id
                 assert rendered.navigation[0].items[0].page_id == static_id
                 assert rendered.navigation[0].items[0].target.value == "/concrete-moved"

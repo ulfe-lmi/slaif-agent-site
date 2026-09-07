@@ -1101,6 +1101,7 @@ async def test_dynamic_detail_hostile_render_matrix_fails_closed(
                 path="/s/dynamic-hostile-matrix/news/valid-item",
             )
         )
+        assert valid.route_kind == "page"
         assert valid.page.id == detail_id
         assert next(iter(valid.bindings.values()))[0]["slug"] == "valid-item"
 
@@ -1304,6 +1305,7 @@ async def test_dynamic_detail_hostile_render_matrix_fails_closed(
                 path="/s/dynamic-hostile-matrix/sl-si/news/valid-item",
             )
         )
+        assert selected.route_kind == "page"
         assert next(iter(selected.bindings.values()))[0]["values"]["title"] == (
             "Veljaven"
         )
@@ -1322,6 +1324,7 @@ async def test_dynamic_detail_hostile_render_matrix_fails_closed(
                 path="/s/dynamic-hostile-matrix/sl-si/news/valid-item",
             )
         )
+        assert fallback.route_kind == "page"
         assert next(iter(fallback.bindings.values()))[0]["values"]["title"] == "Valid"
         async with owner_connection(
             database.settings.resolved_owner_dsn(), expected_database=database.name
