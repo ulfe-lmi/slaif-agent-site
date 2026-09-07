@@ -790,7 +790,7 @@ pathlib.Path(sys.argv[2]).write_text(
 PY
 read -r foreign_capability_public foreign_capability_digest < "$FOREIGN_CAPABILITY_META_FILE"
 preview_site_id=$(docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif -Atc \
-  "SELECT id FROM control.site WHERE site_key='demo'")
+  "SELECT id FROM control.site WHERE site_key='parity'")
 test -n "$preview_site_id"
 docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif \
   -v ON_ERROR_STOP=1 -c \
@@ -813,7 +813,7 @@ do
     --output "$AGENT_RUN_FILE" --write-out '%{http_code}' \
     --request POST --header 'Content-Type: application/json' \
     --header "Idempotency-Key: $worker_key" \
-    --data '{"version":"browser-preview/v1","route":"/s/demo/","target":"desktop-chromium","evidence":["screenshot","heading-summary","structure-summary"]}' \
+    --data '{"version":"browser-preview/v1","route":"/s/parity/","target":"desktop-chromium","evidence":["screenshot","heading-summary","structure-summary"]}' \
     http://localhost:8080/api/agent/v1/preview-runs)
   test "$worker_status" = 202
   worker_run_id=$(python -c \
@@ -860,7 +860,7 @@ done
 docker exec -i \
   -e SLAIF_TEST_RUN_IDS="$worker_run_ids" \
   "${PROJECT}-agent-api-1" python - <<'PY'
-# ROUTE = "/s/demo/" is submitted and normalized by the Agent contract.
+# ROUTE = "/s/parity/" is submitted and normalized by the Agent contract.
 import json
 import os
 from pathlib import Path

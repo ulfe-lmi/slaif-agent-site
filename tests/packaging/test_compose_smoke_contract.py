@@ -166,8 +166,8 @@ class ComposeSmokeContractTests(unittest.TestCase):
         self,
     ) -> None:
         source = SMOKE.read_text(encoding="utf-8")
-        self.assertIn('"route":"/s/demo/"', source)
-        self.assertIn('ROUTE = "/s/demo/"', source)
+        self.assertIn('"route":"/s/parity/"', source)
+        self.assertIn('ROUTE = "/s/parity/"', source)
         self.assertNotIn('"route":"/s/demo/home"', source)
         self.assertNotIn('ROUTE = "/s/demo/home"', source)
         self.assertIn("agent-browser-dispatch: terminal run=", source)

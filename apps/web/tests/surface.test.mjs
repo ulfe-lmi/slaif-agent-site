@@ -295,6 +295,7 @@ test("site shell uses only the fixed server-side Render resolver", async () => {
   const shellView = await read("../src/sites/shell.tsx");
   const landing = await read("../app/page.tsx");
   const renderer = await read("../src/renderer/components.tsx");
+  const layout = await read("../app/layout.tsx");
   const serviceAuth = await read("../src/sites/service-auth.ts");
   const previewPage = await read(
     "../app/preview/[workspaceId]/[[...sitePath]]/route.tsx",
@@ -337,8 +338,13 @@ test("site shell uses only the fixed server-side Render resolver", async () => {
   assert.match(previewPage, /renderToReadableStream/);
   assert.match(previewPage, /lang=\{resolution\.projection\.locale\}/);
   assert.match(previewPage, /resolution\.projection\.page\.title/);
-  assert.match(previewPage, /RENDERER_STYLESHEET/);
+  assert.match(renderer, /RENDERER_STYLESHEET/);
+  assert.match(renderer, /className="renderer-surface"/);
+  assert.match(renderer, /lang=\{projection\.locale\}/);
+  assert.doesNotMatch(layout, /RENDERER_STYLESHEET|renderer-v1\.css/);
   assert.match(rendererStyles, /"\/renderer-v1\.css"/);
+  assert.match(rendererCss, /body:has\(\.renderer-surface\)/);
+  assert.match(rendererCss, /\.renderer-surface \.renderer-collection article/);
   assert.match(rendererCss, /\.renderer-collection-detail/);
   assert.doesNotMatch(rendererCss, /https?:\/\/|@import|url\s*\(/);
   assert.match(previewPage, /workspaceId/);

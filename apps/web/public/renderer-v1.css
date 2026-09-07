@@ -1,22 +1,77 @@
-:root {
-  --renderer-ink: #f4f7f8;
-  --renderer-muted: #b4c0c5;
-  --renderer-panel: rgba(15, 30, 36, 0.78);
-  --renderer-line: rgba(168, 197, 56, 0.32);
-  --renderer-accent: #a8c538;
-}
+/* Versioned, self-contained styling for the trusted public renderer surface. */
 
-body {
+body:has(.renderer-surface) {
+  color-scheme: dark;
   margin: 0;
-  background: #0b1c22;
-  color: var(--renderer-ink);
-  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+  background:
+    radial-gradient(circle at 80% 12%, rgba(37, 145, 178, 0.2), transparent 32rem),
+    linear-gradient(145deg, #081317 0%, #0b1c22 55%, #12272c 100%);
+  color: #f4f7f8;
+  font-family:
+    Inter,
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    sans-serif;
 }
 
-main[data-render-mode] {
+.renderer-surface,
+.renderer-surface *,
+.renderer-surface *::before,
+.renderer-surface *::after {
+  box-sizing: border-box;
+}
+
+.renderer-surface *,
+.renderer-surface *::before,
+.renderer-surface *::after {
+  border-width: 0;
+  border-style: none;
+  border-color: currentColor;
+}
+
+.renderer-surface {
   width: min(72rem, calc(100% - 2rem));
   margin: 0 auto;
   padding: clamp(2rem, 6vw, 5rem) 0 3rem;
+  color: #f4f7f8;
+  line-height: normal;
+  font-family:
+    Inter,
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    sans-serif;
+}
+
+.renderer-surface h1,
+.renderer-surface h2,
+.renderer-surface h3,
+.renderer-surface h4,
+.renderer-surface h5,
+.renderer-surface h6,
+.renderer-surface p,
+.renderer-surface ol,
+.renderer-surface ul {
+  margin: 0;
+}
+
+.renderer-surface > h1 {
+  max-width: 14ch;
+  margin: 1.5rem 0 1rem;
+  font-size: clamp(2.5rem, 7vw, 5.7rem);
+  font-weight: 620;
+  letter-spacing: -0.055em;
+  line-height: 0.95;
+}
+
+.renderer-surface > ol,
+.renderer-surface > ul {
+  padding-left: 1.5rem;
 }
 
 .renderer-section {
@@ -28,10 +83,6 @@ main[data-render-mode] {
   margin-inline: auto;
 }
 
-.renderer-container--narrow {
-  max-width: 42rem;
-}
-
 .renderer-container--sm {
   max-width: 48rem;
 }
@@ -41,8 +92,7 @@ main[data-render-mode] {
 }
 
 .renderer-container--lg,
-.renderer-container--xl,
-.renderer-container--full {
+.renderer-container--xl {
   max-width: 72rem;
 }
 
@@ -50,6 +100,7 @@ main[data-render-mode] {
 .renderer-grid {
   display: grid;
   gap: 1rem;
+  line-height: normal;
 }
 
 .renderer-columns--1,
@@ -70,6 +121,38 @@ main[data-render-mode] {
 .renderer-columns--4,
 .renderer-grid--4 {
   grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.renderer-grid--5 {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.renderer-grid--6 {
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+}
+
+.renderer-grid--7 {
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+}
+
+.renderer-grid--8 {
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+}
+
+.renderer-grid--9 {
+  grid-template-columns: repeat(9, minmax(0, 1fr));
+}
+
+.renderer-grid--10 {
+  grid-template-columns: repeat(10, minmax(0, 1fr));
+}
+
+.renderer-grid--11 {
+  grid-template-columns: repeat(11, minmax(0, 1fr));
+}
+
+.renderer-grid--12 {
+  grid-template-columns: repeat(12, minmax(0, 1fr));
 }
 
 .renderer-stack {
@@ -101,6 +184,10 @@ main[data-render-mode] {
   gap: 1.5rem;
 }
 
+.renderer-spacer--xs {
+  min-height: 0.25rem;
+}
+
 .renderer-spacer--sm {
   min-height: 0.5rem;
 }
@@ -115,10 +202,10 @@ main[data-render-mode] {
 }
 
 .renderer-heading {
-  color: var(--renderer-ink);
-  line-height: 1.1;
+  color: #f4f7f8;
   font-size: 1rem;
   font-weight: 400;
+  line-height: 1.1;
 }
 
 .renderer-richtext,
@@ -128,15 +215,24 @@ main[data-render-mode] {
 .renderer-statistics,
 .renderer-timeline,
 .renderer-faq {
-  color: var(--renderer-ink);
+  color: #f4f7f8;
   line-height: 1.6;
+}
+
+.renderer-richtext > * + * {
+  margin-top: 1rem;
+}
+
+.renderer-richtext h3 {
+  font-size: 1.25rem;
+  line-height: 1.2;
 }
 
 .renderer-image-placeholder {
   min-height: 12rem;
-  border: 1px solid var(--renderer-line);
+  border: 1px solid rgba(168, 197, 56, 0.32);
   border-radius: 0.75rem;
-  background: var(--renderer-panel);
+  background: rgba(15, 30, 36, 0.78);
 }
 
 .renderer-button {
@@ -144,18 +240,18 @@ main[data-render-mode] {
   min-height: 2.75rem;
   align-items: center;
   justify-content: center;
-  border: 1px solid var(--renderer-accent);
+  border: 1px solid #a8c538;
   border-radius: 0.5rem;
   padding: 0.7rem 1rem;
   color: #081317;
-  background: var(--renderer-accent);
+  background: #a8c538;
   font-weight: 750;
   text-decoration: none;
 }
 
 .renderer-button--secondary,
 .renderer-button--ghost {
-  color: var(--renderer-ink);
+  color: #f4f7f8;
   background: transparent;
 }
 
@@ -166,6 +262,25 @@ main[data-render-mode] {
   padding-block: 1rem;
 }
 
+.renderer-breadcrumbs ol,
+.renderer-language {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  padding: 0;
+  list-style: none;
+}
+
+.renderer-surface a {
+  color: #b9ebf6;
+  text-underline-offset: 0.25em;
+}
+
+.renderer-surface a:focus-visible {
+  outline: 3px solid #a8c538;
+  outline-offset: 0.3rem;
+}
+
 .renderer-collection,
 .renderer-statistics {
   display: grid;
@@ -173,13 +288,33 @@ main[data-render-mode] {
   gap: 1rem;
 }
 
+.renderer-surface .renderer-collection article,
+.renderer-surface .renderer-collection-detail {
+  min-height: 0;
+  border: 1px solid rgba(168, 197, 56, 0.32);
+  border-radius: 0.75rem;
+  background: rgba(15, 30, 36, 0.78);
+  line-height: normal;
+  padding: 1.5rem;
+}
+
+.renderer-surface .renderer-collection article h2,
+.renderer-surface .renderer-collection-detail h2 {
+  margin: 0 0 0.7rem;
+  font-size: 1.15rem;
+  font-weight: 400;
+  line-height: 1.2;
+}
+
+.renderer-surface .renderer-collection article p,
+.renderer-surface .renderer-collection-detail p {
+  margin: 0;
+  color: #b4c0c5;
+  line-height: 1.58;
+}
+
 .renderer-collection-detail {
   display: block;
-  min-height: 0;
-  border: 1px solid var(--renderer-line);
-  border-radius: 0.75rem;
-  background: var(--renderer-panel);
-  padding: 1.5rem;
 }
 
 @media (max-width: 760px) {
