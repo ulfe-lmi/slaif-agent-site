@@ -168,6 +168,10 @@ test("target, output, origin, and request policy expose no raw automation surfac
     requestIsAllowed("http://web:3000/_next/static/app.js", "GET", "script", document),
     "ASSET",
   );
+  assert.equal(
+    requestIsAllowed("http://web:3000/renderer-v1.css", "GET", "stylesheet", document),
+    "ASSET",
+  );
   for (const value of [
     ...CONFINEMENT_SELF_CHECK_URLS,
     "file:///etc/passwd",

@@ -300,6 +300,8 @@ test("site shell uses only the fixed server-side Render resolver", async () => {
     "../app/preview/[workspaceId]/[[...sitePath]]/route.tsx",
   );
   const previewResolver = await read("../src/sites/preview-page.tsx");
+  const rendererStyles = await read("../src/renderer/styles.ts");
+  const rendererCss = await read("../public/renderer-v1.css");
   assert.match(client, /http:\/\/render-api:8000\/internal\/render\/v1\/site-context/);
   assert.match(client, /internal\/render\/v1\/page/);
   assert.match(client, /internal\/render\/v1\/preview/);
@@ -333,6 +335,12 @@ test("site shell uses only the fixed server-side Render resolver", async () => {
   assert.match(`${previewPage}${previewResolver}`, /SLAIF_BROWSER_PREVIEW_AUTHORITY/);
   assert.match(`${previewPage}${previewResolver}`, /browserToken \? browserAuthority!/);
   assert.match(previewPage, /renderToReadableStream/);
+  assert.match(previewPage, /lang=\{resolution\.projection\.locale\}/);
+  assert.match(previewPage, /resolution\.projection\.page\.title/);
+  assert.match(previewPage, /RENDERER_STYLESHEET/);
+  assert.match(rendererStyles, /"\/renderer-v1\.css"/);
+  assert.match(rendererCss, /\.renderer-collection-detail/);
+  assert.doesNotMatch(rendererCss, /https?:\/\/|@import|url\s*\(/);
   assert.match(previewPage, /workspaceId/);
   assert.doesNotMatch(
     `${client}${previewPage}${previewResolver}`,

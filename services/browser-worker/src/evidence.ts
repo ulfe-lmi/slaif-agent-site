@@ -105,11 +105,29 @@ async function collectSummary(
     });
   }
   if (kind === "structure-summary") {
+    const detail = page.locator(".renderer-collection-detail").first();
+    const detailStyle =
+      (await detail.count()) === 0
+        ? null
+        : await detail.evaluate((element) => {
+            const style = element.ownerDocument.defaultView?.getComputedStyle(element);
+            return {
+              borderTopStyle: style?.borderTopStyle ?? "",
+              display: style?.display ?? "",
+              paddingTop: style?.paddingTop ?? "",
+            };
+          });
     return jsonArtifact(kind, {
       articles: await page.locator("article").count(),
-      components: await page.locator("[data-component-type]").count(),
+      collectionDetails: await page.locator(".renderer-collection-detail").count(),
+      components: await page.locator("[data-component]").count(),
+      detailStyle,
+      htmlLang: await page.locator("html").getAttribute("lang"),
       main: await page.locator("main").count(),
       navigation: await page.locator("nav").count(),
+      rendererStylesheets: await page
+        .locator('link[rel="stylesheet"][href$="/renderer-v1.css"]')
+        .count(),
       sections: await page.locator("section").count(),
     });
   }

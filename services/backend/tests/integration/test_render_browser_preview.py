@@ -227,6 +227,12 @@ async def test_browser_token_projects_only_bound_overlay_and_is_one_time(
             )
         )
         user_id, workspace_id, capability_id = uuid4(), uuid4(), uuid4()
+        dynamic_type_id = uuid4()
+        dynamic_item_id = uuid4()
+        dynamic_translation_id = uuid4()
+        dynamic_view_id = uuid4()
+        dynamic_listing_id = uuid4()
+        dynamic_detail_id = uuid4()
         expires = datetime.now(UTC) + timedelta(hours=1)
         async with owner_connection(
             database.settings.resolved_owner_dsn(), expected_database=database.name
@@ -291,12 +297,91 @@ async def test_browser_token_projects_only_bound_overlay_and_is_one_time(
                 page_id,
                 '{"text":"Browser preview","level":2}',
             )
+            await owner.execute(
+                "INSERT INTO content.content_type_base "
+                "(id,site_id,key,labels,slug_pattern,status,definition_version,"
+                "settings) VALUES ($1,$2,'browser-news','{}',"
+                "'/news/{slug}','ACTIVE',1,'{}')",
+                dynamic_type_id,
+                site.site_id,
+            )
+            await owner.execute(
+                "INSERT INTO content.field_definition_base "
+                "(id,type_id,key,label,field_type,required,localized,cardinality,"
+                "position,validation,ui_options,definition_version) VALUES "
+                "($1,$2,'title','Title','short_text',true,true,1,0,'{}','{}',1),"
+                "($3,$2,'summary','Summary','long_text',true,true,1,1,'{}','{}',1),"
+                "($4,$2,'rank','Rank','integer',true,false,1,2,'{}','{}',1)",
+                uuid4(),
+                dynamic_type_id,
+                uuid4(),
+                uuid4(),
+            )
+            await owner.execute(
+                "INSERT INTO content.content_item_base "
+                "(id,site_id,type_id,slug,status,type_definition_version,values) "
+                "VALUES ($1,$2,$3,'published','PUBLISHED',1,'{\"rank\":1}')",
+                dynamic_item_id,
+                site.site_id,
+                dynamic_type_id,
+            )
+            await owner.execute(
+                "INSERT INTO content.content_item_translation_base "
+                "(id,site_id,item_id,locale,localized_values) VALUES "
+                "($1,$2,$3,'en',$4::jsonb)",
+                dynamic_translation_id,
+                site.site_id,
+                dynamic_item_id,
+                '{"title":"Canonical browser item","summary":"Canonical summary"}',
+            )
+            await owner.execute(
+                "INSERT INTO content.collection_view_base "
+                "(id,site_id,type_id,key,filter_spec,sort_spec,projection_spec,"
+                "pagination_spec) VALUES ($1,$2,$3,'browser-news','{}',"
+                "$4::jsonb,$5::jsonb,$6::jsonb)",
+                dynamic_view_id,
+                site.site_id,
+                dynamic_type_id,
+                '{"field":"rank","direction":"desc"}',
+                '{"fields":["title","summary","rank"]}',
+                '{"limit":10,"offset":0}',
+            )
+            await owner.execute(
+                "INSERT INTO content.page_base "
+                "(id,site_id,slug,title,status,locale,parent_id,route_template) "
+                "VALUES ($1,$2,'news','Browser news','PUBLISHED','en',NULL,NULL),"
+                "($3,$2,'detail','Browser detail','PUBLISHED','en',$1,'{slug}')",
+                dynamic_listing_id,
+                site.site_id,
+                dynamic_detail_id,
+            )
+            await owner.execute(
+                "INSERT INTO content.page_composition_base "
+                "(site_id,page_id,component_type,schema_version,slot_key,"
+                "order_key,props) VALUES "
+                "($1,$2,'CollectionDetail','1','default',0,$3::jsonb)",
+                site.site_id,
+                dynamic_detail_id,
+                json.dumps({"viewId": str(dynamic_view_id)}),
+            )
         async with asyncpg_cow_session(
             agent_pool, session_id=workspace_id, operation_id=uuid4()
         ) as cow:
             await cow.native.execute(
                 "UPDATE content.page SET title='Bound localized nested browser draft' "
                 "WHERE site_id=$1 AND slug='guide' AND locale='sl-SI'",
+                site.site_id,
+            )
+            await cow.native.execute(
+                "UPDATE content.content_item_translation SET localized_values=$1 "
+                "WHERE id=$2 AND site_id=$3",
+                json.dumps(
+                    {
+                        "title": "Workspace browser item",
+                        "summary": "Workspace summary",
+                    }
+                ),
+                dynamic_translation_id,
                 site.site_id,
             )
         preview_route = f"{ROUTE}/sl-si/guide"
@@ -571,6 +656,170 @@ async def test_browser_token_projects_only_bound_overlay_and_is_one_time(
         ) as owner:
             baseline_operations = await get_session_operations(
                 AsyncpgExecutor(owner), workspace_id, schema="content"
+            )
+
+        # Cancellation after a dynamic detail and translation snapshot rolls back
+        # only the read transaction. The separately committed one-use browser
+        # authorization remains consumed, and a newly authorized run succeeds.
+        dynamic_route = f"{ROUTE}/news/published"
+        async with agent_pool.acquire() as agent:
+            cancelled_run_id = await _begin(
+                agent,
+                capability_id=capability_id,
+                site_id=site.site_id,
+                workspace_id=workspace_id,
+                delegator_id=user_id,
+                key="render-dynamic-cancel",
+                route=dynamic_route,
+            )
+        cancelled_token = _token(
+            signer,
+            capability_id=capability_id,
+            site_id=site.site_id,
+            workspace_id=workspace_id,
+            run_id=cancelled_run_id,
+            now=int(time.time()),
+            route=dynamic_route,
+            nonce="11223344556677889900aabbccddeeff",
+        )
+        original_query = service._query
+        dynamic_snapshot = asyncio.Event()
+        release_dynamic_snapshot = asyncio.Event()
+
+        async def pause_after_dynamic_snapshot(
+            connection: Any,
+            *,
+            context: Any,
+            request: RenderPageRequest,
+            render_mode: str,
+        ) -> Any:
+            projection = await original_query(
+                connection,
+                context=context,
+                request=request,
+                render_mode=render_mode,
+            )
+            if request.path == dynamic_route:
+                dynamic_snapshot.set()
+                await release_dynamic_snapshot.wait()
+            return projection
+
+        monkeypatch.setattr(service, "_query", pause_after_dynamic_snapshot)
+        cancelled_task = asyncio.create_task(
+            service.preview(
+                RenderPreviewRequest(
+                    authority="localhost",
+                    path=dynamic_route,
+                    workspace_id=workspace_id,
+                    browser_route=dynamic_route,
+                    browser_token=SecretStr(cancelled_token),
+                )
+            )
+        )
+        await asyncio.wait_for(dynamic_snapshot.wait(), timeout=15)
+        cancelled_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await cancelled_task
+        release_dynamic_snapshot.set()
+        monkeypatch.setattr(service, "_query", original_query)
+        with pytest.raises(ProjectionError, match="not_found"):
+            await service.preview(
+                RenderPreviewRequest(
+                    authority="localhost",
+                    path=dynamic_route,
+                    workspace_id=workspace_id,
+                    browser_route=dynamic_route,
+                    browser_token=SecretStr(cancelled_token),
+                )
+            )
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            assert (
+                await owner.fetchval(
+                    "SELECT count(*) FROM audit.browser_event "
+                    "WHERE run_id=$1 AND event_type='PREVIEW_TOKEN_CONSUMED'",
+                    cancelled_run_id,
+                )
+                == 1
+            )
+            assert (
+                await get_session_operations(
+                    AsyncpgExecutor(owner), workspace_id, schema="content"
+                )
+                == baseline_operations
+            )
+            cancelled_state = await owner.fetchrow(
+                "SELECT preview_token_used_at,preview_nonce_digest "
+                "FROM control.browser_run WHERE id=$1",
+                cancelled_run_id,
+            )
+            assert cancelled_state[0] is not None
+            assert (
+                cancelled_state[1]
+                == hashlib.sha256(b"11223344556677889900aabbccddeeff").hexdigest()
+            )
+        async with preview_pool.acquire(timeout=3) as preview:
+            context_values = await preview.fetchrow(
+                "SELECT current_setting('app.session_id',true),"
+                "current_setting('app.operation_id',true)"
+            )
+            assert all(value in {None, ""} for value in context_values)
+            assert await preview.fetchval("SELECT 1") == 1
+
+        async with agent_pool.acquire() as agent:
+            recovery_run_id = await _begin(
+                agent,
+                capability_id=capability_id,
+                site_id=site.site_id,
+                workspace_id=workspace_id,
+                delegator_id=user_id,
+                key="render-dynamic-after-cancel",
+                route=dynamic_route,
+            )
+        recovery_token = _token(
+            signer,
+            capability_id=capability_id,
+            site_id=site.site_id,
+            workspace_id=workspace_id,
+            run_id=recovery_run_id,
+            now=int(time.time()),
+            route=dynamic_route,
+            nonce="22334455667788990011aabbccddeeff",
+        )
+        recovered_dynamic = await service.preview(
+            RenderPreviewRequest(
+                authority="localhost",
+                path=dynamic_route,
+                workspace_id=workspace_id,
+                browser_route=dynamic_route,
+                browser_token=SecretStr(recovery_token),
+            )
+        )
+        assert recovered_dynamic.route_kind == "page"
+        assert recovered_dynamic.route_parameters == {"slug": "published"}
+        assert next(iter(recovered_dynamic.bindings.values()))[0]["values"] == {
+            "rank": 1,
+            "summary": "Workspace summary",
+            "title": "Workspace browser item",
+        }
+        canonical_dynamic = await service.canonical(
+            RenderPageRequest(authority="localhost", path=dynamic_route)
+        )
+        assert canonical_dynamic.route_kind == "page"
+        assert next(iter(canonical_dynamic.bindings.values()))[0]["values"] == {
+            "rank": 1,
+            "summary": "Canonical summary",
+            "title": "Canonical browser item",
+        }
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            assert (
+                await get_session_operations(
+                    AsyncpgExecutor(owner), workspace_id, schema="content"
+                )
+                == baseline_operations
             )
 
         # Pause after the consuming authorization and revoke before the COW

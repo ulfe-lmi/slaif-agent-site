@@ -5,6 +5,7 @@ import {
   resolveWorkspacePreview,
   type WorkspacePreviewResolution,
 } from "../../../../src/sites/preview-page";
+import { RENDERER_STYLESHEET } from "../../../../src/renderer/styles";
 import { PageProjectionShell } from "../../../../src/sites/shell";
 
 export const dynamic = "force-dynamic";
@@ -42,11 +43,12 @@ async function renderResolution(
     );
   }
   const stream = await renderToReadableStream(
-    <html lang="en">
+    <html lang={resolution.projection.locale}>
       <head>
         <meta charSet="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <title>SLAIF Agent-Site</title>
+        <title>{resolution.projection.page.title}</title>
+        <link rel="stylesheet" href={RENDERER_STYLESHEET} />
       </head>
       <body>
         <PageProjectionShell projection={resolution.projection} />

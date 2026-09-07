@@ -3,6 +3,7 @@ import { headers } from "next/headers";
 
 import "@measured/puck/no-external.css";
 import "./styles.css";
+import { RENDERER_STYLESHEET } from "../src/renderer/styles";
 
 export const metadata: Metadata = {
   title: "SLAIF Agent-Site — deployment skeleton",
@@ -15,6 +16,9 @@ export default async function RootLayout({
   await headers();
   return (
     <html lang="en">
+      <head>
+        <link rel="stylesheet" href={RENDERER_STYLESHEET} />
+      </head>
       <body>{children}</body>
     </html>
   );

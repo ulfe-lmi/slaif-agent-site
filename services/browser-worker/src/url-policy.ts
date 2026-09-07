@@ -4,7 +4,11 @@ import type { BrowserContext, Request, Route } from "playwright-core";
 const forbiddenHost =
   /^(?:localhost|localhost\.|0\.0\.0\.0|127(?:\.[0-9]{1,3}){3}|169\.254(?:\.[0-9]{1,3}){2}|::1|\[::1\])$/iu;
 const allowedStaticPrefixes = ["/_next/static/"] as const;
-const allowedStaticPaths = new Set(["/_next/image", "/slaif-logo.svg"]);
+const allowedStaticPaths = new Set([
+  "/_next/image",
+  "/renderer-v1.css",
+  "/slaif-logo.svg",
+]);
 
 export class BrowserUrlPolicyError extends Error {
   public constructor() {

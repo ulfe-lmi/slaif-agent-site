@@ -43,6 +43,31 @@ test("authenticated-preview-renders-overlay-and-keeps-canonical-unchanged", asyn
     "Compose overlay heading",
   );
   expect(await page.locator("main").getAttribute("data-render-mode")).toBe("preview");
+  await expect(page.locator("html")).toHaveAttribute("lang", "en");
+  expect(await page.title()).toBe("Compose preview overlay");
+  await expect(
+    page.locator('link[rel="stylesheet"][href="/renderer-v1.css"]'),
+  ).toHaveCount(1);
+  const stylesheet = await page.request.get("/renderer-v1.css");
+  expect(stylesheet.status()).toBe(200);
+  expect(await stylesheet.text()).toContain(".renderer-collection-detail");
+  const previewStyle = await page
+    .locator('[data-component="Heading"] .renderer-heading')
+    .first()
+    .evaluate((element) => {
+      const style = getComputedStyle(element);
+      return {
+        className: element.getAttribute("class"),
+        color: style.color,
+        lineHeight: style.lineHeight,
+      };
+    });
+
+  const previewHtml = await page.content();
+  expect(previewHtml).not.toMatch(
+    /[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/i,
+  );
+  expect(previewHtml).not.toMatch(/__next_f|self\.__next_f|_rsc=|NEXT_DATA/i);
 
   const storage = await page.evaluate(() => ({
     cookies: document.cookie,
@@ -125,6 +150,18 @@ test("authenticated-preview-renders-overlay-and-keeps-canonical-unchanged", asyn
     "Compose overlay heading",
   );
   expect(await page.locator("main").getAttribute("data-render-mode")).toBe("canonical");
+  const canonicalStyle = await page
+    .locator('[data-component="Heading"] .renderer-heading')
+    .first()
+    .evaluate((element) => {
+      const style = getComputedStyle(element);
+      return {
+        className: element.getAttribute("class"),
+        color: style.color,
+        lineHeight: style.lineHeight,
+      };
+    });
+  expect(canonicalStyle).toEqual(previewStyle);
   const previewOnlyCanonicalRedirect = await page.request.get(
     "/s/demo/compose-redirect",
     {

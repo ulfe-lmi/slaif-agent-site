@@ -579,32 +579,6 @@ def _compose(project: str, action: str, service: str) -> None:
         raise ProofFailure(f"compose-{action}-{service}-failed")
 
 
-def _compose_shell(project: str, service: str, command: str) -> None:
-    try:
-        result = subprocess.run(
-            [
-                "docker",
-                "compose",
-                "-p",
-                project,
-                "exec",
-                "-T",
-                service,
-                "sh",
-                "-c",
-                command,
-            ],
-            check=False,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            text=True,
-        )
-    except OSError as error:
-        raise ProofFailure("compose-shell-unavailable") from error
-    if result.returncode != 0:
-        raise ProofFailure("compose-shell-failed")
-
-
 def _sql(project: str, query: str) -> str:
     try:
         result = subprocess.run(
@@ -788,6 +762,8 @@ def _assert_preview_html(
     body: bytes,
     *,
     label: str,
+    locale: str,
+    title: str,
     expected: tuple[str, ...],
     forbidden: tuple[str, ...],
     known_ids: tuple[tuple[str, str], ...],
@@ -798,6 +774,12 @@ def _assert_preview_html(
         raise ProofFailure(f"{label}-invalid-html") from error
     if 'data-component="Collection' not in text:
         raise ProofFailure(f"{label}-trusted-renderer-missing")
+    if f'<html lang="{locale}">' not in text:
+        raise ProofFailure(f"{label}-locale-missing")
+    if f"<title>{title}</title>" not in text:
+        raise ProofFailure(f"{label}-title-missing")
+    if '<link rel="stylesheet" href="/renderer-v1.css"/>' not in text:
+        raise ProofFailure(f"{label}-renderer-stylesheet-missing")
     for value in expected:
         if value not in text:
             raise ProofFailure(f"{label}-expected-text-missing")
@@ -815,6 +797,10 @@ def _assert_preview_html(
         raise ProofFailure(f"{label}-uuid-leak")
     if any(marker in text for marker in ("sas2_", "sbp1.", "sbws1:")):
         raise ProofFailure(f"{label}-credential-leak")
+    if any(
+        marker in text for marker in ("__next_f", "self.__next_f", "_rsc=", "NEXT_DATA")
+    ):
+        raise ProofFailure(f"{label}-next-flight-leak")
 
 
 def _canonical_stable_bytes(body: bytes) -> bytes:
@@ -838,7 +824,12 @@ def _canonical_stable_bytes(body: bytes) -> bytes:
 
 
 def _run_dynamic_news_edge_journey(
-    client: PublicClient, site_id: str, csrf: str, project: str, tag: str
+    client: PublicClient,
+    site_id: str,
+    csrf: str,
+    project: str,
+    tag: str,
+    observer_token: str,
 ) -> None:
     """Prove the Agent-created dynamic News result through the public edge."""
 
@@ -1095,6 +1086,8 @@ def _run_dynamic_news_edge_journey(
         _assert_preview_html(
             default_listing_body,
             label="news-default-listing",
+            locale=default_locale,
+            title="News",
             expected=("Published title", "Draft title", "Published summary"),
             forbidden=("Archived title", "sas2_", "internal"),
             known_ids=(
@@ -1119,6 +1112,8 @@ def _run_dynamic_news_edge_journey(
         _assert_preview_html(
             default_detail,
             label="news-default-detail",
+            locale=default_locale,
+            title="News detail",
             expected=("Published title", "Published summary"),
             forbidden=("Draft title", "Archived title"),
             known_ids=(
@@ -1138,6 +1133,8 @@ def _run_dynamic_news_edge_journey(
         _assert_preview_html(
             selected_detail,
             label="news-selected-detail",
+            locale=selected_locale,
+            title="Podrobnosti",
             expected=("Published naslov", "Published povzetek"),
             forbidden=("Published title", "Archived naslov"),
             known_ids=(
@@ -1151,18 +1148,29 @@ def _run_dynamic_news_edge_journey(
                 ],
             ),
         )
+        stylesheet = client.request("/renderer-v1.css")
+        if (
+            stylesheet.status != 200
+            or stylesheet.body
+            != (ROOT / "apps/web/public/renderer-v1.css").read_bytes()
+        ):
+            raise ProofFailure("news-renderer-stylesheet-byte-drift")
+
+        browser_route = f"/s/demo{selected_route}/published"
+        browser_key = f"oap-077v-news-browser-run-{tag}"
+        browser_body = {
+            "version": "browser-preview/v1",
+            "route": browser_route,
+            "target": "desktop-chromium",
+            "evidence": ["heading-summary", "structure-summary"],
+        }
         browser_response = client.request(
             "/api/agent/v1/preview-runs",
             method="POST",
-            body={
-                "version": "browser-preview/v1",
-                "route": f"/s/demo{default_route}/published",
-                "target": "desktop-chromium",
-                "evidence": ["heading-summary", "structure-summary"],
-            },
+            body=browser_body,
             headers={
                 "Authorization": f"Bearer {token}",
-                "Idempotency-Key": f"oap-077u-news-browser-run-{tag}",
+                "Idempotency-Key": browser_key,
             },
         )
         browser_document = _json(
@@ -1177,6 +1185,192 @@ def _run_dynamic_news_edge_journey(
         ):
             raise ProofFailure("news-browser-run-secret-disclosure")
         _wait_browser_run(client, token, browser_run_id, "news-browser-run")
+        terminal_run = _json(
+            client.request(
+                f"/api/agent/v1/preview-runs/{browser_run_id}",
+                headers={"Authorization": f"Bearer {token}"},
+            ),
+            status=200,
+            label="news-browser-run-terminal",
+        )
+        if terminal_run.get("state") != "COMPLETED":
+            raise ProofFailure("news-browser-run-not-completed")
+        replay = _json(
+            client.request(
+                "/api/agent/v1/preview-runs",
+                method="POST",
+                body=browser_body,
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Idempotency-Key": browser_key,
+                },
+            ),
+            status=202,
+            label="news-browser-run-idempotency-replay",
+        )
+        if replay.get("run_id") != browser_run_id:
+            raise ProofFailure("news-browser-run-idempotency-created-second-run")
+
+        artifacts = _list(
+            client.request(
+                f"/api/agent/v1/preview-runs/{browser_run_id}/artifacts",
+                headers={"Authorization": f"Bearer {token}"},
+            ),
+            status=200,
+            label="news-browser-artifact-list",
+        )
+        if len(artifacts) != 2 or {item.get("kind") for item in artifacts} != {
+            "heading-summary",
+            "structure-summary",
+        }:
+            raise ProofFailure("news-browser-artifact-inventory-invalid")
+        expected_metadata = {
+            "version",
+            "artifact_id",
+            "run_id",
+            "kind",
+            "mime_type",
+            "sha256",
+            "size_bytes",
+            "target",
+            "route_digest",
+            "created_at",
+            "expires_at",
+            "visibility",
+        }
+        route_digest = hashlib.sha256(browser_route.encode("utf-8")).hexdigest()
+        artifact_ids: list[str] = []
+        for artifact in artifacts:
+            if set(artifact) != expected_metadata:
+                raise ProofFailure("news-browser-artifact-metadata-shape-invalid")
+            artifact_id = _require_uuid(
+                artifact.get("artifact_id"), "news-browser-artifact"
+            )
+            artifact_ids.append(artifact_id)
+            if (
+                artifact.get("run_id") != browser_run_id
+                or artifact.get("target") != "desktop-chromium"
+                or artifact.get("route_digest") != route_digest
+                or artifact.get("visibility") != "PRIVATE"
+                or artifact.get("mime_type") != "application/json"
+            ):
+                raise ProofFailure("news-browser-artifact-binding-invalid")
+            response = client.request(
+                f"/api/agent/v1/preview-runs/{browser_run_id}/artifacts/{artifact_id}",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            if (
+                response.status != 200
+                or len(response.body) != artifact.get("size_bytes")
+                or hashlib.sha256(response.body).hexdigest() != artifact.get("sha256")
+            ):
+                raise ProofFailure("news-browser-artifact-bytes-invalid")
+            try:
+                evidence = json.loads(response.body)
+            except (TypeError, ValueError) as error:
+                raise ProofFailure("news-browser-artifact-json-invalid") from error
+            if artifact.get("kind") == "heading-summary":
+                if evidence != {"headings": ["Podrobnosti", "Published naslov"]}:
+                    raise ProofFailure("news-browser-heading-evidence-invalid")
+            elif evidence != {
+                "articles": 1,
+                "collectionDetails": 1,
+                "components": 1,
+                "detailStyle": {
+                    "borderTopStyle": "solid",
+                    "display": "block",
+                    "paddingTop": "24px",
+                },
+                "htmlLang": selected_locale,
+                "main": 1,
+                "navigation": 0,
+                "rendererStylesheets": 1,
+                "sections": 0,
+            }:
+                raise ProofFailure("news-browser-structure-evidence-invalid")
+
+        random_id = str(uuid4())
+        for path, denied_token, label in (
+            (f"/api/agent/v1/preview-runs/{random_id}", token, "random-run"),
+            (
+                f"/api/agent/v1/preview-runs/{browser_run_id}/artifacts/{random_id}",
+                token,
+                "random-artifact",
+            ),
+            (
+                f"/api/agent/v1/preview-runs/{browser_run_id}",
+                observer_token,
+                "wrong-workspace-run",
+            ),
+            (
+                f"/api/agent/v1/preview-runs/{browser_run_id}/artifacts",
+                observer_token,
+                "wrong-workspace-artifacts",
+            ),
+            (
+                f"/api/agent/v1/preview-runs/{browser_run_id}/artifacts/{artifact_ids[0]}",
+                observer_token,
+                "wrong-capability-artifact",
+            ),
+        ):
+            denied = client.request(
+                path, headers={"Authorization": f"Bearer {denied_token}"}
+            )
+            if denied.status != 404:
+                raise ProofFailure(f"news-browser-{label}-visible")
+
+        event_counts = _sql(
+            project,
+            "SELECT count(*) FILTER (WHERE event_type='ENQUEUED') || ':' || "
+            "count(*) FILTER (WHERE event_type='LEASED') || ':' || "
+            "count(*) FILTER (WHERE event_type='COMPLETED') || ':' || "
+            "count(*) FILTER (WHERE event_type='PREVIEW_TOKEN_CONSUMED') || ':' || "
+            "count(*) FILTER (WHERE event_type='ARTIFACT_REGISTERED') "
+            f"FROM audit.browser_event WHERE run_id='{browser_run_id}'::uuid",
+        )
+        if event_counts != "1:1:1:1:2":
+            raise ProofFailure("news-browser-durable-event-count-invalid")
+
+        draft_item, draft_default_translation, draft_selected_translation = items[
+            "draft"
+        ]
+        _request_mutation(
+            client,
+            token,
+            f"/api/agent/v1/content-items/{draft_item}/translations/{draft_selected_translation}",
+            {"expected_row_version": 1},
+            f"oap-077v-news-delete-selected-translation-{tag}",
+            method="DELETE",
+        )
+        draft_fallback = _wait_preview_html(
+            client, f"{selected_preview}/draft", "news-selected-fallback"
+        )
+        _assert_preview_html(
+            draft_fallback,
+            label="news-selected-fallback",
+            locale=selected_locale,
+            title="Podrobnosti",
+            expected=("Draft title", "Draft summary"),
+            forbidden=("Draft naslov", "Draft povzetek"),
+            known_ids=(("workspace", workspace), ("draft-item", draft_item)),
+        )
+        _request_mutation(
+            client,
+            token,
+            f"/api/agent/v1/content-items/{draft_item}/translations/{draft_default_translation}",
+            {"expected_row_version": 1},
+            f"oap-077v-news-delete-default-translation-{tag}",
+            method="DELETE",
+        )
+        if client.request(f"{selected_preview}/draft").status != 404:
+            raise ProofFailure("news-selected-missing-translation-not-failed")
+        _request_mutation(
+            client,
+            token,
+            f"/api/agent/v1/content-items/{draft_item}",
+            {"status": "ARCHIVED", "expected_row_version": 1},
+            f"oap-077v-news-archive-translationless-item-{tag}",
+        )
         for invalid in (
             f"{default_preview}/archived",
             f"{default_preview}/unknown",
@@ -1217,6 +1411,8 @@ def _run_dynamic_news_edge_journey(
         _assert_preview_html(
             renamed_body,
             label="news-renamed-detail",
+            locale=default_locale,
+            title="News detail",
             expected=("Published title updated", "Published summary updated"),
             forbidden=('Published title"><', "Archived title"),
             known_ids=(
@@ -1280,24 +1476,10 @@ def _run_dynamic_news_edge_journey(
             f"workspace={workspace} routes=default,non-default detail=exact "
             "listing-sort=verified status-slug-translation=verified "
             "canonical-isolation=byte-identical restart=agent,render,web "
-            "html=uuid-token-json-free"
+            "html=uuid-token-flight-free css=canonical-parity "
+            "browser-artifacts=public-verified-retained authorization=one-use"
         )
     finally:
-        if browser_run_id:
-            run_sql = f"'{browser_run_id}'::uuid"
-            _sql(
-                project,
-                "BEGIN; "
-                f"DELETE FROM audit.browser_event WHERE run_id={run_sql}; "
-                f"DELETE FROM control.browser_artifact WHERE run_id={run_sql}; "
-                f"DELETE FROM control.browser_idempotency WHERE run_id={run_sql}; "
-                f"DELETE FROM control.browser_run WHERE id={run_sql}; COMMIT;",
-            )
-            _compose_shell(
-                project,
-                "browser-worker",
-                "find /var/lib/slaif/browser-artifacts -mindepth 1 -maxdepth 1 -delete",
-            )
         if workspace and capability:
             _revoke_capability(client, site_id, workspace, capability)
 
@@ -1497,7 +1679,9 @@ def run_acceptance(project: str) -> None:
         ):
             raise ProofFailure("primitive-discovery-invalid")
 
-        _run_dynamic_news_edge_journey(client, site_id, csrf, project, tag)
+        _run_dynamic_news_edge_journey(
+            client, site_id, csrf, project, tag, observer_token
+        )
 
         baseline_types = _agent_list(
             client,

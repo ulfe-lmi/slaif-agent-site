@@ -5508,6 +5508,7 @@ async def test_agent_relation_and_collection_view_crud_is_cow_bound_and_audited(
 @pytest.mark.asyncio
 async def test_public_agent_builds_news_dynamic_listing_and_detail_render(
     agent_site_database: AgentSiteDatabase,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Build the bounded News model and dynamic pages through Agent HTTP."""
 
@@ -5655,7 +5656,7 @@ async def test_public_agent_builds_news_dynamic_listing_and_detail_render(
                 )
                 assert locale["tag"] == "sl-SI"
 
-                items: dict[str, UUID] = {}
+                items: dict[str, tuple[UUID, UUID, UUID]] = {}
                 for slug, status, rank, key in (
                     ("published-item", "PUBLISHED", 3, "news-published"),
                     ("draft-item", "DRAFT", 2, "news-draft"),
@@ -5673,8 +5674,7 @@ async def test_public_agent_builds_news_dynamic_listing_and_detail_render(
                         },
                     )
                     item_id = UUID(record["id"])
-                    items[slug] = item_id
-                    await mutate(
+                    default_translation = await mutate(
                         "POST",
                         f"/api/agent/v1/content-items/{item_id}/translations",
                         f"{key}-translation-en",
@@ -5686,7 +5686,7 @@ async def test_public_agent_builds_news_dynamic_listing_and_detail_render(
                             },
                         },
                     )
-                    await mutate(
+                    selected_translation = await mutate(
                         "POST",
                         f"/api/agent/v1/content-items/{item_id}/translations",
                         f"{key}-translation-sl",
@@ -5697,6 +5697,11 @@ async def test_public_agent_builds_news_dynamic_listing_and_detail_render(
                                 "summary": f"{status.title()} povzetek",
                             },
                         },
+                    )
+                    items[slug] = (
+                        item_id,
+                        UUID(default_translation["id"]),
+                        UUID(selected_translation["id"]),
                     )
 
                 view = await mutate(
@@ -5914,6 +5919,9 @@ async def test_public_agent_builds_news_dynamic_listing_and_detail_render(
             service = RenderProjectionService(
                 _AgentRenderAdapter(public_pool, preview_pool)
             )
+            published_item, _default_translation, selected_translation_id = items[
+                "published-item"
+            ]
             session_token = format_session_token(public_id, secret)
             listing_preview = await service.preview(
                 RenderPreviewRequest(
@@ -5993,8 +6001,196 @@ async def test_public_agent_builds_news_dynamic_listing_and_detail_render(
             async with httpx.AsyncClient(
                 transport=httpx.ASGITransport(app=app), base_url="http://agent.test"
             ) as client_after:
+                original_query = service._query
+                snapshot_reached = asyncio.Event()
+                release_snapshot = asyncio.Event()
+                block_snapshot = False
+
+                async def intercept_dynamic_snapshot(
+                    connection: Any,
+                    *,
+                    context: Any,
+                    request: RenderPageRequest,
+                    render_mode: str,
+                ) -> Any:
+                    projection = await original_query(
+                        connection,
+                        context=context,
+                        request=request,
+                        render_mode=render_mode,
+                    )
+                    if block_snapshot and request.path.endswith(
+                        "/sl-si/news/published-item"
+                    ):
+                        snapshot_reached.set()
+                        await release_snapshot.wait()
+                    return projection
+
+                monkeypatch.setattr(service, "_query", intercept_dynamic_snapshot)
+
+                cancellation_before = await durable_mutation_counts()
+                async with asyncpg_cow_session(
+                    agent_pool,
+                    session_id=workspace_id,
+                    operation_id=uuid4(),
+                ) as cow:
+                    workspace_before = await cow.native.fetchrow(
+                        "SELECT i.slug,i.status,t.localized_values "
+                        "FROM content.content_item i "
+                        "JOIN content.content_item_translation t ON t.item_id=i.id "
+                        "WHERE i.id=$1 AND t.id=$2",
+                        published_item,
+                        selected_translation_id,
+                    )
+                block_snapshot = True
+                cancelled_preview = asyncio.create_task(
+                    service.preview(
+                        RenderPreviewRequest(
+                            authority="localhost",
+                            path="/s/agent-mutation/sl-si/news/published-item",
+                            workspace_id=workspace_id,
+                            session_token=session_token,
+                        )
+                    )
+                )
+                await asyncio.wait_for(snapshot_reached.wait(), timeout=5)
+                cancelled_preview.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await cancelled_preview
+                block_snapshot = False
+                release_snapshot.set()
+                assert await durable_mutation_counts() == cancellation_before
+                async with asyncpg_cow_session(
+                    agent_pool,
+                    session_id=workspace_id,
+                    operation_id=uuid4(),
+                ) as cow:
+                    workspace_after = await cow.native.fetchrow(
+                        "SELECT i.slug,i.status,t.localized_values "
+                        "FROM content.content_item i "
+                        "JOIN content.content_item_translation t ON t.item_id=i.id "
+                        "WHERE i.id=$1 AND t.id=$2",
+                        published_item,
+                        selected_translation_id,
+                    )
+                assert tuple(workspace_after) == tuple(workspace_before)
+                async with preview_pool.acquire(timeout=3) as connection:
+                    context_values = await connection.fetchrow(
+                        "SELECT current_setting('app.session_id',true),"
+                        "current_setting('app.operation_id',true)"
+                    )
+                    assert all(value in {None, ""} for value in context_values)
+                    assert await connection.fetchval("SELECT 1") == 1
+                after_cancel = await service.preview(
+                    RenderPreviewRequest(
+                        authority="localhost",
+                        path="/s/agent-mutation/sl-si/news/published-item",
+                        workspace_id=workspace_id,
+                        session_token=session_token,
+                    )
+                )
+                assert after_cancel.route_kind == "page"
+                assert (
+                    next(iter(after_cancel.bindings.values()))[0]["values"]["title"]
+                    == "Published naslov"
+                )
+                with pytest.raises(ProjectionError, match="not_found"):
+                    await service.canonical(
+                        RenderPageRequest(
+                            authority="localhost",
+                            path="/s/agent-mutation/news/published-item",
+                        )
+                    )
+
+                snapshot_reached = asyncio.Event()
+                release_snapshot = asyncio.Event()
+                block_snapshot = True
+                raced_preview_task = asyncio.create_task(
+                    service.preview(
+                        RenderPreviewRequest(
+                            authority="localhost",
+                            path="/s/agent-mutation/sl-si/news/published-item",
+                            workspace_id=workspace_id,
+                            session_token=session_token,
+                        )
+                    )
+                )
+                await asyncio.wait_for(snapshot_reached.wait(), timeout=5)
+                race_before = await durable_mutation_counts()
+                translation_response = await client_after.patch(
+                    f"/api/agent/v1/content-items/{published_item}/translations/"
+                    f"{selected_translation_id}",
+                    headers={
+                        "Authorization": f"Bearer {token}",
+                        "Idempotency-Key": "news-selected-translation-race",
+                    },
+                    json={
+                        "localized_values": {
+                            "title": "Published naslov updated",
+                            "summary": "Published povzetek updated",
+                        },
+                        "expected_row_version": 1,
+                    },
+                )
+                assert translation_response.status_code == 200, (
+                    translation_response.text
+                )
+                translation_document = translation_response.json()
+                operation_id = UUID(translation_document["operation_id"])
+                assert translation_document["record"]["row_version"] == 2
+                race_after = await durable_mutation_counts()
+                assert race_after == tuple(value + 1 for value in race_before)
+                block_snapshot = False
+                release_snapshot.set()
+                raced_preview = await raced_preview_task
+                assert raced_preview.route_kind == "page"
+                assert (
+                    next(iter(raced_preview.bindings.values()))[0]["values"]["title"]
+                    == "Published naslov"
+                )
+                fresh_after_race = await service.preview(
+                    RenderPreviewRequest(
+                        authority="localhost",
+                        path="/s/agent-mutation/sl-si/news/published-item",
+                        workspace_id=workspace_id,
+                        session_token=session_token,
+                    )
+                )
+                assert fresh_after_race.route_kind == "page"
+                assert next(iter(fresh_after_race.bindings.values()))[0]["values"] == {
+                    "rank": 3,
+                    "summary": "Published povzetek updated",
+                    "title": "Published naslov updated",
+                }
+                async with owner_connection(
+                    database.settings.resolved_owner_dsn(),
+                    expected_database=database.name,
+                ) as owner:
+                    durable_race = await owner.fetchrow(
+                        "SELECT a.action,a.resource_type,a.resource_id,a.http_method,"
+                        "a.quota_kind,i.status_code,i.operation_id "
+                        "FROM audit.agent_mutation a "
+                        "JOIN control.agent_idempotency i "
+                        "ON i.workspace_id=a.workspace_id "
+                        "AND i.operation_id=a.operation_id "
+                        "WHERE a.workspace_id=$1 AND a.operation_id=$2 "
+                        "AND i.idempotency_key='news-selected-translation-race'",
+                        workspace_id,
+                        operation_id,
+                    )
+                    assert tuple(durable_race) == (
+                        "CONTENT_ITEM_TRANSLATION_UPDATED",
+                        "content_item_translation",
+                        selected_translation_id,
+                        "PATCH",
+                        "mutation",
+                        200,
+                        operation_id,
+                    )
+                monkeypatch.setattr(service, "_query", original_query)
+
                 updated = await client_after.patch(
-                    f"/api/agent/v1/content-items/{items['published-item']}",
+                    f"/api/agent/v1/content-items/{published_item}",
                     headers={
                         "Authorization": f"Bearer {token}",
                         "Idempotency-Key": "news-published-rename",
