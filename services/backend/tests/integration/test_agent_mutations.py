@@ -2083,7 +2083,7 @@ async def test_agent_redirect_051_migration_round_trip_preserves_data_and_privil
             await owner.fetchval(
                 "SELECT version_num::text FROM control.alembic_version"
             )
-            == "056_001"
+            == "057_001"
         )
         assert tuple(
             await owner.fetchrow(
@@ -2121,6 +2121,82 @@ async def test_agent_redirect_051_migration_round_trip_preserves_data_and_privil
             assert not await owner.fetchval(
                 "SELECT has_function_privilege('public',$1,'EXECUTE')", signature
             )
+
+
+@pytest.mark.asyncio
+async def test_agent_057_navigation_route_migration_round_trip_preserves_privileges(
+    agent_site_database: AgentSiteDatabase,
+) -> None:
+    """Verify the navigation repair is reversible and role-confined."""
+
+    database = agent_site_database
+    _token, _seeded = await _seed(database)
+    await _disable_content_cow(database)
+    await run_migration(
+        database.settings.resolved_owner_dsn(),
+        expected_database=database.name,
+        operation="downgrade",
+        revision="056_001",
+    )
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        assert (
+            await owner.fetchval(
+                "SELECT version_num::text FROM control.alembic_version"
+            )
+            == "056_001"
+        )
+        assert not await owner.fetchval(
+            "SELECT to_regprocedure($1)",
+            "content.slaif_navigation_page_target_validate(uuid,uuid,text)",
+        )
+    await run_migration(
+        database.settings.resolved_owner_dsn(),
+        expected_database=database.name,
+        operation="upgrade",
+        revision="head",
+    )
+    await reconcile(database.settings)
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        assert (
+            await owner.fetchval(
+                "SELECT version_num::text FROM control.alembic_version"
+            )
+            == "057_001"
+        )
+        helper = "content.slaif_navigation_page_target_validate(uuid,uuid,text)"
+        assert (
+            await owner.fetchval(
+                "SELECT pg_get_userbyid(proowner) FROM pg_proc "
+                "WHERE oid=$1::regprocedure",
+                helper,
+            )
+            == "slaif_owner"
+        )
+        assert await owner.fetchval(
+            "SELECT proconfig @> ARRAY['search_path=pg_catalog'] "
+            "FROM pg_proc WHERE oid=$1::regprocedure",
+            helper,
+        )
+        for role in ("public", "slaif_agent_runtime", "slaif_editor_runtime"):
+            assert not await owner.fetchval(
+                "SELECT has_function_privilege($1,$2,'EXECUTE')", role, helper
+            )
+        assert await owner.fetchval(
+            "SELECT has_function_privilege('slaif_agent_runtime',$1,'EXECUTE')",
+            "content.slaif_agent_page_update(uuid,uuid,text,text,text,text,text,boolean,integer)",
+        )
+        assert await owner.fetchval(
+            "SELECT has_function_privilege('slaif_editor_runtime',$1,'EXECUTE')",
+            "content.slaif_navigation_item_create(uuid,uuid,uuid,uuid,text,text,jsonb,text,integer)",
+        )
+        assert await owner.fetchval(
+            "SELECT has_function_privilege('slaif_public_reader',$1,'EXECUTE')",
+            "content.slaif_render_navigation_items(uuid,text,text[])",
+        )
 
 
 @pytest.mark.asyncio
@@ -2174,7 +2250,7 @@ async def test_agent_049_plain_page_data_downgrade_and_upgrade_preserves_data(
             await owner.fetchval(
                 "SELECT version_num::text FROM control.alembic_version"
             )
-            == "056_001"
+            == "057_001"
         )
         row = await owner.fetchrow(
             "SELECT title, route_template, deleted_at FROM content.page_base "
@@ -3054,6 +3130,336 @@ async def test_agent_page_sibling_routes_and_dynamic_leaf_contract(
                 )
                 assert dynamic_child.status_code == 422, dynamic_child.text
     finally:
+        await agent_pool.close()
+        await reviewer_pool.close()
+
+
+@pytest.mark.asyncio
+async def test_agent_navigation_page_targets_are_concrete_and_race_safe(
+    agent_site_database: AgentSiteDatabase,
+) -> None:
+    """Keep navigation identity coherent with static and dynamic page routes."""
+
+    database = agent_site_database
+    _token, seeded = await _seed(database)
+    scopes = [
+        "site:read",
+        "page:create",
+        "page:read",
+        "page:write",
+        "route:write",
+        "navigation:read",
+        "navigation:create",
+        "navigation:write",
+        "preview:inspect",
+    ]
+    token, workspace_id = await _workspace_capability(
+        database, seeded, scopes, "Agent Navigation Concrete Route Workspace"
+    )
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        await owner.execute(
+            "UPDATE control.capability SET request_quota=200, mutation_quota=200 "
+            "WHERE workspace_id=$1",
+            workspace_id,
+        )
+    app = create_agent_app(
+        settings=ServiceSettings.for_test(),
+        database_settings=_agent_settings(database),
+    )
+    session_id = uuid4()
+    session_secret = b"c" * 32
+    session_public_id = f"sas2_{session_id.hex}"
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        await owner.execute(
+            "INSERT INTO control.user_session "
+            "(id,public_id,secret_digest,csrf_secret_digest,user_account_id,"
+            "absolute_expires_at) VALUES ($1,$2,$3,$4,$5,$6)",
+            session_id,
+            session_public_id,
+            hashlib.sha256(session_secret).digest(),
+            b"c" * 32,
+            seeded["delegator_id"],
+            datetime.now(UTC) + timedelta(hours=1),
+        )
+    agent_pool = await database.role_pool("slaif_agent_runtime")
+    reviewer_pool = await database.role_pool("slaif_reviewer")
+    public_pool = await database.role_pool("slaif_public_reader")
+    preview_pool = await database.role_pool("slaif_preview_reader")
+    try:
+        async with app.router.lifespan_context(app):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://agent.test"
+            ) as client:
+                headers = {"Authorization": f"Bearer {token}"}
+
+                async def create_page(key: str, slug: str) -> httpx.Response:
+                    return await client.post(
+                        "/api/agent/v1/pages",
+                        headers={**headers, "Idempotency-Key": key},
+                        json={
+                            "slug": slug,
+                            "title": slug.title(),
+                            "status": "PUBLISHED",
+                            "locale": "en-US",
+                        },
+                    )
+
+                static_page = await create_page("concrete-static-page", "concrete")
+                dynamic_parent = await create_page(
+                    "concrete-dynamic-parent", "dynamic-parent"
+                )
+                assert dynamic_parent.status_code == 201, dynamic_parent.text
+                dynamic_parent_id = dynamic_parent.json()["record"]["id"]
+                dynamic_page = await client.post(
+                    "/api/agent/v1/pages",
+                    headers={**headers, "Idempotency-Key": "concrete-dynamic-page"},
+                    json={
+                        "slug": "dynamic",
+                        "title": "Dynamic",
+                        "status": "PUBLISHED",
+                        "locale": "en-US",
+                        "parent_id": dynamic_parent_id,
+                        "route_template": "{slug}",
+                    },
+                )
+                assert static_page.status_code == 201, static_page.text
+                assert dynamic_page.status_code == 201, dynamic_page.text
+                static_id = UUID(static_page.json()["record"]["id"])
+                dynamic_id = UUID(dynamic_page.json()["record"]["id"])
+
+                navigation = await client.post(
+                    "/api/agent/v1/navigation",
+                    headers={**headers, "Idempotency-Key": "concrete-navigation"},
+                    json={"key": "concrete", "label": "Concrete"},
+                )
+                assert navigation.status_code == 201, navigation.text
+                navigation_id = UUID(navigation.json()["record"]["id"])
+
+                async def durable_state() -> tuple[int, int, int, int]:
+                    async with owner_connection(
+                        database.settings.resolved_owner_dsn(),
+                        expected_database=database.name,
+                    ) as owner:
+                        row = await owner.fetchrow(
+                            "SELECT c.mutation_used, "
+                            "(SELECT count(*) FROM control.agent_idempotency "
+                            "WHERE workspace_id=$1), "
+                            "(SELECT count(*) FROM audit.agent_mutation "
+                            "WHERE workspace_id=$1), "
+                            "(SELECT count(*) FROM content.navigation_item_changes "
+                            "WHERE session_id=$1) "
+                            "FROM control.capability c WHERE c.workspace_id=$1 "
+                            "ORDER BY c.created_at DESC LIMIT 1",
+                            workspace_id,
+                        )
+                    return tuple(row)
+
+                async def cow_operations() -> tuple[Any, ...]:
+                    async with asyncpg_cow_reviewer(reviewer_pool) as reviewer:
+                        return tuple(
+                            sorted(
+                                await reviewer.operations(
+                                    workspace_id, schema="content"
+                                )
+                            )
+                        )
+
+                before_invalid_create = await durable_state()
+                operations_before_invalid_create = await cow_operations()
+                invalid_create = await client.post(
+                    f"/api/agent/v1/navigation/{navigation_id}/items",
+                    headers={
+                        **headers,
+                        "Idempotency-Key": "concrete-dynamic-create",
+                    },
+                    json={
+                        "page_id": str(dynamic_id),
+                        "target_kind": "PAGE",
+                        "target_value": str(dynamic_id),
+                        "labels": {"en-US": "Dynamic"},
+                    },
+                )
+                assert invalid_create.status_code == 422, invalid_create.text
+                assert str(dynamic_id) not in invalid_create.text
+                assert await durable_state() == before_invalid_create
+                assert await cow_operations() == operations_before_invalid_create
+                async with owner_connection(
+                    database.settings.resolved_owner_dsn(),
+                    expected_database=database.name,
+                ) as owner:
+                    assert (
+                        await owner.fetchval(
+                            "SELECT count(*) FROM control.agent_idempotency "
+                            "WHERE workspace_id=$1 AND idempotency_key=$2",
+                            workspace_id,
+                            "concrete-dynamic-create",
+                        )
+                        == 0
+                    )
+
+                static_item = await client.post(
+                    f"/api/agent/v1/navigation/{navigation_id}/items",
+                    headers={**headers, "Idempotency-Key": "concrete-static-item"},
+                    json={
+                        "page_id": str(static_id),
+                        "target_kind": "PAGE",
+                        "target_value": str(static_id),
+                        "labels": {"en-US": "Concrete"},
+                    },
+                )
+                assert static_item.status_code == 201, static_item.text
+                static_item_id = UUID(static_item.json()["record"]["id"])
+
+                moved_static = await client.patch(
+                    f"/api/agent/v1/pages/{static_id}",
+                    headers={**headers, "Idempotency-Key": "concrete-static-move"},
+                    json={"slug": "concrete-moved", "expected_row_version": 1},
+                )
+                assert moved_static.status_code == 200, moved_static.text
+                assert (
+                    moved_static.json()["record"]["effective_route"]
+                    == "/concrete-moved"
+                )
+
+                render_service = RenderProjectionService(
+                    _AgentRenderAdapter(public_pool, preview_pool)
+                )
+                rendered = await render_service.preview(
+                    RenderPreviewRequest(
+                        authority="localhost",
+                        path="/s/agent-mutation/concrete-moved",
+                        workspace_id=workspace_id,
+                        session_token=format_session_token(
+                            session_public_id, session_secret
+                        ),
+                    )
+                )
+                assert rendered.page.id == static_id
+                assert rendered.navigation[0].items[0].page_id == static_id
+                assert rendered.navigation[0].items[0].target.value == "/concrete-moved"
+
+                before_invalid_update = await durable_state()
+                operations_before_invalid_update = await cow_operations()
+                invalid_update = await client.patch(
+                    f"/api/agent/v1/navigation-items/{static_item_id}",
+                    headers={**headers, "Idempotency-Key": "concrete-dynamic-update"},
+                    json={
+                        "navigation_id": str(navigation_id),
+                        "page_id": str(dynamic_id),
+                        "target_kind": "PAGE",
+                        "target_value": str(dynamic_id),
+                        "labels": {"en-US": "Dynamic"},
+                        "expected_row_version": 1,
+                    },
+                )
+                assert invalid_update.status_code == 422, invalid_update.text
+                assert str(dynamic_id) not in invalid_update.text
+                assert await durable_state() == before_invalid_update
+                assert await cow_operations() == operations_before_invalid_update
+                unchanged_item = await client.get(
+                    f"/api/agent/v1/navigation-items/{static_item_id}",
+                    headers=headers,
+                )
+                assert unchanged_item.status_code == 200, unchanged_item.text
+                assert unchanged_item.json()["page_id"] == str(static_id)
+                assert unchanged_item.json()["row_version"] == 1
+                async with owner_connection(
+                    database.settings.resolved_owner_dsn(),
+                    expected_database=database.name,
+                ) as owner:
+                    assert (
+                        await owner.fetchval(
+                            "SELECT count(*) FROM control.agent_idempotency "
+                            "WHERE workspace_id=$1 AND idempotency_key=$2",
+                            workspace_id,
+                            "concrete-dynamic-update",
+                        )
+                        == 0
+                    )
+
+                race_page = await create_page("concrete-race-page", "race-target")
+                assert race_page.status_code == 201, race_page.text
+                race_page_id = UUID(race_page.json()["record"]["id"])
+                async with owner_connection(
+                    database.settings.resolved_owner_dsn(),
+                    expected_database=database.name,
+                ) as blocker:
+                    async with blocker.transaction():
+                        lock_key = await blocker.fetchval(
+                            "SELECT hashtextextended($1,994)",
+                            f"{workspace_id}:{seeded['site_id']}:page-structure",
+                        )
+                        await blocker.execute(
+                            "SELECT pg_advisory_xact_lock($1::bigint)", lock_key
+                        )
+                        race_navigation = asyncio.create_task(
+                            client.post(
+                                f"/api/agent/v1/navigation/{navigation_id}/items",
+                                headers={
+                                    **headers,
+                                    "Idempotency-Key": "concrete-race-navigation",
+                                },
+                                json={
+                                    "page_id": str(race_page_id),
+                                    "target_kind": "PAGE",
+                                    "target_value": str(race_page_id),
+                                    "labels": {"en-US": "Race"},
+                                },
+                            )
+                        )
+                        race_dynamic = asyncio.create_task(
+                            client.patch(
+                                f"/api/agent/v1/pages/{race_page_id}",
+                                headers={
+                                    **headers,
+                                    "Idempotency-Key": "concrete-race-dynamic",
+                                },
+                                json={
+                                    "route_template": "{slug}",
+                                    "expected_row_version": 1,
+                                },
+                            )
+                        )
+                        await _wait_for_page_structure_waiters(blocker, 2)
+                    race_navigation_result, race_dynamic_result = await asyncio.gather(
+                        race_navigation, race_dynamic
+                    )
+                assert sorted(
+                    (
+                        race_navigation_result.status_code,
+                        race_dynamic_result.status_code,
+                    )
+                ) in ([200, 422], [201, 422]), (
+                    race_navigation_result.text,
+                    race_dynamic_result.text,
+                )
+                final_page = await client.get(
+                    f"/api/agent/v1/pages/{race_page_id}", headers=headers
+                )
+                assert final_page.status_code == 200, final_page.text
+                race_items = await client.get(
+                    f"/api/agent/v1/navigation/{navigation_id}/items",
+                    headers=headers,
+                )
+                assert race_items.status_code == 200, race_items.text
+                race_item_rows = [
+                    row
+                    for row in race_items.json()
+                    if row["page_id"] == str(race_page_id)
+                ]
+                page_is_dynamic = final_page.json()["route_template"] == "{slug}"
+                assert page_is_dynamic == (race_dynamic_result.status_code == 200)
+                assert (len(race_item_rows) == 1) == (
+                    race_navigation_result.status_code == 201
+                )
+                assert page_is_dynamic != (len(race_item_rows) == 1)
+    finally:
+        await public_pool.close()
+        await preview_pool.close()
         await agent_pool.close()
         await reviewer_pool.close()
 
@@ -4331,7 +4737,7 @@ async def test_agent_046_047_migration_round_trip_preserves_contract_and_state(
                 await owner.fetchval(
                     "SELECT version_num::text FROM control.alembic_version"
                 )
-                == "056_001"
+                == "057_001"
             )
             assert await owner.fetchval(
                 "SELECT to_regprocedure($1)",
@@ -4660,7 +5066,7 @@ async def test_agent_048_data_bearing_round_trip_preserves_relations_views_and_a
         )
         await reconcile(database.settings)
         final_status = await status(database.settings)
-        assert final_status.revision == "056_001"
+        assert final_status.revision == "057_001"
         assert final_status.state.value == "HARDENED"
         assert final_status.safe
         assert await cow_rows() == content_before
@@ -11842,7 +12248,7 @@ async def test_semantic_audit_contract_is_strict_and_reversible(
                 await owner.fetchval(
                     "SELECT version_num::text FROM control.alembic_version"
                 )
-                == "056_001"
+                == "057_001"
             )
             assert (
                 await owner.fetchval(

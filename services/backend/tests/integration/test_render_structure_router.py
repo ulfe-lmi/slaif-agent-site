@@ -13,6 +13,7 @@ from uuid import UUID, uuid4
 import httpx
 import pytest
 from conftest import AgentSiteDatabase
+from fastapi import FastAPI
 from pydantic import SecretStr
 from slaif_agent_site.agent_api.app import create_app as create_agent_app
 from slaif_agent_site.agent_api.config import AgentDatabaseMode, AgentDatabaseSettings
@@ -20,6 +21,7 @@ from slaif_agent_site.agent_state.capability import generate_capability_token
 from slaif_agent_site.bootstrap.service import reconcile, upgrade
 from slaif_agent_site.config import ServiceSettings
 from slaif_agent_site.db.connections import owner_connection
+from slaif_agent_site.errors import install_error_handlers
 from slaif_agent_site.identity.sessions import format_session_token
 from slaif_agent_site.render_api.projection import (
     ProjectionError,
@@ -27,6 +29,7 @@ from slaif_agent_site.render_api.projection import (
     RenderPreviewRequest,
     RenderProjectionService,
 )
+from slaif_agent_site.render_api.site_http import install_render_projection_routes
 from slaif_agent_site.sites import CreateSiteRequest
 from slaif_agent_site.sites.resolver import SiteResolver
 from slaif_agent_site.sites.service import SiteService
@@ -731,6 +734,660 @@ async def test_dynamic_collection_detail_route_binds_exact_published_item(
         assert reusable.route_kind == "page"
         assert reusable.page.effective_route == "/moved/{slug}"
     finally:
+        await public_pool.close()
+        await control_pool.close()
+
+
+@pytest.mark.asyncio
+async def test_dynamic_detail_hostile_render_matrix_fails_closed(
+    agent_site_database: AgentSiteDatabase,
+) -> None:
+    """Exercise every bounded dynamic-detail failure through Render HTTP."""
+
+    database = agent_site_database
+    await upgrade(database.settings)
+    await reconcile(database.settings)
+    control_pool = await database.role_pool("slaif_control")
+    public_pool = await database.role_pool("slaif_public_reader")
+    preview_pool = await database.role_pool("slaif_preview_reader")
+    try:
+        site = await SiteService(control_pool).create(
+            CreateSiteRequest(
+                site_key="dynamic-hostile-matrix",
+                display_name="Dynamic Hostile Matrix",
+                default_locale="en-US",
+            )
+        )
+        foreign_site = await SiteService(control_pool).create(
+            CreateSiteRequest(
+                site_key="dynamic-hostile-foreign",
+                display_name="Dynamic Hostile Foreign",
+                default_locale="en-US",
+            )
+        )
+        listing_id, detail_id, selected_listing_id, selected_detail_id = (
+            uuid4(),
+            uuid4(),
+            uuid4(),
+            uuid4(),
+        )
+        type_id, title_field_id, rank_field_id, view_id = (
+            uuid4(),
+            uuid4(),
+            uuid4(),
+            uuid4(),
+        )
+        valid_item_id, excluded_item_id, draft_item_id, archived_item_id = (
+            uuid4(),
+            uuid4(),
+            uuid4(),
+            uuid4(),
+        )
+        hostile_parent_ids = {
+            name: uuid4()
+            for name in (
+                "zero",
+                "multiple",
+                "non-detail",
+                "malformed",
+                "wrong-view",
+            )
+        }
+        hostile_page_ids = {name: uuid4() for name in hostile_parent_ids}
+        other_type_id, other_view_id, foreign_type_id, foreign_view_id = (
+            uuid4(),
+            uuid4(),
+            uuid4(),
+            uuid4(),
+        )
+        preview_user_id, preview_session_id, preview_workspace_id = (
+            uuid4(),
+            uuid4(),
+            uuid4(),
+        )
+        preview_secret = b"h" * 32
+        preview_public_id = f"sas2_{preview_session_id.hex}"
+        expires = datetime.now(UTC) + timedelta(hours=1)
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            await owner.execute(
+                "INSERT INTO content.site_locale_base "
+                "(site_id,tag,enabled,is_default,position) VALUES "
+                "($1,'en-US',true,true,0),($1,'sl-SI',true,false,1)",
+                site.site_id,
+            )
+            await owner.execute(
+                "INSERT INTO content.site_locale_base "
+                "(site_id,tag,enabled,is_default,position) VALUES "
+                "($1,'en-US',true,true,0)",
+                foreign_site.site_id,
+            )
+            await owner.execute(
+                "INSERT INTO control.user_account "
+                "(id,identity_kind,oidc_issuer,oidc_subject,display_name) "
+                "VALUES ($1,'OIDC','https://issuer.test',$2,'Hostile Preview User')",
+                preview_user_id,
+                f"subject-{preview_user_id}",
+            )
+            await owner.execute(
+                "INSERT INTO control.site_membership "
+                "(site_id,user_account_id,role_key,delegation_ceiling) "
+                "VALUES ($1,$2,'SITE_EDITOR',2)",
+                site.site_id,
+                preview_user_id,
+            )
+            await owner.execute(
+                "INSERT INTO control.user_session "
+                "(id,public_id,secret_digest,csrf_secret_digest,user_account_id,"
+                "absolute_expires_at) VALUES ($1,$2,$3,$4,$5,$6)",
+                preview_session_id,
+                preview_public_id,
+                hashlib.sha256(preview_secret).digest(),
+                b"h" * 32,
+                preview_user_id,
+                expires,
+            )
+            await owner.execute(
+                "INSERT INTO control.workspace "
+                "(id,site_id,created_by,actor_type,title,delegation_preset,"
+                "status,expires_at) VALUES ($1,$2,$3,'HUMAN','Hostile Preview',"
+                "'L2_SITE_EDITOR','ACTIVE',$4)",
+                preview_workspace_id,
+                site.site_id,
+                preview_user_id,
+                expires,
+            )
+            await owner.executemany(
+                "INSERT INTO content.page_base "
+                "(id,site_id,slug,title,status,locale,parent_id,route_template) "
+                "VALUES ($1,$2,$3,$4,'PUBLISHED',$5,$6,$7)",
+                [
+                    (listing_id, site.site_id, "news", "News", "en-US", None, None),
+                    (
+                        detail_id,
+                        site.site_id,
+                        "detail",
+                        "Detail",
+                        "en-US",
+                        listing_id,
+                        "{slug}",
+                    ),
+                    (
+                        selected_listing_id,
+                        site.site_id,
+                        "news",
+                        "Novice",
+                        "sl-SI",
+                        None,
+                        None,
+                    ),
+                    (
+                        selected_detail_id,
+                        site.site_id,
+                        "detail",
+                        "Podrobnosti",
+                        "sl-SI",
+                        selected_listing_id,
+                        "{slug}",
+                    ),
+                ]
+                + [
+                    (
+                        hostile_parent_ids[name],
+                        site.site_id,
+                        name,
+                        name.title(),
+                        "en-US",
+                        None,
+                        None,
+                    )
+                    for name in hostile_parent_ids
+                ]
+                + [
+                    (
+                        hostile_page_ids[name],
+                        site.site_id,
+                        "entry",
+                        f"{name.title()} entry",
+                        "en-US",
+                        hostile_parent_ids[name],
+                        "{slug}",
+                    )
+                    for name in hostile_page_ids
+                ],
+            )
+            await owner.execute(
+                "INSERT INTO content.content_type_base "
+                "(id,site_id,key,labels,slug_pattern,status,"
+                "definition_version,settings) "
+                "VALUES ($1,$2,'news','{}','/news/{slug}','ACTIVE',1,'{}')",
+                type_id,
+                site.site_id,
+            )
+            await owner.execute(
+                "INSERT INTO content.field_definition_base "
+                "(id,type_id,key,label,field_type,required,localized,cardinality,"
+                "position,validation,ui_options,definition_version) VALUES "
+                "($1,$2,'title','Title','short_text',true,true,1,0,'{}','{}',1),"
+                "($3,$2,'rank','Rank','integer',true,false,1,1,'{}','{}',1)",
+                title_field_id,
+                type_id,
+                rank_field_id,
+            )
+            await owner.executemany(
+                "INSERT INTO content.content_item_base "
+                "(id,site_id,type_id,slug,status,type_definition_version,values) "
+                "VALUES ($1,$2,$3,$4,$5,1,$6::jsonb)",
+                [
+                    (
+                        valid_item_id,
+                        site.site_id,
+                        type_id,
+                        "valid-item",
+                        "PUBLISHED",
+                        '{"rank":2}',
+                    ),
+                    (
+                        excluded_item_id,
+                        site.site_id,
+                        type_id,
+                        "excluded-item",
+                        "PUBLISHED",
+                        '{"rank":1}',
+                    ),
+                    (
+                        draft_item_id,
+                        site.site_id,
+                        type_id,
+                        "draft-item",
+                        "DRAFT",
+                        '{"rank":3}',
+                    ),
+                    (
+                        archived_item_id,
+                        site.site_id,
+                        type_id,
+                        "archived-item",
+                        "ARCHIVED",
+                        '{"rank":4}',
+                    ),
+                ],
+            )
+            await owner.executemany(
+                "INSERT INTO content.content_item_translation_base "
+                "(site_id,item_id,locale,localized_values) VALUES ($1,$2,$3,$4::jsonb)",
+                [
+                    (site.site_id, valid_item_id, "en-US", '{"title":"Valid"}'),
+                    (site.site_id, valid_item_id, "sl-SI", '{"title":"Veljaven"}'),
+                    (site.site_id, excluded_item_id, "en-US", '{"title":"Excluded"}'),
+                    (site.site_id, draft_item_id, "en-US", '{"title":"Draft"}'),
+                    (site.site_id, archived_item_id, "en-US", '{"title":"Archived"}'),
+                ],
+            )
+            await owner.execute(
+                "INSERT INTO content.collection_view_base "
+                "(id,site_id,type_id,key,filter_spec,sort_spec,projection_spec,"
+                "pagination_spec) VALUES ($1,$2,$3,'news',$4::jsonb,$5::jsonb,"
+                "$6::jsonb,$7::jsonb)",
+                view_id,
+                site.site_id,
+                type_id,
+                '{"field":"rank","op":"gte","value":2}',
+                '{"field":"rank","direction":"desc"}',
+                '{"fields":["title","rank"]}',
+                '{"limit":10,"offset":0}',
+            )
+            await owner.execute(
+                "INSERT INTO content.content_type_base "
+                "(id,site_id,key,labels,slug_pattern,status,"
+                "definition_version,settings) "
+                "VALUES ($1,$2,'other','{}','/other/{slug}','ACTIVE',1,'{}')",
+                other_type_id,
+                site.site_id,
+            )
+            await owner.execute(
+                "INSERT INTO content.collection_view_base "
+                "(id,site_id,type_id,key,filter_spec,sort_spec,projection_spec,"
+                "pagination_spec) VALUES ($1,$2,$3,'other','{}','{}','{}',"
+                '\'{"limit":10,"offset":0}\')',
+                other_view_id,
+                site.site_id,
+                other_type_id,
+            )
+            await owner.execute(
+                "INSERT INTO content.content_type_base "
+                "(id,site_id,key,labels,slug_pattern,status,"
+                "definition_version,settings) "
+                "VALUES ($1,$2,'foreign','{}','/foreign/{slug}','ACTIVE',1,'{}')",
+                foreign_type_id,
+                foreign_site.site_id,
+            )
+            await owner.execute(
+                "INSERT INTO content.collection_view_base "
+                "(id,site_id,type_id,key,filter_spec,sort_spec,projection_spec,"
+                "pagination_spec) VALUES ($1,$2,$3,'foreign','{}','{}','{}',"
+                '\'{"limit":10,"offset":0}\')',
+                foreign_view_id,
+                foreign_site.site_id,
+                foreign_type_id,
+            )
+            view_props = json.dumps({"viewId": str(view_id)})
+            await owner.executemany(
+                "INSERT INTO content.page_composition_base "
+                "(site_id,page_id,component_type,schema_version,slot_key,"
+                "order_key,props) "
+                "VALUES ($1,$2,'CollectionDetail','1','default',$3,$4::jsonb)",
+                [
+                    (site.site_id, detail_id, 0, view_props),
+                    (site.site_id, selected_detail_id, 0, view_props),
+                    (
+                        site.site_id,
+                        hostile_page_ids["multiple"],
+                        0,
+                        view_props,
+                    ),
+                    (
+                        site.site_id,
+                        hostile_page_ids["multiple"],
+                        1,
+                        view_props,
+                    ),
+                    (site.site_id, hostile_page_ids["malformed"], 0, "{}"),
+                    (
+                        site.site_id,
+                        hostile_page_ids["wrong-view"],
+                        0,
+                        json.dumps({"viewId": str(uuid4())}),
+                    ),
+                ],
+            )
+            await owner.execute(
+                "INSERT INTO content.page_composition_base "
+                "(site_id,page_id,component_type,schema_version,slot_key,"
+                "order_key,props) "
+                "VALUES ($1,$2,'Heading','1','default',0,$3::jsonb)",
+                site.site_id,
+                hostile_page_ids["non-detail"],
+                '{"text":"Not detail","level":2}',
+            )
+
+        service = RenderProjectionService(_RenderAdapter(public_pool, preview_pool))
+        render_app = FastAPI()
+        install_error_handlers(render_app)
+        install_render_projection_routes(
+            render_app, _RenderAdapter(public_pool, preview_pool)
+        )
+
+        async def assert_http_not_found(
+            path: str, *, expected_status: int = 404
+        ) -> None:
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=render_app),
+                base_url="http://render.test",
+            ) as client:
+                response = await client.post(
+                    "/internal/render/v1/page",
+                    json={"authority": "localhost", "path": path},
+                )
+            assert response.status_code == expected_status, (path, response.text)
+            assert str(site.site_id) not in response.text
+            assert str(valid_item_id) not in response.text
+            assert "bindings" not in response.text
+
+        valid = await service.canonical(
+            RenderPageRequest(
+                authority="localhost",
+                path="/s/dynamic-hostile-matrix/news/valid-item",
+            )
+        )
+        assert valid.page.id == detail_id
+        assert next(iter(valid.bindings.values()))[0]["slug"] == "valid-item"
+
+        corrupt_navigation_id, corrupt_item_id = uuid4(), uuid4()
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            await owner.execute(
+                "INSERT INTO content.navigation_base "
+                "(id,site_id,key,label,labels,settings) VALUES "
+                "($1,$2,'corrupt','Corrupt','{}','{}')",
+                corrupt_navigation_id,
+                site.site_id,
+            )
+            await owner.execute(
+                "INSERT INTO content.navigation_item_base "
+                "(id,site_id,navigation_id,parent_id,parent_key,page_id,target_kind,"
+                "target_value,labels,locale,position) VALUES "
+                "($1,$2,$3,NULL,$4,$5,'PAGE',$6,$7,'en-US',0)",
+                corrupt_item_id,
+                site.site_id,
+                corrupt_navigation_id,
+                "00000000-0000-0000-0000-000000000000",
+                detail_id,
+                str(detail_id),
+                '{"en-US":"Corrupt"}',
+            )
+        await assert_http_not_found(
+            "/s/dynamic-hostile-matrix/news/valid-item", expected_status=503
+        )
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            await owner.execute(
+                "DELETE FROM content.navigation_item_base WHERE id=$1",
+                corrupt_item_id,
+            )
+            await owner.execute(
+                "DELETE FROM content.navigation_base WHERE id=$1",
+                corrupt_navigation_id,
+            )
+        await assert_http_not_found("/s/dynamic-hostile-matrix/news/excluded-item")
+        for name in hostile_parent_ids:
+            await assert_http_not_found(f"/s/dynamic-hostile-matrix/{name}/valid-item")
+
+        await assert_http_not_found("/s/dynamic-hostile-matrix/news/valid-item/extra")
+        await assert_http_not_found("/s/dynamic-hostile-matrix/news/%2e%2e")
+        await assert_http_not_found("/s/dynamic-hostile-matrix/news/" + "a" * 256)
+        await assert_http_not_found(
+            "/s/dynamic-hostile-matrix/news/<script>alert(1)</script>"
+        )
+        await assert_http_not_found(
+            "/s/dynamic-hostile-matrix/news/valid-item?query=ignored"
+        )
+
+        overlap_id = uuid4()
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            await owner.execute(
+                "INSERT INTO content.page_base "
+                "(id,site_id,slug,title,status,locale,parent_id,route_template) "
+                "VALUES ($1,$2,'valid-item','Overlap','PUBLISHED','en-US',$3,NULL)",
+                overlap_id,
+                site.site_id,
+                listing_id,
+            )
+        await assert_http_not_found(
+            "/s/dynamic-hostile-matrix/news/valid-item", expected_status=503
+        )
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            await owner.execute("DELETE FROM content.page_base WHERE id=$1", overlap_id)
+        duplicate_dynamic_id = uuid4()
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            await owner.execute(
+                "INSERT INTO content.page_base "
+                "(id,site_id,slug,title,status,locale,parent_id,route_template) "
+                "VALUES ($1,$2,'detail-two','Detail two','PUBLISHED','en-US',$3,"
+                "'{slug}')",
+                duplicate_dynamic_id,
+                site.site_id,
+                listing_id,
+            )
+        await assert_http_not_found(
+            "/s/dynamic-hostile-matrix/news/valid-item", expected_status=503
+        )
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            await owner.execute(
+                "DELETE FROM content.page_base WHERE id=$1", duplicate_dynamic_id
+            )
+
+        async def update_composition(props: str) -> None:
+            async with owner_connection(
+                database.settings.resolved_owner_dsn(), expected_database=database.name
+            ) as owner:
+                await owner.execute(
+                    "UPDATE content.page_composition_base SET props=$1::jsonb "
+                    "WHERE page_id=$2",
+                    props,
+                    detail_id,
+                )
+
+        await update_composition(json.dumps({"viewId": str(foreign_view_id)}))
+        await assert_http_not_found("/s/dynamic-hostile-matrix/news/valid-item")
+        await update_composition(json.dumps({"viewId": str(other_view_id)}))
+        await assert_http_not_found("/s/dynamic-hostile-matrix/news/valid-item")
+        await update_composition(json.dumps({"viewId": str(view_id)}))
+
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            await owner.execute(
+                "UPDATE content.collection_view_base SET definition_version=99 "
+                "WHERE id=$1",
+                view_id,
+            )
+        await assert_http_not_found("/s/dynamic-hostile-matrix/news/valid-item")
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            await owner.execute(
+                "UPDATE content.collection_view_base SET definition_version=1 "
+                "WHERE id=$1",
+                view_id,
+            )
+            await owner.execute(
+                "UPDATE content.content_item_base SET type_definition_version=99 "
+                "WHERE id=$1",
+                valid_item_id,
+            )
+        await assert_http_not_found("/s/dynamic-hostile-matrix/news/valid-item")
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            await owner.execute(
+                "UPDATE content.content_item_base SET type_definition_version=1 "
+                "WHERE id=$1",
+                valid_item_id,
+            )
+
+        for field_name, value in (
+            (
+                "filter_spec",
+                '{"field":"title","op":"eq","value":"Valid"}',
+            ),
+            (
+                "sort_spec",
+                '{"field":"title","direction":"asc"}',
+            ),
+            (
+                "projection_spec",
+                '{"fields":["title"],"undeclared":"ignored"}',
+            ),
+        ):
+            async with owner_connection(
+                database.settings.resolved_owner_dsn(), expected_database=database.name
+            ) as owner:
+                await owner.execute(
+                    f"UPDATE content.collection_view_base SET {field_name}=$1::jsonb "
+                    "WHERE id=$2",
+                    value,
+                    view_id,
+                )
+            await assert_http_not_found("/s/dynamic-hostile-matrix/news/valid-item")
+            async with owner_connection(
+                database.settings.resolved_owner_dsn(), expected_database=database.name
+            ) as owner:
+                await owner.execute(
+                    f"UPDATE content.collection_view_base SET {field_name}=$1::jsonb "
+                    "WHERE id=$2",
+                    {
+                        "filter_spec": '{"field":"rank","op":"gte","value":2}',
+                        "sort_spec": '{"field":"rank","direction":"desc"}',
+                        "projection_spec": '{"fields":["title","rank"]}',
+                    }[field_name],
+                    view_id,
+                )
+
+        session_token = format_session_token(preview_public_id, preview_secret)
+
+        async def assert_preview_not_found(path: str) -> None:
+            with pytest.raises(ProjectionError, match="not_found"):
+                await service.preview(
+                    RenderPreviewRequest(
+                        authority="localhost",
+                        path=path,
+                        workspace_id=preview_workspace_id,
+                        session_token=session_token,
+                    )
+                )
+
+        selected = await service.canonical(
+            RenderPageRequest(
+                authority="localhost",
+                path="/s/dynamic-hostile-matrix/sl-si/news/valid-item",
+            )
+        )
+        assert next(iter(selected.bindings.values()))[0]["values"]["title"] == (
+            "Veljaven"
+        )
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            await owner.execute(
+                "DELETE FROM content.content_item_translation_base "
+                "WHERE site_id=$1 AND item_id=$2 AND locale='sl-SI'",
+                site.site_id,
+                valid_item_id,
+            )
+        fallback = await service.canonical(
+            RenderPageRequest(
+                authority="localhost",
+                path="/s/dynamic-hostile-matrix/sl-si/news/valid-item",
+            )
+        )
+        assert next(iter(fallback.bindings.values()))[0]["values"]["title"] == "Valid"
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            await owner.execute(
+                "DELETE FROM content.content_item_translation_base "
+                "WHERE site_id=$1 AND item_id=$2 AND locale='en-US'",
+                site.site_id,
+                valid_item_id,
+            )
+        await assert_http_not_found("/s/dynamic-hostile-matrix/sl-si/news/valid-item")
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            await owner.execute(
+                "INSERT INTO content.content_item_translation_base "
+                "(site_id,item_id,locale,localized_values) VALUES "
+                "($1,$2,'en-US','{\"title\":\"Valid\"}'::jsonb)",
+                site.site_id,
+                valid_item_id,
+            )
+            await owner.execute(
+                "INSERT INTO content.content_item_translation_base "
+                "(site_id,item_id,locale,localized_values) VALUES "
+                "($1,$2,'sl-SI','{\"title\":7}'::jsonb)",
+                site.site_id,
+                valid_item_id,
+            )
+        await assert_http_not_found("/s/dynamic-hostile-matrix/sl-si/news/valid-item")
+
+        for slug in ("draft-item", "archived-item", "unknown-item"):
+            await assert_http_not_found(f"/s/dynamic-hostile-matrix/news/{slug}")
+        await assert_preview_not_found("/s/dynamic-hostile-matrix/news/archived-item")
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            await owner.execute(
+                "UPDATE content.content_item_base SET status='UNKNOWN' WHERE id=$1",
+                valid_item_id,
+            )
+        await assert_http_not_found("/s/dynamic-hostile-matrix/news/valid-item")
+        await assert_preview_not_found("/s/dynamic-hostile-matrix/news/valid-item")
+
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            await owner.execute(
+                "UPDATE content.content_item_base SET status='PUBLISHED' WHERE id=$1",
+                valid_item_id,
+            )
+            await owner.execute(
+                "UPDATE content.content_item_translation_base SET localized_values="
+                '\'{"title":"Valid"}\'::jsonb WHERE site_id=$1 AND item_id=$2 '
+                "AND locale='en-US'",
+                site.site_id,
+                valid_item_id,
+            )
+
+        async with public_pool.acquire(timeout=3) as connection:
+            assert not connection.is_in_transaction()
+            assert await connection.fetchval("SELECT 1") == 1
+        async with preview_pool.acquire(timeout=3) as connection:
+            assert not connection.is_in_transaction()
+            assert await connection.fetchval("SELECT 1") == 1
+    finally:
+        await preview_pool.close()
         await public_pool.close()
         await control_pool.close()
 
