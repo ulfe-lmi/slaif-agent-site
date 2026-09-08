@@ -356,6 +356,52 @@ async def _wait_for_page_structure_waiters(owner: Any, expected: int) -> None:
     raise AssertionError(f"expected {expected} structural lock waiters, got {waiting}")
 
 
+@asynccontextmanager
+async def _hold_agent_structure_lock(
+    database: AgentSiteDatabase,
+    workspace_id: UUID,
+    site_id: UUID,
+) -> Any:
+    """Hold the exact production component lock for deterministic race barriers."""
+
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as blocker:
+        async with blocker.transaction():
+            lock_key = await blocker.fetchval(
+                "SELECT hashtextextended($1,994)",
+                f"{workspace_id}:{site_id}:page-structure",
+            )
+            await blocker.execute("SELECT pg_advisory_xact_lock($1::bigint)", lock_key)
+            yield blocker
+
+
+async def _agent_structural_state(
+    database: AgentSiteDatabase,
+    workspace_id: UUID,
+    reviewer_pool: Any,
+) -> tuple[tuple[Any, ...], tuple[UUID, ...]]:
+    """Capture only durable mutation state relevant to a component race."""
+
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        row = await owner.fetchrow(
+            "SELECT mutation_used,delete_used, "
+            "(SELECT count(*) FROM control.agent_idempotency "
+            "WHERE workspace_id=$1), "
+            "(SELECT count(*) FROM audit.agent_mutation "
+            "WHERE workspace_id=$1) "
+            "FROM control.capability WHERE workspace_id=$1",
+            workspace_id,
+        )
+    async with asyncpg_cow_reviewer(reviewer_pool) as reviewer:
+        operations = tuple(
+            sorted(await reviewer.operations(workspace_id, schema="content"))
+        )
+    return tuple(row), operations
+
+
 @pytest.mark.asyncio
 async def test_agent_create_type_is_cow_only_and_durablely_idempotent(
     agent_site_database: AgentSiteDatabase,
@@ -5904,6 +5950,1213 @@ async def test_agent_component_visible_and_subtree_limits_are_db_enforced(
             }
 
     await reviewer_pool.close()
+
+
+@pytest.mark.asyncio
+async def test_agent_component_concurrent_creates_before_anchor_are_serialized(
+    agent_site_database: AgentSiteDatabase,
+) -> None:
+    database = agent_site_database
+    _seed_token, seeded = await _seed(database)
+    token, workspace_id = await _workspace_capability(
+        database,
+        seeded,
+        [
+            "site:read",
+            "page:create",
+            "page:read",
+            "composition:read",
+            "component-structure:create",
+        ],
+        "Agent Component Concurrent Create Workspace",
+    )
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        await owner.execute(
+            "UPDATE control.capability SET request_quota=100, mutation_quota=50 "
+            "WHERE workspace_id=$1",
+            workspace_id,
+        )
+    app = create_agent_app(
+        settings=ServiceSettings.for_test(),
+        database_settings=_agent_settings(database),
+    )
+    headers = {"Authorization": f"Bearer {token}"}
+    reviewer_pool = await database.role_pool("slaif_reviewer")
+
+    async def post(
+        client: httpx.AsyncClient,
+        path: str,
+        key: str,
+        body: Mapping[str, object],
+    ) -> httpx.Response:
+        return await client.post(
+            path,
+            headers={**headers, "Idempotency-Key": key},
+            json=body,
+        )
+
+    async with app.router.lifespan_context(app):
+        try:
+            async with (
+                httpx.AsyncClient(
+                    transport=httpx.ASGITransport(app=app), base_url="http://agent.test"
+                ) as client_a,
+                httpx.AsyncClient(
+                    transport=httpx.ASGITransport(app=app), base_url="http://agent.test"
+                ) as client_b,
+            ):
+                page = await post(
+                    client_a,
+                    "/api/agent/v1/pages/",
+                    "concurrent-create-page",
+                    {"slug": "concurrent-create", "title": "Concurrent create"},
+                )
+                assert page.status_code == 201, page.text
+                page_id = page.json()["record"]["id"]
+                anchor = await post(
+                    client_a,
+                    f"/api/agent/v1/pages/{page_id}/components",
+                    "concurrent-create-anchor",
+                    {
+                        "component_type": "Heading",
+                        "props": {"text": "anchor", "level": 2},
+                    },
+                )
+                assert anchor.status_code == 201, anchor.text
+                anchor_id = anchor.json()["record"]["id"]
+                before_state = await _agent_structural_state(
+                    database, workspace_id, reviewer_pool
+                )
+                body_a = {
+                    "component_type": "Quote",
+                    "before_component_id": anchor_id,
+                    "props": {"text": "A"},
+                }
+                body_b = {
+                    "component_type": "Quote",
+                    "before_component_id": anchor_id,
+                    "props": {"text": "B"},
+                }
+                async with _hold_agent_structure_lock(
+                    database, workspace_id, seeded["site_id"]
+                ) as blocker:
+                    task_a = asyncio.create_task(
+                        post(
+                            client_a,
+                            f"/api/agent/v1/pages/{page_id}/components",
+                            "concurrent-create-a",
+                            body_a,
+                        )
+                    )
+                    task_b = asyncio.create_task(
+                        post(
+                            client_b,
+                            f"/api/agent/v1/pages/{page_id}/components",
+                            "concurrent-create-b",
+                            body_b,
+                        )
+                    )
+                    await _wait_for_page_structure_waiters(blocker, 2)
+                result_a, result_b = await asyncio.gather(task_a, task_b)
+                assert (result_a.status_code, result_b.status_code) == (201, 201), (
+                    result_a.text,
+                    result_b.text,
+                )
+                records = await client_a.get(
+                    f"/api/agent/v1/pages/{page_id}/components", headers=headers
+                )
+                assert records.status_code == 200, records.text
+                rows = records.json()
+                assert [row["order_key"] for row in rows] == [0, 1, 2]
+                assert rows[-1]["id"] == anchor_id
+                assert {row["props"]["text"] for row in rows[:-1]} == {"A", "B"}
+                assert {row["row_version"] for row in rows[:-1]} == {1}
+                assert rows[-1]["row_version"] == 3
+                assert {
+                    result_a.json()["record"]["id"],
+                    result_b.json()["record"]["id"],
+                } == {row["id"] for row in rows[:-1]}
+                after_state = await _agent_structural_state(
+                    database, workspace_id, reviewer_pool
+                )
+                assert after_state[0] == (
+                    before_state[0][0] + 2,
+                    before_state[0][1],
+                    before_state[0][2] + 2,
+                    before_state[0][3] + 2,
+                )
+                assert len(after_state[1]) == len(before_state[1]) + 2
+                replay = await post(
+                    client_b,
+                    f"/api/agent/v1/pages/{page_id}/components",
+                    "concurrent-create-b",
+                    body_b,
+                )
+                assert replay.status_code == 201, replay.text
+                assert replay.json() == result_b.json()
+                assert (
+                    await _agent_structural_state(database, workspace_id, reviewer_pool)
+                    == after_state
+                )
+        finally:
+            await reviewer_pool.close()
+
+
+@pytest.mark.asyncio
+async def test_agent_component_concurrent_moves_serialize_cycle_and_stale_winners(
+    agent_site_database: AgentSiteDatabase,
+) -> None:
+    database = agent_site_database
+    _seed_token, seeded = await _seed(database)
+    token, workspace_id = await _workspace_capability(
+        database,
+        seeded,
+        [
+            "site:read",
+            "page:create",
+            "page:read",
+            "composition:read",
+            "component-structure:create",
+            "component-structure:move",
+        ],
+        "Agent Component Concurrent Move Workspace",
+    )
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        await owner.execute(
+            "UPDATE control.capability SET request_quota=200, mutation_quota=100 "
+            "WHERE workspace_id=$1",
+            workspace_id,
+        )
+    app = create_agent_app(
+        settings=ServiceSettings.for_test(),
+        database_settings=_agent_settings(database),
+    )
+    headers = {"Authorization": f"Bearer {token}"}
+    reviewer_pool = await database.role_pool("slaif_reviewer")
+
+    async def post(
+        client: httpx.AsyncClient,
+        path: str,
+        key: str,
+        body: Mapping[str, object],
+    ) -> httpx.Response:
+        return await client.post(
+            path,
+            headers={**headers, "Idempotency-Key": key},
+            json=body,
+        )
+
+    async def create_component(
+        client: httpx.AsyncClient,
+        page_id: str,
+        key: str,
+        component_type: str,
+        props: dict[str, object],
+        parent_id: str | None = None,
+    ) -> dict[str, Any]:
+        body: dict[str, object] = {
+            "component_type": component_type,
+            "props": props,
+        }
+        if parent_id is not None:
+            body["parent_id"] = parent_id
+        response = await post(
+            client,
+            f"/api/agent/v1/pages/{page_id}/components",
+            key,
+            body,
+        )
+        assert response.status_code == 201, response.text
+        return cast(dict[str, Any], response.json()["record"])
+
+    async def page_records(
+        client: httpx.AsyncClient, page_id: str
+    ) -> list[dict[str, Any]]:
+        response = await client.get(
+            f"/api/agent/v1/pages/{page_id}/components", headers=headers
+        )
+        assert response.status_code == 200, response.text
+        return cast(list[dict[str, Any]], response.json())
+
+    async with app.router.lifespan_context(app):
+        try:
+            async with (
+                httpx.AsyncClient(
+                    transport=httpx.ASGITransport(app=app), base_url="http://agent.test"
+                ) as client_a,
+                httpx.AsyncClient(
+                    transport=httpx.ASGITransport(app=app), base_url="http://agent.test"
+                ) as client_b,
+            ):
+                page = await post(
+                    client_a,
+                    "/api/agent/v1/pages/",
+                    "concurrent-cycle-page",
+                    {"slug": "concurrent-cycle", "title": "Concurrent cycle"},
+                )
+                assert page.status_code == 201, page.text
+                cycle_page_id = page.json()["record"]["id"]
+                holder_a = await create_component(
+                    client_a, cycle_page_id, "concurrent-cycle-holder-a", "Section", {}
+                )
+                holder_b = await create_component(
+                    client_a, cycle_page_id, "concurrent-cycle-holder-b", "Section", {}
+                )
+                parent_a = await create_component(
+                    client_a,
+                    cycle_page_id,
+                    "concurrent-cycle-a-create",
+                    "Section",
+                    {},
+                    holder_a["id"],
+                )
+                parent_b = await create_component(
+                    client_a,
+                    cycle_page_id,
+                    "concurrent-cycle-b-create",
+                    "Section",
+                    {},
+                    holder_b["id"],
+                )
+                before_cycle = await _agent_structural_state(
+                    database, workspace_id, reviewer_pool
+                )
+                move_a_body = {
+                    "new_parent_id": parent_b["id"],
+                    "new_slot_key": "default",
+                    "expected_row_version": 1,
+                }
+                move_b_body = {
+                    "new_parent_id": parent_a["id"],
+                    "new_slot_key": "default",
+                    "expected_row_version": 1,
+                }
+                async with _hold_agent_structure_lock(
+                    database, workspace_id, seeded["site_id"]
+                ) as blocker:
+                    cycle_a = asyncio.create_task(
+                        post(
+                            client_a,
+                            f"/api/agent/v1/components/{parent_a['id']}/move",
+                            "concurrent-cycle-a-move",
+                            move_a_body,
+                        )
+                    )
+                    cycle_b = asyncio.create_task(
+                        post(
+                            client_b,
+                            f"/api/agent/v1/components/{parent_b['id']}/move",
+                            "concurrent-cycle-b-move",
+                            move_b_body,
+                        )
+                    )
+                    await _wait_for_page_structure_waiters(blocker, 2)
+                result_a, result_b = await asyncio.gather(cycle_a, cycle_b)
+                assert sorted((result_a.status_code, result_b.status_code)) == [
+                    200,
+                    422,
+                ], (
+                    result_a.text,
+                    result_b.text,
+                )
+                cycle_records = await page_records(client_a, cycle_page_id)
+                cycle_parents = {row["id"]: row["parent_id"] for row in cycle_records}
+                for component_id in cycle_parents:
+                    seen: set[str] = set()
+                    cursor = component_id
+                    while cursor is not None:
+                        assert cursor not in seen
+                        seen.add(cursor)
+                        cursor = cycle_parents[cursor]
+                winner_id = (
+                    parent_a["id"] if result_a.status_code == 200 else parent_b["id"]
+                )
+                loser_key = (
+                    "concurrent-cycle-b-move"
+                    if result_a.status_code == 200
+                    else "concurrent-cycle-a-move"
+                )
+                winner_parent = (
+                    parent_b["id"] if winner_id == parent_a["id"] else parent_a["id"]
+                )
+                winner_row = next(
+                    row for row in cycle_records if row["id"] == winner_id
+                )
+                assert winner_row["parent_id"] == winner_parent
+                assert winner_row["row_version"] == 2
+                cycle_versions = {
+                    row["id"]: row["row_version"] for row in cycle_records
+                }
+                assert cycle_versions == {
+                    holder_a["id"]: 1,
+                    holder_b["id"]: 1,
+                    parent_a["id"]: 2 if winner_id == parent_a["id"] else 1,
+                    parent_b["id"]: 2 if winner_id == parent_b["id"] else 1,
+                }
+                after_cycle = await _agent_structural_state(
+                    database, workspace_id, reviewer_pool
+                )
+                assert after_cycle[0] == (
+                    before_cycle[0][0] + 1,
+                    before_cycle[0][1],
+                    before_cycle[0][2] + 1,
+                    before_cycle[0][3] + 1,
+                )
+                assert len(after_cycle[1]) == len(before_cycle[1]) + 1
+                async with owner_connection(
+                    database.settings.resolved_owner_dsn(),
+                    expected_database=database.name,
+                ) as owner:
+                    assert (
+                        await owner.fetchval(
+                            "SELECT count(*) FROM control.agent_idempotency "
+                            "WHERE workspace_id=$1 AND idempotency_key=$2",
+                            workspace_id,
+                            loser_key,
+                        )
+                        == 0
+                    )
+
+                order_page = await post(
+                    client_a,
+                    "/api/agent/v1/pages/",
+                    "concurrent-order-page",
+                    {"slug": "concurrent-order", "title": "Concurrent order"},
+                )
+                assert order_page.status_code == 201, order_page.text
+                order_page_id = order_page.json()["record"]["id"]
+                order_records = {
+                    label: await create_component(
+                        client_a,
+                        order_page_id,
+                        f"concurrent-order-{label}-create",
+                        "Heading",
+                        {"text": label, "level": 2},
+                    )
+                    for label in ("a", "b", "c")
+                }
+                before_order = await _agent_structural_state(
+                    database, workspace_id, reviewer_pool
+                )
+                before_body = {
+                    "before_component_id": order_records["c"]["id"],
+                    "expected_row_version": 1,
+                }
+                after_body = {
+                    "after_component_id": order_records["c"]["id"],
+                    "expected_row_version": 1,
+                }
+                async with _hold_agent_structure_lock(
+                    database, workspace_id, seeded["site_id"]
+                ) as blocker:
+                    before_task = asyncio.create_task(
+                        post(
+                            client_a,
+                            f"/api/agent/v1/components/{order_records['a']['id']}/move",
+                            "concurrent-order-before",
+                            before_body,
+                        )
+                    )
+                    after_task = asyncio.create_task(
+                        post(
+                            client_b,
+                            f"/api/agent/v1/components/{order_records['a']['id']}/move",
+                            "concurrent-order-after",
+                            after_body,
+                        )
+                    )
+                    await _wait_for_page_structure_waiters(blocker, 2)
+                before_result, after_result = await asyncio.gather(
+                    before_task, after_task
+                )
+                assert sorted(
+                    (before_result.status_code, after_result.status_code)
+                ) == [200, 409], (before_result.text, after_result.text)
+                order_rows = await page_records(client_a, order_page_id)
+                winner_before = before_result.status_code == 200
+                expected_text = ["b", "a", "c"] if winner_before else ["b", "c", "a"]
+                assert [row["props"]["text"] for row in order_rows] == expected_text
+                assert [row["order_key"] for row in order_rows] == [0, 1, 2]
+                expected_versions = (
+                    {"a": 2, "b": 2, "c": 1}
+                    if winner_before
+                    else {"a": 2, "b": 2, "c": 2}
+                )
+                assert {
+                    row["props"]["text"]: row["row_version"] for row in order_rows
+                } == expected_versions
+                after_order = await _agent_structural_state(
+                    database, workspace_id, reviewer_pool
+                )
+                assert after_order[0] == (
+                    before_order[0][0] + 1,
+                    before_order[0][1],
+                    before_order[0][2] + 1,
+                    before_order[0][3] + 1,
+                )
+                loser_key = (
+                    "concurrent-order-after"
+                    if winner_before
+                    else "concurrent-order-before"
+                )
+                async with owner_connection(
+                    database.settings.resolved_owner_dsn(),
+                    expected_database=database.name,
+                ) as owner:
+                    assert (
+                        await owner.fetchval(
+                            "SELECT count(*) FROM control.agent_idempotency "
+                            "WHERE workspace_id=$1 AND idempotency_key=$2",
+                            workspace_id,
+                            loser_key,
+                        )
+                        == 0
+                    )
+        finally:
+            await reviewer_pool.close()
+
+
+@pytest.mark.asyncio
+async def test_agent_component_concurrent_patches_have_one_optimistic_winner(
+    agent_site_database: AgentSiteDatabase,
+) -> None:
+    database = agent_site_database
+    _seed_token, seeded = await _seed(database)
+    token, workspace_id = await _workspace_capability(
+        database,
+        seeded,
+        [
+            "site:read",
+            "page:create",
+            "page:read",
+            "composition:read",
+            "component-structure:create",
+            "component-content-props:write",
+        ],
+        "Agent Component Concurrent Patch Workspace",
+    )
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        await owner.execute(
+            "UPDATE control.capability SET request_quota=200, mutation_quota=100 "
+            "WHERE workspace_id=$1",
+            workspace_id,
+        )
+    app = create_agent_app(
+        settings=ServiceSettings.for_test(),
+        database_settings=_agent_settings(database),
+    )
+    headers = {"Authorization": f"Bearer {token}"}
+    reviewer_pool = await database.role_pool("slaif_reviewer")
+
+    async def post(
+        client: httpx.AsyncClient,
+        path: str,
+        key: str,
+        body: Mapping[str, object],
+    ) -> httpx.Response:
+        return await client.post(
+            path,
+            headers={**headers, "Idempotency-Key": key},
+            json=body,
+        )
+
+    async with app.router.lifespan_context(app):
+        try:
+            async with (
+                httpx.AsyncClient(
+                    transport=httpx.ASGITransport(app=app), base_url="http://agent.test"
+                ) as client_a,
+                httpx.AsyncClient(
+                    transport=httpx.ASGITransport(app=app), base_url="http://agent.test"
+                ) as client_b,
+            ):
+                page = await post(
+                    client_a,
+                    "/api/agent/v1/pages/",
+                    "concurrent-patch-page",
+                    {"slug": "concurrent-patch", "title": "Concurrent patch"},
+                )
+                assert page.status_code == 201, page.text
+                page_id = page.json()["record"]["id"]
+                component = await post(
+                    client_a,
+                    f"/api/agent/v1/pages/{page_id}/components",
+                    "concurrent-patch-component",
+                    {
+                        "component_type": "Heading",
+                        "props": {"text": "initial", "level": 2},
+                    },
+                )
+                assert component.status_code == 201, component.text
+                component_id = component.json()["record"]["id"]
+                before_state = await _agent_structural_state(
+                    database, workspace_id, reviewer_pool
+                )
+                async with _hold_agent_structure_lock(
+                    database, workspace_id, seeded["site_id"]
+                ) as blocker:
+                    patch_a = asyncio.create_task(
+                        client_a.patch(
+                            f"/api/agent/v1/components/{component_id}",
+                            headers={
+                                **headers,
+                                "Idempotency-Key": "concurrent-patch-a",
+                            },
+                            json={
+                                "props": {"text": "winner-a"},
+                                "expected_row_version": 1,
+                            },
+                        )
+                    )
+                    patch_b = asyncio.create_task(
+                        client_b.patch(
+                            f"/api/agent/v1/components/{component_id}",
+                            headers={
+                                **headers,
+                                "Idempotency-Key": "concurrent-patch-b",
+                            },
+                            json={
+                                "props": {"text": "winner-b"},
+                                "expected_row_version": 1,
+                            },
+                        )
+                    )
+                    await _wait_for_page_structure_waiters(blocker, 2)
+                result_a, result_b = await asyncio.gather(patch_a, patch_b)
+                assert sorted((result_a.status_code, result_b.status_code)) == [
+                    200,
+                    409,
+                ], (
+                    result_a.text,
+                    result_b.text,
+                )
+                winner = result_a if result_a.status_code == 200 else result_b
+                loser_key = (
+                    "concurrent-patch-b"
+                    if result_a.status_code == 200
+                    else "concurrent-patch-a"
+                )
+                rows = await client_a.get(
+                    f"/api/agent/v1/pages/{page_id}/components", headers=headers
+                )
+                assert rows.status_code == 200, rows.text
+                target = next(row for row in rows.json() if row["id"] == component_id)
+                assert (
+                    target["props"]["text"] == winner.json()["record"]["props"]["text"]
+                )
+                assert target["row_version"] == 2
+                after_state = await _agent_structural_state(
+                    database, workspace_id, reviewer_pool
+                )
+                assert after_state[0] == (
+                    before_state[0][0] + 1,
+                    before_state[0][1],
+                    before_state[0][2] + 1,
+                    before_state[0][3] + 1,
+                )
+                assert len(after_state[1]) == len(before_state[1]) + 1
+                async with owner_connection(
+                    database.settings.resolved_owner_dsn(),
+                    expected_database=database.name,
+                ) as owner:
+                    assert (
+                        await owner.fetchval(
+                            "SELECT count(*) FROM control.agent_idempotency "
+                            "WHERE workspace_id=$1 AND idempotency_key=$2",
+                            workspace_id,
+                            loser_key,
+                        )
+                        == 0
+                    )
+                follow_up = await client_b.patch(
+                    f"/api/agent/v1/components/{component_id}",
+                    headers={
+                        **headers,
+                        "Idempotency-Key": "concurrent-patch-follow-up",
+                    },
+                    json={
+                        "props": {"text": "after-race"},
+                        "expected_row_version": 2,
+                    },
+                )
+                assert follow_up.status_code == 200, follow_up.text
+                assert follow_up.json()["record"]["row_version"] == 3
+                async with app.state.database.cow_pool().acquire() as connection:
+                    assert not connection.is_in_transaction()
+        finally:
+            await reviewer_pool.close()
+
+
+@pytest.mark.asyncio
+async def test_agent_component_leaf_delete_and_child_create_have_both_serial_orders(
+    agent_site_database: AgentSiteDatabase,
+) -> None:
+    database = agent_site_database
+    _seed_token, seeded = await _seed(database)
+    token, workspace_id = await _workspace_capability(
+        database,
+        seeded,
+        [
+            "site:read",
+            "page:create",
+            "page:read",
+            "composition:read",
+            "component-structure:create",
+            "component-structure:delete",
+        ],
+        "Agent Component Delete/Create Race Workspace",
+    )
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        await owner.execute(
+            "UPDATE control.capability SET request_quota=200, mutation_quota=100, "
+            "delete_quota=50 WHERE workspace_id=$1",
+            workspace_id,
+        )
+    app = create_agent_app(
+        settings=ServiceSettings.for_test(),
+        database_settings=_agent_settings(database),
+    )
+    headers = {"Authorization": f"Bearer {token}"}
+    reviewer_pool = await database.role_pool("slaif_reviewer")
+
+    async def post(
+        client: httpx.AsyncClient,
+        path: str,
+        key: str,
+        body: Mapping[str, object],
+    ) -> httpx.Response:
+        return await client.post(
+            path,
+            headers={**headers, "Idempotency-Key": key},
+            json=body,
+        )
+
+    async def create_page(client: httpx.AsyncClient, slug: str, key: str) -> str:
+        response = await post(
+            client,
+            "/api/agent/v1/pages/",
+            key,
+            {"slug": slug, "title": slug},
+        )
+        assert response.status_code == 201, response.text
+        return str(response.json()["record"]["id"])
+
+    async def create_leaf(
+        client: httpx.AsyncClient, page_id: str, key: str
+    ) -> dict[str, Any]:
+        response = await post(
+            client,
+            f"/api/agent/v1/pages/{page_id}/components",
+            key,
+            {"component_type": "Section", "props": {}},
+        )
+        assert response.status_code == 201, response.text
+        return cast(dict[str, Any], response.json()["record"])
+
+    async def list_components(
+        client: httpx.AsyncClient, page_id: str
+    ) -> list[dict[str, Any]]:
+        response = await client.get(
+            f"/api/agent/v1/pages/{page_id}/components", headers=headers
+        )
+        assert response.status_code == 200, response.text
+        return cast(list[dict[str, Any]], response.json())
+
+    async with app.router.lifespan_context(app):
+        try:
+            async with (
+                httpx.AsyncClient(
+                    transport=httpx.ASGITransport(app=app), base_url="http://agent.test"
+                ) as client_a,
+                httpx.AsyncClient(
+                    transport=httpx.ASGITransport(app=app), base_url="http://agent.test"
+                ) as client_b,
+            ):
+                delete_first_page = await create_page(
+                    client_a, "delete-first", "delete-first-page"
+                )
+                delete_first_leaf = await create_leaf(
+                    client_a, delete_first_page, "delete-first-leaf"
+                )
+                before_delete = await _agent_structural_state(
+                    database, workspace_id, reviewer_pool
+                )
+                async with _hold_agent_structure_lock(
+                    database, workspace_id, seeded["site_id"]
+                ) as blocker:
+                    delete_task = asyncio.create_task(
+                        client_a.request(
+                            "DELETE",
+                            f"/api/agent/v1/components/{delete_first_leaf['id']}",
+                            headers={
+                                **headers,
+                                "Idempotency-Key": "delete-first-operation",
+                            },
+                            json={"expected_row_version": 1},
+                        )
+                    )
+                    await _wait_for_page_structure_waiters(blocker, 1)
+                delete_result = await delete_task
+                assert delete_result.status_code == 200, delete_result.text
+                child_after_delete = await post(
+                    client_b,
+                    f"/api/agent/v1/pages/{delete_first_page}/components",
+                    "delete-first-child",
+                    {
+                        "component_type": "Heading",
+                        "parent_id": delete_first_leaf["id"],
+                        "props": {"text": "orphan", "level": 2},
+                    },
+                )
+                assert child_after_delete.status_code == 404, child_after_delete.text
+                after_delete = await _agent_structural_state(
+                    database, workspace_id, reviewer_pool
+                )
+                assert after_delete[0] == (
+                    before_delete[0][0],
+                    before_delete[0][1] + 1,
+                    before_delete[0][2] + 1,
+                    before_delete[0][3] + 1,
+                )
+                assert len(after_delete[1]) == len(before_delete[1]) + 1
+                async with owner_connection(
+                    database.settings.resolved_owner_dsn(),
+                    expected_database=database.name,
+                ) as owner:
+                    assert (
+                        await owner.fetchval(
+                            "SELECT count(*) FROM control.agent_idempotency "
+                            "WHERE workspace_id=$1 AND "
+                            "idempotency_key='delete-first-child'",
+                            workspace_id,
+                        )
+                        == 0
+                    )
+
+                child_first_page = await create_page(
+                    client_a, "child-first", "child-first-page"
+                )
+                child_first_leaf = await create_leaf(
+                    client_a, child_first_page, "child-first-leaf"
+                )
+                before_child = await _agent_structural_state(
+                    database, workspace_id, reviewer_pool
+                )
+                async with _hold_agent_structure_lock(
+                    database, workspace_id, seeded["site_id"]
+                ) as blocker:
+                    child_task = asyncio.create_task(
+                        post(
+                            client_b,
+                            f"/api/agent/v1/pages/{child_first_page}/components",
+                            "child-first-operation",
+                            {
+                                "component_type": "Heading",
+                                "parent_id": child_first_leaf["id"],
+                                "props": {"text": "child", "level": 2},
+                            },
+                        )
+                    )
+                    await _wait_for_page_structure_waiters(blocker, 1)
+                child_result = await child_task
+                assert child_result.status_code == 201, child_result.text
+                before_delete_result = await client_a.request(
+                    "DELETE",
+                    f"/api/agent/v1/components/{child_first_leaf['id']}",
+                    headers={
+                        **headers,
+                        "Idempotency-Key": "child-first-delete",
+                    },
+                    json={"expected_row_version": 1},
+                )
+                assert before_delete_result.status_code == 409, (
+                    before_delete_result.text
+                )
+                child_rows = await list_components(client_a, child_first_page)
+                assert {row["id"] for row in child_rows} == {
+                    child_first_leaf["id"],
+                    child_result.json()["record"]["id"],
+                }
+                child_row = next(
+                    row for row in child_rows if row["id"] == child_first_leaf["id"]
+                )
+                assert child_row["row_version"] == 1
+                after_child = await _agent_structural_state(
+                    database, workspace_id, reviewer_pool
+                )
+                assert after_child[0] == (
+                    before_child[0][0] + 1,
+                    before_child[0][1],
+                    before_child[0][2] + 1,
+                    before_child[0][3] + 1,
+                )
+                assert len(after_child[1]) == len(before_child[1]) + 1
+                async with owner_connection(
+                    database.settings.resolved_owner_dsn(),
+                    expected_database=database.name,
+                ) as owner:
+                    assert (
+                        await owner.fetchval(
+                            "SELECT count(*) FROM control.agent_idempotency "
+                            "WHERE workspace_id=$1 AND "
+                            "idempotency_key='child-first-delete'",
+                            workspace_id,
+                        )
+                        == 0
+                    )
+        finally:
+            await reviewer_pool.close()
+
+
+@pytest.mark.asyncio
+async def test_agent_page_delete_and_component_create_have_both_serial_orders(
+    agent_site_database: AgentSiteDatabase,
+) -> None:
+    database = agent_site_database
+    _seed_token, seeded = await _seed(database)
+    page_delete_first_id = uuid4()
+    component_first_id = uuid4()
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        await owner.executemany(
+            """
+            INSERT INTO content.page_base(
+                id,site_id,slug,title,status,locale,row_version
+            ) VALUES ($1,$2,$3,$4,'DRAFT','en-US',1)
+            """,
+            [
+                (
+                    page_delete_first_id,
+                    seeded["site_id"],
+                    "page-delete-first",
+                    "Page delete first",
+                ),
+                (
+                    component_first_id,
+                    seeded["site_id"],
+                    "component-create-first",
+                    "Component create first",
+                ),
+            ],
+        )
+    token, workspace_id = await _workspace_capability(
+        database,
+        seeded,
+        [
+            "site:read",
+            "page:read",
+            "page:delete",
+            "composition:read",
+            "component-structure:create",
+        ],
+        "Agent Page/Component Race Workspace",
+    )
+    other_token, _other_workspace_id = await _workspace_capability(
+        database,
+        seeded,
+        ["site:read", "page:read", "composition:read"],
+        "Agent Page/Component Other Workspace",
+    )
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        await owner.execute(
+            "UPDATE control.capability SET request_quota=200, mutation_quota=100, "
+            "delete_quota=50 WHERE workspace_id=$1",
+            workspace_id,
+        )
+    app = create_agent_app(
+        settings=ServiceSettings.for_test(),
+        database_settings=_agent_settings(database),
+    )
+    headers = {"Authorization": f"Bearer {token}"}
+    other_headers = {"Authorization": f"Bearer {other_token}"}
+    reviewer_pool = await database.role_pool("slaif_reviewer")
+
+    async def component_create(
+        client: httpx.AsyncClient, page_id: UUID, key: str
+    ) -> httpx.Response:
+        return await client.post(
+            f"/api/agent/v1/pages/{page_id}/components",
+            headers={**headers, "Idempotency-Key": key},
+            json={"component_type": "Heading", "props": {"text": key, "level": 2}},
+        )
+
+    async with app.router.lifespan_context(app):
+        try:
+            async with (
+                httpx.AsyncClient(
+                    transport=httpx.ASGITransport(app=app), base_url="http://agent.test"
+                ) as client_a,
+                httpx.AsyncClient(
+                    transport=httpx.ASGITransport(app=app), base_url="http://agent.test"
+                ) as client_b,
+            ):
+                before_page_delete = await _agent_structural_state(
+                    database, workspace_id, reviewer_pool
+                )
+                async with _hold_agent_structure_lock(
+                    database, workspace_id, seeded["site_id"]
+                ) as blocker:
+                    page_delete_task = asyncio.create_task(
+                        client_a.request(
+                            "DELETE",
+                            f"/api/agent/v1/pages/{page_delete_first_id}",
+                            headers={
+                                **headers,
+                                "Idempotency-Key": "page-delete-first-operation",
+                            },
+                            json={"expected_row_version": 1},
+                        )
+                    )
+                    await _wait_for_page_structure_waiters(blocker, 1)
+                page_delete_result = await page_delete_task
+                assert page_delete_result.status_code == 200, page_delete_result.text
+                create_after_delete = await component_create(
+                    client_b, page_delete_first_id, "page-delete-first-component"
+                )
+                assert create_after_delete.status_code == 404, create_after_delete.text
+                other_page = await client_b.get(
+                    f"/api/agent/v1/pages/{page_delete_first_id}",
+                    headers=other_headers,
+                )
+                assert other_page.status_code == 200, other_page.text
+                after_page_delete = await _agent_structural_state(
+                    database, workspace_id, reviewer_pool
+                )
+                assert after_page_delete[0] == (
+                    before_page_delete[0][0],
+                    before_page_delete[0][1] + 1,
+                    before_page_delete[0][2] + 1,
+                    before_page_delete[0][3] + 1,
+                )
+                assert len(after_page_delete[1]) == len(before_page_delete[1]) + 1
+                async with owner_connection(
+                    database.settings.resolved_owner_dsn(),
+                    expected_database=database.name,
+                ) as owner:
+                    assert (
+                        await owner.fetchval(
+                            "SELECT count(*) FROM control.agent_idempotency "
+                            "WHERE workspace_id=$1 AND "
+                            "idempotency_key='page-delete-first-component'",
+                            workspace_id,
+                        )
+                        == 0
+                    )
+
+                create_first = await component_create(
+                    client_a, component_first_id, "component-first-operation"
+                )
+                assert create_first.status_code == 201, create_first.text
+                before_failed_delete = await _agent_structural_state(
+                    database, workspace_id, reviewer_pool
+                )
+                failed_delete = await client_b.request(
+                    "DELETE",
+                    f"/api/agent/v1/pages/{component_first_id}",
+                    headers={**headers, "Idempotency-Key": "component-first-delete"},
+                    json={"expected_row_version": 1},
+                )
+                assert failed_delete.status_code == 422, failed_delete.text
+                other_page = await client_b.get(
+                    f"/api/agent/v1/pages/{component_first_id}",
+                    headers=other_headers,
+                )
+                assert other_page.status_code == 200, other_page.text
+                other_components = await client_b.get(
+                    f"/api/agent/v1/pages/{component_first_id}/components",
+                    headers=other_headers,
+                )
+                assert other_components.status_code == 200, other_components.text
+                assert other_components.json() == []
+                assert (
+                    await _agent_structural_state(database, workspace_id, reviewer_pool)
+                    == before_failed_delete
+                )
+                async with owner_connection(
+                    database.settings.resolved_owner_dsn(),
+                    expected_database=database.name,
+                ) as owner:
+                    assert (
+                        await owner.fetchval(
+                            "SELECT count(*) FROM control.agent_idempotency "
+                            "WHERE workspace_id=$1 AND "
+                            "idempotency_key='component-first-delete'",
+                            workspace_id,
+                        )
+                        == 0
+                    )
+        finally:
+            await reviewer_pool.close()
+
+
+@pytest.mark.asyncio
+async def test_agent_component_cancellation_and_independent_workspace_locks(
+    agent_site_database: AgentSiteDatabase,
+) -> None:
+    database = agent_site_database
+    _seed_token, seeded = await _seed(database)
+    page_id = uuid4()
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        await owner.execute(
+            """
+            INSERT INTO content.page_base(
+                id,site_id,slug,title,status,locale,row_version
+            ) VALUES ($1,$2,'cancel-component','Cancel component','DRAFT','en-US',1)
+            """,
+            page_id,
+            seeded["site_id"],
+        )
+    token_a, workspace_a = await _workspace_capability(
+        database,
+        seeded,
+        [
+            "site:read",
+            "page:read",
+            "composition:read",
+            "component-structure:create",
+        ],
+        "Agent Component Cancellation Workspace A",
+    )
+    token_b, workspace_b = await _workspace_capability(
+        database,
+        seeded,
+        [
+            "site:read",
+            "page:read",
+            "composition:read",
+            "component-structure:create",
+        ],
+        "Agent Component Independent Workspace B",
+    )
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        await owner.execute(
+            "UPDATE control.capability SET request_quota=100, mutation_quota=50 "
+            "WHERE workspace_id IN ($1,$2)",
+            workspace_a,
+            workspace_b,
+        )
+    app = create_agent_app(
+        settings=ServiceSettings.for_test(),
+        database_settings=_agent_settings(database),
+    )
+    headers_a = {"Authorization": f"Bearer {token_a}"}
+    headers_b = {"Authorization": f"Bearer {token_b}"}
+    reviewer_pool = await database.role_pool("slaif_reviewer")
+
+    async def list_components(
+        client: httpx.AsyncClient, headers: dict[str, str]
+    ) -> list[dict[str, Any]]:
+        response = await client.get(
+            f"/api/agent/v1/pages/{page_id}/components", headers=headers
+        )
+        assert response.status_code == 200, response.text
+        return cast(list[dict[str, Any]], response.json())
+
+    async with app.router.lifespan_context(app):
+        try:
+            async with (
+                httpx.AsyncClient(
+                    transport=httpx.ASGITransport(app=app), base_url="http://agent.test"
+                ) as client_a,
+                httpx.AsyncClient(
+                    transport=httpx.ASGITransport(app=app), base_url="http://agent.test"
+                ) as client_b,
+            ):
+                before_cancel = await _agent_structural_state(
+                    database, workspace_a, reviewer_pool
+                )
+                async with _hold_agent_structure_lock(
+                    database, workspace_a, seeded["site_id"]
+                ) as blocker:
+                    cancelled = asyncio.create_task(
+                        client_a.post(
+                            f"/api/agent/v1/pages/{page_id}/components",
+                            headers={
+                                **headers_a,
+                                "Idempotency-Key": "cancelled-component",
+                            },
+                            json={
+                                "component_type": "Heading",
+                                "props": {"text": "cancelled", "level": 2},
+                            },
+                        )
+                    )
+                    await _wait_for_page_structure_waiters(blocker, 1)
+                    cancelled.cancel()
+                    with pytest.raises(asyncio.CancelledError):
+                        await cancelled
+                assert await list_components(client_a, headers_a) == []
+                assert (
+                    await _agent_structural_state(database, workspace_a, reviewer_pool)
+                    == before_cancel
+                )
+                async with owner_connection(
+                    database.settings.resolved_owner_dsn(),
+                    expected_database=database.name,
+                ) as owner:
+                    assert (
+                        await owner.fetchval(
+                            "SELECT count(*) FROM control.agent_idempotency "
+                            "WHERE workspace_id=$1 AND "
+                            "idempotency_key='cancelled-component'",
+                            workspace_a,
+                        )
+                        == 0
+                    )
+                async with app.state.database.cow_pool().acquire() as connection:
+                    assert not connection.is_in_transaction()
+
+                retry = await client_a.post(
+                    f"/api/agent/v1/pages/{page_id}/components",
+                    headers={
+                        **headers_a,
+                        "Idempotency-Key": "cancelled-component-retry",
+                    },
+                    json={
+                        "component_type": "Heading",
+                        "props": {"text": "retry", "level": 2},
+                    },
+                )
+                assert retry.status_code == 201, retry.text
+                async with _hold_agent_structure_lock(
+                    database, workspace_a, seeded["site_id"]
+                ) as blocker:
+                    independent = asyncio.create_task(
+                        client_b.post(
+                            f"/api/agent/v1/pages/{page_id}/components",
+                            headers={
+                                **headers_b,
+                                "Idempotency-Key": "independent-workspace-component",
+                            },
+                            json={
+                                "component_type": "Heading",
+                                "props": {"text": "independent", "level": 2},
+                            },
+                        )
+                    )
+                    independent_result = await asyncio.wait_for(independent, timeout=5)
+                    assert independent_result.status_code == 201, (
+                        independent_result.text
+                    )
+                    assert await list_components(client_b, headers_b)
+                    assert len(await list_components(client_a, headers_a)) == 1
+        finally:
+            await reviewer_pool.close()
 
 
 @pytest.mark.asyncio
