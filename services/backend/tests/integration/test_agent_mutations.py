@@ -6704,19 +6704,25 @@ async def test_agent_component_leaf_delete_and_child_create_have_both_serial_ord
                         )
                     )
                     await _wait_for_page_structure_waiters(blocker, 1)
-                delete_result = await delete_task
-                assert delete_result.status_code == 200, delete_result.text
-                child_after_delete = await post(
-                    client_b,
-                    f"/api/agent/v1/pages/{delete_first_page}/components",
-                    "delete-first-child",
-                    {
-                        "component_type": "Heading",
-                        "parent_id": delete_first_leaf["id"],
-                        "props": {"text": "orphan", "level": 2},
-                    },
+                    child_task = asyncio.create_task(
+                        post(
+                            client_b,
+                            f"/api/agent/v1/pages/{delete_first_page}/components",
+                            "delete-first-child",
+                            {
+                                "component_type": "Heading",
+                                "parent_id": delete_first_leaf["id"],
+                                "props": {"text": "orphan", "level": 2},
+                            },
+                        )
+                    )
+                    await _wait_for_page_structure_waiters(blocker, 2)
+                delete_result, child_after_delete = await asyncio.gather(
+                    delete_task, child_task
                 )
+                assert delete_result.status_code == 200, delete_result.text
                 assert child_after_delete.status_code == 404, child_after_delete.text
+                assert await list_components(client_a, delete_first_page) == []
                 after_delete = await _agent_structural_state(
                     database, workspace_id, reviewer_pool
                 )
@@ -6766,17 +6772,22 @@ async def test_agent_component_leaf_delete_and_child_create_have_both_serial_ord
                         )
                     )
                     await _wait_for_page_structure_waiters(blocker, 1)
-                child_result = await child_task
-                assert child_result.status_code == 201, child_result.text
-                before_delete_result = await client_a.request(
-                    "DELETE",
-                    f"/api/agent/v1/components/{child_first_leaf['id']}",
-                    headers={
-                        **headers,
-                        "Idempotency-Key": "child-first-delete",
-                    },
-                    json={"expected_row_version": 1},
+                    delete_task = asyncio.create_task(
+                        client_a.request(
+                            "DELETE",
+                            f"/api/agent/v1/components/{child_first_leaf['id']}",
+                            headers={
+                                **headers,
+                                "Idempotency-Key": "child-first-delete",
+                            },
+                            json={"expected_row_version": 1},
+                        )
+                    )
+                    await _wait_for_page_structure_waiters(blocker, 2)
+                child_result, before_delete_result = await asyncio.gather(
+                    child_task, delete_task
                 )
+                assert child_result.status_code == 201, child_result.text
                 assert before_delete_result.status_code == 409, (
                     before_delete_result.text
                 )
@@ -6812,6 +6823,387 @@ async def test_agent_component_leaf_delete_and_child_create_have_both_serial_ord
                         )
                         == 0
                     )
+        finally:
+            await reviewer_pool.close()
+
+
+@pytest.mark.asyncio
+async def test_agent_component_leaf_delete_and_subtree_move_have_both_race_orders(
+    agent_site_database: AgentSiteDatabase,
+) -> None:
+    database = agent_site_database
+    _seed_token, seeded = await _seed(database)
+    token, workspace_id = await _workspace_capability(
+        database,
+        seeded,
+        [
+            "site:read",
+            "page:create",
+            "page:read",
+            "composition:read",
+            "component-structure:create",
+            "component-structure:move",
+            "component-structure:delete",
+        ],
+        "Agent Component Delete/Move Race Workspace",
+    )
+    other_token, _other_workspace_id = await _workspace_capability(
+        database,
+        seeded,
+        ["site:read", "page:read", "composition:read"],
+        "Agent Component Delete/Move Other Workspace",
+    )
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        await owner.execute(
+            "UPDATE control.capability SET request_quota=300, mutation_quota=100, "
+            "delete_quota=50 WHERE workspace_id=$1",
+            workspace_id,
+        )
+    app = create_agent_app(
+        settings=ServiceSettings.for_test(),
+        database_settings=_agent_settings(database),
+    )
+    headers = {"Authorization": f"Bearer {token}"}
+    other_headers = {"Authorization": f"Bearer {other_token}"}
+    reviewer_pool = await database.role_pool("slaif_reviewer")
+
+    async def post(
+        client: httpx.AsyncClient,
+        path: str,
+        key: str,
+        body: Mapping[str, object],
+    ) -> httpx.Response:
+        return await client.post(
+            path,
+            headers={**headers, "Idempotency-Key": key},
+            json=body,
+        )
+
+    async def create_page(client: httpx.AsyncClient, slug: str, key: str) -> str:
+        response = await post(
+            client,
+            "/api/agent/v1/pages/",
+            key,
+            {"slug": slug, "title": slug},
+        )
+        assert response.status_code == 201, response.text
+        return str(response.json()["record"]["id"])
+
+    async def create_component(
+        client: httpx.AsyncClient,
+        page_id: str,
+        key: str,
+        component_type: str,
+        props: dict[str, object],
+        parent_id: str | None = None,
+    ) -> dict[str, Any]:
+        body: dict[str, object] = {
+            "component_type": component_type,
+            "props": props,
+        }
+        if parent_id is not None:
+            body["parent_id"] = parent_id
+        response = await post(
+            client,
+            f"/api/agent/v1/pages/{page_id}/components",
+            key,
+            body,
+        )
+        assert response.status_code == 201, response.text
+        return cast(dict[str, Any], response.json()["record"])
+
+    async def page_components(
+        client: httpx.AsyncClient, page_id: str
+    ) -> list[dict[str, Any]]:
+        response = await client.get(
+            f"/api/agent/v1/pages/{page_id}/components", headers=headers
+        )
+        assert response.status_code == 200, response.text
+        return cast(list[dict[str, Any]], response.json())
+
+    async with app.router.lifespan_context(app):
+        try:
+            async with (
+                httpx.AsyncClient(
+                    transport=httpx.ASGITransport(app=app), base_url="http://agent.test"
+                ) as client_a,
+                httpx.AsyncClient(
+                    transport=httpx.ASGITransport(app=app), base_url="http://agent.test"
+                ) as client_b,
+            ):
+                delete_first_page = await create_page(
+                    client_a, "subtree-delete-first", "subtree-delete-first-page"
+                )
+                delete_first_holder_a = await create_component(
+                    client_a,
+                    delete_first_page,
+                    "subtree-delete-first-holder-a",
+                    "Section",
+                    {},
+                )
+                delete_first_holder_b = await create_component(
+                    client_a,
+                    delete_first_page,
+                    "subtree-delete-first-holder-b",
+                    "Section",
+                    {},
+                )
+                delete_first_leaf = await create_component(
+                    client_a,
+                    delete_first_page,
+                    "subtree-delete-first-leaf",
+                    "Section",
+                    {},
+                    delete_first_holder_a["id"],
+                )
+                delete_first_source = await create_component(
+                    client_a,
+                    delete_first_page,
+                    "subtree-delete-first-source",
+                    "Section",
+                    {},
+                    delete_first_holder_b["id"],
+                )
+                delete_first_child = await create_component(
+                    client_a,
+                    delete_first_page,
+                    "subtree-delete-first-child",
+                    "Heading",
+                    {"text": "child", "level": 2},
+                    delete_first_source["id"],
+                )
+                before_delete = await _agent_structural_state(
+                    database, workspace_id, reviewer_pool
+                )
+                async with _hold_agent_structure_lock(
+                    database, workspace_id, seeded["site_id"]
+                ) as blocker:
+                    delete_task = asyncio.create_task(
+                        client_a.request(
+                            "DELETE",
+                            f"/api/agent/v1/components/{delete_first_leaf['id']}",
+                            headers={
+                                **headers,
+                                "Idempotency-Key": "subtree-delete-first-operation",
+                            },
+                            json={"expected_row_version": 1},
+                        )
+                    )
+                    await _wait_for_page_structure_waiters(blocker, 1)
+                    move_task = asyncio.create_task(
+                        post(
+                            client_b,
+                            f"/api/agent/v1/components/{delete_first_source['id']}/move",
+                            "subtree-delete-first-move",
+                            {
+                                "new_parent_id": delete_first_leaf["id"],
+                                "new_slot_key": "default",
+                                "expected_row_version": 1,
+                            },
+                        )
+                    )
+                    await _wait_for_page_structure_waiters(blocker, 2)
+                delete_result, move_result = await asyncio.gather(
+                    delete_task, move_task
+                )
+                assert delete_result.status_code == 200, delete_result.text
+                assert move_result.status_code == 404, move_result.text
+                delete_first_rows = await page_components(client_a, delete_first_page)
+                assert {row["id"] for row in delete_first_rows} == {
+                    delete_first_holder_a["id"],
+                    delete_first_holder_b["id"],
+                    delete_first_source["id"],
+                    delete_first_child["id"],
+                }
+                source_row = next(
+                    row
+                    for row in delete_first_rows
+                    if row["id"] == delete_first_source["id"]
+                )
+                child_row = next(
+                    row
+                    for row in delete_first_rows
+                    if row["id"] == delete_first_child["id"]
+                )
+                assert source_row["parent_id"] == delete_first_holder_b["id"]
+                assert source_row["order_key"] == 0
+                assert source_row["row_version"] == 1
+                assert child_row["parent_id"] == delete_first_source["id"]
+                assert child_row["order_key"] == 0
+                assert child_row["row_version"] == 1
+                after_delete = await _agent_structural_state(
+                    database, workspace_id, reviewer_pool
+                )
+                assert after_delete[0] == (
+                    before_delete[0][0],
+                    before_delete[0][1] + 1,
+                    before_delete[0][2] + 1,
+                    before_delete[0][3] + 1,
+                )
+                assert len(after_delete[1]) == len(before_delete[1]) + 1
+                assert (
+                    await client_b.get(
+                        f"/api/agent/v1/pages/{delete_first_page}",
+                        headers=other_headers,
+                    )
+                ).status_code == 404
+
+                move_first_page = await create_page(
+                    client_a, "subtree-move-first", "subtree-move-first-page"
+                )
+                move_first_holder_a = await create_component(
+                    client_a,
+                    move_first_page,
+                    "subtree-move-first-holder-a",
+                    "Section",
+                    {},
+                )
+                move_first_holder_b = await create_component(
+                    client_a,
+                    move_first_page,
+                    "subtree-move-first-holder-b",
+                    "Section",
+                    {},
+                )
+                move_first_leaf = await create_component(
+                    client_a,
+                    move_first_page,
+                    "subtree-move-first-leaf",
+                    "Section",
+                    {},
+                    move_first_holder_a["id"],
+                )
+                move_first_source = await create_component(
+                    client_a,
+                    move_first_page,
+                    "subtree-move-first-source",
+                    "Section",
+                    {},
+                    move_first_holder_b["id"],
+                )
+                move_first_child = await create_component(
+                    client_a,
+                    move_first_page,
+                    "subtree-move-first-child",
+                    "Heading",
+                    {"text": "child", "level": 2},
+                    move_first_source["id"],
+                )
+                before_move = await _agent_structural_state(
+                    database, workspace_id, reviewer_pool
+                )
+                async with _hold_agent_structure_lock(
+                    database, workspace_id, seeded["site_id"]
+                ) as blocker:
+                    move_task = asyncio.create_task(
+                        post(
+                            client_a,
+                            f"/api/agent/v1/components/{move_first_source['id']}/move",
+                            "subtree-move-first-operation",
+                            {
+                                "new_parent_id": move_first_leaf["id"],
+                                "new_slot_key": "default",
+                                "expected_row_version": 1,
+                            },
+                        )
+                    )
+                    await _wait_for_page_structure_waiters(blocker, 1)
+                    delete_task = asyncio.create_task(
+                        client_b.request(
+                            "DELETE",
+                            f"/api/agent/v1/components/{move_first_leaf['id']}",
+                            headers={
+                                **headers,
+                                "Idempotency-Key": "subtree-move-first-delete",
+                            },
+                            json={"expected_row_version": 1},
+                        )
+                    )
+                    await _wait_for_page_structure_waiters(blocker, 2)
+                move_result, delete_result = await asyncio.gather(
+                    move_task, delete_task
+                )
+                assert move_result.status_code == 200, move_result.text
+                assert delete_result.status_code == 409, delete_result.text
+                move_first_rows = await page_components(client_a, move_first_page)
+                assert {row["id"] for row in move_first_rows} == {
+                    move_first_holder_a["id"],
+                    move_first_holder_b["id"],
+                    move_first_leaf["id"],
+                    move_first_source["id"],
+                    move_first_child["id"],
+                }
+                leaf_row = next(
+                    row for row in move_first_rows if row["id"] == move_first_leaf["id"]
+                )
+                source_row = next(
+                    row
+                    for row in move_first_rows
+                    if row["id"] == move_first_source["id"]
+                )
+                child_row = next(
+                    row
+                    for row in move_first_rows
+                    if row["id"] == move_first_child["id"]
+                )
+                assert (
+                    leaf_row["parent_id"],
+                    leaf_row["order_key"],
+                    leaf_row["row_version"],
+                ) == (
+                    move_first_holder_a["id"],
+                    0,
+                    1,
+                )
+                assert (
+                    source_row["parent_id"],
+                    source_row["order_key"],
+                    source_row["row_version"],
+                ) == (
+                    move_first_leaf["id"],
+                    0,
+                    2,
+                )
+                assert (
+                    child_row["parent_id"],
+                    child_row["order_key"],
+                    child_row["row_version"],
+                ) == (
+                    move_first_source["id"],
+                    0,
+                    1,
+                )
+                after_move = await _agent_structural_state(
+                    database, workspace_id, reviewer_pool
+                )
+                assert after_move[0] == (
+                    before_move[0][0] + 1,
+                    before_move[0][1],
+                    before_move[0][2] + 1,
+                    before_move[0][3] + 1,
+                )
+                assert len(after_move[1]) == len(before_move[1]) + 1
+                async with owner_connection(
+                    database.settings.resolved_owner_dsn(),
+                    expected_database=database.name,
+                ) as owner:
+                    assert (
+                        await owner.fetchval(
+                            "SELECT count(*) FROM control.agent_idempotency "
+                            "WHERE workspace_id=$1 AND "
+                            "idempotency_key='subtree-move-first-delete'",
+                            workspace_id,
+                        )
+                        == 0
+                    )
+                assert (
+                    await client_b.get(
+                        f"/api/agent/v1/pages/{move_first_page}",
+                        headers=other_headers,
+                    )
+                ).status_code == 404
         finally:
             await reviewer_pool.close()
 
@@ -6919,11 +7311,18 @@ async def test_agent_page_delete_and_component_create_have_both_serial_orders(
                         )
                     )
                     await _wait_for_page_structure_waiters(blocker, 1)
-                page_delete_result = await page_delete_task
-                assert page_delete_result.status_code == 200, page_delete_result.text
-                create_after_delete = await component_create(
-                    client_b, page_delete_first_id, "page-delete-first-component"
+                    component_task = asyncio.create_task(
+                        component_create(
+                            client_b,
+                            page_delete_first_id,
+                            "page-delete-first-component",
+                        )
+                    )
+                    await _wait_for_page_structure_waiters(blocker, 2)
+                page_delete_result, create_after_delete = await asyncio.gather(
+                    page_delete_task, component_task
                 )
+                assert page_delete_result.status_code == 200, page_delete_result.text
                 assert create_after_delete.status_code == 404, create_after_delete.text
                 other_page = await client_b.get(
                     f"/api/agent/v1/pages/{page_delete_first_id}",
@@ -6954,19 +7353,36 @@ async def test_agent_page_delete_and_component_create_have_both_serial_orders(
                         == 0
                     )
 
-                create_first = await component_create(
-                    client_a, component_first_id, "component-first-operation"
-                )
-                assert create_first.status_code == 201, create_first.text
                 before_failed_delete = await _agent_structural_state(
                     database, workspace_id, reviewer_pool
                 )
-                failed_delete = await client_b.request(
-                    "DELETE",
-                    f"/api/agent/v1/pages/{component_first_id}",
-                    headers={**headers, "Idempotency-Key": "component-first-delete"},
-                    json={"expected_row_version": 1},
+                async with _hold_agent_structure_lock(
+                    database, workspace_id, seeded["site_id"]
+                ) as blocker:
+                    component_task = asyncio.create_task(
+                        component_create(
+                            client_a,
+                            component_first_id,
+                            "component-first-operation",
+                        )
+                    )
+                    await _wait_for_page_structure_waiters(blocker, 1)
+                    failed_delete_task = asyncio.create_task(
+                        client_b.request(
+                            "DELETE",
+                            f"/api/agent/v1/pages/{component_first_id}",
+                            headers={
+                                **headers,
+                                "Idempotency-Key": "component-first-delete",
+                            },
+                            json={"expected_row_version": 1},
+                        )
+                    )
+                    await _wait_for_page_structure_waiters(blocker, 2)
+                create_first, failed_delete = await asyncio.gather(
+                    component_task, failed_delete_task
                 )
+                assert create_first.status_code == 201, create_first.text
                 assert failed_delete.status_code == 422, failed_delete.text
                 other_page = await client_b.get(
                     f"/api/agent/v1/pages/{component_first_id}",
@@ -6979,10 +7395,16 @@ async def test_agent_page_delete_and_component_create_have_both_serial_orders(
                 )
                 assert other_components.status_code == 200, other_components.text
                 assert other_components.json() == []
-                assert (
-                    await _agent_structural_state(database, workspace_id, reviewer_pool)
-                    == before_failed_delete
+                after_component_first = await _agent_structural_state(
+                    database, workspace_id, reviewer_pool
                 )
+                assert after_component_first[0] == (
+                    before_failed_delete[0][0] + 1,
+                    before_failed_delete[0][1],
+                    before_failed_delete[0][2] + 1,
+                    before_failed_delete[0][3] + 1,
+                )
+                assert len(after_component_first[1]) == len(before_failed_delete[1]) + 1
                 async with owner_connection(
                     database.settings.resolved_owner_dsn(),
                     expected_database=database.name,
