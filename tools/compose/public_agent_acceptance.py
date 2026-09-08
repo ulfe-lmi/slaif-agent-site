@@ -2327,8 +2327,8 @@ def _run_component_render_loop(
         )
         _expect_component_error(
             design,
-            status=422,
-            code="DOMAIN_VALIDATION_FAILED",
+            status=403,
+            code="AUTHORIZATION_DENIED",
             label="component-design",
         )
         assert_component_negative_state("component-design")
