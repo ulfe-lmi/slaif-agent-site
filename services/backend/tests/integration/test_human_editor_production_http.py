@@ -957,6 +957,88 @@ async def test_editor_agent_structural_races_share_workspace_site_lock(
                     editor_item.status_code == 201
                 )
 
+                editor_internal_page = await editor_client.post(
+                    f"{editor_root}/pages/",
+                    headers=editor_headers("editor-internal-page-create"),
+                    json={
+                        "slug": "editor-internal",
+                        "title": "Editor internal",
+                        "status": "DRAFT",
+                        "locale": "en-US",
+                    },
+                )
+                assert editor_internal_page.status_code == 201, (
+                    editor_internal_page.text
+                )
+                editor_internal_page_id = UUID(editor_internal_page.json()["id"])
+                editor_internal_navigation = await editor_client.post(
+                    f"{editor_root}/navigation",
+                    headers=editor_headers("editor-internal-navigation"),
+                    json={
+                        "key": "editor-internal",
+                        "label": "Editor internal",
+                        "settings": {},
+                    },
+                )
+                assert editor_internal_navigation.status_code == 201, (
+                    editor_internal_navigation.text
+                )
+                editor_internal_navigation_id = UUID(
+                    editor_internal_navigation.json()["id"]
+                )
+                editor_internal_item = await editor_client.post(
+                    f"{editor_root}/navigation/{editor_internal_navigation_id}/items",
+                    headers=editor_headers("editor-internal-item"),
+                    json={
+                        "navigation_id": str(editor_internal_navigation_id),
+                        "target_kind": "INTERNAL",
+                        "target_value": "/editor-internal",
+                        "labels": {"en-US": "Editor internal"},
+                        "locale": "en-US",
+                        "position": 0,
+                    },
+                )
+                assert editor_internal_item.status_code == 201, (
+                    editor_internal_item.text
+                )
+                editor_internal_item_id = UUID(editor_internal_item.json()["id"])
+                editor_orphaned = await editor_client.patch(
+                    f"{editor_root}/pages/{editor_internal_page_id}",
+                    headers=editor_headers("editor-internal-orphan"),
+                    json={
+                        "slug": "editor-internal-renamed",
+                        "title": "Editor internal",
+                        "status": "DRAFT",
+                        "expected_row_version": 1,
+                    },
+                )
+                assert editor_orphaned.status_code == 409, editor_orphaned.text
+                editor_internal_unchanged = await editor_client.get(
+                    f"{editor_root}/pages/{editor_internal_page_id}",
+                    headers=editor_headers("editor-internal-read"),
+                )
+                assert editor_internal_unchanged.status_code == 200
+                assert editor_internal_unchanged.json()["slug"] == "editor-internal"
+                editor_item_removed = await editor_client.delete(
+                    f"{editor_root}/navigation-items/{editor_internal_item_id}"
+                    "?expected_row_version=1",
+                    headers=editor_headers("editor-internal-remove"),
+                )
+                assert editor_item_removed.status_code == 204, editor_item_removed.text
+                editor_route_change_allowed = await editor_client.patch(
+                    f"{editor_root}/pages/{editor_internal_page_id}",
+                    headers=editor_headers("editor-internal-route-allowed"),
+                    json={
+                        "slug": "editor-internal-renamed",
+                        "title": "Editor internal",
+                        "status": "DRAFT",
+                        "expected_row_version": 1,
+                    },
+                )
+                assert editor_route_change_allowed.status_code == 200, (
+                    editor_route_change_allowed.text
+                )
+
                 async with owner_pool.acquire() as owner:
                     secondary_id = await owner.fetchval(
                         "SELECT id FROM content.site_locale_base "

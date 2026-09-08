@@ -453,6 +453,7 @@ async def _assert_downgrade_compatible(
         "055_001",
         "056_001",
         "057_001",
+        "058_001",
     }:
         return
     workspace_rows = await connection.fetch(

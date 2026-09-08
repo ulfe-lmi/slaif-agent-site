@@ -1143,6 +1143,43 @@ async def test_dynamic_detail_hostile_render_matrix_fails_closed(
                 "DELETE FROM content.navigation_base WHERE id=$1",
                 corrupt_navigation_id,
             )
+
+        dangling_navigation_id, dangling_item_id = uuid4(), uuid4()
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            await owner.execute(
+                "INSERT INTO content.navigation_base "
+                "(id,site_id,key,label,labels,settings) VALUES "
+                "($1,$2,'dangling','Dangling','{}','{}')",
+                dangling_navigation_id,
+                site.site_id,
+            )
+            await owner.execute(
+                "INSERT INTO content.navigation_item_base "
+                "(id,site_id,navigation_id,parent_id,parent_key,page_id,target_kind,"
+                "target_value,labels,locale,position) VALUES "
+                "($1,$2,$3,NULL,$4,NULL,'INTERNAL','/dangling',$5,'en-US',0)",
+                dangling_item_id,
+                site.site_id,
+                dangling_navigation_id,
+                "00000000-0000-0000-0000-000000000000",
+                '{"en-US":"Dangling"}',
+            )
+        await assert_http_not_found(
+            "/s/dynamic-hostile-matrix/news/valid-item", expected_status=503
+        )
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            await owner.execute(
+                "DELETE FROM content.navigation_item_base WHERE id=$1",
+                dangling_item_id,
+            )
+            await owner.execute(
+                "DELETE FROM content.navigation_base WHERE id=$1",
+                dangling_navigation_id,
+            )
         await assert_http_not_found("/s/dynamic-hostile-matrix/news/excluded-item")
         for name in hostile_parent_ids:
             await assert_http_not_found(f"/s/dynamic-hostile-matrix/{name}/valid-item")
@@ -1354,6 +1391,65 @@ async def test_dynamic_detail_hostile_render_matrix_fails_closed(
                 valid_item_id,
             )
         await assert_http_not_found("/s/dynamic-hostile-matrix/sl-si/news/valid-item")
+
+        draft_page_id, draft_navigation_id, draft_item_id = uuid4(), uuid4(), uuid4()
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            await owner.execute(
+                "INSERT INTO content.page_base "
+                "(id,site_id,slug,title,status,locale,parent_id,route_template) "
+                "VALUES ($1,$2,'draft-only','Draft only','DRAFT','en-US',NULL,NULL)",
+                draft_page_id,
+                site.site_id,
+            )
+            await owner.execute(
+                "INSERT INTO content.navigation_base "
+                "(id,site_id,key,label,labels,settings) VALUES "
+                "($1,$2,'draft-target','Draft target','{}','{}')",
+                draft_navigation_id,
+                site.site_id,
+            )
+            await owner.execute(
+                "INSERT INTO content.navigation_item_base "
+                "(id,site_id,navigation_id,parent_id,parent_key,page_id,target_kind,"
+                "target_value,labels,locale,position) VALUES "
+                "($1,$2,$3,NULL,$4,NULL,'INTERNAL','/draft-only',$5,'en-US',0)",
+                draft_item_id,
+                site.site_id,
+                draft_navigation_id,
+                "00000000-0000-0000-0000-000000000000",
+                '{"en-US":"Draft"}',
+            )
+        await assert_http_not_found(
+            "/s/dynamic-hostile-matrix/news/valid-item", expected_status=503
+        )
+        preview_with_draft = await service.preview(
+            RenderPreviewRequest(
+                authority="localhost",
+                path="/s/dynamic-hostile-matrix/news/valid-item",
+                workspace_id=preview_workspace_id,
+                session_token=session_token,
+            )
+        )
+        assert preview_with_draft.route_kind == "page"
+        assert any(
+            item.target.value == "/draft-only"
+            for navigation in preview_with_draft.navigation
+            for item in navigation.items
+        )
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            await owner.execute(
+                "DELETE FROM content.navigation_item_base WHERE id=$1", draft_item_id
+            )
+            await owner.execute(
+                "DELETE FROM content.navigation_base WHERE id=$1", draft_navigation_id
+            )
+            await owner.execute(
+                "DELETE FROM content.page_base WHERE id=$1", draft_page_id
+            )
 
         for slug in ("draft-item", "archived-item", "unknown-item"):
             await assert_http_not_found(f"/s/dynamic-hostile-matrix/news/{slug}")

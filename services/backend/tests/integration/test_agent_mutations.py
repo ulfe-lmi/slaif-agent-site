@@ -2083,7 +2083,7 @@ async def test_agent_redirect_051_migration_round_trip_preserves_data_and_privil
             await owner.fetchval(
                 "SELECT version_num::text FROM control.alembic_version"
             )
-            == "057_001"
+            == "058_001"
         )
         assert tuple(
             await owner.fetchrow(
@@ -2155,9 +2155,8 @@ async def test_agent_057_navigation_route_migration_round_trip_preserves_privile
         database.settings.resolved_owner_dsn(),
         expected_database=database.name,
         operation="upgrade",
-        revision="head",
+        revision="057_001",
     )
-    await reconcile(database.settings)
     async with owner_connection(
         database.settings.resolved_owner_dsn(), expected_database=database.name
     ) as owner:
@@ -2192,6 +2191,84 @@ async def test_agent_057_navigation_route_migration_round_trip_preserves_privile
         assert await owner.fetchval(
             "SELECT has_function_privilege('slaif_editor_runtime',$1,'EXECUTE')",
             "content.slaif_navigation_item_create(uuid,uuid,uuid,uuid,text,text,jsonb,text,integer)",
+        )
+        assert await owner.fetchval(
+            "SELECT has_function_privilege('slaif_public_reader',$1,'EXECUTE')",
+            "content.slaif_render_navigation_items(uuid,text,text[])",
+        )
+
+
+@pytest.mark.asyncio
+async def test_agent_058_internal_navigation_migration_round_trip_preserves_privileges(
+    agent_site_database: AgentSiteDatabase,
+) -> None:
+    """Verify the internal-route repair reverses without leaking grants."""
+
+    database = agent_site_database
+    _token, _seeded = await _seed(database)
+    await _disable_content_cow(database)
+    await run_migration(
+        database.settings.resolved_owner_dsn(),
+        expected_database=database.name,
+        operation="downgrade",
+        revision="057_001",
+    )
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        assert (
+            await owner.fetchval(
+                "SELECT version_num::text FROM control.alembic_version"
+            )
+            == "057_001"
+        )
+        for signature in (
+            "content.slaif_navigation_internal_target_exists(uuid,text)",
+            "content.slaif_navigation_internal_target_validate(uuid,text)",
+            "content.slaif_navigation_validate_internal_targets(uuid)",
+            "content.slaif_render_internal_target_exists(uuid,text,text,text[])",
+        ):
+            assert not await owner.fetchval("SELECT to_regprocedure($1)", signature)
+    await run_migration(
+        database.settings.resolved_owner_dsn(),
+        expected_database=database.name,
+        operation="upgrade",
+        revision="head",
+    )
+    await reconcile(database.settings)
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        assert (
+            await owner.fetchval(
+                "SELECT version_num::text FROM control.alembic_version"
+            )
+            == "058_001"
+        )
+        for signature in (
+            "content.slaif_navigation_internal_target_exists(uuid,text)",
+            "content.slaif_navigation_internal_target_validate(uuid,text)",
+            "content.slaif_navigation_validate_internal_targets(uuid)",
+            "content.slaif_render_internal_target_exists(uuid,text,text,text[])",
+        ):
+            assert (
+                await owner.fetchval(
+                    "SELECT pg_get_userbyid(proowner) FROM pg_proc "
+                    "WHERE oid=$1::regprocedure",
+                    signature,
+                )
+                == "slaif_owner"
+            )
+            assert not await owner.fetchval(
+                "SELECT has_function_privilege('public',$1,'EXECUTE')", signature
+            )
+        assert await owner.fetchval(
+            "SELECT has_function_privilege('slaif_agent_runtime',$1,'EXECUTE')",
+            "content.slaif_agent_navigation_item_update(uuid,uuid,uuid,uuid,text,text,jsonb,text,integer)",
+        )
+        assert await owner.fetchval(
+            "SELECT has_function_privilege('slaif_editor_runtime',$1,'EXECUTE')",
+            "content.slaif_page_update(uuid,text,text,text,integer)",
         )
         assert await owner.fetchval(
             "SELECT has_function_privilege('slaif_public_reader',$1,'EXECUTE')",
@@ -2250,7 +2327,7 @@ async def test_agent_049_plain_page_data_downgrade_and_upgrade_preserves_data(
             await owner.fetchval(
                 "SELECT version_num::text FROM control.alembic_version"
             )
-            == "057_001"
+            == "058_001"
         )
         row = await owner.fetchrow(
             "SELECT title, route_template, deleted_at FROM content.page_base "
@@ -3463,6 +3540,566 @@ async def test_agent_navigation_page_targets_are_concrete_and_race_safe(
         await preview_pool.close()
         await agent_pool.close()
         await reviewer_pool.close()
+
+
+@pytest.mark.asyncio
+async def test_agent_internal_navigation_dependencies_are_atomic_and_site_bound(
+    agent_site_database: AgentSiteDatabase,
+) -> None:
+    """Reject route mutations that would orphan fixed INTERNAL navigation."""
+
+    database = agent_site_database
+    _token, seeded = await _seed(database)
+    scopes = [
+        "site:read",
+        "page:create",
+        "page:read",
+        "page:write",
+        "page:move",
+        "page:delete",
+        "route:write",
+        "navigation:read",
+        "navigation:create",
+        "navigation:write",
+        "navigation:delete",
+    ]
+    token, workspace_id = await _workspace_capability(
+        database, seeded, scopes, "Agent Internal Navigation Workspace"
+    )
+    other_token, other_workspace_id = await _workspace_capability(
+        database, seeded, scopes, "Agent Internal Navigation Other Workspace"
+    )
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        await owner.execute(
+            "UPDATE control.capability SET request_quota=300, mutation_quota=300, "
+            "delete_quota=100 WHERE workspace_id=ANY($1::uuid[])",
+            [workspace_id, other_workspace_id],
+        )
+        await owner.execute(
+            "INSERT INTO content.page_base "
+            "(id,site_id,slug,title,status,locale) VALUES "
+            "($1,$2,'foreign','Foreign','PUBLISHED','en-US')",
+            uuid4(),
+            seeded["site_b_id"],
+        )
+    app = create_agent_app(
+        settings=ServiceSettings.for_test(),
+        database_settings=_agent_settings(database),
+    )
+    agent_pool = await database.role_pool("slaif_agent_runtime")
+    reviewer_pool = await database.role_pool("slaif_reviewer")
+    try:
+        async with app.router.lifespan_context(app):
+            async with (
+                httpx.AsyncClient(
+                    transport=httpx.ASGITransport(app=app), base_url="http://agent.test"
+                ) as client,
+                httpx.AsyncClient(
+                    transport=httpx.ASGITransport(app=app), base_url="http://other.test"
+                ) as other_client,
+            ):
+                headers = {"Authorization": f"Bearer {token}"}
+                other_headers = {"Authorization": f"Bearer {other_token}"}
+
+                async def create_page(
+                    key: str,
+                    slug: str,
+                    *,
+                    bearer: str = token,
+                    parent_id: str | None = None,
+                    route_template: str | None = None,
+                    status: str = "PUBLISHED",
+                    locale: str = "en-US",
+                ) -> httpx.Response:
+                    body: dict[str, object] = {
+                        "slug": slug,
+                        "title": slug.title(),
+                        "status": status,
+                        "locale": locale,
+                    }
+                    if parent_id is not None:
+                        body["parent_id"] = parent_id
+                    if route_template is not None:
+                        body["route_template"] = route_template
+                    return await client.post(
+                        "/api/agent/v1/pages",
+                        headers={
+                            "Authorization": f"Bearer {bearer}",
+                            "Idempotency-Key": key,
+                        },
+                        json=body,
+                    )
+
+                async def durable_state(
+                    current_workspace: UUID = workspace_id,
+                ) -> tuple[int, int, int, int, int]:
+                    async with owner_connection(
+                        database.settings.resolved_owner_dsn(),
+                        expected_database=database.name,
+                    ) as owner:
+                        row = await owner.fetchrow(
+                            "SELECT c.mutation_used, "
+                            "(SELECT count(*) FROM control.agent_idempotency "
+                            "WHERE workspace_id=$1), "
+                            "(SELECT count(*) FROM audit.agent_mutation "
+                            "WHERE workspace_id=$1), "
+                            "(SELECT count(*) FROM content.page_changes "
+                            "WHERE session_id=$1), "
+                            "(SELECT count(*) FROM content.navigation_item_changes "
+                            "WHERE session_id=$1) "
+                            "FROM control.capability c WHERE c.workspace_id=$1 "
+                            "ORDER BY c.created_at DESC LIMIT 1",
+                            current_workspace,
+                        )
+                    return tuple(row)
+
+                async def operations(
+                    current_workspace: UUID = workspace_id,
+                ) -> tuple[Any, ...]:
+                    async with asyncpg_cow_reviewer(reviewer_pool) as reviewer:
+                        return tuple(
+                            sorted(
+                                await reviewer.operations(
+                                    current_workspace, schema="content"
+                                )
+                            )
+                        )
+
+                async def assert_rejected(
+                    response: httpx.Response,
+                    *,
+                    key: str,
+                    before: tuple[int, int, int, int, int],
+                    before_operations: tuple[Any, ...],
+                    current_workspace: UUID = workspace_id,
+                ) -> None:
+                    assert response.status_code == 422, response.text
+                    assert await durable_state(current_workspace) == before
+                    assert await operations(current_workspace) == before_operations
+                    async with owner_connection(
+                        database.settings.resolved_owner_dsn(),
+                        expected_database=database.name,
+                    ) as owner:
+                        assert (
+                            await owner.fetchval(
+                                "SELECT count(*) FROM control.agent_idempotency "
+                                "WHERE workspace_id=$1 AND idempotency_key=$2",
+                                current_workspace,
+                                key,
+                            )
+                            == 0
+                        )
+
+                target_parent = await create_page(
+                    "internal-target-parent", "internal-target-parent"
+                )
+                assert target_parent.status_code == 201, target_parent.text
+                target = await create_page(
+                    "internal-target-create",
+                    "internal-target",
+                    parent_id=target_parent.json()["record"]["id"],
+                )
+                relocation_parent = await create_page(
+                    "internal-relocation-parent", "relocation-parent"
+                )
+                assert target.status_code == relocation_parent.status_code == 201
+                target_id = UUID(target.json()["record"]["id"])
+                relocation_parent_id = relocation_parent.json()["record"]["id"]
+                navigation = await client.post(
+                    "/api/agent/v1/navigation",
+                    headers={
+                        **headers,
+                        "Idempotency-Key": "internal-navigation-create",
+                    },
+                    json={"key": "internal", "label": "Internal"},
+                )
+                assert navigation.status_code == 201, navigation.text
+                navigation_id = UUID(navigation.json()["record"]["id"])
+                item = await client.post(
+                    f"/api/agent/v1/navigation/{navigation_id}/items",
+                    headers={**headers, "Idempotency-Key": "internal-item-create"},
+                    json={
+                        "target_kind": "INTERNAL",
+                        "target_value": "/internal-target-parent/internal-target",
+                        "labels": {"en-US": "Target"},
+                    },
+                )
+                assert item.status_code == 201, item.text
+                item_id = UUID(item.json()["record"]["id"])
+
+                for key, body in (
+                    (
+                        "internal-slug-orphan",
+                        {"slug": "internal-renamed", "expected_row_version": 1},
+                    ),
+                    (
+                        "internal-locale-orphan",
+                        {"locale": "en", "expected_row_version": 1},
+                    ),
+                    (
+                        "internal-template-orphan",
+                        {"route_template": "{slug}", "expected_row_version": 1},
+                    ),
+                ):
+                    before = await durable_state()
+                    before_operations = await operations()
+                    response = await client.patch(
+                        f"/api/agent/v1/pages/{target_id}",
+                        headers={**headers, "Idempotency-Key": key},
+                        json=body,
+                    )
+                    await assert_rejected(
+                        response,
+                        key=key,
+                        before=before,
+                        before_operations=before_operations,
+                    )
+                target_read = await client.get(
+                    f"/api/agent/v1/pages/{target_id}", headers=headers
+                )
+                assert target_read.status_code == 200, target_read.text
+                assert target_read.json()["slug"] == "internal-target"
+                assert target_read.json()["locale"] == "en-US"
+                assert target_read.json()["route_template"] is None
+                assert target_read.json()["row_version"] == 1
+
+                before = await durable_state()
+                before_operations = await operations()
+                direct_move = await client.post(
+                    f"/api/agent/v1/pages/{target_id}:move",
+                    headers={**headers, "Idempotency-Key": "internal-direct-move"},
+                    json={
+                        "parent_id": relocation_parent_id,
+                        "expected_row_version": 1,
+                    },
+                )
+                await assert_rejected(
+                    direct_move,
+                    key="internal-direct-move",
+                    before=before,
+                    before_operations=before_operations,
+                )
+
+                ancestor = await create_page(
+                    "internal-ancestor-create", "internal-ancestor"
+                )
+                descendant = await create_page(
+                    "internal-descendant-create",
+                    "internal-descendant",
+                    parent_id=ancestor.json()["record"]["id"],
+                )
+                new_parent = await create_page(
+                    "internal-new-ancestor-parent", "new-ancestor-parent"
+                )
+                assert (
+                    ancestor.status_code
+                    == descendant.status_code
+                    == new_parent.status_code
+                    == 201
+                )
+                ancestor_id = UUID(ancestor.json()["record"]["id"])
+                ancestor_item = await client.post(
+                    f"/api/agent/v1/navigation/{navigation_id}/items",
+                    headers={**headers, "Idempotency-Key": "internal-descendant-item"},
+                    json={
+                        "target_kind": "INTERNAL",
+                        "target_value": "/internal-ancestor/internal-descendant",
+                        "labels": {"en-US": "Descendant"},
+                    },
+                )
+                assert ancestor_item.status_code == 201, ancestor_item.text
+                before = await durable_state()
+                before_operations = await operations()
+                ancestor_move = await client.post(
+                    f"/api/agent/v1/pages/{ancestor_id}:move",
+                    headers={**headers, "Idempotency-Key": "internal-ancestor-move"},
+                    json={
+                        "parent_id": new_parent.json()["record"]["id"],
+                        "expected_row_version": 1,
+                    },
+                )
+                await assert_rejected(
+                    ancestor_move,
+                    key="internal-ancestor-move",
+                    before=before,
+                    before_operations=before_operations,
+                )
+
+                delete_target = await create_page(
+                    "internal-delete-target", "internal-delete"
+                )
+                assert delete_target.status_code == 201, delete_target.text
+                delete_target_id = UUID(delete_target.json()["record"]["id"])
+                delete_item = await client.post(
+                    f"/api/agent/v1/navigation/{navigation_id}/items",
+                    headers={**headers, "Idempotency-Key": "internal-delete-item"},
+                    json={
+                        "target_kind": "INTERNAL",
+                        "target_value": "/internal-delete",
+                        "labels": {"en-US": "Delete"},
+                    },
+                )
+                assert delete_item.status_code == 201, delete_item.text
+                before = await durable_state()
+                before_operations = await operations()
+                deleted = await client.request(
+                    "DELETE",
+                    f"/api/agent/v1/pages/{delete_target_id}",
+                    headers={**headers, "Idempotency-Key": "internal-page-delete"},
+                    json={"expected_row_version": 1},
+                )
+                await assert_rejected(
+                    deleted,
+                    key="internal-page-delete",
+                    before=before,
+                    before_operations=before_operations,
+                )
+
+                removed = await client.request(
+                    "DELETE",
+                    f"/api/agent/v1/navigation-items/{item_id}",
+                    headers={**headers, "Idempotency-Key": "internal-item-remove"},
+                    json={"expected_row_version": 1},
+                )
+                assert removed.status_code == 200, removed.text
+                renamed = await client.patch(
+                    f"/api/agent/v1/pages/{target_id}",
+                    headers={**headers, "Idempotency-Key": "internal-slug-allowed"},
+                    json={"slug": "internal-renamed", "expected_row_version": 1},
+                )
+                assert renamed.status_code == 200, renamed.text
+                assert (
+                    renamed.json()["record"]["effective_route"]
+                    == "/internal-target-parent/internal-renamed"
+                )
+
+                source = await create_page(
+                    "internal-retarget-source", "internal-retarget-source"
+                )
+                destination = await create_page(
+                    "internal-retarget-destination", "internal-retarget-destination"
+                )
+                assert source.status_code == destination.status_code == 201
+                retarget_item = await client.post(
+                    f"/api/agent/v1/navigation/{navigation_id}/items",
+                    headers={**headers, "Idempotency-Key": "internal-retarget-item"},
+                    json={
+                        "target_kind": "INTERNAL",
+                        "target_value": "/internal-retarget-source",
+                        "labels": {"en-US": "Retarget"},
+                    },
+                )
+                assert retarget_item.status_code == 201, retarget_item.text
+                retargeted = await client.patch(
+                    f"/api/agent/v1/navigation-items/{retarget_item.json()['record']['id']}",
+                    headers={**headers, "Idempotency-Key": "internal-retarget"},
+                    json={
+                        "target_kind": "INTERNAL",
+                        "target_value": "/internal-retarget-destination",
+                        "labels": {"en-US": "Retargeted"},
+                        "expected_row_version": 1,
+                    },
+                )
+                assert retargeted.status_code == 200, retargeted.text
+                source_renamed = await client.patch(
+                    f"/api/agent/v1/pages/{source.json()['record']['id']}",
+                    headers={**headers, "Idempotency-Key": "internal-source-allowed"},
+                    json={"slug": "internal-source-renamed", "expected_row_version": 1},
+                )
+                assert source_renamed.status_code == 200, source_renamed.text
+
+                dynamic_parent = await create_page(
+                    "internal-dynamic-parent", "internal-dynamic-parent"
+                )
+                dynamic_page = await create_page(
+                    "internal-dynamic-page",
+                    "entry",
+                    parent_id=dynamic_parent.json()["record"]["id"],
+                    route_template="{slug}",
+                )
+                assert dynamic_parent.status_code == dynamic_page.status_code == 201
+                for key, target_value in (
+                    ("internal-absent", "/internal-absent"),
+                    ("internal-dynamic-target", "/internal-dynamic-parent/entry"),
+                    ("internal-foreign-target", "/foreign"),
+                    ("internal-reserved-target", "/admin"),
+                ):
+                    before = await durable_state()
+                    before_operations = await operations()
+                    response = await client.post(
+                        f"/api/agent/v1/navigation/{navigation_id}/items",
+                        headers={**headers, "Idempotency-Key": key},
+                        json={
+                            "target_kind": "INTERNAL",
+                            "target_value": target_value,
+                            "labels": {"en-US": key},
+                        },
+                    )
+                    await assert_rejected(
+                        response,
+                        key=key,
+                        before=before,
+                        before_operations=before_operations,
+                    )
+
+                workspace_page = await create_page(
+                    "internal-workspace-page", "internal-workspace-page"
+                )
+                assert workspace_page.status_code == 201, workspace_page.text
+                other_navigation = await other_client.post(
+                    "/api/agent/v1/navigation",
+                    headers={
+                        **other_headers,
+                        "Idempotency-Key": "internal-other-navigation",
+                    },
+                    json={"key": "internal-other", "label": "Other"},
+                )
+                assert other_navigation.status_code == 201, other_navigation.text
+                other_navigation_id = UUID(other_navigation.json()["record"]["id"])
+                before = await durable_state(other_workspace_id)
+                before_operations = await operations(other_workspace_id)
+                wrong_workspace = await other_client.post(
+                    f"/api/agent/v1/navigation/{other_navigation_id}/items",
+                    headers={
+                        **other_headers,
+                        "Idempotency-Key": "internal-wrong-workspace",
+                    },
+                    json={
+                        "target_kind": "INTERNAL",
+                        "target_value": "/internal-workspace-page",
+                        "labels": {"en-US": "Wrong workspace"},
+                    },
+                )
+                await assert_rejected(
+                    wrong_workspace,
+                    key="internal-wrong-workspace",
+                    before=before,
+                    before_operations=before_operations,
+                    current_workspace=other_workspace_id,
+                )
+
+                draft_target = await create_page(
+                    "internal-draft-target", "internal-draft-target", status="DRAFT"
+                )
+                assert draft_target.status_code == 201, draft_target.text
+                draft_item = await client.post(
+                    f"/api/agent/v1/navigation/{navigation_id}/items",
+                    headers={**headers, "Idempotency-Key": "internal-draft-item"},
+                    json={
+                        "target_kind": "INTERNAL",
+                        "target_value": "/internal-draft-target",
+                        "labels": {"en-US": "Draft"},
+                    },
+                )
+                assert draft_item.status_code == 201, draft_item.text
+
+                race_page = await create_page("internal-race-page", "internal-race")
+                race_parent = await create_page(
+                    "internal-race-parent", "internal-race-parent"
+                )
+                assert race_page.status_code == race_parent.status_code == 201
+                race_page_id = UUID(race_page.json()["record"]["id"])
+                race_parent_id = race_parent.json()["record"]["id"]
+                before_race = await durable_state()
+                operations_before_race = await operations()
+                async with owner_connection(
+                    database.settings.resolved_owner_dsn(),
+                    expected_database=database.name,
+                ) as blocker:
+                    async with blocker.transaction():
+                        lock_key = await blocker.fetchval(
+                            "SELECT hashtextextended($1,994)",
+                            f"{workspace_id}:{seeded['site_id']}:page-structure",
+                        )
+                        await blocker.execute(
+                            "SELECT pg_advisory_xact_lock($1::bigint)", lock_key
+                        )
+                        race_create = asyncio.create_task(
+                            client.post(
+                                f"/api/agent/v1/navigation/{navigation_id}/items",
+                                headers={
+                                    **headers,
+                                    "Idempotency-Key": "internal-race-create",
+                                },
+                                json={
+                                    "target_kind": "INTERNAL",
+                                    "target_value": "/internal-race",
+                                    "labels": {"en-US": "Race"},
+                                },
+                            )
+                        )
+                        race_move = asyncio.create_task(
+                            client.post(
+                                f"/api/agent/v1/pages/{race_page_id}:move",
+                                headers={
+                                    **headers,
+                                    "Idempotency-Key": "internal-race-move",
+                                },
+                                json={
+                                    "parent_id": race_parent_id,
+                                    "expected_row_version": 1,
+                                },
+                            )
+                        )
+                        await _wait_for_page_structure_waiters(blocker, 2)
+                    race_create_result, race_move_result = await asyncio.gather(
+                        race_create, race_move
+                    )
+                assert sorted(
+                    (race_create_result.status_code, race_move_result.status_code)
+                ) in ([200, 422], [201, 422]), (
+                    race_create_result.text,
+                    race_move_result.text,
+                )
+                after_race = await durable_state()
+                assert after_race[:3] == (
+                    before_race[0] + 1,
+                    before_race[1] + 1,
+                    before_race[2] + 1,
+                )
+                assert after_race[3] == before_race[3] + int(
+                    race_move_result.status_code == 200
+                )
+                if race_create_result.status_code == 201:
+                    assert after_race[4] > before_race[4]
+                else:
+                    assert after_race[4] == before_race[4]
+                assert len(await operations()) == len(operations_before_race) + 1
+                final_race_page = await client.get(
+                    f"/api/agent/v1/pages/{race_page_id}", headers=headers
+                )
+                race_items = await client.get(
+                    f"/api/agent/v1/navigation/{navigation_id}/items",
+                    headers=headers,
+                )
+                assert final_race_page.status_code == race_items.status_code == 200
+                moved = final_race_page.json()["parent_id"] == race_parent_id
+                has_race_item = any(
+                    row["target_value"] == "/internal-race" for row in race_items.json()
+                )
+                assert moved == (not has_race_item)
+                for key, response in (
+                    ("internal-race-create", race_create_result),
+                    ("internal-race-move", race_move_result),
+                ):
+                    async with owner_connection(
+                        database.settings.resolved_owner_dsn(),
+                        expected_database=database.name,
+                    ) as owner:
+                        present = await owner.fetchval(
+                            "SELECT count(*) FROM control.agent_idempotency "
+                            "WHERE workspace_id=$1 AND idempotency_key=$2",
+                            workspace_id,
+                            key,
+                        )
+                    assert present == int(response.status_code in {200, 201})
+    finally:
+        await agent_pool.close()
+        await reviewer_pool.close()
+        _TEST_CAPABILITY_BY_WORKSPACE.pop(workspace_id, None)
+        _TEST_CAPABILITY_BY_WORKSPACE.pop(other_workspace_id, None)
 
 
 @pytest.mark.asyncio
@@ -4738,7 +5375,7 @@ async def test_agent_046_047_migration_round_trip_preserves_contract_and_state(
                 await owner.fetchval(
                     "SELECT version_num::text FROM control.alembic_version"
                 )
-                == "057_001"
+                == "058_001"
             )
             assert await owner.fetchval(
                 "SELECT to_regprocedure($1)",
@@ -5067,7 +5704,7 @@ async def test_agent_048_data_bearing_round_trip_preserves_relations_views_and_a
         )
         await reconcile(database.settings)
         final_status = await status(database.settings)
-        assert final_status.revision == "057_001"
+        assert final_status.revision == "058_001"
         assert final_status.state.value == "HARDENED"
         assert final_status.safe
         assert await cow_rows() == content_before
@@ -12249,7 +12886,7 @@ async def test_semantic_audit_contract_is_strict_and_reversible(
                 await owner.fetchval(
                     "SELECT version_num::text FROM control.alembic_version"
                 )
-                == "057_001"
+                == "058_001"
             )
             assert (
                 await owner.fetchval(
