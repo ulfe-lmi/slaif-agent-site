@@ -1762,6 +1762,17 @@ async def test_editor_http_site_data_substrate_is_cow_and_versioned(
                     )
                 ).status_code == 204
 
+                home_page = await client.post(
+                    f"{root}/pages/",
+                    headers=mutation("site-home-page"),
+                    json={
+                        "slug": "home",
+                        "title": "Home",
+                        "status": "DRAFT",
+                        "locale": "en",
+                    },
+                )
+                assert home_page.status_code == 201, home_page.text
                 nav = await client.post(
                     f"{root}/navigation",
                     headers=mutation("site-navigation"),
@@ -1776,7 +1787,7 @@ async def test_editor_http_site_data_substrate_is_cow_and_versioned(
                     json={
                         "navigation_id": navigation_id,
                         "target_kind": "INTERNAL",
-                        "target_value": "/home",
+                        "target_value": "/",
                         "labels": {"en": "Home"},
                         "position": 0,
                     },

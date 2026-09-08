@@ -2390,7 +2390,7 @@ async def test_navigation_corruption_matrix_fails_closed(
             "page_id=NULL,target_value='//unsafe' WHERE id=$1",
             item_id,
         )
-        with pytest.raises(ProjectionError, match="navigation_target"):
+        with pytest.raises(ProjectionError, match="unavailable"):
             await service.canonical(request)
         await corrupt(
             "UPDATE content.navigation_item_base SET target_kind='EXTERNAL',"

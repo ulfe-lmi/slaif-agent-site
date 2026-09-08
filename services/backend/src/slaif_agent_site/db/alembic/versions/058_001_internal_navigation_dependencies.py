@@ -44,7 +44,7 @@ def _internal_route_helpers_sql() -> str:
         DECLARE page_row record; page_route text;
         BEGIN
             IF p_site_id IS NULL OR p_target_value IS NULL
-               OR NOT (p_target_value='/' OR p_target_value ~ '^/[a-z0-9][a-z0-9._~/-]*$')
+               OR NOT (p_target_value='/' OR p_target_value ~ '^/[A-Za-z0-9][A-Za-z0-9._~/-]*$')
                OR p_target_value ~ '//|\\\\|\\.\\.'
                OR p_target_value ~ '^/(api|admin|agent|control|editor|health|internal|login|logout|mcp|media|preview|setup|_next|static)(/|$)'
             THEN RETURN false; END IF;
@@ -110,7 +110,7 @@ def _internal_route_helpers_sql() -> str:
                    SELECT 1 FROM unnest(p_statuses) AS selected(status)
                    WHERE selected.status NOT IN ('PUBLISHED','DRAFT')
                )
-               OR NOT (p_target_value='/' OR p_target_value ~ '^/[a-z0-9][a-z0-9._~/-]*$')
+               OR NOT (p_target_value='/' OR p_target_value ~ '^/[A-Za-z0-9][A-Za-z0-9._~/-]*$')
                OR p_target_value ~ '//|\\\\|\\.\\.'
             THEN RETURN false; END IF;
             FOR page_row IN
@@ -214,7 +214,7 @@ def _agent_target_sql(*, restored: bool) -> str:
             ELSIF p_page_id IS NOT NULL THEN
                 RAISE EXCEPTION 'NAVIGATION_PAGE_INVALID' USING ERRCODE='P0003';
             ELSIF p_target_kind='INTERNAL' THEN
-                IF NOT (p_target_value='/' OR p_target_value ~ '^/[a-z0-9][a-z0-9._~/-]*$')
+                IF NOT (p_target_value='/' OR p_target_value ~ '^/[A-Za-z0-9][A-Za-z0-9._~/-]*$')
                    OR p_target_value ~ '//|\\\\|\\.\\.'
                    OR p_target_value ~ '^/(api|admin|agent|control|editor|health|internal|login|logout|mcp|media|preview|setup|_next|static)(/|$)'
                 THEN RAISE EXCEPTION 'NAVIGATION_TARGET_UNSAFE' USING ERRCODE='P0003'; END IF;
@@ -248,7 +248,8 @@ def _render_navigation_sql(*, restored: bool) -> str:
                 ELSIF item.target_kind='INTERNAL' THEN
                     IF item.page_id IS NOT NULL
                        OR NOT content.slaif_render_internal_target_exists(
-                           p_site_id,item.target_value,p_locale,p_statuses)
+                           p_site_id,item.target_value,
+                           coalesce(item.locale,p_locale),p_statuses)
                     THEN
                         RAISE EXCEPTION 'RENDER_NAVIGATION_TARGET_INVALID'
                             USING ERRCODE='P0003';
