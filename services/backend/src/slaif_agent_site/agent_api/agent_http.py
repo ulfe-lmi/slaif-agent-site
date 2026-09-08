@@ -506,6 +506,7 @@ async def _execute_mutation(
     dependency_type_id: UUID | None = None,
     dependency_item_id: UUID | None = None,
     dependency_view_id: UUID | None = None,
+    no_effect: bool = False,
 ) -> AgentMutationResponse:
     try:
         key = validate_idempotency_key(idempotency_key)
@@ -533,6 +534,7 @@ async def _execute_mutation(
             dependency_type_id=dependency_type_id,
             dependency_item_id=dependency_item_id,
             dependency_view_id=dependency_view_id,
+            no_effect=no_effect,
         )
     except DurableIdempotencyMismatchError:
         raise IdempotencyMismatchError() from None
@@ -1608,7 +1610,6 @@ async def update_component(
     idempotency_key: IdempotencyHeader = None,
 ) -> AgentMutationResponse:
     context = await _authenticate(request)
-    _require_scope(context, "component-content-props:write")
     current = cast(
         CompositionNodeRecord,
         await _execute_read(
@@ -1634,6 +1635,21 @@ async def update_component(
         )
     except ValueError:
         raise AuthorizationError() from None
+    if not required_scopes:
+        if current.row_version != body.expected_row_version:
+            raise ResourceConflictError()
+        return await _execute_mutation(
+            request,
+            context,
+            body,
+            idempotency_key,
+            resource_type="composition_node",
+            status_code=200,
+            no_effect=True,
+            mutate=lambda service: service.get_component_for_site(
+                context.site_id, component_id
+            ),
+        )
     return await _execute_mutation(
         request,
         context,

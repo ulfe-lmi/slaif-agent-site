@@ -97,6 +97,63 @@ describe("puck adapter", () => {
       "full",
       "narrow",
     ]);
+    expect(generatePuckConfig().Button!.fields.variant?.options).toEqual([
+      "primary",
+      "secondary",
+      "ghost",
+    ]);
+    expect(generatePuckConfig().Image!.fields.aspectRatio?.options).toEqual([
+      "auto",
+      "16:9",
+      "4:3",
+      "1:1",
+    ]);
+    expect(generatePuckConfig().CollectionGrid!.fields.columns).toMatchObject({
+      type: "number",
+      min: 1,
+      max: 6,
+    });
+    const visualProps: readonly NormalizedCompositionNode[] = [
+      {
+        id: "visual-button",
+        componentType: "Button",
+        schemaVersion: "1",
+        parentId: null,
+        slotKey: "default",
+        orderKey: 0,
+        props: {
+          label: "Open",
+          href: "/open",
+          variant: { desktop: "primary", mobile: "ghost" },
+        },
+      },
+      {
+        id: "visual-image",
+        componentType: "Image",
+        schemaVersion: "1",
+        parentId: null,
+        slotKey: "default",
+        orderKey: 1,
+        props: {
+          mediaId: "11111111-1111-4111-8111-111111111111",
+          alt: "Preview",
+          aspectRatio: { desktop: "16:9", mobile: "1:1" },
+        },
+      },
+      {
+        id: "visual-collection",
+        componentType: "CollectionGrid",
+        schemaVersion: "1",
+        parentId: null,
+        slotKey: "default",
+        orderKey: 2,
+        props: {
+          viewId: "22222222-2222-4222-8222-222222222222",
+          columns: { desktop: 4, tablet: 2, mobile: 1 },
+        },
+      },
+    ];
+    expect(puckToComposition(compositionToPuck(visualProps))).toEqual(visualProps);
   });
 
   it("preserves nested parent and slot metadata through a Puck edit", () => {

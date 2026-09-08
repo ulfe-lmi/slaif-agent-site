@@ -151,7 +151,7 @@ class AgentCreateCompositionNodeRequest(BaseModel):
 
 
 class AgentUpdateCompositionNodeRequest(BaseModel):
-    """Agent PATCH: content props only, with an explicit row version."""
+    """Agent PATCH: bounded content/design props with an explicit row version."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 

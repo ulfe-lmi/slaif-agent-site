@@ -24,6 +24,10 @@ _VALIDATE_FUNCTION = (
 _TREE_VALIDATE_FUNCTION = (
     "content.slaif_agent_component_tree_validate_design(uuid,uuid)"
 )
+_NO_EFFECT_IDEMPOTENCY_FUNCTION = (
+    "control.slaif_agent_idempotency_complete_no_effect("
+    "uuid,uuid,text,text,uuid,integer,jsonb,text,uuid,uuid)"
+)
 
 
 def _execute_block(sql: str) -> None:
@@ -49,6 +53,12 @@ def _authority_sql() -> str:
             SELECT CASE
                 WHEN p_component_type='Section' AND p_prop_key='variant'
                     THEN 'component-variant:write'
+                WHEN p_component_type='Button' AND p_prop_key='variant'
+                    THEN 'component-variant:write'
+                WHEN p_component_type='Image' AND p_prop_key='aspectRatio'
+                    THEN 'component-props:write'
+                WHEN p_component_type='CollectionGrid' AND p_prop_key='columns'
+                    THEN 'layout:write'
                 WHEN p_component_type IN ('Section','Container','Columns','Grid','Stack','Heading')
                      AND p_prop_key='alignment' THEN 'layout:write'
                 WHEN p_component_type='Container' AND p_prop_key='width'
@@ -70,7 +80,7 @@ def _authority_sql() -> str:
         ) RETURNS uuid LANGUAGE plpgsql SECURITY DEFINER
         SET search_path=pg_catalog AS $fn$
         DECLARE capability_id uuid; scopes jsonb; constraints jsonb; key text;
-            value jsonb; authority text; required_scope text; changed boolean:=false;
+            value jsonb; authority text; required_scope text;
         BEGIN
             capability_id:=control.slaif_agent_require_capability(p_site_id,'site:read');
             SELECT c.scopes,c.resource_constraints INTO scopes,constraints
@@ -81,15 +91,15 @@ def _authority_sql() -> str:
             THEN RAISE EXCEPTION 'COMPONENT_PROPS_INVALID' USING ERRCODE='P0003'; END IF;
             FOR key,value IN SELECT entry.key,entry.value FROM jsonb_each(p_new_props) entry LOOP
                 IF (p_old_props->key) IS DISTINCT FROM value THEN
-                    changed:=true;
                     required_scope:=control.slaif_agent_component_design_scope(
                         p_component_type,key);
                     SELECT entry->'props'->key->>'authority' INTO authority
                     FROM control.component_catalog c,jsonb_array_elements(c.definitions) entry
                     WHERE c.version='catalog-v1' AND entry->>'type'=p_component_type;
-                    IF required_scope IS NULL AND authority='design' THEN
-                        RAISE EXCEPTION 'COMPONENT_DESIGN_PROP_UNSUPPORTED' USING ERRCODE='P0003';
-                    ELSIF required_scope IS NULL OR authority='content' THEN
+                    IF required_scope IS NULL THEN
+                        IF authority='design' THEN
+                            RAISE EXCEPTION 'COMPONENT_DESIGN_PROP_UNSUPPORTED' USING ERRCODE='P0003';
+                        END IF;
                         IF NOT (scopes ? 'component-content-props:write') THEN
                             RAISE EXCEPTION 'AGENT_SCOPE_DENIED' USING ERRCODE='P0007';
                         END IF;
@@ -134,10 +144,51 @@ def _authority_sql() -> str:
                     END IF;
                 END IF;
             END LOOP;
-            IF NOT changed AND NOT (scopes ? 'component-content-props:write') THEN
-                RAISE EXCEPTION 'AGENT_SCOPE_DENIED' USING ERRCODE='P0007';
-            END IF;
             RETURN capability_id;
+        END;
+        $fn$;
+    """
+
+
+def _no_effect_completion_sql() -> str:
+    return """
+        CREATE OR REPLACE FUNCTION control.slaif_agent_idempotency_complete_no_effect(
+            p_capability_id uuid,p_workspace_id uuid,p_idempotency_key text,
+            p_request_digest text,p_operation_id uuid,p_status_code integer,
+            p_response_body jsonb,p_resource_type text,p_resource_id uuid,
+            p_site_id uuid
+        ) RETURNS void LANGUAGE plpgsql SECURITY DEFINER
+        SET search_path=pg_catalog AS $fn$
+        DECLARE expected_site uuid;
+        BEGIN
+            SELECT workspace.site_id INTO expected_site
+            FROM control.capability capability
+            JOIN control.workspace workspace ON workspace.id=capability.workspace_id
+            WHERE capability.id=p_capability_id
+              AND capability.workspace_id=p_workspace_id
+              AND workspace.site_id=p_site_id;
+            IF expected_site IS NULL
+               OR p_status_code NOT BETWEEN 200 AND 299
+               OR p_response_body IS NULL
+               OR p_resource_id IS NULL
+               OR p_resource_type NOT IN ('content_type','field_definition',
+                   'content_item','page','composition_node')
+            THEN
+                RAISE EXCEPTION 'INVALID_IDEMPOTENCY_COMPLETION'
+                    USING ERRCODE='P0001';
+            END IF;
+            UPDATE control.agent_idempotency
+            SET status_code=p_status_code,response_body=p_response_body,
+                resource_type=p_resource_type,resource_id=p_resource_id,
+                completed_at=current_timestamp
+            WHERE capability_id=p_capability_id AND workspace_id=p_workspace_id
+              AND idempotency_key=p_idempotency_key
+              AND request_digest=p_request_digest AND operation_id=p_operation_id
+              AND status_code IS NULL;
+            IF NOT FOUND THEN
+                RAISE EXCEPTION 'IDEMPOTENCY_RESERVATION_NOT_FOUND'
+                    USING ERRCODE='P0002';
+            END IF;
         END;
         $fn$;
     """
@@ -317,6 +368,12 @@ def _component_update_sql() -> str:
             PERFORM content.slaif_agent_component_validate_design(
                 p_site_id,old.page_id,old.id,old.component_type,old.schema_version,
                 old.parent_id,old.slot_key,old.props,p_props,true);
+            IF old.props IS NOT DISTINCT FROM p_props THEN
+                RETURN QUERY SELECT old.id,old.site_id,old.page_id,old.component_type,
+                    old.schema_version,old.catalog_version,old.parent_id,old.slot_key,
+                    old.order_key,old.props,old.row_version,old.created_at,old.updated_at;
+                RETURN;
+            END IF;
             IF NOT control.slaif_agent_quota_consume(capability_id,workspace_id,'mutation') THEN
                 RAISE EXCEPTION 'AGENT_MUTATION_QUOTA_EXCEEDED' USING ERRCODE='P0005';
             END IF;
@@ -429,17 +486,23 @@ def upgrade() -> None:
     _execute_block(_authority_sql())
     _execute_block(_design_validator_sql())
     _execute_block(_component_update_sql())
+    _execute_block(_no_effect_completion_sql())
     for function in (
         _DESIGN_SCOPE_FUNCTION,
         _AUTHORIZE_FUNCTION,
         _VALIDATE_FUNCTION,
         _TREE_VALIDATE_FUNCTION,
+        _NO_EFFECT_IDEMPOTENCY_FUNCTION,
     ):
         op.execute(f"ALTER FUNCTION {function} OWNER TO slaif_owner")
         op.execute(f"REVOKE ALL ON FUNCTION {function} FROM PUBLIC")
+    op.execute(
+        f"GRANT EXECUTE ON FUNCTION {_NO_EFFECT_IDEMPOTENCY_FUNCTION} TO slaif_agent_runtime"
+    )
 
 
 def downgrade() -> None:
+    op.execute(f"DROP FUNCTION IF EXISTS {_NO_EFFECT_IDEMPOTENCY_FUNCTION}")
     op.execute(f"DROP FUNCTION IF EXISTS {_TREE_VALIDATE_FUNCTION}")
     _execute_block(_restore_tree_validator_sql())
     op.execute(f"DROP FUNCTION IF EXISTS {_VALIDATE_FUNCTION}")

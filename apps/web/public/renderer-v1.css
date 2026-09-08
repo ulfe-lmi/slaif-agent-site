@@ -271,6 +271,21 @@ body:has(.renderer-surface) {
   background: rgba(15, 30, 36, 0.78);
 }
 
+.renderer-image-placeholder--16-9 {
+  min-height: 0;
+  aspect-ratio: 16 / 9;
+}
+
+.renderer-image-placeholder--4-3 {
+  min-height: 0;
+  aspect-ratio: 4 / 3;
+}
+
+.renderer-image-placeholder--1-1 {
+  min-height: 0;
+  aspect-ratio: 1 / 1;
+}
+
 .renderer-button {
   display: inline-flex;
   min-height: 2.75rem;
@@ -289,6 +304,30 @@ body:has(.renderer-surface) {
 .renderer-button--ghost {
   color: #f4f7f8;
   background: transparent;
+}
+
+.renderer-collection[class~="renderer-collection-grid--1"] {
+  grid-template-columns: repeat(1, minmax(0, 1fr));
+}
+
+.renderer-collection[class~="renderer-collection-grid--2"] {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.renderer-collection[class~="renderer-collection-grid--3"] {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.renderer-collection[class~="renderer-collection-grid--4"] {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.renderer-collection[class~="renderer-collection-grid--5"] {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.renderer-collection[class~="renderer-collection-grid--6"] {
+  grid-template-columns: repeat(6, minmax(0, 1fr));
 }
 
 .renderer-header,
@@ -491,6 +530,51 @@ body:has(.renderer-surface) {
   [class~="renderer-columns--tablet-4"] {
     grid-template-columns: repeat(4, minmax(0, 1fr));
   }
+
+  [class~="renderer-button--tablet-secondary"],
+  [class~="renderer-button--tablet-ghost"] {
+    color: #f4f7f8;
+    background: transparent;
+  }
+
+  [class~="renderer-image-placeholder--tablet-16-9"] {
+    min-height: 0;
+    aspect-ratio: 16 / 9;
+  }
+
+  [class~="renderer-image-placeholder--tablet-4-3"] {
+    min-height: 0;
+    aspect-ratio: 4 / 3;
+  }
+
+  [class~="renderer-image-placeholder--tablet-1-1"] {
+    min-height: 0;
+    aspect-ratio: 1 / 1;
+  }
+
+  .renderer-collection[class~="renderer-collection-grid--tablet-1"] {
+    grid-template-columns: repeat(1, minmax(0, 1fr));
+  }
+
+  .renderer-collection[class~="renderer-collection-grid--tablet-2"] {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .renderer-collection[class~="renderer-collection-grid--tablet-3"] {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .renderer-collection[class~="renderer-collection-grid--tablet-4"] {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .renderer-collection[class~="renderer-collection-grid--tablet-5"] {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+
+  .renderer-collection[class~="renderer-collection-grid--tablet-6"] {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 760px) {
@@ -617,5 +701,50 @@ body:has(.renderer-surface) {
 
   [class~="renderer-columns--mobile-4"] {
     grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  [class~="renderer-button--mobile-secondary"],
+  [class~="renderer-button--mobile-ghost"] {
+    color: #f4f7f8;
+    background: transparent;
+  }
+
+  [class~="renderer-image-placeholder--mobile-16-9"] {
+    min-height: 0;
+    aspect-ratio: 16 / 9;
+  }
+
+  [class~="renderer-image-placeholder--mobile-4-3"] {
+    min-height: 0;
+    aspect-ratio: 4 / 3;
+  }
+
+  [class~="renderer-image-placeholder--mobile-1-1"] {
+    min-height: 0;
+    aspect-ratio: 1 / 1;
+  }
+
+  .renderer-collection[class~="renderer-collection-grid--mobile-1"] {
+    grid-template-columns: repeat(1, minmax(0, 1fr));
+  }
+
+  .renderer-collection[class~="renderer-collection-grid--mobile-2"] {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .renderer-collection[class~="renderer-collection-grid--mobile-3"] {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .renderer-collection[class~="renderer-collection-grid--mobile-4"] {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .renderer-collection[class~="renderer-collection-grid--mobile-5"] {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+
+  .renderer-collection[class~="renderer-collection-grid--mobile-6"] {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
   }
 }

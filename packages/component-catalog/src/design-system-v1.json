@@ -212,11 +212,57 @@
       ]
     },
     {"type": "RichText", "variants": [], "properties": []},
-    {"type": "Image", "variants": [], "properties": []},
-    {"type": "Button", "variants": [], "properties": []},
+    {
+      "type": "Image",
+      "variants": [],
+      "properties": [
+        {
+          "name": "aspectRatio",
+          "type": "enum",
+          "values": ["auto", "16:9", "4:3", "1:1"],
+          "default": "auto",
+          "required": false,
+          "responsive": true,
+          "scope": "component-props:write",
+          "token": "aspect_ratio"
+        }
+      ]
+    },
+    {
+      "type": "Button",
+      "variants": [],
+      "properties": [
+        {
+          "name": "variant",
+          "type": "enum",
+          "values": ["primary", "secondary", "ghost"],
+          "default": "primary",
+          "required": false,
+          "responsive": true,
+          "scope": "component-variant:write",
+          "token": "variant"
+        }
+      ]
+    },
     {"type": "Quote", "variants": [], "properties": []},
     {"type": "CollectionList", "variants": [], "properties": []},
-    {"type": "CollectionGrid", "variants": [], "properties": []},
+    {
+      "type": "CollectionGrid",
+      "variants": [],
+      "properties": [
+        {
+          "name": "columns",
+          "type": "number",
+          "minimum": 1,
+          "maximum": 6,
+          "default": 3,
+          "required": false,
+          "responsive": true,
+          "scope": "layout:write",
+          "token": "columns"
+        }
+      ]
+    },
     {"type": "CollectionDetail", "variants": [], "properties": []},
     {"type": "Hero", "variants": [], "properties": []},
     {"type": "Statistics", "variants": [], "properties": []},

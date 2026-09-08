@@ -1304,7 +1304,7 @@
       },
       "AgentUpdateCompositionNodeRequest": {
         "additionalProperties": false,
-        "description": "Agent PATCH: content props only, with an explicit row version.",
+        "description": "Agent PATCH: bounded content/design props with an explicit row version.",
         "properties": {
           "expected_row_version": {
             "exclusiveMinimum": 0.0,
@@ -5017,134 +5017,834 @@
           }
         ],
         "summary": "Update Component",
-        "x-slaif-component-design-scopes": [
+        "x-slaif-component-property-scopes": [
+          {
+            "component_type": "Section",
+            "property": "background",
+            "responsive": false,
+            "responsive_required_scopes": [],
+            "scalar_required_scopes": [],
+            "supported": false
+          },
           {
             "component_type": "Section",
             "property": "variant",
-            "required_scopes": [
-              "component-variant:write",
+            "responsive": true,
+            "responsive_required_scopes": [
               "responsive-design:write"
-            ]
+            ],
+            "scalar_required_scopes": [
+              "component-variant:write"
+            ],
+            "supported": true
           },
           {
             "component_type": "Section",
             "property": "alignment",
-            "required_scopes": [
-              "layout:write",
+            "responsive": true,
+            "responsive_required_scopes": [
               "responsive-design:write"
-            ]
+            ],
+            "scalar_required_scopes": [
+              "layout:write"
+            ],
+            "supported": true
           },
           {
             "component_type": "Container",
             "property": "width",
-            "required_scopes": [
-              "layout:write",
+            "responsive": true,
+            "responsive_required_scopes": [
               "responsive-design:write"
-            ]
+            ],
+            "scalar_required_scopes": [
+              "layout:write"
+            ],
+            "supported": true
           },
           {
             "component_type": "Container",
             "property": "alignment",
-            "required_scopes": [
-              "layout:write",
+            "responsive": true,
+            "responsive_required_scopes": [
               "responsive-design:write"
-            ]
+            ],
+            "scalar_required_scopes": [
+              "layout:write"
+            ],
+            "supported": true
           },
           {
             "component_type": "Columns",
             "property": "count",
-            "required_scopes": [
-              "layout:write",
+            "responsive": true,
+            "responsive_required_scopes": [
               "responsive-design:write"
-            ]
+            ],
+            "scalar_required_scopes": [
+              "layout:write"
+            ],
+            "supported": true
           },
           {
             "component_type": "Columns",
             "property": "gap",
-            "required_scopes": [
-              "layout:write",
+            "responsive": true,
+            "responsive_required_scopes": [
               "responsive-design:write"
-            ]
+            ],
+            "scalar_required_scopes": [
+              "layout:write"
+            ],
+            "supported": true
           },
           {
             "component_type": "Columns",
             "property": "alignment",
-            "required_scopes": [
-              "layout:write",
+            "responsive": true,
+            "responsive_required_scopes": [
               "responsive-design:write"
-            ]
+            ],
+            "scalar_required_scopes": [
+              "layout:write"
+            ],
+            "supported": true
           },
           {
             "component_type": "Grid",
             "property": "columns",
-            "required_scopes": [
-              "layout:write",
+            "responsive": true,
+            "responsive_required_scopes": [
               "responsive-design:write"
-            ]
+            ],
+            "scalar_required_scopes": [
+              "layout:write"
+            ],
+            "supported": true
           },
           {
             "component_type": "Grid",
             "property": "gap",
-            "required_scopes": [
-              "layout:write",
+            "responsive": true,
+            "responsive_required_scopes": [
               "responsive-design:write"
-            ]
+            ],
+            "scalar_required_scopes": [
+              "layout:write"
+            ],
+            "supported": true
           },
           {
             "component_type": "Grid",
             "property": "alignment",
-            "required_scopes": [
-              "layout:write",
+            "responsive": true,
+            "responsive_required_scopes": [
               "responsive-design:write"
-            ]
+            ],
+            "scalar_required_scopes": [
+              "layout:write"
+            ],
+            "supported": true
           },
           {
             "component_type": "Stack",
             "property": "direction",
-            "required_scopes": [
-              "layout:write",
+            "responsive": true,
+            "responsive_required_scopes": [
               "responsive-design:write"
-            ]
+            ],
+            "scalar_required_scopes": [
+              "layout:write"
+            ],
+            "supported": true
           },
           {
             "component_type": "Stack",
             "property": "gap",
-            "required_scopes": [
-              "layout:write",
+            "responsive": true,
+            "responsive_required_scopes": [
               "responsive-design:write"
-            ]
+            ],
+            "scalar_required_scopes": [
+              "layout:write"
+            ],
+            "supported": true
           },
           {
             "component_type": "Stack",
             "property": "alignment",
-            "required_scopes": [
-              "layout:write",
+            "responsive": true,
+            "responsive_required_scopes": [
               "responsive-design:write"
-            ]
+            ],
+            "scalar_required_scopes": [
+              "layout:write"
+            ],
+            "supported": true
           },
           {
             "component_type": "Spacer",
             "property": "size",
-            "required_scopes": [
-              "layout:write",
+            "responsive": true,
+            "responsive_required_scopes": [
               "responsive-design:write"
-            ]
+            ],
+            "scalar_required_scopes": [
+              "layout:write"
+            ],
+            "supported": true
+          },
+          {
+            "component_type": "Heading",
+            "property": "level",
+            "responsive": false,
+            "responsive_required_scopes": [],
+            "scalar_required_scopes": [
+              "component-content-props:write"
+            ],
+            "supported": true
+          },
+          {
+            "component_type": "Heading",
+            "property": "text",
+            "responsive": false,
+            "responsive_required_scopes": [],
+            "scalar_required_scopes": [
+              "component-content-props:write"
+            ],
+            "supported": true
           },
           {
             "component_type": "Heading",
             "property": "alignment",
-            "required_scopes": [
-              "layout:write",
+            "responsive": true,
+            "responsive_required_scopes": [
               "responsive-design:write"
+            ],
+            "scalar_required_scopes": [
+              "layout:write"
+            ],
+            "supported": true
+          },
+          {
+            "component_type": "RichText",
+            "property": "content",
+            "responsive": false,
+            "responsive_required_scopes": [],
+            "scalar_required_scopes": [
+              "component-content-props:write"
+            ],
+            "supported": true
+          },
+          {
+            "component_type": "Image",
+            "property": "alt",
+            "responsive": false,
+            "responsive_required_scopes": [],
+            "scalar_required_scopes": [
+              "component-content-props:write"
+            ],
+            "supported": true
+          },
+          {
+            "component_type": "Image",
+            "property": "aspectRatio",
+            "responsive": true,
+            "responsive_required_scopes": [
+              "responsive-design:write"
+            ],
+            "scalar_required_scopes": [
+              "component-props:write"
+            ],
+            "supported": true
+          },
+          {
+            "component_type": "Image",
+            "property": "mediaId",
+            "responsive": false,
+            "responsive_required_scopes": [],
+            "scalar_required_scopes": [
+              "component-content-props:write"
+            ],
+            "supported": true
+          },
+          {
+            "component_type": "Button",
+            "property": "href",
+            "responsive": false,
+            "responsive_required_scopes": [],
+            "scalar_required_scopes": [
+              "component-content-props:write"
+            ],
+            "supported": true
+          },
+          {
+            "component_type": "Button",
+            "property": "label",
+            "responsive": false,
+            "responsive_required_scopes": [],
+            "scalar_required_scopes": [
+              "component-content-props:write"
+            ],
+            "supported": true
+          },
+          {
+            "component_type": "Button",
+            "property": "variant",
+            "responsive": true,
+            "responsive_required_scopes": [
+              "responsive-design:write"
+            ],
+            "scalar_required_scopes": [
+              "component-variant:write"
+            ],
+            "supported": true
+          },
+          {
+            "component_type": "Quote",
+            "property": "attribution",
+            "responsive": false,
+            "responsive_required_scopes": [],
+            "scalar_required_scopes": [
+              "component-content-props:write"
+            ],
+            "supported": true
+          },
+          {
+            "component_type": "Quote",
+            "property": "text",
+            "responsive": false,
+            "responsive_required_scopes": [],
+            "scalar_required_scopes": [
+              "component-content-props:write"
+            ],
+            "supported": true
+          },
+          {
+            "component_type": "CollectionList",
+            "property": "limit",
+            "responsive": false,
+            "responsive_required_scopes": [],
+            "scalar_required_scopes": [
+              "component-content-props:write"
+            ],
+            "supported": true
+          },
+          {
+            "component_type": "CollectionList",
+            "property": "viewId",
+            "responsive": false,
+            "responsive_required_scopes": [],
+            "scalar_required_scopes": [
+              "component-content-props:write"
+            ],
+            "supported": true
+          },
+          {
+            "component_type": "CollectionGrid",
+            "property": "columns",
+            "responsive": true,
+            "responsive_required_scopes": [
+              "responsive-design:write"
+            ],
+            "scalar_required_scopes": [
+              "layout:write"
+            ],
+            "supported": true
+          },
+          {
+            "component_type": "CollectionGrid",
+            "property": "viewId",
+            "responsive": false,
+            "responsive_required_scopes": [],
+            "scalar_required_scopes": [
+              "component-content-props:write"
+            ],
+            "supported": true
+          },
+          {
+            "component_type": "CollectionDetail",
+            "property": "viewId",
+            "responsive": false,
+            "responsive_required_scopes": [],
+            "scalar_required_scopes": [
+              "component-content-props:write"
+            ],
+            "supported": true
+          },
+          {
+            "component_type": "Hero",
+            "property": "heading",
+            "responsive": false,
+            "responsive_required_scopes": [],
+            "scalar_required_scopes": [
+              "component-content-props:write"
+            ],
+            "supported": true
+          },
+          {
+            "component_type": "Hero",
+            "property": "mediaId",
+            "responsive": false,
+            "responsive_required_scopes": [],
+            "scalar_required_scopes": [
+              "component-content-props:write"
+            ],
+            "supported": true
+          },
+          {
+            "component_type": "Hero",
+            "property": "subheading",
+            "responsive": false,
+            "responsive_required_scopes": [],
+            "scalar_required_scopes": [
+              "component-content-props:write"
+            ],
+            "supported": true
+          },
+          {
+            "component_type": "Statistics",
+            "property": "items",
+            "responsive": false,
+            "responsive_required_scopes": [],
+            "scalar_required_scopes": [
+              "component-content-props:write"
+            ],
+            "supported": true
+          },
+          {
+            "component_type": "Timeline",
+            "property": "items",
+            "responsive": false,
+            "responsive_required_scopes": [],
+            "scalar_required_scopes": [
+              "component-content-props:write"
+            ],
+            "supported": true
+          },
+          {
+            "component_type": "FAQ",
+            "property": "items",
+            "responsive": false,
+            "responsive_required_scopes": [],
+            "scalar_required_scopes": [
+              "component-content-props:write"
+            ],
+            "supported": true
+          }
+        ],
+        "x-slaif-conditional-scopes": [
+          {
+            "component_types": [
+              "Section"
+            ],
+            "required_scopes": [
+              "component-variant:write"
+            ],
+            "when_fields": [
+              "props.variant"
+            ]
+          },
+          {
+            "component_types": [
+              "Section"
+            ],
+            "required_scopes": [
+              "layout:write"
+            ],
+            "when_fields": [
+              "props.alignment"
+            ]
+          },
+          {
+            "component_types": [
+              "Container"
+            ],
+            "required_scopes": [
+              "layout:write"
+            ],
+            "when_fields": [
+              "props.width"
+            ]
+          },
+          {
+            "component_types": [
+              "Container"
+            ],
+            "required_scopes": [
+              "layout:write"
+            ],
+            "when_fields": [
+              "props.alignment"
+            ]
+          },
+          {
+            "component_types": [
+              "Columns"
+            ],
+            "required_scopes": [
+              "layout:write"
+            ],
+            "when_fields": [
+              "props.count"
+            ]
+          },
+          {
+            "component_types": [
+              "Columns"
+            ],
+            "required_scopes": [
+              "layout:write"
+            ],
+            "when_fields": [
+              "props.gap"
+            ]
+          },
+          {
+            "component_types": [
+              "Columns"
+            ],
+            "required_scopes": [
+              "layout:write"
+            ],
+            "when_fields": [
+              "props.alignment"
+            ]
+          },
+          {
+            "component_types": [
+              "Grid"
+            ],
+            "required_scopes": [
+              "layout:write"
+            ],
+            "when_fields": [
+              "props.columns"
+            ]
+          },
+          {
+            "component_types": [
+              "Grid"
+            ],
+            "required_scopes": [
+              "layout:write"
+            ],
+            "when_fields": [
+              "props.gap"
+            ]
+          },
+          {
+            "component_types": [
+              "Grid"
+            ],
+            "required_scopes": [
+              "layout:write"
+            ],
+            "when_fields": [
+              "props.alignment"
+            ]
+          },
+          {
+            "component_types": [
+              "Stack"
+            ],
+            "required_scopes": [
+              "layout:write"
+            ],
+            "when_fields": [
+              "props.direction"
+            ]
+          },
+          {
+            "component_types": [
+              "Stack"
+            ],
+            "required_scopes": [
+              "layout:write"
+            ],
+            "when_fields": [
+              "props.gap"
+            ]
+          },
+          {
+            "component_types": [
+              "Stack"
+            ],
+            "required_scopes": [
+              "layout:write"
+            ],
+            "when_fields": [
+              "props.alignment"
+            ]
+          },
+          {
+            "component_types": [
+              "Spacer"
+            ],
+            "required_scopes": [
+              "layout:write"
+            ],
+            "when_fields": [
+              "props.size"
+            ]
+          },
+          {
+            "component_types": [
+              "Heading"
+            ],
+            "required_scopes": [
+              "component-content-props:write"
+            ],
+            "when_fields": [
+              "props.level"
+            ]
+          },
+          {
+            "component_types": [
+              "Heading"
+            ],
+            "required_scopes": [
+              "component-content-props:write"
+            ],
+            "when_fields": [
+              "props.text"
+            ]
+          },
+          {
+            "component_types": [
+              "Heading"
+            ],
+            "required_scopes": [
+              "layout:write"
+            ],
+            "when_fields": [
+              "props.alignment"
+            ]
+          },
+          {
+            "component_types": [
+              "RichText"
+            ],
+            "required_scopes": [
+              "component-content-props:write"
+            ],
+            "when_fields": [
+              "props.content"
+            ]
+          },
+          {
+            "component_types": [
+              "Image"
+            ],
+            "required_scopes": [
+              "component-content-props:write"
+            ],
+            "when_fields": [
+              "props.alt"
+            ]
+          },
+          {
+            "component_types": [
+              "Image"
+            ],
+            "required_scopes": [
+              "component-props:write"
+            ],
+            "when_fields": [
+              "props.aspectRatio"
+            ]
+          },
+          {
+            "component_types": [
+              "Image"
+            ],
+            "required_scopes": [
+              "component-content-props:write"
+            ],
+            "when_fields": [
+              "props.mediaId"
+            ]
+          },
+          {
+            "component_types": [
+              "Button"
+            ],
+            "required_scopes": [
+              "component-content-props:write"
+            ],
+            "when_fields": [
+              "props.href"
+            ]
+          },
+          {
+            "component_types": [
+              "Button"
+            ],
+            "required_scopes": [
+              "component-content-props:write"
+            ],
+            "when_fields": [
+              "props.label"
+            ]
+          },
+          {
+            "component_types": [
+              "Button"
+            ],
+            "required_scopes": [
+              "component-variant:write"
+            ],
+            "when_fields": [
+              "props.variant"
+            ]
+          },
+          {
+            "component_types": [
+              "Quote"
+            ],
+            "required_scopes": [
+              "component-content-props:write"
+            ],
+            "when_fields": [
+              "props.attribution"
+            ]
+          },
+          {
+            "component_types": [
+              "Quote"
+            ],
+            "required_scopes": [
+              "component-content-props:write"
+            ],
+            "when_fields": [
+              "props.text"
+            ]
+          },
+          {
+            "component_types": [
+              "CollectionList"
+            ],
+            "required_scopes": [
+              "component-content-props:write"
+            ],
+            "when_fields": [
+              "props.limit"
+            ]
+          },
+          {
+            "component_types": [
+              "CollectionList"
+            ],
+            "required_scopes": [
+              "component-content-props:write"
+            ],
+            "when_fields": [
+              "props.viewId"
+            ]
+          },
+          {
+            "component_types": [
+              "CollectionGrid"
+            ],
+            "required_scopes": [
+              "layout:write"
+            ],
+            "when_fields": [
+              "props.columns"
+            ]
+          },
+          {
+            "component_types": [
+              "CollectionGrid"
+            ],
+            "required_scopes": [
+              "component-content-props:write"
+            ],
+            "when_fields": [
+              "props.viewId"
+            ]
+          },
+          {
+            "component_types": [
+              "CollectionDetail"
+            ],
+            "required_scopes": [
+              "component-content-props:write"
+            ],
+            "when_fields": [
+              "props.viewId"
+            ]
+          },
+          {
+            "component_types": [
+              "Hero"
+            ],
+            "required_scopes": [
+              "component-content-props:write"
+            ],
+            "when_fields": [
+              "props.heading"
+            ]
+          },
+          {
+            "component_types": [
+              "Hero"
+            ],
+            "required_scopes": [
+              "component-content-props:write"
+            ],
+            "when_fields": [
+              "props.mediaId"
+            ]
+          },
+          {
+            "component_types": [
+              "Hero"
+            ],
+            "required_scopes": [
+              "component-content-props:write"
+            ],
+            "when_fields": [
+              "props.subheading"
+            ]
+          },
+          {
+            "component_types": [
+              "Statistics"
+            ],
+            "required_scopes": [
+              "component-content-props:write"
+            ],
+            "when_fields": [
+              "props.items"
+            ]
+          },
+          {
+            "component_types": [
+              "Timeline"
+            ],
+            "required_scopes": [
+              "component-content-props:write"
+            ],
+            "when_fields": [
+              "props.items"
+            ]
+          },
+          {
+            "component_types": [
+              "FAQ"
+            ],
+            "required_scopes": [
+              "component-content-props:write"
+            ],
+            "when_fields": [
+              "props.items"
             ]
           }
         ],
-        "x-slaif-conditional-scopes": [],
         "x-slaif-idempotency": "required",
         "x-slaif-mutation": true,
-        "x-slaif-required-scopes": [
-          "component-content-props:write"
-        ]
+        "x-slaif-required-scopes": []
       }
     },
     "/api/agent/v1/components/{component_id}/move": {

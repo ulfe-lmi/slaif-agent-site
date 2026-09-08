@@ -146,10 +146,16 @@ labels and use deterministic desktop/tablet/mobile fallback, so the same
 normalized props are consumed by Puck, Render, and Web. Resource constraints
 can disable responsive editing or narrow allowed variants, and invalid,
 foreign, stale, wrong-version, or raw design input fails closed without a
-mutation envelope. The component PATCH OpenAPI operation publishes the exact
-component/property scope table in `x-slaif-component-design-scopes`, generated
-from the same authority; its ordinary `x-slaif-conditional-scopes` field
-continues to describe top-level request-field conditions.
+mutation envelope. The component PATCH OpenAPI operation has no fixed scope:
+its ordinary `x-slaif-conditional-scopes` entries identify the exact
+`props.<name>` and component type that trigger each scalar scope, while
+`x-slaif-component-property-scopes` additionally records whether that property
+accepts a responsive map and the extra responsive scope. Both are generated
+from the route policy and the same design/catalog authority.
+An empty or byte-equivalent PATCH checks the optimistic row version, requires
+no write scope, returns the unchanged record with no semantic action, and
+stores only the idempotency response needed for exact replay; it consumes no
+mutation quota and creates no audit or COW mutation.
 
 This order does not implement publication, review/freeze/promotion,
 workspace-management UI, site-global theme tokens, global regions,

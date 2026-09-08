@@ -142,17 +142,17 @@ fixture and retains all prior acceptance gates.
 
 The focused design-semantics integration adds a real PostgreSQL/public-Agent
 slice on the same normalized tree. It fetches the exact typed
-`design-system/v1` document, changes Section/Container/Grid/Heading variant,
-width, columns, gap, alignment, and desktop/tablet/mobile values, and proves
-mixed content-plus-design updates, Puck round-trip validation, Render/Web
-responsive consumption, resource narrowing, L1/L2 denials, individually
-missing conditional scopes, direct runtime-helper denial, stale/invalid input,
-and post-design structural create/move behavior. A deterministic PostgreSQL
-barrier proves one optimistic design PATCH winner and one `409` loser; a
-cancelled design PATCH leaves props, version, quota, idempotency, audit, and
-COW state unchanged. These focused tests run serially because the disposable
-fixture provisions shared product role names; concurrent test-file execution
-is not valid evidence.
+`design-system/v1` document, changes Section/Container/Grid/Heading and the
+existing Button/Image/CollectionGrid visual properties, and proves exact
+scalar versus responsive scopes, mixed-property denials with unchanged
+props/version/quota/idempotency/audit/COW state, L1 visual denials, direct
+runtime-helper denial, malformed device input, no-op replay/accounting,
+Puck round-trip validation, Render/Web responsive consumption, and resource
+narrowing. A deterministic PostgreSQL barrier proves one optimistic design
+PATCH winner and one `409` loser; a cancelled design PATCH leaves state
+unchanged. These focused tests run serially because the disposable fixture
+provisions shared product role names; concurrent test-file execution is not
+valid evidence.
 
 ## Browser-run contract and durable control-plane proof
 

@@ -155,6 +155,21 @@ def test_agent_page_patch_conditional_route_scope_is_machine_auditable() -> None
         {"route_template"},
     ) == ("route:write",)
 
+    component = next(
+        policy
+        for policy in route_policies_for(ProcessKind.AGENT_API)
+        if policy.method == "PATCH"
+        and policy.path_template == "/api/agent/v1/components/{component_id}"
+    )
+    assert component.required_scopes == ()
+    assert len(component.conditional_scopes) == 37
+    assert any(
+        condition.when_fields == ("props.variant",)
+        and condition.component_types == ("Button",)
+        and condition.required_scopes == ("component-variant:write",)
+        for condition in component.conditional_scopes
+    )
+
 
 def test_agent_design_system_is_a_capability_bound_read() -> None:
     design = next(

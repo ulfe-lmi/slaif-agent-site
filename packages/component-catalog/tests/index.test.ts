@@ -115,6 +115,24 @@ describe("component catalog", () => {
     expect(DESIGN_SYSTEM_DOCUMENT.components.map((item) => item.type)).toEqual(
       Array.from(COMPONENT_TYPES),
     );
+    expect(
+      DESIGN_SYSTEM_DOCUMENT.components
+        .find((item) => item.type === "Image")
+        ?.properties.find((item) => item.name === "aspectRatio"),
+    ).toMatchObject({
+      scope: "component-props:write",
+      responsive: true,
+    });
+    expect(
+      DESIGN_SYSTEM_DOCUMENT.components
+        .find((item) => item.type === "Button")
+        ?.properties.find((item) => item.name === "variant"),
+    ).toMatchObject({ scope: "component-variant:write" });
+    expect(
+      DESIGN_SYSTEM_DOCUMENT.components
+        .find((item) => item.type === "CollectionGrid")
+        ?.properties.find((item) => item.name === "columns"),
+    ).toMatchObject({ scope: "layout:write" });
     expect(JSON.stringify(DESIGN_SYSTEM_DOCUMENT)).not.toMatch(
       /javascript:|<script|style|font|selector|media query/i,
     );

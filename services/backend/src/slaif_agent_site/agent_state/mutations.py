@@ -110,6 +110,10 @@ BEGIN_IDEMPOTENCY_SQL = (
 COMPLETE_IDEMPOTENCY_SQL = (
     "SELECT control.slaif_agent_idempotency_complete($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)"
 )
+COMPLETE_NO_EFFECT_IDEMPOTENCY_SQL = (
+    "SELECT control.slaif_agent_idempotency_complete_no_effect("
+    "$1,$2,$3,$4,$5,$6,$7,$8,$9,$10)"
+)
 COMPLETE_SEMANTIC_IDEMPOTENCY_SQL = (
     "SELECT control.slaif_agent_idempotency_complete("
     "$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)"
@@ -1320,10 +1324,15 @@ async def _complete(
     action: str | None,
     method: str | None,
     quota_kind: str,
+    no_effect: bool,
 ) -> None:
     try:
+        if no_effect and action is not None:
+            raise AgentMutationUnavailableError()
         completion_sql = (
-            COMPLETE_SEMANTIC_IDEMPOTENCY_SQL
+            COMPLETE_NO_EFFECT_IDEMPOTENCY_SQL
+            if no_effect
+            else COMPLETE_SEMANTIC_IDEMPOTENCY_SQL
             if action is not None
             else COMPLETE_IDEMPOTENCY_SQL
         )
@@ -1381,6 +1390,7 @@ async def execute_agent_mutation(
     dependency_type_id: UUID | None = None,
     dependency_item_id: UUID | None = None,
     dependency_view_id: UUID | None = None,
+    no_effect: bool = False,
 ) -> AgentMutationResponse:
     """Reserve, execute, audit, and complete one atomic Agent mutation."""
 
@@ -1503,6 +1513,7 @@ async def execute_agent_mutation(
                 action=action,
                 method=method,
                 quota_kind=quota_kind,
+                no_effect=no_effect,
             )
             return response
     except asyncio.CancelledError:

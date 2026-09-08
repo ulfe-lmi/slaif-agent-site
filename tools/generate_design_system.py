@@ -30,6 +30,15 @@ _FORBIDDEN_TEXT = (
     "media query",
     "font url",
 )
+_UNSUPPORTED_CATALOG_DESIGN_PROPERTIES = {("Section", "background")}
+_DESIGN_SYSTEM_ONLY_PROPERTIES = {
+    ("Section", "alignment"),
+    ("Container", "alignment"),
+    ("Columns", "alignment"),
+    ("Grid", "alignment"),
+    ("Stack", "alignment"),
+    ("Heading", "alignment"),
+}
 
 
 def _document() -> dict[str, Any]:
@@ -71,6 +80,8 @@ def _document() -> dict[str, Any]:
     design_types = [item["type"] for item in value["components"]]
     if design_types != catalog_types:
         raise ValueError("design system component inventory is not catalog-v1 exact")
+    catalog_by_type = {item["type"]: item for item in catalog["components"]}
+    design_by_type = {item["type"]: item for item in value["components"]}
     for component in value["components"]:
         if not isinstance(component, dict) or set(component) != {
             "type",
@@ -95,6 +106,39 @@ def _document() -> dict[str, Any]:
                 raise ValueError("design property scope is not delegatable")
             if prop["responsive"] is not True:
                 raise ValueError("design properties must declare responsiveness")
+            catalog_prop = catalog_by_type[component["type"]]["props"].get(prop["name"])
+            if catalog_prop is None:
+                if (
+                    component["type"],
+                    prop["name"],
+                ) not in _DESIGN_SYSTEM_ONLY_PROPERTIES:
+                    raise ValueError(
+                        "design property is not catalog-v1 or approved extension"
+                    )
+                continue
+            if prop["type"] != catalog_prop["type"]:
+                raise ValueError("design property type disagrees with catalog-v1")
+            if prop["type"] == "enum" and prop.get("values") != catalog_prop.get(
+                "enum_values", []
+            ):
+                raise ValueError("design property enum disagrees with catalog-v1")
+            if prop["type"] == "number" and (
+                prop.get("minimum") != catalog_prop.get("minimum")
+                or prop.get("maximum") != catalog_prop.get("maximum")
+            ):
+                raise ValueError("design property bounds disagree with catalog-v1")
+    for component in catalog["components"]:
+        design_names = {
+            prop["name"] for prop in design_by_type[component["type"]]["properties"]
+        }
+        for name, prop in component["props"].items():
+            if (
+                prop.get("authority") == "design"
+                and name not in design_names
+                and (component["type"], name)
+                not in _UNSUPPORTED_CATALOG_DESIGN_PROPERTIES
+            ):
+                raise ValueError("catalog design property lacks design authority")
     encoded = json.dumps(value, ensure_ascii=False).casefold()
     if any(marker in encoded for marker in _FORBIDDEN_TEXT):
         raise ValueError("design system contains an unsafe editable primitive")
@@ -114,7 +158,11 @@ from __future__ import annotations
 import json
 from typing import Any, cast
 
-from .component_catalog import component_definition, validate_component_props
+from .component_catalog import (
+    COMPONENT_CATALOG,
+    component_definition,
+    validate_component_props,
+)
 
 DESIGN_SYSTEM_VERSION = "design-system/v1"
 CATALOG_VERSION = "catalog-v1"
@@ -142,23 +190,63 @@ def design_property(component_type: str, name: str) -> dict[str, Any] | None:
     return dict(value) if value is not None else None
 
 
-def _property_required_scopes(prop: dict[str, Any]) -> list[str]:
-    result = [prop["scope"]]
-    if prop["responsive"]:
-        result.append(RESPONSIVE_SCOPE)
+def component_property_scope_metadata() -> list[dict[str, Any]]:
+    """Return the exact scalar/responsive scope for every catalog property."""
+    result: list[dict[str, Any]] = []
+    for component in COMPONENT_CATALOG:
+        design_component = _COMPONENTS[component.type]
+        design_names = [prop["name"] for prop in design_component["properties"]]
+        property_names = list(component.props)
+        property_names.extend(
+            name for name in design_names if name not in component.props
+        )
+        for name in property_names:
+            catalog_property = component.props.get(name)
+            design = design_property(component.type, name)
+            if design is not None:
+                scalar_scopes = [design["scope"]]
+                responsive = bool(design["responsive"])
+                responsive_scopes = [RESPONSIVE_SCOPE] if responsive else []
+                supported = True
+            elif (
+                catalog_property is not None and catalog_property.authority == "design"
+            ):
+                scalar_scopes = []
+                responsive = False
+                responsive_scopes = []
+                supported = False
+            else:
+                scalar_scopes = ["component-content-props:write"]
+                responsive = False
+                responsive_scopes = []
+                supported = True
+            result.append(
+                {{
+                    "component_type": component.type,
+                    "property": name,
+                    "supported": supported,
+                    "scalar_required_scopes": scalar_scopes,
+                    "responsive": responsive,
+                    "responsive_required_scopes": responsive_scopes,
+                }}
+            )
     return result
 
 
+def component_property_scope(component_type: str, name: str) -> dict[str, Any] | None:
+    for item in component_property_scope_metadata():
+        if item["component_type"] == component_type and item["property"] == name:
+            return dict(item)
+    return None
+
+
 def design_scope_metadata() -> list[dict[str, Any]]:
-    """Return deterministic property-level scope metadata for Agent OpenAPI."""
+    """Return deterministic property-level design scope metadata."""
     return [
-        {{
-            "component_type": component["type"],
-            "property": prop["name"],
-            "required_scopes": _property_required_scopes(prop),
-        }}
-        for component in DESIGN_SYSTEM_DOCUMENT["components"]
-        for prop in component["properties"]
+        item
+        for item in component_property_scope_metadata()
+        if item["supported"]
+        and item["scalar_required_scopes"] != ["component-content-props:write"]
     ]
 
 
@@ -201,30 +289,22 @@ def required_scopes_for_component_update(
     component_type: str, old_props: dict[str, Any], patch_props: dict[str, Any]
 ) -> tuple[str, ...]:
     """Derive scopes from changed trusted properties, never caller labels."""
-    definition = component_definition(component_type)
     result: list[str] = []
-    changed = False
     for key, value in patch_props.items():
         if old_props.get(key) == value:
             continue
-        changed = True
-        property_definition = design_property(component_type, key)
-        if property_definition is not None:
-            scope = property_definition["scope"]
+        property_scope = component_property_scope(component_type, key)
+        if property_scope is None:
+            raise ValueError("unknown prop")
+        if not property_scope["supported"]:
+            raise ValueError("unsupported design prop")
+        for scope in property_scope["scalar_required_scopes"]:
             if scope not in result:
                 result.append(scope)
-            if is_responsive_value(value) and RESPONSIVE_SCOPE not in result:
-                result.append(RESPONSIVE_SCOPE)
-            continue
-        catalog_property = definition.props.get(key)
-        if catalog_property is None or catalog_property.authority == "content":
-            if "component-content-props:write" not in result:
-                result.append("component-content-props:write")
-        else:
-            if "component-props:write" not in result:
-                result.append("component-props:write")
-    if not changed and "component-content-props:write" not in result:
-        result.append("component-content-props:write")
+        if property_scope["responsive"] and is_responsive_value(value):
+            for scope in property_scope["responsive_required_scopes"]:
+                if scope not in result:
+                    result.append(scope)
     return tuple(result)
 
 
@@ -273,6 +353,8 @@ def validate_agent_component_props(
         if property_definition is None:
             continue
         if is_responsive_value(value):
+            if not property_definition["responsive"]:
+                raise ValueError("responsive prop")
             for leaf in value.values():
                 if key == "alignment":
                     _validate_alignment(leaf)
@@ -300,6 +382,8 @@ __all__ = [
     "RENDERER_VERSION",
     "RESPONSIVE_LABELS",
     "RESPONSIVE_SCOPE",
+    "component_property_scope",
+    "component_property_scope_metadata",
     "design_property",
     "design_scope_metadata",
     "design_system_document",

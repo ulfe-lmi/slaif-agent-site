@@ -5,6 +5,8 @@ from __future__ import annotations
 import pytest
 from slaif_agent_site.content_model.design_system import (
     DESIGN_SYSTEM_DOCUMENT,
+    component_property_scope,
+    component_property_scope_metadata,
     design_property,
     required_scopes_for_component_update,
     validate_agent_component_props,
@@ -40,6 +42,26 @@ def test_changed_properties_derive_exact_design_and_responsive_scopes() -> None:
     assert required_scopes_for_component_update(
         "Section", {"variant": "default"}, {"variant": "narrow"}
     ) == ("component-variant:write",)
+    assert required_scopes_for_component_update(
+        "Button", {"variant": "primary"}, {"variant": "secondary"}
+    ) == ("component-variant:write",)
+    assert required_scopes_for_component_update(
+        "Image", {"aspectRatio": "auto"}, {"aspectRatio": "16:9"}
+    ) == ("component-props:write",)
+    assert required_scopes_for_component_update(
+        "CollectionGrid", {"columns": 3}, {"columns": 4}
+    ) == ("layout:write",)
+    assert required_scopes_for_component_update(
+        "Image", {"aspectRatio": "auto"}, {"aspectRatio": {"mobile": "1:1"}}
+    ) == ("component-props:write", "responsive-design:write")
+    assert (
+        required_scopes_for_component_update(
+            "Heading", {"text": "same", "level": 2}, {"text": "same"}
+        )
+        == ()
+    )
+    assert component_property_scope("Section", "background")["supported"] is False  # type: ignore[index]
+    assert len(component_property_scope_metadata()) == 38
 
 
 def test_agent_validation_normalizes_responsive_maps_and_rejects_unsafe_design() -> (

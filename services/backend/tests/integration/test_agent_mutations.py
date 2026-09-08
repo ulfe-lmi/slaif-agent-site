@@ -5482,6 +5482,491 @@ async def test_agent_component_design_system_scopes_and_responsive_props_are_cow
 
 
 @pytest.mark.asyncio
+async def test_agent_component_property_scopes_and_visual_classification_are_exact(
+    agent_site_database: AgentSiteDatabase,
+) -> None:
+    database = agent_site_database
+    _seed_token, seeded = await _seed(database)
+    full_scopes = [
+        "site:read",
+        "theme:read",
+        "content-model:create",
+        "content-model:read",
+        "collection-view:create",
+        "collection-view:read",
+        "page:create",
+        "page:read",
+        "composition:read",
+        "component-structure:create",
+        "component-content-props:write",
+        "component-props:write",
+        "component-variant:write",
+        "layout:write",
+        "responsive-design:write",
+    ]
+    full_token, workspace_id = await _workspace_capability(
+        database, seeded, full_scopes, "Agent Exact Component Property Scopes"
+    )
+    scoped_seeded = {**seeded, "workspace_id": workspace_id}
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        await owner.execute(
+            "UPDATE control.capability SET request_quota=500, mutation_quota=100 "
+            "WHERE workspace_id=$1",
+            workspace_id,
+        )
+    app = create_agent_app(
+        settings=ServiceSettings.for_test(),
+        database_settings=_agent_settings(database),
+    )
+    headers = {"Authorization": f"Bearer {full_token}"}
+    reviewer_pool = await database.role_pool("slaif_reviewer")
+
+    async def record(component_id: str) -> dict[str, Any]:
+        response = await client.get(
+            f"/api/agent/v1/components/{component_id}", headers=headers
+        )
+        assert response.status_code == 200, response.text
+        return cast(dict[str, Any], response.json())
+
+    async def durable() -> tuple[tuple[Any, ...], tuple[UUID, ...]]:
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            row = await owner.fetchrow(
+                "SELECT coalesce(sum(mutation_used),0), "
+                "coalesce(sum(delete_used),0), "
+                "(SELECT count(*) FROM control.agent_idempotency "
+                "WHERE workspace_id=$1), "
+                "(SELECT count(*) FROM audit.agent_mutation "
+                "WHERE workspace_id=$1) "
+                "FROM control.capability WHERE workspace_id=$1",
+                workspace_id,
+            )
+        async with asyncpg_cow_reviewer(reviewer_pool) as reviewer:
+            operations = tuple(
+                sorted(await reviewer.operations(workspace_id, schema="content"))
+            )
+        return tuple(row), operations
+
+    async def missing_scope_denial(
+        component_id: str,
+        patch: dict[str, Any],
+        expected_version: int,
+        required: list[str],
+        missing: str,
+        key: str,
+    ) -> None:
+        before_record = await record(component_id)
+        before_durable = await durable()
+        token = await _capability_with_scopes(
+            database,
+            scoped_seeded,
+            [scope for scope in full_scopes if scope != missing],
+        )
+        response = await client.patch(
+            f"/api/agent/v1/components/{component_id}",
+            json={"props": patch, "expected_row_version": expected_version},
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Idempotency-Key": key,
+            },
+        )
+        assert response.status_code == 403, response.text
+        assert response.json()["error"]["code"] == "AUTHORIZATION_DENIED"
+        assert await record(component_id) == before_record
+        assert await durable() == before_durable
+        assert missing in required
+
+    async with app.router.lifespan_context(app):
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://agent.test"
+        ) as client:
+            media_id = uuid4()
+            async with owner_connection(
+                database.settings.resolved_owner_dsn(), expected_database=database.name
+            ) as owner:
+                await owner.execute(
+                    "INSERT INTO content.media_asset_base "
+                    "(id,site_id,uploaded_by,filename,mime_type,size_bytes,"
+                    "content_hash,storage_key,alt_text,metadata) "
+                    "VALUES ($1,$2,$3,'scope.png','image/png',1,$4,$5,"
+                    "'Scope','{}'::jsonb)",
+                    media_id,
+                    seeded["site_id"],
+                    seeded["delegator_id"],
+                    "a" * 64,
+                    "sha256/aa/aa/" + "a" * 64,
+                )
+            content_type = await client.post(
+                "/api/agent/v1/content-model/types",
+                json={
+                    "key": "scope-items",
+                    "labels": {"en": "Scope items"},
+                    "slug_pattern": "/scope-items/{slug}",
+                    "settings": {},
+                },
+                headers={**headers, "Idempotency-Key": "exact-scope-type"},
+            )
+            assert content_type.status_code == 201, content_type.text
+            type_id = content_type.json()["record"]["id"]
+            collection_view = await client.post(
+                f"/api/agent/v1/collection-views/types/{type_id}",
+                json={
+                    "type_id": type_id,
+                    "key": "scope-view",
+                    "filter_spec": {},
+                    "sort_spec": {},
+                    "projection_spec": {},
+                    "pagination_spec": {"limit": 10, "offset": 0},
+                },
+                headers={**headers, "Idempotency-Key": "exact-scope-view"},
+            )
+            assert collection_view.status_code == 201, collection_view.text
+            view_id = collection_view.json()["record"]["id"]
+            collection_view_two = await client.post(
+                f"/api/agent/v1/collection-views/types/{type_id}",
+                json={
+                    "type_id": type_id,
+                    "key": "scope-view-two",
+                    "filter_spec": {},
+                    "sort_spec": {},
+                    "projection_spec": {},
+                    "pagination_spec": {"limit": 10, "offset": 0},
+                },
+                headers={**headers, "Idempotency-Key": "exact-scope-view-two"},
+            )
+            assert collection_view_two.status_code == 201, collection_view_two.text
+            view_id_two = collection_view_two.json()["record"]["id"]
+            view_read = await client.get(
+                f"/api/agent/v1/collection-views/{view_id}", headers=headers
+            )
+            assert view_read.status_code == 200, view_read.text
+            page = await client.post(
+                "/api/agent/v1/pages/",
+                json={"slug": "exact-property-scopes", "title": "Exact scopes"},
+                headers={**headers, "Idempotency-Key": "exact-scopes-page"},
+            )
+            assert page.status_code == 201, page.text
+            page_id = page.json()["record"]["id"]
+
+            async def create(
+                component_type: str,
+                props: dict[str, Any],
+                key: str,
+                slot: str = "default",
+            ) -> str:
+                response = await client.post(
+                    f"/api/agent/v1/pages/{page_id}/components",
+                    json={
+                        "component_type": component_type,
+                        "slot_key": slot,
+                        "props": props,
+                    },
+                    headers={**headers, "Idempotency-Key": key},
+                )
+                assert response.status_code == 201, response.text
+                return str(response.json()["record"]["id"])
+
+            button_id = await create(
+                "Button", {"label": "Button", "href": "/button"}, "exact-button"
+            )
+            image_id = await create(
+                "Image",
+                {
+                    "mediaId": str(media_id),
+                    "alt": "Image",
+                },
+                "exact-image",
+            )
+            collection_id = await create(
+                "CollectionGrid",
+                {"viewId": view_id},
+                "exact-collection",
+            )
+
+            design_only = await _capability_with_scopes(
+                database,
+                scoped_seeded,
+                ["site:read", "composition:read", "component-props:write"],
+            )
+            response = await client.patch(
+                f"/api/agent/v1/components/{image_id}",
+                json={
+                    "props": {"aspectRatio": "16:9"},
+                    "expected_row_version": 1,
+                },
+                headers={
+                    "Authorization": f"Bearer {design_only}",
+                    "Idempotency-Key": "exact-image-scalar",
+                },
+            )
+            assert response.status_code == 200, response.text
+            assert response.json()["record"]["row_version"] == 2
+            assert response.json()["record"]["props"]["aspectRatio"] == "16:9"
+
+            responsive_design_only = await _capability_with_scopes(
+                database,
+                scoped_seeded,
+                [
+                    "site:read",
+                    "composition:read",
+                    "component-props:write",
+                    "responsive-design:write",
+                ],
+            )
+            response = await client.patch(
+                f"/api/agent/v1/components/{image_id}",
+                json={
+                    "props": {"aspectRatio": {"mobile": "1:1", "desktop": "4:3"}},
+                    "expected_row_version": 2,
+                },
+                headers={
+                    "Authorization": f"Bearer {responsive_design_only}",
+                    "Idempotency-Key": "exact-image-responsive",
+                },
+            )
+            assert response.status_code == 200, response.text
+            assert response.json()["record"]["props"]["aspectRatio"] == {
+                "desktop": "4:3",
+                "mobile": "1:1",
+            }
+
+            content_only = await _capability_with_scopes(
+                database,
+                scoped_seeded,
+                ["site:read", "composition:read", "component-content-props:write"],
+            )
+            response = await client.patch(
+                f"/api/agent/v1/components/{button_id}",
+                json={"props": {"label": "Content only"}, "expected_row_version": 1},
+                headers={
+                    "Authorization": f"Bearer {content_only}",
+                    "Idempotency-Key": "exact-content-only",
+                },
+            )
+            assert response.status_code == 200, response.text
+            assert response.json()["record"]["row_version"] == 2
+
+            image_patch = {"alt": "New alt", "aspectRatio": "1:1"}
+            image_required = ["component-content-props:write", "component-props:write"]
+            for index, missing in enumerate(image_required):
+                await missing_scope_denial(
+                    image_id,
+                    image_patch,
+                    3,
+                    image_required,
+                    missing,
+                    f"exact-image-mixed-{index}",
+                )
+            response = await client.patch(
+                f"/api/agent/v1/components/{image_id}",
+                json={"props": image_patch, "expected_row_version": 3},
+                headers={**headers, "Idempotency-Key": "exact-image-mixed-success"},
+            )
+            assert response.status_code == 200, response.text
+            assert response.json()["record"]["row_version"] == 4
+
+            button_patch = {
+                "label": "Variant label",
+                "variant": {"desktop": "secondary", "mobile": "ghost"},
+            }
+            button_required = [
+                "component-content-props:write",
+                "component-variant:write",
+                "responsive-design:write",
+            ]
+            for index, missing in enumerate(button_required):
+                await missing_scope_denial(
+                    button_id,
+                    button_patch,
+                    2,
+                    button_required,
+                    missing,
+                    f"exact-button-mixed-{index}",
+                )
+            response = await client.patch(
+                f"/api/agent/v1/components/{button_id}",
+                json={"props": button_patch, "expected_row_version": 2},
+                headers={**headers, "Idempotency-Key": "exact-button-mixed-success"},
+            )
+            assert response.status_code == 200, response.text
+            assert response.json()["record"]["row_version"] == 3
+
+            collection_patch = {
+                "viewId": view_id_two,
+                "columns": {"desktop": 4, "mobile": 2},
+            }
+            collection_required = [
+                "component-content-props:write",
+                "layout:write",
+                "responsive-design:write",
+            ]
+            for index, missing in enumerate(collection_required):
+                await missing_scope_denial(
+                    collection_id,
+                    collection_patch,
+                    1,
+                    collection_required,
+                    missing,
+                    f"exact-collection-mixed-{index}",
+                )
+            response = await client.patch(
+                f"/api/agent/v1/components/{collection_id}",
+                json={"props": collection_patch, "expected_row_version": 1},
+                headers={
+                    **headers,
+                    "Idempotency-Key": "exact-collection-mixed-success",
+                },
+            )
+            assert response.status_code == 200, response.text
+            assert response.json()["record"]["row_version"] == 2
+
+            l1 = await _capability_with_scopes(
+                database,
+                scoped_seeded,
+                ["site:read", "composition:read", "component-content-props:write"],
+            )
+            for index, (component_id, patch, version) in enumerate(
+                (
+                    (button_id, {"variant": "primary"}, 3),
+                    (image_id, {"aspectRatio": "auto"}, 4),
+                    (collection_id, {"columns": 3}, 2),
+                )
+            ):
+                before = await record(component_id)
+                before_durable = await durable()
+                response = await client.patch(
+                    f"/api/agent/v1/components/{component_id}",
+                    json={"props": patch, "expected_row_version": version},
+                    headers={
+                        "Authorization": f"Bearer {l1}",
+                        "Idempotency-Key": f"exact-l1-visual-{index}",
+                    },
+                )
+                assert response.status_code == 403, response.text
+                assert response.json()["error"]["code"] == "AUTHORIZATION_DENIED"
+                assert await record(component_id) == before
+                assert await durable() == before_durable
+
+            malformed = await client.patch(
+                f"/api/agent/v1/components/{image_id}",
+                json={
+                    "props": {"aspectRatio": {"wide": "16:9"}},
+                    "expected_row_version": 4,
+                },
+                headers={**headers, "Idempotency-Key": "exact-custom-device"},
+            )
+            assert malformed.status_code == 422, malformed.text
+
+            no_op_token = await _capability_with_scopes(
+                database, scoped_seeded, ["site:read", "composition:read"]
+            )
+            async with owner_connection(
+                database.settings.resolved_owner_dsn(), expected_database=database.name
+            ) as owner:
+                assert await owner.fetchval(
+                    "SELECT has_function_privilege('slaif_agent_runtime', "
+                    "'control.slaif_agent_idempotency_complete_no_effect("
+                    "uuid,uuid,text,text,uuid,integer,jsonb,text,uuid,uuid)', "
+                    "'EXECUTE')"
+                )
+            before = await record(button_id)
+            before_durable = await durable()
+            no_op = await client.patch(
+                f"/api/agent/v1/components/{button_id}",
+                json={"props": {}, "expected_row_version": 3},
+                headers={
+                    "Authorization": f"Bearer {no_op_token}",
+                    "Idempotency-Key": "exact-no-op",
+                },
+            )
+            assert no_op.status_code == 200, no_op.text
+            assert no_op.json()["record"] == before
+            assert no_op.json()["action"] is None
+            after_durable = await durable()
+            assert after_durable[0][0] == before_durable[0][0]
+            assert after_durable[0][1] == before_durable[0][1]
+            assert after_durable[0][2] == before_durable[0][2] + 1
+            assert after_durable[0][3] == before_durable[0][3]
+            assert after_durable[1] == before_durable[1]
+            replay = await client.patch(
+                f"/api/agent/v1/components/{button_id}",
+                json={"props": {}, "expected_row_version": 3},
+                headers={
+                    "Authorization": f"Bearer {no_op_token}",
+                    "Idempotency-Key": "exact-no-op",
+                },
+            )
+            assert replay.status_code == 200, replay.text
+            assert replay.json() == no_op.json()
+            assert await durable() == after_durable
+
+            for index, (component_id, patch, version, missing) in enumerate(
+                (
+                    (button_id, {"variant": "narrow"}, 3, "component-variant:write"),
+                    (
+                        image_id,
+                        {"aspectRatio": {"desktop": "1:1"}},
+                        4,
+                        "responsive-design:write",
+                    ),
+                    (collection_id, {"columns": 5}, 2, "layout:write"),
+                )
+            ):
+                token = await _capability_with_scopes(
+                    database,
+                    scoped_seeded,
+                    [scope for scope in full_scopes if scope != missing],
+                )
+                capability_public_id = token.split("_", 2)[1]
+                async with owner_connection(
+                    database.settings.resolved_owner_dsn(),
+                    expected_database=database.name,
+                ) as owner:
+                    capability_id = await owner.fetchval(
+                        "SELECT id FROM control.capability WHERE public_id=$1",
+                        capability_public_id,
+                    )
+                _TEST_CAPABILITY_BY_WORKSPACE[workspace_id] = capability_id
+                current = await record(component_id)
+                merged = dict(cast(dict[str, Any], current["props"]))
+                merged.update(cast(dict[str, Any], patch))
+                before_direct = await durable()
+                pool = await database.role_pool("slaif_agent_runtime")
+                try:
+                    async with asyncpg_cow_session(
+                        pool, session_id=workspace_id, operation_id=uuid4()
+                    ) as cow:
+                        await cow.native.execute("SAVEPOINT exact_scope")
+                        try:
+                            await cow.native.fetchrow(
+                                "SELECT * FROM content.slaif_agent_component_update("
+                                "$1,$2,$3::jsonb,$4)",
+                                seeded["site_id"],
+                                UUID(component_id),
+                                json.dumps(merged),
+                                version,
+                            )
+                        except asyncpg.PostgresError as error:
+                            assert "AGENT_SCOPE_DENIED" in str(error)
+                            await cow.native.execute(
+                                "ROLLBACK TO SAVEPOINT exact_scope"
+                            )
+                            await cow.native.execute("RELEASE SAVEPOINT exact_scope")
+                        else:
+                            raise AssertionError(
+                                f"direct scope bypass for case {index}"
+                            )
+                finally:
+                    await pool.close()
+                assert await durable() == before_direct
+
+    await reviewer_pool.close()
+
+
+@pytest.mark.asyncio
 async def test_agent_component_design_patch_concurrency_and_cancellation_are_atomic(
     agent_site_database: AgentSiteDatabase,
     monkeypatch: pytest.MonkeyPatch,

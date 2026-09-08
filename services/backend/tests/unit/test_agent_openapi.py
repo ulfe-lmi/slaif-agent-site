@@ -9,7 +9,9 @@ from fastapi.testclient import TestClient
 from slaif_agent_site.agent_api.app import create_app, public_agent_openapi_bytes
 from slaif_agent_site.agent_api.config import AgentDatabaseMode, AgentDatabaseSettings
 from slaif_agent_site.config import ServiceSettings
-from slaif_agent_site.content_model.design_system import design_scope_metadata
+from slaif_agent_site.content_model.design_system import (
+    component_property_scope_metadata,
+)
 from slaif_agent_site.health import ProbeResult
 
 from tools.contracts.generate_agent_openapi import CONTRACT_PATH, generate_agent_openapi
@@ -144,9 +146,17 @@ def test_design_system_contract_is_typed_and_site_catalog_bound() -> None:
     component_patch = document["paths"]["/api/agent/v1/components/{component_id}"][
         "patch"
     ]
-    assert component_patch["x-slaif-component-design-scopes"] == (
-        design_scope_metadata()
+    assert component_patch["x-slaif-required-scopes"] == []
+    assert component_patch["x-slaif-component-property-scopes"] == (
+        component_property_scope_metadata()
     )
+    image_aspect = next(
+        item
+        for item in component_patch["x-slaif-conditional-scopes"]
+        if item["component_types"] == ["Image"]
+        and item["when_fields"] == ["props.aspectRatio"]
+    )
+    assert image_aspect["required_scopes"] == ["component-props:write"]
 
 
 def test_public_edge_endpoint_returns_the_same_canonical_bytes() -> None:

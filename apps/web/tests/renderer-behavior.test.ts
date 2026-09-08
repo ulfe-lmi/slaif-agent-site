@@ -134,6 +134,55 @@ describe("trusted catalog renderer behavior", () => {
     expect(section + grid + heading).not.toMatch(/style=|class="[^"]*javascript/i);
   });
 
+  it("renders classified visual properties with responsive semantics", () => {
+    const button = renderToStaticMarkup(
+      renderComponent(
+        {
+          componentType: "Button",
+          props: {
+            label: "Open",
+            href: "/open",
+            variant: { desktop: "primary", tablet: "secondary", mobile: "ghost" },
+          },
+        },
+        "en",
+      ),
+    );
+    const image = renderToStaticMarkup(
+      renderComponent(
+        {
+          componentType: "Image",
+          props: {
+            mediaId: "11111111-1111-4111-8111-111111111111",
+            alt: "Preview",
+            aspectRatio: { desktop: "16:9", mobile: "1:1" },
+          },
+        },
+        "en",
+      ),
+    );
+    const collection = renderToStaticMarkup(
+      renderComponent(
+        {
+          componentType: "CollectionGrid",
+          props: {
+            viewId: "22222222-2222-4222-8222-222222222222",
+            columns: { desktop: 4, tablet: 2, mobile: 1 },
+          },
+        },
+        "en",
+      ),
+    );
+    expect(button).toContain("renderer-button--primary");
+    expect(button).toContain("renderer-button--tablet-secondary");
+    expect(button).toContain("renderer-button--mobile-ghost");
+    expect(image).toContain("renderer-image-placeholder--16-9");
+    expect(image).toContain("renderer-image-placeholder--mobile-1-1");
+    expect(collection).toContain("renderer-collection-grid--4");
+    expect(collection).toContain("renderer-collection-grid--tablet-2");
+    expect(collection).toContain("renderer-collection-grid--mobile-1");
+  });
+
   it("rejects malformed nested data before rendering", () => {
     expect(() =>
       compositionToPuck([

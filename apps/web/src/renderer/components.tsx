@@ -88,6 +88,7 @@ const GAP_VALUES = new Set(["none", "sm", "md", "lg"]);
 const WIDTH_VALUES = new Set(["sm", "md", "lg", "xl"]);
 const DIRECTION_VALUES = new Set(["vertical", "horizontal"]);
 const SIZE_VALUES = new Set(["xs", "sm", "md", "lg", "xl"]);
+const ASPECT_RATIO_VALUES = new Set(["auto", "16:9", "4:3", "1:1"]);
 
 function text(value: unknown): string {
   return typeof value === "string" ? value : "";
@@ -96,6 +97,10 @@ function text(value: unknown): string {
 function safeHref(value: unknown): string {
   if (typeof value !== "string" || !value || value.startsWith("//")) return "/";
   return value.startsWith("/") ? value : "/";
+}
+
+function aspectRatioClass(value: unknown): string {
+  return token(value, ASPECT_RATIO_VALUES, "auto").replace(":", "-");
 }
 
 function Section({ props, children }: RenderProps) {
@@ -209,7 +214,7 @@ function Image({ props }: RenderProps) {
   return (
     <div
       aria-label={text(props.alt)}
-      className="renderer-image-placeholder"
+      className={`renderer-image-placeholder ${designClasses(props.aspectRatio, "renderer-image-placeholder", "auto", aspectRatioClass)}`}
       role="img"
     />
   );
@@ -217,7 +222,7 @@ function Image({ props }: RenderProps) {
 function Button({ props }: RenderProps) {
   return (
     <a
-      className={`renderer-button renderer-button--${classValue(props.variant, "primary")}`}
+      className={`renderer-button ${designClasses(props.variant, "renderer-button", "primary", (value) => classValue(value, "primary"))}`}
       href={safeHref(props.href)}
     >
       {text(props.label)}
@@ -298,8 +303,16 @@ function Collection({
       </article>
     );
   }
+  const gridClasses =
+    mode === "grid"
+      ? designClasses(props.columns, "renderer-collection-grid", "3", (value) =>
+          numberValue(value, 1, 6, 3),
+        )
+      : "";
   return (
-    <div className={`renderer-collection renderer-collection--${mode}`}>
+    <div
+      className={`renderer-collection renderer-collection--${mode}${gridClasses ? ` ${gridClasses}` : ""}`}
+    >
       {items.map((item, index) => (
         <article key={text(item.id) || index}>
           {(() => {

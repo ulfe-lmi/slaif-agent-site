@@ -87,6 +87,13 @@ AGENT_CONTROL_FUNCTIONS = {
         "text, text, text"
     ),
     (
+        "slaif_agent_idempotency_complete_no_effect",
+        "p_capability_id uuid, p_workspace_id uuid, p_idempotency_key text, "
+        "p_request_digest text, p_operation_id uuid, p_status_code integer, "
+        "p_response_body jsonb, p_resource_type text, p_resource_id uuid, "
+        "p_site_id uuid",
+    ): "uuid, uuid, text, text, uuid, integer, jsonb, text, uuid, uuid",
+    (
         "slaif_agent_browser_run_begin",
         "p_capability_id uuid, p_site_id uuid, p_workspace_id uuid, "
         "p_delegator_id uuid, p_idempotency_key text, p_request_digest text, "
