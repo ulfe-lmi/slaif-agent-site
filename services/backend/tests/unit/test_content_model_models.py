@@ -2,12 +2,19 @@
 
 from __future__ import annotations
 
+from uuid import uuid4
+
 import pytest
 from pydantic import ValidationError
 from slaif_agent_site.content_model.models import (
     CreateContentTypeRequest,
     CreateFieldDefinitionRequest,
     UpdateContentTypeRequest,
+)
+from slaif_agent_site.content_model.page_models import (
+    CreatePageRequest,
+    MovePageRequest,
+    RestorePageRequest,
 )
 
 
@@ -85,3 +92,29 @@ class TestUpdateModels:
     def test_no_change_ok(self) -> None:
         req = UpdateContentTypeRequest()
         assert req.labels is None
+
+
+class TestPageModels:
+    def test_route_template_is_null_or_terminal_slug_only(self) -> None:
+        assert CreatePageRequest(slug="news", title="News").route_template is None
+        assert (
+            CreatePageRequest(
+                slug="detail", title="Detail", route_template="{slug}"
+            ).route_template
+            == "{slug}"
+        )
+        for value in ("/news/{slug}", "news/{slug}", "{id}", "news"):
+            with pytest.raises(ValidationError):
+                CreatePageRequest(slug="detail", title="Detail", route_template=value)
+
+    def test_move_is_parent_only_and_restore_requires_tombstone_version(self) -> None:
+        move = MovePageRequest(expected_row_version=1)
+        assert move.parent_id is None
+        with pytest.raises(ValidationError):
+            MovePageRequest(
+                expected_row_version=1,
+                before_page_id=uuid4(),  # type: ignore[call-arg]
+            )
+        with pytest.raises(ValidationError):
+            RestorePageRequest()  # type: ignore[call-arg]
+        assert RestorePageRequest(expected_row_version=2).expected_row_version == 2

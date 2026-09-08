@@ -112,7 +112,7 @@
     "pnpm/action-setup": "0977fd99725f1db4007ccb2928dbb4e90d06cc86"
   },
   "oci_sources": {
-    "apache": "docker.io/library/httpd:2.4.68-alpine3.23@sha256:4a15e9c73f25334bc03cfb3c692c9adfc103bb46ca89cee1f0b9a5fcbc7b21f6",
+    "apache": "docker.io/library/ubuntu:24.04@sha256:33ceb71981b602c1a7443a53469e4dba065f7503eab3078a2d7a57a2ab987517",
     "nginx": "docker.io/library/nginx:1.29.7-alpine3.23@sha256:e7257f1ef28ba17cf7c248cb8ccf6f0c6e0228ab9c315c152f9c203cd34cf6d1",
     "node": "docker.io/library/node:24.14.1-alpine3.23@sha256:8510330d3eb72c804231a834b1a8ebb55cb3796c3e4431297a24d246b8add4d5",
     "playwright": "mcr.microsoft.com/playwright:v1.62.1-noble@sha256:dcc5531e97840b9b5e794f2814476b21571c5124a3fca2267d73041f56e7580e",
@@ -123,10 +123,6 @@
   "alpine_package_overrides": {
     "registry": "https://dl-cdn.alpinelinux.org/alpine/v3.23",
     "images": {
-      "apache": {
-        "install": ["apr-util-ldap=1.6.4-r0", "apr-util=1.6.4-r0", "libcrypto3=3.5.8-r0", "libssl3=3.5.8-r0"],
-        "remove": ["perl"]
-      },
       "backend": {
         "install": ["libcrypto3=3.5.8-r0", "libssl3=3.5.8-r0"],
         "remove": []
@@ -136,7 +132,11 @@
         "remove": ["curl"]
       },
       "postgres": {
-        "install": ["libcrypto3=3.5.8-r0", "libssl3=3.5.8-r0"],
+        "install": [
+          "libcrypto3=3.5.8-r0",
+          "libcurl=8.22.0-r0",
+          "libssl3=3.5.8-r0"
+        ],
         "remove": []
       },
       "web": {
@@ -145,15 +145,29 @@
       }
     }
   },
+  "ubuntu_package_overrides": {
+    "images": {
+      "apache": {
+        "install": [
+          "apache2-bin=2.4.58-1ubuntu8.15",
+          "apache2-data=2.4.58-1ubuntu8.15",
+          "apache2-utils=2.4.58-1ubuntu8.15",
+          "apache2=2.4.58-1ubuntu8.15",
+          "openssl=3.0.13-0ubuntu3.15"
+        ],
+        "remove": []
+      }
+    }
+  },
   "browser_runtime": {
     "base_image": "playwright",
     "node_version": "24.18.1",
     "playwright_core_version": "1.62.1",
     "chromium_revision": "1669021",
-    "chromium_version": "152.0.7977.64",
+    "chromium_version": "152.0.7977.82",
     "chromium_executable": "/ms-playwright/chromium-1669021/chrome-linux64/chrome",
-    "chromium_archive_url": "https://storage.googleapis.com/chrome-for-testing-public/152.0.7977.64/linux64/chrome-linux64.zip",
-    "chromium_archive_sha256": "8b592f066af71f054aab2cc80fc26f73c775c6d44ebb99d16ade924b24756c2e",
+    "chromium_archive_url": "https://storage.googleapis.com/chrome-for-testing-public/152.0.7977.82/linux64/chrome-linux64.zip",
+    "chromium_archive_sha256": "0704631fb3e4f741092e08f55272f90abc3e307f991f05f332924364415b02e0",
     "platform": "linux/amd64",
     "seccomp_profile_sha256": "294a5523dd03c8dad52215d7970d38711b03f7e6624e09f2ff109ea3628a645c",
     "allowed_capabilities": ["SYS_CHROOT"],
@@ -185,7 +199,7 @@
     "apache": {
       "local_reference": "slaif-agent-site-apache:test",
       "base": "apache",
-      "expected_components": ["httpd"]
+      "expected_components": ["apache2"]
     },
     "backend": {
       "local_reference": "slaif-agent-site-backend:local",

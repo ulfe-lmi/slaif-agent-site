@@ -6,6 +6,61 @@
     "database": "v6.1.9",
     "database_built": "2026-08-27T09:17:14Z"
   },
+  "qualification_history": [
+    {
+      "candidate": "candidate-3 CfT: 152.0.7977.82",
+      "official_metadata": {
+        "last_known_good_url": "https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions-with-downloads.json",
+        "exact_version_url": "https://googlechromelabs.github.io/chrome-for-testing/known-good-versions-with-downloads.json",
+        "timestamp": "2026-09-03T22:22:57.696Z",
+        "channel": "Stable",
+        "version": "152.0.7977.82",
+        "revision": "1669021",
+        "platform": "linux64",
+        "archive_url": "https://storage.googleapis.com/chrome-for-testing-public/152.0.7977.82/linux64/chrome-linux64.zip"
+      },
+      "archive_sha256": "0704631fb3e4f741092e08f55272f90abc3e307f991f05f332924364415b02e0",
+      "runtime": {
+        "image": "browser-worker",
+        "image_digest": "sha256:20cd747a2ce5c4474576d3e844b39e240e3d8690454998d5930aa1910042994c",
+        "base_image": "mcr.microsoft.com/playwright:v1.62.1-noble@sha256:dcc5531e97840b9b5e794f2814476b21571c5124a3fca2267d73041f56e7580e",
+        "executable": "/ms-playwright/chromium-1669021/chrome-linux64/chrome",
+        "executable_version": "Google Chrome for Testing 152.0.7977.82"
+      },
+      "scanner": {
+        "name": "grype",
+        "version": "0.117.0",
+        "database_schema": "v6.1.9",
+        "database_built": "2026-09-03T06:30:55Z",
+        "database_checksum": "sha256:3574269f1e15cc771bd8ea11a31f2e198c5e4cc546ae7d3187919c8f4822cb7a",
+        "syft_name": "syft",
+        "syft_version": "1.51.0"
+      },
+      "sbom": {
+        "format": "SPDX-2.3",
+        "chrome_purl": "pkg:generic/chrome@152.0.7977.82",
+        "chrome_version": "152.0.7977.82",
+        "playwright_purl": "pkg:npm/playwright-core@1.62.1"
+      },
+      "scan_result": {
+        "result": "PASS",
+        "evidence_runner": "tools/supply_chain/run.sh",
+        "image_count": 6,
+        "critical": 0,
+        "unexcepted_critical": 0,
+        "high_review_findings": 40,
+        "browser_worker_matches": 1344,
+        "browser_worker_high": 2,
+        "browser_worker_medium": 1236,
+        "browser_worker_low": 92,
+        "browser_worker_negligible": 14,
+        "exception_count": 0,
+        "checksum_validation": "PASS"
+      },
+      "qualification_date": "2026-09-04",
+      "history_note": "The pre-existing candidate-1 and candidate-2 .64 entries remain unchanged historical evidence."
+    }
+  ],
   "entries": [
     {
       "candidate": "baseline: 151.0.7922.72",

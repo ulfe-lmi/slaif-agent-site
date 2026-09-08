@@ -58,7 +58,10 @@ async def create_page(
             locale=body.locale,
         )
     except ContentModelServiceError as exc:
-        if exc.reason is ContentModelServiceReason.CONFLICT:
+        if exc.reason in {
+            ContentModelServiceReason.CONFLICT,
+            ContentModelServiceReason.VALIDATION,
+        }:
             raise ResourceConflictError() from None
         raise ServiceUnavailableError() from None
 

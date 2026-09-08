@@ -131,7 +131,7 @@ Grype scans that checksummed document; the index links both forms.
 
 The browser worker uses the digest-pinned official Playwright 1.62.1 Noble
 image, Node 24.18.1, exact `playwright-core==1.62.1`, and Chromium revision 1669021
-(`152.0.7977.64`). The exact linux/amd64 archive is SHA-256 verified before
+(`152.0.7977.82`). The exact linux/amd64 archive is SHA-256 verified before
 extraction by the bounded source-controlled parser. Its runtime removes
 Firefox, WebKit, the duplicate Chromium
 headless shell, ffmpeg, npm, and Corepack. Evidence requires the worker package
@@ -139,6 +139,25 @@ and `playwright-core`, rejects Firefox/WebKit inventory, and hashes the retained
 `/ms-playwright/chromium-1669021` tree during both clean image builds. The separate
 root E2E runner still installs all three test-only browser families outside the
 product image.
+
+The Apache adapter uses the official
+`httpd:2.4.68-trixie@sha256:979c38c2228d28c2edfd45c6e27dcee1c7b4a101a5526721ae8ece454e89e99e`
+multi-platform image. Its deterministic Debian Trixie package overlay pins
+`libaprutil1-ldap`/`libaprutil1t64` 1.6.3-3+deb13u1 and OpenSSL
+3.5.7-1~deb13u2. The other Alpine
+images retain their independently qualified 3.23 package sources. The Apache
+image is accepted only after two reproducible builds, parity, SBOM/license
+evidence, and a current Grype scan with zero unexcepted Critical findings.
+
+For the current 077-o qualification, the earlier Trixie paragraph above is
+historical blocker evidence. The active Apache source is the immutable Ubuntu
+24.04 LTS image `ubuntu:24.04@sha256:33ceb71981b602c1a7443a53469e4dba065f7503eab3078a2d7a57a2ab987517`,
+with standard Ubuntu Apache 2.4 security packages and glibc 2.39-0ubuntu8.8.
+The normalized Apache application-file boundary is `/etc/apache2/` for this
+base-image layout.
+The PostgreSQL 18.6 Alpine 3.23 overlay keeps the official base and pins the
+standard-repository security package `libcurl=8.22.0-r0` alongside the existing
+OpenSSL pins.
 
 ## Vulnerability gate and database freshness
 
@@ -152,14 +171,16 @@ findings do not pass silently: per-image and total counts remain in JSON,
 `SUMMARY.txt`, and human-readable scan summaries as review evidence. Lower and
 unknown severity counts also remain visible. A pass means zero unexcepted
 Critical findings in that time-bounded database; it does not mean zero
-vulnerabilities. The temporary 2026-08-28 human-approved exception for the
-41 unavoidable Chrome 152.0.7977.64 Critical findings is recorded in
-[`supply-chain/vulnerability-exceptions.json`](../supply-chain/vulnerability-exceptions.json)
-and tracked at [issue #67](https://github.com/ulfe-lmi/slaif-agent-site/issues/67).
-It expires 2026-09-04, applies only to `browser-worker`, and must be removed
-when official stable 152.0.7977.65 or newer is available. Validation requires
-every entry to match a current Critical finding's exact ID, PURL, and scope;
-unused, stale, near-match, duplicate, or wrong-severity entries fail closed.
+vulnerabilities. The expired 2026-08-28 exception for the former Chrome
+152.0.7977.64 findings was removed after the fixed 152.0.7977.82 image passed a
+fresh full scan with zero unexcepted Critical findings. The prior qualification
+and finding set remain historical evidence in
+[`supply-chain/browser-worker-critical-matrix.json`](../supply-chain/browser-worker-critical-matrix.json)
+and the risk record remains tracked at
+[issue #67](https://github.com/ulfe-lmi/slaif-agent-site/issues/67); coding does
+not close that issue. Validation requires every non-empty exception set to match
+a current Critical finding's exact ID, PURL, and scope; unused, stale,
+near-match, duplicate, or wrong-severity entries fail closed.
 
 ## Evidence bundle
 
@@ -201,9 +222,11 @@ only on that artifact.
 
 ## Exceptions and updates
 
-Both exception lists are empty by default; the only current vulnerability
-exception is the owner-approved, seven-day Chrome 152.0.7977.64 entry set of
-41 current findings tracked by [issue #67](https://github.com/ulfe-lmi/slaif-agent-site/issues/67).
+Both exception lists are empty for the current pinned artifacts. The former
+owner-approved, seven-day Chrome 152.0.7977.64 entry set of 41 findings is
+historical evidence tracked by
+[issue #67](https://github.com/ulfe-lmi/slaif-agent-site/issues/67), not a current
+exception.
 An entry requires all of:
 
 - exact vulnerability ID or license expression in `identifier`;
@@ -220,9 +243,9 @@ current Critical finding with the exact identifier, PURL, and scope; unused,
 stale, near-match, and wrong-severity entries fail closed. A valid exception
 changes only the conclusion for that exact finding; it never removes the
 component or finding from evidence. Coding agents must not author an exception
-merely to make a gate green. The owner removes this exception or upgrades to
-official stable Chrome 152.0.7977.65+ immediately when available and no later
-than its 2026-09-04 expiry.
+merely to make a gate green. The owner removed this exception after the official
+stable Chrome 152.0.7977.82 qualification; coding does not close issue #67 or
+claim release readiness.
 
 An authorized update must preserve readable tags plus top-level digests,
 review source/license/signature metadata, update the machine policy and narrow

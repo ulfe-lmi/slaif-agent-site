@@ -75,6 +75,7 @@ NEW_PACKAGE_FILES = {
     "slaif_agent_site/agent_api/dispatcher.py",
     "slaif_agent_site/agent_state/mutations.py",
     "slaif_agent_site/agent_state/reads.py",
+    "slaif_agent_site/agent_state/locks.py",
     "slaif_agent_site/application.py",
     "slaif_agent_site/authority.py",
     "slaif_agent_site/bootstrap/__init__.py",
@@ -127,6 +128,17 @@ NEW_PACKAGE_FILES = {
     "slaif_agent_site/db/alembic/versions/046_001_complete_agent_content_item_crud.py",
     "slaif_agent_site/db/alembic/versions/047_001_repair_item_semantics_and_translations.py",
     "slaif_agent_site/db/alembic/versions/048_001_agent_relations_and_collection_views.py",
+    "slaif_agent_site/db/alembic/versions/049_001_agent_page_structure.py",
+    "slaif_agent_site/db/alembic/versions/050_001_agent_locale_navigation.py",
+    "slaif_agent_site/db/alembic/versions/051_001_agent_redirect_semantics.py",
+    "slaif_agent_site/db/alembic/versions/052_001_render_structure_projection.py",
+    "slaif_agent_site/db/alembic/versions/053_001_locale_route_integrity.py",
+    "slaif_agent_site/db/alembic/versions/054_001_preview_recheck_modes.py",
+    "slaif_agent_site/db/alembic/versions/055_001_redirect_dependency_cow_tombstone.py",
+    "slaif_agent_site/db/alembic/versions/056_001_dynamic_render_collection_contract.py",
+    "slaif_agent_site/db/alembic/versions/057_001_navigation_dynamic_route_integrity.py",
+    "slaif_agent_site/db/alembic/versions/058_001_internal_navigation_dependencies.py",
+    "slaif_agent_site/db/alembic/versions/059_001_locale_neutral_internal_render.py",
     "slaif_agent_site/db/connections.py",
     "slaif_agent_site/db/executor.py",
     "slaif_agent_site/db/migrations.py",
@@ -587,8 +599,19 @@ def test_locked_foundation_artifact_hash_constants_are_sha256() -> None:
 
 
 def test_alembic_graph_and_offline_sql_need_no_locator_or_network() -> None:
-    assert migration_heads() == ("048_001",)
+    assert migration_heads() == ("059_001",)
     assert migration_history() == (
+        "059_001",
+        "058_001",
+        "057_001",
+        "056_001",
+        "055_001",
+        "054_001",
+        "053_001",
+        "052_001",
+        "051_001",
+        "050_001",
+        "049_001",
         "048_001",
         "047_001",
         "046_001",

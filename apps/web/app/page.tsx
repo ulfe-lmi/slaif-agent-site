@@ -1,7 +1,12 @@
 import { headers } from "next/headers";
 import { notFound } from "next/navigation";
 
-import { resolveCanonicalPage, resolveSiteContext } from "../src/sites/render";
+import {
+  isRedirectProjection,
+  redirectProjection,
+  resolveCanonicalPage,
+  resolveSiteContext,
+} from "../src/sites/render";
 import { PageProjectionShell, SiteContextShell } from "../src/sites/shell";
 
 function isLoopbackAuthority(authority: string): boolean {
@@ -22,7 +27,10 @@ export default async function Home() {
   const authority = (await headers()).get("host") ?? "";
   if (!isLoopbackAuthority(authority)) {
     const projection = await resolveCanonicalPage(authority, "/");
-    if (projection) return <PageProjectionShell projection={projection} />;
+    if (projection) {
+      if (isRedirectProjection(projection)) redirectProjection(projection);
+      return <PageProjectionShell projection={projection} />;
+    }
     const context = await resolveSiteContext(authority, "/");
     if (!context) notFound();
     return <SiteContextShell context={context} />;

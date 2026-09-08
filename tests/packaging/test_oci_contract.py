@@ -78,10 +78,29 @@ class OciContractTests(unittest.TestCase):
             content,
         )
         self.assertIn("libcrypto3=3.5.8-r0", content)
+        self.assertIn("libcurl=8.22.0-r0", content)
         self.assertIn("libssl3=3.5.8-r0", content)
         self.assertIn("https://dl-cdn.alpinelinux.org/alpine/v3.23/main", content)
         self.assertNotIn("apk upgrade", content)
         self.assertNotIn("postgresql-", content)
+
+    def test_apache_qualification_is_exact_and_uses_fixed_ubuntu_packages(self) -> None:
+        content = (ROOT / "infra/apache/Dockerfile").read_text(encoding="utf-8")
+        self.assertIn(
+            "ubuntu:24.04@sha256:"
+            "33ceb71981b602c1a7443a53469e4dba065f7503eab3078a2d7a57a2ab987517",
+            content,
+        )
+        for package in (
+            "apache2=2.4.58-1ubuntu8.15",
+            "apache2-bin=2.4.58-1ubuntu8.15",
+            "apache2-data=2.4.58-1ubuntu8.15",
+            "apache2-utils=2.4.58-1ubuntu8.15",
+            "openssl=3.0.13-0ubuntu3.15",
+        ):
+            self.assertIn(f"'{package}'", content)
+        self.assertIn("apachectl -t", content)
+        self.assertIn('CMD ["apachectl", "-D", "FOREGROUND"]', content)
 
     def test_web_runtime_is_filtered_standalone_and_telemetry_free(self) -> None:
         content = (ROOT / "apps/web/Dockerfile").read_text(encoding="utf-8")
@@ -128,9 +147,9 @@ class OciContractTests(unittest.TestCase):
         runtime = content.split(" AS runtime", maxsplit=1)[1]
         self.assertNotIn("pnpm install", runtime)
         self.assertIn("rm -rf /ms-playwright/*", runtime)
-        self.assertIn("BROWSER_WORKER_EXPECTED_CHROMIUM_VERSION=152.0.7977.64", runtime)
+        self.assertIn("BROWSER_WORKER_EXPECTED_CHROMIUM_VERSION=152.0.7977.82", runtime)
         self.assertIn(
-            "8b592f066af71f054aab2cc80fc26f73c775c6d44ebb99d16ade924b24756c2e",
+            "0704631fb3e4f741092e08f55272f90abc3e307f991f05f332924364415b02e0",
             content,
         )
         self.assertIn("USER 10001:10001", content)

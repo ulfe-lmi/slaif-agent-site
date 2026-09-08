@@ -30,15 +30,25 @@ from slaif_agent_site.content_model.page_models import PageRecord
 from slaif_agent_site.content_model.service import (
     ContentModelServiceError,
     ContentModelServiceReason,
+    _agent_nav,
     _ci,
     _cmp,
     _ct,
     _cv,
     _fd,
+    _locale,
     _md,
+    _nav_item,
     _pg,
+    _redirect,
     _rel,
     _tr,
+)
+from slaif_agent_site.content_model.site_data_models import (
+    AgentNavigationRecord,
+    LocaleRecord,
+    NavigationItemRecord,
+    RedirectRecord,
 )
 from slaif_agent_site.content_model.view_models import CollectionViewRecord
 
@@ -66,8 +76,21 @@ AGENT_COLLECTION_VIEW_GET_SQL = (
     "SELECT * FROM content.slaif_agent_collection_view_get($1,$2)"
 )
 AGENT_PAGE_LIST_SQL = "SELECT * FROM content.slaif_agent_page_list($1)"
+AGENT_PAGE_GET_SQL = "SELECT * FROM content.slaif_agent_page_get($1,$2)"
 AGENT_COMPOSITION_LIST_SQL = "SELECT * FROM content.slaif_agent_composition_list($1,$2)"
 AGENT_MEDIA_LIST_SQL = "SELECT * FROM content.slaif_agent_media_list($1)"
+AGENT_LOCALE_LIST_SQL = "SELECT * FROM content.slaif_agent_locale_list($1)"
+AGENT_LOCALE_GET_SQL = "SELECT * FROM content.slaif_agent_locale_get($1,$2)"
+AGENT_NAVIGATION_LIST_SQL = "SELECT * FROM content.slaif_agent_navigation_list($1)"
+AGENT_NAVIGATION_GET_SQL = "SELECT * FROM content.slaif_agent_navigation_get($1,$2)"
+AGENT_NAVIGATION_ITEM_LIST_SQL = (
+    "SELECT * FROM content.slaif_agent_navigation_item_list($1,$2)"
+)
+AGENT_NAVIGATION_ITEM_GET_SQL = (
+    "SELECT * FROM content.slaif_agent_navigation_item_get($1,$2)"
+)
+AGENT_REDIRECT_LIST_SQL = "SELECT * FROM content.slaif_agent_redirect_list($1)"
+AGENT_REDIRECT_GET_SQL = "SELECT * FROM content.slaif_agent_redirect_get($1,$2)"
 
 AgentRead = Callable[["AgentSemanticReadService"], Awaitable[Any]]
 
@@ -92,6 +115,12 @@ class AgentSemanticReadService:
             if getattr(error, "sqlstate", None) == "P0003":
                 raise ContentModelServiceError(
                     ContentModelServiceReason.VALIDATION
+                ) from None
+            if getattr(error, "sqlstate", None) in {"P0004", "P0005", "P0006"}:
+                raise ContentModelServiceError(
+                    ContentModelServiceReason.CONFLICT
+                    if getattr(error, "sqlstate", None) == "P0004"
+                    else ContentModelServiceReason.QUOTA
                 ) from None
             if getattr(error, "sqlstate", None) == "P0007":
                 raise ContentModelServiceError(
@@ -119,6 +148,12 @@ class AgentSemanticReadService:
             if getattr(error, "sqlstate", None) == "P0003":
                 raise ContentModelServiceError(
                     ContentModelServiceReason.VALIDATION
+                ) from None
+            if getattr(error, "sqlstate", None) in {"P0004", "P0005", "P0006"}:
+                raise ContentModelServiceError(
+                    ContentModelServiceReason.CONFLICT
+                    if getattr(error, "sqlstate", None) == "P0004"
+                    else ContentModelServiceReason.QUOTA
                 ) from None
             if getattr(error, "sqlstate", None) == "P0007":
                 raise ContentModelServiceError(
@@ -218,6 +253,26 @@ class AgentSemanticReadService:
         rows = await self._fetch(AGENT_PAGE_LIST_SQL, site_id)
         return tuple(_pg(row) for row in rows)
 
+    async def get_page(self, site_id: UUID, page_id: UUID) -> PageRecord:
+        row = await self._fetchrow(AGENT_PAGE_GET_SQL, site_id, page_id)
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
+        return cast(PageRecord, _pg(row))
+
+    async def list_redirects_for_site(
+        self, site_id: UUID
+    ) -> tuple[RedirectRecord, ...]:
+        rows = await self._fetch(AGENT_REDIRECT_LIST_SQL, site_id)
+        return tuple(_redirect(row) for row in rows)
+
+    async def get_redirect_for_site(
+        self, site_id: UUID, redirect_id: UUID
+    ) -> RedirectRecord:
+        row = await self._fetchrow(AGENT_REDIRECT_GET_SQL, site_id, redirect_id)
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
+        return _redirect(row)
+
     async def list_composition(
         self, site_id: UUID, page_id: UUID
     ) -> tuple[CompositionNodeRecord, ...]:
@@ -227,6 +282,42 @@ class AgentSemanticReadService:
     async def list_media(self, site_id: UUID) -> tuple[MediaAssetRecord, ...]:
         rows = await self._fetch(AGENT_MEDIA_LIST_SQL, site_id)
         return tuple(_md(row) for row in rows)
+
+    async def list_locales(self, site_id: UUID) -> tuple[LocaleRecord, ...]:
+        rows = await self._fetch(AGENT_LOCALE_LIST_SQL, site_id)
+        return tuple(_locale(row) for row in rows)
+
+    async def get_locale(self, site_id: UUID, locale_id: UUID) -> LocaleRecord:
+        row = await self._fetchrow(AGENT_LOCALE_GET_SQL, site_id, locale_id)
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
+        return _locale(row)
+
+    async def list_navigation(self, site_id: UUID) -> tuple[AgentNavigationRecord, ...]:
+        rows = await self._fetch(AGENT_NAVIGATION_LIST_SQL, site_id)
+        return tuple(_agent_nav(row) for row in rows)
+
+    async def get_navigation(
+        self, site_id: UUID, navigation_id: UUID
+    ) -> AgentNavigationRecord:
+        row = await self._fetchrow(AGENT_NAVIGATION_GET_SQL, site_id, navigation_id)
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
+        return _agent_nav(row)
+
+    async def list_navigation_items(
+        self, site_id: UUID, navigation_id: UUID
+    ) -> tuple[NavigationItemRecord, ...]:
+        rows = await self._fetch(AGENT_NAVIGATION_ITEM_LIST_SQL, site_id, navigation_id)
+        return tuple(_nav_item(row) for row in rows)
+
+    async def get_navigation_item(
+        self, site_id: UUID, item_id: UUID
+    ) -> NavigationItemRecord:
+        row = await self._fetchrow(AGENT_NAVIGATION_ITEM_GET_SQL, site_id, item_id)
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
+        return _nav_item(row)
 
 
 async def execute_agent_read(

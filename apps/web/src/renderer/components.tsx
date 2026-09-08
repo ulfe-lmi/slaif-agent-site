@@ -3,6 +3,7 @@
 import { createElement, type ReactElement, type ReactNode } from "react";
 import type { ComponentDefinition } from "@slaif-agent-site/component-catalog";
 import type { PageProjection, ProjectionNode } from "../sites/render";
+import { RENDERER_STYLESHEET } from "./styles";
 
 interface RenderProps {
   readonly definition: ComponentDefinition;
@@ -369,7 +370,7 @@ function renderNode(
 ): ReactElement {
   const children = node.children.map((child) => renderNode(child, locale, bindings));
   return (
-    <div data-component={node.component_type} data-node-id={node.id}>
+    <div data-component={node.component_type}>
       {renderComponent(
         { componentType: node.component_type, props: node.props, children },
         locale,
@@ -381,15 +382,19 @@ function renderNode(
 
 export function renderProjection(projection: PageProjection): ReactElement {
   return (
-    <main
-      data-render-mode={projection.render_mode}
-      data-site-id={projection.site.id}
-      aria-labelledby="page-title"
-    >
-      <h1 id="page-title">{projection.page.title}</h1>
-      {projection.composition.nodes.map((node) =>
-        renderNode(node, projection.locale, projection.bindings),
-      )}
-    </main>
+    <>
+      <link rel="stylesheet" href={RENDERER_STYLESHEET} />
+      <main
+        className="renderer-surface"
+        lang={projection.locale}
+        data-render-mode={projection.render_mode}
+        aria-labelledby="page-title"
+      >
+        <h1 id="page-title">{projection.page.title}</h1>
+        {projection.composition.nodes.map((node) =>
+          renderNode(node, projection.locale, projection.bindings),
+        )}
+      </main>
+    </>
   );
 }

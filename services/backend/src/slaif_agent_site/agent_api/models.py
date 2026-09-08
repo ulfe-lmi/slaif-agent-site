@@ -10,6 +10,10 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from ..browser_contracts import BrowserCapabilityLimits
 from ..content_model.primitives import FieldPrimitive
+from ..content_model.site_data_validators import (
+    validate_internal_route,
+    validate_locale_tag,
+)
 
 
 class AgentCapabilityContext(BaseModel):
@@ -41,6 +45,18 @@ class AgentCapabilityContext(BaseModel):
             "max_fields_per_type",
             "delete_enabled",
             "max_deletes",
+            "allowed_locales",
+            "route_prefix",
+            "allowed_page_root_ids",
+            "max_visible_pages",
+            "max_page_depth",
+            "allowed_navigation_keys",
+            "allowed_navigation_ids",
+            "max_visible_locales",
+            "max_visible_navigations",
+            "max_visible_navigation_items",
+            "max_navigation_depth",
+            "max_visible_redirects",
         }
         unknown = set(self.resource_constraints) - allowed
         if unknown:
@@ -54,7 +70,71 @@ class AgentCapabilityContext(BaseModel):
                 or any(not isinstance(item, str) or not item for item in value)
             ):
                 raise ValueError("resource allowlist is malformed")
-        for key in ("max_content_types", "max_fields_per_type", "max_deletes"):
+        allowed_locales = constraints.get("allowed_locales")
+        if allowed_locales is not None:
+            if (
+                not isinstance(allowed_locales, list)
+                or len(allowed_locales) > 64
+                or any(
+                    not isinstance(item, str) or not item for item in allowed_locales
+                )
+            ):
+                raise ValueError("locale allowlist is malformed")
+            try:
+                for locale in allowed_locales:
+                    validate_locale_tag(locale)
+            except ValueError:
+                raise ValueError("locale allowlist is malformed") from None
+        for key in ("allowed_navigation_keys", "allowed_navigation_ids"):
+            value = constraints.get(key)
+            if value is not None and (
+                not isinstance(value, list)
+                or len(value) > 256
+                or any(not isinstance(item, str) or not item for item in value)
+            ):
+                raise ValueError("navigation allowlist is malformed")
+        allowed_navigation_ids = constraints.get("allowed_navigation_ids")
+        if allowed_navigation_ids is not None:
+            try:
+                for navigation_id in allowed_navigation_ids:
+                    UUID(navigation_id)
+            except (TypeError, ValueError):
+                raise ValueError("navigation allowlist is malformed") from None
+        allowed_page_roots = constraints.get("allowed_page_root_ids")
+        if allowed_page_roots is not None:
+            if (
+                not isinstance(allowed_page_roots, list)
+                or len(allowed_page_roots) > 256
+                or any(
+                    not isinstance(item, str) or not item for item in allowed_page_roots
+                )
+            ):
+                raise ValueError("page-root allowlist is malformed")
+            try:
+                for page_id in allowed_page_roots:
+                    UUID(page_id)
+            except (TypeError, ValueError):
+                raise ValueError("page-root allowlist is malformed") from None
+        route_prefix = constraints.get("route_prefix")
+        if route_prefix is not None:
+            if not isinstance(route_prefix, str) or len(route_prefix) > 512:
+                raise ValueError("route prefix is malformed")
+            try:
+                validate_internal_route(route_prefix)
+            except ValueError:
+                raise ValueError("route prefix is malformed") from None
+        for key in (
+            "max_content_types",
+            "max_fields_per_type",
+            "max_deletes",
+            "max_visible_pages",
+            "max_page_depth",
+            "max_visible_locales",
+            "max_visible_navigations",
+            "max_visible_navigation_items",
+            "max_navigation_depth",
+            "max_visible_redirects",
+        ):
             value = constraints.get(key)
             if value is not None and (
                 not isinstance(value, int) or isinstance(value, bool) or value < 0

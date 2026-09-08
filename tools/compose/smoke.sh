@@ -62,6 +62,7 @@ ARTIFACT_BODY_FILE=
 FOREIGN_CAPABILITY_CONFIG_FILE=
 FOREIGN_CAPABILITY_META_FILE=
 PRE_OUTAGE_BODY_FILE=
+BROWSER_ARTIFACT_BASELINE=
 
 retrieve_public_artifacts() {
   for worker_run_id in $(printf '%s' "$worker_run_ids" | tr ',' ' ')
@@ -244,8 +245,8 @@ echo "compose-mode-policy: OK long-running-backends=9 mode=development"
 docker inspect "${PROJECT}-browser-worker-1" | python -c \
   'import json,sys; value=json.load(sys.stdin)[0]; host=value["HostConfig"]; config=value["Config"]; assert config["User"]=="10001:10001" and host["ReadonlyRootfs"] is True; assert host["CapDrop"]==["ALL"] and host["CapAdd"]==["CAP_SYS_CHROOT"]; assert host["PidsLimit"]==256 and host["Memory"]==805306368 and host["ShmSize"]==134217728 and host["NanoCpus"]==1000000000; assert "no-new-privileges:true" in host["SecurityOpt"] and any(item.startswith("seccomp=") for item in host["SecurityOpt"]); assert host["NetworkMode"].endswith("_browser"); print("browser-worker-runtime-policy: OK uid=10001 readonly=yes caps=SYS_CHROOT limits=exact network=browser")'
 docker exec "${PROJECT}-browser-worker-1" sh -c \
-  'test "$(find /ms-playwright -mindepth 1 -maxdepth 1 -type d | wc -l)" -eq 1; test -x /ms-playwright/chromium-1669021/chrome-linux64/chrome; test ! -e /usr/bin/npm; test ! -e /usr/bin/corepack; test "$(node --version)" = v24.18.1; /ms-playwright/chromium-1669021/chrome-linux64/chrome --version | grep -Eq "^Google Chrome for Testing 152[.]0[.]7977[.]64 *$"'
-echo "browser-worker-image-policy: OK playwright=1.62.1 chromium=152.0.7977.64 browsers=chromium-only package-manager=absent"
+  'test "$(find /ms-playwright -mindepth 1 -maxdepth 1 -type d | wc -l)" -eq 1; test -x /ms-playwright/chromium-1669021/chrome-linux64/chrome; test ! -e /usr/bin/npm; test ! -e /usr/bin/corepack; test "$(node --version)" = v24.18.1; /ms-playwright/chromium-1669021/chrome-linux64/chrome --version | grep -Eq "^Google Chrome for Testing 152[.]0[.]7977[.]82 *$"'
+echo "browser-worker-image-policy: OK playwright=1.62.1 chromium=152.0.7977.82 browsers=chromium-only package-manager=absent"
 
 curl --fail --show-error --silent http://localhost:8080/ | grep -q "Self-hosted human control"
 docker compose -p "$PROJECT" logs --no-color bootstrap 2>/dev/null \
@@ -609,10 +610,12 @@ then
   echo "compose-smoke: unrelated uid unexpectedly read browser worker credential" >&2
   exit 1
 fi
-docker run --rm --network none --read-only --cap-drop ALL --cap-add DAC_READ_SEARCH \
+BROWSER_ARTIFACT_BASELINE=$(docker run --rm --network none --read-only --cap-drop ALL --cap-add DAC_READ_SEARCH \
   --user 0:0 --volume "${PROJECT}_browser-artifacts:/artifacts:ro" \
   --entrypoint python slaif-agent-site-backend:local -c \
-  "import pathlib,stat; root=pathlib.Path('/artifacts'); info=root.stat(); assert stat.S_IMODE(info.st_mode)==0o700 and info.st_uid==10001 and info.st_gid==10001 and not list(root.iterdir()); print('browser-artifact-root-policy: OK empty mode=0700 owner=10001')"
+  "import pathlib,stat; root=pathlib.Path('/artifacts'); info=root.stat(); files=sorted(root.iterdir()); assert stat.S_IMODE(info.st_mode)==0o700 and info.st_uid==10001 and info.st_gid==10001; assert len(files)==4 and sum(p.suffix=='.bin' for p in files)==2 and sum(p.suffix=='.json' for p in files)==2; assert all(p.is_file() and not p.is_symlink() and stat.S_IMODE(p.stat().st_mode)==0o600 and p.stat().st_uid==10001 and p.stat().st_nlink==1 for p in files); assert not any(marker in p.read_bytes() for p in files for marker in (b'sbp1.',b'sbws1:',b'sas2_')); print(len(files))")
+test "$BROWSER_ARTIFACT_BASELINE" = 4
+echo "browser-artifact-root-policy: OK retained-files=$BROWSER_ARTIFACT_BASELINE retained-artifacts=2 mode=0600 owner=10001"
 
 docker run --rm --network none --read-only --cap-drop ALL --cap-add DAC_READ_SEARCH \
   --user 0:0 --volume "${PROJECT}_local-secrets:/master:ro" \
@@ -787,7 +790,7 @@ pathlib.Path(sys.argv[2]).write_text(
 PY
 read -r foreign_capability_public foreign_capability_digest < "$FOREIGN_CAPABILITY_META_FILE"
 preview_site_id=$(docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif -Atc \
-  "SELECT id FROM control.site WHERE site_key='demo'")
+  "SELECT id FROM control.site WHERE site_key='parity'")
 test -n "$preview_site_id"
 docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif \
   -v ON_ERROR_STOP=1 -c \
@@ -810,7 +813,7 @@ do
     --output "$AGENT_RUN_FILE" --write-out '%{http_code}' \
     --request POST --header 'Content-Type: application/json' \
     --header "Idempotency-Key: $worker_key" \
-    --data '{"version":"browser-preview/v1","route":"/s/demo/","target":"desktop-chromium","evidence":["screenshot","heading-summary","structure-summary"]}' \
+    --data '{"version":"browser-preview/v1","route":"/s/parity/","target":"desktop-chromium","evidence":["screenshot","heading-summary","structure-summary"]}' \
     http://localhost:8080/api/agent/v1/preview-runs)
   test "$worker_status" = 202
   worker_run_id=$(python -c \
@@ -857,7 +860,7 @@ done
 docker exec -i \
   -e SLAIF_TEST_RUN_IDS="$worker_run_ids" \
   "${PROJECT}-agent-api-1" python - <<'PY'
-# ROUTE = "/s/demo/" is submitted and normalized by the Agent contract.
+# ROUTE = "/s/parity/" is submitted and normalized by the Agent contract.
 import json
 import os
 from pathlib import Path
@@ -955,7 +958,8 @@ echo "browser-worker-public-separation: OK durable-runs=2 completed=2 db-artifac
 docker run --rm --network none --read-only --cap-drop ALL --cap-add DAC_READ_SEARCH \
   --user 0:0 --volume "${PROJECT}_browser-artifacts:/artifacts:ro" \
   --entrypoint python slaif-agent-site-backend:local -c \
-  "import pathlib,stat; root=pathlib.Path('/artifacts'); files=sorted(root.iterdir()); assert len(files)==12 and sum(p.suffix=='.bin' for p in files)==6 and sum(p.suffix=='.json' for p in files)==6 and not any(p.name.startswith('.stage-') for p in files); assert all(p.is_file() and not p.is_symlink() and stat.S_IMODE(p.stat().st_mode)==0o600 and p.stat().st_uid==10001 and p.stat().st_nlink==1 for p in files); assert not any(marker in p.read_bytes() for p in files for marker in (b'sbp1.',b'sbws1:',b'sas2_')); print('browser-artifact-runtime-policy: OK files=12 artifacts=6 mode=0600 links=1 credentials=absent')"
+  "import pathlib,stat,sys; baseline=int(sys.argv[1]); root=pathlib.Path('/artifacts'); files=sorted(root.iterdir()); assert len(files)==baseline+12 and sum(p.suffix=='.bin' for p in files)==baseline//2+6 and sum(p.suffix=='.json' for p in files)==baseline//2+6 and not any(p.name.startswith('.stage-') for p in files); assert all(p.is_file() and not p.is_symlink() and stat.S_IMODE(p.stat().st_mode)==0o600 and p.stat().st_uid==10001 and p.stat().st_nlink==1 for p in files); assert not any(marker in p.read_bytes() for p in files for marker in (b'sbp1.',b'sbws1:',b'sas2_')); print(f'browser-artifact-runtime-policy: OK files={len(files)} retained={baseline} new=12 mode=0600 links=1 credentials=absent')" \
+  "$BROWSER_ARTIFACT_BASELINE"
 if docker compose -p "$PROJECT" logs --no-color browser-worker 2>/dev/null \
   | grep -Eq 'sbp1\.|sbws1:|sas2_|--no-sandbox'
 then
@@ -1171,7 +1175,7 @@ then
 fi
 
 docker build -f infra/apache/Dockerfile -t slaif-agent-site-apache:test .
-docker run --rm slaif-agent-site-apache:test httpd -t
+docker run --rm slaif-agent-site-apache:test apachectl -t
 docker run --rm \
   --add-host control-api:127.0.0.1 \
   --add-host editor-api:127.0.0.1 \

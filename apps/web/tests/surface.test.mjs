@@ -5,6 +5,27 @@ import { URL } from "node:url";
 
 const read = (path) => readFile(new URL(path, import.meta.url), "utf8");
 
+test("static redirect boundary preserves pinned Next browser fallback statuses", async () => {
+  const proxy = await read("../proxy.ts");
+  for (const status of [301, 302, 303, 307, 308]) {
+    assert.match(proxy, new RegExp(String(status)));
+  }
+  assert.match(proxy, /!browserToken && !session/);
+  const edge = await read("../../../infra/nginx/nginx.conf");
+  assert.match(edge, /map \$uri \$slaif_preview_cache_control/);
+  assert.match(edge, /private, no-store/);
+  assert.match(edge, /noindex, nofollow, noarchive/);
+
+  const nextRedirect = await import("next/dist/client/components/redirect.js");
+  const nextRedirectError =
+    await import("next/dist/client/components/redirect-error.js");
+  for (const status of [303, 307, 308]) {
+    const error = nextRedirect.getRedirectError("/target", "replace", status);
+    assert.equal(nextRedirectError.isRedirectError(error), true);
+    assert.equal(nextRedirect.getRedirectStatusCodeFromError(error), status);
+  }
+});
+
 test("auth routes and landing page expose truthful local flows", async () => {
   const home = await read("../app/page.tsx");
   assert.match(home, /href="\/setup"/);
@@ -274,10 +295,14 @@ test("site shell uses only the fixed server-side Render resolver", async () => {
   const shellView = await read("../src/sites/shell.tsx");
   const landing = await read("../app/page.tsx");
   const renderer = await read("../src/renderer/components.tsx");
+  const layout = await read("../app/layout.tsx");
   const serviceAuth = await read("../src/sites/service-auth.ts");
   const previewPage = await read(
-    "../app/preview/[workspaceId]/[[...sitePath]]/page.tsx",
+    "../app/preview/[workspaceId]/[[...sitePath]]/route.tsx",
   );
+  const previewResolver = await read("../src/sites/preview-page.tsx");
+  const rendererStyles = await read("../src/renderer/styles.ts");
+  const rendererCss = await read("../public/renderer-v1.css");
   assert.match(client, /http:\/\/render-api:8000\/internal\/render\/v1\/site-context/);
   assert.match(client, /internal\/render\/v1\/page/);
   assert.match(client, /internal\/render\/v1\/preview/);
@@ -298,18 +323,33 @@ test("site shell uses only the fixed server-side Render resolver", async () => {
   assert.match(landing, /isLoopbackAuthority/);
   assert.match(landing, /resolveCanonicalPage\(authority, "\/"\)/);
   assert.match(renderer, /renderer-image-placeholder/);
+  assert.doesNotMatch(renderer, /data-site-id|data-node-id/);
+  assert.doesNotMatch(renderer, /data-component=\{[^}]*\.id/);
   assert.doesNotMatch(renderer, /parsed\.protocol === "https:"/);
   assert.match(serviceAuth, /lstat/);
   assert.doesNotMatch(serviceAuth, /readFile\(file, "ascii"\)\)\.trim/);
   assert.match(landing, /resolveSiteContext\(authority, "\/"\)/);
   assert.doesNotMatch(shell, /site_id.*params|x-forwarded-host/i);
-  assert.match(previewPage, /x-slaif-browser-preview/);
-  assert.match(previewPage, /session && browserToken/);
-  assert.match(previewPage, /browserToken, browserRoute/);
-  assert.match(previewPage, /SLAIF_BROWSER_PREVIEW_AUTHORITY/);
-  assert.match(previewPage, /browserToken \? browserAuthority!/);
+  assert.match(`${previewPage}${previewResolver}`, /x-slaif-browser-preview/);
+  assert.match(`${previewPage}${previewResolver}`, /session && browserToken/);
+  assert.match(`${previewPage}${previewResolver}`, /browserToken, browserRoute/);
+  assert.match(`${previewPage}${previewResolver}`, /SLAIF_BROWSER_PREVIEW_AUTHORITY/);
+  assert.match(`${previewPage}${previewResolver}`, /browserToken \? browserAuthority!/);
+  assert.match(previewPage, /renderToReadableStream/);
+  assert.match(previewPage, /lang=\{resolution\.projection\.locale\}/);
+  assert.match(previewPage, /resolution\.projection\.page\.title/);
+  assert.match(renderer, /RENDERER_STYLESHEET/);
+  assert.match(renderer, /className="renderer-surface"/);
+  assert.match(renderer, /lang=\{projection\.locale\}/);
+  assert.doesNotMatch(layout, /RENDERER_STYLESHEET|renderer-v1\.css/);
+  assert.match(rendererStyles, /"\/renderer-v1\.css"/);
+  assert.match(rendererCss, /body:has\(\.renderer-surface\)/);
+  assert.match(rendererCss, /\.renderer-surface \.renderer-collection article/);
+  assert.match(rendererCss, /\.renderer-collection-detail/);
+  assert.doesNotMatch(rendererCss, /https?:\/\/|@import|url\s*\(/);
+  assert.match(previewPage, /workspaceId/);
   assert.doesNotMatch(
-    `${client}${previewPage}`,
+    `${client}${previewPage}${previewResolver}`,
     /localStorage|sessionStorage|[?&](?:token|credential)=/i,
   );
 });

@@ -31,7 +31,7 @@ FIXED_CREATED = "2024-01-01T00:00:00Z"
 HEX_ID = re.compile(r"sha256:[0-9a-f]{64}")
 SPDX_ID = re.compile(r"SPDXRef-[A-Za-z0-9.-]+")
 IMAGE_PREFIXES = {
-    "apache": ("usr/local/apache2/conf/",),
+    "apache": ("etc/apache2/",),
     "backend": ("opt/slaif/",),
     "browser-worker": ("opt/slaif/", "ms-playwright/chromium-1669021/"),
     "nginx": ("etc/nginx/nginx.conf",),

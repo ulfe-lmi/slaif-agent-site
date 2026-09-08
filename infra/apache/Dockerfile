@@ -1,5 +1,5 @@
-# Apache HTTP Server 2.4.68; Apache-2.0 license; official multi-platform image.
-FROM httpd:2.4.68-alpine3.23@sha256:4a15e9c73f25334bc03cfb3c692c9adfc103bb46ca89cee1f0b9a5fcbc7b21f6
+# Apache HTTP Server 2.4 on Ubuntu 24.04 LTS; Apache-2.0 license; official image.
+FROM ubuntu:24.04@sha256:33ceb71981b602c1a7443a53469e4dba065f7503eab3078a2d7a57a2ab987517
 ARG SOURCE_DATE_EPOCH=1704067200
 ARG SLAIF_IMAGE_CREATED=2024-01-01T00:00:00Z
 ARG SLAIF_IMAGE_REVISION=local
@@ -12,19 +12,16 @@ LABEL org.opencontainers.image.title="SLAIF Agent-Site Apache edge" \
       org.opencontainers.image.revision="${SLAIF_IMAGE_REVISION}" \
       org.opencontainers.image.created="${SLAIF_IMAGE_CREATED}"
 ENV SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH}
-RUN apk --timeout 30 add --no-cache \
-      'apr-util=1.6.4-r0' \
-      'apr-util-ldap=1.6.4-r0' \
-      'libcrypto3=3.5.8-r0' \
-      'libssl3=3.5.8-r0' \
-    && apk del perl \
-    && sed -i \
-      -e 's/^#LoadModule headers_module/LoadModule headers_module/' \
-      -e 's/^#LoadModule proxy_module/LoadModule proxy_module/' \
-      -e 's/^#LoadModule proxy_http_module/LoadModule proxy_http_module/' \
-      -e 's/^#LoadModule unique_id_module/LoadModule unique_id_module/' \
-      -e 's/^#LoadModule deflate_module/LoadModule deflate_module/' \
-      /usr/local/apache2/conf/httpd.conf \
-    && printf '\nInclude conf/extra/slaif-agent-site.conf\n' >> /usr/local/apache2/conf/httpd.conf
-COPY infra/apache/slaif-agent-site.conf /usr/local/apache2/conf/extra/slaif-agent-site.conf
-RUN httpd -t
+RUN apt-get update \
+    && apt-get install --no-install-recommends --yes \
+      'apache2=2.4.58-1ubuntu8.15' \
+      'apache2-bin=2.4.58-1ubuntu8.15' \
+      'apache2-data=2.4.58-1ubuntu8.15' \
+      'apache2-utils=2.4.58-1ubuntu8.15' \
+      'openssl=3.0.13-0ubuntu3.15' \
+    && a2dissite 000-default \
+    && a2enmod deflate headers proxy proxy_http unique_id \
+    && rm -rf /var/lib/apt/lists/* /var/cache/apt/*
+COPY infra/apache/slaif-agent-site.conf /etc/apache2/sites-available/slaif-agent-site.conf
+RUN a2ensite slaif-agent-site && apachectl -t
+CMD ["apachectl", "-D", "FOREGROUND"]

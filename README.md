@@ -32,6 +32,17 @@ and transactional authority locking. Render projects only typed, site-confined
 canonical or authorized COW-preview data; Web alone returns HTML. Review,
 promotion, and publication execution remain unimplemented.
 
+The Objective-077 source revision developed in [PR #74](https://github.com/ulfe-lmi/slaif-agent-site/pull/74)
+adds the bounded capability-bound Agent page list/read/create/update/delete/
+move/restore, locale, navigation, redirect, and dynamic collection Render
+semantics, with the corresponding human Editor route path, shared trusted
+Render projection, hostile-negative/concurrency/recovery evidence, and exact
+OpenAPI/policy continuity. GitHub's PR and merge state is authoritative for
+whether this source revision is contained in `main`; review snapshots,
+promotion, publication execution, composition/design/media-reference expansion,
+and later MVP work remain separate. This source-revision evidence does not
+claim that the contractual MVP is complete.
+
 > **Pre-alpha / bounded deployable product.** This
 > repository contains the normative architecture, coding-agent governance,
 > reproducible Python/TypeScript toolchains, the qualified
@@ -55,11 +66,14 @@ promotion, and publication execution remain unimplemented.
 > runs with durable private artifact retrieval. Review snapshots, promotion,
 > publication, and public media finalization remain separate work.
 
-The supply-chain policy records a temporary, bounded 41-finding Critical
-exception for Chrome for Testing `152.0.7977.64` in open
-[issue #67](https://github.com/ulfe-lmi/slaif-agent-site/issues/67). It expires
-on `2026-09-04`, is limited to the isolated browser-worker, and is not release
-readiness.
+The supply-chain policy now uses qualified Chrome for Testing `152.0.7977.82`
+and has no current vulnerability exception after a fresh full six-image scan
+reported zero unexcepted Critical findings. The former 41-finding
+`152.0.7977.64` qualification remains historical evidence in
+[`supply-chain/browser-worker-critical-matrix.json`](supply-chain/browser-worker-critical-matrix.json)
+and [issue #67](https://github.com/ulfe-lmi/slaif-agent-site/issues/67). Policy
+keeps that issue open until the containing Objective-077 merge is verified and
+then closes it as resolved; this does not claim release readiness.
 
 The current automation also migrates/rebuilds disposable databases, verifies
 the exact role/ownership/grant matrix, exercises COW runtime/reviewer paths,
@@ -180,8 +194,10 @@ docker compose up --build
 No `.env`, manual package install, cloud account, API key, or secret-generation
 step is required. Wait for health, then open <http://localhost:8080/>. Only
 loopback port 8080 is published. The deployable pre-alpha stack includes
-one-time first-run setup/login and site-management administration; deeper Agent
-semantics and review/publication remain queued. See the
+one-time first-run setup/login and site-management administration; bounded
+page/locale/navigation/redirect/dynamic-Render semantics are present in the
+Objective-077 source revision, while composition/design/media, review, and
+publication remain queued. See the
 [deployment guide](docs/DEPLOYMENT.md) and [operations guide](docs/OPERATIONS.md).
 
 ## Delivery sequence
@@ -200,6 +216,7 @@ semantics and review/publication remain queued. See the
 | Completed site foundation | Control-owned sites and domain mappings, bounded installation quota, strict identifier normalization, immutable site context, and trusted longest-prefix/local-development resolution. |
 | Completed human RBAC HTTP boundary | Immutable role/permission catalogs, site membership list/get/create/update/deactivate, strict session/CSRF policy, optimistic concurrency, and complete Control/Editor route declarations. |
 | Responsive site and membership administration | Permission-driven site/profile/domain workflows plus existing-user UUID membership cards, built-in roles, bounded ceilings, separate publication overrides, complete override replacement, version refresh, and semantic deactivation. |
+| Objective-077 source revision | Capability-bound Agent pages, locales, navigation, redirects, and bounded dynamic collection Render semantics with human Editor parity, shared Render/NGINX/browser evidence, route integrity, concurrency, and recovery proof on PR #74; strategic acceptance/merge remains separate. |
 | Planned product work | Add review snapshots, freeze/accept/discard/promotion, approved-source and responsive-sweep orchestration, reconstruction, public media finalization, and remaining hardening. |
 
 See [Architecture Section 50](ARCHITECTURE.md#50-implementation-phases) for
@@ -326,10 +343,10 @@ Ministry of Higher Education, Science and Innovation for SLAIF grant
 
 ## Implementation Status
 
-The merged Objectives 065–072 prove only the narrow, bounded slices recorded
-in [`oap/MVP-CONTRACT-AUDIT.md`](oap/MVP-CONTRACT-AUDIT.md). The contractual MVP
-remains incomplete: complete Agent semantic REST and MCP, immutable review
-snapshots, accept/discard promotion,
+The merged Objectives 065–076 and the Objective-077 source revision prove only
+the narrow, bounded slices recorded in [`oap/MVP-CONTRACT-AUDIT.md`](oap/MVP-CONTRACT-AUDIT.md).
+The contractual MVP remains incomplete: complete Agent semantic REST and MCP,
+immutable review snapshots, accept/discard promotion,
 conflict-safe publication, source reconstruction, lifecycle cleanup, and
 backup/restore evidence are planned in the 074–091 sequence. See
 [`oap/MVP-PROGRESS.md`](oap/MVP-PROGRESS.md) for the current status vocabulary

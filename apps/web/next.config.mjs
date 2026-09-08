@@ -16,7 +16,12 @@ function versionedBuildInputs() {
     "apps/web/tsconfig.json",
     "docs/assets/slaif-logo.svg",
   ];
-  for (const directory of ["apps/web/app", "packages"]) {
+  for (const directory of [
+    "apps/web/app",
+    "apps/web/public",
+    "apps/web/src",
+    "packages",
+  ]) {
     const absolute = path.join(repositoryRoot, directory);
     for (const entry of readdirSync(absolute, {
       recursive: true,

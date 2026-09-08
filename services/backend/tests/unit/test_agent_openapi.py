@@ -82,6 +82,21 @@ def test_public_contract_has_scopes_headers_errors_and_no_internal_paths() -> No
     assert mutation["responses"]["422"]["content"]["application/json"]["schema"] == {
         "$ref": "#/components/schemas/ErrorEnvelope"
     }
+    page_patch = document["paths"]["/api/agent/v1/pages/{page_id}"]["patch"]
+    assert page_patch["x-slaif-required-scopes"] == ["page:write"]
+    assert page_patch["x-slaif-conditional-scopes"] == [
+        {
+            "when_fields": ["slug", "locale", "route_template"],
+            "required_scopes": ["route:write"],
+        }
+    ]
+    move = document["components"]["schemas"]["MovePageRequest"]
+    assert set(move["properties"]) == {"parent_id", "expected_row_version"}
+    assert "deleted_at" in document["components"]["schemas"]["PageRecord"]["properties"]
+    restore = document["paths"]["/api/agent/v1/pages/{page_id}:restore"]["post"]
+    restore_schema = restore["requestBody"]["content"]["application/json"]["schema"]
+    assert restore["requestBody"]["required"] is True
+    assert restore_schema == {"$ref": "#/components/schemas/RestorePageRequest"}
     assert "LivenessResponse" not in document["components"]["schemas"]
     assert "ReadinessResponse" not in document["components"]["schemas"]
 

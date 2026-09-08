@@ -216,6 +216,8 @@ def validate_query_contract(
     projection_spec: dict[str, Any] | list[str],
     pagination_spec: dict[str, Any],
     fields: Iterable[Any],
+    *,
+    allow_localized_projection: bool = False,
 ) -> None:
     """Validate a query before persistence or execution."""
 
@@ -262,7 +264,7 @@ def validate_query_contract(
         field = definitions.get(name) if isinstance(name, str) else None
         if not isinstance(name, str) or name in _COMMON_FIELDS or field is None:
             raise ValueError("unknown or reserved projection field")
-        if field.localized:
+        if field.localized and not allow_localized_projection:
             raise ValueError("localized fields are not valid projection fields")
     if set(pagination_spec) - {"limit", "offset"}:
         raise ValueError("unknown pagination member")

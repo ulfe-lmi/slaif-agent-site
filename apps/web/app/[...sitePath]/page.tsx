@@ -1,7 +1,12 @@
 import { headers } from "next/headers";
 import { notFound } from "next/navigation";
 
-import { resolveCanonicalPage, resolveSiteContext } from "../../src/sites/render";
+import {
+  isRedirectProjection,
+  redirectProjection,
+  resolveCanonicalPage,
+  resolveSiteContext,
+} from "../../src/sites/render";
 import { PageProjectionShell, SiteContextShell } from "../../src/sites/shell";
 
 export const dynamic = "force-dynamic";
@@ -21,6 +26,7 @@ export default async function SiteShell({
     if (matchedRoot !== requestedPath) notFound();
     return <SiteContextShell context={context} />;
   }
+  if (isRedirectProjection(projection)) redirectProjection(projection);
 
   return <PageProjectionShell projection={projection} />;
 }

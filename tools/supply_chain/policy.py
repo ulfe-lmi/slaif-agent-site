@@ -93,6 +93,7 @@ def validate_policy(policy: dict[str, Any]) -> None:
     required = {
         "application_licenses",
         "alpine_package_overrides",
+        "ubuntu_package_overrides",
         "attribution_notes",
         "browser_runtime",
         "container_license_policy",
@@ -259,7 +260,7 @@ def validate_policy(policy: dict[str, Any]) -> None:
         raise PolicyError("policy: Alpine package overrides are malformed")
     if overrides["registry"] != "https://dl-cdn.alpinelinux.org/alpine/v3.23":
         raise PolicyError("policy: Alpine package registry is not exact and approved")
-    expected_override_images = {"apache", "backend", "nginx", "postgres", "web"}
+    expected_override_images = {"backend", "nginx", "postgres", "web"}
     if (
         not isinstance(overrides["images"], dict)
         or set(overrides["images"]) != expected_override_images
@@ -268,10 +269,8 @@ def validate_policy(policy: dict[str, Any]) -> None:
             "policy: Alpine package override image coverage is incomplete"
         )
     for name, configuration in overrides["images"].items():
-        if not isinstance(configuration, dict) or set(configuration) != {
-            "install",
-            "remove",
-        }:
+        allowed_keys = {"install", "remove"}
+        if not isinstance(configuration, dict) or set(configuration) != allowed_keys:
             raise PolicyError(
                 f"policy: Alpine package overrides for {name} are malformed"
             )
@@ -294,6 +293,40 @@ def validate_policy(policy: dict[str, Any]) -> None:
         if not isinstance(removed, list) or removed != sorted(set(removed)):
             raise PolicyError(
                 f"policy: Alpine package removals for {name} are malformed"
+            )
+
+    ubuntu = policy["ubuntu_package_overrides"]
+    if not isinstance(ubuntu, dict) or set(ubuntu) != {"images"}:
+        raise PolicyError("policy: Ubuntu package overrides are malformed")
+    if not isinstance(ubuntu["images"], dict) or set(ubuntu["images"]) != {"apache"}:
+        raise PolicyError(
+            "policy: Ubuntu package override image coverage is incomplete"
+        )
+    for name, configuration in ubuntu["images"].items():
+        if not isinstance(configuration, dict) or set(configuration) != {
+            "install",
+            "remove",
+        }:
+            raise PolicyError(
+                f"policy: Ubuntu package overrides for {name} are malformed"
+            )
+        installed = configuration["install"]
+        removed = configuration["remove"]
+        if (
+            not isinstance(installed, list)
+            or not all(
+                isinstance(item, str)
+                and re.fullmatch(r"[a-z0-9][a-z0-9+_.-]*=[^\s]+", item)
+                for item in installed
+            )
+            or installed != sorted(set(installed))
+        ):
+            raise PolicyError(
+                f"policy: Ubuntu package overrides for {name} are not exact"
+            )
+        if not isinstance(removed, list) or removed != sorted(set(removed)):
+            raise PolicyError(
+                f"policy: Ubuntu package removals for {name} are malformed"
             )
 
     browser_runtime = policy["browser_runtime"]
@@ -321,11 +354,11 @@ def validate_policy(policy: dict[str, Any]) -> None:
         browser_runtime["base_image"] != "playwright"
         or browser_runtime["playwright_core_version"] != "1.62.1"
         or browser_runtime["chromium_revision"] != "1669021"
-        or browser_runtime["chromium_version"] != "152.0.7977.64"
+        or browser_runtime["chromium_version"] != "152.0.7977.82"
         or browser_runtime["chromium_archive_url"]
-        != "https://storage.googleapis.com/chrome-for-testing-public/152.0.7977.64/linux64/chrome-linux64.zip"
+        != "https://storage.googleapis.com/chrome-for-testing-public/152.0.7977.82/linux64/chrome-linux64.zip"
         or browser_runtime["chromium_archive_sha256"]
-        != "8b592f066af71f054aab2cc80fc26f73c775c6d44ebb99d16ade924b24756c2e"
+        != "0704631fb3e4f741092e08f55272f90abc3e307f991f05f332924364415b02e0"
         or browser_runtime["platform"] != "linux/amd64"
         or browser_runtime["node_version"] != "24.18.1"
         or browser_runtime["chromium_executable"]
@@ -731,6 +764,16 @@ def validate_dependency_sources(root: Path, policy: dict[str, Any]) -> dict[str,
                 marker = f"apk del {package}"
             if marker not in dockerfile_text:
                 raise PolicyError(f"{name}: missing Alpine package removal {package}")
+
+    ubuntu_paths = {"apache": root / "infra/apache/Dockerfile"}
+    for name, configuration in policy["ubuntu_package_overrides"]["images"].items():
+        dockerfile_text = ubuntu_paths[name].read_text(encoding="utf-8")
+        for package in configuration["install"]:
+            if f"'{package}'" not in dockerfile_text:
+                raise PolicyError(f"{name}: missing exact Ubuntu package {package}")
+        for package in configuration["remove"]:
+            if package not in dockerfile_text:
+                raise PolicyError(f"{name}: missing Ubuntu package removal {package}")
 
     browser_runtime = policy["browser_runtime"]
     worker_dockerfile = (root / "services/browser-worker/Dockerfile").read_text(

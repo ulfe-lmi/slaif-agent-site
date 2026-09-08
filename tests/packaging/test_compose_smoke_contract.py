@@ -152,11 +152,12 @@ class ComposeSmokeContractTests(unittest.TestCase):
             "browser-worker-dispatch: OK durable-runs=2 artifacts=agent-owned",
             "browser-worker-restart: OK durable-dispatch-artifacts=retained",
             "browser-worker-public-separation: OK durable-runs=2 completed=2",
-            "browser-artifact-runtime-policy: OK files=12 artifacts=6",
+            "browser-artifact-runtime-policy: OK files=",
             "browser-worker-cleanup: OK chromium-children=0",
             "browser-worker-secret-recovery: OK",
         ):
             self.assertEqual(source.count(marker), 1, marker)
+        self.assertIn("baseline=int(sys.argv[1])", source)
         self.assertNotIn("slaif_agent_browser_run_claim", source)
         self.assertNotIn("slaif_agent_browser_run_complete", source)
         self.assertNotIn("slaif_agent_browser_artifact_register", source)
@@ -165,8 +166,8 @@ class ComposeSmokeContractTests(unittest.TestCase):
         self,
     ) -> None:
         source = SMOKE.read_text(encoding="utf-8")
-        self.assertIn('"route":"/s/demo/"', source)
-        self.assertIn('ROUTE = "/s/demo/"', source)
+        self.assertIn('"route":"/s/parity/"', source)
+        self.assertIn('ROUTE = "/s/parity/"', source)
         self.assertNotIn('"route":"/s/demo/home"', source)
         self.assertNotIn('ROUTE = "/s/demo/home"', source)
         self.assertIn("agent-browser-dispatch: terminal run=", source)

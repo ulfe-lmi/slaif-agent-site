@@ -43,7 +43,10 @@ class SiteResolver:
         self._pool = pool
         self._acquire_timeout = acquire_timeout
 
-    async def resolve(self, authority: str, request_path: str) -> SiteContext:
+    @staticmethod
+    async def _resolve_connection(
+        connection: Any, authority: str, request_path: str
+    ) -> SiteContext:
         try:
             normalized_authority = normalize_authority(authority)
             normalized_path = normalize_request_path(request_path)
@@ -53,26 +56,48 @@ class SiteResolver:
             raise SiteResolverError(SiteResolverReason.NOT_FOUND)
 
         segments = normalized_path.split("/")
+        if len(segments) >= 2 and segments[1] == "s":
+            if normalized_authority.hostname != "localhost" or len(segments) < 3:
+                raise SiteResolverError(SiteResolverReason.NOT_FOUND)
+            try:
+                key = normalize_site_key(segments[2])
+            except SiteInputError:
+                raise SiteResolverError(SiteResolverReason.NOT_FOUND) from None
+            row = await connection.fetchrow(RESOLVE_LOCAL_SQL, key)
+            if row is None:
+                raise SiteResolverError(SiteResolverReason.NOT_FOUND)
+            return SiteContext._from_database(
+                (*tuple(row), normalized_authority.hostname, f"/s/{key}")
+            )
+
+        rows = await connection.fetch(
+            RESOLVE_SITE_SQL, normalized_authority.hostname, normalized_path
+        )
+        if not rows:
+            raise SiteResolverError(SiteResolverReason.NOT_FOUND)
+        if len(rows) > 1 and len(rows[0][6]) == len(rows[1][6]):
+            raise SiteResolverError(SiteResolverReason.CONFLICT)
+        return SiteContext._from_database(rows[0])
+
+    async def resolve_on_connection(
+        self, connection: Any, authority: str, request_path: str
+    ) -> SiteContext:
+        """Resolve using the caller's already-owned transaction and snapshot."""
+
+        try:
+            return await self._resolve_connection(connection, authority, request_path)
+        except asyncio.CancelledError:
+            raise
+        except SiteResolverError:
+            raise
+        except (asyncpg.PostgresError, OSError, TimeoutError):
+            raise SiteResolverError(SiteResolverReason.UNAVAILABLE) from None
+
+    async def resolve(self, authority: str, request_path: str) -> SiteContext:
         try:
             async with self._pool.acquire(timeout=self._acquire_timeout) as connection:
-                if len(segments) >= 2 and segments[1] == "s":
-                    if (
-                        normalized_authority.hostname != "localhost"
-                        or len(segments) < 3
-                    ):
-                        raise SiteResolverError(SiteResolverReason.NOT_FOUND)
-                    try:
-                        key = normalize_site_key(segments[2])
-                    except SiteInputError:
-                        raise SiteResolverError(SiteResolverReason.NOT_FOUND) from None
-                    row = await connection.fetchrow(RESOLVE_LOCAL_SQL, key)
-                    if row is None:
-                        raise SiteResolverError(SiteResolverReason.NOT_FOUND)
-                    return SiteContext._from_database(
-                        (*tuple(row), normalized_authority.hostname, f"/s/{key}")
-                    )
-                rows = await connection.fetch(
-                    RESOLVE_SITE_SQL, normalized_authority.hostname, normalized_path
+                return await self._resolve_connection(
+                    connection, authority, request_path
                 )
         except asyncio.CancelledError:
             raise
@@ -80,11 +105,6 @@ class SiteResolver:
             raise
         except (asyncpg.PostgresError, OSError, TimeoutError):
             raise SiteResolverError(SiteResolverReason.UNAVAILABLE) from None
-        if not rows:
-            raise SiteResolverError(SiteResolverReason.NOT_FOUND)
-        if len(rows) > 1 and len(rows[0][6]) == len(rows[1][6]):
-            raise SiteResolverError(SiteResolverReason.CONFLICT)
-        return SiteContext._from_database(rows[0])
 
 
 __all__ = [
