@@ -6,8 +6,7 @@
         "properties": {
           "components": {
             "items": {
-              "additionalProperties": true,
-              "type": "object"
+              "$ref": "#/components/schemas/AgentComponentDescriptor"
             },
             "title": "Components",
             "type": "array"
@@ -29,6 +28,385 @@
           "components"
         ],
         "title": "AgentComponentCatalogResponse",
+        "type": "object"
+      },
+      "AgentComponentDescriptor": {
+        "additionalProperties": false,
+        "properties": {
+          "allowed_slots": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Allowed Slots",
+            "type": "array"
+          },
+          "authority_class": {
+            "enum": [
+              "content",
+              "structure",
+              "global"
+            ],
+            "title": "Authority Class",
+            "type": "string"
+          },
+          "binding_kind": {
+            "enum": [
+              "none",
+              "collection_view",
+              "media_asset"
+            ],
+            "title": "Binding Kind",
+            "type": "string"
+          },
+          "category": {
+            "enum": [
+              "layout",
+              "basic",
+              "data",
+              "institutional",
+              "global"
+            ],
+            "title": "Category",
+            "type": "string"
+          },
+          "max_children": {
+            "title": "Max Children",
+            "type": "integer"
+          },
+          "props": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/AgentComponentPropDescriptor"
+            },
+            "title": "Props",
+            "type": "object"
+          },
+          "schema_version": {
+            "title": "Schema Version",
+            "type": "string"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "category",
+          "schema_version",
+          "allowed_slots",
+          "max_children",
+          "binding_kind",
+          "authority_class",
+          "props"
+        ],
+        "title": "AgentComponentDescriptor",
+        "type": "object"
+      },
+      "AgentComponentPropDescriptor": {
+        "additionalProperties": false,
+        "properties": {
+          "authority": {
+            "enum": [
+              "content",
+              "design"
+            ],
+            "title": "Authority",
+            "type": "string"
+          },
+          "enum_values": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enum Values"
+          },
+          "format": {
+            "anyOf": [
+              {
+                "const": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Format"
+          },
+          "localized": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Localized"
+          },
+          "max_items": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Items"
+          },
+          "max_length": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Length"
+          },
+          "maximum": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Maximum"
+          },
+          "min_items": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min Items"
+          },
+          "minimum": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Minimum"
+          },
+          "required": {
+            "title": "Required",
+            "type": "boolean"
+          },
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AgentComponentSchemaNode"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "type": {
+            "enum": [
+              "string",
+              "number",
+              "boolean",
+              "enum",
+              "reference",
+              "object",
+              "array"
+            ],
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "required",
+          "authority"
+        ],
+        "title": "AgentComponentPropDescriptor",
+        "type": "object"
+      },
+      "AgentComponentSchemaNode": {
+        "additionalProperties": false,
+        "properties": {
+          "additional_properties": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Additional Properties"
+          },
+          "enum_values": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enum Values"
+          },
+          "format": {
+            "anyOf": [
+              {
+                "const": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Format"
+          },
+          "items": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AgentComponentSchemaNode"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "max_items": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Items"
+          },
+          "max_length": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Length"
+          },
+          "maximum": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Maximum"
+          },
+          "min_items": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min Items"
+          },
+          "minimum": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Minimum"
+          },
+          "properties": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/AgentComponentSchemaNode"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Properties"
+          },
+          "required": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Required"
+          },
+          "type": {
+            "enum": [
+              "string",
+              "number",
+              "boolean",
+              "enum",
+              "reference",
+              "object",
+              "array"
+            ],
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "title": "AgentComponentSchemaNode",
         "type": "object"
       },
       "AgentCreateCompositionNodeRequest": {
@@ -62,11 +440,6 @@
           "component_type": {
             "title": "Component Type",
             "type": "string"
-          },
-          "order_key": {
-            "default": 0,
-            "title": "Order Key",
-            "type": "integer"
           },
           "parent_id": {
             "anyOf": [

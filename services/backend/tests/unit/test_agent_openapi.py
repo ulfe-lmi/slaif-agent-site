@@ -101,6 +101,24 @@ def test_public_contract_has_scopes_headers_errors_and_no_internal_paths() -> No
     assert "ReadinessResponse" not in document["components"]["schemas"]
 
 
+def test_component_catalog_contract_is_closed_and_agent_create_has_no_raw_rank() -> (
+    None
+):
+    document = json.loads(generate_agent_openapi())
+    schemas = document["components"]["schemas"]
+    for name in (
+        "AgentComponentCatalogResponse",
+        "AgentComponentDescriptor",
+        "AgentComponentPropDescriptor",
+        "AgentComponentSchemaNode",
+    ):
+        assert schemas[name]["additionalProperties"] is False
+    create = schemas["AgentCreateCompositionNodeRequest"]
+    assert "order_key" not in create["properties"]
+    component_path = document["paths"]["/api/agent/v1/component-catalog"]["get"]
+    assert component_path["x-slaif-required-scopes"] == ["component-catalog:read"]
+
+
 def test_public_edge_endpoint_returns_the_same_canonical_bytes() -> None:
     with TestClient(_app()) as client:
         response = client.get("/api/agent/v1/openapi.json")

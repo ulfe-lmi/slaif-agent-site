@@ -11,6 +11,8 @@ from slaif_agent_site.agent_api.config import AgentDatabaseMode, AgentDatabaseSe
 from slaif_agent_site.config import ServiceSettings
 from slaif_agent_site.health import ProbeResult
 
+from tools.generate_component_catalog import check as check_component_catalog
+
 ROOT = Path(__file__).resolve().parents[2]
 CONTRACT_PATH = ROOT / "contracts/openapi/agent-v1.json"
 
@@ -47,6 +49,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     arguments = parser.parse_args(argv)
     generated = generate_agent_openapi()
     if arguments.check:
+        check_component_catalog()
         if not CONTRACT_PATH.is_file() or CONTRACT_PATH.read_bytes() != generated:
             parser.error(f"contract drift: {CONTRACT_PATH.relative_to(ROOT)}")
         print(f"agent-openapi: OK {CONTRACT_PATH.relative_to(ROOT)}")

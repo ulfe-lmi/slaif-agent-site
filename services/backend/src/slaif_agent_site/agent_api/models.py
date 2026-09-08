@@ -174,12 +174,59 @@ class AgentDiscoveryResponse(BaseModel):
     upload_quota: int = 0
 
 
+class AgentComponentSchemaNode(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    type: Literal["string", "number", "boolean", "enum", "reference", "object", "array"]
+    required: bool | tuple[str, ...] | None = None
+    enum_values: tuple[str, ...] | None = None
+    minimum: int | float | None = None
+    maximum: int | float | None = None
+    min_items: int | None = None
+    max_items: int | None = None
+    max_length: int | None = None
+    format: Literal["uuid"] | None = None
+    properties: dict[str, AgentComponentSchemaNode] | None = None
+    additional_properties: bool | None = None
+    items: AgentComponentSchemaNode | None = None
+
+
+class AgentComponentPropDescriptor(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    type: Literal["string", "number", "boolean", "enum", "reference", "object", "array"]
+    required: bool
+    enum_values: tuple[str, ...] | None = None
+    minimum: int | float | None = None
+    maximum: int | float | None = None
+    min_items: int | None = None
+    max_items: int | None = None
+    localized: bool | None = None
+    authority: Literal["content", "design"]
+    max_length: int | None = None
+    format: Literal["uuid"] | None = None
+    schema_: AgentComponentSchemaNode | None = Field(default=None, alias="schema")
+
+
+class AgentComponentDescriptor(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    type: str
+    category: Literal["layout", "basic", "data", "institutional", "global"]
+    schema_version: str
+    allowed_slots: tuple[str, ...]
+    max_children: int
+    binding_kind: Literal["none", "collection_view", "media_asset"]
+    authority_class: Literal["content", "structure", "global"]
+    props: dict[str, AgentComponentPropDescriptor]
+
+
 class AgentComponentCatalogResponse(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     version: Literal["catalog-v1"]
     composition_schema_version: Literal["site-composition/v1"]
-    components: tuple[dict[str, Any], ...]
+    components: tuple[AgentComponentDescriptor, ...]
 
 
 class AgentPermissionsResponse(BaseModel):

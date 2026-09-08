@@ -108,10 +108,14 @@ function Heading({ props }: RenderProps) {
 function RichText({ props }: RenderProps) {
   const value = props.content;
   if (typeof value === "string") return <p className="renderer-richtext">{value}</p>;
-  if (!Array.isArray(value)) return <p className="renderer-richtext" />;
+  const blocks = Array.isArray(value)
+    ? value
+    : typeof value === "object" && value !== null
+      ? [value]
+      : [];
   return (
     <div className="renderer-richtext">
-      {value.map((block, index) => {
+      {blocks.map((block, index) => {
         if (typeof block === "string") return <p key={index}>{block}</p>;
         if (typeof block !== "object" || block === null)
           throw new Error("invalid rich text");

@@ -1,42 +1,65 @@
+import catalog from "./catalog-v1.json" with { type: "json" };
+
 /**
  * Puck adapter: maps between the normalized composition tree and Puck's
  * editor data format. Puck is only a visual editing UX layer; normalized
  * composition metadata remains the persistence authority.
  */
 
-export const CATALOG_TYPES = [
-  "Section",
-  "Container",
-  "Columns",
-  "Grid",
-  "Stack",
-  "Spacer",
-  "Heading",
-  "RichText",
-  "Image",
-  "Button",
-  "Quote",
-  "CollectionList",
-  "CollectionGrid",
-  "CollectionDetail",
-  "Hero",
-  "Statistics",
-  "Timeline",
-  "FAQ",
-  "Header",
-  "Footer",
-  "Breadcrumbs",
-  "LanguageSwitcher",
-] as const;
+type CatalogType =
+  "string" | "number" | "boolean" | "enum" | "reference" | "object" | "array";
+
+interface CatalogSchema {
+  readonly type: CatalogType;
+  readonly required?: boolean | readonly string[];
+  readonly enum_values?: readonly string[];
+  readonly minimum?: number;
+  readonly maximum?: number;
+  readonly min_items?: number;
+  readonly max_items?: number;
+  readonly max_length?: number;
+  readonly properties?: Readonly<Record<string, CatalogSchema>>;
+  readonly additional_properties?: boolean;
+  readonly items?: CatalogSchema;
+}
+
+interface CatalogProp extends CatalogSchema {
+  readonly required: boolean;
+  readonly authority: "content" | "design";
+  readonly schema?: CatalogSchema;
+}
+
+interface CatalogComponent {
+  readonly type: string;
+  readonly props: Readonly<Record<string, CatalogProp>>;
+}
+
+const CATALOG_COMPONENTS = catalog.components as readonly CatalogComponent[];
+export const CATALOG_TYPES = CATALOG_COMPONENTS.map(
+  (component) => component.type,
+) as readonly string[];
 
 const CATALOG_TYPE_SET = new Set<string>(CATALOG_TYPES);
 const FORBIDDEN_PROP_KEYS = new Set([
+  "__proto__",
+  "constructor",
+  "prototype",
+  "style",
+  "class",
+  "classname",
   "dangerouslysetinnerhtml",
   "innerhtml",
+  "handler",
   "script",
   "eval",
   "onclick",
   "onload",
+  "html",
+  "template",
+  "query",
+  "code",
+  "package",
+  "callback",
 ]);
 
 export interface NormalizedCompositionNode {
@@ -93,6 +116,106 @@ function assertTrustedType(type: string): void {
   if (!CATALOG_TYPE_SET.has(type)) throw new Error("unknown-component-type");
 }
 
+function assertSchema(value: unknown, schema: CatalogSchema): void {
+  if (schema.type === "string") {
+    if (typeof value !== "string") throw new Error("invalid-component-props");
+    if (schema.max_length !== undefined && value.length > schema.max_length)
+      throw new Error("invalid-component-props");
+    const lowered = value.toLowerCase();
+    if (
+      lowered.startsWith("javascript:") ||
+      lowered.startsWith("data:") ||
+      lowered.startsWith("file:") ||
+      lowered.includes("<script") ||
+      lowered.includes("onerror=") ||
+      lowered.includes("onload=")
+    )
+      throw new Error("invalid-component-props");
+    return;
+  }
+  if (schema.type === "number") {
+    if (typeof value !== "number" || !Number.isFinite(value))
+      throw new Error("invalid-component-props");
+    if (schema.minimum !== undefined && value < schema.minimum)
+      throw new Error("invalid-component-props");
+    if (schema.maximum !== undefined && value > schema.maximum)
+      throw new Error("invalid-component-props");
+    return;
+  }
+  if (schema.type === "boolean") {
+    if (typeof value !== "boolean") throw new Error("invalid-component-props");
+    return;
+  }
+  if (schema.type === "enum") {
+    if (typeof value !== "string" || !schema.enum_values?.includes(value))
+      throw new Error("invalid-component-props");
+    return;
+  }
+  if (schema.type === "reference") {
+    if (
+      typeof value !== "string" ||
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+        value,
+      )
+    )
+      throw new Error("invalid-component-props");
+    return;
+  }
+  if (schema.type === "object") {
+    if (!isRecord(value)) throw new Error("invalid-component-props");
+    if (
+      Array.isArray(schema.required) &&
+      schema.required.some((key) => !(key in value))
+    )
+      throw new Error("invalid-component-props");
+    const properties = schema.properties ?? {};
+    if (
+      schema.additional_properties === false &&
+      Object.keys(value).some((key) => !(key in properties))
+    )
+      throw new Error("invalid-component-props");
+    for (const [key, child] of Object.entries(value)) {
+      const childSchema = properties[key];
+      if (childSchema) assertSchema(child, childSchema);
+    }
+    return;
+  }
+  if (schema.type === "array") {
+    if (!Array.isArray(value)) throw new Error("invalid-component-props");
+    if (schema.min_items !== undefined && value.length < schema.min_items)
+      throw new Error("invalid-component-props");
+    if (schema.max_items !== undefined && value.length > schema.max_items)
+      throw new Error("invalid-component-props");
+    if (schema.items) value.forEach((item) => assertSchema(item, schema.items!));
+  }
+}
+
+function assertCatalogProps(
+  componentType: string,
+  props: Record<string, unknown>,
+): void {
+  assertTrustedType(componentType);
+  const component = CATALOG_COMPONENTS.find(
+    (candidate) => candidate.type === componentType,
+  );
+  if (!component) throw new Error("unknown-component-type");
+  const definitions = component.props;
+  for (const [key, definition] of Object.entries(definitions)) {
+    if (definition.required && !(key in props))
+      throw new Error("invalid-component-props");
+  }
+  for (const [key, value] of Object.entries(props)) {
+    const definition = definitions[key];
+    if (!definition) throw new Error("invalid-component-props");
+    assertSchema(value, definition.schema ?? definition);
+  }
+  if (componentType === "Button") {
+    const href = props.href;
+    if (typeof href !== "string" || href.startsWith("//") || !href.startsWith("/"))
+      throw new Error("invalid-component-props");
+  }
+}
+
 function assertSafeProps(props: Record<string, unknown>): void {
   for (const key of Object.keys(props)) {
     if (key === "id" || FORBIDDEN_PROP_KEYS.has(key.toLowerCase())) {
@@ -140,6 +263,7 @@ export function compositionToPuck(
     if (seen.has(node.id)) throw new Error("duplicate-component-id");
     if (!isRecord(node.props)) throw new Error("invalid-component-props");
     assertSafeProps(node.props);
+    assertCatalogProps(node.componentType, node.props);
     seen.add(node.id);
     metadata[node.id] = {
       componentType: node.componentType,
@@ -210,6 +334,7 @@ export function puckToComposition(
       const { id: _bookkeepingId, ...props } = node.props;
       void _bookkeepingId;
       assertSafeProps(props);
+      assertCatalogProps(node.type, props);
       seen.add(id);
       const prior = suppliedMetadata[id];
       const actualSlot =

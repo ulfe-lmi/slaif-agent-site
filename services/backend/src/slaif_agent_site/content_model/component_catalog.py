@@ -1,11 +1,13 @@
-"""The trusted, versioned component catalog used by Agent and Render."""
+"""Generated catalog-v1 authority; edit catalog-v1.json instead."""
+
+# ruff: noqa: E501 -- the embedded reviewed source is deterministic.
 
 from __future__ import annotations
 
 import json
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Any, Literal
+from typing import Any, Literal, cast
 from urllib.parse import urlsplit
 from uuid import UUID
 
@@ -16,6 +18,9 @@ COMPOSITION_SCHEMA_VERSION = "site-composition/v1"
 MAX_COMPONENTS_PER_PAGE = 128
 MAX_COMPONENT_DEPTH = 16
 MAX_COMPONENT_PROPS_BYTES = 16_384
+
+_CATALOG_JSON = '{"components":[{"allowed_slots":["default"],"authority_class":"structure","binding_kind":"none","category":"layout","max_children":32,"props":{"background":{"authority":"design","localized":false,"max_length":4096,"required":false,"type":"string"},"variant":{"authority":"design","enum_values":["default","full","narrow"],"localized":false,"required":false,"type":"enum"}},"schema_version":"1","type":"Section"},{"allowed_slots":["default"],"authority_class":"structure","binding_kind":"none","category":"layout","max_children":16,"props":{"width":{"authority":"design","enum_values":["sm","md","lg","xl"],"localized":false,"required":false,"type":"enum"}},"schema_version":"1","type":"Container"},{"allowed_slots":["col-1","col-2","col-3","col-4"],"authority_class":"structure","binding_kind":"none","category":"layout","max_children":4,"props":{"count":{"authority":"design","localized":false,"maximum":4,"minimum":1,"required":true,"type":"number"},"gap":{"authority":"design","enum_values":["none","sm","md","lg"],"localized":false,"required":false,"type":"enum"}},"schema_version":"1","type":"Columns"},{"allowed_slots":["default"],"authority_class":"structure","binding_kind":"none","category":"layout","max_children":24,"props":{"columns":{"authority":"design","localized":false,"maximum":12,"minimum":1,"required":false,"type":"number"},"gap":{"authority":"design","enum_values":["sm","md","lg"],"localized":false,"required":false,"type":"enum"}},"schema_version":"1","type":"Grid"},{"allowed_slots":["default"],"authority_class":"structure","binding_kind":"none","category":"layout","max_children":16,"props":{"direction":{"authority":"design","enum_values":["vertical","horizontal"],"localized":false,"required":false,"type":"enum"},"gap":{"authority":"design","enum_values":["none","sm","md","lg"],"localized":false,"required":false,"type":"enum"}},"schema_version":"1","type":"Stack"},{"allowed_slots":[],"authority_class":"structure","binding_kind":"none","category":"layout","max_children":0,"props":{"size":{"authority":"design","enum_values":["xs","sm","md","lg","xl"],"localized":false,"required":true,"type":"enum"}},"schema_version":"1","type":"Spacer"},{"allowed_slots":[],"authority_class":"content","binding_kind":"none","category":"basic","max_children":0,"props":{"level":{"authority":"content","localized":false,"maximum":6,"minimum":1,"required":true,"type":"number"},"text":{"authority":"content","localized":true,"max_length":4096,"required":true,"type":"string"}},"schema_version":"1","type":"Heading"},{"allowed_slots":[],"authority_class":"content","binding_kind":"none","category":"basic","max_children":0,"props":{"content":{"authority":"content","localized":true,"required":true,"schema":{"additional_properties":false,"properties":{"children":{"items":{"additional_properties":false,"properties":{"bold":{"required":false,"type":"boolean"},"italic":{"required":false,"type":"boolean"},"text":{"max_length":4096,"required":true,"type":"string"}},"required":["text"],"type":"object"},"max_items":64,"min_items":1,"required":true,"type":"array"},"type":{"enum_values":["paragraph","heading","quote"],"required":true,"type":"enum"}},"required":["type","children"],"type":"object"},"type":"object"}},"schema_version":"1","type":"RichText"},{"allowed_slots":[],"authority_class":"content","binding_kind":"media_asset","category":"basic","max_children":0,"props":{"alt":{"authority":"content","localized":true,"max_length":4096,"required":true,"type":"string"},"aspectRatio":{"authority":"content","enum_values":["auto","16:9","4:3","1:1"],"required":false,"type":"enum"},"mediaId":{"authority":"content","format":"uuid","required":true,"type":"reference"}},"schema_version":"1","type":"Image"},{"allowed_slots":[],"authority_class":"content","binding_kind":"none","category":"basic","max_children":0,"props":{"href":{"authority":"content","max_length":4096,"required":true,"type":"string"},"label":{"authority":"content","localized":true,"max_length":4096,"required":true,"type":"string"},"variant":{"authority":"content","enum_values":["primary","secondary","ghost"],"required":false,"type":"enum"}},"schema_version":"1","type":"Button"},{"allowed_slots":[],"authority_class":"content","binding_kind":"none","category":"basic","max_children":0,"props":{"attribution":{"authority":"content","localized":true,"max_length":4096,"required":false,"type":"string"},"text":{"authority":"content","localized":true,"max_length":4096,"required":true,"type":"string"}},"schema_version":"1","type":"Quote"},{"allowed_slots":["item"],"authority_class":"content","binding_kind":"collection_view","category":"data","max_children":0,"props":{"limit":{"authority":"content","maximum":100,"minimum":1,"required":false,"type":"number"},"viewId":{"authority":"content","format":"uuid","required":true,"type":"reference"}},"schema_version":"1","type":"CollectionList"},{"allowed_slots":["item"],"authority_class":"content","binding_kind":"collection_view","category":"data","max_children":0,"props":{"columns":{"authority":"content","maximum":6,"minimum":1,"required":false,"type":"number"},"viewId":{"authority":"content","format":"uuid","required":true,"type":"reference"}},"schema_version":"1","type":"CollectionGrid"},{"allowed_slots":[],"authority_class":"content","binding_kind":"collection_view","category":"data","max_children":0,"props":{"viewId":{"authority":"content","format":"uuid","required":true,"type":"reference"}},"schema_version":"1","type":"CollectionDetail"},{"allowed_slots":["content"],"authority_class":"content","binding_kind":"media_asset","category":"institutional","max_children":8,"props":{"heading":{"authority":"content","localized":true,"max_length":4096,"required":true,"type":"string"},"mediaId":{"authority":"content","format":"uuid","required":false,"type":"reference"},"subheading":{"authority":"content","localized":true,"max_length":4096,"required":false,"type":"string"}},"schema_version":"1","type":"Hero"},{"allowed_slots":[],"authority_class":"content","binding_kind":"none","category":"institutional","max_children":0,"props":{"items":{"authority":"content","max_items":64,"min_items":1,"required":true,"schema":{"items":{"additional_properties":false,"properties":{"label":{"max_length":256,"required":true,"type":"string"},"value":{"max_length":256,"required":true,"type":"string"}},"required":["label","value"],"type":"object"},"max_items":64,"min_items":1,"type":"array"},"type":"array"}},"schema_version":"1","type":"Statistics"},{"allowed_slots":[],"authority_class":"content","binding_kind":"none","category":"institutional","max_children":0,"props":{"items":{"authority":"content","max_items":64,"min_items":1,"required":true,"schema":{"items":{"additional_properties":false,"properties":{"description":{"max_length":4096,"required":true,"type":"string"},"title":{"max_length":256,"required":true,"type":"string"}},"required":["title","description"],"type":"object"},"max_items":64,"min_items":1,"type":"array"},"type":"array"}},"schema_version":"1","type":"Timeline"},{"allowed_slots":[],"authority_class":"content","binding_kind":"none","category":"institutional","max_children":0,"props":{"items":{"authority":"content","max_items":64,"min_items":1,"required":true,"schema":{"items":{"additional_properties":false,"properties":{"answer":{"max_length":4096,"required":true,"type":"string"},"question":{"max_length":4096,"required":true,"type":"string"}},"required":["question","answer"],"type":"object"},"max_items":64,"min_items":1,"type":"array"},"type":"array"}},"schema_version":"1","type":"FAQ"},{"allowed_slots":["nav"],"authority_class":"global","binding_kind":"none","category":"global","max_children":12,"props":{},"schema_version":"1","type":"Header"},{"allowed_slots":["links"],"authority_class":"global","binding_kind":"none","category":"global","max_children":16,"props":{},"schema_version":"1","type":"Footer"},{"allowed_slots":[],"authority_class":"global","binding_kind":"none","category":"global","max_children":0,"props":{},"schema_version":"1","type":"Breadcrumbs"},{"allowed_slots":[],"authority_class":"global","binding_kind":"none","category":"global","max_children":0,"props":{},"schema_version":"1","type":"LanguageSwitcher"}],"composition_schema_version":"site-composition/v1","version":"catalog-v1"}'
+CATALOG_DOCUMENT: dict[str, Any] = json.loads(_CATALOG_JSON)
 
 PropType = Literal[
     "string", "number", "boolean", "enum", "reference", "object", "array"
@@ -33,6 +38,9 @@ class ComponentProp:
     maximum: int | float | None = None
     localized: bool = False
     authority: PropAuthority = "content"
+    schema: dict[str, Any] | None = None
+    max_length: int | None = None
+    format: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,239 +55,39 @@ class ComponentDefinition:
     authority_class: Literal["content", "structure", "global"] = "content"
 
 
-def _props(**values: ComponentProp) -> MappingProxyType[str, ComponentProp]:
-    return MappingProxyType(values)
-
-
-def _p(
-    kind: PropType,
-    *,
-    required: bool = False,
-    enum: tuple[str, ...] = (),
-    minimum: int | float | None = None,
-    maximum: int | float | None = None,
-    localized: bool = False,
-    authority: PropAuthority = "content",
-) -> ComponentProp:
+def _build_prop(value: dict[str, Any]) -> ComponentProp:
     return ComponentProp(
-        kind,
-        required,
-        enum,
-        minimum,
-        maximum,
-        localized,
-        authority,
+        type=value["type"],
+        required=value.get("required", False),
+        enum_values=tuple(value.get("enum_values", [])),
+        minimum=value.get("minimum"),
+        maximum=value.get("maximum"),
+        localized=value.get("localized", False),
+        authority=value.get("authority", "content"),
+        schema=value.get("schema"),
+        max_length=value.get("max_length"),
+        format=value.get("format"),
     )
 
 
-COMPONENT_CATALOG: tuple[ComponentDefinition, ...] = (
-    ComponentDefinition(
-        "Section",
-        "layout",
-        "1",
-        ("default",),
-        32,
-        _props(
-            variant=_p("enum", enum=("default", "full", "narrow"), authority="design"),
-            background=_p("string", authority="design"),
+def _build_component(value: dict[str, Any]) -> ComponentDefinition:
+    return ComponentDefinition(
+        type=value["type"],
+        category=value["category"],
+        schema_version=value["schema_version"],
+        allowed_slots=tuple(value["allowed_slots"]),
+        max_children=value["max_children"],
+        props=MappingProxyType(
+            {key: _build_prop(prop) for key, prop in value["props"].items()}
         ),
-        authority_class="structure",
-    ),
-    ComponentDefinition(
-        "Container",
-        "layout",
-        "1",
-        ("default",),
-        16,
-        _props(width=_p("enum", enum=("sm", "md", "lg", "xl"), authority="design")),
-        authority_class="structure",
-    ),
-    ComponentDefinition(
-        "Columns",
-        "layout",
-        "1",
-        ("col-1", "col-2", "col-3", "col-4"),
-        4,
-        _props(
-            count=_p("number", required=True, minimum=1, maximum=4, authority="design"),
-            gap=_p("enum", enum=("none", "sm", "md", "lg"), authority="design"),
-        ),
-        authority_class="structure",
-    ),
-    ComponentDefinition(
-        "Grid",
-        "layout",
-        "1",
-        ("default",),
-        24,
-        _props(
-            columns=_p("number", minimum=1, maximum=12, authority="design"),
-            gap=_p("enum", enum=("sm", "md", "lg"), authority="design"),
-        ),
-        authority_class="structure",
-    ),
-    ComponentDefinition(
-        "Stack",
-        "layout",
-        "1",
-        ("default",),
-        16,
-        _props(
-            direction=_p("enum", enum=("vertical", "horizontal"), authority="design"),
-            gap=_p("enum", enum=("none", "sm", "md", "lg"), authority="design"),
-        ),
-        authority_class="structure",
-    ),
-    ComponentDefinition(
-        "Spacer",
-        "layout",
-        "1",
-        (),
-        0,
-        _props(
-            size=_p(
-                "enum",
-                required=True,
-                enum=("xs", "sm", "md", "lg", "xl"),
-                authority="design",
-            )
-        ),
-        authority_class="structure",
-    ),
-    ComponentDefinition(
-        "Heading",
-        "basic",
-        "1",
-        (),
-        0,
-        _props(
-            text=_p("string", required=True, localized=True),
-            level=_p("number", required=True, minimum=1, maximum=6),
-        ),
-    ),
-    ComponentDefinition(
-        "RichText",
-        "basic",
-        "1",
-        (),
-        0,
-        _props(content=_p("object", required=True, localized=True)),
-    ),
-    ComponentDefinition(
-        "Image",
-        "basic",
-        "1",
-        (),
-        0,
-        _props(
-            mediaId=_p("reference", required=True),
-            alt=_p("string", required=True, localized=True),
-            aspectRatio=_p("enum", enum=("auto", "16:9", "4:3", "1:1")),
-        ),
-        binding_kind="media_asset",
-    ),
-    ComponentDefinition(
-        "Button",
-        "basic",
-        "1",
-        (),
-        0,
-        _props(
-            label=_p("string", required=True, localized=True),
-            href=_p("string", required=True),
-            variant=_p("enum", enum=("primary", "secondary", "ghost")),
-        ),
-    ),
-    ComponentDefinition(
-        "Quote",
-        "basic",
-        "1",
-        (),
-        0,
-        _props(
-            text=_p("string", required=True, localized=True),
-            attribution=_p("string", localized=True),
-        ),
-    ),
-    ComponentDefinition(
-        "CollectionList",
-        "data",
-        "1",
-        ("item",),
-        0,
-        _props(
-            viewId=_p("reference", required=True),
-            limit=_p("number", minimum=1, maximum=100),
-        ),
-        binding_kind="collection_view",
-    ),
-    ComponentDefinition(
-        "CollectionGrid",
-        "data",
-        "1",
-        ("item",),
-        0,
-        _props(
-            viewId=_p("reference", required=True),
-            columns=_p("number", minimum=1, maximum=6),
-        ),
-        binding_kind="collection_view",
-    ),
-    ComponentDefinition(
-        "CollectionDetail",
-        "data",
-        "1",
-        (),
-        0,
-        _props(viewId=_p("reference", required=True)),
-        binding_kind="collection_view",
-    ),
-    ComponentDefinition(
-        "Hero",
-        "institutional",
-        "1",
-        ("content",),
-        8,
-        _props(
-            heading=_p("string", required=True, localized=True),
-            subheading=_p("string", localized=True),
-            mediaId=_p("reference"),
-        ),
-        binding_kind="media_asset",
-    ),
-    ComponentDefinition(
-        "Statistics",
-        "institutional",
-        "1",
-        (),
-        0,
-        _props(items=_p("array", required=True)),
-    ),
-    ComponentDefinition(
-        "Timeline",
-        "institutional",
-        "1",
-        (),
-        0,
-        _props(items=_p("array", required=True)),
-    ),
-    ComponentDefinition(
-        "FAQ", "institutional", "1", (), 0, _props(items=_p("array", required=True))
-    ),
-    ComponentDefinition(
-        "Header", "global", "1", ("nav",), 12, _props(), authority_class="global"
-    ),
-    ComponentDefinition(
-        "Footer", "global", "1", ("links",), 16, _props(), authority_class="global"
-    ),
-    ComponentDefinition(
-        "Breadcrumbs", "global", "1", (), 0, _props(), authority_class="global"
-    ),
-    ComponentDefinition(
-        "LanguageSwitcher", "global", "1", (), 0, _props(), authority_class="global"
-    ),
-)
+        binding_kind=value["binding_kind"],
+        authority_class=value["authority_class"],
+    )
 
+
+COMPONENT_CATALOG = tuple(
+    _build_component(item) for item in CATALOG_DOCUMENT["components"]
+)
 COMPONENT_BY_TYPE = MappingProxyType({item.type: item for item in COMPONENT_CATALOG})
 TRUSTED_COMPONENT_TYPES = frozenset(COMPONENT_BY_TYPE)
 
@@ -328,10 +136,62 @@ def _validate_nested(value: Any, *, depth: int = 0) -> None:
             _validate_nested(child, depth=depth + 1)
     elif isinstance(value, str):
         lowered = value.casefold()
-        if lowered.startswith(("javascript:", "data:", "file:")):
+        if lowered.startswith(("javascript:", "data:", "file:")) or any(
+            marker in lowered for marker in ("<script", "onerror=", "onload=")
+        ):
             raise ValueError("unsafe value")
-        if any(marker in lowered for marker in ("<script", "onerror=", "onload=")):
-            raise ValueError("executable value")
+
+
+def _validate_schema(value: Any, schema: dict[str, Any]) -> None:
+    kind = schema.get("type")
+    if kind == "string":
+        if not isinstance(value, str):
+            raise ValueError("prop type")
+        if schema.get("max_length") is not None and len(value) > schema["max_length"]:
+            raise ValueError("prop bound")
+    elif kind == "number":
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError("prop type")
+        if schema.get("minimum") is not None and value < schema["minimum"]:
+            raise ValueError("prop bound")
+        if schema.get("maximum") is not None and value > schema["maximum"]:
+            raise ValueError("prop bound")
+    elif kind == "boolean":
+        if not isinstance(value, bool):
+            raise ValueError("prop type")
+    elif kind == "enum":
+        if value not in schema.get("enum_values", []):
+            raise ValueError("prop enum")
+    elif kind == "reference":
+        try:
+            UUID(str(value))
+        except (TypeError, ValueError):
+            raise ValueError("prop reference") from None
+    elif kind == "object":
+        if not isinstance(value, dict):
+            raise ValueError("prop type")
+        properties = schema.get("properties", {})
+        required = schema.get("required", [])
+        if any(key not in value for key in required):
+            raise ValueError("nested prop required")
+        if schema.get("additional_properties") is False and set(value) - set(
+            properties
+        ):
+            raise ValueError("nested prop unknown")
+        for key, child in value.items():
+            if key in properties:
+                _validate_schema(child, properties[key])
+    elif kind == "array":
+        if not isinstance(value, list):
+            raise ValueError("prop type")
+        if schema.get("min_items") is not None and len(value) < schema["min_items"]:
+            raise ValueError("prop bound")
+        if schema.get("max_items") is not None and len(value) > schema["max_items"]:
+            raise ValueError("prop bound")
+        item_schema = schema.get("items")
+        if item_schema is not None:
+            for child in value:
+                _validate_schema(child, item_schema)
 
 
 def validate_component_props(
@@ -361,30 +221,34 @@ def validate_component_props(
         rule = definition.props[key]
         if rule.authority == "design" and not allow_design:
             raise ValueError("design prop")
-        if rule.type == "string" and not isinstance(value, str):
+        if rule.schema is not None:
+            _validate_schema(value, rule.schema)
+        elif rule.type == "string" and not isinstance(value, str):
             raise ValueError("prop type")
-        if rule.type == "number" and (
+        elif rule.type == "number" and (
             isinstance(value, bool) or not isinstance(value, (int, float))
         ):
             raise ValueError("prop type")
-        if rule.type == "boolean" and not isinstance(value, bool):
+        elif rule.type == "boolean" and not isinstance(value, bool):
             raise ValueError("prop type")
-        if rule.type == "enum" and value not in rule.enum_values:
+        elif rule.type == "enum" and value not in rule.enum_values:
             raise ValueError("prop enum")
-        if rule.type == "reference":
+        elif rule.type == "reference":
             try:
                 UUID(str(value))
             except (TypeError, ValueError):
                 raise ValueError("prop reference") from None
-        if rule.type == "object" and not isinstance(value, dict):
-            raise ValueError("prop type")
-        if rule.type == "array" and not isinstance(value, list):
-            raise ValueError("prop type")
         if isinstance(value, (int, float)) and not isinstance(value, bool):
             if rule.minimum is not None and value < rule.minimum:
                 raise ValueError("prop bound")
             if rule.maximum is not None and value > rule.maximum:
                 raise ValueError("prop bound")
+        if (
+            isinstance(value, str)
+            and rule.max_length is not None
+            and len(value) > rule.max_length
+        ):
+            raise ValueError("prop bound")
     if component_type == "Button":
         href = bounded.get("href")
         if isinstance(href, str):
@@ -405,37 +269,11 @@ def validate_component_props(
 
 
 def catalog_document() -> dict[str, Any]:
-    return {
-        "version": COMPONENT_CATALOG_VERSION,
-        "composition_schema_version": COMPOSITION_SCHEMA_VERSION,
-        "components": [
-            {
-                "type": item.type,
-                "category": item.category,
-                "schema_version": item.schema_version,
-                "allowed_slots": list(item.allowed_slots),
-                "max_children": item.max_children,
-                "binding_kind": item.binding_kind,
-                "authority_class": item.authority_class,
-                "props": {
-                    key: {
-                        "type": prop.type,
-                        "required": prop.required,
-                        "enum_values": list(prop.enum_values),
-                        "minimum": prop.minimum,
-                        "maximum": prop.maximum,
-                        "localized": prop.localized,
-                        "authority": prop.authority,
-                    }
-                    for key, prop in item.props.items()
-                },
-            }
-            for item in COMPONENT_CATALOG
-        ],
-    }
+    return cast(dict[str, Any], json.loads(_CATALOG_JSON))
 
 
 __all__ = [
+    "CATALOG_DOCUMENT",
     "COMPONENT_CATALOG",
     "COMPONENT_CATALOG_VERSION",
     "COMPONENT_BY_TYPE",

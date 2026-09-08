@@ -7,17 +7,24 @@ import json
 from collections.abc import Sequence
 
 from alembic import op
-from slaif_agent_site.content_model.component_catalog import catalog_document
 
 revision: str = "060_001"
 down_revision: str | Sequence[str] | None = "059_001"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
+# Reviewed catalog-v1 snapshot. This migration deliberately does not import
+# the mutable current runtime catalog, so clean installs remain deterministic.
+CATALOG_V1_REVIEWED_SHA256 = (
+    "8e95ba57bf1ef2a77df89189fa7da4231f1bcef34aff380de59a322bf5b8085a"
+)
+_CATALOG_V1_JSON = '{"components":[{"allowed_slots":["default"],"authority_class":"structure","binding_kind":"none","category":"layout","max_children":32,"props":{"background":{"authority":"design","localized":false,"max_length":4096,"required":false,"type":"string"},"variant":{"authority":"design","enum_values":["default","full","narrow"],"localized":false,"required":false,"type":"enum"}},"schema_version":"1","type":"Section"},{"allowed_slots":["default"],"authority_class":"structure","binding_kind":"none","category":"layout","max_children":16,"props":{"width":{"authority":"design","enum_values":["sm","md","lg","xl"],"localized":false,"required":false,"type":"enum"}},"schema_version":"1","type":"Container"},{"allowed_slots":["col-1","col-2","col-3","col-4"],"authority_class":"structure","binding_kind":"none","category":"layout","max_children":4,"props":{"count":{"authority":"design","localized":false,"maximum":4,"minimum":1,"required":true,"type":"number"},"gap":{"authority":"design","enum_values":["none","sm","md","lg"],"localized":false,"required":false,"type":"enum"}},"schema_version":"1","type":"Columns"},{"allowed_slots":["default"],"authority_class":"structure","binding_kind":"none","category":"layout","max_children":24,"props":{"columns":{"authority":"design","localized":false,"maximum":12,"minimum":1,"required":false,"type":"number"},"gap":{"authority":"design","enum_values":["sm","md","lg"],"localized":false,"required":false,"type":"enum"}},"schema_version":"1","type":"Grid"},{"allowed_slots":["default"],"authority_class":"structure","binding_kind":"none","category":"layout","max_children":16,"props":{"direction":{"authority":"design","enum_values":["vertical","horizontal"],"localized":false,"required":false,"type":"enum"},"gap":{"authority":"design","enum_values":["none","sm","md","lg"],"localized":false,"required":false,"type":"enum"}},"schema_version":"1","type":"Stack"},{"allowed_slots":[],"authority_class":"structure","binding_kind":"none","category":"layout","max_children":0,"props":{"size":{"authority":"design","enum_values":["xs","sm","md","lg","xl"],"localized":false,"required":true,"type":"enum"}},"schema_version":"1","type":"Spacer"},{"allowed_slots":[],"authority_class":"content","binding_kind":"none","category":"basic","max_children":0,"props":{"level":{"authority":"content","localized":false,"maximum":6,"minimum":1,"required":true,"type":"number"},"text":{"authority":"content","localized":true,"max_length":4096,"required":true,"type":"string"}},"schema_version":"1","type":"Heading"},{"allowed_slots":[],"authority_class":"content","binding_kind":"none","category":"basic","max_children":0,"props":{"content":{"authority":"content","localized":true,"required":true,"schema":{"additional_properties":false,"properties":{"children":{"items":{"additional_properties":false,"properties":{"bold":{"required":false,"type":"boolean"},"italic":{"required":false,"type":"boolean"},"text":{"max_length":4096,"required":true,"type":"string"}},"required":["text"],"type":"object"},"max_items":64,"min_items":1,"required":true,"type":"array"},"type":{"enum_values":["paragraph","heading","quote"],"required":true,"type":"enum"}},"required":["type","children"],"type":"object"},"type":"object"}},"schema_version":"1","type":"RichText"},{"allowed_slots":[],"authority_class":"content","binding_kind":"media_asset","category":"basic","max_children":0,"props":{"alt":{"authority":"content","localized":true,"max_length":4096,"required":true,"type":"string"},"aspectRatio":{"authority":"content","enum_values":["auto","16:9","4:3","1:1"],"required":false,"type":"enum"},"mediaId":{"authority":"content","format":"uuid","required":true,"type":"reference"}},"schema_version":"1","type":"Image"},{"allowed_slots":[],"authority_class":"content","binding_kind":"none","category":"basic","max_children":0,"props":{"href":{"authority":"content","max_length":4096,"required":true,"type":"string"},"label":{"authority":"content","localized":true,"max_length":4096,"required":true,"type":"string"},"variant":{"authority":"content","enum_values":["primary","secondary","ghost"],"required":false,"type":"enum"}},"schema_version":"1","type":"Button"},{"allowed_slots":[],"authority_class":"content","binding_kind":"none","category":"basic","max_children":0,"props":{"attribution":{"authority":"content","localized":true,"max_length":4096,"required":false,"type":"string"},"text":{"authority":"content","localized":true,"max_length":4096,"required":true,"type":"string"}},"schema_version":"1","type":"Quote"},{"allowed_slots":["item"],"authority_class":"content","binding_kind":"collection_view","category":"data","max_children":0,"props":{"limit":{"authority":"content","maximum":100,"minimum":1,"required":false,"type":"number"},"viewId":{"authority":"content","format":"uuid","required":true,"type":"reference"}},"schema_version":"1","type":"CollectionList"},{"allowed_slots":["item"],"authority_class":"content","binding_kind":"collection_view","category":"data","max_children":0,"props":{"columns":{"authority":"content","maximum":6,"minimum":1,"required":false,"type":"number"},"viewId":{"authority":"content","format":"uuid","required":true,"type":"reference"}},"schema_version":"1","type":"CollectionGrid"},{"allowed_slots":[],"authority_class":"content","binding_kind":"collection_view","category":"data","max_children":0,"props":{"viewId":{"authority":"content","format":"uuid","required":true,"type":"reference"}},"schema_version":"1","type":"CollectionDetail"},{"allowed_slots":["content"],"authority_class":"content","binding_kind":"media_asset","category":"institutional","max_children":8,"props":{"heading":{"authority":"content","localized":true,"max_length":4096,"required":true,"type":"string"},"mediaId":{"authority":"content","format":"uuid","required":false,"type":"reference"},"subheading":{"authority":"content","localized":true,"max_length":4096,"required":false,"type":"string"}},"schema_version":"1","type":"Hero"},{"allowed_slots":[],"authority_class":"content","binding_kind":"none","category":"institutional","max_children":0,"props":{"items":{"authority":"content","max_items":64,"min_items":1,"required":true,"schema":{"items":{"additional_properties":false,"properties":{"label":{"max_length":256,"required":true,"type":"string"},"value":{"max_length":256,"required":true,"type":"string"}},"required":["label","value"],"type":"object"},"max_items":64,"min_items":1,"type":"array"},"type":"array"}},"schema_version":"1","type":"Statistics"},{"allowed_slots":[],"authority_class":"content","binding_kind":"none","category":"institutional","max_children":0,"props":{"items":{"authority":"content","max_items":64,"min_items":1,"required":true,"schema":{"items":{"additional_properties":false,"properties":{"description":{"max_length":4096,"required":true,"type":"string"},"title":{"max_length":256,"required":true,"type":"string"}},"required":["title","description"],"type":"object"},"max_items":64,"min_items":1,"type":"array"},"type":"array"}},"schema_version":"1","type":"Timeline"},{"allowed_slots":[],"authority_class":"content","binding_kind":"none","category":"institutional","max_children":0,"props":{"items":{"authority":"content","max_items":64,"min_items":1,"required":true,"schema":{"items":{"additional_properties":false,"properties":{"answer":{"max_length":4096,"required":true,"type":"string"},"question":{"max_length":4096,"required":true,"type":"string"}},"required":["question","answer"],"type":"object"},"max_items":64,"min_items":1,"type":"array"},"type":"array"}},"schema_version":"1","type":"FAQ"},{"allowed_slots":["nav"],"authority_class":"global","binding_kind":"none","category":"global","max_children":12,"props":{},"schema_version":"1","type":"Header"},{"allowed_slots":["links"],"authority_class":"global","binding_kind":"none","category":"global","max_children":16,"props":{},"schema_version":"1","type":"Footer"},{"allowed_slots":[],"authority_class":"global","binding_kind":"none","category":"global","max_children":0,"props":{},"schema_version":"1","type":"Breadcrumbs"},{"allowed_slots":[],"authority_class":"global","binding_kind":"none","category":"global","max_children":0,"props":{},"schema_version":"1","type":"LanguageSwitcher"}],"composition_schema_version":"site-composition/v1","version":"catalog-v1"}'
+
 
 _NEW_FUNCTIONS = (
     "control.slaif_component_catalog()",
     "content.slaif_component_reject_nested(jsonb)",
+    "content.slaif_component_validate_schema(jsonb,jsonb)",
     "content.slaif_agent_component_validate(uuid,uuid,uuid,text,text,uuid,text,jsonb,boolean)",
     "content.slaif_agent_component_tree_validate(uuid,uuid)",
     "content.slaif_agent_component_list(uuid,uuid)",
@@ -198,7 +205,7 @@ def _resource_constraint_sql() -> str:
 
 
 def _catalog_sql() -> str:
-    definitions = json.dumps(catalog_document()["components"], sort_keys=True)
+    definitions = json.dumps(json.loads(_CATALOG_V1_JSON)["components"], sort_keys=True)
     escaped = definitions.replace("'", "''")
     return f"""
         CREATE TABLE control.component_catalog (
@@ -271,6 +278,97 @@ def _nested_validator_sql() -> str:
         $fn$;
         ALTER FUNCTION content.slaif_component_reject_nested(jsonb) OWNER TO slaif_owner;
         REVOKE ALL ON FUNCTION content.slaif_component_reject_nested(jsonb) FROM PUBLIC;
+    """
+
+
+def _schema_validator_sql() -> str:
+    return """
+        CREATE FUNCTION content.slaif_component_validate_schema(
+            p_value jsonb,p_schema jsonb
+        ) RETURNS void LANGUAGE plpgsql IMMUTABLE SECURITY DEFINER
+        SET search_path=pg_catalog AS $fn$
+        DECLARE kind text; key text; child jsonb; rule jsonb;
+            required_value jsonb; minimum numeric; maximum numeric;
+        BEGIN
+            IF p_schema IS NULL THEN RETURN; END IF;
+            kind:=p_schema->>'type';
+            IF kind='string' THEN
+                IF jsonb_typeof(p_value)<>'string' THEN
+                    RAISE EXCEPTION 'COMPONENT_PROP_TYPE' USING ERRCODE='P0003';
+                END IF;
+                IF p_schema ? 'max_length' AND length(p_value #>> '{}')>(p_schema->>'max_length')::integer THEN
+                    RAISE EXCEPTION 'COMPONENT_PROP_BOUND' USING ERRCODE='P0003';
+                END IF;
+            ELSIF kind='number' THEN
+                IF jsonb_typeof(p_value)<>'number' THEN
+                    RAISE EXCEPTION 'COMPONENT_PROP_TYPE' USING ERRCODE='P0003';
+                END IF;
+                minimum:=NULLIF(p_schema->>'minimum','')::numeric;
+                maximum:=NULLIF(p_schema->>'maximum','')::numeric;
+                IF minimum IS NOT NULL AND (p_value #>> '{}')::numeric<minimum THEN
+                    RAISE EXCEPTION 'COMPONENT_PROP_BOUND' USING ERRCODE='P0003';
+                END IF;
+                IF maximum IS NOT NULL AND (p_value #>> '{}')::numeric>maximum THEN
+                    RAISE EXCEPTION 'COMPONENT_PROP_BOUND' USING ERRCODE='P0003';
+                END IF;
+            ELSIF kind='boolean' THEN
+                IF jsonb_typeof(p_value)<>'boolean' THEN
+                    RAISE EXCEPTION 'COMPONENT_PROP_TYPE' USING ERRCODE='P0003';
+                END IF;
+            ELSIF kind='enum' THEN
+                IF jsonb_typeof(p_value)<>'string' OR NOT (p_schema->'enum_values' ? (p_value #>> '{}')) THEN
+                    RAISE EXCEPTION 'COMPONENT_PROP_ENUM' USING ERRCODE='P0003';
+                END IF;
+            ELSIF kind='reference' THEN
+                BEGIN PERFORM (p_value #>> '{}')::uuid;
+                EXCEPTION WHEN invalid_text_representation THEN
+                    RAISE EXCEPTION 'COMPONENT_PROP_REFERENCE' USING ERRCODE='P0003';
+                END;
+            ELSIF kind='object' THEN
+                IF jsonb_typeof(p_value)<>'object' THEN
+                    RAISE EXCEPTION 'COMPONENT_PROP_TYPE' USING ERRCODE='P0003';
+                END IF;
+                required_value:=p_schema->'required';
+                IF jsonb_typeof(required_value)='array' AND EXISTS (
+                    SELECT 1 FROM jsonb_array_elements_text(required_value) required_key
+                    WHERE NOT (p_value ? required_key)
+                ) THEN
+                    RAISE EXCEPTION 'COMPONENT_PROP_REQUIRED' USING ERRCODE='P0003';
+                END IF;
+                IF p_schema->>'additional_properties'='false' AND EXISTS (
+                    SELECT 1 FROM jsonb_object_keys(p_value) object_key
+                    WHERE NOT (p_schema->'properties' ? object_key)
+                ) THEN
+                    RAISE EXCEPTION 'COMPONENT_PROP_UNKNOWN' USING ERRCODE='P0003';
+                END IF;
+                FOR key,child IN SELECT entry.key,entry.value FROM jsonb_each(p_value) entry LOOP
+                    rule:=p_schema->'properties'->key;
+                    IF rule IS NOT NULL THEN
+                        PERFORM content.slaif_component_validate_schema(child,rule);
+                    END IF;
+                END LOOP;
+            ELSIF kind='array' THEN
+                IF jsonb_typeof(p_value)<>'array' THEN
+                    RAISE EXCEPTION 'COMPONENT_PROP_TYPE' USING ERRCODE='P0003';
+                END IF;
+                IF p_schema ? 'min_items' AND jsonb_array_length(p_value)<(p_schema->>'min_items')::integer THEN
+                    RAISE EXCEPTION 'COMPONENT_PROP_BOUND' USING ERRCODE='P0003';
+                END IF;
+                IF p_schema ? 'max_items' AND jsonb_array_length(p_value)>(p_schema->>'max_items')::integer THEN
+                    RAISE EXCEPTION 'COMPONENT_PROP_BOUND' USING ERRCODE='P0003';
+                END IF;
+                IF p_schema->'items' IS NOT NULL THEN
+                    FOR child IN SELECT value FROM jsonb_array_elements(p_value) LOOP
+                        PERFORM content.slaif_component_validate_schema(child,p_schema->'items');
+                    END LOOP;
+                END IF;
+            ELSE
+                RAISE EXCEPTION 'COMPONENT_PROP_TYPE' USING ERRCODE='P0003';
+            END IF;
+        END;
+        $fn$;
+        ALTER FUNCTION content.slaif_component_validate_schema(jsonb,jsonb) OWNER TO slaif_owner;
+        REVOKE ALL ON FUNCTION content.slaif_component_validate_schema(jsonb,jsonb) FROM PUBLIC;
     """
 
 
@@ -376,8 +474,14 @@ def _component_validator_sql() -> str:
                 THEN RAISE EXCEPTION 'COMPONENT_PROP_TYPE' USING ERRCODE='P0003'; END IF;
                 IF expected_type='array' AND jsonb_typeof(value)<>'array'
                 THEN RAISE EXCEPTION 'COMPONENT_PROP_TYPE' USING ERRCODE='P0003'; END IF;
+                IF expected_type='string' AND prop_rule ? 'max_length'
+                   AND length(value #>> '{}')>(prop_rule->>'max_length')::integer
+                THEN RAISE EXCEPTION 'COMPONENT_PROP_BOUND' USING ERRCODE='P0003'; END IF;
                 IF expected_type='enum' AND NOT (prop_rule->'enum_values' ? (value #>> '{}'))
                 THEN RAISE EXCEPTION 'COMPONENT_PROP_ENUM' USING ERRCODE='P0003'; END IF;
+                IF prop_rule ? 'schema' THEN
+                    PERFORM content.slaif_component_validate_schema(value,prop_rule->'schema');
+                END IF;
                 IF expected_type='reference' THEN
                     BEGIN binding_id:=(value #>> '{}')::uuid;
                     EXCEPTION WHEN invalid_text_representation THEN
@@ -635,12 +739,15 @@ def _agent_component_sql() -> str:
             END IF;
             IF EXISTS (
                 SELECT 1
-                FROM jsonb_object_keys(coalesce(old.props,'{}'::jsonb)) key
-                JOIN LATERAL jsonb_array_elements(
+                FROM jsonb_object_keys(
+                    coalesce(old.props,'{}'::jsonb) || coalesce(p_props,'{}'::jsonb)
+                ) key
+                CROSS JOIN LATERAL jsonb_array_elements(
                     (SELECT c.definitions FROM control.component_catalog c
                      WHERE c.version='catalog-v1')
-                ) definition ON definition->>'type'=old.component_type
-                WHERE (definition->'props'->key->>'authority')='design'
+                ) definition
+                WHERE definition->>'type'=old.component_type
+                  AND (definition->'props'->key->>'authority')='design'
                   AND (p_props->key) IS DISTINCT FROM (old.props->key)
             ) THEN RAISE EXCEPTION 'COMPONENT_DESIGN_PROP' USING ERRCODE='P0007'; END IF;
             PERFORM content.slaif_agent_component_validate(
@@ -1052,6 +1159,7 @@ def upgrade() -> None:
     _execute_block(_resource_constraint_sql())
     _execute_block(_catalog_sql())
     _execute_block(_nested_validator_sql())
+    _execute_block(_schema_validator_sql())
     _execute_block(_component_validator_sql())
     _execute_block(_tree_validator_sql())
     op.execute(

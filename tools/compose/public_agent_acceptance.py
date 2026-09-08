@@ -388,7 +388,6 @@ def _canonical_request_body(
         defaults = {
             "parent_id": None,
             "slot_key": "default",
-            "order_key": 0,
             "before_component_id": None,
             "after_component_id": None,
             "props": {},
@@ -1042,7 +1041,6 @@ def _run_dynamic_news_edge_journey(
                 {
                     "component_type": "CollectionList",
                     "slot_key": "default",
-                    "order_key": 0,
                     "props": {"viewId": view_id},
                 },
                 f"oap-077u-news-list-node-{suffix}-{tag}",
@@ -1054,7 +1052,6 @@ def _run_dynamic_news_edge_journey(
                 {
                     "component_type": "CollectionDetail",
                     "slot_key": "default",
-                    "order_key": 0,
                     "props": {"viewId": view_id},
                 },
                 f"oap-077u-news-detail-node-{suffix}-{tag}",
@@ -1963,7 +1960,6 @@ def run_acceptance(project: str) -> None:
             {
                 "component_type": "Heading",
                 "slot_key": "default",
-                "order_key": 0,
                 "props": {"text": "OAP acceptance", "level": 2},
             },
             f"oap-component-create-{tag}",

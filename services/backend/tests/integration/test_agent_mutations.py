@@ -37,6 +37,7 @@ from slaif_agent_site.agent_state.mutations import (
 from slaif_agent_site.agent_state.reads import execute_agent_read
 from slaif_agent_site.bootstrap.service import reconcile, status, upgrade
 from slaif_agent_site.config import ServiceSettings
+from slaif_agent_site.content_model.component_catalog import catalog_document
 from slaif_agent_site.content_model.models import (
     CreateContentTypeRequest,
     CreateFieldDefinitionRequest,
@@ -2440,6 +2441,12 @@ async def test_agent_060_component_migration_round_trip_restores_audit_contract(
             await owner.fetchval("SELECT to_regclass('control.component_catalog')")
             == "control.component_catalog"
         )
+        installed_catalog = await owner.fetchval(
+            "SELECT control.slaif_component_catalog()"
+        )
+        if isinstance(installed_catalog, str):
+            installed_catalog = json.loads(installed_catalog)
+        assert installed_catalog == catalog_document()
         assert await owner.fetchval(
             "SELECT has_function_privilege('slaif_agent_runtime',$1,'EXECUTE')",
             "content.slaif_agent_component_create(uuid,uuid,text,uuid,text,uuid,uuid,jsonb)",
@@ -4805,7 +4812,6 @@ async def test_agent_create_routes_cover_field_item_page_and_component(
                 json={
                     "component_type": "Heading",
                     "slot_key": "default",
-                    "order_key": 0,
                     "props": {"text": "bounded", "level": 2},
                 },
                 headers={**headers, "Idempotency-Key": "route-component"},
@@ -4897,6 +4903,7 @@ async def test_agent_component_catalog_and_semantic_crud_are_cow_bound(
             )
             assert catalog.status_code == 200, catalog.text
             catalog_body = catalog.json()
+            assert catalog_body == catalog_document()
             assert catalog_body["version"] == "catalog-v1"
             assert catalog_body["composition_schema_version"] == "site-composition/v1"
             assert {item["type"] for item in catalog_body["components"]} == {
@@ -4935,6 +4942,34 @@ async def test_agent_component_catalog_and_semantic_crud_are_cow_bound(
             )
             assert page.status_code == 201, page.text
             page_id = page.json()["record"]["id"]
+
+            raw_rank = await client.post(
+                f"/api/agent/v1/pages/{page_id}/components",
+                json={
+                    "component_type": "Heading",
+                    "order_key": 0,
+                    "props": {"text": "must reject", "level": 2},
+                },
+                headers={**headers, "Idempotency-Key": "component-raw-rank"},
+            )
+            assert raw_rank.status_code == 422, raw_rank.text
+            assert (
+                await client.get(
+                    f"/api/agent/v1/pages/{page_id}/components", headers=headers
+                )
+            ).json() == []
+            async with owner_connection(
+                database.settings.resolved_owner_dsn(), expected_database=database.name
+            ) as owner:
+                assert (
+                    await owner.fetchval(
+                        "SELECT count(*) FROM control.agent_idempotency "
+                        "WHERE workspace_id=$1 "
+                        "AND idempotency_key='component-raw-rank'",
+                        workspace_id,
+                    )
+                    == 0
+                )
 
             section = await client.post(
                 f"/api/agent/v1/pages/{page_id}/components",
@@ -5160,6 +5195,270 @@ async def test_agent_component_resource_constraints_are_db_enforced(
             )
             assert listed.status_code == 200, listed.text
             assert len(listed.json()) == 1
+
+
+@pytest.mark.asyncio
+async def test_agent_component_runtime_helper_enforces_design_authority(
+    agent_site_database: AgentSiteDatabase,
+) -> None:
+    database = agent_site_database
+    _seed_token, seeded = await _seed(database)
+    token, workspace_id = await _workspace_capability(
+        database,
+        seeded,
+        [
+            "site:read",
+            "page:create",
+            "page:read",
+            "composition:read",
+            "component-structure:create",
+            "component-content-props:write",
+        ],
+        "Agent Component Runtime Authority Workspace",
+    )
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        capability_id = await owner.fetchval(
+            "SELECT id FROM control.capability WHERE workspace_id=$1", workspace_id
+        )
+        await owner.execute(
+            "UPDATE control.capability SET request_quota=100, mutation_quota=20 "
+            "WHERE id=$1",
+            capability_id,
+        )
+    app = create_agent_app(
+        settings=ServiceSettings.for_test(),
+        database_settings=_agent_settings(database),
+    )
+    headers = {"Authorization": f"Bearer {token}"}
+    agent_pool = await database.role_pool("slaif_agent_runtime")
+    reviewer_pool = await database.role_pool("slaif_reviewer")
+
+    async def cow_record(component_id: str) -> tuple[dict[str, Any], int]:
+        async with asyncpg_cow_session(
+            agent_pool, session_id=workspace_id, operation_id=uuid4()
+        ) as cow:
+            await cow.native.execute(
+                "SELECT set_config('app.capability_id',$1,true)", str(capability_id)
+            )
+            row = await cow.native.fetchrow(
+                "SELECT props,row_version FROM content.page_composition WHERE id=$1",
+                UUID(component_id),
+            )
+            assert row is not None
+            props = row[0]
+            if isinstance(props, str):
+                props = json.loads(props)
+            assert isinstance(props, dict)
+            return props, int(row[1])
+
+    try:
+        async with app.router.lifespan_context(app):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://agent.test"
+            ) as client:
+                page = await client.post(
+                    "/api/agent/v1/pages/",
+                    json={"slug": "runtime-authority", "title": "Authority"},
+                    headers={**headers, "Idempotency-Key": "runtime-page"},
+                )
+                assert page.status_code == 201, page.text
+                page_id = page.json()["record"]["id"]
+                section = await client.post(
+                    f"/api/agent/v1/pages/{page_id}/components",
+                    json={"component_type": "Section", "props": {}},
+                    headers={**headers, "Idempotency-Key": "runtime-section"},
+                )
+                assert section.status_code == 201, section.text
+                section_id = section.json()["record"]["id"]
+                heading = await client.post(
+                    f"/api/agent/v1/pages/{page_id}/components",
+                    json={
+                        "component_type": "Heading",
+                        "props": {"text": "before", "level": 2},
+                    },
+                    headers={**headers, "Idempotency-Key": "runtime-heading"},
+                )
+                assert heading.status_code == 201, heading.text
+                component_id = heading.json()["record"]["id"]
+
+        before_props, before_version = await cow_record(component_id)
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            before_counts = tuple(
+                await owner.fetchrow(
+                    "SELECT "
+                    "(SELECT mutation_used FROM control.capability WHERE id=$1),"
+                    "(SELECT count(*) FROM control.agent_idempotency "
+                    "WHERE workspace_id=$2),"
+                    "(SELECT count(*) FROM audit.agent_mutation WHERE workspace_id=$2)",
+                    capability_id,
+                    workspace_id,
+                )
+            )
+        async with asyncpg_cow_reviewer(reviewer_pool) as reviewer:
+            before_operations = tuple(
+                sorted(await reviewer.operations(workspace_id, schema="content"))
+            )
+
+        with pytest.raises(asyncpg.PostgresError, match="COMPONENT_DESIGN_PROP"):
+            async with asyncpg_cow_session(
+                agent_pool, session_id=workspace_id, operation_id=uuid4()
+            ) as cow:
+                await cow.native.execute(
+                    "SELECT set_config('app.capability_id',$1,true)",
+                    str(capability_id),
+                )
+                await cow.native.fetchrow(
+                    "SELECT * FROM content.slaif_agent_component_update("
+                    "$1,$2,$3::jsonb,$4)",
+                    seeded["site_id"],
+                    UUID(section_id),
+                    json.dumps({"variant": "narrow"}),
+                    before_version,
+                )
+
+        assert await cow_record(component_id) == (before_props, before_version)
+        assert await cow_record(section_id) == ({}, 1)
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            assert (
+                tuple(
+                    await owner.fetchrow(
+                        "SELECT "
+                        "(SELECT mutation_used FROM control.capability WHERE id=$1),"
+                        "(SELECT count(*) FROM control.agent_idempotency "
+                        "WHERE workspace_id=$2),"
+                        "(SELECT count(*) FROM audit.agent_mutation "
+                        "WHERE workspace_id=$2)",
+                        capability_id,
+                        workspace_id,
+                    )
+                )
+                == before_counts
+            )
+        async with asyncpg_cow_reviewer(reviewer_pool) as reviewer:
+            assert (
+                tuple(sorted(await reviewer.operations(workspace_id, schema="content")))
+                == before_operations
+            )
+
+        async with asyncpg_cow_session(
+            agent_pool, session_id=workspace_id, operation_id=uuid4()
+        ) as cow:
+            await cow.native.execute(
+                "SELECT set_config('app.capability_id',$1,true)", str(capability_id)
+            )
+            row = await cow.native.fetchrow(
+                "SELECT * FROM content.slaif_agent_component_update("
+                "$1,$2,$3::jsonb,$4)",
+                seeded["site_id"],
+                UUID(component_id),
+                json.dumps({"text": "after", "level": 2}),
+                before_version,
+            )
+            assert row is not None
+        assert await cow_record(component_id) == (
+            {"text": "after", "level": 2},
+            before_version + 1,
+        )
+    finally:
+        await agent_pool.close()
+        await reviewer_pool.close()
+
+
+@pytest.mark.asyncio
+async def test_agent_component_nested_catalog_schemas_are_db_enforced(
+    agent_site_database: AgentSiteDatabase,
+) -> None:
+    database = agent_site_database
+    _seed_token, seeded = await _seed(database)
+    token, workspace_id = await _workspace_capability(
+        database,
+        seeded,
+        [
+            "site:read",
+            "page:create",
+            "page:read",
+            "composition:read",
+            "component-structure:create",
+        ],
+        "Agent Nested Component Schema Workspace",
+    )
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        await owner.execute(
+            "UPDATE control.capability SET request_quota=100, mutation_quota=20 "
+            "WHERE workspace_id=$1",
+            workspace_id,
+        )
+    app = create_agent_app(
+        settings=ServiceSettings.for_test(),
+        database_settings=_agent_settings(database),
+    )
+    headers = {"Authorization": f"Bearer {token}"}
+    async with app.router.lifespan_context(app):
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://agent.test"
+        ) as client:
+            page = await client.post(
+                "/api/agent/v1/pages/",
+                json={"slug": "nested-components", "title": "Nested"},
+                headers={**headers, "Idempotency-Key": "nested-page"},
+            )
+            assert page.status_code == 201, page.text
+            page_id = page.json()["record"]["id"]
+            valid_components = (
+                (
+                    "RichText",
+                    {
+                        "content": {
+                            "type": "paragraph",
+                            "children": [{"text": "Meaningful text", "bold": True}],
+                        }
+                    },
+                ),
+                ("Statistics", {"items": [{"label": "Users", "value": "42"}]}),
+                (
+                    "Timeline",
+                    {"items": [{"title": "Launch", "description": "Released."}]},
+                ),
+                (
+                    "FAQ",
+                    {"items": [{"question": "Why?", "answer": "Because."}]},
+                ),
+            )
+            for index, (component_type, props) in enumerate(valid_components):
+                response = await client.post(
+                    f"/api/agent/v1/pages/{page_id}/components",
+                    json={"component_type": component_type, "props": props},
+                    headers={**headers, "Idempotency-Key": f"nested-{index}"},
+                )
+                assert response.status_code == 201, response.text
+
+            malformed = await client.post(
+                f"/api/agent/v1/pages/{page_id}/components",
+                json={
+                    "component_type": "RichText",
+                    "props": {
+                        "content": {
+                            "type": "paragraph",
+                            "children": [{"text": "unsafe", "onClick": "run"}],
+                        }
+                    },
+                },
+                headers={**headers, "Idempotency-Key": "nested-malformed"},
+            )
+            assert malformed.status_code == 422, malformed.text
+            listed = await client.get(
+                f"/api/agent/v1/pages/{page_id}/components", headers=headers
+            )
+            assert listed.status_code == 200, listed.text
+            assert len(listed.json()) == len(valid_components)
 
 
 @pytest.mark.asyncio
@@ -7354,7 +7653,6 @@ async def test_public_agent_builds_news_dynamic_listing_and_detail_render(
                     {
                         "component_type": "CollectionList",
                         "slot_key": "default",
-                        "order_key": 0,
                         "props": {"viewId": view_id},
                     },
                 )
@@ -7365,7 +7663,6 @@ async def test_public_agent_builds_news_dynamic_listing_and_detail_render(
                     {
                         "component_type": "CollectionDetail",
                         "slot_key": "default",
-                        "order_key": 0,
                         "props": {"viewId": view_id},
                     },
                 )
@@ -7400,7 +7697,6 @@ async def test_public_agent_builds_news_dynamic_listing_and_detail_render(
                     {
                         "component_type": "CollectionList",
                         "slot_key": "default",
-                        "order_key": 0,
                         "props": {"viewId": view_id},
                     },
                 )
@@ -7411,7 +7707,6 @@ async def test_public_agent_builds_news_dynamic_listing_and_detail_render(
                     {
                         "component_type": "CollectionDetail",
                         "slot_key": "default",
-                        "order_key": 0,
                         "props": {"viewId": view_id},
                     },
                 )

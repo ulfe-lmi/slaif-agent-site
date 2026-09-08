@@ -231,7 +231,7 @@ async def get_permissions(request: Request) -> AgentPermissionsResponse:
     )
 
 
-@router.get("/component-catalog")
+@router.get("/component-catalog", response_model_exclude_none=True)
 async def get_component_catalog(
     request: Request,
 ) -> AgentComponentCatalogResponse:

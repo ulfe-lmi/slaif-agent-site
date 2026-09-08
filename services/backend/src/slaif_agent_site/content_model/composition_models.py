@@ -96,11 +96,52 @@ class UpdateCompositionNodeRequest(BaseModel):
         return result
 
 
-class AgentCreateCompositionNodeRequest(CreateCompositionNodeRequest):
+class AgentCreateCompositionNodeRequest(BaseModel):
     """Agent create intent; sibling anchors replace trusted raw ordering."""
 
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    component_type: str
+    parent_id: str | None = None
+    slot_key: str = "default"
     before_component_id: UUID | None = None
     after_component_id: UUID | None = None
+    props: dict[str, Any] = {}
+
+    @field_validator("component_type")
+    @classmethod
+    def component_type_is_valid(cls, value: str) -> str:
+        if (
+            not value
+            or len(value) > 63
+            or "\x00" in value
+            or value not in TRUSTED_COMPONENT_TYPES
+        ):
+            raise ValueError("invalid component type")
+        return value
+
+    @field_validator("parent_id")
+    @classmethod
+    def parent_id_is_uuid(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        try:
+            return str(UUID(value))
+        except ValueError:
+            raise ValueError("parent_id must be a UUID") from None
+
+    @field_validator("slot_key")
+    @classmethod
+    def slot_key_is_valid(cls, value: str) -> str:
+        return _bounded_text(value, 63)
+
+    @field_validator("props")
+    @classmethod
+    def props_are_bounded(cls, value: dict[str, Any]) -> dict[str, Any]:
+        result = _bounded_json(value)
+        if not isinstance(result, dict):
+            raise ValueError("props must be an object")
+        return result
 
     @model_validator(mode="after")
     def one_anchor(self) -> AgentCreateCompositionNodeRequest:

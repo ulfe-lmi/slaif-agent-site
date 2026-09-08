@@ -165,6 +165,15 @@ test("Puck editor remains trusted, same-origin, and normalized", async () => {
   assert.doesNotMatch(`${editor}${api}`, /localStorage|sessionStorage|Bearer|sas2_/);
 });
 
+test("trusted renderer preserves bounded structured component meaning", async () => {
+  const renderer = await read("../src/renderer/components.tsx");
+  assert.match(renderer, /const blocks = Array\.isArray\(value\)/);
+  assert.match(renderer, /typeof value === "object" && value !== null/);
+  assert.match(renderer, /renderer-statistics/);
+  assert.match(renderer, /renderer-timeline/);
+  assert.match(renderer, /renderer-faq/);
+});
+
 test("membership administration preserves exact server contracts and UX boundaries", async () => {
   const api = await read("../src/admin/api.ts");
   const workflow = await read("../src/admin/membership-workflows.tsx");
