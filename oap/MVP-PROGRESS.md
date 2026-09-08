@@ -3,7 +3,7 @@
 This tracker uses the contract-audit status vocabulary rather than file
 presence or completion estimates. The authoritative baseline is
 [`MVP-CONTRACT-AUDIT.md`](MVP-CONTRACT-AUDIT.md), updated for the protocol-final
-Objective-077 source revision developed in PR #74 on 2026-09-08. GitHub's PR
+Objective-078-f source revision developed in PR #77 on 2026-09-08. GitHub's PR
 state and merge commit are authoritative for whether that revision is contained
 in `main`; its audited base is Objective 076 commit
 `067676314e0d9664d40cb8514ea549b966a4eb2d`.
@@ -11,12 +11,13 @@ in `main`; its audited base is Objective 076 commit
 ## Current verdict
 
 **CONTRACTUAL MVP NOT COMPLETE.** Merged Objectives 065–076 prove narrow,
-bounded contracts, and the Objective-077 source revision now provides complete
-executable evidence for its bounded page/locale/navigation/redirect/dynamic-
-Render information architecture. Objective-077 acceptance and merge state are
-external GitHub/OAP facts; neither that bounded revision nor the earlier slices
-proves the broader composition, review lifecycle, publication, reconstruction,
-or final MVP contract.
+bounded contracts; the Objective-077 source revision provides complete evidence
+for its bounded page/locale/navigation/redirect/dynamic-Render information
+architecture; and the Objective-078-f source revision provides complete
+evidence for the bounded Agent component data plane on open PR #77. Objective
+078 remains partial because design/theme/global-region behavior and the later
+review lifecycle, publication, reconstruction, or final MVP contract are not
+proven. PR acceptance and merge state remain external GitHub/OAP facts.
 
 ## Merged narrow slices
 
@@ -58,18 +59,32 @@ contract is **COMPLETE — E2E PROVEN** at the source revision. GitHub records
 whether strategic acceptance has placed it in `main`. The contractual MVP
 remains **NOT COMPLETE**.
 
+## Objective 078 source revision
+
+The 078-f source revision on [PR #77](https://github.com/ulfe-lmi/slaif-agent-site/pull/77)
+maps the immutable 078-a through 078-f transcript to the existing public Agent
+and shared Render/Web/browser boundaries. Its bounded component slice is
+**COMPLETE — E2E PROVEN** at the open-PR source revision: a clean NGINX-only
+workflow creates and reads an empty-to-nested Section/Container/Heading/RichText
+composition, updates content props, moves with semantic anchors, preserves
+IDs/props/hierarchy/order/versions across Agent/Render/Web restarts, deletes
+leaves then parents, and proves private browser artifacts, hostile negatives,
+idempotency/audit/quota/COW isolation, and canonical non-change. The remaining
+Objective-078 design/theme/global-region scope is still **PARTIAL**; this does
+not claim that PR #77 has merged or that the contractual MVP is complete.
+
 ## Active and remaining sequence
 
-The active transcript pointer remains the protocol-final `077-z` until strategy
-selects and signals the next objective. The source revision has complete bounded
-077 evidence; its acceptance and containment in `main` are determined by OAP
-and GitHub state, not this document. All later order files remain inert until
-strategy selects and signals them.
+The active transcript pointer remains `078-f` until strategy selects and signals
+the next objective. The source revisions have complete bounded 077 evidence and
+complete bounded 078 component evidence; acceptance and containment in `main`
+are determined by OAP and GitHub state, not this document. All later order files
+remain inert until strategy selects and signals them.
 
 | Order | Contractual scope | Current status |
 |---|---|---|
 | 077 | Agent page, navigation, redirect, and bounded dynamic collection Render semantics | COMPLETE — E2E PROVEN at 077-z source revision; consult authoritative PR/main state for merge |
-| 078 | Agent composition and design semantics | PARTIAL |
+| 078 | Agent composition and design semantics; bounded component data plane | PARTIAL — component slice E2E proven at 078-f on open PR #77; design/theme/global-region scope remains |
 | 079 | Agent media semantics and references | PARTIAL |
 | 080 | Real MCP semantic parity | SCAFFOLD ONLY |
 | 081 | Human Puck editing in the exact Agent workspace | PARTIAL |

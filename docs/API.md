@@ -259,7 +259,10 @@ The bounded mutation surface is:
 | `DELETE /api/agent/v1/pages/{page_id}` | 200 | `AgentDeleteRequest` |
 | `POST /api/agent/v1/pages/{page_id}:move` | 200 | `MovePageRequest` (parent-only hierarchy move) |
 | `POST /api/agent/v1/pages/{page_id}:restore` | 200 | `RestorePageRequest` with the exact tombstone row version |
-| `POST /api/agent/v1/pages/{page_id}/components` | 201 | `CreateCompositionNodeRequest` |
+| `POST /api/agent/v1/pages/{page_id}/components` | 201 | `AgentCreateCompositionNodeRequest` |
+| `PATCH /api/agent/v1/components/{component_id}` | 200 | `AgentUpdateCompositionNodeRequest` |
+| `POST /api/agent/v1/components/{component_id}/move` | 200 | `AgentMoveCompositionNodeRequest` |
+| `DELETE /api/agent/v1/components/{component_id}` | 200 | `AgentDeleteRequest` |
 | `POST /api/agent/v1/locales` | 201 | `AgentCreateLocaleRequest` |
 | `PATCH /api/agent/v1/locales/{locale_id}` | 200 | `AgentUpdateLocaleRequest` |
 | `DELETE /api/agent/v1/locales/{locale_id}` | 200 | `AgentDeleteRequest` |
@@ -270,6 +273,22 @@ The bounded mutation surface is:
 | `PATCH /api/agent/v1/navigation-items/{item_id}` | 200 | `AgentUpdateNavigationItemRequest` |
 | `POST /api/agent/v1/navigation-items/{item_id}:move` | 200 | `AgentMoveNavigationItemRequest` |
 | `DELETE /api/agent/v1/navigation-items/{item_id}` | 200 | `AgentDeleteRequest` |
+
+Component composition is a bounded normalized tree. `GET /api/agent/v1/pages/{page_id}/components`
+returns the exact visible nodes and
+`GET /api/agent/v1/components/{component_id}` returns one exact node; both are
+capability- and workspace-confined. Component creation accepts a catalog type,
+parent, slot, and at most one `before_component_id` or `after_component_id`
+sibling anchor. The server assigns dense sibling `order_key` values; callers
+cannot submit or patch a raw order key. `PATCH` changes content-authority
+props only and requires the current positive `expected_row_version`; catalog
+design props are rejected. `POST .../move` changes parent/slot and uses the
+same mutually exclusive semantic anchors plus the current row version. A
+successful move versions the moved node and any shifted siblings. `DELETE`
+requires the current row version, rejects a node with children, and returns the
+deleted record after dense resequencing. All four mutation forms are
+idempotent, semantically audited, COW-confined, quota-bound, and return stable
+`401`/`403`/`404`/`409`/`422`/`429` errors without foreign-record disclosure.
 
 Every mutation requires an `Idempotency-Key` containing 1–128 bounded ASCII
 key characters. The response is `{ "record": <semantic record>,

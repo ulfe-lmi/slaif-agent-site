@@ -102,6 +102,18 @@ def _semantic_contract(
             and method == "POST"
         ):
             return "composition_node", "COMPONENT_CREATED", "mutation"
+        if len(segments) == 6 and segments[4] == "components":
+            if method == "PATCH":
+                return "composition_node", "COMPONENT_UPDATED", "mutation"
+            if method == "DELETE":
+                return "composition_node", "COMPONENT_DELETED", "delete"
+        if (
+            len(segments) == 7
+            and segments[4] == "components"
+            and segments[6] == "move"
+            and method == "POST"
+        ):
+            return "composition_node", "COMPONENT_MOVED", "mutation"
         if (
             len(segments) == 7
             and segments[4] == "content-items"
@@ -391,6 +403,13 @@ def _canonical_request_body(
             "before_component_id": None,
             "after_component_id": None,
             "props": {},
+        }
+    if resource_type == "composition_node" and action == "COMPONENT_MOVED":
+        defaults = {
+            "new_parent_id": None,
+            "new_slot_key": "default",
+            "before_component_id": None,
+            "after_component_id": None,
         }
     if resource_type == "content_item" and action == "CONTENT_ITEM_CREATED":
         defaults = {"status": "DRAFT", "values": {}}
@@ -1497,6 +1516,1465 @@ def _run_dynamic_news_edge_journey(
             _revoke_capability(client, site_id, workspace, capability)
 
 
+def _component_snapshot(nodes: Sequence[dict[str, Any]]) -> tuple[tuple[Any, ...], ...]:
+    return tuple(
+        (
+            _require_uuid(node.get("id"), "component-snapshot-id"),
+            _require_uuid(node.get("site_id"), "component-snapshot-site"),
+            _require_uuid(node.get("page_id"), "component-snapshot-page"),
+            node.get("component_type"),
+            node.get("schema_version"),
+            node.get("catalog_version"),
+            node.get("parent_id"),
+            node.get("slot_key"),
+            node.get("order_key"),
+            json.dumps(node.get("props"), sort_keys=True, separators=(",", ":")),
+            node.get("row_version"),
+        )
+        for node in nodes
+    )
+
+
+def _assert_component_tree(
+    nodes: Sequence[dict[str, Any]],
+    *,
+    site_id: str,
+    page_id: str,
+    expected: dict[str, dict[str, Any]],
+    label: str,
+) -> tuple[tuple[Any, ...], ...]:
+    if {node.get("id") for node in nodes} != set(expected) or len(nodes) != len(
+        expected
+    ):
+        raise ProofFailure(f"{label}-ids")
+    groups: dict[tuple[str | None, str], list[int]] = {}
+    for node in nodes:
+        node_id = _require_uuid(node.get("id"), f"{label}-id")
+        wanted = expected[node_id]
+        if (
+            node.get("site_id") != site_id
+            or node.get("page_id") != page_id
+            or node.get("component_type") != wanted["component_type"]
+            or node.get("schema_version") != "1"
+            or node.get("catalog_version") != "catalog-v1"
+            or node.get("parent_id") != wanted["parent_id"]
+            or node.get("slot_key") != wanted["slot_key"]
+            or node.get("order_key") != wanted["order_key"]
+            or node.get("props") != wanted["props"]
+            or not isinstance(node.get("row_version"), int)
+            or node["row_version"] <= 0
+            or node["row_version"] != wanted["row_version"]
+        ):
+            raise ProofFailure(f"{label}-record-{node_id}")
+        group = (node.get("parent_id"), node.get("slot_key"))
+        groups.setdefault(group, []).append(node["order_key"])
+    if any(sorted(values) != list(range(len(values))) for values in groups.values()):
+        raise ProofFailure(f"{label}-dense-order")
+    return _component_snapshot(nodes)
+
+
+def _expect_component_error(
+    response: Any, *, status: int, code: str, label: str
+) -> None:
+    if response.status != status:
+        raise ProofFailure(f"{label}-status-{response.status}")
+    try:
+        document = json.loads(response.body)
+        actual = document["error"]["code"]
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
+        raise ProofFailure(f"{label}-error-document") from error
+    if actual != code:
+        raise ProofFailure(f"{label}-code-{actual}")
+
+
+def _assert_component_exact_reads(
+    client: PublicClient,
+    token: str,
+    page_id: str,
+    nodes: Sequence[dict[str, Any]],
+    *,
+    label: str,
+) -> None:
+    if not page_id:
+        raise ProofFailure(f"{label}-page-missing")
+    for node in nodes:
+        node_id = _require_uuid(node.get("id"), f"{label}-listed-id")
+        exact = _agent_request(
+            client,
+            token,
+            f"/api/agent/v1/components/{node_id}",
+            label=f"{label}-{node_id}",
+        )
+        if _component_snapshot([exact]) != _component_snapshot([node]):
+            raise ProofFailure(f"{label}-mismatch-{node_id}")
+
+
+def _assert_component_preview_html(
+    body: bytes,
+    *,
+    label: str,
+    title: str,
+    expected: tuple[str, ...],
+    forbidden: tuple[str, ...],
+    markers: tuple[str, ...],
+    known_ids: tuple[str, ...],
+) -> None:
+    try:
+        text = body.decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise ProofFailure(f"{label}-invalid-html") from error
+    if '<html lang="en">' not in text:
+        raise ProofFailure(f"{label}-locale-missing")
+    if f"<title>{title}</title>" not in text:
+        raise ProofFailure(f"{label}-title-missing")
+    if '<link rel="stylesheet" href="/renderer-v1.css"/>' not in text:
+        raise ProofFailure(f"{label}-renderer-stylesheet-missing")
+    positions = []
+    for marker in markers:
+        needle = f'data-component="{marker}"'
+        if text.count(needle) != 1:
+            raise ProofFailure(f"{label}-{marker}-marker-count")
+        positions.append(text.index(needle))
+    if positions != sorted(positions):
+        raise ProofFailure(f"{label}-hierarchy-order")
+    if not markers and 'data-component="' in text:
+        raise ProofFailure(f"{label}-unexpected-component")
+    for value in expected:
+        if value not in text:
+            raise ProofFailure(f"{label}-expected-text-missing")
+    for value in forbidden:
+        if value in text:
+            raise ProofFailure(f"{label}-forbidden-text-present")
+    if any(value and value in text for value in known_ids):
+        raise ProofFailure(f"{label}-identity-leak")
+    if re.search(
+        r"[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}",
+        text,
+        re.IGNORECASE,
+    ):
+        raise ProofFailure(f"{label}-uuid-leak")
+    if any(marker in text for marker in ("sas2_", "sbp1.", "sbws1:")):
+        raise ProofFailure(f"{label}-credential-leak")
+    if any(
+        marker in text for marker in ("__next_f", "self.__next_f", "_rsc=", "NEXT_DATA")
+    ):
+        raise ProofFailure(f"{label}-next-flight-leak")
+
+
+def _run_component_browser_proof(
+    client: PublicClient,
+    *,
+    token: str,
+    workspace_id: str,
+    page_slug: str,
+    page_title: str,
+    heading_text: str,
+    page_id: str,
+    component_ids: tuple[str, ...],
+    observer_token: str,
+    project: str,
+    tag: str,
+) -> None:
+    browser_route = f"/s/demo/{page_slug}"
+    browser_body = {
+        "version": "browser-preview/v1",
+        "route": browser_route,
+        "target": "desktop-chromium",
+        "evidence": [
+            "heading-summary",
+            "structure-summary",
+            "console-summary",
+            "failed-request-summary",
+        ],
+    }
+    key = f"oap-078f-component-browser-{tag}"
+    created = _json(
+        client.request(
+            "/api/agent/v1/preview-runs",
+            method="POST",
+            body=browser_body,
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Idempotency-Key": key,
+            },
+        ),
+        status=202,
+        label="component-browser-create",
+    )
+    run_id = _require_uuid(created.get("run_id"), "component-browser-run")
+    if any(name in created for name in ("workspace_id", "capability_id", "token")):
+        raise ProofFailure("component-browser-secret-disclosure")
+    _wait_browser_run(client, token, run_id, "component-browser-run")
+    terminal = _agent_request(
+        client,
+        token,
+        f"/api/agent/v1/preview-runs/{run_id}",
+        label="component-browser-terminal",
+    )
+    if terminal.get("state") != "COMPLETED":
+        raise ProofFailure("component-browser-not-completed")
+    replay = _json(
+        client.request(
+            "/api/agent/v1/preview-runs",
+            method="POST",
+            body=browser_body,
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Idempotency-Key": key,
+            },
+        ),
+        status=202,
+        label="component-browser-replay",
+    )
+    if replay.get("run_id") != run_id:
+        raise ProofFailure("component-browser-replay-created-second-run")
+    artifacts = _list(
+        client.request(
+            f"/api/agent/v1/preview-runs/{run_id}/artifacts",
+            headers={"Authorization": f"Bearer {token}"},
+        ),
+        status=200,
+        label="component-browser-artifacts",
+    )
+    expected_metadata = {
+        "version",
+        "artifact_id",
+        "run_id",
+        "kind",
+        "mime_type",
+        "sha256",
+        "size_bytes",
+        "target",
+        "route_digest",
+        "created_at",
+        "expires_at",
+        "visibility",
+    }
+    if len(artifacts) != 4 or {item.get("kind") for item in artifacts} != {
+        "heading-summary",
+        "structure-summary",
+        "console-summary",
+        "failed-request-summary",
+    }:
+        raise ProofFailure("component-browser-artifact-inventory")
+    route_digest = hashlib.sha256(browser_route.encode("utf-8")).hexdigest()
+    expected_evidence = {
+        "heading-summary": {"headings": [page_title, heading_text]},
+        "structure-summary": {
+            "articles": 0,
+            "collectionDetails": 0,
+            "components": 4,
+            "detailStyle": None,
+            "htmlLang": "en",
+            "main": 1,
+            "navigation": 0,
+            "rendererStylesheets": 1,
+            "sections": 1,
+        },
+        "console-summary": {"entries": []},
+        "failed-request-summary": {"blocked": 0, "entries": []},
+    }
+    artifact_ids: list[str] = []
+    for artifact in artifacts:
+        if set(artifact) != expected_metadata:
+            raise ProofFailure("component-browser-artifact-metadata-shape")
+        artifact_id = _require_uuid(
+            artifact.get("artifact_id"), "component-browser-artifact-id"
+        )
+        artifact_ids.append(artifact_id)
+        if (
+            artifact.get("run_id") != run_id
+            or artifact.get("target") != "desktop-chromium"
+            or artifact.get("route_digest") != route_digest
+            or artifact.get("visibility") != "PRIVATE"
+            or artifact.get("mime_type") != "application/json"
+        ):
+            raise ProofFailure("component-browser-artifact-binding")
+        response = client.request(
+            f"/api/agent/v1/preview-runs/{run_id}/artifacts/{artifact_id}",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        if (
+            response.status != 200
+            or len(response.body) != artifact.get("size_bytes")
+            or hashlib.sha256(response.body).hexdigest() != artifact.get("sha256")
+        ):
+            raise ProofFailure("component-browser-artifact-bytes")
+        try:
+            evidence = json.loads(response.body)
+        except (TypeError, ValueError) as error:
+            raise ProofFailure("component-browser-artifact-json") from error
+        if evidence != expected_evidence[artifact["kind"]]:
+            raise ProofFailure(f"component-browser-{artifact['kind']}-evidence")
+        if any(
+            value in response.body.decode("utf-8")
+            for value in (*component_ids, page_id, workspace_id, "sas2_", "sbp1.")
+        ):
+            raise ProofFailure("component-browser-artifact-identity-leak")
+    for path, denied_token, label in (
+        (f"/api/agent/v1/preview-runs/{run_id}", observer_token, "foreign-run"),
+        (
+            f"/api/agent/v1/preview-runs/{run_id}/artifacts",
+            observer_token,
+            "foreign-artifacts",
+        ),
+        (
+            f"/api/agent/v1/preview-runs/{run_id}/artifacts/{artifact_ids[0]}",
+            observer_token,
+            "foreign-artifact",
+        ),
+    ):
+        _expect_component_error(
+            client.request(path, headers={"Authorization": f"Bearer {denied_token}"}),
+            status=404,
+            code="RESOURCE_NOT_FOUND",
+            label=f"component-browser-{label}",
+        )
+    event_counts = _sql(
+        project,
+        "SELECT count(*) FILTER (WHERE event_type='ENQUEUED') || ':' || "
+        "count(*) FILTER (WHERE event_type='LEASED') || ':' || "
+        "count(*) FILTER (WHERE event_type='COMPLETED') || ':' || "
+        "count(*) FILTER (WHERE event_type='PREVIEW_TOKEN_CONSUMED') || ':' || "
+        "count(*) FILTER (WHERE event_type='ARTIFACT_REGISTERED') "
+        f"FROM audit.browser_event WHERE run_id='{run_id}'::uuid",
+    )
+    if event_counts != "1:1:1:1:4":
+        raise ProofFailure(f"component-browser-event-count-{event_counts}")
+
+
+def _run_component_render_loop(
+    client: PublicClient,
+    *,
+    site_id: str,
+    other_site_id: str,
+    csrf: str,
+    project: str,
+    tag: str,
+    observer_token: str,
+) -> None:
+    component_workspace = component_capability = component_token = ""
+    lower_workspace = lower_capability = lower_token = ""
+    mutation_quota_workspace = mutation_quota_capability = mutation_quota_token = ""
+    delete_quota_workspace = delete_quota_capability = delete_quota_token = ""
+    resource_workspace = resource_capability = resource_token = ""
+    canonical_page_id = canonical_heading_id = canonical_richtext_id = ""
+    page_id = section_id = container_id = heading_id = richtext_id = ""
+    component_page_route = ""
+    try:
+        sites_before = _list(
+            client.request("/api/control/v1/me/sites"),
+            status=200,
+            label="component-sites-before",
+        )
+        other_workspaces_path = f"/api/control/v1/sites/{other_site_id}/workspaces/"
+        other_workspaces_before = _list(
+            client.request(other_workspaces_path),
+            status=200,
+            label="component-other-workspaces-before",
+        )
+        observer_pages_before = _agent_list(
+            client,
+            observer_token,
+            "/api/agent/v1/pages/",
+            label="component-observer-before",
+        )
+        canonical_before = client.request("/s/demo")
+        if canonical_before.status != 200:
+            raise ProofFailure("component-canonical-before-status")
+        canonical_before_stable = _canonical_stable_bytes(canonical_before.body)
+
+        contract_bytes = (ROOT / "contracts/openapi/agent-v1.json").read_bytes()
+        if client.request("/api/agent/v1/openapi.json").body != contract_bytes:
+            raise ProofFailure("component-openapi-bytes")
+        contract = json.loads(contract_bytes)
+        for route in (
+            "/api/agent/v1/session",
+            "/api/agent/v1/permissions",
+            "/api/agent/v1/component-catalog",
+            "/api/agent/v1/pages/",
+            "/api/agent/v1/pages/{page_id}/components",
+            "/api/agent/v1/components/{component_id}",
+            "/api/agent/v1/components/{component_id}/move",
+        ):
+            if route not in contract["paths"]:
+                raise ProofFailure("component-openapi-route-inventory")
+
+        component_workspace = _create_workspace(
+            client,
+            site_id,
+            csrf,
+            {
+                "title": f"OAP 078-f component render loop {tag}",
+                "task_description": "Bounded public component render loop",
+                "delegation_preset": "L2_SITE_EDITOR",
+                "duration_hours": 1,
+                "request_quota": 300,
+                "mutation_quota": 32,
+                "delete_quota": 8,
+                "upload_quota": 0,
+                "browser_quota": 1,
+                "resource_constraints": {"delete_enabled": True, "max_deletes": 8},
+            },
+            f"oap-078f-component-workspace-{tag}",
+        )
+        component_token, component_capability = _issue_capability(
+            client,
+            site_id,
+            component_workspace,
+            csrf,
+            f"oap-078f-component-capability-{tag}",
+        )
+        session = _agent_request(
+            client, component_token, "/api/agent/v1/session", label="component-session"
+        )
+        if (
+            session.get("site_id") != site_id
+            or session.get("workspace_id") != component_workspace
+            or session.get("component_catalog_version") != "catalog-v1"
+            or session.get("composition_schema_version") != "site-composition/v1"
+        ):
+            raise ProofFailure("component-session-binding")
+        permissions = _agent_request(
+            client,
+            component_token,
+            "/api/agent/v1/permissions",
+            label="component-permissions",
+        )
+        if not {
+            "page:create",
+            "page:read",
+            "composition:read",
+            "component-catalog:read",
+            "component-structure:create",
+            "component-content-props:write",
+            "component-structure:move",
+            "component-structure:delete",
+        } <= set(permissions.get("scopes", [])):
+            raise ProofFailure("component-permissions-incomplete")
+        catalog = _agent_request(
+            client,
+            component_token,
+            "/api/agent/v1/component-catalog",
+            label="component-catalog",
+        )
+        definitions = {
+            item.get("type"): item
+            for item in catalog.get("components", [])
+            if isinstance(item, dict)
+        }
+        if catalog.get("version") != "catalog-v1" or not {
+            "Section",
+            "Container",
+            "Heading",
+            "RichText",
+        } <= set(definitions):
+            raise ProofFailure("component-catalog-required-types")
+
+        page_slug = f"oap-component-{tag}"
+        page_title = f"OAP component render loop {tag}"
+        page = _mutation(
+            client,
+            component_token,
+            "/api/agent/v1/pages/",
+            {
+                "slug": page_slug,
+                "title": page_title,
+                "status": "PUBLISHED",
+                "locale": "en",
+            },
+            f"oap-078f-component-page-{tag}",
+        )
+        page_id = _require_uuid(page["record"]["id"], "component-page")
+        component_page_route = f"/s/demo/{page_slug}"
+        if client.request(component_page_route).status != 404:
+            raise ProofFailure("component-canonical-page-leak-before")
+        initial = _agent_list(
+            client,
+            component_token,
+            f"/api/agent/v1/pages/{page_id}/components",
+            label="component-initial-composition",
+        )
+        if initial != []:
+            raise ProofFailure("component-initial-composition-not-empty")
+
+        section = _mutation(
+            client,
+            component_token,
+            f"/api/agent/v1/pages/{page_id}/components",
+            {"component_type": "Section", "props": {}},
+            f"oap-078f-component-section-{tag}",
+        )
+        section_id = _require_uuid(section["record"]["id"], "component-section")
+        container = _mutation(
+            client,
+            component_token,
+            f"/api/agent/v1/pages/{page_id}/components",
+            {"component_type": "Container", "parent_id": section_id, "props": {}},
+            f"oap-078f-component-container-{tag}",
+        )
+        container_id = _require_uuid(container["record"]["id"], "component-container")
+        heading = _mutation(
+            client,
+            component_token,
+            f"/api/agent/v1/pages/{page_id}/components",
+            {
+                "component_type": "Heading",
+                "parent_id": container_id,
+                "props": {"text": "OAP component heading", "level": 2},
+            },
+            f"oap-078f-component-heading-{tag}",
+        )
+        heading_id = _require_uuid(heading["record"]["id"], "component-heading")
+        richtext = _mutation(
+            client,
+            component_token,
+            f"/api/agent/v1/pages/{page_id}/components",
+            {
+                "component_type": "RichText",
+                "parent_id": container_id,
+                "after_component_id": heading_id,
+                "props": {
+                    "content": {
+                        "type": "paragraph",
+                        "children": [{"text": "OAP component supporting text"}],
+                    }
+                },
+            },
+            f"oap-078f-component-richtext-{tag}",
+        )
+        richtext_id = _require_uuid(richtext["record"]["id"], "component-richtext")
+        initial_expected = {
+            section_id: {
+                "component_type": "Section",
+                "parent_id": None,
+                "slot_key": "default",
+                "order_key": 0,
+                "props": {},
+                "row_version": 1,
+            },
+            container_id: {
+                "component_type": "Container",
+                "parent_id": section_id,
+                "slot_key": "default",
+                "order_key": 0,
+                "props": {},
+                "row_version": 1,
+            },
+            heading_id: {
+                "component_type": "Heading",
+                "parent_id": container_id,
+                "slot_key": "default",
+                "order_key": 0,
+                "props": {"text": "OAP component heading", "level": 2},
+                "row_version": 1,
+            },
+            richtext_id: {
+                "component_type": "RichText",
+                "parent_id": container_id,
+                "slot_key": "default",
+                "order_key": 1,
+                "props": {
+                    "content": {
+                        "type": "paragraph",
+                        "children": [{"text": "OAP component supporting text"}],
+                    }
+                },
+                "row_version": 1,
+            },
+        }
+        nodes = _agent_list(
+            client,
+            component_token,
+            f"/api/agent/v1/pages/{page_id}/components",
+            label="component-created-list",
+        )
+        _assert_component_tree(
+            nodes,
+            site_id=site_id,
+            page_id=page_id,
+            expected=initial_expected,
+            label="component-created-tree",
+        )
+        _assert_component_exact_reads(
+            client,
+            component_token,
+            page_id,
+            nodes,
+            label="component-created-exact-read",
+        )
+        updated_heading_text = f"OAP component updated heading {tag}"
+        updated_heading = _request_mutation(
+            client,
+            component_token,
+            f"/api/agent/v1/components/{heading_id}",
+            {
+                "props": {"text": updated_heading_text, "level": 2},
+                "expected_row_version": 1,
+            },
+            f"oap-078f-component-heading-update-{tag}",
+        )
+        if updated_heading["record"].get("row_version") != 2:
+            raise ProofFailure("component-heading-update-version")
+        move_richtext = _request_mutation(
+            client,
+            component_token,
+            f"/api/agent/v1/components/{richtext_id}/move",
+            {
+                "new_parent_id": container_id,
+                "new_slot_key": "default",
+                "before_component_id": heading_id,
+                "expected_row_version": 1,
+            },
+            f"oap-078f-component-richtext-before-{tag}",
+            method="POST",
+        )
+        if move_richtext["record"].get("row_version") != 2:
+            raise ProofFailure("component-richtext-before-version")
+        move_heading = _request_mutation(
+            client,
+            component_token,
+            f"/api/agent/v1/components/{heading_id}/move",
+            {
+                "new_parent_id": container_id,
+                "new_slot_key": "default",
+                "after_component_id": richtext_id,
+                "expected_row_version": 3,
+            },
+            f"oap-078f-component-heading-after-{tag}",
+            method="POST",
+        )
+        if move_heading["record"].get("row_version") != 4:
+            raise ProofFailure("component-heading-after-version")
+        final_expected = {
+            **initial_expected,
+            heading_id: {
+                **initial_expected[heading_id],
+                "props": {"text": updated_heading_text, "level": 2},
+                "order_key": 1,
+                "row_version": 4,
+            },
+            richtext_id: {
+                **initial_expected[richtext_id],
+                "order_key": 0,
+                "row_version": 2,
+            },
+        }
+        nodes = _agent_list(
+            client,
+            component_token,
+            f"/api/agent/v1/pages/{page_id}/components",
+            label="component-final-list",
+        )
+        expected_snapshot = _assert_component_tree(
+            nodes,
+            site_id=site_id,
+            page_id=page_id,
+            expected=final_expected,
+            label="component-final-tree",
+        )
+        _assert_component_exact_reads(
+            client,
+            component_token,
+            page_id,
+            nodes,
+            label="component-final-exact-read",
+        )
+        preview_path = f"/preview/{component_workspace}/s/demo/{page_slug}"
+        preview = _wait_preview_html(client, preview_path, "component-preview")
+        _assert_component_preview_html(
+            preview,
+            label="component-preview",
+            title=page_title,
+            expected=(updated_heading_text, "OAP component supporting text"),
+            forbidden=("OAP component heading",),
+            markers=("Section", "Container", "RichText", "Heading"),
+            known_ids=(
+                component_workspace,
+                site_id,
+                page_id,
+                section_id,
+                container_id,
+                heading_id,
+                richtext_id,
+            ),
+        )
+        if client.request(component_page_route).status != 404:
+            raise ProofFailure("component-canonical-page-leak-after-render")
+        _run_component_browser_proof(
+            client,
+            token=component_token,
+            workspace_id=component_workspace,
+            page_slug=page_slug,
+            page_title=page_title,
+            heading_text=updated_heading_text,
+            page_id=page_id,
+            component_ids=(section_id, container_id, heading_id, richtext_id),
+            observer_token=observer_token,
+            project=project,
+            tag=tag,
+        )
+        for service in ("agent-api", "render-api", "web"):
+            _compose(project, "restart", service)
+            if service == "agent-api":
+                _wait_agent_ready(client)
+            else:
+                _wait_preview_html(client, preview_path, f"component-{service}-preview")
+            restarted_nodes = _agent_list(
+                client,
+                component_token,
+                f"/api/agent/v1/pages/{page_id}/components",
+                label=f"component-{service}-list",
+            )
+            if _component_snapshot(restarted_nodes) != expected_snapshot:
+                raise ProofFailure(f"component-{service}-state-changed")
+            restarted_preview = _wait_preview_html(
+                client, preview_path, f"component-{service}-preview-read"
+            )
+            _assert_component_preview_html(
+                restarted_preview,
+                label=f"component-{service}-preview-read",
+                title=page_title,
+                expected=(updated_heading_text, "OAP component supporting text"),
+                forbidden=("OAP component heading",),
+                markers=("Section", "Container", "RichText", "Heading"),
+                known_ids=(
+                    component_workspace,
+                    site_id,
+                    page_id,
+                    section_id,
+                    container_id,
+                    heading_id,
+                    richtext_id,
+                ),
+            )
+
+        negative_snapshot = expected_snapshot
+        negative_audit_before = _sql(
+            project,
+            f"SELECT count(*) FROM audit.agent_mutation WHERE workspace_id='{component_workspace}'::uuid",
+        )
+        negative_idempotency_before = _sql(
+            project,
+            f"SELECT count(*) FROM control.agent_idempotency WHERE workspace_id='{component_workspace}'::uuid",
+        )
+
+        def assert_component_negative_state(label: str) -> None:
+            current = _component_snapshot(
+                _agent_list(
+                    client,
+                    component_token,
+                    f"/api/agent/v1/pages/{page_id}/components",
+                    label=f"{label}-state",
+                )
+            )
+            if current != negative_snapshot:
+                raise ProofFailure(f"{label}-state-changed")
+            if (
+                _sql(
+                    project,
+                    f"SELECT count(*) FROM audit.agent_mutation WHERE workspace_id='{component_workspace}'::uuid",
+                )
+                != negative_audit_before
+                or _sql(
+                    project,
+                    f"SELECT count(*) FROM control.agent_idempotency WHERE workspace_id='{component_workspace}'::uuid",
+                )
+                != negative_idempotency_before
+            ):
+                raise ProofFailure(f"{label}-durable-state-changed")
+
+        dependency = client.request(
+            f"/api/agent/v1/components/{container_id}",
+            method="DELETE",
+            body={"expected_row_version": 1},
+            headers={
+                "Authorization": f"Bearer {component_token}",
+                "Idempotency-Key": f"oap-078f-component-dependency-{tag}",
+            },
+        )
+        _expect_component_error(
+            dependency,
+            status=409,
+            code="RESOURCE_CONFLICT",
+            label="component-dependency-delete",
+        )
+        assert_component_negative_state("component-dependency")
+        stale = client.request(
+            f"/api/agent/v1/components/{heading_id}",
+            method="PATCH",
+            body={
+                "props": {"text": updated_heading_text, "level": 2},
+                "expected_row_version": 3,
+            },
+            headers={
+                "Authorization": f"Bearer {component_token}",
+                "Idempotency-Key": f"oap-078f-component-stale-{tag}",
+            },
+        )
+        _expect_component_error(
+            stale, status=409, code="RESOURCE_CONFLICT", label="component-stale"
+        )
+        assert_component_negative_state("component-stale")
+        design = client.request(
+            f"/api/agent/v1/components/{container_id}",
+            method="PATCH",
+            body={"props": {"width": "lg"}, "expected_row_version": 1},
+            headers={
+                "Authorization": f"Bearer {component_token}",
+                "Idempotency-Key": f"oap-078f-component-design-{tag}",
+            },
+        )
+        _expect_component_error(
+            design,
+            status=422,
+            code="DOMAIN_VALIDATION_FAILED",
+            label="component-design",
+        )
+        assert_component_negative_state("component-design")
+        invalid_requests = (
+            (
+                "component-invalid-slot",
+                {"component_type": "Section", "slot_key": "not-allowed", "props": {}},
+                422,
+                "DOMAIN_VALIDATION_FAILED",
+            ),
+            (
+                "component-invalid-type",
+                {"component_type": "NotCatalog", "props": {}},
+                422,
+                "VALIDATION_ERROR",
+            ),
+            (
+                "component-invalid-nested",
+                {
+                    "component_type": "RichText",
+                    "parent_id": container_id,
+                    "props": {
+                        "content": {
+                            "type": "paragraph",
+                            "children": [{"text": "nested", "unknown": True}],
+                        }
+                    },
+                },
+                422,
+                "DOMAIN_VALIDATION_FAILED",
+            ),
+            (
+                "component-raw-order-key",
+                {"component_type": "Section", "order_key": 0, "props": {}},
+                422,
+                "VALIDATION_ERROR",
+            ),
+        )
+        for label, body, status, code in invalid_requests:
+            _expect_component_error(
+                client.request(
+                    f"/api/agent/v1/pages/{page_id}/components",
+                    method="POST",
+                    body=body,
+                    headers={
+                        "Authorization": f"Bearer {component_token}",
+                        "Idempotency-Key": f"oap-078f-{label}-{tag}",
+                    },
+                ),
+                status=status,
+                code=code,
+                label=label,
+            )
+            assert_component_negative_state(label)
+        foreign_page = "12000000-0000-4000-8000-000000000330"
+        _expect_component_error(
+            client.request(
+                f"/api/agent/v1/pages/{foreign_page}",
+                headers={"Authorization": f"Bearer {component_token}"},
+            ),
+            status=404,
+            code="RESOURCE_NOT_FOUND",
+            label="component-foreign-site-page",
+        )
+        assert_component_negative_state("component-foreign-site-page")
+        _expect_component_error(
+            client.request(
+                f"/api/agent/v1/pages/{page_id}",
+                headers={"Authorization": f"Bearer {observer_token}"},
+            ),
+            status=404,
+            code="RESOURCE_NOT_FOUND",
+            label="component-foreign-workspace-page",
+        )
+        assert_component_negative_state("component-foreign-workspace-page")
+        _expect_component_error(
+            client.request(
+                f"/api/agent/v1/components/{heading_id}",
+                headers={"Authorization": f"Bearer {observer_token}"},
+            ),
+            status=404,
+            code="RESOURCE_NOT_FOUND",
+            label="component-foreign-workspace-node",
+        )
+        assert_component_negative_state("component-foreign-workspace-node")
+        foreign_parent = client.request(
+            f"/api/agent/v1/pages/{page_id}/components",
+            method="POST",
+            body={
+                "component_type": "Heading",
+                "parent_id": foreign_page,
+                "props": {"text": "foreign", "level": 2},
+            },
+            headers={
+                "Authorization": f"Bearer {component_token}",
+                "Idempotency-Key": f"oap-078f-component-foreign-parent-{tag}",
+            },
+        )
+        _expect_component_error(
+            foreign_parent,
+            status=404,
+            code="RESOURCE_NOT_FOUND",
+            label="component-foreign-parent",
+        )
+        assert_component_negative_state("component-foreign-parent")
+        foreign_sibling = client.request(
+            f"/api/agent/v1/pages/{page_id}/components",
+            method="POST",
+            body={
+                "component_type": "Section",
+                "after_component_id": foreign_page,
+                "props": {},
+            },
+            headers={
+                "Authorization": f"Bearer {component_token}",
+                "Idempotency-Key": f"oap-078f-component-foreign-sibling-{tag}",
+            },
+        )
+        _expect_component_error(
+            foreign_sibling,
+            status=409,
+            code="RESOURCE_CONFLICT",
+            label="component-foreign-sibling",
+        )
+        assert_component_negative_state("component-foreign-sibling")
+        mismatch_key = f"oap-078f-component-section-{tag}"
+        mismatch = client.request(
+            f"/api/agent/v1/pages/{page_id}/components",
+            method="POST",
+            body={"component_type": "Section", "props": {"variant": "narrow"}},
+            headers={
+                "Authorization": f"Bearer {component_token}",
+                "Idempotency-Key": mismatch_key,
+            },
+        )
+        _expect_component_error(
+            mismatch,
+            status=409,
+            code="IDEMPOTENCY_MISMATCH",
+            label="component-idempotency-mismatch",
+        )
+        assert_component_negative_state("component-idempotency-mismatch")
+
+        lower_workspace = _create_workspace(
+            client,
+            site_id,
+            csrf,
+            {
+                "title": f"OAP 078-f lower component proof {tag}",
+                "task_description": "Lower-scope component proof",
+                "delegation_preset": "L1_CONTENT_EDITOR",
+                "duration_hours": 1,
+                "request_quota": 100,
+                "mutation_quota": 5,
+                "delete_quota": 2,
+                "upload_quota": 0,
+                "browser_quota": 0,
+            },
+            f"oap-078f-lower-workspace-{tag}",
+        )
+        lower_token, lower_capability = _issue_capability(
+            client, site_id, lower_workspace, csrf, f"oap-078f-lower-capability-{tag}"
+        )
+        lower_pages = _agent_list(
+            client, lower_token, "/api/agent/v1/pages/", label="component-lower-pages"
+        )
+        home = next(
+            (
+                item
+                for item in lower_pages
+                if item.get("slug") == "home" and item.get("locale") == "en"
+            ),
+            None,
+        )
+        if home is None:
+            raise ProofFailure("component-lower-canonical-home-missing")
+        canonical_page_id = _require_uuid(home.get("id"), "component-canonical-page")
+        home_components = _agent_list(
+            client,
+            lower_token,
+            f"/api/agent/v1/pages/{canonical_page_id}/components",
+            label="component-lower-home-components",
+        )
+        home_heading = next(
+            (
+                item
+                for item in home_components
+                if item.get("component_type") == "Heading"
+            ),
+            None,
+        )
+        home_richtext = next(
+            (
+                item
+                for item in home_components
+                if item.get("component_type") == "RichText"
+            ),
+            None,
+        )
+        if home_heading is None or home_richtext is None:
+            raise ProofFailure("component-lower-canonical-components-missing")
+        canonical_heading_id = _require_uuid(
+            home_heading.get("id"), "component-canonical-heading"
+        )
+        canonical_richtext_id = _require_uuid(
+            home_richtext.get("id"), "component-canonical-richtext"
+        )
+        lower_baseline = _component_snapshot(home_components)
+        lower_audit_before = _sql(
+            project,
+            f"SELECT count(*) FROM audit.agent_mutation WHERE workspace_id='{lower_workspace}'::uuid",
+        )
+        lower_idempotency_before = _sql(
+            project,
+            f"SELECT count(*) FROM control.agent_idempotency WHERE workspace_id='{lower_workspace}'::uuid",
+        )
+        lower_heading_text = f"OAP lower-scope updated heading {tag}"
+        lower_update = _request_mutation(
+            client,
+            lower_token,
+            f"/api/agent/v1/components/{canonical_heading_id}",
+            {
+                "props": {"text": lower_heading_text, "level": 2},
+                "expected_row_version": 1,
+            },
+            f"oap-078f-lower-component-update-{tag}",
+        )
+        if lower_update["record"].get("row_version") != 2:
+            raise ProofFailure("component-lower-update-version")
+        lower_after_update = _component_snapshot(
+            _agent_list(
+                client,
+                lower_token,
+                f"/api/agent/v1/pages/{canonical_page_id}/components",
+                label="component-lower-after-update",
+            )
+        )
+        if lower_after_update == lower_baseline:
+            raise ProofFailure("component-lower-update-not-visible")
+        for label, method, path, body in (
+            (
+                "component-lower-create",
+                "POST",
+                f"/api/agent/v1/pages/{canonical_page_id}/components",
+                {"component_type": "Heading", "props": {"text": "denied", "level": 2}},
+            ),
+            (
+                "component-lower-move",
+                "POST",
+                f"/api/agent/v1/components/{canonical_heading_id}/move",
+                {
+                    "new_parent_id": None,
+                    "new_slot_key": "default",
+                    "expected_row_version": 2,
+                },
+            ),
+            (
+                "component-lower-delete",
+                "DELETE",
+                f"/api/agent/v1/components/{canonical_heading_id}",
+                {"expected_row_version": 2},
+            ),
+        ):
+            _expect_component_error(
+                client.request(
+                    path,
+                    method=method,
+                    body=body,
+                    headers={
+                        "Authorization": f"Bearer {lower_token}",
+                        "Idempotency-Key": f"oap-078f-{label}-{tag}",
+                    },
+                ),
+                status=403,
+                code="AUTHORIZATION_DENIED",
+                label=label,
+            )
+            current = _component_snapshot(
+                _agent_list(
+                    client,
+                    lower_token,
+                    f"/api/agent/v1/pages/{canonical_page_id}/components",
+                    label=f"{label}-state",
+                )
+            )
+            if current != lower_after_update:
+                raise ProofFailure(f"{label}-state-changed")
+            if _sql(
+                project,
+                f"SELECT count(*) FROM audit.agent_mutation WHERE workspace_id='{lower_workspace}'::uuid",
+            ) != str(int(lower_audit_before) + 1) or _sql(
+                project,
+                f"SELECT count(*) FROM control.agent_idempotency WHERE workspace_id='{lower_workspace}'::uuid",
+            ) != str(int(lower_idempotency_before) + 1):
+                raise ProofFailure(f"{label}-durable-state-changed")
+        lower_audit_after = _sql(
+            project,
+            f"SELECT count(*) FROM audit.agent_mutation WHERE workspace_id='{lower_workspace}'::uuid",
+        )
+        lower_idempotency_after = _sql(
+            project,
+            f"SELECT count(*) FROM control.agent_idempotency WHERE workspace_id='{lower_workspace}'::uuid",
+        )
+        if lower_audit_after != str(int(lower_audit_before) + 1):
+            raise ProofFailure("component-lower-audit-count")
+        if lower_idempotency_after != str(int(lower_idempotency_before) + 1):
+            raise ProofFailure("component-lower-idempotency-count")
+        lower_preview = _wait_preview_html(
+            client, f"/preview/{lower_workspace}/s/demo", "component-lower-preview"
+        )
+        _assert_component_preview_html(
+            lower_preview,
+            label="component-lower-preview",
+            title="SLAIF Demo Site",
+            expected=(lower_heading_text, "A trusted canonical page projection."),
+            forbidden=("SLAIF Demo Site</h2>",),
+            markers=("Heading", "RichText"),
+            known_ids=(
+                lower_workspace,
+                site_id,
+                canonical_page_id,
+                canonical_heading_id,
+                canonical_richtext_id,
+            ),
+        )
+
+        mutation_quota_workspace = _create_workspace(
+            client,
+            site_id,
+            csrf,
+            {
+                "title": f"OAP 078-f component mutation quota {tag}",
+                "task_description": "Component mutation quota proof",
+                "delegation_preset": "L2_SITE_EDITOR",
+                "duration_hours": 1,
+                "request_quota": 30,
+                "mutation_quota": 1,
+                "delete_quota": 1,
+                "upload_quota": 0,
+                "browser_quota": 0,
+            },
+            f"oap-078f-mutation-quota-workspace-{tag}",
+        )
+        mutation_quota_token, mutation_quota_capability = _issue_capability(
+            client,
+            site_id,
+            mutation_quota_workspace,
+            csrf,
+            f"oap-078f-mutation-quota-capability-{tag}",
+        )
+        _mutation(
+            client,
+            mutation_quota_token,
+            f"/api/agent/v1/pages/{canonical_page_id}/components",
+            {
+                "component_type": "Heading",
+                "props": {"text": f"quota {tag}", "level": 2},
+            },
+            f"oap-078f-component-mutation-quota-first-{tag}",
+        )
+        _expect_component_error(
+            client.request(
+                f"/api/agent/v1/pages/{canonical_page_id}/components",
+                method="POST",
+                body={
+                    "component_type": "Heading",
+                    "props": {"text": f"quota second {tag}", "level": 2},
+                },
+                headers={
+                    "Authorization": f"Bearer {mutation_quota_token}",
+                    "Idempotency-Key": f"oap-078f-component-mutation-quota-second-{tag}",
+                },
+            ),
+            status=429,
+            code="QUOTA_EXCEEDED",
+            label="component-mutation-quota",
+        )
+        delete_quota_workspace = _create_workspace(
+            client,
+            site_id,
+            csrf,
+            {
+                "title": f"OAP 078-f component delete quota {tag}",
+                "task_description": "Component delete quota proof",
+                "delegation_preset": "L2_SITE_EDITOR",
+                "duration_hours": 1,
+                "request_quota": 30,
+                "mutation_quota": 10,
+                "delete_quota": 1,
+                "upload_quota": 0,
+                "browser_quota": 0,
+            },
+            f"oap-078f-delete-quota-workspace-{tag}",
+        )
+        delete_quota_token, delete_quota_capability = _issue_capability(
+            client,
+            site_id,
+            delete_quota_workspace,
+            csrf,
+            f"oap-078f-delete-quota-capability-{tag}",
+        )
+        _request_mutation(
+            client,
+            delete_quota_token,
+            f"/api/agent/v1/components/{canonical_richtext_id}",
+            {"expected_row_version": 1},
+            f"oap-078f-component-delete-quota-first-{tag}",
+            method="DELETE",
+        )
+        _expect_component_error(
+            client.request(
+                f"/api/agent/v1/components/{canonical_heading_id}",
+                method="DELETE",
+                body={"expected_row_version": 1},
+                headers={
+                    "Authorization": f"Bearer {delete_quota_token}",
+                    "Idempotency-Key": f"oap-078f-component-delete-quota-second-{tag}",
+                },
+            ),
+            status=429,
+            code="QUOTA_EXCEEDED",
+            label="component-delete-quota",
+        )
+        resource_workspace = _create_workspace(
+            client,
+            site_id,
+            csrf,
+            {
+                "title": f"OAP 078-f component resource budget {tag}",
+                "task_description": "Component resource budget proof",
+                "delegation_preset": "L2_SITE_EDITOR",
+                "duration_hours": 1,
+                "request_quota": 30,
+                "mutation_quota": 10,
+                "delete_quota": 1,
+                "upload_quota": 0,
+                "browser_quota": 0,
+                "resource_constraints": {"max_components_per_page": 2},
+            },
+            f"oap-078f-resource-workspace-{tag}",
+        )
+        resource_token, resource_capability = _issue_capability(
+            client,
+            site_id,
+            resource_workspace,
+            csrf,
+            f"oap-078f-resource-capability-{tag}",
+        )
+        _expect_component_error(
+            client.request(
+                f"/api/agent/v1/pages/{canonical_page_id}/components",
+                method="POST",
+                body={
+                    "component_type": "Heading",
+                    "props": {"text": "resource", "level": 2},
+                },
+                headers={
+                    "Authorization": f"Bearer {resource_token}",
+                    "Idempotency-Key": f"oap-078f-component-resource-budget-{tag}",
+                },
+            ),
+            status=422,
+            code="DOMAIN_VALIDATION_FAILED",
+            label="component-resource-budget",
+        )
+
+        for node_id, label in (
+            (richtext_id, "component-richtext"),
+            (heading_id, "component-heading"),
+        ):
+            expected_version = 2 if node_id == richtext_id else 5
+            deleted = _request_mutation(
+                client,
+                component_token,
+                f"/api/agent/v1/components/{node_id}",
+                {"expected_row_version": expected_version},
+                f"oap-078f-{label}-delete-{tag}",
+                method="DELETE",
+            )
+            if deleted["record"].get("id") != node_id:
+                raise ProofFailure(f"{label}-delete-id")
+            if node_id == richtext_id:
+                replay = client.request(
+                    f"/api/agent/v1/components/{node_id}",
+                    method="DELETE",
+                    body={"expected_row_version": expected_version},
+                    headers={
+                        "Authorization": f"Bearer {component_token}",
+                        "Idempotency-Key": f"oap-078f-{label}-delete-{tag}",
+                    },
+                )
+                if (
+                    replay.status != 200
+                    or _json(replay, status=200, label="component-delete-replay")
+                    != deleted
+                ):
+                    raise ProofFailure("component-delete-replay-effect")
+            if node_id == richtext_id:
+                remaining = _agent_list(
+                    client,
+                    component_token,
+                    f"/api/agent/v1/pages/{page_id}/components",
+                    label="component-after-richtext-delete",
+                )
+                _assert_component_tree(
+                    remaining,
+                    site_id=site_id,
+                    page_id=page_id,
+                    expected={
+                        section_id: final_expected[section_id],
+                        container_id: final_expected[container_id],
+                        heading_id: {
+                            **final_expected[heading_id],
+                            "order_key": 0,
+                            "row_version": 5,
+                        },
+                    },
+                    label="component-after-richtext-delete-tree",
+                )
+        _request_mutation(
+            client,
+            component_token,
+            f"/api/agent/v1/components/{container_id}",
+            {"expected_row_version": 1},
+            f"oap-078f-component-container-delete-{tag}",
+            method="DELETE",
+        )
+        _request_mutation(
+            client,
+            component_token,
+            f"/api/agent/v1/components/{section_id}",
+            {"expected_row_version": 1},
+            f"oap-078f-component-section-delete-{tag}",
+            method="DELETE",
+        )
+        final_nodes = _agent_list(
+            client,
+            component_token,
+            f"/api/agent/v1/pages/{page_id}/components",
+            label="component-empty-list",
+        )
+        if final_nodes != []:
+            raise ProofFailure("component-empty-list-not-empty")
+        for node_id in (section_id, container_id, heading_id, richtext_id):
+            _expect_component_error(
+                client.request(
+                    f"/api/agent/v1/components/{node_id}",
+                    headers={"Authorization": f"Bearer {component_token}"},
+                ),
+                status=404,
+                code="RESOURCE_NOT_FOUND",
+                label="component-deleted-read",
+            )
+        removed_preview = _wait_preview_html(
+            client, preview_path, "component-removed-preview"
+        )
+        _assert_component_preview_html(
+            removed_preview,
+            label="component-removed-preview",
+            title=page_title,
+            expected=(page_title,),
+            forbidden=(updated_heading_text, "OAP component supporting text"),
+            markers=(),
+            known_ids=(
+                component_workspace,
+                site_id,
+                page_id,
+                section_id,
+                container_id,
+                heading_id,
+                richtext_id,
+            ),
+        )
+        if client.request(component_page_route).status != 404:
+            raise ProofFailure("component-canonical-page-leak-after-delete")
+
+        revoked_token = component_token
+        _revoke_capability(client, site_id, component_workspace, component_capability)
+        component_capability = component_token = ""
+        _expect_component_error(
+            client.request(
+                f"/api/agent/v1/components/{section_id}",
+                method="PATCH",
+                body={"props": {}, "expected_row_version": 1},
+                headers={
+                    "Authorization": f"Bearer {revoked_token}",
+                    "Idempotency-Key": f"oap-078f-component-revoked-write-{tag}",
+                },
+            ),
+            status=401,
+            code="AUTHENTICATION_REQUIRED",
+            label="component-revoked-write",
+        )
+        canonical_after = client.request("/s/demo")
+        if (
+            canonical_after.status != 200
+            or _canonical_stable_bytes(canonical_after.body) != canonical_before_stable
+        ):
+            raise ProofFailure("component-canonical-bytes-changed")
+        if (
+            _agent_list(
+                client,
+                observer_token,
+                "/api/agent/v1/pages/",
+                label="component-observer-after",
+            )
+            != observer_pages_before
+        ):
+            raise ProofFailure("component-observer-workspace-changed")
+        if (
+            _list(
+                client.request("/api/control/v1/me/sites"),
+                status=200,
+                label="component-sites-after",
+            )
+            != sites_before
+            or _list(
+                client.request(other_workspaces_path),
+                status=200,
+                label="component-other-workspaces-after",
+            )
+            != other_workspaces_before
+        ):
+            raise ProofFailure("component-site-isolation-changed")
+        print(
+            "public-agent-component-loop: OK "
+            f"workspace={component_workspace} page={page_id} "
+            "tree=Section>Container>(RichText,Heading) "
+            "initial=empty update=content-only move=before,after "
+            "preview=human-nginx-html browser=real-private-4-artifacts "
+            "restart=agent,render,web state=ids-props-hierarchy-order-versions "
+            "delete=leaves-parents-replay-safe negatives=scope-design-foreign-stale-schema-idempotency "
+            "quotas=mutation-delete resource=bounded canonical=unchanged observer=unchanged"
+        )
+    finally:
+        for workspace, capability in (
+            (component_workspace, component_capability),
+            (lower_workspace, lower_capability),
+            (mutation_quota_workspace, mutation_quota_capability),
+            (delete_quota_workspace, delete_quota_capability),
+            (resource_workspace, resource_capability),
+        ):
+            if workspace and capability:
+                _revoke_capability(client, site_id, workspace, capability)
+
+
 def run_acceptance(project: str) -> None:
     if not re.fullmatch(r"slaif(?:007|009|010|071)[a-z0-9]+", project):
         raise ProofFailure("unsafe-project-name")
@@ -1711,6 +3189,15 @@ def run_acceptance(project: str) -> None:
 
         _run_dynamic_news_edge_journey(
             client, site_id, csrf, project, tag, observer_token
+        )
+        _run_component_render_loop(
+            client,
+            site_id=site_id,
+            other_site_id=other_site_id,
+            csrf=csrf,
+            project=project,
+            tag=tag,
+            observer_token=observer_token,
         )
 
         baseline_types = _agent_list(
