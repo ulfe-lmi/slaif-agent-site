@@ -14,6 +14,10 @@ from ..content_model.site_data_validators import (
     validate_internal_route,
     validate_locale_tag,
 )
+from ..content_model.theme import (
+    THEME_RESOURCE_CONSTRAINT_KEYS,
+    validate_theme_resource_constraints,
+)
 
 
 class AgentCapabilityContext(BaseModel):
@@ -43,6 +47,7 @@ class AgentCapabilityContext(BaseModel):
             "allowed_type_keys",
             "allowed_component_types",
             "allowed_component_variants",
+            *THEME_RESOURCE_CONSTRAINT_KEYS,
             "max_content_types",
             "max_fields_per_type",
             "max_components_per_page",
@@ -160,6 +165,10 @@ class AgentCapabilityContext(BaseModel):
         responsive_enabled = constraints.get("responsive_design_enabled")
         if responsive_enabled is not None and not isinstance(responsive_enabled, bool):
             raise ValueError("responsive design setting is malformed")
+        try:
+            validate_theme_resource_constraints(constraints)
+        except ValueError:
+            raise ValueError("theme resource constraint is malformed") from None
         return self
 
 

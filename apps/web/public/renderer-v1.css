@@ -577,6 +577,166 @@ body:has(.renderer-surface) {
   }
 }
 
+/* Product-owned theme-schema/v1 classes. Values are fixed here; theme input
+   selects a class and never supplies CSS, selectors, or font syntax. */
+.renderer-surface.renderer-theme-palette--meadow {
+  background: #f0f8f1;
+  color: #12351d;
+}
+
+.renderer-surface.renderer-theme-palette--ember {
+  background: #fff7ed;
+  color: #422006;
+}
+
+.renderer-surface.renderer-theme-palette--meadow .renderer-heading,
+.renderer-surface.renderer-theme-palette--meadow .renderer-richtext,
+.renderer-surface.renderer-theme-palette--meadow .renderer-quote,
+.renderer-surface.renderer-theme-palette--meadow .renderer-hero,
+.renderer-surface.renderer-theme-palette--meadow .renderer-collection,
+.renderer-surface.renderer-theme-palette--meadow .renderer-statistics,
+.renderer-surface.renderer-theme-palette--meadow .renderer-timeline,
+.renderer-surface.renderer-theme-palette--meadow .renderer-faq,
+.renderer-surface.renderer-theme-palette--ember .renderer-heading,
+.renderer-surface.renderer-theme-palette--ember .renderer-richtext,
+.renderer-surface.renderer-theme-palette--ember .renderer-quote,
+.renderer-surface.renderer-theme-palette--ember .renderer-hero,
+.renderer-surface.renderer-theme-palette--ember .renderer-collection,
+.renderer-surface.renderer-theme-palette--ember .renderer-statistics,
+.renderer-surface.renderer-theme-palette--ember .renderer-timeline,
+.renderer-surface.renderer-theme-palette--ember .renderer-faq {
+  color: inherit;
+}
+
+.renderer-surface.renderer-theme-palette--meadow .renderer-button {
+  border-color: #1f6f3d;
+  color: #ffffff;
+  background: #1f6f3d;
+}
+
+.renderer-surface.renderer-theme-palette--ember .renderer-button {
+  border-color: #c2410c;
+  color: #ffffff;
+  background: #c2410c;
+}
+
+.renderer-surface.renderer-theme-palette--meadow a {
+  color: #14532d;
+}
+
+.renderer-surface.renderer-theme-palette--ember a {
+  color: #9a3412;
+}
+
+.renderer-surface.renderer-theme-palette--meadow .renderer-collection article,
+.renderer-surface.renderer-theme-palette--meadow .renderer-collection-detail,
+.renderer-surface.renderer-theme-palette--ember .renderer-collection article,
+.renderer-surface.renderer-theme-palette--ember .renderer-collection-detail {
+  border-color: currentColor;
+  background: color-mix(in srgb, currentColor 8%, transparent);
+}
+
+.renderer-surface.renderer-theme-family--serif {
+  font-family: Georgia, "Times New Roman", serif;
+}
+
+.renderer-surface.renderer-theme-family--mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.renderer-surface.renderer-theme-scale--compact {
+  font-size: 0.9375rem;
+}
+
+.renderer-surface.renderer-theme-scale--spacious {
+  font-size: 1.0625rem;
+}
+
+.renderer-surface.renderer-theme-weight--medium {
+  font-weight: 500;
+}
+
+.renderer-surface.renderer-theme-weight--bold {
+  font-weight: 700;
+}
+
+.renderer-surface.renderer-theme-width--sm {
+  width: min(48rem, calc(100% - 2rem));
+}
+
+.renderer-surface.renderer-theme-width--lg {
+  width: min(80rem, calc(100% - 2rem));
+}
+
+.renderer-surface.renderer-theme-width--xl {
+  width: min(96rem, calc(100% - 2rem));
+}
+
+.renderer-surface.renderer-theme-spacing--sm {
+  padding-block: 1.5rem 2rem;
+}
+
+.renderer-surface.renderer-theme-spacing--lg {
+  padding-block: 4rem 5rem;
+}
+
+.renderer-surface.renderer-theme-gap--sm .renderer-columns,
+.renderer-surface.renderer-theme-gap--sm .renderer-grid,
+.renderer-surface.renderer-theme-gap--sm .renderer-collection,
+.renderer-surface.renderer-theme-gap--sm .renderer-statistics {
+  gap: 0.5rem;
+}
+
+.renderer-surface.renderer-theme-gap--lg .renderer-columns,
+.renderer-surface.renderer-theme-gap--lg .renderer-grid,
+.renderer-surface.renderer-theme-gap--lg .renderer-collection,
+.renderer-surface.renderer-theme-gap--lg .renderer-statistics {
+  gap: 1.5rem;
+}
+
+.renderer-surface.renderer-theme-radius--none .renderer-button,
+.renderer-surface.renderer-theme-radius--none .renderer-image-placeholder,
+.renderer-surface.renderer-theme-radius--none .renderer-collection article,
+.renderer-surface.renderer-theme-radius--none .renderer-collection-detail {
+  border-radius: 0;
+}
+
+.renderer-surface.renderer-theme-radius--sm .renderer-button,
+.renderer-surface.renderer-theme-radius--sm .renderer-image-placeholder,
+.renderer-surface.renderer-theme-radius--sm .renderer-collection article,
+.renderer-surface.renderer-theme-radius--sm .renderer-collection-detail {
+  border-radius: 0.25rem;
+}
+
+.renderer-surface.renderer-theme-radius--lg .renderer-button,
+.renderer-surface.renderer-theme-radius--lg .renderer-image-placeholder,
+.renderer-surface.renderer-theme-radius--lg .renderer-collection article,
+.renderer-surface.renderer-theme-radius--lg .renderer-collection-detail {
+  border-radius: 1.25rem;
+}
+
+.renderer-surface.renderer-theme-radius--full .renderer-button {
+  border-radius: 999px;
+}
+
+.renderer-surface.renderer-theme-shadow--none .renderer-button,
+.renderer-surface.renderer-theme-shadow--none .renderer-collection article,
+.renderer-surface.renderer-theme-shadow--none .renderer-collection-detail {
+  box-shadow: none;
+}
+
+.renderer-surface.renderer-theme-shadow--md .renderer-button,
+.renderer-surface.renderer-theme-shadow--md .renderer-collection article,
+.renderer-surface.renderer-theme-shadow--md .renderer-collection-detail {
+  box-shadow: 0 0.5rem 1.5rem rgba(0, 0, 0, 0.18);
+}
+
+.renderer-surface.renderer-theme-shadow--lg .renderer-button,
+.renderer-surface.renderer-theme-shadow--lg .renderer-collection article,
+.renderer-surface.renderer-theme-shadow--lg .renderer-collection-detail {
+  box-shadow: 0 1rem 2.5rem rgba(0, 0, 0, 0.24);
+}
+
 @media (max-width: 760px) {
   [class~="renderer-align--mobile-start"] {
     align-items: flex-start;

@@ -71,6 +71,7 @@ from slaif_agent_site.content_model.service import (
     ContentModelServiceError,
     ContentModelServiceReason,
     _agent_nav,
+    _agent_theme,
     _ci,
     _cmp,
     _ct,
@@ -99,6 +100,11 @@ from slaif_agent_site.content_model.site_data_models import (
     RedirectRecord,
 )
 from slaif_agent_site.content_model.site_data_validators import validate_agent_target
+from slaif_agent_site.content_model.theme import (
+    AgentUpdateThemeRequest,
+    ThemeRecord,
+    theme_patch_json,
+)
 from slaif_agent_site.content_model.validators import validate_values
 from slaif_agent_site.content_model.view_models import (
     CollectionViewRecord,
@@ -262,6 +268,9 @@ AGENT_COLLECTION_VIEW_UPDATE_SQL = (
 AGENT_COLLECTION_VIEW_DELETE_SQL = (
     "SELECT * FROM content.slaif_agent_collection_view_delete($1,$2,$3)"
 )
+AGENT_THEME_UPDATE_SQL = (
+    "SELECT * FROM content.slaif_agent_theme_update($1,$2,$3,$4,$5,$6,$7)"
+)
 
 _IDEMPOTENCY_KEY = re.compile(r"^[A-Za-z0-9._~-]{1,128}$")
 
@@ -341,6 +350,7 @@ AGENT_SEMANTIC_CONTRACTS = {
     "COMPONENT_UPDATED": ("composition_node", "PATCH", 200, "mutation"),
     "COMPONENT_MOVED": ("composition_node", "POST", 200, "mutation"),
     "COMPONENT_DELETED": ("composition_node", "DELETE", 200, "delete"),
+    "THEME_UPDATED": ("theme", "PATCH", 200, "mutation"),
 }
 AGENT_SEMANTIC_ACTIONS = frozenset(AGENT_SEMANTIC_CONTRACTS)
 
@@ -398,6 +408,25 @@ class AgentCowContentModelService(ContentModelService):
             acquire_timeout=acquire_timeout,
             cow_session=cow_session,
         )
+        self.last_mutation_no_effect = False
+
+    async def update_theme_for_site(
+        self, site_id: UUID, request: AgentUpdateThemeRequest, *, no_effect: bool
+    ) -> ThemeRecord:
+        row = await self._fetchrow(
+            AGENT_THEME_UPDATE_SQL,
+            site_id,
+            request.expected_row_version,
+            theme_patch_json(request, "palette"),
+            theme_patch_json(request, "typography"),
+            theme_patch_json(request, "layout"),
+            theme_patch_json(request, "shape"),
+            no_effect,
+        )
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
+        self.last_mutation_no_effect = bool(row[11])
+        return cast(ThemeRecord, _agent_theme(row))
 
     async def create_type(
         self, site_id: UUID, request: CreateContentTypeRequest
@@ -1473,6 +1502,7 @@ async def execute_agent_mutation(
                 "navigation_item",
                 "redirect",
                 "composition_node",
+                "theme",
             }:
                 try:
                     mutation_allowed = await cow.native.fetchval(
@@ -1489,17 +1519,19 @@ async def execute_agent_mutation(
             service = AgentCowContentModelService(cow)
             record = await mutate(service)
             record_body = record.model_dump(mode="json")
-            if action is not None and (
-                action not in AGENT_SEMANTIC_ACTIONS
+            effective_no_effect = no_effect or service.last_mutation_no_effect
+            effective_action = None if effective_no_effect else action
+            if effective_action is not None and (
+                effective_action not in AGENT_SEMANTIC_ACTIONS
                 or method is None
-                or AGENT_SEMANTIC_CONTRACTS[action]
+                or AGENT_SEMANTIC_CONTRACTS[effective_action]
                 != (resource_type, method, status_code, quota_kind)
             ):
                 raise AgentMutationUnavailableError()
             response = AgentMutationResponse(
                 record=record_body,
                 operation_id=reservation.operation_id,
-                action=action,
+                action=effective_action,
             )
             await _complete(
                 cow,
@@ -1510,10 +1542,10 @@ async def execute_agent_mutation(
                 response=response,
                 resource_type=resource_type,
                 status_code=status_code,
-                action=action,
+                action=effective_action,
                 method=method,
                 quota_kind=quota_kind,
-                no_effect=no_effect,
+                no_effect=effective_no_effect,
             )
             return response
     except asyncio.CancelledError:

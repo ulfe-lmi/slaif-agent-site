@@ -457,6 +457,7 @@ async def _assert_downgrade_compatible(
         "059_001",
         "060_001",
         "061_001",
+        "062_001",
     }:
         return
     workspace_rows = await connection.fetch(
@@ -682,6 +683,9 @@ async def reconcile(
                     "slaif_proposed_side_effect_list(uuid,uuid)",
                     "slaif_theme_get(uuid)",
                     "slaif_theme_update(uuid,jsonb,jsonb,jsonb,jsonb)",
+                    "slaif_theme_validate_groups(jsonb,jsonb,jsonb,jsonb)",
+                    "slaif_theme_default(uuid)",
+                    "slaif_theme_project(uuid)",
                     "slaif_page_create(uuid,text,text,text,text)",
                     "slaif_page_list(uuid)",
                     "slaif_page_get(uuid)",

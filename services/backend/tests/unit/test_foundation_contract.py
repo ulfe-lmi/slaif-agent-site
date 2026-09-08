@@ -141,6 +141,7 @@ NEW_PACKAGE_FILES = {
     "slaif_agent_site/db/alembic/versions/059_001_locale_neutral_internal_render.py",
     "slaif_agent_site/db/alembic/versions/060_001_agent_component_semantics.py",
     "slaif_agent_site/db/alembic/versions/061_001_agent_component_design_semantics.py",
+    "slaif_agent_site/db/alembic/versions/062_001_bounded_theme_tokens.py",
     "slaif_agent_site/db/connections.py",
     "slaif_agent_site/db/executor.py",
     "slaif_agent_site/db/migrations.py",
@@ -217,6 +218,7 @@ EXPECTED_PACKAGE_FILES = NEW_PACKAGE_FILES | {
     "slaif_agent_site/content_model/page_models.py",
     "slaif_agent_site/content_model/composition_models.py",
     "slaif_agent_site/content_model/media_models.py",
+    "slaif_agent_site/content_model/theme.py",
     "slaif_agent_site/agent_state/workspace_models.py",
     "slaif_agent_site/agent_state/audit.py",
     "slaif_agent_site/agent_state/promotion.py",
@@ -275,6 +277,7 @@ EXPECTED_SDIST_FILES = {
     "services/backend/src/slaif_agent_site/content_model/service.py",
     "services/backend/src/slaif_agent_site/content_model/component_catalog.py",
     "services/backend/src/slaif_agent_site/content_model/design_system.py",
+    "services/backend/src/slaif_agent_site/content_model/theme.py",
     "services/backend/src/slaif_agent_site/content_model/validators.py",
     "services/backend/src/slaif_agent_site/content_model/query_dsl.py",
     "services/backend/src/slaif_agent_site/content_model/site_data_models.py",
@@ -605,8 +608,9 @@ def test_locked_foundation_artifact_hash_constants_are_sha256() -> None:
 
 
 def test_alembic_graph_and_offline_sql_need_no_locator_or_network() -> None:
-    assert migration_heads() == ("061_001",)
+    assert migration_heads() == ("062_001",)
     assert migration_history() == (
+        "062_001",
         "061_001",
         "060_001",
         "059_001",

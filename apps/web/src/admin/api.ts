@@ -1,5 +1,8 @@
 import { CONTROL, csrfCookie } from "../auth/client";
-import type { NormalizedCompositionNode } from "@slaif-agent-site/composition-schema";
+import type {
+  NormalizedCompositionNode,
+  ThemeRecord,
+} from "@slaif-agent-site/composition-schema";
 
 const EDITOR = "/api/editor/v1";
 
@@ -369,6 +372,28 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
 
+function themeRecord(value: unknown): ThemeRecord {
+  const item = object(value);
+  const rowVersion = item.row_version;
+  if (
+    !isUuidValue(item.id) ||
+    !isUuidValue(item.site_id) ||
+    item.schema_version !== "theme-schema/v1" ||
+    item.renderer_version !== "renderer-v1" ||
+    typeof rowVersion !== "number" ||
+    !Number.isInteger(rowVersion) ||
+    rowVersion < 1 ||
+    !isPlainObject(item.palette) ||
+    !isPlainObject(item.typography) ||
+    !isPlainObject(item.layout) ||
+    !isPlainObject(item.shape) ||
+    typeof item.created_at !== "string" ||
+    typeof item.updated_at !== "string"
+  )
+    throw new Error("invalid-response");
+  return item as unknown as ThemeRecord;
+}
+
 function editorPath(siteId: string, pageId: string, suffix = "") {
   return `/sites/${encodeURIComponent(siteId)}/pages/${encodeURIComponent(pageId)}/composition/${suffix}`;
 }
@@ -385,6 +410,22 @@ export async function loadComposition(
       throw new Error("invalid-response");
     return node;
   });
+}
+
+export async function loadTheme(siteId: string): Promise<ThemeRecord> {
+  return themeRecord(await editorJson(`/sites/${encodeURIComponent(siteId)}/theme`));
+}
+
+export async function updateTheme(
+  siteId: string,
+  body: Partial<Pick<ThemeRecord, "palette" | "typography" | "layout" | "shape">>,
+): Promise<ThemeRecord> {
+  return themeRecord(
+    await editorJson(
+      `/sites/${encodeURIComponent(siteId)}/theme`,
+      editorMutation("PATCH", body),
+    ),
+  );
 }
 
 export async function addCompositionNode(

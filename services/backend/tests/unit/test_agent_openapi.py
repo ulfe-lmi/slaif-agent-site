@@ -104,6 +104,42 @@ def test_public_contract_has_scopes_headers_errors_and_no_internal_paths() -> No
     assert "ReadinessResponse" not in document["components"]["schemas"]
 
 
+def test_theme_contract_is_closed_and_has_separate_token_scope() -> None:
+    document = json.loads(generate_agent_openapi())
+    schema_path = document["paths"]["/api/agent/v1/theme-schema"]["get"]
+    theme_path = document["paths"]["/api/agent/v1/theme"]["get"]
+    patch_path = document["paths"]["/api/agent/v1/theme"]["patch"]
+    assert schema_path["x-slaif-required-scopes"] == ["theme:read"]
+    assert theme_path["x-slaif-required-scopes"] == ["theme:read"]
+    assert patch_path["x-slaif-required-scopes"] == ["theme-tokens:write"]
+    assert patch_path["x-slaif-mutation"] is True
+    assert (
+        document["components"]["schemas"]["ThemeRecord"]["additionalProperties"]
+        is False
+    )
+    assert (
+        document["components"]["schemas"]["AgentThemeSchemaResponse"][
+            "additionalProperties"
+        ]
+        is False
+    )
+    assert (
+        document["components"]["schemas"]["AgentThemeMutationResponse"][
+            "additionalProperties"
+        ]
+        is False
+    )
+    request = document["components"]["schemas"]["AgentUpdateThemeRequest"]
+    assert request["additionalProperties"] is False
+    assert set(request["properties"]) == {
+        "expected_row_version",
+        "palette",
+        "typography",
+        "layout",
+        "shape",
+    }
+
+
 def test_component_catalog_contract_is_closed_and_agent_create_has_no_raw_rank() -> (
     None
 ):
