@@ -3,19 +3,20 @@
 This tracker uses the contract-audit status vocabulary rather than file
 presence or completion estimates. The authoritative baseline is
 [`MVP-CONTRACT-AUDIT.md`](MVP-CONTRACT-AUDIT.md), updated for the protocol-final
-Objective-077 source revision on PR #74 on 2026-09-08. The merged baseline
-remains Objective 076 commit `067676314e0d9664d40cb8514ea549b966a4eb2d` until
-strategy independently accepts and merges PR #74.
+Objective-077 source revision developed in PR #74 on 2026-09-08. GitHub's PR
+state and merge commit are authoritative for whether that revision is contained
+in `main`; its audited base is Objective 076 commit
+`067676314e0d9664d40cb8514ea549b966a4eb2d`.
 
 ## Current verdict
 
 **CONTRACTUAL MVP NOT COMPLETE.** Merged Objectives 065–076 prove narrow,
 bounded contracts, and the Objective-077 source revision now provides complete
 executable evidence for its bounded page/locale/navigation/redirect/dynamic-
-Render information architecture. The source revision is still subject to
-strategic PR acceptance; neither it nor the earlier slices proves the broader
-composition, review lifecycle, publication, reconstruction, or final MVP
-contract.
+Render information architecture. Objective-077 acceptance and merge state are
+external GitHub/OAP facts; neither that bounded revision nor the earlier slices
+proves the broader composition, review lifecycle, publication, reconstruction,
+or final MVP contract.
 
 ## Merged narrow slices
 
@@ -53,20 +54,21 @@ maps the immutable 077-a through 077-z transcript to executable Agent,
 Editor, Render, NGINX/browser, migration, concurrency, recovery, contract, and
 hostile-negative evidence for bounded pages, locales, navigation, redirects,
 and dynamic collection rendering. Its narrow information-architecture
-contract is **COMPLETE — E2E PROVEN** at the source revision; PR acceptance and
-merge remain strategic decisions. The contractual MVP remains **NOT COMPLETE**.
+contract is **COMPLETE — E2E PROVEN** at the source revision. GitHub records
+whether strategic acceptance has placed it in `main`. The contractual MVP
+remains **NOT COMPLETE**.
 
 ## Active and remaining sequence
 
-The current active order is the protocol-final `077-z` on [PR #74](https://github.com/ulfe-lmi/slaif-agent-site/pull/74).
-The source revision has complete bounded 077 evidence; its acceptance and merge
-state are determined by strategy and GitHub. Current `main` remains the merged
-076 baseline until that decision. All later order files remain inert until
+The active transcript pointer remains the protocol-final `077-z` until strategy
+selects and signals the next objective. The source revision has complete bounded
+077 evidence; its acceptance and containment in `main` are determined by OAP
+and GitHub state, not this document. All later order files remain inert until
 strategy selects and signals them.
 
 | Order | Contractual scope | Current status |
 |---|---|---|
-| 077 | Agent page, navigation, redirect, and bounded dynamic collection Render semantics | COMPLETE — E2E PROVEN at 077-z source revision; PR #74 awaits strategic acceptance |
+| 077 | Agent page, navigation, redirect, and bounded dynamic collection Render semantics | COMPLETE — E2E PROVEN at 077-z source revision; consult authoritative PR/main state for merge |
 | 078 | Agent composition and design semantics | PARTIAL |
 | 079 | Agent media semantics and references | PARTIAL |
 | 080 | Real MCP semantic parity | SCAFFOLD ONLY |

@@ -32,16 +32,16 @@ and transactional authority locking. Render projects only typed, site-confined
 canonical or authorized COW-preview data; Web alone returns HTML. Review,
 promotion, and publication execution remain unimplemented.
 
-The Objective-077 source revision on [PR #74](https://github.com/ulfe-lmi/slaif-agent-site/pull/74)
+The Objective-077 source revision developed in [PR #74](https://github.com/ulfe-lmi/slaif-agent-site/pull/74)
 adds the bounded capability-bound Agent page list/read/create/update/delete/
 move/restore, locale, navigation, redirect, and dynamic collection Render
 semantics, with the corresponding human Editor route path, shared trusted
 Render projection, hostile-negative/concurrency/recovery evidence, and exact
-OpenAPI/policy continuity. At this source revision PR #74 is awaiting
-strategic acceptance; review snapshots, promotion, publication execution,
-composition/design/media-reference expansion, and later MVP work remain
-separate. The wording describes source-revision evidence and does not claim
-that the PR has merged or that the MVP is complete.
+OpenAPI/policy continuity. GitHub's PR and merge state is authoritative for
+whether this source revision is contained in `main`; review snapshots,
+promotion, publication execution, composition/design/media-reference expansion,
+and later MVP work remain separate. This source-revision evidence does not
+claim that the contractual MVP is complete.
 
 > **Pre-alpha / bounded deployable product.** This
 > repository contains the normative architecture, coding-agent governance,
@@ -71,8 +71,9 @@ and has no current vulnerability exception after a fresh full six-image scan
 reported zero unexcepted Critical findings. The former 41-finding
 `152.0.7977.64` qualification remains historical evidence in
 [`supply-chain/browser-worker-critical-matrix.json`](supply-chain/browser-worker-critical-matrix.json)
-and open [issue #67](https://github.com/ulfe-lmi/slaif-agent-site/issues/67);
-this does not claim release readiness or issue closure.
+and [issue #67](https://github.com/ulfe-lmi/slaif-agent-site/issues/67). Policy
+keeps that issue open until the containing Objective-077 merge is verified and
+then closes it as resolved; this does not claim release readiness.
 
 The current automation also migrates/rebuilds disposable databases, verifies
 the exact role/ownership/grant matrix, exercises COW runtime/reviewer paths,
