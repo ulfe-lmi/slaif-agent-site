@@ -218,5 +218,13 @@ describe("puck adapter", () => {
         },
       ]),
     ).toThrow("forbidden-component-prop");
+    expect(() =>
+      compositionToPuck([
+        {
+          ...nodes[1]!,
+          props: { text: "vbscript:alert(1)" },
+        },
+      ]),
+    ).toThrow("invalid-component-props");
   });
 });

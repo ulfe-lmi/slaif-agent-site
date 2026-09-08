@@ -126,6 +126,7 @@ function assertSchema(value: unknown, schema: CatalogSchema): void {
       lowered.startsWith("javascript:") ||
       lowered.startsWith("data:") ||
       lowered.startsWith("file:") ||
+      lowered.startsWith("vbscript:") ||
       lowered.includes("<script") ||
       lowered.includes("onerror=") ||
       lowered.includes("onload=")

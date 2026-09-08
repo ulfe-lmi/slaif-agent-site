@@ -136,7 +136,7 @@ def _validate_nested(value: Any, *, depth: int = 0) -> None:
             _validate_nested(child, depth=depth + 1)
     elif isinstance(value, str):
         lowered = value.casefold()
-        if lowered.startswith(("javascript:", "data:", "file:")) or any(
+        if lowered.startswith(("javascript:", "data:", "file:", "vbscript:")) or any(
             marker in lowered for marker in ("<script", "onerror=", "onload=")
         ):
             raise ValueError("unsafe value")

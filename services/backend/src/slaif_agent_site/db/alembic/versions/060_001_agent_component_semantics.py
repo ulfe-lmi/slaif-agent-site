@@ -269,7 +269,8 @@ def _nested_validator_sql() -> str:
             ELSIF jsonb_typeof(p_value)='string' THEN
                 lowered:=lower(p_value #>> '{}');
                 IF lowered LIKE 'javascript:%' OR lowered LIKE 'data:%'
-                   OR lowered LIKE 'file:%' OR lowered LIKE '%<script%'
+                   OR lowered LIKE 'file:%' OR lowered LIKE 'vbscript:%'
+                   OR lowered LIKE '%<script%'
                    OR lowered LIKE '%onerror=%' OR lowered LIKE '%onload=%'
                 THEN RETURN true; END IF;
             END IF;
@@ -506,7 +507,7 @@ def _component_validator_sql() -> str:
             IF p_component_type='Button' THEN
                 href:=p_props->>'href';
                 IF href IS NULL OR href LIKE '//%' OR href NOT LIKE '/%'
-                   OR href ~* '^(javascript|data|file):'
+                   OR href ~* '^(javascript|data|file|vbscript):'
                 THEN RAISE EXCEPTION 'COMPONENT_PROP_UNSAFE' USING ERRCODE='P0003'; END IF;
             END IF;
             IF definition->>'binding_kind'='collection_view' THEN

@@ -52,6 +52,16 @@ def test_rich_text_schema_preserves_the_existing_fixture_shape() -> None:
             "RichText",
             {"content": {"type": "paragraph", "children": [{}]}},
         )
+    with pytest.raises(ValueError, match="unsafe value"):
+        validate_component_props(
+            "RichText",
+            {
+                "content": {
+                    "type": "paragraph",
+                    "children": [{"text": "vbscript:alert(1)"}],
+                }
+            },
+        )
 
 
 @pytest.mark.parametrize(

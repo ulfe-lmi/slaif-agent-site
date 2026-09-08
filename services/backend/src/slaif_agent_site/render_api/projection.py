@@ -309,7 +309,7 @@ def _validate_nested(value: Any, *, depth: int = 0) -> None:
         for child in value:
             _validate_nested(child, depth=depth + 1)
     elif isinstance(value, str) and value.casefold().startswith(
-        ("javascript:", "data:", "file:")
+        ("javascript:", "data:", "file:", "vbscript:")
     ):
         raise ProjectionError("unsafe_value")
 
