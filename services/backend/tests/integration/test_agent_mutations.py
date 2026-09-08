@@ -5082,7 +5082,7 @@ async def test_agent_component_catalog_and_semantic_crud_are_cow_bound(
             deleted_heading = await client.request(
                 "DELETE",
                 f"/api/agent/v1/components/{heading_id}",
-                json={"expected_row_version": 2},
+                json={"expected_row_version": 4},
                 headers={**headers, "Idempotency-Key": "component-heading-delete"},
             )
             assert deleted_heading.status_code == 200, deleted_heading.text
@@ -5112,6 +5112,491 @@ async def test_agent_component_catalog_and_semantic_crud_are_cow_bound(
         "COMPONENT_DELETED",
         "COMPONENT_DELETED",
     ]
+
+
+@pytest.mark.asyncio
+async def test_agent_component_semantic_moves_are_exact_and_versioned(
+    agent_site_database: AgentSiteDatabase,
+) -> None:
+    database = agent_site_database
+    _seed_token, seeded = await _seed(database)
+    token, workspace_id = await _workspace_capability(
+        database,
+        seeded,
+        [
+            "site:read",
+            "page:create",
+            "page:read",
+            "composition:read",
+            "component-structure:create",
+            "component-structure:move",
+            "component-structure:delete",
+        ],
+        "Agent Component Ordering Workspace",
+    )
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        await owner.execute(
+            "UPDATE control.capability SET request_quota=300, mutation_quota=200, "
+            "delete_quota=20 "
+            "WHERE workspace_id=$1",
+            workspace_id,
+        )
+    app = create_agent_app(
+        settings=ServiceSettings.for_test(),
+        database_settings=_agent_settings(database),
+    )
+    headers = {"Authorization": f"Bearer {token}"}
+    reviewer_pool = await database.role_pool("slaif_reviewer")
+
+    async def durable_state() -> tuple[tuple[Any, ...], tuple[UUID, ...]]:
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            row = await owner.fetchrow(
+                "SELECT mutation_used,delete_used, "
+                "(SELECT count(*) FROM control.agent_idempotency "
+                "WHERE workspace_id=$1), "
+                "(SELECT count(*) FROM audit.agent_mutation "
+                "WHERE workspace_id=$1) "
+                "FROM control.capability WHERE workspace_id=$1",
+                workspace_id,
+            )
+        async with asyncpg_cow_reviewer(reviewer_pool) as reviewer:
+            operations = tuple(
+                sorted(await reviewer.operations(workspace_id, schema="content"))
+            )
+        return tuple(row), operations
+
+    async with app.router.lifespan_context(app):
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://agent.test"
+        ) as client:
+
+            async def create_page(slug: str) -> UUID:
+                response = await client.post(
+                    "/api/agent/v1/pages/",
+                    json={"slug": slug, "title": slug},
+                    headers={**headers, "Idempotency-Key": f"page-{slug}"},
+                )
+                assert response.status_code == 201, response.text
+                return UUID(response.json()["record"]["id"])
+
+            async def create_component(
+                page_id: UUID, label: str, key: str
+            ) -> dict[str, Any]:
+                response = await client.post(
+                    f"/api/agent/v1/pages/{page_id}/components",
+                    json={
+                        "component_type": "Heading",
+                        "props": {"text": label, "level": 2},
+                    },
+                    headers={**headers, "Idempotency-Key": key},
+                )
+                assert response.status_code == 201, response.text
+                return cast(dict[str, Any], response.json()["record"])
+
+            async def page_records(page_id: UUID) -> list[dict[str, Any]]:
+                response = await client.get(
+                    f"/api/agent/v1/pages/{page_id}/components", headers=headers
+                )
+                assert response.status_code == 200, response.text
+                return cast(list[dict[str, Any]], response.json())
+
+            scenarios = [
+                (
+                    "a-before-c",
+                    "a",
+                    "before",
+                    "c",
+                    ["b", "a", "c"],
+                    {"a": 2, "b": 2, "c": 1},
+                ),
+                (
+                    "a-after-b",
+                    "a",
+                    "after",
+                    "b",
+                    ["b", "a", "c"],
+                    {"a": 2, "b": 2, "c": 1},
+                ),
+                (
+                    "c-before-a",
+                    "c",
+                    "before",
+                    "a",
+                    ["c", "a", "b"],
+                    {"a": 2, "b": 2, "c": 2},
+                ),
+                (
+                    "c-after-a",
+                    "c",
+                    "after",
+                    "a",
+                    ["a", "c", "b"],
+                    {"a": 1, "b": 2, "c": 2},
+                ),
+                (
+                    "c-before-b",
+                    "c",
+                    "before",
+                    "b",
+                    ["a", "c", "b"],
+                    {"a": 1, "b": 2, "c": 2},
+                ),
+                (
+                    "a-after-c-append",
+                    "a",
+                    "after",
+                    "c",
+                    ["b", "c", "a"],
+                    {"a": 2, "b": 2, "c": 2},
+                ),
+                (
+                    "same-position-no-op",
+                    "a",
+                    "before",
+                    "b",
+                    ["a", "b", "c"],
+                    {"a": 2, "b": 1, "c": 1},
+                ),
+            ]
+            for scenario, moving, relation, anchor, expected, versions in scenarios:
+                page_id = await create_page(f"ordering-{scenario}")
+                records = {
+                    label: await create_component(
+                        page_id, label, f"{scenario}-{label}-create"
+                    )
+                    for label in ("a", "b", "c")
+                }
+                initial = await page_records(page_id)
+                assert [row["props"]["text"] for row in initial] == ["a", "b", "c"]
+                move_body: dict[str, Any] = {
+                    "expected_row_version": records[moving]["row_version"],
+                }
+                move_body[f"{relation}_component_id"] = records[anchor]["id"]
+                moved = await client.post(
+                    f"/api/agent/v1/components/{records[moving]['id']}/move",
+                    json=move_body,
+                    headers={
+                        **headers,
+                        "Idempotency-Key": f"{scenario}-move",
+                    },
+                )
+                assert moved.status_code == 200, moved.text
+                assert moved.json()["action"] == "COMPONENT_MOVED"
+                listed = await page_records(page_id)
+                assert [row["props"]["text"] for row in listed] == expected
+                assert [row["order_key"] for row in listed] == list(range(3))
+                observed = {row["props"]["text"]: row for row in listed}
+                assert {
+                    label: observed[label]["row_version"] for label in versions
+                } == versions
+                for label, row in observed.items():
+                    created_at = datetime.fromisoformat(row["created_at"])
+                    updated_at = datetime.fromisoformat(row["updated_at"])
+                    if versions[label] == 1:
+                        assert updated_at == created_at
+                    else:
+                        assert updated_at > created_at
+
+                if scenario == "same-position-no-op":
+                    before_replay = await durable_state()
+                    replay = await client.post(
+                        f"/api/agent/v1/components/{records[moving]['id']}/move",
+                        json=move_body,
+                        headers={
+                            **headers,
+                            "Idempotency-Key": f"{scenario}-move",
+                        },
+                    )
+                    assert replay.status_code == 200, replay.text
+                    assert replay.json() == moved.json()
+                    assert await page_records(page_id) == listed
+                    assert await durable_state() == before_replay
+
+            inserted_page = await create_page("ordering-create-before")
+            inserted_records = {
+                label: await create_component(
+                    inserted_page, label, f"create-before-{label}"
+                )
+                for label in ("a", "b", "c")
+            }
+            inserted = await client.post(
+                f"/api/agent/v1/pages/{inserted_page}/components",
+                json={
+                    "component_type": "Heading",
+                    "before_component_id": inserted_records["b"]["id"],
+                    "props": {"text": "inserted", "level": 2},
+                },
+                headers={**headers, "Idempotency-Key": "create-before-anchor"},
+            )
+            assert inserted.status_code == 201, inserted.text
+            inserted_list = await page_records(inserted_page)
+            assert [row["props"]["text"] for row in inserted_list] == [
+                "a",
+                "inserted",
+                "b",
+                "c",
+            ]
+            assert [row["order_key"] for row in inserted_list] == [0, 1, 2, 3]
+            inserted_by_text = {row["props"]["text"]: row for row in inserted_list}
+            assert {
+                label: inserted_by_text[label]["row_version"]
+                for label in ("a", "inserted", "b", "c")
+            } == {"a": 1, "inserted": 1, "b": 2, "c": 2}
+
+            deleted_page = await create_page("ordering-delete-rebalance")
+            deleted_records = {
+                label: await create_component(
+                    deleted_page, label, f"delete-rebalance-{label}"
+                )
+                for label in ("a", "b", "c")
+            }
+            deleted = await client.request(
+                "DELETE",
+                f"/api/agent/v1/components/{deleted_records['b']['id']}",
+                json={"expected_row_version": 1},
+                headers={**headers, "Idempotency-Key": "delete-rebalance"},
+            )
+            assert deleted.status_code == 200, deleted.text
+            deleted_list = await page_records(deleted_page)
+            assert [row["props"]["text"] for row in deleted_list] == ["a", "c"]
+            assert [row["order_key"] for row in deleted_list] == [0, 1]
+            assert {
+                row["props"]["text"]: row["row_version"] for row in deleted_list
+            } == {"a": 1, "c": 2}
+
+    await reviewer_pool.close()
+
+
+@pytest.mark.asyncio
+async def test_agent_component_cross_parent_and_slot_moves_are_exact(
+    agent_site_database: AgentSiteDatabase,
+) -> None:
+    database = agent_site_database
+    _seed_token, seeded = await _seed(database)
+    token, workspace_id = await _workspace_capability(
+        database,
+        seeded,
+        [
+            "site:read",
+            "page:create",
+            "page:read",
+            "composition:read",
+            "component-structure:create",
+            "component-structure:move",
+        ],
+        "Agent Component Cross Parent Workspace",
+    )
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        await owner.execute(
+            "UPDATE control.capability SET request_quota=100, mutation_quota=50 "
+            "WHERE workspace_id=$1",
+            workspace_id,
+        )
+    await _set_resource_constraints(
+        database,
+        workspace_id,
+        {
+            "max_components_per_page": 20,
+            "max_component_depth": 16,
+        },
+    )
+    page_id = uuid4()
+    columns_id = uuid4()
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        await owner.execute(
+            """
+            INSERT INTO content.page_base(
+                id,site_id,slug,title,status,locale,row_version
+            ) VALUES ($1,$2,'cross-parent','Cross parent','DRAFT','en',1)
+            """,
+            page_id,
+            seeded["site_id"],
+        )
+        await owner.execute(
+            """
+            INSERT INTO content.page_composition_base(
+                id,site_id,page_id,component_type,schema_version,parent_id,
+                slot_key,order_key,props
+            ) VALUES ($1,$2,$3,'Columns','1',NULL,'default',0,
+                      '{"count":2}'::jsonb)
+            """,
+            columns_id,
+            seeded["site_id"],
+            page_id,
+        )
+    app = create_agent_app(
+        settings=ServiceSettings.for_test(),
+        database_settings=_agent_settings(database),
+    )
+    headers = {"Authorization": f"Bearer {token}"}
+    async with app.router.lifespan_context(app):
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://agent.test"
+        ) as client:
+
+            async def create(
+                component_type: str,
+                key: str,
+                *,
+                parent_id: UUID | None = None,
+                slot_key: str = "default",
+                props: dict[str, Any] | None = None,
+            ) -> dict[str, Any]:
+                body: dict[str, Any] = {
+                    "component_type": component_type,
+                    "slot_key": slot_key,
+                    "props": props or {},
+                }
+                if parent_id is not None:
+                    body["parent_id"] = str(parent_id)
+                response = await client.post(
+                    f"/api/agent/v1/pages/{page_id}/components",
+                    json=body,
+                    headers={**headers, "Idempotency-Key": key},
+                )
+                assert response.status_code == 201, response.text
+                return cast(dict[str, Any], response.json()["record"])
+
+            async def list_records() -> list[dict[str, Any]]:
+                response = await client.get(
+                    f"/api/agent/v1/pages/{page_id}/components", headers=headers
+                )
+                assert response.status_code == 200, response.text
+                return cast(list[dict[str, Any]], response.json())
+
+            section_a = await create("Section", "cross-section-a")
+            section_b = await create("Section", "cross-section-b")
+            columns = {"id": str(columns_id), "row_version": 1}
+            child_a = await create(
+                "Heading",
+                "cross-child-a",
+                parent_id=UUID(section_a["id"]),
+                props={"text": "A", "level": 2},
+            )
+            child_tail = await create(
+                "Quote",
+                "cross-child-tail",
+                parent_id=UUID(section_a["id"]),
+                props={"text": "Tail"},
+            )
+            child_b = await create(
+                "Heading",
+                "cross-child-b",
+                parent_id=UUID(section_b["id"]),
+                props={"text": "B", "level": 2},
+            )
+
+            async def move(
+                record: dict[str, Any],
+                key: str,
+                *,
+                parent_id: UUID,
+                slot_key: str,
+                before_id: UUID | None = None,
+                after_id: UUID | None = None,
+            ) -> dict[str, Any]:
+                body: dict[str, Any] = {
+                    "new_parent_id": str(parent_id),
+                    "new_slot_key": slot_key,
+                    "expected_row_version": record["row_version"],
+                }
+                if before_id is not None:
+                    body["before_component_id"] = str(before_id)
+                if after_id is not None:
+                    body["after_component_id"] = str(after_id)
+                response = await client.post(
+                    f"/api/agent/v1/components/{record['id']}/move",
+                    json=body,
+                    headers={**headers, "Idempotency-Key": key},
+                )
+                assert response.status_code == 200, response.text
+                return cast(dict[str, Any], response.json()["record"])
+
+            await move(
+                child_a,
+                "cross-move-parent",
+                parent_id=UUID(section_b["id"]),
+                slot_key="default",
+                before_id=UUID(child_b["id"]),
+            )
+            records = await list_records()
+            group_b = sorted(
+                (row for row in records if row["parent_id"] == section_b["id"]),
+                key=lambda row: row["order_key"],
+            )
+            group_a = sorted(
+                (row for row in records if row["parent_id"] == section_a["id"]),
+                key=lambda row: row["order_key"],
+            )
+            assert [row["props"]["text"] for row in group_b] == ["A", "B"]
+            assert [row["order_key"] for row in group_b] == [0, 1]
+            assert [row["props"]["text"] for row in group_a] == ["Tail"]
+            assert group_b[0]["row_version"] == 2
+            assert group_b[1]["row_version"] == 2
+            assert group_a[0]["row_version"] == 2
+
+            child_a["row_version"] = 2
+            child_tail["row_version"] = 2
+            await move(
+                child_a,
+                "cross-move-slot-one",
+                parent_id=columns_id,
+                slot_key="col-1",
+            )
+            await move(
+                child_tail,
+                "cross-move-slot-two",
+                parent_id=columns_id,
+                slot_key="col-2",
+            )
+            records = await list_records()
+            columns_one = sorted(
+                (
+                    row
+                    for row in records
+                    if row["parent_id"] == columns["id"] and row["slot_key"] == "col-1"
+                ),
+                key=lambda row: row["order_key"],
+            )
+            columns_two = sorted(
+                (
+                    row
+                    for row in records
+                    if row["parent_id"] == columns["id"] and row["slot_key"] == "col-2"
+                ),
+                key=lambda row: row["order_key"],
+            )
+            remaining_b = sorted(
+                (row for row in records if row["parent_id"] == section_b["id"]),
+                key=lambda row: row["order_key"],
+            )
+            assert [row["props"]["text"] for row in columns_one] == ["A"]
+            assert [row["props"]["text"] for row in columns_two] == ["Tail"]
+            assert [row["props"]["text"] for row in remaining_b] == ["B"]
+            assert [row["order_key"] for row in columns_one] == [0]
+            assert [row["order_key"] for row in columns_two] == [0]
+            assert [row["order_key"] for row in remaining_b] == [0]
+            assert (
+                next(row for row in columns_one if row["props"]["text"] == "A")[
+                    "row_version"
+                ]
+                == 3
+            )
+            assert (
+                next(row for row in columns_two if row["props"]["text"] == "Tail")[
+                    "row_version"
+                ]
+                == 3
+            )
+            assert remaining_b[0]["row_version"] == 3
 
 
 @pytest.mark.asyncio
@@ -5195,6 +5680,230 @@ async def test_agent_component_resource_constraints_are_db_enforced(
             )
             assert listed.status_code == 200, listed.text
             assert len(listed.json()) == 1
+
+
+@pytest.mark.asyncio
+async def test_agent_component_visible_and_subtree_limits_are_db_enforced(
+    agent_site_database: AgentSiteDatabase,
+) -> None:
+    database = agent_site_database
+    _seed_token, seeded = await _seed(database)
+    foreign_component_id = uuid4()
+    inaccessible_page_id = uuid4()
+    inaccessible_component_id = uuid4()
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        await owner.execute(
+            """
+            INSERT INTO content.page_base(
+                id,site_id,slug,title,status,locale,row_version
+            ) VALUES ($1,$2,'inaccessible-component-page','Inaccessible','DRAFT','zz',1)
+            """,
+            inaccessible_page_id,
+            seeded["site_id"],
+        )
+        await owner.execute(
+            """
+            INSERT INTO content.page_composition_base(
+                id,site_id,page_id,component_type,schema_version,parent_id,
+                slot_key,order_key,props
+            ) VALUES ($1,$2,$3,'Heading','1',NULL,'default',0,
+                      '{"text":"inaccessible","level":2}'::jsonb)
+            """,
+            inaccessible_component_id,
+            seeded["site_id"],
+            inaccessible_page_id,
+        )
+        await owner.execute(
+            """
+            INSERT INTO content.page_composition_base(
+                id,site_id,page_id,component_type,schema_version,parent_id,
+                slot_key,order_key,props
+            ) VALUES ($1,$2,$3,'Heading','1',NULL,'default',0,
+                      '{"text":"foreign","level":2}'::jsonb)
+            """,
+            foreign_component_id,
+            seeded["site_b_id"],
+            seeded["page_b_id"],
+        )
+    token, workspace_id = await _workspace_capability(
+        database,
+        seeded,
+        [
+            "site:read",
+            "page:create",
+            "page:read",
+            "composition:read",
+            "component-structure:create",
+            "component-structure:move",
+        ],
+        "Agent Component Visible Limit Workspace",
+    )
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        await owner.execute(
+            "UPDATE control.capability SET request_quota=200, mutation_quota=100 "
+            "WHERE workspace_id=$1",
+            workspace_id,
+        )
+    app = create_agent_app(
+        settings=ServiceSettings.for_test(),
+        database_settings=_agent_settings(database),
+    )
+    headers = {"Authorization": f"Bearer {token}"}
+    reviewer_pool = await database.role_pool("slaif_reviewer")
+
+    async def durable_state() -> tuple[tuple[Any, ...], tuple[UUID, ...]]:
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            row = await owner.fetchrow(
+                "SELECT mutation_used,delete_used, "
+                "(SELECT count(*) FROM control.agent_idempotency "
+                "WHERE workspace_id=$1), "
+                "(SELECT count(*) FROM audit.agent_mutation "
+                "WHERE workspace_id=$1) "
+                "FROM control.capability WHERE workspace_id=$1",
+                workspace_id,
+            )
+        async with asyncpg_cow_reviewer(reviewer_pool) as reviewer:
+            operations = tuple(
+                sorted(await reviewer.operations(workspace_id, schema="content"))
+            )
+        return tuple(row), operations
+
+    async with app.router.lifespan_context(app):
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://agent.test"
+        ) as client:
+
+            async def create_page(slug: str) -> UUID:
+                response = await client.post(
+                    "/api/agent/v1/pages/",
+                    json={"slug": slug, "title": slug, "locale": "en"},
+                    headers={**headers, "Idempotency-Key": f"visible-page-{slug}"},
+                )
+                assert response.status_code == 201, response.text
+                return UUID(response.json()["record"]["id"])
+
+            async def create_component(
+                page_id: UUID,
+                key: str,
+                component_type: str = "Heading",
+                parent_id: UUID | None = None,
+                slot_key: str = "default",
+                props: dict[str, Any] | None = None,
+            ) -> dict[str, Any]:
+                body: dict[str, Any] = {
+                    "component_type": component_type,
+                    "slot_key": slot_key,
+                    "props": props
+                    or (
+                        {"text": key, "level": 2} if component_type == "Heading" else {}
+                    ),
+                }
+                if parent_id is not None:
+                    body["parent_id"] = str(parent_id)
+                response = await client.post(
+                    f"/api/agent/v1/pages/{page_id}/components",
+                    json=body,
+                    headers={**headers, "Idempotency-Key": key},
+                )
+                assert response.status_code == 201, response.text
+                return cast(dict[str, Any], response.json()["record"])
+
+            async def page_records(page_id: UUID) -> list[dict[str, Any]]:
+                response = await client.get(
+                    f"/api/agent/v1/pages/{page_id}/components", headers=headers
+                )
+                assert response.status_code == 200, response.text
+                return cast(list[dict[str, Any]], response.json())
+
+            first_page = await create_page("visible-one")
+            second_page = await create_page("visible-two")
+            await _set_resource_constraints(
+                database,
+                workspace_id,
+                {
+                    "allowed_component_types": ["Heading", "Section", "Container"],
+                    "allowed_page_root_ids": [str(first_page), str(second_page)],
+                    "max_components_per_page": 20,
+                    "max_visible_components": 2,
+                    "max_component_depth": 3,
+                },
+            )
+            first = await create_component(first_page, "visible-first")
+            second = await create_component(second_page, "visible-second")
+            before_visible = {
+                str(first_page): await page_records(first_page),
+                str(second_page): await page_records(second_page),
+            }
+            before_visible_state = await durable_state()
+            denied = await client.post(
+                f"/api/agent/v1/pages/{first_page}/components",
+                json={
+                    "component_type": "Heading",
+                    "props": {"text": "third", "level": 2},
+                },
+                headers={**headers, "Idempotency-Key": "visible-third-denied"},
+            )
+            assert denied.status_code == 422, denied.text
+            assert await page_records(first_page) == before_visible[str(first_page)]
+            assert await page_records(second_page) == before_visible[str(second_page)]
+            assert await durable_state() == before_visible_state
+            assert first["row_version"] == second["row_version"] == 1
+            assert foreign_component_id != UUID(first["id"])
+            assert inaccessible_component_id != UUID(second["id"])
+
+            await _set_resource_constraints(
+                database,
+                workspace_id,
+                {
+                    "allowed_component_types": ["Heading", "Section", "Container"],
+                    "max_components_per_page": 20,
+                    "max_visible_components": 20,
+                    "max_component_depth": 3,
+                },
+            )
+            deep_page = await create_page("deep-subtree")
+            source = await create_component(deep_page, "deep-source", "Section")
+            child = await create_component(
+                deep_page,
+                "deep-child",
+                "Container",
+                parent_id=UUID(source["id"]),
+            )
+            leaf = await create_component(
+                deep_page,
+                "deep-leaf",
+                parent_id=UUID(child["id"]),
+            )
+            target = await create_component(deep_page, "deep-target", "Section")
+            before_deep = await page_records(deep_page)
+            before_deep_state = await durable_state()
+            depth_denied = await client.post(
+                f"/api/agent/v1/components/{source['id']}/move",
+                json={
+                    "new_parent_id": target["id"],
+                    "new_slot_key": "default",
+                    "expected_row_version": source["row_version"],
+                },
+                headers={**headers, "Idempotency-Key": "deep-move-denied"},
+            )
+            assert depth_denied.status_code == 422, depth_denied.text
+            assert await page_records(deep_page) == before_deep
+            assert await durable_state() == before_deep_state
+            assert {row["row_version"] for row in before_deep} == {1}
+            assert {row["id"] for row in before_deep} == {
+                source["id"],
+                child["id"],
+                leaf["id"],
+                target["id"],
+            }
+
+    await reviewer_pool.close()
 
 
 @pytest.mark.asyncio

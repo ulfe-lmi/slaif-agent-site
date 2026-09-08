@@ -27,6 +27,8 @@ _NEW_FUNCTIONS = (
     "content.slaif_component_validate_schema(jsonb,jsonb)",
     "content.slaif_agent_component_validate(uuid,uuid,uuid,text,text,uuid,text,jsonb,boolean)",
     "content.slaif_agent_component_tree_validate(uuid,uuid)",
+    "content.slaif_agent_component_reposition(uuid,uuid,uuid,uuid,text,integer)",
+    "content.slaif_agent_component_resequence(uuid,uuid,uuid,text)",
     "content.slaif_agent_component_list(uuid,uuid)",
     "content.slaif_agent_component_get(uuid,uuid)",
     "content.slaif_agent_component_create(uuid,uuid,text,uuid,text,uuid,uuid,jsonb)",
@@ -582,6 +584,58 @@ def _tree_validator_sql() -> str:
 
 def _agent_component_sql() -> str:
     return """
+        CREATE FUNCTION content.slaif_agent_component_reposition(
+            p_site_id uuid,p_page_id uuid,p_component_id uuid,p_parent_id uuid,
+            p_slot_key text,p_position integer
+        ) RETURNS void LANGUAGE sql SECURITY DEFINER SET search_path=pg_catalog AS $fn$
+            WITH remaining AS (
+                SELECT c.id,c.parent_id,c.slot_key,
+                    (row_number() OVER (
+                        PARTITION BY c.parent_id,c.slot_key
+                        ORDER BY c.order_key,c.id
+                    )-1)::integer AS remaining_order
+                FROM content.page_composition c
+                WHERE c.site_id=p_site_id AND c.page_id=p_page_id
+                  AND c.id<>p_component_id
+            ), desired AS (
+                SELECT id,parent_id,slot_key,
+                    CASE WHEN parent_id IS NOT DISTINCT FROM p_parent_id
+                              AND slot_key=p_slot_key
+                         THEN remaining_order+
+                              CASE WHEN remaining_order>=p_position THEN 1 ELSE 0 END
+                         ELSE remaining_order END AS desired_order
+                FROM remaining
+                UNION ALL
+                SELECT p_component_id,p_parent_id,p_slot_key,p_position
+            )
+            UPDATE content.page_composition c
+            SET parent_id=d.parent_id,slot_key=d.slot_key,order_key=d.desired_order,
+                row_version=c.row_version+1,updated_at=now()
+            FROM desired d
+            WHERE c.id=d.id AND c.site_id=p_site_id AND c.page_id=p_page_id
+              AND (c.parent_id IS DISTINCT FROM d.parent_id
+                   OR c.slot_key IS DISTINCT FROM d.slot_key
+                   OR c.order_key IS DISTINCT FROM d.desired_order)
+        $fn$;
+
+        CREATE FUNCTION content.slaif_agent_component_resequence(
+            p_site_id uuid,p_page_id uuid,p_parent_id uuid,p_slot_key text
+        ) RETURNS void LANGUAGE sql SECURITY DEFINER SET search_path=pg_catalog AS $fn$
+            WITH ranked AS (
+                SELECT c.id,
+                    (row_number() OVER (ORDER BY c.order_key,c.id)-1)::integer
+                        AS desired_order
+                FROM content.page_composition c
+                WHERE c.site_id=p_site_id AND c.page_id=p_page_id
+                  AND c.parent_id IS NOT DISTINCT FROM p_parent_id
+                  AND c.slot_key=p_slot_key
+            )
+            UPDATE content.page_composition c
+            SET order_key=r.desired_order,row_version=c.row_version+1,updated_at=now()
+            FROM ranked r
+            WHERE c.id=r.id AND c.order_key<>r.desired_order
+        $fn$;
+
         CREATE FUNCTION content.slaif_agent_component_list(
             p_site_id uuid,p_page_id uuid
         ) RETURNS TABLE(
@@ -604,7 +658,7 @@ def _agent_component_sql() -> str:
             LIMIT COALESCE((
                 SELECT LEAST(
                     128,
-                    COALESCE(NULLIF(cap.resource_constraints->>'max_visible_components','')::integer,128)
+                    COALESCE(NULLIF(cap.resource_constraints->>'max_components_per_page','')::integer,128)
                 )
                 FROM control.capability cap
                 WHERE cap.id=NULLIF(current_setting('app.capability_id',true),'')::uuid
@@ -662,6 +716,9 @@ def _agent_component_sql() -> str:
             IF NULLIF(constraints->>'max_components_per_page','') IS NOT NULL
                AND visible_count+1 > (constraints->>'max_components_per_page')::integer
             THEN RAISE EXCEPTION 'COMPONENT_PAGE_LIMIT' USING ERRCODE='P0003'; END IF;
+            SELECT count(*) INTO visible_count FROM content.page_composition c
+            WHERE c.site_id=p_site_id
+              AND content.slaif_agent_page_accessible(p_site_id,c.page_id);
             IF NULLIF(constraints->>'max_visible_components','') IS NOT NULL
                AND visible_count+1 > (constraints->>'max_visible_components')::integer
             THEN RAISE EXCEPTION 'COMPONENT_PAGE_LIMIT' USING ERRCODE='P0003'; END IF;
@@ -674,13 +731,13 @@ def _agent_component_sql() -> str:
                     FROM content.page_composition c JOIN ancestors a ON c.id=a.parent_id
                     WHERE c.site_id=p_site_id AND c.page_id=p_page_id
                 ) SELECT coalesce(max(depth),0) INTO parent_depth FROM ancestors;
-                IF NULLIF(constraints->>'max_component_depth','') IS NOT NULL
-                   AND parent_depth+1 > (constraints->>'max_component_depth')::integer
-                THEN RAISE EXCEPTION 'COMPONENT_DEPTH_LIMIT' USING ERRCODE='P0003'; END IF;
             END IF;
-            IF NOT control.slaif_agent_quota_consume(capability_id,workspace_id,'mutation') THEN
-                RAISE EXCEPTION 'AGENT_MUTATION_QUOTA_EXCEEDED' USING ERRCODE='P0005';
+            IF parent_depth+1 > 16 THEN
+                RAISE EXCEPTION 'COMPONENT_DEPTH_LIMIT' USING ERRCODE='P0003';
             END IF;
+            IF NULLIF(constraints->>'max_component_depth','') IS NOT NULL
+               AND parent_depth+1 > (constraints->>'max_component_depth')::integer
+            THEN RAISE EXCEPTION 'COMPONENT_DEPTH_LIMIT' USING ERRCODE='P0003'; END IF;
             IF p_before IS NOT NULL OR p_after IS NOT NULL THEN
                 SELECT c.parent_id,c.slot_key,c.order_key INTO anchor_parent,anchor_slot,anchor_order
                 FROM content.page_composition c
@@ -695,10 +752,9 @@ def _agent_component_sql() -> str:
                 WHERE c.site_id=p_site_id AND c.page_id=p_page_id
                   AND c.parent_id IS NOT DISTINCT FROM p_parent_id AND c.slot_key=p_slot_key;
             END IF;
-            UPDATE content.page_composition c SET order_key=c.order_key+1
-            WHERE c.site_id=p_site_id AND c.page_id=p_page_id
-              AND c.parent_id IS NOT DISTINCT FROM p_parent_id AND c.slot_key=p_slot_key
-              AND c.order_key>=position;
+            IF NOT control.slaif_agent_quota_consume(capability_id,workspace_id,'mutation') THEN
+                RAISE EXCEPTION 'AGENT_MUTATION_QUOTA_EXCEEDED' USING ERRCODE='P0005';
+            END IF;
             new_id:=gen_random_uuid();
             INSERT INTO content.page_composition(
                 id,site_id,page_id,component_type,schema_version,catalog_version,
@@ -707,6 +763,8 @@ def _agent_component_sql() -> str:
                 new_id,p_site_id,p_page_id,p_component_type,'1','catalog-v1',p_parent_id,
                 p_slot_key,position,p_props,1
             );
+            PERFORM content.slaif_agent_component_reposition(
+                p_site_id,p_page_id,new_id,p_parent_id,p_slot_key,position);
             PERFORM content.slaif_agent_component_tree_validate(p_site_id,p_page_id);
             RETURN QUERY SELECT c.id,c.site_id,c.page_id,c.component_type,c.schema_version,
                 c.catalog_version,c.parent_id,c.slot_key,c.order_key,c.props,c.row_version,
@@ -778,7 +836,8 @@ def _agent_component_sql() -> str:
         ) LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $fn$
         DECLARE old record; workspace_id uuid; capability_id uuid; position integer;
             anchor_order integer; anchor_parent uuid; anchor_slot text;
-            constraints jsonb; parent_depth integer:=0;
+            constraints jsonb; parent_depth integer:=0; subtree_height integer:=0;
+            visible_count integer;
         BEGIN
             capability_id:=control.slaif_agent_require_capability(
                 p_site_id,'component-structure:move');
@@ -804,6 +863,9 @@ def _agent_component_sql() -> str:
                 SELECT 1 FROM content.page_composition c
                 WHERE c.id=p_parent_id AND c.site_id=p_site_id AND c.page_id=old.page_id
             ) THEN RAISE EXCEPTION 'COMPONENT_PARENT_INVALID' USING ERRCODE='P0002'; END IF;
+            IF p_parent_id=p_component_id THEN
+                RAISE EXCEPTION 'COMPONENT_PARENT_INVALID' USING ERRCODE='P0003';
+            END IF;
             IF p_parent_id IS NOT NULL THEN
                 WITH RECURSIVE ancestors(id,parent_id,depth) AS (
                     SELECT c.id,c.parent_id,1 FROM content.page_composition c
@@ -813,10 +875,27 @@ def _agent_component_sql() -> str:
                     FROM content.page_composition c JOIN ancestors a ON c.id=a.parent_id
                     WHERE c.site_id=p_site_id AND c.page_id=old.page_id
                 ) SELECT coalesce(max(depth),0) INTO parent_depth FROM ancestors;
-                IF NULLIF(constraints->>'max_component_depth','') IS NOT NULL
-                   AND parent_depth+1 > (constraints->>'max_component_depth')::integer
-                THEN RAISE EXCEPTION 'COMPONENT_DEPTH_LIMIT' USING ERRCODE='P0003'; END IF;
             END IF;
+            WITH RECURSIVE descendants(id,relative_depth) AS (
+                SELECT c.id,0 FROM content.page_composition c
+                WHERE c.id=p_component_id AND c.site_id=p_site_id AND c.page_id=old.page_id
+                UNION ALL
+                SELECT child.id,d.relative_depth+1
+                FROM content.page_composition child JOIN descendants d
+                  ON child.parent_id=d.id
+                WHERE child.site_id=p_site_id AND child.page_id=old.page_id
+            ) SELECT coalesce(max(relative_depth),0) INTO subtree_height FROM descendants;
+            SELECT count(*) INTO visible_count FROM content.page_composition c
+            WHERE c.site_id=p_site_id AND c.page_id=old.page_id;
+            IF NULLIF(constraints->>'max_components_per_page','') IS NOT NULL
+               AND visible_count > (constraints->>'max_components_per_page')::integer
+            THEN RAISE EXCEPTION 'COMPONENT_PAGE_LIMIT' USING ERRCODE='P0003'; END IF;
+            IF parent_depth+1+subtree_height > 16 THEN
+                RAISE EXCEPTION 'COMPONENT_DEPTH_LIMIT' USING ERRCODE='P0003';
+            END IF;
+            IF NULLIF(constraints->>'max_component_depth','') IS NOT NULL
+               AND parent_depth+1+subtree_height > (constraints->>'max_component_depth')::integer
+            THEN RAISE EXCEPTION 'COMPONENT_DEPTH_LIMIT' USING ERRCODE='P0003'; END IF;
             IF p_before IS NOT NULL OR p_after IS NOT NULL THEN
                 SELECT c.parent_id,c.slot_key,c.order_key INTO anchor_parent,anchor_slot,anchor_order
                 FROM content.page_composition c
@@ -824,34 +903,49 @@ def _agent_component_sql() -> str:
                 IF NOT FOUND OR anchor_parent IS DISTINCT FROM p_parent_id OR anchor_slot<>p_slot_key
                    OR coalesce(p_before,p_after)=p_component_id
                 THEN RAISE EXCEPTION 'COMPONENT_ANCHOR_INVALID' USING ERRCODE='P0003'; END IF;
-                position:=anchor_order+CASE WHEN p_after IS NOT NULL THEN 1 ELSE 0 END;
+                IF p_before IS NOT NULL THEN
+                    SELECT count(*) INTO position FROM content.page_composition c
+                    WHERE c.site_id=p_site_id AND c.page_id=old.page_id
+                      AND c.id<>p_component_id
+                      AND c.parent_id IS NOT DISTINCT FROM p_parent_id
+                      AND c.slot_key=p_slot_key AND c.order_key<anchor_order;
+                ELSE
+                    SELECT count(*) INTO position FROM content.page_composition c
+                    WHERE c.site_id=p_site_id AND c.page_id=old.page_id
+                      AND c.id<>p_component_id
+                      AND c.parent_id IS NOT DISTINCT FROM p_parent_id
+                      AND c.slot_key=p_slot_key AND c.order_key<=anchor_order;
+                END IF;
             ELSE
-                position:=0;
-            END IF;
-            UPDATE content.page_composition c SET order_key=c.order_key-1
-            WHERE c.site_id=p_site_id AND c.page_id=old.page_id
-              AND c.parent_id IS NOT DISTINCT FROM old.parent_id AND c.slot_key=old.slot_key
-              AND c.order_key>old.order_key;
-            IF p_before IS NULL AND p_after IS NULL THEN
-                SELECT coalesce(max(c.order_key)+1,0) INTO position
-                FROM content.page_composition c WHERE c.site_id=p_site_id AND c.page_id=old.page_id
-                  AND c.id<>p_component_id AND c.parent_id IS NOT DISTINCT FROM p_parent_id
+                SELECT count(*) INTO position FROM content.page_composition c
+                WHERE c.site_id=p_site_id AND c.page_id=old.page_id
+                  AND c.id<>p_component_id
+                  AND c.parent_id IS NOT DISTINCT FROM p_parent_id
                   AND c.slot_key=p_slot_key;
             END IF;
-            UPDATE content.page_composition c SET order_key=c.order_key+1
-            WHERE c.site_id=p_site_id AND c.page_id=old.page_id AND c.id<>p_component_id
-              AND c.parent_id IS NOT DISTINCT FROM p_parent_id AND c.slot_key=p_slot_key
-              AND c.order_key>=position;
             PERFORM content.slaif_agent_component_validate(
                 p_site_id,old.page_id,old.id,old.component_type,old.schema_version,
                 p_parent_id,p_slot_key,old.props,true);
-            IF NOT control.slaif_agent_quota_consume(capability_id,workspace_id,'mutation') THEN
-                RAISE EXCEPTION 'AGENT_MUTATION_QUOTA_EXCEEDED' USING ERRCODE='P0005';
+            -- A satisfied semantic move is a deliberate versioned no-op: it
+            -- consumes the normal mutation quota and produces one audit event,
+            -- while only advancing the requested row version.
+            IF old.parent_id IS NOT DISTINCT FROM p_parent_id
+               AND old.slot_key=p_slot_key AND old.order_key=position THEN
+                IF NOT control.slaif_agent_quota_consume(capability_id,workspace_id,'mutation') THEN
+                    RAISE EXCEPTION 'AGENT_MUTATION_QUOTA_EXCEEDED' USING ERRCODE='P0005';
+                END IF;
+                UPDATE content.page_composition c SET row_version=c.row_version+1,
+                    updated_at=now()
+                WHERE c.id=p_component_id AND c.site_id=p_site_id
+                  AND c.row_version=p_expected;
+                IF NOT FOUND THEN RAISE EXCEPTION 'ROW_VERSION_MISMATCH' USING ERRCODE='P0004'; END IF;
+            ELSE
+                IF NOT control.slaif_agent_quota_consume(capability_id,workspace_id,'mutation') THEN
+                    RAISE EXCEPTION 'AGENT_MUTATION_QUOTA_EXCEEDED' USING ERRCODE='P0005';
+                END IF;
+                PERFORM content.slaif_agent_component_reposition(
+                    p_site_id,old.page_id,p_component_id,p_parent_id,p_slot_key,position);
             END IF;
-            UPDATE content.page_composition c SET parent_id=p_parent_id,slot_key=p_slot_key,
-                order_key=position,row_version=c.row_version+1,updated_at=now()
-            WHERE c.id=p_component_id AND c.site_id=p_site_id AND c.row_version=p_expected;
-            IF NOT FOUND THEN RAISE EXCEPTION 'ROW_VERSION_MISMATCH' USING ERRCODE='P0004'; END IF;
             PERFORM content.slaif_agent_component_tree_validate(p_site_id,old.page_id);
             RETURN QUERY SELECT c.id,c.site_id,c.page_id,c.component_type,c.schema_version,
                 c.catalog_version,c.parent_id,c.slot_key,c.order_key,c.props,c.row_version,
@@ -883,7 +977,11 @@ def _agent_component_sql() -> str:
             IF old.row_version<>p_expected THEN
                 RAISE EXCEPTION 'ROW_VERSION_MISMATCH' USING ERRCODE='P0004';
             END IF;
-            IF EXISTS (SELECT 1 FROM content.page_composition c WHERE c.parent_id=p_component_id) THEN
+            IF EXISTS (
+                SELECT 1 FROM content.page_composition c
+                WHERE c.parent_id=p_component_id AND c.site_id=p_site_id
+                  AND c.page_id=old.page_id
+            ) THEN
                 RAISE EXCEPTION 'COMPONENT_DEPENDENCIES' USING ERRCODE='P0003';
             END IF;
             IF NOT control.slaif_agent_quota_consume(capability_id,workspace_id,'delete') THEN
@@ -892,10 +990,8 @@ def _agent_component_sql() -> str:
             DELETE FROM content.page_composition c WHERE c.id=p_component_id AND c.site_id=p_site_id
                 AND c.row_version=p_expected;
             IF NOT FOUND THEN RAISE EXCEPTION 'ROW_VERSION_MISMATCH' USING ERRCODE='P0004'; END IF;
-            UPDATE content.page_composition c SET order_key=c.order_key-1
-            WHERE c.site_id=p_site_id AND c.page_id=old.page_id
-              AND c.parent_id IS NOT DISTINCT FROM old.parent_id AND c.slot_key=old.slot_key
-              AND c.order_key>old.order_key;
+            PERFORM content.slaif_agent_component_resequence(
+                p_site_id,old.page_id,old.parent_id,old.slot_key);
             PERFORM content.slaif_agent_component_tree_validate(p_site_id,old.page_id);
             RETURN QUERY SELECT old.id,old.site_id,old.page_id,old.component_type,
                 old.schema_version,old.catalog_version,old.parent_id,old.slot_key,
