@@ -32,6 +32,17 @@ and transactional authority locking. Render projects only typed, site-confined
 canonical or authorized COW-preview data; Web alone returns HTML. Review,
 promotion, and publication execution remain unimplemented.
 
+The Objective-077 source revision on [PR #74](https://github.com/ulfe-lmi/slaif-agent-site/pull/74)
+adds the bounded capability-bound Agent page list/read/create/update/delete/
+move/restore, locale, navigation, redirect, and dynamic collection Render
+semantics, with the corresponding human Editor route path, shared trusted
+Render projection, hostile-negative/concurrency/recovery evidence, and exact
+OpenAPI/policy continuity. At this source revision PR #74 is awaiting
+strategic acceptance; review snapshots, promotion, publication execution,
+composition/design/media-reference expansion, and later MVP work remain
+separate. The wording describes source-revision evidence and does not claim
+that the PR has merged or that the MVP is complete.
+
 > **Pre-alpha / bounded deployable product.** This
 > repository contains the normative architecture, coding-agent governance,
 > reproducible Python/TypeScript toolchains, the qualified
@@ -182,8 +193,10 @@ docker compose up --build
 No `.env`, manual package install, cloud account, API key, or secret-generation
 step is required. Wait for health, then open <http://localhost:8080/>. Only
 loopback port 8080 is published. The deployable pre-alpha stack includes
-one-time first-run setup/login and site-management administration; deeper Agent
-semantics and review/publication remain queued. See the
+one-time first-run setup/login and site-management administration; bounded
+page/locale/navigation/redirect/dynamic-Render semantics are present in the
+Objective-077 source revision, while composition/design/media, review, and
+publication remain queued. See the
 [deployment guide](docs/DEPLOYMENT.md) and [operations guide](docs/OPERATIONS.md).
 
 ## Delivery sequence
@@ -202,6 +215,7 @@ semantics and review/publication remain queued. See the
 | Completed site foundation | Control-owned sites and domain mappings, bounded installation quota, strict identifier normalization, immutable site context, and trusted longest-prefix/local-development resolution. |
 | Completed human RBAC HTTP boundary | Immutable role/permission catalogs, site membership list/get/create/update/deactivate, strict session/CSRF policy, optimistic concurrency, and complete Control/Editor route declarations. |
 | Responsive site and membership administration | Permission-driven site/profile/domain workflows plus existing-user UUID membership cards, built-in roles, bounded ceilings, separate publication overrides, complete override replacement, version refresh, and semantic deactivation. |
+| Objective-077 source revision | Capability-bound Agent pages, locales, navigation, redirects, and bounded dynamic collection Render semantics with human Editor parity, shared Render/NGINX/browser evidence, route integrity, concurrency, and recovery proof on PR #74; strategic acceptance/merge remains separate. |
 | Planned product work | Add review snapshots, freeze/accept/discard/promotion, approved-source and responsive-sweep orchestration, reconstruction, public media finalization, and remaining hardening. |
 
 See [Architecture Section 50](ARCHITECTURE.md#50-implementation-phases) for
@@ -328,10 +342,10 @@ Ministry of Higher Education, Science and Innovation for SLAIF grant
 
 ## Implementation Status
 
-The merged Objectives 065–072 prove only the narrow, bounded slices recorded
-in [`oap/MVP-CONTRACT-AUDIT.md`](oap/MVP-CONTRACT-AUDIT.md). The contractual MVP
-remains incomplete: complete Agent semantic REST and MCP, immutable review
-snapshots, accept/discard promotion,
+The merged Objectives 065–076 and the Objective-077 source revision prove only
+the narrow, bounded slices recorded in [`oap/MVP-CONTRACT-AUDIT.md`](oap/MVP-CONTRACT-AUDIT.md).
+The contractual MVP remains incomplete: complete Agent semantic REST and MCP,
+immutable review snapshots, accept/discard promotion,
 conflict-safe publication, source reconstruction, lifecycle cleanup, and
 backup/restore evidence are planned in the 074–091 sequence. See
 [`oap/MVP-PROGRESS.md`](oap/MVP-PROGRESS.md) for the current status vocabulary

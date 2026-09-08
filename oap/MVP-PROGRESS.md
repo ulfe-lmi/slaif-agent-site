@@ -2,16 +2,19 @@
 
 This tracker uses the contract-audit status vocabulary rather than file
 presence or completion estimates. The authoritative baseline is
-[`MVP-CONTRACT-AUDIT.md`](MVP-CONTRACT-AUDIT.md), evaluated against merged
-Objective 076 commit `067676314e0d9664d40cb8514ea549b966a4eb2d` on
-2026-09-02.
+[`MVP-CONTRACT-AUDIT.md`](MVP-CONTRACT-AUDIT.md), updated for the protocol-final
+Objective-077 source revision on PR #74 on 2026-09-08. The merged baseline
+remains Objective 076 commit `067676314e0d9664d40cb8514ea549b966a4eb2d` until
+strategy independently accepts and merges PR #74.
 
 ## Current verdict
 
 **CONTRACTUAL MVP NOT COMPLETE.** Merged Objectives 065–076 prove narrow,
-bounded contracts, with 073 repairing current-state claims and 074–076 adding
-real Agent control and model/content semantics. None of those slices alone
-proves the broader product capability, review lifecycle, or publication
+bounded contracts, and the Objective-077 source revision now provides complete
+executable evidence for its bounded page/locale/navigation/redirect/dynamic-
+Render information architecture. The source revision is still subject to
+strategic PR acceptance; neither it nor the earlier slices proves the broader
+composition, review lifecycle, publication, reconstruction, or final MVP
 contract.
 
 ## Merged narrow slices
@@ -43,17 +46,27 @@ report.
 | 075 / [PR #71](https://github.com/ulfe-lmi/slaif-agent-site/pull/71) | Editable-domain substrate, validators, query contract, locale/navigation/redirect integrity, production COW upgrade, and Agent binding, merged as `0e83b26bf9a9f63bff6756d65cbfd527d215ec51` | COMPLETE — E2E PROVEN |
 | 076 / [PR #72](https://github.com/ulfe-lmi/slaif-agent-site/pull/72) | Capability-bound Agent model/type/field/item/translation/relation/collection-view REST semantics, strict policy/audit/COW/concurrency, canonical OpenAPI, public NGINX evidence, and PostgreSQL 14–18 CI, merged as `067676314e0d9664d40cb8514ea549b966a4eb2d` | COMPLETE — E2E PROVEN |
 
+## Objective 077 source revision
+
+The protocol-final 077 source revision on [PR #74](https://github.com/ulfe-lmi/slaif-agent-site/pull/74)
+maps the immutable 077-a through 077-z transcript to executable Agent,
+Editor, Render, NGINX/browser, migration, concurrency, recovery, contract, and
+hostile-negative evidence for bounded pages, locales, navigation, redirects,
+and dynamic collection rendering. Its narrow information-architecture
+contract is **COMPLETE — E2E PROVEN** at the source revision; PR acceptance and
+merge remain strategic decisions. The contractual MVP remains **NOT COMPLETE**.
+
 ## Active and remaining sequence
 
-The current active order is `077-t` on [PR #74](https://github.com/ulfe-lmi/slaif-agent-site/pull/74),
-which remains open and unmerged. The broader 077 page/navigation/redirect/
-Render contract remains `PARTIAL` on current `main`; the unmerged 077-a page
-slice is evidence under strategic review, not merged product truth. All later
-order files remain inert until strategy selects and signals them.
+The current active order is the protocol-final `077-z` on [PR #74](https://github.com/ulfe-lmi/slaif-agent-site/pull/74).
+The source revision has complete bounded 077 evidence; its acceptance and merge
+state are determined by strategy and GitHub. Current `main` remains the merged
+076 baseline until that decision. All later order files remain inert until
+strategy selects and signals them.
 
 | Order | Contractual scope | Current status |
 |---|---|---|
-| 077 | Agent page, navigation, redirect, and bounded dynamic collection Render semantics | ACTIVE — PR #74 OPEN/UNMERGED; 077-t evidence under strategic review |
+| 077 | Agent page, navigation, redirect, and bounded dynamic collection Render semantics | COMPLETE — E2E PROVEN at 077-z source revision; PR #74 awaits strategic acceptance |
 | 078 | Agent composition and design semantics | PARTIAL |
 | 079 | Agent media semantics and references | PARTIAL |
 | 080 | Real MCP semantic parity | SCAFFOLD ONLY |

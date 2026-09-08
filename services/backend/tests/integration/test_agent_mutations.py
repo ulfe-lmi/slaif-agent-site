@@ -2083,7 +2083,7 @@ async def test_agent_redirect_051_migration_round_trip_preserves_data_and_privil
             await owner.fetchval(
                 "SELECT version_num::text FROM control.alembic_version"
             )
-            == "058_001"
+            == "059_001"
         )
         assert tuple(
             await owner.fetchrow(
@@ -2233,9 +2233,8 @@ async def test_agent_058_internal_navigation_migration_round_trip_preserves_priv
         database.settings.resolved_owner_dsn(),
         expected_database=database.name,
         operation="upgrade",
-        revision="head",
+        revision="058_001",
     )
-    await reconcile(database.settings)
     async with owner_connection(
         database.settings.resolved_owner_dsn(), expected_database=database.name
     ) as owner:
@@ -2274,6 +2273,112 @@ async def test_agent_058_internal_navigation_migration_round_trip_preserves_priv
             "SELECT has_function_privilege('slaif_public_reader',$1,'EXECUTE')",
             "content.slaif_render_navigation_items(uuid,text,text[])",
         )
+
+
+@pytest.mark.asyncio
+async def test_agent_059_locale_neutral_render_round_trip_preserves_privileges(
+    agent_site_database: AgentSiteDatabase,
+) -> None:
+    """Verify the locale-neutral Render correction is reversible and bounded."""
+
+    database = agent_site_database
+    _token, _seeded = await _seed(database)
+    await _disable_content_cow(database)
+    await run_migration(
+        database.settings.resolved_owner_dsn(),
+        expected_database=database.name,
+        operation="downgrade",
+        revision="058_001",
+    )
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        assert (
+            await owner.fetchval(
+                "SELECT version_num::text FROM control.alembic_version"
+            )
+            == "058_001"
+        )
+        legacy_definition = await owner.fetchval(
+            "SELECT pg_get_functiondef($1::regprocedure)",
+            "content.slaif_render_navigation_items(uuid,text,text[])",
+        )
+        assert "coalesce(item.locale,p_locale)" in legacy_definition
+
+    await run_migration(
+        database.settings.resolved_owner_dsn(),
+        expected_database=database.name,
+        operation="upgrade",
+        revision="059_001",
+    )
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        assert (
+            await owner.fetchval(
+                "SELECT version_num::text FROM control.alembic_version"
+            )
+            == "059_001"
+        )
+        corrected_definition = await owner.fetchval(
+            "SELECT pg_get_functiondef($1::regprocedure)",
+            "content.slaif_render_navigation_items(uuid,text,text[])",
+        )
+        assert "coalesce(item.locale,p_locale)" not in corrected_definition
+        assert "item.locale" in corrected_definition
+        for signature in (
+            "content.slaif_render_internal_target_exists(uuid,text,text,text[])",
+            "content.slaif_render_navigation_items(uuid,text,text[])",
+        ):
+            assert (
+                await owner.fetchval(
+                    "SELECT pg_get_userbyid(proowner) FROM pg_proc "
+                    "WHERE oid=$1::regprocedure",
+                    signature,
+                )
+                == "slaif_owner"
+            )
+            assert await owner.fetchval(
+                "SELECT proconfig @> ARRAY['search_path=pg_catalog'] "
+                "FROM pg_proc WHERE oid=$1::regprocedure",
+                signature,
+            )
+            assert not await owner.fetchval(
+                "SELECT has_function_privilege('public',$1,'EXECUTE')", signature
+            )
+        assert await owner.fetchval(
+            "SELECT has_function_privilege('slaif_public_reader',$1,'EXECUTE')",
+            "content.slaif_render_navigation_items(uuid,text,text[])",
+        )
+
+    await run_migration(
+        database.settings.resolved_owner_dsn(),
+        expected_database=database.name,
+        operation="downgrade",
+        revision="058_001",
+    )
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        assert (
+            await owner.fetchval(
+                "SELECT version_num::text FROM control.alembic_version"
+            )
+            == "058_001"
+        )
+        restored_definition = await owner.fetchval(
+            "SELECT pg_get_functiondef($1::regprocedure)",
+            "content.slaif_render_navigation_items(uuid,text,text[])",
+        )
+        assert "coalesce(item.locale,p_locale)" in restored_definition
+
+    await run_migration(
+        database.settings.resolved_owner_dsn(),
+        expected_database=database.name,
+        operation="upgrade",
+        revision="059_001",
+    )
+    assert (await status(database.settings)).revision == "059_001"
 
 
 @pytest.mark.asyncio
@@ -2327,7 +2432,7 @@ async def test_agent_049_plain_page_data_downgrade_and_upgrade_preserves_data(
             await owner.fetchval(
                 "SELECT version_num::text FROM control.alembic_version"
             )
-            == "058_001"
+            == "059_001"
         )
         row = await owner.fetchrow(
             "SELECT title, route_template, deleted_at FROM content.page_base "
@@ -5375,7 +5480,7 @@ async def test_agent_046_047_migration_round_trip_preserves_contract_and_state(
                 await owner.fetchval(
                     "SELECT version_num::text FROM control.alembic_version"
                 )
-                == "058_001"
+                == "059_001"
             )
             assert await owner.fetchval(
                 "SELECT to_regprocedure($1)",
@@ -5704,7 +5809,7 @@ async def test_agent_048_data_bearing_round_trip_preserves_relations_views_and_a
         )
         await reconcile(database.settings)
         final_status = await status(database.settings)
-        assert final_status.revision == "058_001"
+        assert final_status.revision == "059_001"
         assert final_status.state.value == "HARDENED"
         assert final_status.safe
         assert await cow_rows() == content_before
@@ -12886,7 +12991,7 @@ async def test_semantic_audit_contract_is_strict_and_reversible(
                 await owner.fetchval(
                     "SELECT version_num::text FROM control.alembic_version"
                 )
-                == "058_001"
+                == "059_001"
             )
             assert (
                 await owner.fetchval(

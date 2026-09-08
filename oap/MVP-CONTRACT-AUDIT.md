@@ -1,7 +1,7 @@
 # Contract-First MVP Audit
 
-**Audit date:** 2026-09-02
-**Authoritative implementation baseline:** `067676314e0d9664d40cb8514ea549b966a4eb2d` (`origin/main`, Objective 076 merged)
+**Audit date:** 2026-09-08
+**Authoritative source revision:** Objective 077-z on [PR #74](https://github.com/ulfe-lmi/slaif-agent-site/pull/74); merged baseline remains `067676314e0d9664d40cb8514ea549b966a4eb2d` (`origin/main`, Objective 076)
 **Normative contract:** `ARCHITECTURE.md`, Revision 2.1, read in full  
 **Verdict:** **CONTRACTUAL MVP NOT COMPLETE**
 
@@ -33,7 +33,7 @@ capability. Percentages and file presence are not acceptance evidence.
 | §§15.2, 18–20, 24.2 | Human creates an AGENT workspace and one-time capability, monitors/revokes it | Human Control/Web | Merged Objective 074 / [PR #70](https://github.com/ulfe-lmi/slaif-agent-site/pull/70) proves the public Control workspace/capability issuance path, site/CSRF/policy authority, one-time capability use, durable idempotency/audit/revoke behavior, and Control+Agent restart proof | COMPLETE — E2E PROVEN | Preserve the merged 074 evidence; later review/publication authority remains separate |
 | §§16.2, 21, 51.1 | Configurable types, fields, items, translations, relations and collection views as COW data | Human Editor and Agent semantic APIs | Merged Objective 075 / [PR #71](https://github.com/ulfe-lmi/slaif-agent-site/pull/71) proves the editable-domain substrate, bounded validators/query contract, locale/navigation/redirect integrity, production COW upgrade, and Agent binding; later semantic families remain separately scoped | COMPLETE — E2E PROVEN | Preserve 075 production-boundary evidence; 076 extends its public Agent surface |
 | §§15.4, 24.4–24.5 | Agent model/content semantic CRUD with scopes, COW, validation, idempotency and audit | External agent / REST/OpenAPI | Merged Objective 076 / [PR #72](https://github.com/ulfe-lmi/slaif-agent-site/pull/72), merged as `067676314e0d9664d40cb8514ea549b966a4eb2d`, proves capability-bound public REST model/type/field/item/translation/relation/collection-view semantics with strict scopes/resources/quotas, COW, idempotency, semantic audit, concurrency, and public NGINX/PG14–18 evidence | COMPLETE — E2E PROVEN | Preserve 076 evidence; broader 077–079 page/composition/media semantics remain partial |
-| §§15.4, 21.7–22.5, 24.6–24.7 | Agent pages/routes/navigation/redirects/composition/design/media-reference semantics | External agent / REST/OpenAPI | Current `main` contains the pre-077 boundary and the broader contract remains partial. 077-a page structure evidence is on unmerged [PR #74](https://github.com/ulfe-lmi/slaif-agent-site/pull/74), currently in 077-b prerequisite review; it is not merged product truth | PARTIAL | Active 077-b prerequisites, then later 077 page review defects and 078–079 bounded surfaces |
+| §§15.4, 21.7–22.5, 24.6–24.7 | Agent pages/routes/navigation/redirects/composition/design/media-reference semantics | External agent / REST/OpenAPI | Protocol-final 077-z source revision on [PR #74](https://github.com/ulfe-lmi/slaif-agent-site/pull/74) maps 077-a through 077-z to real public Agent/Editor/Render/NGINX/browser, PostgreSQL, migration, concurrency, recovery, OpenAPI/policy, and hostile-negative evidence for the bounded page/locale/navigation/redirect/dynamic-Render surface. Composition, design, media-reference, review, and publication remain outside 077. Current `main` remains the merged 076 baseline until strategic acceptance/merge. | COMPLETE — E2E PROVEN (source revision) | Strategy independently reviews/accepts PR #74; 078–091 remain separate contracts |
 | §§24.1, 51.1 | Versioned deterministic Agent OpenAPI describes the real public semantic contract | External agent / OpenAPI | Merged Objective 076 / [PR #72](https://github.com/ulfe-lmi/slaif-agent-site/pull/72) provides the canonical generated Agent OpenAPI through the public path, with bidirectional production-handler/route-policy/schema drift checks and required mutation metadata | COMPLETE — E2E PROVEN | Preserve 076 OpenAPI evidence; MCP parity remains Objective 080 and is not implied by OpenAPI completion |
 | §25, §51.1 | Curated MCP model/content/composition/design and browser tools delegate to Agent API | External agent / real MCP | Custom `/mcp/v1/tools` lists five reads; `/call` accepts caller-chosen method/path, references absent production configuration and uses a test-only HTTP dependency; no real call test or write-tool proof | SCAFFOLD ONLY | 080; real MCP client tools/list and tools/call E2E through NGINX, with no DB/internal bypass |
 | §§14.3, 22.4, 42.4, 52.6 | Human Puck edits the same normalized composition and exact Agent workspace under server policy | Human Web/Puck → Editor API | Objective 068 proves real Puck editing, but its resolver selects/creates a separate HUMAN workspace rather than the Agent workspace later reviewed | PARTIAL | 081 exact-workspace proof; 084/088 reuse it for human adjustment |
@@ -53,7 +53,7 @@ capability. Percentages and file presence are not acceptance evidence.
 | §§14.10, 42.4, 52.2 | Critical governance works on phone; six stable Playwright projects cover real product flows | Human public UI | Six projects run current auth/admin flows; review/accept/discard do not exist and therefore are not proven responsively | PARTIAL | 082–083 add review flows; 091 reruns final product matrix |
 | §§51–52 | MVP/release claims match checked-out product | Human/docs | Merged Objective 073 / [PR #69](https://github.com/ulfe-lmi/slaif-agent-site/pull/69) repaired the README and current-state claims to describe truthful interim 065–072 evidence and preserve the not-complete/future sequence; this round updates the ledgers to the later 076 baseline and keeps reconstruction and final release proof in the MVP contract | COMPLETE — CURRENT-STATE AUDITED | Objective 091 alone may declare the contractual MVP complete or production-ready |
 
-## Narrowest statements proven by Objectives 065–076
+## Narrowest statements proven by Objectives 065–077
 
 | Objective | What its merged evidence actually proves | It does not prove |
 |---|---|---|
@@ -69,6 +69,7 @@ capability. Percentages and file presence are not acceptance evidence.
 | 074 | Real public human Agent workspace/capability issuance, policy/CSRF/site authority, idempotency, audit, revoke, and Control+Agent restart proof | Review, promotion, publication, or complete Agent semantic API |
 | 075 | Complete editable-domain substrate and bounded validators/query contract with production COW upgrade and Agent binding | Complete public Agent model/content/page/composition/media/MCP surface |
 | 076 | Public capability-bound Agent model/type/field/item/translation/relation/collection-view REST semantics, strict scopes/resources/quotas/idempotency/audit/COW/concurrency, generated OpenAPI, public NGINX evidence, and PG14–18 CI | Page/navigation/redirect/composition/design/media completion, MCP parity, review, promotion, or MVP completion |
+| 077 source revision | Capability-bound page list/read/create/update/delete/move/restore, locale and navigation/redirect semantics, derived static/dynamic route integrity, shared Render projection, hostile negatives, deterministic concurrency/recovery, and public Agent/Editor/Render/NGINX/browser evidence on PR #74 | Composition/design/media-reference, MCP, exact-workspace Puck, freeze/review, promotion/publication, source reconstruction, cleanup, backup/restore, or contractual MVP completion |
 
 Historical objectives remain complete for those narrow scopes. None may be
 used to mark the broader row complete.
@@ -87,10 +88,13 @@ COMPLETED ON REMOTE MAIN:
       -> 075 complete editable-domain substrate and shared validators
           -> 076 Agent model/content/view/relation REST+OpenAPI
 
-ACTIVE / REMAINING:
-077 page/navigation/redirect semantics (077-b active on unmerged PR #74)
-  -> 078 Agent composition/design semantics
-      -> 079 Agent media semantics
+OBJECTIVE 077 SOURCE REVISION / CURRENT REVIEW STATE:
+077 page/navigation/redirect/dynamic-Render contract is complete at the source
+revision on PR #74; acceptance and merge remain strategic/GitHub state.
+
+ACTIVE / REMAINING AFTER 077 ACCEPTANCE:
+078 Agent composition/design semantics
+  -> 079 Agent media semantics
           -> 080 real curated MCP semantic parity
               -> 081 human edits exact Agent workspace in Puck
                   -> 082 immutable freeze/review snapshot

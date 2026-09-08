@@ -94,6 +94,7 @@ async def test_static_hierarchy_locale_navigation_and_redirect_projection(
         en_only_item_id, sl_only_item_id, hidden_parent_child_id = (
             uuid4() for _ in range(3)
         )
+        global_internal_item_id = uuid4()
         async with owner_connection(
             database.settings.resolved_owner_dsn(), expected_database=database.name
         ) as owner:
@@ -170,6 +171,17 @@ async def test_static_hierarchy_locale_navigation_and_redirect_projection(
                 '{"sl-SI":"Hidden child"}',
             )
             await owner.execute(
+                "INSERT INTO content.navigation_item_base "
+                "(id,site_id,navigation_id,parent_id,parent_key,page_id,target_kind,"
+                "target_value,labels,locale,position) VALUES "
+                "($1,$2,$3,NULL,$4::uuid,NULL,'INTERNAL','/guide',$5::jsonb,NULL,4)",
+                global_internal_item_id,
+                site.site_id,
+                navigation_id,
+                "00000000-0000-0000-0000-000000000000",
+                '{"en":"Global guide","sl-SI":"Global vodnik"}',
+            )
+            await owner.execute(
                 "INSERT INTO content.redirect_base "
                 "(site_id,source_route,target,status_code,locale) "
                 "VALUES ($1,'/legacy','/guide',301,NULL)",
@@ -197,6 +209,7 @@ async def test_static_hierarchy_locale_navigation_and_redirect_projection(
         assert root.navigation[0].label == "Primary"
         assert root.navigation[0].items[0].target.value == "/"
         assert root.navigation[0].items[0].children[0].target.value == "/sl-SI/guide"
+        assert any(item.target.value == "/guide" for item in root.navigation[0].items)
         root_labels = {item.label for item in root.navigation[0].items}
         assert "English only" in root_labels
         assert "Slovenski only" not in root_labels
@@ -223,6 +236,12 @@ async def test_static_hierarchy_locale_navigation_and_redirect_projection(
         assert "Slovenski only" in translated_labels
         assert "English only" not in translated_labels
         assert "Hidden child" not in translated_labels
+        global_item = next(
+            item
+            for item in translated.navigation[0].items
+            if item.target.value == "/guide"
+        )
+        assert global_item.label == "Global vodnik"
 
         redirect = await service.canonical(
             RenderPageRequest(authority="localhost", path="/s/structure-router/legacy")
@@ -259,6 +278,313 @@ async def test_static_hierarchy_locale_navigation_and_redirect_projection(
                 )
             )
     finally:
+        await public_pool.close()
+        await control_pool.close()
+
+
+@pytest.mark.asyncio
+async def test_locale_neutral_internal_render_status_and_hostile_targets(
+    agent_site_database: AgentSiteDatabase,
+) -> None:
+    """Prove locale-neutral targets retain routes across locales and fail closed."""
+
+    database = agent_site_database
+    await upgrade(database.settings)
+    await reconcile(database.settings)
+    control_pool = await database.role_pool("slaif_control")
+    public_pool = await database.role_pool("slaif_public_reader")
+    preview_pool = await database.role_pool("slaif_preview_reader")
+    try:
+        site = await SiteService(control_pool).create(
+            CreateSiteRequest(
+                site_key="internal-render-locale-neutral",
+                display_name="Internal Render Locale Neutral",
+                default_locale="en-US",
+            )
+        )
+        foreign_site = await SiteService(control_pool).create(
+            CreateSiteRequest(
+                site_key="internal-render-locale-foreign",
+                display_name="Internal Render Locale Foreign",
+                default_locale="en-US",
+            )
+        )
+        docs_id, guide_id, draft_id, home_id, duplicate_root_id, deleted_id = (
+            uuid4() for _ in range(6)
+        )
+        duplicate_child_id, dynamic_id, foreign_page_id = (uuid4() for _ in range(3))
+        navigation_id, item_id = uuid4(), uuid4()
+        preview_user_id, preview_session_id, preview_workspace_id = (
+            uuid4(),
+            uuid4(),
+            uuid4(),
+        )
+        preview_secret = b"i" * 32
+        preview_public_id = f"sas2_{preview_session_id.hex}"
+        expires = datetime.now(UTC) + timedelta(hours=1)
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            await owner.execute(
+                "INSERT INTO content.site_locale_base "
+                "(site_id,tag,enabled,is_default,position) VALUES "
+                "($1,'en-US',true,true,0),($1,'sl-SI',true,false,1)",
+                site.site_id,
+            )
+            await owner.execute(
+                "INSERT INTO content.site_locale_base "
+                "(site_id,tag,enabled,is_default,position) VALUES "
+                "($1,'en-US',true,true,0)",
+                foreign_site.site_id,
+            )
+            await owner.execute(
+                "INSERT INTO control.user_account "
+                "(id,identity_kind,oidc_issuer,oidc_subject,display_name) "
+                "VALUES ($1,'OIDC','https://issuer.test',$2,'Internal Render Preview')",
+                preview_user_id,
+                f"subject-{preview_user_id}",
+            )
+            await owner.execute(
+                "INSERT INTO control.site_membership "
+                "(site_id,user_account_id,role_key,delegation_ceiling) "
+                "VALUES ($1,$2,'SITE_EDITOR',2)",
+                site.site_id,
+                preview_user_id,
+            )
+            await owner.execute(
+                "INSERT INTO control.user_session "
+                "(id,public_id,secret_digest,csrf_secret_digest,user_account_id,"
+                "absolute_expires_at) VALUES ($1,$2,$3,$4,$5,$6)",
+                preview_session_id,
+                preview_public_id,
+                hashlib.sha256(preview_secret).digest(),
+                b"i" * 32,
+                preview_user_id,
+                expires,
+            )
+            await owner.execute(
+                "INSERT INTO control.workspace "
+                "(id,site_id,created_by,actor_type,title,delegation_preset,"
+                "status,expires_at) VALUES ($1,$2,$3,'HUMAN','Internal Render Preview',"
+                "'L2_SITE_EDITOR','ACTIVE',$4)",
+                preview_workspace_id,
+                site.site_id,
+                preview_user_id,
+                expires,
+            )
+            await owner.executemany(
+                "INSERT INTO content.page_base "
+                "(id,site_id,slug,title,status,locale,parent_id,route_template) "
+                "VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
+                [
+                    (
+                        docs_id,
+                        site.site_id,
+                        "docs",
+                        "Docs",
+                        "PUBLISHED",
+                        "en-US",
+                        None,
+                        None,
+                    ),
+                    (
+                        guide_id,
+                        site.site_id,
+                        "guide",
+                        "Vodnik",
+                        "PUBLISHED",
+                        "sl-SI",
+                        None,
+                        None,
+                    ),
+                    (
+                        draft_id,
+                        site.site_id,
+                        "draft-target",
+                        "Draft",
+                        "DRAFT",
+                        "en-US",
+                        None,
+                        None,
+                    ),
+                    (
+                        home_id,
+                        site.site_id,
+                        "home",
+                        "Home",
+                        "PUBLISHED",
+                        "en-US",
+                        None,
+                        None,
+                    ),
+                    (
+                        duplicate_root_id,
+                        site.site_id,
+                        "dupe",
+                        "Dupe root",
+                        "PUBLISHED",
+                        "en-US",
+                        None,
+                        None,
+                    ),
+                    (
+                        duplicate_child_id,
+                        site.site_id,
+                        "dupe",
+                        "Dupe child",
+                        "PUBLISHED",
+                        "en-US",
+                        home_id,
+                        None,
+                    ),
+                    (
+                        deleted_id,
+                        site.site_id,
+                        "deleted",
+                        "Deleted",
+                        "PUBLISHED",
+                        "en-US",
+                        None,
+                        None,
+                    ),
+                    (
+                        dynamic_id,
+                        site.site_id,
+                        "dynamic",
+                        "Dynamic",
+                        "PUBLISHED",
+                        "en-US",
+                        None,
+                        "{slug}",
+                    ),
+                    (
+                        foreign_page_id,
+                        foreign_site.site_id,
+                        "foreign",
+                        "Foreign",
+                        "PUBLISHED",
+                        "en-US",
+                        None,
+                        None,
+                    ),
+                ],
+            )
+            await owner.execute(
+                "INSERT INTO content.navigation_base "
+                "(id,site_id,key,label,labels,settings) VALUES "
+                "($1,$2,'primary','Primary',$3::jsonb,'{}'::jsonb)",
+                navigation_id,
+                site.site_id,
+                '{"en-US":"Primary","sl-SI":"Glavni meni"}',
+            )
+            await owner.execute(
+                "INSERT INTO content.navigation_item_base "
+                "(id,site_id,navigation_id,parent_id,parent_key,page_id,target_kind,"
+                "target_value,labels,locale,position) VALUES "
+                "($1,$2,$3,NULL,$4::uuid,NULL,'INTERNAL','/docs',$5::jsonb,NULL,0)",
+                item_id,
+                site.site_id,
+                navigation_id,
+                "00000000-0000-0000-0000-000000000000",
+                '{"en-US":"Docs","sl-SI":"Dokumenti"}',
+            )
+
+        service = RenderProjectionService(_RenderAdapter(public_pool, preview_pool))
+        selected_path = "/s/internal-render-locale-neutral/sl-si/guide"
+        global_projection = await service.canonical(
+            RenderPageRequest(authority="localhost", path=selected_path)
+        )
+        assert global_projection.route_kind == "page"
+        assert global_projection.locale == "sl-SI"
+        global_item = global_projection.navigation[0].items[0]
+        assert global_item.locale is None
+        assert global_item.target.value == "/docs"
+        assert global_item.label == "Dokumenti"
+
+        async def set_item(
+            target: str, *, locale: str | None = None, page_id: UUID | None = None
+        ) -> None:
+            async with owner_connection(
+                database.settings.resolved_owner_dsn(), expected_database=database.name
+            ) as owner:
+                await owner.execute(
+                    "UPDATE content.navigation_item_base SET page_id=$1, "
+                    "target_kind='INTERNAL',target_value=$2,locale=$3 WHERE id=$4",
+                    page_id,
+                    target,
+                    locale,
+                    item_id,
+                )
+
+        await set_item("/sl-SI/guide", locale="sl-SI")
+        locale_specific = await service.canonical(
+            RenderPageRequest(authority="localhost", path=selected_path)
+        )
+        assert locale_specific.route_kind == "page"
+        assert locale_specific.navigation[0].items[0].target.value == "/sl-si/guide"
+        assert locale_specific.navigation[0].items[0].locale == "sl-SI"
+
+        await set_item("/docs")
+        preview_request = RenderPreviewRequest(
+            authority="localhost",
+            path=selected_path,
+            workspace_id=preview_workspace_id,
+            session_token=format_session_token(preview_public_id, preview_secret),
+        )
+        await set_item("/draft-target")
+        with pytest.raises(ProjectionError, match="unavailable"):
+            await service.canonical(
+                RenderPageRequest(authority="localhost", path=selected_path)
+            )
+        draft_preview = await service.preview(preview_request)
+        assert draft_preview.route_kind == "page"
+        assert any(
+            item.target.value == "/draft-target"
+            for navigation in draft_preview.navigation
+            for item in navigation.items
+        )
+
+        await set_item("/deleted")
+        deleted_projection = await service.canonical(
+            RenderPageRequest(authority="localhost", path=selected_path)
+        )
+        assert deleted_projection.route_kind == "page"
+        assert deleted_projection.locale == "sl-SI"
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            await owner.execute("DELETE FROM content.page_base WHERE id=$1", deleted_id)
+        with pytest.raises(ProjectionError, match="unavailable"):
+            await service.canonical(
+                RenderPageRequest(authority="localhost", path=selected_path)
+            )
+
+        for hostile_target in ("/absent", "/dupe", "/{slug}", "/admin", "/foreign"):
+            await set_item(hostile_target)
+            with pytest.raises(ProjectionError, match="unavailable"):
+                await service.canonical(
+                    RenderPageRequest(authority="localhost", path=selected_path)
+                )
+        await set_item("/docs", page_id=docs_id)
+        with pytest.raises(ProjectionError, match="unavailable"):
+            await service.canonical(
+                RenderPageRequest(authority="localhost", path=selected_path)
+            )
+
+        await set_item("/docs")
+        recovered = await service.canonical(
+            RenderPageRequest(authority="localhost", path=selected_path)
+        )
+        assert recovered.route_kind == "page"
+        assert recovered.navigation[0].items[0].target.value == "/docs"
+        async with public_pool.acquire(timeout=3) as connection:
+            assert not connection.is_in_transaction()
+            assert await connection.fetchval("SELECT 1") == 1
+        async with preview_pool.acquire(timeout=3) as connection:
+            assert not connection.is_in_transaction()
+            assert await connection.fetchval("SELECT 1") == 1
+    finally:
+        await preview_pool.close()
         await public_pool.close()
         await control_pool.close()
 
