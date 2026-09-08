@@ -6,6 +6,11 @@ import {
   COMPONENT_TYPES,
   validateComponentType,
 } from "../src/index";
+import {
+  DESIGN_SYSTEM_DOCUMENT,
+  DESIGN_SYSTEM_VERSION,
+  RESPONSIVE_LABELS,
+} from "../src/design-system";
 
 describe("component catalog", () => {
   it("has a stable version", () => {
@@ -94,5 +99,24 @@ describe("component catalog", () => {
       required: ["text"],
       additional_properties: false,
     });
+  });
+
+  it("publishes the bounded design-system authority", () => {
+    expect(DESIGN_SYSTEM_VERSION).toBe("design-system/v1");
+    expect(DESIGN_SYSTEM_DOCUMENT.catalog_version).toBe("catalog-v1");
+    expect(DESIGN_SYSTEM_DOCUMENT.responsive_labels).toEqual(RESPONSIVE_LABELS);
+    expect(DESIGN_SYSTEM_DOCUMENT.tokens.alignment).toEqual([
+      "start",
+      "center",
+      "end",
+      "stretch",
+    ]);
+    expect(DESIGN_SYSTEM_DOCUMENT.components).toHaveLength(22);
+    expect(DESIGN_SYSTEM_DOCUMENT.components.map((item) => item.type)).toEqual(
+      Array.from(COMPONENT_TYPES),
+    );
+    expect(JSON.stringify(DESIGN_SYSTEM_DOCUMENT)).not.toMatch(
+      /javascript:|<script|style|font|selector|media query/i,
+    );
   });
 });

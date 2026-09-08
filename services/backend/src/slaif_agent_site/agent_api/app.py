@@ -26,6 +26,7 @@ from ..browser_worker_client import (
     load_browser_worker_credential,
 )
 from ..config import ConfigurationError, ServiceSettings
+from ..content_model.design_system import design_scope_metadata
 from ..control_api.route_policy import (
     RouteMutationClass,
     conditional_scope_metadata,
@@ -166,6 +167,11 @@ def build_public_agent_openapi_document(app: FastAPI) -> dict[str, object]:
             scopes = list(policy.required_scopes)
             operation["x-slaif-required-scopes"] = scopes
             operation["x-slaif-conditional-scopes"] = conditional_scope_metadata(policy)
+            if (
+                method.upper() == "PATCH"
+                and path == "/api/agent/v1/components/{component_id}"
+            ):
+                operation["x-slaif-component-design-scopes"] = design_scope_metadata()
             operation["x-slaif-mutation"] = (
                 policy.mutation_class is RouteMutationClass.MUTATION
             )

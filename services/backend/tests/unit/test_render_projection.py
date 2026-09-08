@@ -119,6 +119,7 @@ def test_projection_tree_uses_parent_slots_and_full_prop_schema() -> None:
             page_id=UUID("33333333-3333-4333-8333-333333333333"),
             site_id=SITE_ID,
         )
+
     with pytest.raises(ProjectionError, match="missing_prop"):
         _node_tree(
             [_node("Heading", node_id=str(heading_id), props={"text": "No level"})],
@@ -150,6 +151,45 @@ def test_projection_tree_uses_parent_slots_and_full_prop_schema() -> None:
                     "default",
                     0,
                     {"dangerouslySetInnerHTML": "<script>"},
+                )
+            ],
+            page_id=UUID("33333333-3333-4333-8333-333333333333"),
+            site_id=SITE_ID,
+        )
+
+
+def test_projection_tree_accepts_only_bounded_design_responsive_values() -> None:
+    valid = _node_tree(
+        [
+            _node(
+                "Heading",
+                node_id="44444444-4444-4444-8444-444444444444",
+                props={
+                    "text": "Responsive",
+                    "level": 2,
+                    "alignment": {"desktop": "start", "mobile": "center"},
+                },
+            )
+        ],
+        page_id=UUID("33333333-3333-4333-8333-333333333333"),
+        site_id=SITE_ID,
+    )
+    assert valid[0].props["alignment"] == {
+        "desktop": "start",
+        "mobile": "center",
+    }
+
+    with pytest.raises(ProjectionError, match="prop_type"):
+        _node_tree(
+            [
+                _node(
+                    "Heading",
+                    node_id="44444444-4444-4444-8444-444444444444",
+                    props={
+                        "text": "Unsafe",
+                        "level": 2,
+                        "alignment": {"desktop": "position:fixed"},
+                    },
                 )
             ],
             page_id=UUID("33333333-3333-4333-8333-333333333333"),

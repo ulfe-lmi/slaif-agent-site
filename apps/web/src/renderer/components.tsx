@@ -1,7 +1,11 @@
 /** One pure trusted renderer shared by Puck, public SSR, and workspace preview. */
 
 import { createElement, type ReactElement, type ReactNode } from "react";
-import type { ComponentDefinition } from "@slaif-agent-site/component-catalog";
+import {
+  isResponsiveValue,
+  RESPONSIVE_LABELS,
+  type ComponentDefinition,
+} from "@slaif-agent-site/component-catalog";
 import type { PageProjection, ProjectionNode } from "../sites/render";
 import { RENDERER_STYLESHEET } from "./styles";
 
@@ -33,6 +37,58 @@ function classValue(value: unknown, fallback: string): string {
   return typeof value === "string" && CLASS_VALUES.has(value) ? value : fallback;
 }
 
+function numberValue(
+  value: unknown,
+  minimum: number,
+  maximum: number,
+  fallback: number,
+) {
+  return typeof value === "number" &&
+    Number.isInteger(value) &&
+    value >= minimum &&
+    value <= maximum
+    ? value
+    : fallback;
+}
+
+function designClasses(
+  value: unknown,
+  prefix: string,
+  fallback: string,
+  normalize: (value: unknown) => string | number,
+): string {
+  if (isResponsiveValue(value)) {
+    const labels = RESPONSIVE_LABELS.filter((label) => value[label] !== undefined);
+    if (labels.length > 0) {
+      const first = labels[0]!;
+      const classes = [
+        `${prefix}--${normalize(value[first])}`,
+        ...labels
+          .slice(1)
+          .map((label) => `${prefix}--${label}-${normalize(value[label])}`),
+      ];
+      return classes.join(" ");
+    }
+  }
+  return `${prefix}--${normalize(value) || fallback}`;
+}
+
+function alignment(value: unknown): string {
+  return typeof value === "string" &&
+    ["start", "center", "end", "stretch"].includes(value)
+    ? value
+    : "stretch";
+}
+
+function token(value: unknown, allowed: Set<string>, fallback: string): string {
+  return typeof value === "string" && allowed.has(value) ? value : fallback;
+}
+
+const GAP_VALUES = new Set(["none", "sm", "md", "lg"]);
+const WIDTH_VALUES = new Set(["sm", "md", "lg", "xl"]);
+const DIRECTION_VALUES = new Set(["vertical", "horizontal"]);
+const SIZE_VALUES = new Set(["xs", "sm", "md", "lg", "xl"]);
+
 function text(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
@@ -45,7 +101,7 @@ function safeHref(value: unknown): string {
 function Section({ props, children }: RenderProps) {
   return (
     <section
-      className={`renderer-section renderer-section--${classValue(props.variant, "default")}`}
+      className={`renderer-section ${designClasses(props.variant, "renderer-section", "default", (value) => token(value, new Set(["default", "full", "narrow"]), "default"))} ${designClasses(props.alignment, "renderer-align", "stretch", alignment)}`}
     >
       {children}
     </section>
@@ -54,32 +110,34 @@ function Section({ props, children }: RenderProps) {
 function Container({ props, children }: RenderProps) {
   return (
     <div
-      className={`renderer-container renderer-container--${classValue(props.width, "md")}`}
+      className={`renderer-container ${designClasses(props.width, "renderer-container", "md", (value) => token(value, WIDTH_VALUES, "md"))} ${designClasses(props.alignment, "renderer-align", "stretch", alignment)}`}
     >
       {children}
     </div>
   );
 }
 function Columns({ props, children }: RenderProps) {
-  const count =
-    typeof props.count === "number" && props.count >= 1 && props.count <= 4
-      ? props.count
-      : 2;
   return (
-    <div className={`renderer-columns renderer-columns--${count}`}>{children}</div>
+    <div
+      className={`renderer-columns ${designClasses(props.count, "renderer-columns", "2", (value) => numberValue(value, 1, 4, 2))} ${designClasses(props.gap, "renderer-gap", "md", (value) => token(value, GAP_VALUES, "md"))} ${designClasses(props.alignment, "renderer-align", "stretch", alignment)}`}
+    >
+      {children}
+    </div>
   );
 }
 function Grid({ props, children }: RenderProps) {
-  const columns =
-    typeof props.columns === "number" && props.columns >= 1 && props.columns <= 12
-      ? props.columns
-      : 1;
-  return <div className={`renderer-grid renderer-grid--${columns}`}>{children}</div>;
+  return (
+    <div
+      className={`renderer-grid ${designClasses(props.columns, "renderer-grid", "1", (value) => numberValue(value, 1, 12, 1))} ${designClasses(props.gap, "renderer-gap", "md", (value) => token(value, GAP_VALUES, "md"))} ${designClasses(props.alignment, "renderer-align", "stretch", alignment)}`}
+    >
+      {children}
+    </div>
+  );
 }
 function Stack({ props, children }: RenderProps) {
   return (
     <div
-      className={`renderer-stack renderer-stack--${classValue(props.direction, "vertical")} renderer-stack-gap--${classValue(props.gap, "md")}`}
+      className={`renderer-stack ${designClasses(props.direction, "renderer-stack", "vertical", (value) => token(value, DIRECTION_VALUES, "vertical"))} ${designClasses(props.gap, "renderer-stack-gap", "md", (value) => token(value, GAP_VALUES, "md"))} ${designClasses(props.alignment, "renderer-align", "stretch", alignment)}`}
     >
       {children}
     </div>
@@ -89,7 +147,7 @@ function Spacer({ props }: RenderProps) {
   return (
     <div
       aria-hidden="true"
-      className={`renderer-spacer renderer-spacer--${classValue(props.size, "md")}`}
+      className={`renderer-spacer ${designClasses(props.size, "renderer-spacer", "md", (value) => token(value, SIZE_VALUES, "md"))}`}
     />
   );
 }
@@ -100,7 +158,9 @@ function Heading({ props }: RenderProps) {
       : 2;
   return createElement(
     `h${level}`,
-    { className: "renderer-heading" },
+    {
+      className: `renderer-heading ${designClasses(props.alignment, "renderer-align", "start", alignment)}`,
+    },
     text(props.text),
   );
 }

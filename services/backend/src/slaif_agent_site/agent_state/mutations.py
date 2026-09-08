@@ -30,15 +30,14 @@ from slaif_agent_site.agent_state.locks import (
     acquire_workspace_lifecycle_lock,
     prelocked_cow_session,
 )
-from slaif_agent_site.content_model.component_catalog import (
-    component_definition,
-    validate_component_props,
-)
 from slaif_agent_site.content_model.composition_models import (
     AgentCreateCompositionNodeRequest,
     AgentMoveCompositionNodeRequest,
     AgentUpdateCompositionNodeRequest,
     CompositionNodeRecord,
+)
+from slaif_agent_site.content_model.design_system import (
+    validate_agent_component_props,
 )
 from slaif_agent_site.content_model.item_models import (
     AgentUpdateContentItemRequest,
@@ -1212,16 +1211,9 @@ class AgentCowContentModelService(ContentModelService):
         request: AgentUpdateCompositionNodeRequest,
     ) -> CompositionNodeRecord:
         current = await self.get_component_for_site(site_id, component_id)
-        merged = {**current.props, **request.props}
         try:
-            definition = component_definition(current.component_type)
-            if any(
-                key in definition.props and definition.props[key].authority == "design"
-                for key in request.props
-            ):
-                raise ValueError("design prop")
-            props = validate_component_props(
-                current.component_type, merged, allow_design=True
+            props = validate_agent_component_props(
+                current.component_type, current.props, request.props
             )
         except (TypeError, ValueError) as error:
             raise ContentModelServiceError(

@@ -208,6 +208,8 @@ NODE_REQUIRED_FILES = (
     "services/browser-worker/tsconfig.json",
     "tsconfig.base.json",
     "tsconfig.json",
+    "packages/component-catalog/src/design-system.ts",
+    "packages/component-catalog/src/design-system-v1.json",
 ) + tuple(
     path
     for slug in WORKSPACE_PACKAGES
@@ -256,6 +258,7 @@ REQUIRED_FILES = (
         "tools/contracts/__init__.py",
         "tools/contracts/generate_agent_openapi.py",
         "tools/generate_component_catalog.py",
+        "tools/generate_design_system.py",
         "packages/component-catalog/src/catalog-v1.json",
         "packages/composition-schema/src/catalog-v1.json",
         ".dockerignore",
@@ -284,6 +287,7 @@ REQUIRED_FILES = (
         "services/backend/src/slaif_agent_site/control_api/database.py",
         "services/backend/src/slaif_agent_site/db/alembic/versions/014_001_human_rbac.py",
         "services/backend/src/slaif_agent_site/db/alembic/versions/015_001_admin_read_model.py",
+        "services/backend/src/slaif_agent_site/db/alembic/versions/061_001_agent_component_design_semantics.py",
         "services/backend/src/slaif_agent_site/application.py",
         "services/backend/src/slaif_agent_site/authority.py",
         "services/backend/src/slaif_agent_site/config.py",
@@ -344,6 +348,7 @@ REQUIRED_FILES = (
         "services/backend/tests/unit/test_errors.py",
         "services/backend/tests/unit/test_health_apps.py",
         "services/backend/tests/unit/test_agent_openapi.py",
+        "services/backend/tests/unit/test_design_system.py",
         "services/backend/tests/unit/test_identity_password.py",
         "services/backend/tests/unit/test_local_roles.py",
         "services/backend/tests/unit/test_process_entrypoints.py",

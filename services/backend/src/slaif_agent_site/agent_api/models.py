@@ -42,6 +42,7 @@ class AgentCapabilityContext(BaseModel):
             "allowed_type_ids",
             "allowed_type_keys",
             "allowed_component_types",
+            "allowed_component_variants",
             "max_content_types",
             "max_fields_per_type",
             "max_components_per_page",
@@ -61,6 +62,7 @@ class AgentCapabilityContext(BaseModel):
             "max_visible_navigation_items",
             "max_navigation_depth",
             "max_visible_redirects",
+            "responsive_design_enabled",
         }
         unknown = set(self.resource_constraints) - allowed
         if unknown:
@@ -70,6 +72,7 @@ class AgentCapabilityContext(BaseModel):
             "allowed_type_ids",
             "allowed_type_keys",
             "allowed_component_types",
+            "allowed_component_variants",
         ):
             value = constraints.get(key)
             if value is not None and (
@@ -154,6 +157,9 @@ class AgentCapabilityContext(BaseModel):
         enabled = constraints.get("delete_enabled")
         if enabled is not None and not isinstance(enabled, bool):
             raise ValueError("delete_enabled is malformed")
+        responsive_enabled = constraints.get("responsive_design_enabled")
+        if responsive_enabled is not None and not isinstance(responsive_enabled, bool):
+            raise ValueError("responsive design setting is malformed")
         return self
 
 
@@ -227,6 +233,56 @@ class AgentComponentCatalogResponse(BaseModel):
     version: Literal["catalog-v1"]
     composition_schema_version: Literal["site-composition/v1"]
     components: tuple[AgentComponentDescriptor, ...]
+
+
+class AgentDesignPropertyDescriptor(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    name: str
+    type: Literal["enum", "number"]
+    values: tuple[str, ...] | None = None
+    minimum: int | float | None = None
+    maximum: int | float | None = None
+    default: str | int | float
+    required: bool
+    responsive: Literal[True]
+    scope: Literal["component-props:write", "component-variant:write", "layout:write"]
+    token: str
+
+
+class AgentDesignComponentDescriptor(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    type: str
+    variants: tuple[str, ...]
+    properties: tuple[AgentDesignPropertyDescriptor, ...]
+
+
+class AgentDesignTokenSet(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    spacing: tuple[str, ...]
+    gap: tuple[str, ...]
+    width: tuple[str, ...]
+    alignment: tuple[str, ...]
+    columns: tuple[int, ...]
+    radius: tuple[str, ...]
+    shadow: tuple[str, ...]
+    aspect_ratio: tuple[str, ...]
+
+
+class AgentDesignSystemResponse(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    version: Literal["design-system/v1"]
+    catalog_version: Literal["catalog-v1"]
+    composition_schema_version: Literal["site-composition/v1"]
+    renderer_version: Literal["renderer-v1"]
+    responsive_labels: tuple[Literal["desktop", "tablet", "mobile"], ...]
+    responsive_scope: Literal["responsive-design:write"]
+    responsive_fallback: tuple[Literal["desktop", "tablet", "mobile"], ...]
+    tokens: AgentDesignTokenSet
+    components: tuple[AgentDesignComponentDescriptor, ...]
 
 
 class AgentPermissionsResponse(BaseModel):

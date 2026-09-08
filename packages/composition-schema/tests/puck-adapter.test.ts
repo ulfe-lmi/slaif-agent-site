@@ -80,6 +80,25 @@ describe("puck adapter", () => {
     expect(puckToComposition(puck)).toEqual(nodes);
   });
 
+  it("preserves bounded responsive design props through Puck", () => {
+    const responsive = [
+      {
+        ...nodes[0]!,
+        props: {
+          variant: { desktop: "default", tablet: "narrow", mobile: "full" },
+          alignment: { desktop: "start", tablet: "center", mobile: "stretch" },
+        },
+      },
+    ];
+    const puck = compositionToPuck(responsive);
+    expect(puckToComposition(puck)).toEqual(responsive);
+    expect(generatePuckConfig().Section!.fields.variant?.options).toEqual([
+      "default",
+      "full",
+      "narrow",
+    ]);
+  });
+
   it("preserves nested parent and slot metadata through a Puck edit", () => {
     const puck = compositionToPuck([
       ...nodes,

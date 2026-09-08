@@ -87,6 +87,53 @@ describe("trusted catalog renderer behavior", () => {
     expect(rendered.join(" ")).not.toContain("<b>text</b>");
   });
 
+  it("renders only bounded responsive design classes", () => {
+    const section = renderToStaticMarkup(
+      renderComponent(
+        {
+          componentType: "Section",
+          props: {
+            variant: { desktop: "default", tablet: "narrow", mobile: "full" },
+            alignment: { desktop: "start", tablet: "center", mobile: "stretch" },
+          },
+        },
+        "en",
+      ),
+    );
+    const grid = renderToStaticMarkup(
+      renderComponent(
+        {
+          componentType: "Grid",
+          props: {
+            columns: { desktop: 4, tablet: 2, mobile: 1 },
+            gap: { desktop: "lg", tablet: "md", mobile: "sm" },
+            alignment: "center",
+          },
+        },
+        "en",
+      ),
+    );
+    const heading = renderToStaticMarkup(
+      renderComponent(
+        {
+          componentType: "Heading",
+          props: { text: "Safe heading", level: 2, alignment: "center" },
+        },
+        "en",
+      ),
+    );
+    expect(section).toContain("renderer-section--default");
+    expect(section).toContain("renderer-section--tablet-narrow");
+    expect(section).toContain("renderer-section--mobile-full");
+    expect(section).toContain("renderer-align--tablet-center");
+    expect(grid).toContain("renderer-grid--4");
+    expect(grid).toContain("renderer-grid--tablet-2");
+    expect(grid).toContain("renderer-grid--mobile-1");
+    expect(grid).toContain("renderer-gap--tablet-md");
+    expect(heading).toContain("renderer-align--center");
+    expect(section + grid + heading).not.toMatch(/style=|class="[^"]*javascript/i);
+  });
+
   it("rejects malformed nested data before rendering", () => {
     expect(() =>
       compositionToPuck([

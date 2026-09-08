@@ -126,9 +126,35 @@ controlled data directly. Selection follows the moved component at its
 destination, and the move participates in Puck's visible undo/redo history
 without creating another semantic editor operation. A later deliberate human
 selection always takes precedence and releases that temporary continuity.
-This order does not implement publication, preview authority,
-workspace-management UI, freeze/review/promotion, responsive preview, or new
-catalog/storage types.
+The component-local design layer is exposed separately from the immutable
+`catalog-v1` bytes. `GET /api/agent/v1/design-system` requires `theme:read` and
+returns the typed `design-system/v1` authority bound to `catalog-v1`,
+`site-composition/v1`, and `renderer-v1`. It enumerates only the fixed
+`desktop`/`tablet`/`mobile` labels, bounded spacing/gap/width/alignment/
+columns/radius/shadow/aspect-ratio choices, and the exact variant and local
+layout properties supported by each current component. It exposes no CSS,
+class, selector, breakpoint, URL, font, color, HTML, or executable primitive.
+
+Component PATCH remains the one normalized mutation boundary. The server and
+trusted PostgreSQL helper derive the required scope from the actual changed
+property: content uses `component-content-props:write`, general design uses
+`component-props:write`, variants use `component-variant:write`, layout uses
+`layout:write`, and responsive maps additionally use
+`responsive-design:write`. Mixed changes require the union; caller-supplied
+authority labels are ignored. Responsive maps contain only the three fixed
+labels and use deterministic desktop/tablet/mobile fallback, so the same
+normalized props are consumed by Puck, Render, and Web. Resource constraints
+can disable responsive editing or narrow allowed variants, and invalid,
+foreign, stale, wrong-version, or raw design input fails closed without a
+mutation envelope. The component PATCH OpenAPI operation publishes the exact
+component/property scope table in `x-slaif-component-design-scopes`, generated
+from the same authority; its ordinary `x-slaif-conditional-scopes` field
+continues to describe top-level request-field conditions.
+
+This order does not implement publication, review/freeze/promotion,
+workspace-management UI, site-global theme tokens, global regions,
+header/footer architecture, or new catalog/storage types. A full responsive
+browser sweep remains a later combined acceptance round.
 
 ## Private human Media API
 
@@ -280,10 +306,12 @@ returns the exact visible nodes and
 capability- and workspace-confined. Component creation accepts a catalog type,
 parent, slot, and at most one `before_component_id` or `after_component_id`
 sibling anchor. The server assigns dense sibling `order_key` values; callers
-cannot submit or patch a raw order key. `PATCH` changes content-authority
-props only and requires the current positive `expected_row_version`; catalog
-design props are rejected. `POST .../move` changes parent/slot and uses the
-same mutually exclusive semantic anchors plus the current row version. A
+cannot submit or patch a raw order key. `PATCH` changes bounded content and/or
+design props and requires the current positive `expected_row_version`; the
+server derives the exact required scope union from changed paths, while the
+trusted PostgreSQL helper repeats that derivation. `POST .../move` changes
+parent/slot and uses the same mutually exclusive semantic anchors plus the
+current row version. A
 successful move versions the moved node and any shifted siblings. `DELETE`
 requires the current row version, rejects a node with children, and returns the
 deleted record after dense resequencing. All four mutation forms are

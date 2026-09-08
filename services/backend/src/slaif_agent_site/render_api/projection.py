@@ -28,7 +28,9 @@ from slaif_agent_site.content_model.component_catalog import (
     MAX_COMPONENT_PROPS_BYTES,
     MAX_COMPONENTS_PER_PAGE,
     TRUSTED_COMPONENT_TYPES,
-    validate_component_props,
+)
+from slaif_agent_site.content_model.design_system import (
+    validate_agent_component_props,
 )
 from slaif_agent_site.content_model.query_dsl import (
     MAX_CANDIDATES,
@@ -316,7 +318,7 @@ def _validate_nested(value: Any, *, depth: int = 0) -> None:
 
 def _validate_props(component_type: str, props: dict[str, Any]) -> None:
     try:
-        validate_component_props(component_type, props, allow_design=True)
+        validate_agent_component_props(component_type, props, {})
     except ValueError as error:
         message = str(error)
         reason = {

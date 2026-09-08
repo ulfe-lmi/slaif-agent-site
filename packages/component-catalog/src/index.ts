@@ -176,3 +176,4 @@ export function validateComponentType(type: string): boolean {
 }
 
 export const COMPONENT_CATALOG_DOCUMENT = catalogDocument;
+export * from "./design-system";

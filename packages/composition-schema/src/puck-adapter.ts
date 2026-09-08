@@ -1,4 +1,10 @@
 import catalog from "./catalog-v1.json" with { type: "json" };
+import {
+  designComponent,
+  designProperty,
+  isResponsiveValue,
+  type DesignProperty,
+} from "./design-system";
 
 /**
  * Puck adapter: maps between the normalized composition tree and Puck's
@@ -108,6 +114,24 @@ export interface PuckComponentConfig {
   fields: Record<string, PuckField>;
 }
 
+function assertDesignValue(value: unknown, definition: DesignProperty): void {
+  if (isResponsiveValue(value)) {
+    for (const item of Object.values(value)) assertDesignValue(item, definition);
+    return;
+  }
+  if (definition.type === "enum") {
+    if (typeof value !== "string" || !definition.values?.includes(value))
+      throw new Error("invalid-component-props");
+    return;
+  }
+  if (typeof value !== "number" || !Number.isFinite(value))
+    throw new Error("invalid-component-props");
+  if (definition.minimum !== undefined && value < definition.minimum)
+    throw new Error("invalid-component-props");
+  if (definition.maximum !== undefined && value > definition.maximum)
+    throw new Error("invalid-component-props");
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -207,6 +231,11 @@ function assertCatalogProps(
   }
   for (const [key, value] of Object.entries(props)) {
     const definition = definitions[key];
+    const design = designProperty(componentType, key);
+    if (design) {
+      assertDesignValue(value, design);
+      continue;
+    }
     if (!definition) throw new Error("invalid-component-props");
     assertSchema(value, definition.schema ?? definition);
   }
@@ -241,10 +270,26 @@ function orderedNodes(
 export function generatePuckConfig(): Record<string, PuckComponentConfig> {
   const config: Record<string, PuckComponentConfig> = {};
   for (const componentType of CATALOG_TYPES) {
+    const fields: Record<string, PuckField> = {};
+    for (const property of designComponent(componentType)?.properties ?? []) {
+      fields[property.name] =
+        property.type === "enum"
+          ? {
+              type: "select",
+              label: `${property.name} (responsive-safe)`,
+              options: [...(property.values ?? [])],
+            }
+          : {
+              type: "number",
+              label: `${property.name} (responsive-safe)`,
+              ...(property.minimum === undefined ? {} : { min: property.minimum }),
+              ...(property.maximum === undefined ? {} : { max: property.maximum }),
+            };
+    }
     config[componentType] = {
       type: componentType,
       label: componentType,
-      fields: {},
+      fields,
     };
   }
   return config;

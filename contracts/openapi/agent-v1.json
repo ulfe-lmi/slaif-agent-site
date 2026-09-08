@@ -691,6 +691,292 @@
         "title": "AgentDeleteRequest",
         "type": "object"
       },
+      "AgentDesignComponentDescriptor": {
+        "additionalProperties": false,
+        "properties": {
+          "properties": {
+            "items": {
+              "$ref": "#/components/schemas/AgentDesignPropertyDescriptor"
+            },
+            "title": "Properties",
+            "type": "array"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          },
+          "variants": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Variants",
+            "type": "array"
+          }
+        },
+        "required": [
+          "type",
+          "variants",
+          "properties"
+        ],
+        "title": "AgentDesignComponentDescriptor",
+        "type": "object"
+      },
+      "AgentDesignPropertyDescriptor": {
+        "additionalProperties": false,
+        "properties": {
+          "default": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "title": "Default"
+          },
+          "maximum": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Maximum"
+          },
+          "minimum": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Minimum"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "required": {
+            "title": "Required",
+            "type": "boolean"
+          },
+          "responsive": {
+            "const": true,
+            "title": "Responsive",
+            "type": "boolean"
+          },
+          "scope": {
+            "enum": [
+              "component-props:write",
+              "component-variant:write",
+              "layout:write"
+            ],
+            "title": "Scope",
+            "type": "string"
+          },
+          "token": {
+            "title": "Token",
+            "type": "string"
+          },
+          "type": {
+            "enum": [
+              "enum",
+              "number"
+            ],
+            "title": "Type",
+            "type": "string"
+          },
+          "values": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Values"
+          }
+        },
+        "required": [
+          "name",
+          "type",
+          "default",
+          "required",
+          "responsive",
+          "scope",
+          "token"
+        ],
+        "title": "AgentDesignPropertyDescriptor",
+        "type": "object"
+      },
+      "AgentDesignSystemResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "catalog_version": {
+            "const": "catalog-v1",
+            "title": "Catalog Version",
+            "type": "string"
+          },
+          "components": {
+            "items": {
+              "$ref": "#/components/schemas/AgentDesignComponentDescriptor"
+            },
+            "title": "Components",
+            "type": "array"
+          },
+          "composition_schema_version": {
+            "const": "site-composition/v1",
+            "title": "Composition Schema Version",
+            "type": "string"
+          },
+          "renderer_version": {
+            "const": "renderer-v1",
+            "title": "Renderer Version",
+            "type": "string"
+          },
+          "responsive_fallback": {
+            "items": {
+              "enum": [
+                "desktop",
+                "tablet",
+                "mobile"
+              ],
+              "type": "string"
+            },
+            "title": "Responsive Fallback",
+            "type": "array"
+          },
+          "responsive_labels": {
+            "items": {
+              "enum": [
+                "desktop",
+                "tablet",
+                "mobile"
+              ],
+              "type": "string"
+            },
+            "title": "Responsive Labels",
+            "type": "array"
+          },
+          "responsive_scope": {
+            "const": "responsive-design:write",
+            "title": "Responsive Scope",
+            "type": "string"
+          },
+          "tokens": {
+            "$ref": "#/components/schemas/AgentDesignTokenSet"
+          },
+          "version": {
+            "const": "design-system/v1",
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "version",
+          "catalog_version",
+          "composition_schema_version",
+          "renderer_version",
+          "responsive_labels",
+          "responsive_scope",
+          "responsive_fallback",
+          "tokens",
+          "components"
+        ],
+        "title": "AgentDesignSystemResponse",
+        "type": "object"
+      },
+      "AgentDesignTokenSet": {
+        "additionalProperties": false,
+        "properties": {
+          "alignment": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Alignment",
+            "type": "array"
+          },
+          "aspect_ratio": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Aspect Ratio",
+            "type": "array"
+          },
+          "columns": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Columns",
+            "type": "array"
+          },
+          "gap": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Gap",
+            "type": "array"
+          },
+          "radius": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Radius",
+            "type": "array"
+          },
+          "shadow": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Shadow",
+            "type": "array"
+          },
+          "spacing": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Spacing",
+            "type": "array"
+          },
+          "width": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Width",
+            "type": "array"
+          }
+        },
+        "required": [
+          "spacing",
+          "gap",
+          "width",
+          "alignment",
+          "columns",
+          "radius",
+          "shadow",
+          "aspect_ratio"
+        ],
+        "title": "AgentDesignTokenSet",
+        "type": "object"
+      },
       "AgentDiscoveryResponse": {
         "properties": {
           "component_catalog_version": {
@@ -4731,6 +5017,128 @@
           }
         ],
         "summary": "Update Component",
+        "x-slaif-component-design-scopes": [
+          {
+            "component_type": "Section",
+            "property": "variant",
+            "required_scopes": [
+              "component-variant:write",
+              "responsive-design:write"
+            ]
+          },
+          {
+            "component_type": "Section",
+            "property": "alignment",
+            "required_scopes": [
+              "layout:write",
+              "responsive-design:write"
+            ]
+          },
+          {
+            "component_type": "Container",
+            "property": "width",
+            "required_scopes": [
+              "layout:write",
+              "responsive-design:write"
+            ]
+          },
+          {
+            "component_type": "Container",
+            "property": "alignment",
+            "required_scopes": [
+              "layout:write",
+              "responsive-design:write"
+            ]
+          },
+          {
+            "component_type": "Columns",
+            "property": "count",
+            "required_scopes": [
+              "layout:write",
+              "responsive-design:write"
+            ]
+          },
+          {
+            "component_type": "Columns",
+            "property": "gap",
+            "required_scopes": [
+              "layout:write",
+              "responsive-design:write"
+            ]
+          },
+          {
+            "component_type": "Columns",
+            "property": "alignment",
+            "required_scopes": [
+              "layout:write",
+              "responsive-design:write"
+            ]
+          },
+          {
+            "component_type": "Grid",
+            "property": "columns",
+            "required_scopes": [
+              "layout:write",
+              "responsive-design:write"
+            ]
+          },
+          {
+            "component_type": "Grid",
+            "property": "gap",
+            "required_scopes": [
+              "layout:write",
+              "responsive-design:write"
+            ]
+          },
+          {
+            "component_type": "Grid",
+            "property": "alignment",
+            "required_scopes": [
+              "layout:write",
+              "responsive-design:write"
+            ]
+          },
+          {
+            "component_type": "Stack",
+            "property": "direction",
+            "required_scopes": [
+              "layout:write",
+              "responsive-design:write"
+            ]
+          },
+          {
+            "component_type": "Stack",
+            "property": "gap",
+            "required_scopes": [
+              "layout:write",
+              "responsive-design:write"
+            ]
+          },
+          {
+            "component_type": "Stack",
+            "property": "alignment",
+            "required_scopes": [
+              "layout:write",
+              "responsive-design:write"
+            ]
+          },
+          {
+            "component_type": "Spacer",
+            "property": "size",
+            "required_scopes": [
+              "layout:write",
+              "responsive-design:write"
+            ]
+          },
+          {
+            "component_type": "Heading",
+            "property": "alignment",
+            "required_scopes": [
+              "layout:write",
+              "responsive-design:write"
+            ]
+          }
+        ],
         "x-slaif-conditional-scopes": [],
         "x-slaif-idempotency": "required",
         "x-slaif-mutation": true,
@@ -8678,6 +9086,125 @@
         "x-slaif-mutation": true,
         "x-slaif-required-scopes": [
           "field-definition:write"
+        ]
+      }
+    },
+    "/api/agent/v1/design-system": {
+      "get": {
+        "operationId": "get_design_system_api_agent_v1_design_system_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentDesignSystemResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Malformed request or missing/invalid idempotency key."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Authentication is required."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The capability scope or resource constraint is not sufficient."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The resource is not available to this capability."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The request conflicts with current state or idempotency."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The request exceeds the bounded body limit."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The request failed domain validation."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The request exceeds an enforced quota."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The service is temporarily unavailable."
+          }
+        },
+        "security": [
+          {
+            "AgentCapability": []
+          }
+        ],
+        "summary": "Get Design System",
+        "x-slaif-conditional-scopes": [],
+        "x-slaif-idempotency": "not-applicable",
+        "x-slaif-mutation": false,
+        "x-slaif-required-scopes": [
+          "theme:read"
         ]
       }
     },

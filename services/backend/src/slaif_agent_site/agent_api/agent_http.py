@@ -17,6 +17,7 @@ from fastapi import APIRouter, Header, Request
 from slaif_agent_site.agent_api.models import (
     AgentComponentCatalogResponse,
     AgentDeleteRequest,
+    AgentDesignSystemResponse,
     AgentDiscoveryResponse,
     AgentFieldPrimitiveDescriptor,
     AgentMutationResponse,
@@ -49,6 +50,11 @@ from slaif_agent_site.content_model.composition_models import (
     AgentMoveCompositionNodeRequest,
     AgentUpdateCompositionNodeRequest,
     CompositionNodeRecord,
+)
+from slaif_agent_site.content_model.design_system import (
+    design_system_document,
+    required_scopes_for_component_update,
+    validate_design_resource_constraints,
 )
 from slaif_agent_site.content_model.item_models import (
     AgentUpdateContentItemRequest,
@@ -241,6 +247,13 @@ async def get_component_catalog(
         request, context, lambda service: service.component_catalog()
     )
     return AgentComponentCatalogResponse.model_validate(catalog)
+
+
+@router.get("/design-system", response_model_exclude_none=True)
+async def get_design_system(request: Request) -> AgentDesignSystemResponse:
+    context = await _authenticate(request)
+    _require_scope(context, "theme:read")
+    return AgentDesignSystemResponse.model_validate(design_system_document())
 
 
 @router.get("/content-model/primitives")
@@ -1596,6 +1609,31 @@ async def update_component(
 ) -> AgentMutationResponse:
     context = await _authenticate(request)
     _require_scope(context, "component-content-props:write")
+    current = cast(
+        CompositionNodeRecord,
+        await _execute_read(
+            request,
+            context,
+            lambda service: service.get_component(context.site_id, component_id),
+        ),
+    )
+    try:
+        required_scopes = required_scopes_for_component_update(
+            current.component_type, current.props, body.props
+        )
+    except (TypeError, ValueError):
+        raise DomainValidationError() from None
+    for scope in required_scopes:
+        _require_scope(context, scope)
+    try:
+        validate_design_resource_constraints(
+            current.component_type,
+            current.props,
+            body.props,
+            context.resource_constraints,
+        )
+    except ValueError:
+        raise AuthorizationError() from None
     return await _execute_mutation(
         request,
         context,

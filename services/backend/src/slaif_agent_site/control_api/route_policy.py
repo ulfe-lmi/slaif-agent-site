@@ -1067,6 +1067,11 @@ ROUTE_POLICIES: Final[tuple[RoutePolicy, ...]] = (
             ),
             (
                 "GET",
+                "/api/agent/v1/design-system",
+                ("theme:read",),
+            ),
+            (
+                "GET",
                 "/api/agent/v1/content-model/primitives",
                 ("validation:read",),
             ),

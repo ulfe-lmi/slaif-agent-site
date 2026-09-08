@@ -4,6 +4,8 @@ import { createUsePuck, DropZone, Puck, type Config, type Data } from "@measured
 import {
   COMPONENT_CATALOG,
   COMPONENT_TYPES,
+  designComponent,
+  type DesignProperty,
   type ComponentDefinition,
 } from "@slaif-agent-site/component-catalog";
 import {
@@ -62,6 +64,24 @@ function fieldFor(
   return { type: "text", label: name };
 }
 
+function designFieldFor(
+  property: DesignProperty,
+): PuckComponentConfig["fields"][string] {
+  if (property.type === "enum") {
+    return {
+      type: "select",
+      label: `${property.name} (responsive-safe)`,
+      options: [...(property.values ?? [])],
+    };
+  }
+  return {
+    type: "number",
+    label: `${property.name} (responsive-safe)`,
+    ...(property.minimum === undefined ? {} : { min: property.minimum }),
+    ...(property.maximum === undefined ? {} : { max: property.maximum }),
+  };
+}
+
 function trustedPuckComponent(
   definition: ComponentDefinition,
   props: Record<string, unknown>,
@@ -105,12 +125,20 @@ const PUCK_CONFIG = {
       definition.type,
       {
         label: definition.type,
-        fields: Object.fromEntries(
-          Object.keys(definition.propsSchema).map((name) => [
-            name,
-            fieldFor(definition, name),
-          ]),
-        ),
+        fields: {
+          ...Object.fromEntries(
+            Object.keys(definition.propsSchema).map((name) => [
+              name,
+              fieldFor(definition, name),
+            ]),
+          ),
+          ...Object.fromEntries(
+            (designComponent(definition.type)?.properties ?? []).map((property) => [
+              property.name,
+              designFieldFor(property),
+            ]),
+          ),
+        },
         render: (props: Record<string, unknown>) =>
           trustedPuckComponent(definition, props),
       },
