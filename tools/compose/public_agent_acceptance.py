@@ -97,6 +97,13 @@ def _semantic_contract(
     ]:
         if (
             len(segments) == 7
+            and segments[4] == "pages"
+            and segments[6] == "components"
+            and method == "POST"
+        ):
+            return "composition_node", "COMPONENT_CREATED", "mutation"
+        if (
+            len(segments) == 7
             and segments[4] == "content-items"
             and segments[5] == "types"
         ):
@@ -377,6 +384,15 @@ def _canonical_request_body(
         }
     if resource_type == "content_type" and action == "CONTENT_TYPE_CREATED":
         defaults = {"labels": {}, "settings": {}}
+    if resource_type == "composition_node" and action == "COMPONENT_CREATED":
+        defaults = {
+            "parent_id": None,
+            "slot_key": "default",
+            "order_key": 0,
+            "before_component_id": None,
+            "after_component_id": None,
+            "props": {},
+        }
     if resource_type == "content_item" and action == "CONTENT_ITEM_CREATED":
         defaults = {"status": "DRAFT", "values": {}}
     if resource_type == "page" and action == "PAGE_CREATED":
@@ -1539,6 +1555,7 @@ def run_acceptance(project: str) -> None:
             raise ProofFailure("public-openapi-bytes-drift")
         contract = json.loads(contract_bytes)
         required_paths = {
+            "/api/agent/v1/component-catalog",
             "/api/agent/v1/session",
             "/api/agent/v1/permissions",
             "/api/agent/v1/content-model/primitives",
@@ -1557,6 +1574,8 @@ def run_acceptance(project: str) -> None:
             "/api/agent/v1/navigation/{navigation_id}/items",
             "/api/agent/v1/navigation-items/{item_id}",
             "/api/agent/v1/navigation-items/{item_id}:move",
+            "/api/agent/v1/components/{component_id}",
+            "/api/agent/v1/components/{component_id}/move",
         }
         if not required_paths <= set(contract["paths"]):
             raise ProofFailure("public-openapi-route-inventory-incomplete")
@@ -1628,6 +1647,16 @@ def run_acceptance(project: str) -> None:
         permissions = _agent_request(
             client, primary_token, "/api/agent/v1/permissions", label="permissions"
         )
+        catalog = _agent_request(
+            client, primary_token, "/api/agent/v1/component-catalog", label="catalog"
+        )
+        if (
+            catalog.get("version") != "catalog-v1"
+            or catalog.get("composition_schema_version") != "site-composition/v1"
+            or not isinstance(catalog.get("components"), list)
+            or len(catalog["components"]) != 22
+        ):
+            raise ProofFailure("component-catalog-invalid")
         required_scopes = {
             "site:read",
             "content-model:create",
@@ -1657,6 +1686,10 @@ def run_acceptance(project: str) -> None:
             "route:write",
             "composition:read",
             "component-structure:create",
+            "component-catalog:read",
+            "component-content-props:write",
+            "component-structure:move",
+            "component-structure:delete",
             "validation:read",
             "locale:configure",
             "navigation:read",

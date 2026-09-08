@@ -41,8 +41,12 @@ class AgentCapabilityContext(BaseModel):
         allowed = {
             "allowed_type_ids",
             "allowed_type_keys",
+            "allowed_component_types",
             "max_content_types",
             "max_fields_per_type",
+            "max_components_per_page",
+            "max_component_depth",
+            "max_visible_components",
             "delete_enabled",
             "max_deletes",
             "allowed_locales",
@@ -62,7 +66,11 @@ class AgentCapabilityContext(BaseModel):
         if unknown:
             raise ValueError("unknown resource constraint")
         constraints = self.resource_constraints
-        for key in ("allowed_type_ids", "allowed_type_keys"):
+        for key in (
+            "allowed_type_ids",
+            "allowed_type_keys",
+            "allowed_component_types",
+        ):
             value = constraints.get(key)
             if value is not None and (
                 not isinstance(value, list)
@@ -126,6 +134,9 @@ class AgentCapabilityContext(BaseModel):
         for key in (
             "max_content_types",
             "max_fields_per_type",
+            "max_components_per_page",
+            "max_component_depth",
+            "max_visible_components",
             "max_deletes",
             "max_visible_pages",
             "max_page_depth",
@@ -161,6 +172,14 @@ class AgentDiscoveryResponse(BaseModel):
     mutation_quota: int = 0
     delete_quota: int = 0
     upload_quota: int = 0
+
+
+class AgentComponentCatalogResponse(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    version: Literal["catalog-v1"]
+    composition_schema_version: Literal["site-composition/v1"]
+    components: tuple[dict[str, Any], ...]
 
 
 class AgentPermissionsResponse(BaseModel):

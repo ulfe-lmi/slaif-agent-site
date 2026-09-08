@@ -77,7 +77,9 @@ AGENT_COLLECTION_VIEW_GET_SQL = (
 )
 AGENT_PAGE_LIST_SQL = "SELECT * FROM content.slaif_agent_page_list($1)"
 AGENT_PAGE_GET_SQL = "SELECT * FROM content.slaif_agent_page_get($1,$2)"
-AGENT_COMPOSITION_LIST_SQL = "SELECT * FROM content.slaif_agent_composition_list($1,$2)"
+AGENT_COMPOSITION_LIST_SQL = "SELECT * FROM content.slaif_agent_component_list($1,$2)"
+AGENT_COMPONENT_GET_SQL = "SELECT * FROM content.slaif_agent_component_get($1,$2)"
+AGENT_COMPONENT_CATALOG_SQL = "SELECT control.slaif_component_catalog()"
 AGENT_MEDIA_LIST_SQL = "SELECT * FROM content.slaif_agent_media_list($1)"
 AGENT_LOCALE_LIST_SQL = "SELECT * FROM content.slaif_agent_locale_list($1)"
 AGENT_LOCALE_GET_SQL = "SELECT * FROM content.slaif_agent_locale_get($1,$2)"
@@ -278,6 +280,27 @@ class AgentSemanticReadService:
     ) -> tuple[CompositionNodeRecord, ...]:
         rows = await self._fetch(AGENT_COMPOSITION_LIST_SQL, site_id, page_id)
         return tuple(_cmp(row) for row in rows)
+
+    async def get_component(
+        self, site_id: UUID, component_id: UUID
+    ) -> CompositionNodeRecord:
+        row = await self._fetchrow(AGENT_COMPONENT_GET_SQL, site_id, component_id)
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
+        return cast(CompositionNodeRecord, _cmp(row))
+
+    async def component_catalog(self) -> dict[str, Any]:
+        row = await self._fetchrow(AGENT_COMPONENT_CATALOG_SQL)
+        if row is None or row[0] is None:
+            raise ContentModelServiceError(ContentModelServiceReason.UNAVAILABLE)
+        value = row[0]
+        if isinstance(value, str):
+            import json
+
+            value = json.loads(value)
+        if not isinstance(value, dict):
+            raise ContentModelServiceError(ContentModelServiceReason.UNAVAILABLE)
+        return value
 
     async def list_media(self, site_id: UUID) -> tuple[MediaAssetRecord, ...]:
         rows = await self._fetch(AGENT_MEDIA_LIST_SQL, site_id)

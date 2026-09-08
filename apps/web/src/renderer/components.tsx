@@ -345,6 +345,8 @@ const FALLBACK_DEFINITION: ComponentDefinition = {
   allowedSlots: [],
   maxChildren: 0,
   propsSchema: {},
+  bindingKind: "none",
+  authorityClass: "content",
 };
 
 export function renderComponent(

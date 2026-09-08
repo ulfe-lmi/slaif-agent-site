@@ -263,18 +263,94 @@ const GLOBAL_COMPONENTS = [
     },
 ];
 export const COMPONENT_CATALOG_VERSION = "catalog-v1";
+export const COMPOSITION_SCHEMA_VERSION = "site-composition/v1";
+const COLLECTION_VIEW_COMPONENTS = new Set([
+    "CollectionList",
+    "CollectionGrid",
+    "CollectionDetail",
+]);
+const MEDIA_COMPONENTS = new Set(["Image", "Hero"]);
+function enrichComponent(component) {
+    const authorityClass = component.category === "global"
+        ? "global"
+        : component.category === "layout"
+            ? "structure"
+            : "content";
+    const propsSchema = Object.fromEntries(Object.entries(component.propsSchema).map(([key, prop]) => [
+        key,
+        {
+            ...prop,
+            authority: component.category === "layout" ? "design" : "content",
+        },
+    ]));
+    return {
+        ...component,
+        propsSchema,
+        bindingKind: COLLECTION_VIEW_COMPONENTS.has(component.type)
+            ? "collection_view"
+            : MEDIA_COMPONENTS.has(component.type)
+                ? "media_asset"
+                : "none",
+        authorityClass,
+    };
+}
 export const COMPONENT_CATALOG = [
     ...LAYOUT_COMPONENTS,
     ...BASIC_COMPONENTS,
     ...DATA_COMPONENTS,
     ...INSTITUTIONAL_COMPONENTS,
     ...GLOBAL_COMPONENTS,
-];
+].map(enrichComponent);
 export const COMPONENT_TYPES = new Set(COMPONENT_CATALOG.map((c) => c.type));
+export const FORBIDDEN_PROP_KEYS = new Set([
+    "__proto__",
+    "constructor",
+    "prototype",
+    "innerhtml",
+    "dangerouslysetinnerhtml",
+    "style",
+    "class",
+    "classname",
+    "onclick",
+    "onload",
+    "handler",
+    "script",
+    "eval",
+    "html",
+    "template",
+    "query",
+    "code",
+    "package",
+    "callback",
+]);
 export function getComponent(type) {
     return COMPONENT_CATALOG.find((c) => c.type === type);
 }
 export function validateComponentType(type) {
     return COMPONENT_TYPES.has(type);
 }
-//# sourceMappingURL=index.js.map
+export const COMPONENT_CATALOG_DOCUMENT = {
+    version: COMPONENT_CATALOG_VERSION,
+    composition_schema_version: COMPOSITION_SCHEMA_VERSION,
+    components: COMPONENT_CATALOG.map((component) => ({
+        type: component.type,
+        category: component.category,
+        schema_version: component.schemaVersion,
+        allowed_slots: [...component.allowedSlots],
+        max_children: component.maxChildren,
+        binding_kind: component.bindingKind,
+        authority_class: component.authorityClass,
+        props: Object.fromEntries(Object.entries(component.propsSchema).map(([key, prop]) => [
+            key,
+            {
+                type: prop.type,
+                required: prop.required,
+                enum_values: [...(prop.enumValues ?? [])],
+                minimum: prop.bounded?.min ?? null,
+                maximum: prop.bounded?.max ?? null,
+                localized: prop.localized ?? false,
+                authority: prop.authority ?? "content",
+            },
+        ])),
+    })),
+};

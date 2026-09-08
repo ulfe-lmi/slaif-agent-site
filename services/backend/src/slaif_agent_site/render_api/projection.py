@@ -22,6 +22,14 @@ from slaif_agent_site.browser_preview_credentials import (
     BrowserPreviewCredentialSigner,
     BrowserPreviewExpectedBinding,
 )
+from slaif_agent_site.content_model.component_catalog import (
+    COMPONENT_BY_TYPE,
+    MAX_COMPONENT_DEPTH,
+    MAX_COMPONENT_PROPS_BYTES,
+    MAX_COMPONENTS_PER_PAGE,
+    TRUSTED_COMPONENT_TYPES,
+    validate_component_props,
+)
 from slaif_agent_site.content_model.query_dsl import (
     MAX_CANDIDATES,
     MAX_PAGE_SIZE,
@@ -79,121 +87,14 @@ def _browser_outcome(error: ProjectionError) -> str:
     return "unavailable" if error.reason == "unavailable" else "not_found"
 
 
-CATALOG_TYPES = frozenset(
-    {
-        "Section",
-        "Container",
-        "Columns",
-        "Grid",
-        "Stack",
-        "Spacer",
-        "Heading",
-        "RichText",
-        "Image",
-        "Button",
-        "Quote",
-        "CollectionList",
-        "CollectionGrid",
-        "CollectionDetail",
-        "Hero",
-        "Statistics",
-        "Timeline",
-        "FAQ",
-        "Header",
-        "Footer",
-        "Breadcrumbs",
-        "LanguageSwitcher",
-    }
-)
-MAX_NODES = 128
-MAX_DEPTH = 16
-MAX_PROPS_BYTES = 16_384
-ALLOWED_SLOTS: dict[str, frozenset[str]] = {
-    "Section": frozenset({"default"}),
-    "Container": frozenset({"default"}),
-    "Columns": frozenset({"col-1", "col-2", "col-3", "col-4"}),
-    "Grid": frozenset({"default"}),
-    "Stack": frozenset({"default"}),
-    "Hero": frozenset({"content"}),
-    "Header": frozenset({"nav"}),
-    "Footer": frozenset({"links"}),
+CATALOG_TYPES = TRUSTED_COMPONENT_TYPES
+MAX_NODES = MAX_COMPONENTS_PER_PAGE
+MAX_DEPTH = MAX_COMPONENT_DEPTH
+MAX_PROPS_BYTES = MAX_COMPONENT_PROPS_BYTES
+ALLOWED_SLOTS = {
+    item.type: frozenset(item.allowed_slots) for item in COMPONENT_BY_TYPE.values()
 }
-MAX_CHILDREN = {
-    "Section": 32,
-    "Container": 16,
-    "Columns": 4,
-    "Grid": 24,
-    "Stack": 16,
-    "Hero": 8,
-    "Header": 12,
-    "Footer": 16,
-}
-PROP_SCHEMA: dict[str, dict[str, dict[str, Any]]] = {
-    "Section": {
-        "variant": {"type": "enum", "values": ("default", "full", "narrow")},
-        "background": {"type": "string"},
-    },
-    "Container": {"width": {"type": "enum", "values": ("sm", "md", "lg", "xl")}},
-    "Columns": {
-        "count": {"type": "number", "required": True, "min": 1, "max": 4},
-        "gap": {"type": "enum", "values": ("none", "sm", "md", "lg")},
-    },
-    "Grid": {
-        "columns": {"type": "number", "min": 1, "max": 12},
-        "gap": {"type": "enum", "values": ("sm", "md", "lg")},
-    },
-    "Stack": {
-        "direction": {"type": "enum", "values": ("vertical", "horizontal")},
-        "gap": {"type": "enum", "values": ("none", "sm", "md", "lg")},
-    },
-    "Spacer": {
-        "size": {
-            "type": "enum",
-            "required": True,
-            "values": ("xs", "sm", "md", "lg", "xl"),
-        }
-    },
-    "Heading": {
-        "text": {"type": "string", "required": True},
-        "level": {"type": "number", "required": True, "min": 1, "max": 6},
-    },
-    "RichText": {"content": {"type": "object", "required": True}},
-    "Image": {
-        "mediaId": {"type": "reference", "required": True},
-        "alt": {"type": "string", "required": True},
-        "aspectRatio": {"type": "enum", "values": ("auto", "16:9", "4:3", "1:1")},
-    },
-    "Button": {
-        "label": {"type": "string", "required": True},
-        "href": {"type": "string", "required": True},
-        "variant": {"type": "enum", "values": ("primary", "secondary", "ghost")},
-    },
-    "Quote": {
-        "text": {"type": "string", "required": True},
-        "attribution": {"type": "string"},
-    },
-    "CollectionList": {
-        "viewId": {"type": "reference", "required": True},
-        "limit": {"type": "number", "min": 1, "max": 100},
-    },
-    "CollectionGrid": {
-        "viewId": {"type": "reference", "required": True},
-        "columns": {"type": "number", "min": 1, "max": 6},
-    },
-    "CollectionDetail": {"viewId": {"type": "reference", "required": True}},
-    "Hero": {
-        "heading": {"type": "string", "required": True},
-        "subheading": {"type": "string"},
-        "mediaId": {"type": "reference"},
-    },
-    "Statistics": {"items": {"type": "array", "required": True}},
-    "Timeline": {"items": {"type": "array", "required": True}},
-    "FAQ": {"items": {"type": "array", "required": True}},
-    "Header": {},
-    "Footer": {},
-    "Breadcrumbs": {},
-    "LanguageSwitcher": {},
-}
+MAX_CHILDREN = {item.type: item.max_children for item in COMPONENT_BY_TYPE.values()}
 
 
 class ProjectionError(RuntimeError):
@@ -414,42 +315,22 @@ def _validate_nested(value: Any, *, depth: int = 0) -> None:
 
 
 def _validate_props(component_type: str, props: dict[str, Any]) -> None:
-    schema = PROP_SCHEMA[component_type]
-    if set(props) - set(schema):
-        raise ProjectionError("unknown_prop")
-    for key, rule in schema.items():
-        if rule.get("required") and key not in props:
-            raise ProjectionError("missing_prop")
-    for key, value in props.items():
-        rule = schema[key]
-        kind = rule["type"]
-        if kind == "string" and not isinstance(value, str):
-            raise ProjectionError("prop_type")
-        if kind == "number" and (
-            isinstance(value, bool) or not isinstance(value, (int, float))
-        ):
-            raise ProjectionError("prop_type")
-        if kind == "object" and not isinstance(value, dict):
-            raise ProjectionError("prop_type")
-        if kind == "array" and not isinstance(value, list):
-            raise ProjectionError("prop_type")
-        if kind == "reference":
-            try:
-                UUID(str(value))
-            except (TypeError, ValueError):
-                raise ProjectionError("prop_reference") from None
-        if kind == "enum" and value not in rule["values"]:
-            raise ProjectionError("prop_enum")
-        if isinstance(value, (int, float)) and not isinstance(value, bool):
-            if "min" in rule and value < rule["min"]:
-                raise ProjectionError("prop_bound")
-            if "max" in rule and value > rule["max"]:
-                raise ProjectionError("prop_bound")
-    if component_type == "Button":
-        href = props["href"]
-        if not href.startswith("/") or href.startswith("//"):
-            raise ProjectionError("unsafe_value")
-    _validate_nested(props)
+    try:
+        validate_component_props(component_type, props, allow_design=True)
+    except ValueError as error:
+        message = str(error)
+        reason = {
+            "unknown prop": "unknown_prop",
+            "missing prop": "missing_prop",
+            "prop reference": "prop_reference",
+            "prop enum": "prop_enum",
+            "prop bound": "prop_bound",
+            "executable prop": "executable_prop",
+            "unsafe value": "unsafe_value",
+            "props depth exceeded": "props_depth",
+            "props too large": "props_too_large",
+        }.get(message, "prop_type")
+        raise ProjectionError(reason) from None
 
 
 MAX_LOCALES = 32

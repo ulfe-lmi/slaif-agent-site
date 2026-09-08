@@ -6,36 +6,10 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from .component_catalog import TRUSTED_COMPONENT_TYPES
 from .models import _bounded_json, _bounded_text
-
-TRUSTED_COMPONENT_TYPES = frozenset(
-    {
-        "Section",
-        "Container",
-        "Columns",
-        "Grid",
-        "Stack",
-        "Spacer",
-        "Heading",
-        "RichText",
-        "Image",
-        "Button",
-        "Quote",
-        "CollectionList",
-        "CollectionGrid",
-        "CollectionDetail",
-        "Hero",
-        "Statistics",
-        "Timeline",
-        "FAQ",
-        "Header",
-        "Footer",
-        "Breadcrumbs",
-        "LanguageSwitcher",
-    }
-)
 
 
 class CreateCompositionNodeRequest(BaseModel):
@@ -122,6 +96,36 @@ class UpdateCompositionNodeRequest(BaseModel):
         return result
 
 
+class AgentCreateCompositionNodeRequest(CreateCompositionNodeRequest):
+    """Agent create intent; sibling anchors replace trusted raw ordering."""
+
+    before_component_id: UUID | None = None
+    after_component_id: UUID | None = None
+
+    @model_validator(mode="after")
+    def one_anchor(self) -> AgentCreateCompositionNodeRequest:
+        if self.before_component_id is not None and self.after_component_id is not None:
+            raise ValueError("at most one sibling anchor is allowed")
+        return self
+
+
+class AgentUpdateCompositionNodeRequest(BaseModel):
+    """Agent PATCH: content props only, with an explicit row version."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    props: dict[str, Any]
+    expected_row_version: int = Field(gt=0)
+
+    @field_validator("props")
+    @classmethod
+    def props_are_bounded(cls, value: dict[str, Any]) -> dict[str, Any]:
+        result = _bounded_json(value)
+        if not isinstance(result, dict):
+            raise ValueError("props must be an object")
+        return result
+
+
 class MoveCompositionNodeRequest(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -140,6 +144,29 @@ class MoveCompositionNodeRequest(BaseModel):
             raise ValueError("new_parent_id must be a UUID") from None
 
 
+class AgentMoveCompositionNodeRequest(BaseModel):
+    """Agent move intent; ordering is expressed by semantic sibling anchors."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    new_parent_id: UUID | None = None
+    new_slot_key: str = "default"
+    before_component_id: UUID | None = None
+    after_component_id: UUID | None = None
+    expected_row_version: int = Field(gt=0)
+
+    @model_validator(mode="after")
+    def one_anchor(self) -> AgentMoveCompositionNodeRequest:
+        if self.before_component_id is not None and self.after_component_id is not None:
+            raise ValueError("at most one sibling anchor is allowed")
+        return self
+
+    @field_validator("new_slot_key")
+    @classmethod
+    def slot_key_is_bounded(cls, value: str) -> str:
+        return _bounded_text(value, 63)
+
+
 class CompositionNodeRecord(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -148,10 +175,12 @@ class CompositionNodeRecord(BaseModel):
     site_id: UUID
     component_type: str
     schema_version: str
+    catalog_version: str = "catalog-v1"
     parent_id: UUID | None
     slot_key: str
     order_key: int
     props: dict[str, Any]
+    row_version: int = 1
     created_at: datetime
     updated_at: datetime
 

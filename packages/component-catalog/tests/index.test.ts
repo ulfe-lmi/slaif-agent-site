@@ -63,4 +63,18 @@ describe("component catalog", () => {
       }
     }
   });
+
+  it("publishes bounded authority and binding metadata", () => {
+    for (const component of COMPONENT_CATALOG) {
+      expect(["content", "structure", "global"]).toContain(
+        component.authorityClass,
+      );
+      expect(["none", "collection_view", "media_asset"]).toContain(
+        component.bindingKind,
+      );
+      for (const prop of Object.values(component.propsSchema)) {
+        expect(["content", "design"]).toContain(prop.authority);
+      }
+    }
+  });
 });

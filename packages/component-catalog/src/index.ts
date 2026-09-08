@@ -14,6 +14,17 @@ export interface ComponentDefinition {
   readonly allowedSlots: readonly string[];
   readonly maxChildren: number;
   readonly propsSchema: Record<string, PropDefinition>;
+  readonly bindingKind: "none" | "collection_view" | "media_asset";
+  readonly authorityClass: "content" | "structure" | "global";
+}
+
+interface ComponentDefinitionBase {
+  readonly type: string;
+  readonly category: "layout" | "basic" | "data" | "institutional" | "global";
+  readonly schemaVersion: string;
+  readonly allowedSlots: readonly string[];
+  readonly maxChildren: number;
+  readonly propsSchema: Record<string, PropDefinition>;
 }
 
 export interface PropDefinition {
@@ -23,9 +34,10 @@ export interface PropDefinition {
   readonly enumValues?: readonly string[];
   readonly bounded?: { min?: number; max?: number };
   readonly localized?: boolean;
+  readonly authority?: "content" | "design";
 }
 
-const LAYOUT_COMPONENTS: readonly ComponentDefinition[] = [
+const LAYOUT_COMPONENTS: readonly ComponentDefinitionBase[] = [
   {
     type: "Section",
     category: "layout",
@@ -104,7 +116,7 @@ const LAYOUT_COMPONENTS: readonly ComponentDefinition[] = [
   },
 ];
 
-const BASIC_COMPONENTS: readonly ComponentDefinition[] = [
+const BASIC_COMPONENTS: readonly ComponentDefinitionBase[] = [
   {
     type: "Heading",
     category: "basic",
@@ -171,7 +183,7 @@ const BASIC_COMPONENTS: readonly ComponentDefinition[] = [
   },
 ];
 
-const DATA_COMPONENTS: readonly ComponentDefinition[] = [
+const DATA_COMPONENTS: readonly ComponentDefinitionBase[] = [
   {
     type: "CollectionList",
     category: "data",
@@ -206,7 +218,7 @@ const DATA_COMPONENTS: readonly ComponentDefinition[] = [
   },
 ];
 
-const INSTITUTIONAL_COMPONENTS: readonly ComponentDefinition[] = [
+const INSTITUTIONAL_COMPONENTS: readonly ComponentDefinitionBase[] = [
   {
     type: "Hero",
     category: "institutional",
@@ -251,7 +263,7 @@ const INSTITUTIONAL_COMPONENTS: readonly ComponentDefinition[] = [
   },
 ];
 
-const GLOBAL_COMPONENTS: readonly ComponentDefinition[] = [
+const GLOBAL_COMPONENTS: readonly ComponentDefinitionBase[] = [
   {
     type: "Header",
     category: "global",
@@ -288,17 +300,76 @@ const GLOBAL_COMPONENTS: readonly ComponentDefinition[] = [
 
 export const COMPONENT_CATALOG_VERSION = "catalog-v1";
 
+export const COMPOSITION_SCHEMA_VERSION = "site-composition/v1";
+
+const COLLECTION_VIEW_COMPONENTS = new Set([
+  "CollectionList",
+  "CollectionGrid",
+  "CollectionDetail",
+]);
+const MEDIA_COMPONENTS = new Set(["Image", "Hero"]);
+
+function enrichComponent(component: ComponentDefinitionBase): ComponentDefinition {
+  const authorityClass =
+    component.category === "global"
+      ? "global"
+      : component.category === "layout"
+        ? "structure"
+        : "content";
+  const propsSchema = Object.fromEntries(
+    Object.entries(component.propsSchema).map(([key, prop]) => [
+      key,
+      {
+        ...prop,
+        authority: component.category === "layout" ? "design" : "content",
+      },
+    ]),
+  ) as Record<string, PropDefinition>;
+  return {
+    ...component,
+    propsSchema,
+    bindingKind: COLLECTION_VIEW_COMPONENTS.has(component.type)
+      ? "collection_view"
+      : MEDIA_COMPONENTS.has(component.type)
+        ? "media_asset"
+        : "none",
+    authorityClass,
+  };
+}
+
 export const COMPONENT_CATALOG: readonly ComponentDefinition[] = [
   ...LAYOUT_COMPONENTS,
   ...BASIC_COMPONENTS,
   ...DATA_COMPONENTS,
   ...INSTITUTIONAL_COMPONENTS,
   ...GLOBAL_COMPONENTS,
-];
+].map(enrichComponent);
 
 export const COMPONENT_TYPES: ReadonlySet<string> = new Set(
   COMPONENT_CATALOG.map((c) => c.type),
 );
+
+export const FORBIDDEN_PROP_KEYS: ReadonlySet<string> = new Set([
+  "__proto__",
+  "constructor",
+  "prototype",
+  "innerhtml",
+  "dangerouslysetinnerhtml",
+  "style",
+  "class",
+  "classname",
+  "onclick",
+  "onload",
+  "handler",
+  "script",
+  "eval",
+  "html",
+  "template",
+  "query",
+  "code",
+  "package",
+  "callback",
+]);
 
 export function getComponent(type: string): ComponentDefinition | undefined {
   return COMPONENT_CATALOG.find((c) => c.type === type);
@@ -307,3 +378,31 @@ export function getComponent(type: string): ComponentDefinition | undefined {
 export function validateComponentType(type: string): boolean {
   return COMPONENT_TYPES.has(type);
 }
+
+export const COMPONENT_CATALOG_DOCUMENT = {
+  version: COMPONENT_CATALOG_VERSION,
+  composition_schema_version: COMPOSITION_SCHEMA_VERSION,
+  components: COMPONENT_CATALOG.map((component) => ({
+    type: component.type,
+    category: component.category,
+    schema_version: component.schemaVersion,
+    allowed_slots: [...component.allowedSlots],
+    max_children: component.maxChildren,
+    binding_kind: component.bindingKind,
+    authority_class: component.authorityClass,
+    props: Object.fromEntries(
+      Object.entries(component.propsSchema).map(([key, prop]) => [
+        key,
+        {
+          type: prop.type,
+          required: prop.required,
+          enum_values: [...(prop.enumValues ?? [])],
+          minimum: prop.bounded?.min ?? null,
+          maximum: prop.bounded?.max ?? null,
+          localized: prop.localized ?? false,
+          authority: prop.authority ?? "content",
+        },
+      ]),
+    ),
+  })),
+} as const;

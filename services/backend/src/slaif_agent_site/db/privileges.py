@@ -56,6 +56,10 @@ CAPABILITY_READ_RELATIONS = ("workspace", "capability")
 CAPABILITY_READ_ROLES = (CONTROL_ROLE,)
 AGENT_CONTROL_FUNCTIONS = {
     (
+        "slaif_component_catalog",
+        "",
+    ): "",
+    (
         "slaif_agent_capability_authenticate",
         "p_public_id text",
     ): "text",
@@ -385,6 +389,32 @@ AGENT_CONTENT_FUNCTIONS = {
         "p_site_id uuid, p_page_id uuid, p_component_type text, "
         "p_parent_id uuid, p_slot_key text, p_order_key integer, p_props jsonb",
     ): "uuid, uuid, text, uuid, text, integer, jsonb",
+    (
+        "slaif_agent_component_list",
+        "p_site_id uuid, p_page_id uuid",
+    ): "uuid, uuid",
+    (
+        "slaif_agent_component_get",
+        "p_site_id uuid, p_component_id uuid",
+    ): "uuid, uuid",
+    (
+        "slaif_agent_component_create",
+        "p_site_id uuid, p_page_id uuid, p_component_type text, p_parent_id uuid, "
+        "p_slot_key text, p_before uuid, p_after uuid, p_props jsonb",
+    ): "uuid, uuid, text, uuid, text, uuid, uuid, jsonb",
+    (
+        "slaif_agent_component_update",
+        "p_site_id uuid, p_component_id uuid, p_props jsonb, p_expected integer",
+    ): "uuid, uuid, jsonb, integer",
+    (
+        "slaif_agent_component_move",
+        "p_site_id uuid, p_component_id uuid, p_parent_id uuid, p_slot_key text, "
+        "p_before uuid, p_after uuid, p_expected integer",
+    ): "uuid, uuid, uuid, text, uuid, uuid, integer",
+    (
+        "slaif_agent_component_delete",
+        "p_site_id uuid, p_component_id uuid, p_expected integer",
+    ): "uuid, uuid, integer",
     ("slaif_agent_locale_list", "p_site_id uuid"): "uuid",
     ("slaif_agent_locale_get", "p_site_id uuid, p_locale_id uuid"): "uuid, uuid",
     (

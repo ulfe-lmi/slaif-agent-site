@@ -1062,6 +1062,11 @@ ROUTE_POLICIES: Final[tuple[RoutePolicy, ...]] = (
             ("GET", "/api/agent/v1/permissions", ("site:read",)),
             (
                 "GET",
+                "/api/agent/v1/component-catalog",
+                ("component-catalog:read",),
+            ),
+            (
+                "GET",
                 "/api/agent/v1/content-model/primitives",
                 ("validation:read",),
             ),
@@ -1125,6 +1130,7 @@ ROUTE_POLICIES: Final[tuple[RoutePolicy, ...]] = (
             ("GET", "/api/agent/v1/pages/", ("page:read",)),
             ("GET", "/api/agent/v1/pages/{page_id}", ("page:read",)),
             ("GET", "/api/agent/v1/pages/{page_id}/components", ("composition:read",)),
+            ("GET", "/api/agent/v1/components/{component_id}", ("composition:read",)),
             ("GET", "/api/agent/v1/media/", ("media:read",)),
             ("GET", "/api/agent/v1/locales", ("site:read",)),
             ("GET", "/api/agent/v1/locales/{locale_id}", ("site:read",)),
@@ -1237,6 +1243,21 @@ ROUTE_POLICIES: Final[tuple[RoutePolicy, ...]] = (
                 "POST",
                 "/api/agent/v1/pages/{page_id}/components",
                 "component-structure:create",
+            ),
+            (
+                "PATCH",
+                "/api/agent/v1/components/{component_id}",
+                "component-content-props:write",
+            ),
+            (
+                "POST",
+                "/api/agent/v1/components/{component_id}/move",
+                "component-structure:move",
+            ),
+            (
+                "DELETE",
+                "/api/agent/v1/components/{component_id}",
+                "component-structure:delete",
             ),
             ("POST", "/api/agent/v1/locales", "locale:configure"),
             ("PATCH", "/api/agent/v1/locales/{locale_id}", "locale:configure"),

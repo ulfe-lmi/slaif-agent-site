@@ -30,9 +30,15 @@ from slaif_agent_site.agent_state.locks import (
     acquire_workspace_lifecycle_lock,
     prelocked_cow_session,
 )
+from slaif_agent_site.content_model.component_catalog import (
+    component_definition,
+    validate_component_props,
+)
 from slaif_agent_site.content_model.composition_models import (
+    AgentCreateCompositionNodeRequest,
+    AgentMoveCompositionNodeRequest,
+    AgentUpdateCompositionNodeRequest,
     CompositionNodeRecord,
-    CreateCompositionNodeRequest,
 )
 from slaif_agent_site.content_model.item_models import (
     AgentUpdateContentItemRequest,
@@ -215,8 +221,19 @@ AGENT_REDIRECT_UPDATE_SQL = (
 AGENT_REDIRECT_DELETE_SQL = (
     "SELECT * FROM content.slaif_agent_redirect_delete($1,$2,$3)"
 )
+AGENT_COMPONENT_LIST_SQL = "SELECT * FROM content.slaif_agent_component_list($1,$2)"
+AGENT_COMPONENT_GET_SQL = "SELECT * FROM content.slaif_agent_component_get($1,$2)"
 AGENT_COMPONENT_CREATE_SQL = (
-    "SELECT * FROM content.slaif_agent_composition_node_add($1,$2,$3,$4,$5,$6,$7)"
+    "SELECT * FROM content.slaif_agent_component_create($1,$2,$3,$4,$5,$6,$7,$8)"
+)
+AGENT_COMPONENT_UPDATE_SQL = (
+    "SELECT * FROM content.slaif_agent_component_update($1,$2,$3,$4)"
+)
+AGENT_COMPONENT_MOVE_SQL = (
+    "SELECT * FROM content.slaif_agent_component_move($1,$2,$3,$4,$5,$6,$7)"
+)
+AGENT_COMPONENT_DELETE_SQL = (
+    "SELECT * FROM content.slaif_agent_component_delete($1,$2,$3)"
 )
 AGENT_RELATION_CREATE_SQL = (
     "SELECT * FROM content.slaif_agent_item_relation_create($1,$2,$3,$4,$5,$6)"
@@ -317,6 +334,10 @@ AGENT_SEMANTIC_CONTRACTS = {
     "REDIRECT_CREATED": ("redirect", "POST", 201, "mutation"),
     "REDIRECT_UPDATED": ("redirect", "PATCH", 200, "mutation"),
     "REDIRECT_DELETED": ("redirect", "DELETE", 200, "delete"),
+    "COMPONENT_CREATED": ("composition_node", "POST", 201, "mutation"),
+    "COMPONENT_UPDATED": ("composition_node", "PATCH", 200, "mutation"),
+    "COMPONENT_MOVED": ("composition_node", "POST", 200, "mutation"),
+    "COMPONENT_DELETED": ("composition_node", "DELETE", 200, "delete"),
 }
 AGENT_SEMANTIC_ACTIONS = frozenset(AGENT_SEMANTIC_CONTRACTS)
 
@@ -1158,7 +1179,7 @@ class AgentCowContentModelService(ContentModelService):
         self,
         site_id: UUID,
         page_id: UUID,
-        request: CreateCompositionNodeRequest,
+        request: AgentCreateCompositionNodeRequest,
     ) -> CompositionNodeRecord:
         parent_id = UUID(request.parent_id) if request.parent_id else None
         row = await self._fetchrow(
@@ -1168,11 +1189,83 @@ class AgentCowContentModelService(ContentModelService):
             request.component_type,
             parent_id,
             request.slot_key,
-            request.order_key,
+            request.before_component_id,
+            request.after_component_id,
             json.dumps(request.props, sort_keys=True),
         )
         if row is None:
             raise ContentModelServiceError(ContentModelServiceReason.CONFLICT)
+        return cast(CompositionNodeRecord, _cmp(row))
+
+    async def get_component_for_site(
+        self, site_id: UUID, component_id: UUID
+    ) -> CompositionNodeRecord:
+        row = await self._fetchrow(AGENT_COMPONENT_GET_SQL, site_id, component_id)
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
+        return cast(CompositionNodeRecord, _cmp(row))
+
+    async def update_component_for_site(
+        self,
+        site_id: UUID,
+        component_id: UUID,
+        request: AgentUpdateCompositionNodeRequest,
+    ) -> CompositionNodeRecord:
+        current = await self.get_component_for_site(site_id, component_id)
+        merged = {**current.props, **request.props}
+        try:
+            definition = component_definition(current.component_type)
+            if any(
+                key in definition.props and definition.props[key].authority == "design"
+                for key in request.props
+            ):
+                raise ValueError("design prop")
+            props = validate_component_props(
+                current.component_type, merged, allow_design=True
+            )
+        except (TypeError, ValueError) as error:
+            raise ContentModelServiceError(
+                ContentModelServiceReason.VALIDATION, code=str(error)
+            ) from None
+        row = await self._fetchrow(
+            AGENT_COMPONENT_UPDATE_SQL,
+            site_id,
+            component_id,
+            json.dumps(props, sort_keys=True),
+            request.expected_row_version,
+        )
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
+        return cast(CompositionNodeRecord, _cmp(row))
+
+    async def move_component_for_site(
+        self,
+        site_id: UUID,
+        component_id: UUID,
+        request: AgentMoveCompositionNodeRequest,
+    ) -> CompositionNodeRecord:
+        row = await self._fetchrow(
+            AGENT_COMPONENT_MOVE_SQL,
+            site_id,
+            component_id,
+            request.new_parent_id,
+            request.new_slot_key,
+            request.before_component_id,
+            request.after_component_id,
+            request.expected_row_version,
+        )
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
+        return cast(CompositionNodeRecord, _cmp(row))
+
+    async def delete_component_for_site(
+        self, site_id: UUID, component_id: UUID, expected_row_version: int
+    ) -> CompositionNodeRecord:
+        row = await self._fetchrow(
+            AGENT_COMPONENT_DELETE_SQL, site_id, component_id, expected_row_version
+        )
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
         return cast(CompositionNodeRecord, _cmp(row))
 
 
@@ -1277,7 +1370,7 @@ async def _complete(
 Mutation = Callable[[AgentCowContentModelService], Awaitable[Any]]
 
 _STRUCTURAL_RESOURCE_TYPES = frozenset(
-    {"page", "locale", "navigation", "navigation_item", "redirect"}
+    {"page", "locale", "navigation", "navigation_item", "redirect", "composition_node"}
 )
 
 
@@ -1377,6 +1470,7 @@ async def execute_agent_mutation(
                 "navigation",
                 "navigation_item",
                 "redirect",
+                "composition_node",
             }:
                 try:
                     mutation_allowed = await cow.native.fetchval(

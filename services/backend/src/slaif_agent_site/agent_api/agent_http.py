@@ -15,6 +15,7 @@ from uuid import UUID
 from fastapi import APIRouter, Header, Request
 
 from slaif_agent_site.agent_api.models import (
+    AgentComponentCatalogResponse,
     AgentDeleteRequest,
     AgentDiscoveryResponse,
     AgentFieldPrimitiveDescriptor,
@@ -39,9 +40,15 @@ from slaif_agent_site.agent_state.reads import (
     execute_agent_read,
 )
 from slaif_agent_site.authority import ProcessKind
+from slaif_agent_site.content_model.component_catalog import (
+    COMPONENT_CATALOG_VERSION,
+    COMPOSITION_SCHEMA_VERSION,
+)
 from slaif_agent_site.content_model.composition_models import (
+    AgentCreateCompositionNodeRequest,
+    AgentMoveCompositionNodeRequest,
+    AgentUpdateCompositionNodeRequest,
     CompositionNodeRecord,
-    CreateCompositionNodeRequest,
 )
 from slaif_agent_site.content_model.item_models import (
     AgentUpdateContentItemRequest,
@@ -200,8 +207,8 @@ async def get_session(request: Request) -> AgentDiscoveryResponse:
         site_id=context.site_id,
         workspace_id=context.workspace_id,
         scopes=tuple(sorted(context.scopes)),
-        component_catalog_version="catalog-v1",
-        composition_schema_version="site-composition/v1",
+        component_catalog_version=COMPONENT_CATALOG_VERSION,
+        composition_schema_version=COMPOSITION_SCHEMA_VERSION,
         content_model_schema_version="content-model/v1",
         resource_constraints=context.resource_constraints,
         source_origins=context.source_origins,
@@ -222,6 +229,18 @@ async def get_permissions(request: Request) -> AgentPermissionsResponse:
         workspace_id=context.workspace_id,
         scopes=tuple(sorted(context.scopes)),
     )
+
+
+@router.get("/component-catalog")
+async def get_component_catalog(
+    request: Request,
+) -> AgentComponentCatalogResponse:
+    context = await _authenticate(request)
+    _require_scope(context, "component-catalog:read")
+    catalog = await _execute_read(
+        request, context, lambda service: service.component_catalog()
+    )
+    return AgentComponentCatalogResponse.model_validate(catalog)
 
 
 @router.get("/content-model/primitives")
@@ -435,6 +454,18 @@ async def list_components(
     return [record.model_dump(mode="json") for record in records]
 
 
+@router.get("/components/{component_id}")
+async def get_component(component_id: UUID, request: Request) -> CompositionNodeRecord:
+    context = await _authenticate(request)
+    _require_scope(context, "composition:read")
+    record = await _execute_read(
+        request,
+        context,
+        lambda service: service.get_component(context.site_id, component_id),
+    )
+    return cast(CompositionNodeRecord, record.model_dump(mode="json"))
+
+
 @router.get("/media/")
 async def list_media(request: Request) -> list[MediaAssetRecord]:
     context = await _authenticate(request)
@@ -521,6 +552,9 @@ async def _execute_mutation(
                 "REDIRECT_CYCLE",
                 "REDIRECT_CHAIN_LIMIT",
                 "REDIRECT_DEPENDENCY",
+                "COMPONENT_DEPENDENCIES",
+                "COMPONENT_ANCHORS_INVALID",
+                "COMPONENT_ANCHOR_INVALID",
             }:
                 raise ResourceConflictError() from None
             if exc.code == "REDIRECT_ROUTE_PREFIX_DENIED":
@@ -1530,18 +1564,96 @@ async def restore_page(
 async def create_component(
     page_id: UUID,
     request: Request,
-    body: CreateCompositionNodeRequest,
+    body: AgentCreateCompositionNodeRequest,
     idempotency_key: IdempotencyHeader = None,
 ) -> AgentMutationResponse:
     context = await _authenticate(request)
     _require_scope(context, "component-structure:create")
+    allowed_types = _constraint(context, "allowed_component_types")
+    if isinstance(allowed_types, (list, tuple, set)) and body.component_type not in {
+        str(value) for value in allowed_types
+    }:
+        raise AuthorizationError()
     return await _execute_mutation(
         request,
         context,
         body,
         idempotency_key,
         resource_type="composition_node",
+        action="COMPONENT_CREATED",
         mutate=lambda service: service.add_component_for_site(
             context.site_id, page_id, body
+        ),
+    )
+
+
+@router.patch("/components/{component_id}")
+async def update_component(
+    component_id: UUID,
+    request: Request,
+    body: AgentUpdateCompositionNodeRequest,
+    idempotency_key: IdempotencyHeader = None,
+) -> AgentMutationResponse:
+    context = await _authenticate(request)
+    _require_scope(context, "component-content-props:write")
+    return await _execute_mutation(
+        request,
+        context,
+        body,
+        idempotency_key,
+        resource_type="composition_node",
+        status_code=200,
+        action="COMPONENT_UPDATED",
+        mutate=lambda service: service.update_component_for_site(
+            context.site_id, component_id, body
+        ),
+    )
+
+
+@router.post("/components/{component_id}/move", status_code=200)
+async def move_component(
+    component_id: UUID,
+    request: Request,
+    body: AgentMoveCompositionNodeRequest,
+    idempotency_key: IdempotencyHeader = None,
+) -> AgentMutationResponse:
+    context = await _authenticate(request)
+    _require_scope(context, "component-structure:move")
+    return await _execute_mutation(
+        request,
+        context,
+        body,
+        idempotency_key,
+        resource_type="composition_node",
+        status_code=200,
+        action="COMPONENT_MOVED",
+        mutate=lambda service: service.move_component_for_site(
+            context.site_id, component_id, body
+        ),
+    )
+
+
+@router.delete("/components/{component_id}")
+async def delete_component(
+    component_id: UUID,
+    request: Request,
+    body: AgentDeleteRequest,
+    idempotency_key: IdempotencyHeader = None,
+) -> AgentMutationResponse:
+    context = await _authenticate(request)
+    _require_scope(context, "component-structure:delete")
+    if _constraint(context, "delete_enabled", True) is False:
+        raise AuthorizationError()
+    return await _execute_mutation(
+        request,
+        context,
+        body,
+        idempotency_key,
+        resource_type="composition_node",
+        status_code=200,
+        quota_kind="delete",
+        action="COMPONENT_DELETED",
+        mutate=lambda service: service.delete_component_for_site(
+            context.site_id, component_id, body.expected_row_version
         ),
     )

@@ -2083,7 +2083,7 @@ async def test_agent_redirect_051_migration_round_trip_preserves_data_and_privil
             await owner.fetchval(
                 "SELECT version_num::text FROM control.alembic_version"
             )
-            == "059_001"
+            == "060_001"
         )
         assert tuple(
             await owner.fetchrow(
@@ -2382,6 +2382,71 @@ async def test_agent_059_locale_neutral_render_round_trip_preserves_privileges(
 
 
 @pytest.mark.asyncio
+async def test_agent_060_component_migration_round_trip_restores_audit_contract(
+    agent_site_database: AgentSiteDatabase,
+) -> None:
+    database = agent_site_database
+    _token, _seeded = await _seed(database)
+    await _disable_content_cow(database)
+    signature = (
+        "control.slaif_agent_idempotency_complete("
+        "uuid,uuid,text,text,uuid,integer,jsonb,text,uuid,uuid,text,text,text)"
+    )
+    await run_migration(
+        database.settings.resolved_owner_dsn(),
+        expected_database=database.name,
+        operation="downgrade",
+        revision="059_001",
+    )
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        assert (
+            await owner.fetchval(
+                "SELECT version_num::text FROM control.alembic_version"
+            )
+            == "059_001"
+        )
+        assert await owner.fetchval(
+            "SELECT to_regprocedure($1)",
+            signature,
+        )
+        assert not await owner.fetchval(
+            "SELECT to_regprocedure($1)",
+            "control.slaif_agent_idempotency_complete_059(uuid,uuid,text,text,uuid,integer,jsonb,text,uuid,uuid,text,text,text)",
+        )
+
+    await run_migration(
+        database.settings.resolved_owner_dsn(),
+        expected_database=database.name,
+        operation="upgrade",
+        revision="head",
+    )
+    await reconcile(database.settings)
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        assert (
+            await owner.fetchval(
+                "SELECT version_num::text FROM control.alembic_version"
+            )
+            == "060_001"
+        )
+        definition = await owner.fetchval(
+            "SELECT pg_get_functiondef($1::regprocedure)", signature
+        )
+        assert "COMPONENT_CREATED" in definition
+        assert (
+            await owner.fetchval("SELECT to_regclass('control.component_catalog')")
+            == "control.component_catalog"
+        )
+        assert await owner.fetchval(
+            "SELECT has_function_privilege('slaif_agent_runtime',$1,'EXECUTE')",
+            "content.slaif_agent_component_create(uuid,uuid,text,uuid,text,uuid,uuid,jsonb)",
+        )
+
+
+@pytest.mark.asyncio
 async def test_agent_049_plain_page_data_downgrade_and_upgrade_preserves_data(
     agent_site_database: AgentSiteDatabase,
 ) -> None:
@@ -2432,7 +2497,7 @@ async def test_agent_049_plain_page_data_downgrade_and_upgrade_preserves_data(
             await owner.fetchval(
                 "SELECT version_num::text FROM control.alembic_version"
             )
-            == "059_001"
+            == "060_001"
         )
         row = await owner.fetchrow(
             "SELECT title, route_template, deleted_at FROM content.page_base "
@@ -4741,7 +4806,7 @@ async def test_agent_create_routes_cover_field_item_page_and_component(
                     "component_type": "Heading",
                     "slot_key": "default",
                     "order_key": 0,
-                    "props": {"text": "bounded"},
+                    "props": {"text": "bounded", "level": 2},
                 },
                 headers={**headers, "Idempotency-Key": "route-component"},
             )
@@ -4786,6 +4851,315 @@ async def test_agent_create_routes_cover_field_item_page_and_component(
             read_media = await client.get("/api/agent/v1/media/", headers=headers)
             assert read_media.status_code == 200, read_media.text
             assert read_media.json() == []
+
+
+@pytest.mark.asyncio
+async def test_agent_component_catalog_and_semantic_crud_are_cow_bound(
+    agent_site_database: AgentSiteDatabase,
+) -> None:
+    database = agent_site_database
+    _seed_token, seeded = await _seed(database)
+    token, workspace_id = await _workspace_capability(
+        database,
+        seeded,
+        [
+            "site:read",
+            "page:create",
+            "page:read",
+            "composition:read",
+            "component-catalog:read",
+            "component-structure:create",
+            "component-content-props:write",
+            "component-structure:move",
+            "component-structure:delete",
+        ],
+        "Agent Component Semantics Workspace",
+    )
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        await owner.execute(
+            "UPDATE control.capability SET request_quota=100, mutation_quota=20, "
+            "delete_quota=10 WHERE workspace_id=$1",
+            workspace_id,
+        )
+    app = create_agent_app(
+        settings=ServiceSettings.for_test(),
+        database_settings=_agent_settings(database),
+    )
+    headers = {"Authorization": f"Bearer {token}"}
+    async with app.router.lifespan_context(app):
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://agent.test"
+        ) as client:
+            catalog = await client.get(
+                "/api/agent/v1/component-catalog", headers=headers
+            )
+            assert catalog.status_code == 200, catalog.text
+            catalog_body = catalog.json()
+            assert catalog_body["version"] == "catalog-v1"
+            assert catalog_body["composition_schema_version"] == "site-composition/v1"
+            assert {item["type"] for item in catalog_body["components"]} == {
+                "Section",
+                "Container",
+                "Columns",
+                "Grid",
+                "Stack",
+                "Spacer",
+                "Heading",
+                "RichText",
+                "Image",
+                "Button",
+                "Quote",
+                "CollectionList",
+                "CollectionGrid",
+                "CollectionDetail",
+                "Hero",
+                "Statistics",
+                "Timeline",
+                "FAQ",
+                "Header",
+                "Footer",
+                "Breadcrumbs",
+                "LanguageSwitcher",
+            }
+            assert all(
+                item["authority_class"] in {"content", "structure", "global"}
+                for item in catalog_body["components"]
+            )
+
+            page = await client.post(
+                "/api/agent/v1/pages/",
+                json={"slug": "component-page", "title": "Components"},
+                headers={**headers, "Idempotency-Key": "component-page"},
+            )
+            assert page.status_code == 201, page.text
+            page_id = page.json()["record"]["id"]
+
+            section = await client.post(
+                f"/api/agent/v1/pages/{page_id}/components",
+                json={"component_type": "Section", "props": {}},
+                headers={**headers, "Idempotency-Key": "component-section"},
+            )
+            assert section.status_code == 201, section.text
+            section_id = section.json()["record"]["id"]
+
+            heading = await client.post(
+                f"/api/agent/v1/pages/{page_id}/components",
+                json={
+                    "component_type": "Heading",
+                    "parent_id": section_id,
+                    "slot_key": "default",
+                    "props": {"text": "First", "level": 2},
+                },
+                headers={**headers, "Idempotency-Key": "component-heading"},
+            )
+            assert heading.status_code == 201, heading.text
+            heading_id = heading.json()["record"]["id"]
+
+            quote = await client.post(
+                f"/api/agent/v1/pages/{page_id}/components",
+                json={
+                    "component_type": "Quote",
+                    "parent_id": section_id,
+                    "slot_key": "default",
+                    "props": {"text": "Second"},
+                },
+                headers={**headers, "Idempotency-Key": "component-quote"},
+            )
+            assert quote.status_code == 201, quote.text
+            quote_id = quote.json()["record"]["id"]
+
+            fetched = await client.get(
+                f"/api/agent/v1/components/{heading_id}", headers=headers
+            )
+            assert fetched.status_code == 200, fetched.text
+            assert fetched.json()["row_version"] == 1
+
+            updated = await client.patch(
+                f"/api/agent/v1/components/{heading_id}",
+                json={
+                    "props": {"text": "Updated"},
+                    "expected_row_version": 1,
+                },
+                headers={**headers, "Idempotency-Key": "component-update"},
+            )
+            assert updated.status_code == 200, updated.text
+            assert updated.json()["record"]["props"]["text"] == "Updated"
+            assert updated.json()["record"]["row_version"] == 2
+
+            stale = await client.patch(
+                f"/api/agent/v1/components/{heading_id}",
+                json={"props": {"text": "stale"}, "expected_row_version": 1},
+                headers={**headers, "Idempotency-Key": "component-stale-update"},
+            )
+            assert stale.status_code == 409, stale.text
+
+            design_denied = await client.patch(
+                f"/api/agent/v1/components/{section_id}",
+                json={
+                    "props": {"variant": "narrow"},
+                    "expected_row_version": 1,
+                },
+                headers={**headers, "Idempotency-Key": "component-design-denied"},
+            )
+            assert design_denied.status_code == 422, design_denied.text
+
+            moved = await client.post(
+                f"/api/agent/v1/components/{quote_id}/move",
+                json={
+                    "new_parent_id": section_id,
+                    "new_slot_key": "default",
+                    "before_component_id": heading_id,
+                    "expected_row_version": 1,
+                },
+                headers={**headers, "Idempotency-Key": "component-move"},
+            )
+            assert moved.status_code == 200, moved.text
+            assert moved.json()["record"]["order_key"] == 0
+            assert moved.json()["record"]["row_version"] == 2
+
+            listed = await client.get(
+                f"/api/agent/v1/pages/{page_id}/components", headers=headers
+            )
+            assert listed.status_code == 200, listed.text
+            children = [
+                record for record in listed.json() if record["parent_id"] == section_id
+            ]
+            assert [record["id"] for record in children] == [quote_id, heading_id]
+            assert [record["order_key"] for record in children] == [0, 1]
+
+            dependency_denied = await client.request(
+                "DELETE",
+                f"/api/agent/v1/components/{section_id}",
+                json={"expected_row_version": 1},
+                headers={**headers, "Idempotency-Key": "component-parent-delete"},
+            )
+            assert dependency_denied.status_code == 409, dependency_denied.text
+
+            deleted_quote = await client.request(
+                "DELETE",
+                f"/api/agent/v1/components/{quote_id}",
+                json={"expected_row_version": 2},
+                headers={**headers, "Idempotency-Key": "component-quote-delete"},
+            )
+            assert deleted_quote.status_code == 200, deleted_quote.text
+            deleted_heading = await client.request(
+                "DELETE",
+                f"/api/agent/v1/components/{heading_id}",
+                json={"expected_row_version": 2},
+                headers={**headers, "Idempotency-Key": "component-heading-delete"},
+            )
+            assert deleted_heading.status_code == 200, deleted_heading.text
+            deleted_section = await client.request(
+                "DELETE",
+                f"/api/agent/v1/components/{section_id}",
+                json={"expected_row_version": 1},
+                headers={**headers, "Idempotency-Key": "component-section-delete"},
+            )
+            assert deleted_section.status_code == 200, deleted_section.text
+
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        actions = await owner.fetch(
+            "SELECT action FROM audit.agent_mutation WHERE workspace_id=$1 "
+            "AND resource_type='composition_node' ORDER BY occurred_at",
+            workspace_id,
+        )
+    assert [row[0] for row in actions] == [
+        "COMPONENT_CREATED",
+        "COMPONENT_CREATED",
+        "COMPONENT_CREATED",
+        "COMPONENT_UPDATED",
+        "COMPONENT_MOVED",
+        "COMPONENT_DELETED",
+        "COMPONENT_DELETED",
+        "COMPONENT_DELETED",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_agent_component_resource_constraints_are_db_enforced(
+    agent_site_database: AgentSiteDatabase,
+) -> None:
+    database = agent_site_database
+    _seed_token, seeded = await _seed(database)
+    token, workspace_id = await _workspace_capability(
+        database,
+        seeded,
+        [
+            "site:read",
+            "page:create",
+            "page:read",
+            "composition:read",
+            "component-structure:create",
+        ],
+        "Agent Component Constraint Workspace",
+    )
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        await owner.execute(
+            "UPDATE control.capability SET request_quota=50, mutation_quota=10 "
+            "WHERE workspace_id=$1",
+            workspace_id,
+        )
+    await _set_resource_constraints(
+        database,
+        workspace_id,
+        {
+            "allowed_component_types": ["Heading"],
+            "max_components_per_page": 1,
+            "max_visible_components": 1,
+            "max_component_depth": 1,
+        },
+    )
+    app = create_agent_app(
+        settings=ServiceSettings.for_test(),
+        database_settings=_agent_settings(database),
+    )
+    headers = {"Authorization": f"Bearer {token}"}
+    async with app.router.lifespan_context(app):
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://agent.test"
+        ) as client:
+            page = await client.post(
+                "/api/agent/v1/pages/",
+                json={"slug": "limited-components", "title": "Limited"},
+                headers={**headers, "Idempotency-Key": "limited-page"},
+            )
+            assert page.status_code == 201, page.text
+            page_id = page.json()["record"]["id"]
+            first = await client.post(
+                f"/api/agent/v1/pages/{page_id}/components",
+                json={
+                    "component_type": "Heading",
+                    "props": {"text": "one", "level": 2},
+                },
+                headers={**headers, "Idempotency-Key": "limited-first"},
+            )
+            assert first.status_code == 201, first.text
+            second = await client.post(
+                f"/api/agent/v1/pages/{page_id}/components",
+                json={
+                    "component_type": "Heading",
+                    "props": {"text": "two", "level": 2},
+                },
+                headers={**headers, "Idempotency-Key": "limited-second"},
+            )
+            assert second.status_code == 422, second.text
+            denied_type = await client.post(
+                f"/api/agent/v1/pages/{page_id}/components",
+                json={"component_type": "Quote", "props": {"text": "denied"}},
+                headers={**headers, "Idempotency-Key": "limited-denied-type"},
+            )
+            assert denied_type.status_code == 403, denied_type.text
+            listed = await client.get(
+                f"/api/agent/v1/pages/{page_id}/components", headers=headers
+            )
+            assert listed.status_code == 200, listed.text
+            assert len(listed.json()) == 1
 
 
 @pytest.mark.asyncio
@@ -5480,7 +5854,7 @@ async def test_agent_046_047_migration_round_trip_preserves_contract_and_state(
                 await owner.fetchval(
                     "SELECT version_num::text FROM control.alembic_version"
                 )
-                == "059_001"
+                == "060_001"
             )
             assert await owner.fetchval(
                 "SELECT to_regprocedure($1)",
@@ -5809,7 +6183,7 @@ async def test_agent_048_data_bearing_round_trip_preserves_relations_views_and_a
         )
         await reconcile(database.settings)
         final_status = await status(database.settings)
-        assert final_status.revision == "059_001"
+        assert final_status.revision == "060_001"
         assert final_status.state.value == "HARDENED"
         assert final_status.safe
         assert await cow_rows() == content_before
@@ -8880,7 +9254,10 @@ async def test_agent_semantic_reads_use_cow_overlay_fallback_and_isolation(
                 workspace_page_id = page_response.json()["record"]["id"]
                 component_response = await client.post(
                     f"/api/agent/v1/pages/{workspace_page_id}/components",
-                    json={"component_type": "Heading", "props": {"text": "Workspace"}},
+                    json={
+                        "component_type": "Heading",
+                        "props": {"text": "Workspace", "level": 2},
+                    },
                     headers={
                         **headers,
                         "Idempotency-Key": "read-chain-component",
@@ -12991,7 +13368,7 @@ async def test_semantic_audit_contract_is_strict_and_reversible(
                 await owner.fetchval(
                     "SELECT version_num::text FROM control.alembic_version"
                 )
-                == "059_001"
+                == "060_001"
             )
             assert (
                 await owner.fetchval(
