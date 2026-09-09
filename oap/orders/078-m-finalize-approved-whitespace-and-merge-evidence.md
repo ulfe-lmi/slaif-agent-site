@@ -1,7 +1,7 @@
 # OAP Work Order — 078-m: finalize approved closure
 
 - Objective 078; increment 078/1; round 078-m; AMEND_EXISTING_PR.
-- Existing PR #77: https://github.com/ulfe-lmi/slaif-agent-site/pull/77
+- Existing [PR #77](https://github.com/ulfe-lmi/slaif-agent-site/pull/77).
 - Branch `oap/078-agent-composition-design-semantics`; base `main`.
 - Verified base/main: `ae3a4a681bb888260192b7bb1b2a337b4906828d`.
 - Starting report head: `e75022d6d72586170078daa8db39bebec4063fdf`.
