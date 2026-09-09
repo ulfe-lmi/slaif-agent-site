@@ -2131,7 +2131,7 @@ async def test_agent_redirect_051_migration_round_trip_preserves_data_and_privil
             await owner.fetchval(
                 "SELECT version_num::text FROM control.alembic_version"
             )
-            == "063_001"
+            == "064_001"
         )
         assert tuple(
             await owner.fetchrow(
@@ -2478,7 +2478,7 @@ async def test_agent_060_component_migration_round_trip_restores_audit_contract(
             await owner.fetchval(
                 "SELECT version_num::text FROM control.alembic_version"
             )
-            == "063_001"
+            == "064_001"
         )
         definition = await owner.fetchval(
             "SELECT pg_get_functiondef($1::regprocedure)", signature
@@ -2543,7 +2543,7 @@ async def test_agent_062_component_authority_migration_downgrade_round_trip(
         operation="upgrade",
         revision="head",
     )
-    assert (await status(database.settings)).revision == "063_001"
+    assert (await status(database.settings)).revision == "064_001"
 
 
 @pytest.mark.asyncio
@@ -2621,7 +2621,7 @@ async def test_agent_063_component_audit_migration_preserves_data_on_downgrade(
             await owner.fetchval(
                 "SELECT version_num::text FROM control.alembic_version"
             )
-            == "063_001"
+            == "064_001"
         )
         assert (
             tuple(
@@ -2633,6 +2633,194 @@ async def test_agent_063_component_audit_migration_preserves_data_on_downgrade(
             )
             == before
         )
+
+
+@pytest.mark.asyncio
+async def test_agent_064_component_downgrade_guards_and_round_trips_contract(
+    agent_site_database: AgentSiteDatabase,
+) -> None:
+    database = agent_site_database
+    _token, seeded = await _seed(database)
+    page_id = uuid4()
+    scalar_component_id = uuid4()
+    responsive_component_id = uuid4()
+    signatures = (
+        "content.slaif_agent_component_create(uuid,uuid,text,uuid,text,uuid,uuid,jsonb)",
+        "content.slaif_agent_component_update(uuid,uuid,jsonb,integer)",
+        "content.slaif_agent_component_move(uuid,uuid,uuid,text,uuid,uuid,integer)",
+    )
+    roles = ("slaif_agent_runtime", "slaif_editor_runtime", "slaif_control")
+
+    def normalized_state(row: Any) -> tuple[Any, ...]:
+        values = list(row)
+        if isinstance(values[0], str):
+            values[0] = json.loads(values[0])
+        return tuple(values)
+
+    async def contract(
+        owner: Any,
+    ) -> tuple[tuple[str, ...], tuple[tuple[Any, ...], ...]]:
+        definition_values: list[str] = []
+        for signature in signatures:
+            definition_values.append(
+                await owner.fetchval(
+                    "SELECT pg_get_functiondef($1::regprocedure)", signature
+                )
+            )
+        grant_values: list[tuple[Any, ...]] = []
+        for signature in signatures:
+            for role in roles:
+                grant_values.append(
+                    (
+                        signature,
+                        role,
+                        await owner.fetchval(
+                            "SELECT has_function_privilege($1,$2,'EXECUTE')",
+                            role,
+                            signature,
+                        ),
+                    )
+                )
+        definitions = tuple(definition_values)
+        grants = tuple(grant_values)
+        return definitions, grants
+
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        await owner.execute(
+            "INSERT INTO content.page_base "
+            "(id,site_id,slug,title,status,locale,row_version) "
+            "VALUES ($1,$2,'component-downgrade','Component downgrade','DRAFT','en',1)",
+            page_id,
+            seeded["site_id"],
+        )
+        await owner.execute(
+            "INSERT INTO content.page_composition_base "
+            "(id,site_id,page_id,component_type,schema_version,parent_id,slot_key,"
+            "order_key,props) VALUES ($1,$2,$3,'Columns','1',NULL,'default',0,"
+            "'{\"count\":2}'::jsonb)",
+            scalar_component_id,
+            seeded["site_id"],
+            page_id,
+        )
+    await _disable_content_cow(database)
+    await run_migration(
+        database.settings.resolved_owner_dsn(),
+        expected_database=database.name,
+        operation="downgrade",
+        revision="060_001",
+    )
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        scalar_at_060 = normalized_state(
+            await owner.fetchrow(
+                "SELECT props,row_version FROM content.page_composition WHERE id=$1",
+                scalar_component_id,
+            )
+        )
+        contract_at_060 = await contract(owner)
+        assert scalar_at_060 == ({"count": 2}, 1)
+
+    await run_migration(
+        database.settings.resolved_owner_dsn(),
+        expected_database=database.name,
+        operation="upgrade",
+        revision="head",
+    )
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        assert (
+            await owner.fetchval(
+                "SELECT version_num::text FROM control.alembic_version"
+            )
+            == "064_001"
+        )
+    await _disable_content_cow(database)
+    await run_migration(
+        database.settings.resolved_owner_dsn(),
+        expected_database=database.name,
+        operation="downgrade",
+        revision="060_001",
+    )
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        assert await contract(owner) == contract_at_060
+        assert (
+            normalized_state(
+                await owner.fetchrow(
+                    "SELECT props,row_version FROM content.page_composition "
+                    "WHERE id=$1",
+                    scalar_component_id,
+                )
+            )
+            == scalar_at_060
+        )
+
+    await run_migration(
+        database.settings.resolved_owner_dsn(),
+        expected_database=database.name,
+        operation="upgrade",
+        revision="head",
+    )
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        await owner.execute(
+            "INSERT INTO content.page_composition "
+            "(id,site_id,page_id,component_type,schema_version,parent_id,slot_key,"
+            "order_key,props) VALUES ($1,$2,$3,'Section','1',NULL,'default',1,"
+            '\'{"variant":{"desktop":"default","mobile":"full"},'
+            '"alignment":{"desktop":"start","mobile":"end"}}\'::jsonb)',
+            responsive_component_id,
+            seeded["site_id"],
+            page_id,
+        )
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        before_version = await owner.fetchval(
+            "SELECT version_num::text FROM control.alembic_version"
+        )
+        before_data = normalized_state(
+            await owner.fetchrow(
+                "SELECT props,row_version FROM content.page_composition WHERE id=$1",
+                responsive_component_id,
+            )
+        )
+        before_contract = await contract(owner)
+    assert before_version == "064_001"
+    await _disable_content_cow(database)
+    with pytest.raises(Exception, match="064_DOWNGRADE_RESPONSIVE_COMPONENT_STATE"):
+        await run_migration(
+            database.settings.resolved_owner_dsn(),
+            expected_database=database.name,
+            operation="downgrade",
+            revision="060_001",
+        )
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        assert (
+            await owner.fetchval(
+                "SELECT version_num::text FROM control.alembic_version"
+            )
+            == before_version
+        )
+        assert (
+            normalized_state(
+                await owner.fetchrow(
+                    "SELECT props,row_version FROM content.page_composition "
+                    "WHERE id=$1",
+                    responsive_component_id,
+                )
+            )
+            == before_data
+        )
+        assert await contract(owner) == before_contract
 
 
 @pytest.mark.asyncio
@@ -2686,7 +2874,7 @@ async def test_agent_049_plain_page_data_downgrade_and_upgrade_preserves_data(
             await owner.fetchval(
                 "SELECT version_num::text FROM control.alembic_version"
             )
-            == "063_001"
+            == "064_001"
         )
         row = await owner.fetchrow(
             "SELECT title, route_template, deleted_at FROM content.page_base "
@@ -6105,6 +6293,397 @@ async def test_agent_component_authority_repair_regressions(
             assert direct_props == {"label": "Direct", "href": "/direct"}
     finally:
         await agent_pool.close()
+
+
+@pytest.mark.asyncio
+async def test_agent_component_responsive_moves_preserve_props_and_authority(
+    agent_site_database: AgentSiteDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Prove responsive MOVE is structure-only and atomic at every surface."""
+    database = agent_site_database
+    _seed_token, seeded = await _seed(database)
+    full_scopes = [
+        "site:read",
+        "content-model:create",
+        "content-model:read",
+        "collection-view:create",
+        "collection-view:read",
+        "page:create",
+        "page:read",
+        "composition:read",
+        "media:read",
+        "component-structure:create",
+        "component-structure:move",
+        "component-content-props:write",
+        "component-props:write",
+        "component-variant:write",
+        "layout:write",
+        "responsive-design:write",
+    ]
+    full_token, workspace_id = await _workspace_capability(
+        database, seeded, full_scopes, "Agent Responsive Component Move Workspace"
+    )
+    scoped_seeded = {**seeded, "workspace_id": workspace_id}
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        await owner.execute(
+            "UPDATE control.capability SET request_quota=500, mutation_quota=200 "
+            "WHERE workspace_id=$1",
+            workspace_id,
+        )
+        media_id = uuid4()
+        await owner.execute(
+            "INSERT INTO content.media_asset_base "
+            "(id,site_id,uploaded_by,filename,mime_type,size_bytes,content_hash,"
+            "storage_key,alt_text,metadata) VALUES ($1,$2,$3,'move.png','image/png',"
+            "1,$4,$5,'Move','{}'::jsonb)",
+            media_id,
+            seeded["site_id"],
+            seeded["delegator_id"],
+            "c" * 64,
+            "sha256/cc/cc/" + "c" * 64,
+        )
+    app = create_agent_app(
+        settings=ServiceSettings.for_test(),
+        database_settings=_agent_settings(database),
+    )
+    full_headers = {"Authorization": f"Bearer {full_token}"}
+    async with app.router.lifespan_context(app):
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://agent.test"
+        ) as client:
+            page = await client.post(
+                "/api/agent/v1/pages/",
+                json={"slug": "responsive-moves", "title": "Responsive moves"},
+                headers={**full_headers, "Idempotency-Key": "responsive-moves-page"},
+            )
+            assert page.status_code == 201, page.text
+            page_id = page.json()["record"]["id"]
+            content_type = await client.post(
+                "/api/agent/v1/content-model/types",
+                json={
+                    "key": "responsive-move-items",
+                    "labels": {"en": "Responsive move items"},
+                    "slug_pattern": "/responsive-move-items/{slug}",
+                    "settings": {},
+                },
+                headers={
+                    **full_headers,
+                    "Idempotency-Key": "responsive-moves-type",
+                },
+            )
+            assert content_type.status_code == 201, content_type.text
+            view = await client.post(
+                f"/api/agent/v1/collection-views/types/"
+                f"{content_type.json()['record']['id']}",
+                json={
+                    "type_id": content_type.json()["record"]["id"],
+                    "key": "responsive-move-view",
+                    "filter_spec": {},
+                    "sort_spec": {},
+                    "projection_spec": {},
+                    "pagination_spec": {"limit": 10, "offset": 0},
+                },
+                headers={
+                    **full_headers,
+                    "Idempotency-Key": "responsive-moves-view",
+                },
+            )
+            assert view.status_code == 201, view.text
+            view_id = view.json()["record"]["id"]
+
+            async def create(
+                component_type: str, props: dict[str, Any], key: str
+            ) -> dict[str, Any]:
+                response = await client.post(
+                    f"/api/agent/v1/pages/{page_id}/components",
+                    json={"component_type": component_type, "props": props},
+                    headers={**full_headers, "Idempotency-Key": key},
+                )
+                assert response.status_code == 201, response.text
+                return cast(dict[str, Any], response.json()["record"])
+
+            section_a = await create("Section", {}, "responsive-moves-section-a")
+            section_b = await create("Section", {}, "responsive-moves-section-b")
+            columns = await create("Columns", {}, "responsive-moves-columns")
+            cases = (
+                (
+                    "Button",
+                    {
+                        "label": "Responsive button",
+                        "href": "/responsive-button",
+                        "variant": {"desktop": "primary", "tablet": "secondary"},
+                    },
+                    "responsive-moves-button",
+                    "col-1",
+                ),
+                (
+                    "Image",
+                    {
+                        "mediaId": str(media_id),
+                        "alt": "Responsive image",
+                        "aspectRatio": {"desktop": "16:9", "mobile": "1:1"},
+                    },
+                    "responsive-moves-image",
+                    "col-2",
+                ),
+                (
+                    "CollectionGrid",
+                    {
+                        "viewId": view_id,
+                        "columns": {"desktop": 4, "tablet": 2},
+                    },
+                    "responsive-moves-collection",
+                    "col-3",
+                ),
+            )
+            records = {
+                component_type: await create(component_type, props, key)
+                for component_type, props, key, _slot in cases
+            }
+            for component_type, record in records.items():
+                refreshed = await client.get(
+                    f"/api/agent/v1/components/{record['id']}", headers=full_headers
+                )
+                assert refreshed.status_code == 200, refreshed.text
+                records[component_type] = cast(dict[str, Any], refreshed.json())
+            original_props = {
+                component_type: record["props"]
+                for component_type, record in records.items()
+            }
+
+            async def move(
+                record: dict[str, Any],
+                parent_id: str,
+                slot: str,
+                key: str,
+                version: int,
+            ) -> httpx.Response:
+                return await client.post(
+                    f"/api/agent/v1/components/{record['id']}/move",
+                    json={
+                        "new_parent_id": parent_id,
+                        "new_slot_key": slot,
+                        "expected_row_version": version,
+                    },
+                    headers={**structure_headers, "Idempotency-Key": key},
+                )
+
+            structure_token = await _capability_with_scopes(
+                database,
+                scoped_seeded,
+                [
+                    "site:read",
+                    "page:read",
+                    "composition:read",
+                    "component-structure:move",
+                ],
+            )
+            structure_headers = {"Authorization": f"Bearer {structure_token}"}
+
+            for component_type, _props, _key, final_slot in cases:
+                latest = await client.get(
+                    f"/api/agent/v1/components/{records[component_type]['id']}",
+                    headers=structure_headers,
+                )
+                assert latest.status_code == 200, latest.text
+                record = cast(dict[str, Any], latest.json())
+                records[component_type] = record
+                initial_version = record["row_version"]
+                first = await move(
+                    record,
+                    section_a["id"],
+                    "default",
+                    f"{component_type}-move-section-a",
+                    initial_version,
+                )
+                assert first.status_code == 200, first.text
+                assert first.json()["record"]["props"] == original_props[component_type]
+                first_record = cast(dict[str, Any], first.json()["record"])
+                records[component_type] = first_record
+                replay = await move(
+                    first_record,
+                    section_a["id"],
+                    "default",
+                    f"{component_type}-move-section-a",
+                    initial_version,
+                )
+                assert replay.status_code == 200, replay.text
+                assert replay.json() == first.json()
+                stale = await move(
+                    first_record,
+                    section_b["id"],
+                    "default",
+                    f"{component_type}-move-stale",
+                    initial_version,
+                )
+                assert stale.status_code == 409, stale.text
+                second_version = first_record["row_version"]
+                across_parent = await move(
+                    first_record,
+                    section_b["id"],
+                    "default",
+                    f"{component_type}-move-section-b",
+                    second_version,
+                )
+                assert across_parent.status_code == 200, across_parent.text
+                assert (
+                    across_parent.json()["record"]["props"]
+                    == original_props[component_type]
+                )
+                second_record = cast(dict[str, Any], across_parent.json()["record"])
+                records[component_type] = second_record
+                across_slot = await move(
+                    second_record,
+                    columns["id"],
+                    final_slot,
+                    f"{component_type}-move-columns",
+                    second_record["row_version"],
+                )
+                assert across_slot.status_code == 200, across_slot.text
+                moved_record = across_slot.json()["record"]
+                assert moved_record["parent_id"] == columns["id"]
+                assert moved_record["slot_key"] == final_slot
+                assert moved_record["props"] == original_props[component_type]
+                records[component_type] = cast(dict[str, Any], moved_record)
+
+            current = await client.get(
+                f"/api/agent/v1/components/{records['Button']['id']}",
+                headers=structure_headers,
+            )
+            assert current.status_code == 200, current.text
+            denied_value_change = await client.patch(
+                f"/api/agent/v1/components/{records['Button']['id']}",
+                json={
+                    "props": {"variant": {"desktop": "ghost"}},
+                    "expected_row_version": current.json()["row_version"],
+                },
+                headers={
+                    **structure_headers,
+                    "Idempotency-Key": "responsive-moves-denied-value",
+                },
+            )
+            assert denied_value_change.status_code == 403, denied_value_change.text
+            assert current.json()["props"] == original_props["Button"]
+            assert current.json()["parent_id"] == columns["id"]
+            assert current.json()["slot_key"] == "col-1"
+
+            async with owner_connection(
+                database.settings.resolved_owner_dsn(), expected_database=database.name
+            ) as owner:
+                durable_before_cancel = tuple(
+                    await owner.fetchrow(
+                        "SELECT mutation_used, "
+                        "(SELECT count(*) FROM control.agent_idempotency "
+                        "WHERE workspace_id=$1), "
+                        "(SELECT count(*) FROM audit.agent_mutation "
+                        "WHERE workspace_id=$1) "
+                        "FROM control.capability WHERE workspace_id=$1",
+                        workspace_id,
+                    )
+                )
+            entered = asyncio.Event()
+            release = asyncio.Event()
+            original_move = AgentCowContentModelService.move_component_for_site
+
+            async def pause_after_move(
+                service: Any,
+                site_id: UUID,
+                component_id: UUID,
+                request: Any,
+            ) -> Any:
+                result = await original_move(service, site_id, component_id, request)
+                entered.set()
+                await release.wait()
+                return result
+
+            monkeypatch.setattr(
+                AgentCowContentModelService,
+                "move_component_for_site",
+                pause_after_move,
+            )
+            button_before_cancel = current.json()
+            cancelled = asyncio.create_task(
+                client.post(
+                    f"/api/agent/v1/components/{records['Button']['id']}/move",
+                    json={
+                        "new_parent_id": section_a["id"],
+                        "new_slot_key": "default",
+                        "expected_row_version": button_before_cancel["row_version"],
+                    },
+                    headers={
+                        **structure_headers,
+                        "Idempotency-Key": "responsive-moves-cancelled",
+                    },
+                )
+            )
+            try:
+                await asyncio.wait_for(entered.wait(), timeout=5)
+                cancelled.cancel()
+                release.set()
+                with pytest.raises(asyncio.CancelledError):
+                    await cancelled
+            finally:
+                release.set()
+                monkeypatch.undo()
+            after_cancel = await client.get(
+                f"/api/agent/v1/components/{records['Button']['id']}",
+                headers=structure_headers,
+            )
+            assert after_cancel.status_code == 200, after_cancel.text
+            assert after_cancel.json() == button_before_cancel
+            async with owner_connection(
+                database.settings.resolved_owner_dsn(), expected_database=database.name
+            ) as owner:
+                durable_after_cancel = tuple(
+                    await owner.fetchrow(
+                        "SELECT mutation_used, "
+                        "(SELECT count(*) FROM control.agent_idempotency "
+                        "WHERE workspace_id=$1), "
+                        "(SELECT count(*) FROM audit.agent_mutation "
+                        "WHERE workspace_id=$1) "
+                        "FROM control.capability WHERE workspace_id=$1",
+                        workspace_id,
+                    )
+                )
+            assert durable_after_cancel == durable_before_cancel
+
+            direct_pool = await database.role_pool("slaif_agent_runtime")
+            try:
+                async with asyncpg_cow_session(
+                    direct_pool, session_id=workspace_id, operation_id=uuid4()
+                ) as cow:
+                    await cow.native.execute(
+                        "SELECT set_config('app.capability_id',$1,true)",
+                        str(_TEST_CAPABILITY_BY_WORKSPACE[workspace_id]),
+                    )
+                    direct_version = (
+                        await client.get(
+                            f"/api/agent/v1/components/{records['Image']['id']}",
+                            headers=structure_headers,
+                        )
+                    ).json()["row_version"]
+                    direct = await cow.native.fetchrow(
+                        "SELECT * FROM content.slaif_agent_component_move("
+                        "$1,$2,$3,$4,$5,$6,$7)",
+                        seeded["site_id"],
+                        UUID(records["Image"]["id"]),
+                        UUID(section_a["id"]),
+                        "default",
+                        None,
+                        None,
+                        direct_version,
+                    )
+                    assert direct is not None
+                    direct_props = direct["props"]
+                    if isinstance(direct_props, str):
+                        direct_props = json.loads(direct_props)
+                    assert direct_props == original_props["Image"]
+                    assert direct["row_version"] == direct_version + 1
+            finally:
+                await direct_pool.close()
 
 
 @pytest.mark.asyncio
@@ -10147,7 +10726,7 @@ async def test_agent_046_047_migration_round_trip_preserves_contract_and_state(
                 await owner.fetchval(
                     "SELECT version_num::text FROM control.alembic_version"
                 )
-                == "063_001"
+                == "064_001"
             )
             assert await owner.fetchval(
                 "SELECT to_regprocedure($1)",
@@ -10476,7 +11055,7 @@ async def test_agent_048_data_bearing_round_trip_preserves_relations_views_and_a
         )
         await reconcile(database.settings)
         final_status = await status(database.settings)
-        assert final_status.revision == "063_001"
+        assert final_status.revision == "064_001"
         assert final_status.state.value == "HARDENED"
         assert final_status.safe
         assert await cow_rows() == content_before
@@ -17657,7 +18236,7 @@ async def test_semantic_audit_contract_is_strict_and_reversible(
                 await owner.fetchval(
                     "SELECT version_num::text FROM control.alembic_version"
                 )
-                == "063_001"
+                == "064_001"
             )
             assert (
                 await owner.fetchval(

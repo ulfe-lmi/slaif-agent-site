@@ -72,3 +72,31 @@ run after the repairs. The final report records exact commands and results.
 No theme or later feature was added, no historical order/report was rewritten,
 and no merge or auto-merge was performed. The remaining action is the human
 newline decision, followed by the required final Markdown/CI verification.
+
+## 078-l continuation evidence
+
+The active 078-l continuation adds only the missing component MOVE and safe
+downgrade proof. Migration `064_001_component_move_responsive.py` replaces the
+Agent MOVE validator with the full trusted design validator while passing the
+unchanged property state for a structure-only move. Its downgrade guard refuses
+responsive breakpoint maps or the alignment extension before replacing any
+older function, data, or grant state.
+
+The following required proofs pass against real PostgreSQL and public Agent
+HTTP: `test_agent_component_responsive_moves_preserve_props_and_authority`
+(responsive Button, Image, and CollectionGrid moves across parents and slots,
+narrowed structure-only authority, value-write denial, replay, stale version,
+cancellation rollback, and direct runtime MOVE); and
+`test_agent_064_component_downgrade_guards_and_round_trips_contract` (scalar
+061-to-060 round-trip, exact function/grant repeatability, and atomic refusal
+with responsive maps plus alignment). The component-focused selection passes
+24 tests; the full Python unit/repository selection passes 538 tests; mypy
+passes 268 files; and full Python Ruff/format, lock, repository-policy, and
+Mermaid checks pass.
+
+The frozen Node sequence passes on Node 24.14.1 and pnpm 11.22.0, including
+install, lint, format, typecheck, test, build, and license inventory. Markdown
+lint still reports exactly one pre-existing immutable-order error at
+`oap/orders/078-j-close-component-increment.md:187` (`MD012`); 078-j remains
+byte-for-byte unchanged and no lint bypass is active. Objective 078 remains
+PARTIAL pending that governance decision and green required remote checks.

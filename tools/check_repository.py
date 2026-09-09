@@ -290,6 +290,7 @@ REQUIRED_FILES = (
         "services/backend/src/slaif_agent_site/db/alembic/versions/061_001_agent_component_design_semantics.py",
         "services/backend/src/slaif_agent_site/db/alembic/versions/062_001_component_authority_repairs.py",
         "services/backend/src/slaif_agent_site/db/alembic/versions/063_001_component_audit_repairs.py",
+        "services/backend/src/slaif_agent_site/db/alembic/versions/064_001_component_move_responsive.py",
         "services/backend/src/slaif_agent_site/application.py",
         "services/backend/src/slaif_agent_site/authority.py",
         "services/backend/src/slaif_agent_site/config.py",

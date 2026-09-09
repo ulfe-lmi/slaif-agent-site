@@ -143,6 +143,7 @@ NEW_PACKAGE_FILES = {
     "slaif_agent_site/db/alembic/versions/061_001_agent_component_design_semantics.py",
     "slaif_agent_site/db/alembic/versions/062_001_component_authority_repairs.py",
     "slaif_agent_site/db/alembic/versions/063_001_component_audit_repairs.py",
+    "slaif_agent_site/db/alembic/versions/064_001_component_move_responsive.py",
     "slaif_agent_site/db/connections.py",
     "slaif_agent_site/db/executor.py",
     "slaif_agent_site/db/migrations.py",
@@ -607,8 +608,9 @@ def test_locked_foundation_artifact_hash_constants_are_sha256() -> None:
 
 
 def test_alembic_graph_and_offline_sql_need_no_locator_or_network() -> None:
-    assert migration_heads() == ("063_001",)
+    assert migration_heads() == ("064_001",)
     assert migration_history() == (
+        "064_001",
         "063_001",
         "062_001",
         "061_001",
