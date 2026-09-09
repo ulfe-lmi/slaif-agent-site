@@ -183,4 +183,3 @@ source/function anchors, changed effects, scope-trim proof and preserved theme
 SHA, governance/truth changes, exact checks/tests, final size categories,
 remaining increment scope and strongest reason to reject. Push and verify
 report-only parent/path/remote head, send exact FIFO OK, then wait.
-

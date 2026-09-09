@@ -59,19 +59,20 @@ the retained behavior and 078-k audit closure.
 
 ## F7 — lint and immutable artifact boundary
 
-The new whole-file ignores and repository-policy allowlisting were removed.
-The mutable governance amendment is formatted. Immutable 078-j remains
-byte-for-byte untouched because the requested human one-newline override has
-not arrived through control FIFO. Consequently Markdownlint is intentionally
-not green for that one immutable order error; no bypass is active.
+    The new whole-file ignores and repository-policy allowlisting were removed.
+The mutable governance amendment is formatted. At the time of 078-k,
+immutable 078-j remained byte-for-byte untouched because the requested human
+one-newline override had not arrived through control FIFO. The later 078-m
+governance record contains the explicit approval and exact one-byte correction;
+no bypass is active.
 
 ## Verification state
 
 Focused Agent authority, migration, Editor, unit, Puck, and renderer tests are
 run after the repairs. The final report records exact commands and results.
 No theme or later feature was added, no historical order/report was rewritten,
-and no merge or auto-merge was performed. The remaining action is the human
-newline decision, followed by the required final Markdown/CI verification.
+and no merge or auto-merge was performed. The remaining action was the human
+newline decision, followed by the final Markdown/CI verification in 078-m.
 
 ## 078-l continuation evidence
 
@@ -95,8 +96,31 @@ passes 268 files; and full Python Ruff/format, lock, repository-policy, and
 Mermaid checks pass.
 
 The frozen Node sequence passes on Node 24.14.1 and pnpm 11.22.0, including
-install, lint, format, typecheck, test, build, and license inventory. Markdown
-lint still reports exactly one pre-existing immutable-order error at
-`oap/orders/078-j-close-component-increment.md:187` (`MD012`); 078-j remains
-byte-for-byte unchanged and no lint bypass is active. Objective 078 remains
-PARTIAL pending that governance decision and green required remote checks.
+install, lint, format, typecheck, test, build, and license inventory. At the
+078-l report head, Markdownlint still reported the then-pending 078-j error;
+078-m records its approved correction and final closure CI remains required.
+Objective 078 remains PARTIAL pending strategic merge and later increments.
+
+## 078-m strategic acceptance addendum
+
+Human approval and strategy's technical acceptance are recorded in
+`oap/governance/2026-09-09-078-j-whitespace-override.md` and
+`oap/audits/078-1-strategic-acceptance.md`. The corrected 078-j bytes have
+SHA-256 `942bb3f53507e76eb87559afb34f1ca3eb8bcabd59f7ac4e3a006b8d44189796`
+and differ from the original only by deletion of its final LF. The 078-m order
+requires no product change: only that approved historical whitespace correction,
+the governance/transcript records, current-ledger reconciliation, and final
+CI/merge evidence are in scope. Strategy accepted the product implementation
+at `6e41a5201215015e48d266995242b9c58067b95c`; PR #77 remains open until the
+final closure head is verified and merged by strategy.
+
+## 078-m execution boundary
+
+The approved 078-j correction is byte-exact and the strategic acceptance
+records are present. Repository-wide Markdownlint now reports exactly one
+issue in the consumed immutable order
+`oap/orders/078-m-finalize-approved-whitespace-and-merge-evidence.md:4`
+(`MD034/no-bare-urls`). The coding agent cannot edit an activated order or add
+a lint bypass, so this is a strategy-artifact blocker rather than a product
+failure. No product code, dependency, historical report, or other order was
+changed.

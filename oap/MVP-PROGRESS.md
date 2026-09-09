@@ -3,17 +3,20 @@
 This tracker uses the contract-audit status vocabulary rather than file
 presence or completion estimates. The authoritative baseline is
 [`MVP-CONTRACT-AUDIT.md`](MVP-CONTRACT-AUDIT.md), updated for the protocol-final
-Objective 078 increment 1 on PR #77, reviewed on 2026-09-09. Verified remote
+Objective 078 increment 1 on PR #77, reviewed and technically accepted on
+2026-09-09. Verified remote
 `main` is `ae3a4a681bb888260192b7bb1b2a337b4906828d`, the accepted
-Objective-077 merge. PR #77 is OPEN and has not been accepted or merged.
+Objective-077 merge. PR #77 is OPEN, technically accepted by strategy, and has
+not been merged.
 
 ## Current verdict
 
 **CONTRACTUAL MVP NOT COMPLETE.** Objectives 065–077 are accepted and merged
 for their bounded contracts. PR #77 contains Objective 078/1: component
 composition and component-local design. Its final hostile audit has been
-performed; acceptance is pending closure of the recorded findings and green
-required checks. The 078-i theme implementation is preserved in history and
+performed and the recorded findings are closed; final closure is blocked by a
+bare URL in the consumed 078-m order, with merge remaining pending.
+The 078-i theme implementation is preserved in history and
 removed from this PR. Remaining Objective 078 theme, global regions/header and
 footer, page style and catalog work belongs to fresh bounded PR increments.
 Later numbered objectives own media, MCP, exact-workspace Puck, review,
@@ -62,7 +65,7 @@ contractual MVP remains **NOT COMPLETE**.
 
 ## Objective 078 source revision
 
-The 078-l closure of the 078-j source revision on [PR #77](https://github.com/ulfe-lmi/slaif-agent-site/pull/77)
+The 078-m closure of the 078-j source revision on [PR #77](https://github.com/ulfe-lmi/slaif-agent-site/pull/77)
 maps the immutable 078-a through 078-f transcript to the existing public Agent
 and shared Render/Web/browser boundaries. Its bounded component slice is
 **COMPLETE — E2E PROVEN** at the open-PR source revision: a clean NGINX-only
@@ -78,8 +81,11 @@ semantics, and classifies the existing Button/Image/CollectionGrid visual
 properties. The 078-k audit closed full validation, responsive CREATE, renderer
 cascade, human Editor/Puck preservation, and migration reversibility. The 078-l
 continuation closes the responsive Agent MOVE and guarded 061-to-060 downgrade
-proof; focused public-Agent/PostgreSQL/Render/Web/Puck evidence remains required
-before crediting this repaired design slice. The accepted Objective-077
+proof, and 078-m records strategic technical acceptance after the approved
+078-j whitespace correction. Focused public-Agent/PostgreSQL/Render/Web/Puck
+evidence is retained and credited for technical acceptance; the 078-m order
+itself has a Markdownlint MD034 bare-URL error at line 4 that the coding agent
+cannot edit after activation. The accepted Objective-077
 revision is in `main` at `ae3a4a6`. Site-global theme, global-region,
 exact-workspace Puck, review, promotion, and publication remain
 **PARTIAL/NOT IMPLEMENTED**; this does not claim that PR #77 has merged or that
@@ -87,7 +93,7 @@ the contractual MVP is complete.
 
 ## Active and remaining sequence
 
-The active transcript pointer is `078-l` for the current closure continuation;
+The active transcript pointer is `078-m` for the current closure continuation;
 the source revisions have complete bounded 077 evidence and
 complete bounded 078 component evidence; acceptance and containment in `main`
 are determined by OAP and GitHub state, not this document. All later order files
@@ -96,7 +102,7 @@ remain inert until strategy selects and signals them.
 | Order | Contractual scope | Current status |
 |---|---|---|
 | 077 | Agent page, navigation, redirect, and bounded dynamic collection Render semantics | COMPLETE — E2E PROVEN and accepted/merged in PR #74 on 2026-09-08 at `ae3a4a6` |
-| 078 | Agent composition and design semantics; bounded component data plane | PARTIAL — component/local-design slice and 078-l closure repairs are on open PR #77 awaiting strategic acceptance; site-theme/global/page-style/catalog scope remains deferred |
+| 078 | Agent composition and design semantics; bounded component data plane | PARTIAL — component/local-design slice and 078-m closure repairs are technically accepted on open PR #77, but closure is blocked by immutable 078-m MD034 pending strategic correction; site-theme/global/page-style/catalog scope remains deferred |
 | 079 | Agent media semantics and references | PARTIAL |
 | 080 | Real MCP semantic parity | SCAFFOLD ONLY |
 | 081 | Human Puck editing in the exact Agent workspace | PARTIAL |
