@@ -17,6 +17,8 @@ from slaif_agent_site.agent_api.app import create_app as create_agent_app
 from slaif_agent_site.agent_state.foundation import asyncpg_cow_reviewer
 from slaif_agent_site.config import ServiceSettings
 from slaif_agent_site.db.connections import owner_connection
+from slaif_agent_site.db.migrations import run_migration
+from sqlalchemy.exc import DBAPIError
 from test_agent_mutations import (
     _agent_settings,
     _capability_with_scopes,
@@ -582,6 +584,44 @@ async def test_theme_lifecycle_foreign_context_read_purity_and_reconnect(
     finally:
         await reviewer_pool.close()
         await agent_pool.close()
+
+
+@pytest.mark.asyncio
+async def test_theme_downgrade_rejects_pending_cow_without_data_loss(
+    agent_site_database: AgentSiteDatabase,
+) -> None:
+    database = agent_site_database
+    _unused_token, seeded = await _seed(database)
+    token = await _capability_with_scopes(
+        database, seeded, ["site:read", "theme:read", "theme-tokens:write"]
+    )
+    async with _agent_client(database) as client:
+        changed = await client.patch(
+            "/api/agent/v1/theme",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Idempotency-Key": "theme-pending-downgrade",
+            },
+            json={"expected_row_version": 1, "palette": {"preset": "meadow"}},
+        )
+        assert changed.status_code == 200, changed.text
+
+    with pytest.raises(DBAPIError, match="THEME_MIGRATION_PENDING_COW"):
+        await run_migration(
+            database.settings.resolved_owner_dsn(),
+            expected_database=database.name,
+            operation="downgrade",
+            revision="064_001",
+        )
+
+    async with _agent_client(database) as client:
+        preserved = await client.get(
+            "/api/agent/v1/theme",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert preserved.status_code == 200, preserved.text
+        assert preserved.json()["row_version"] == 2
+        assert preserved.json()["palette"] == {"preset": "meadow"}
 
 
 async def _theme_lock_key(connection: Any, seeded: dict[str, UUID]) -> int:
