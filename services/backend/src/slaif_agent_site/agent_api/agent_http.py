@@ -1584,20 +1584,30 @@ async def create_component(
     idempotency_key: IdempotencyHeader = None,
 ) -> AgentMutationResponse:
     context = await _authenticate(request)
-    _require_scope(context, "component-structure:create")
-    allowed_types = _constraint(context, "allowed_component_types")
-    if isinstance(allowed_types, (list, tuple, set)) and body.component_type not in {
-        str(value) for value in allowed_types
-    }:
-        raise AuthorizationError()
-    try:
-        required_scopes = required_scopes_for_component_create(
-            body.component_type, body.props
+
+    async def apply_component_create(service: Any) -> CompositionNodeRecord:
+        try:
+            required_scopes = required_scopes_for_component_create(
+                body.component_type, body.props
+            )
+        except (TypeError, ValueError) as error:
+            raise ContentModelServiceError(
+                ContentModelServiceReason.VALIDATION, code=str(error)
+            ) from None
+        if "component-structure:create" not in context.scopes or any(
+            scope not in context.scopes for scope in required_scopes
+        ):
+            raise ContentModelServiceError(ContentModelServiceReason.AUTHORIZATION)
+        allowed_types = _constraint(context, "allowed_component_types")
+        if isinstance(
+            allowed_types, (list, tuple, set)
+        ) and body.component_type not in {str(value) for value in allowed_types}:
+            raise ContentModelServiceError(ContentModelServiceReason.AUTHORIZATION)
+        return cast(
+            CompositionNodeRecord,
+            await service.add_component_for_site(context.site_id, page_id, body),
         )
-    except (TypeError, ValueError):
-        raise DomainValidationError() from None
-    for scope in required_scopes:
-        _require_scope(context, scope)
+
     return await _execute_mutation(
         request,
         context,
@@ -1605,9 +1615,7 @@ async def create_component(
         idempotency_key,
         resource_type="composition_node",
         action="COMPONENT_CREATED",
-        mutate=lambda service: service.add_component_for_site(
-            context.site_id, page_id, body
-        ),
+        mutate=apply_component_create,
     )
 
 
