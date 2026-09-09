@@ -288,3 +288,67 @@ test("authenticated-preview-renders-overlay-and-keeps-canonical-unchanged", asyn
 
   expect(failures(), "unexpected preview browser failures").toEqual([]);
 });
+
+test("renderer local design follows the documented responsive cascade", async ({
+  page,
+}) => {
+  const response = await page.goto("/s/parity/");
+  expect(response?.status()).toBe(200);
+  await expect(
+    page.locator('link[rel="stylesheet"][href="/renderer-v1.css"]'),
+  ).toHaveCount(1);
+  await page.evaluate(() => {
+    const root = document.createElement("div");
+    root.id = "local-design-evidence";
+    root.innerHTML = `
+      <section id="local-section" class="renderer-section renderer-section--narrow"></section>
+      <div id="local-grid" class="renderer-grid renderer-grid--4 renderer-grid--tablet-2"></div>
+      <div id="local-spacer" class="renderer-spacer renderer-spacer--md renderer-spacer--mobile-xl"></div>
+      <a id="local-button" class="renderer-button renderer-button--secondary renderer-button--mobile-primary">Button</a>
+      <div id="local-image" class="renderer-image-placeholder renderer-image-placeholder--16-9 renderer-image-placeholder--mobile-auto"></div>
+    `;
+    document.body.append(root);
+  });
+  const evidence = () =>
+    page.evaluate(() => {
+      const style = (id: string) => {
+        const element = document.getElementById(id);
+        if (!(element instanceof HTMLElement)) throw new Error(`missing-${id}`);
+        const computed = getComputedStyle(element);
+        return {
+          maxWidth: computed.maxWidth,
+          gridTemplateColumns: computed.gridTemplateColumns,
+          minHeight: computed.minHeight,
+          backgroundColor: computed.backgroundColor,
+          color: computed.color,
+          aspectRatio: computed.aspectRatio,
+        };
+      };
+      return {
+        section: style("local-section"),
+        grid: style("local-grid"),
+        spacer: style("local-spacer"),
+        button: style("local-button"),
+        image: style("local-image"),
+      };
+    });
+
+  await page.setViewportSize({ width: 1440, height: 800 });
+  const desktop = await evidence();
+  expect(desktop.section.maxWidth).toBe("768px");
+  expect(desktop.grid.gridTemplateColumns.split(" ")).toHaveLength(4);
+  expect(desktop.image.aspectRatio).toBe("16 / 9");
+
+  await page.setViewportSize({ width: 900, height: 800 });
+  const tablet = await evidence();
+  expect(tablet.grid.gridTemplateColumns.split(" ")).toHaveLength(2);
+
+  await page.setViewportSize({ width: 390, height: 800 });
+  const mobile = await evidence();
+  expect(mobile.grid.gridTemplateColumns.split(" ")).toHaveLength(2);
+  expect(mobile.spacer.minHeight).toBe("32px");
+  expect(mobile.button.backgroundColor).toBe("rgb(168, 197, 56)");
+  expect(mobile.button.color).toBe("rgb(8, 19, 23)");
+  expect(mobile.image.minHeight).toBe("192px");
+  expect(mobile.image.aspectRatio).toBe("auto");
+});

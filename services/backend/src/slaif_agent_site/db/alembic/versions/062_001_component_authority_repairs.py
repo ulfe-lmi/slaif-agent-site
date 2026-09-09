@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from importlib import import_module
+from typing import Any
 
 from alembic import op
 
@@ -22,6 +24,12 @@ _AUTHORIZE_CREATE_FUNCTION = (
 )
 _COMPONENT_CREATE_FUNCTION = (
     "content.slaif_agent_component_create(uuid,uuid,text,uuid,text,uuid,uuid,jsonb)"
+)
+_COMPONENT_UPDATE_FUNCTION = (
+    "content.slaif_agent_component_update(uuid,uuid,jsonb,integer)"
+)
+_M061: Any = import_module(
+    "slaif_agent_site.db.alembic.versions.061_001_agent_component_design_semantics"
 )
 
 
@@ -491,6 +499,12 @@ def downgrade() -> None:
     op.execute(f"REVOKE ALL ON FUNCTION {_COMPONENT_CREATE_FUNCTION} FROM PUBLIC")
     op.execute(
         f"GRANT EXECUTE ON FUNCTION {_COMPONENT_CREATE_FUNCTION} TO slaif_agent_runtime"
+    )
+    _execute_block(_M061._component_update_sql())
+    op.execute(f"ALTER FUNCTION {_COMPONENT_UPDATE_FUNCTION} OWNER TO slaif_owner")
+    op.execute(f"REVOKE ALL ON FUNCTION {_COMPONENT_UPDATE_FUNCTION} FROM PUBLIC")
+    op.execute(
+        f"GRANT EXECUTE ON FUNCTION {_COMPONENT_UPDATE_FUNCTION} TO slaif_agent_runtime"
     )
     _execute_block("""
         CREATE OR REPLACE FUNCTION control.slaif_agent_component_authorize_update(

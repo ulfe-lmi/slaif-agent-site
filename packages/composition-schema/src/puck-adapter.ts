@@ -18,6 +18,7 @@ type CatalogType =
 interface CatalogSchema {
   readonly type: CatalogType;
   readonly required?: boolean | readonly string[];
+  readonly integer?: boolean;
   readonly enum_values?: readonly string[];
   readonly minimum?: number;
   readonly maximum?: number;
@@ -125,6 +126,8 @@ function assertDesignValue(value: unknown, definition: DesignProperty): void {
     return;
   }
   if (typeof value !== "number" || !Number.isFinite(value))
+    throw new Error("invalid-component-props");
+  if (definition.integer === true && !Number.isInteger(value))
     throw new Error("invalid-component-props");
   if (definition.minimum !== undefined && value < definition.minimum)
     throw new Error("invalid-component-props");

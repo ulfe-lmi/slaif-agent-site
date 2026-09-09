@@ -37,8 +37,8 @@ adds the bounded capability-bound Agent page list/read/create/update/delete/
 move/restore, locale, navigation, redirect, and dynamic collection Render
 semantics, with the corresponding human Editor route path, shared trusted
 Render projection, hostile-negative/concurrency/recovery evidence, and exact
-OpenAPI/policy continuity. GitHub's PR and merge state is authoritative for
-whether this source revision is contained in `main`; review snapshots,
+OpenAPI/policy continuity. The accepted revision was merged in PR #74 on
+2026-09-08 at `ae3a4a681bb888260192b7bb1b2a337b4906828d`; review snapshots,
 promotion, publication execution, composition/design/media-reference expansion,
 and later MVP work remain separate. This source-revision evidence does not
 claim that the contractual MVP is complete.
@@ -212,7 +212,7 @@ loopback port 8080 is published. The deployable pre-alpha stack includes
 one-time first-run setup/login and site-management administration; bounded
 page/locale/navigation/redirect/dynamic-Render semantics are present in the
 Objective-077 source revision, and the bounded Agent component and local
-design data planes and the 078-j authority/replay repair are present in the
+design data planes and the 078-k authority/replay/audit closure is present in the
 Objective-078 source revision;
 site-global theme/media, review, and publication remain queued. See the
 [deployment guide](docs/DEPLOYMENT.md) and [operations guide](docs/OPERATIONS.md).
@@ -233,8 +233,8 @@ site-global theme/media, review, and publication remain queued. See the
 | Completed site foundation | Control-owned sites and domain mappings, bounded installation quota, strict identifier normalization, immutable site context, and trusted longest-prefix/local-development resolution. |
 | Completed human RBAC HTTP boundary | Immutable role/permission catalogs, site membership list/get/create/update/deactivate, strict session/CSRF policy, optimistic concurrency, and complete Control/Editor route declarations. |
 | Responsive site and membership administration | Permission-driven site/profile/domain workflows plus existing-user UUID membership cards, built-in roles, bounded ceilings, separate publication overrides, complete override replacement, version refresh, and semantic deactivation. |
-| Objective-077 source revision | Capability-bound Agent pages, locales, navigation, redirects, and bounded dynamic collection Render semantics with human Editor parity, shared Render/NGINX/browser evidence, route integrity, concurrency, and recovery proof on PR #74; strategic acceptance/merge remains separate. |
-| Objective-078-j source revision | Bounded capability-bound Agent component/catalog design semantics plus exact property-level scopes, initial design selection, removal/replay/no-op accounting, scalar/responsive OpenAPI truth, PostgreSQL narrowed-capability/direct-helper proof, Puck round-trip, Render/Web parity, and canonical non-change on open PR #77; site-theme work is deferred to a new PR and strategic acceptance/merge remains separate. |
+| Objective-077 source revision | Capability-bound Agent pages, locales, navigation, redirects, and bounded dynamic collection Render semantics with human Editor parity, shared Render/NGINX/browser evidence, route integrity, concurrency, and recovery proof, accepted and merged in PR #74 on 2026-09-08 at `ae3a4a6`; later review/publication remains separate. |
+| Objective-078-k source revision | Bounded capability-bound Agent component/catalog design semantics plus exact property-level scopes, responsive CREATE, full validation, renderer cascade, Editor/Puck preservation, removal/replay/no-op accounting, scalar/responsive OpenAPI truth, PostgreSQL narrowed-capability/direct-helper proof, and canonical non-change on open PR #77; site-theme work is deferred to a new PR and strategic acceptance/merge remains separate. |
 | Planned product work | Add review snapshots, freeze/accept/discard/promotion, approved-source and responsive-sweep orchestration, reconstruction, public media finalization, and remaining hardening. |
 
 See [Architecture Section 50](ARCHITECTURE.md#50-implementation-phases) for

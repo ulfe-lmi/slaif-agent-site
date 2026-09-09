@@ -3,21 +3,21 @@
 This tracker uses the contract-audit status vocabulary rather than file
 presence or completion estimates. The authoritative baseline is
 [`MVP-CONTRACT-AUDIT.md`](MVP-CONTRACT-AUDIT.md), updated for the protocol-final
-Objective-078-j source revision developed in PR #77 on 2026-09-09. GitHub's PR
-state and merge commit are authoritative for whether that revision is contained
-in `main`; its verified main base is the accepted Objective-077 source
-revision, `ae3a4a681bb888260192b7bb1b2a337b4906828d`.
+Objective-078-k closure of the Objective-078-j source revision in PR #77 on 2026-09-09. GitHub's PR
+state is accepted and merged in `main` at `ae3a4a681bb888260192b7bb1b2a337b4906828d`.
 
 ## Current verdict
 
 **CONTRACTUAL MVP NOT COMPLETE.** Merged Objectives 065–076 prove narrow,
-bounded contracts; the Objective-077 source revision provides complete evidence
-for its bounded page/locale/navigation/redirect/dynamic-Render information
-architecture; and the Objective-078-j source revision provides complete
-evidence for the bounded Agent component/local-design data plane on open PR #77. The active
+bounded contracts; the accepted and merged Objective-077 source revision
+provides complete evidence for its bounded page/locale/navigation/redirect/
+dynamic-Render information architecture; and the Objective-078-j source revision
+plus 078-k audit closure provides complete evidence for the bounded Agent
+component/local-design data plane on open PR #77. The active
 078-g added bounded local design semantics, and 078-j repairs exact
 property-level authority, initial design selection, removal/replay semantics,
-and current OpenAPI truth; the focused public-Agent/PostgreSQL/Render/Web/Puck evidence is not credited until
+current OpenAPI truth, full validation, responsive rendering, and Editor/Puck
+preservation; the focused public-Agent/PostgreSQL/Render/Web/Puck evidence is not credited until
 all gates complete. Objective 078 remains partial because site-global theme,
 global-region behavior and the later review lifecycle, publication,
 reconstruction, or final MVP contract are not proven. PR acceptance and merge
@@ -65,7 +65,7 @@ remains **NOT COMPLETE**.
 
 ## Objective 078 source revision
 
-The 078-j source revision on [PR #77](https://github.com/ulfe-lmi/slaif-agent-site/pull/77)
+The 078-k closure of the 078-j source revision on [PR #77](https://github.com/ulfe-lmi/slaif-agent-site/pull/77)
 maps the immutable 078-a through 078-f transcript to the existing public Agent
 and shared Render/Web/browser boundaries. Its bounded component slice is
 **COMPLETE — E2E PROVEN** at the open-PR source revision: a clean NGINX-only
@@ -78,15 +78,18 @@ idempotency/audit/quota/COW isolation, and canonical non-change. The active
 variant/layout/responsive mutation; 078-j repairs its exact property-level
 scope/OpenAPI truth, initial design selection, removal/replay/no-effect
 semantics, and classifies the existing Button/Image/CollectionGrid visual
-properties. Focused public-Agent/PostgreSQL/Render/Web/Puck evidence is
-required before crediting this repaired design slice. Site-global theme, global-region,
+properties. The 078-k audit closes full validation, responsive CREATE, renderer
+cascade, human Editor/Puck preservation, and migration reversibility. Focused
+public-Agent/PostgreSQL/Render/Web/Puck evidence is
+required before crediting this repaired design slice. The accepted Objective-077
+revision is in `main` at `ae3a4a6`. Site-global theme, global-region,
 exact-workspace Puck, review, promotion, and publication remain
 **PARTIAL/NOT IMPLEMENTED**; this does not claim that PR #77 has merged or that
 the contractual MVP is complete.
 
 ## Active and remaining sequence
 
-The active transcript pointer remains `078-j` until strategy selects and signals
+The active transcript pointer remains `078-k` until strategy selects and signals
 the next objective. The source revisions have complete bounded 077 evidence and
 complete bounded 078 component evidence; acceptance and containment in `main`
 are determined by OAP and GitHub state, not this document. All later order files
@@ -94,8 +97,8 @@ remain inert until strategy selects and signals them.
 
 | Order | Contractual scope | Current status |
 |---|---|---|
-| 077 | Agent page, navigation, redirect, and bounded dynamic collection Render semantics | COMPLETE — E2E PROVEN at 077-z source revision; consult authoritative PR/main state for merge |
-| 078 | Agent composition and design semantics; bounded component data plane | PARTIAL — component/local-design slice and 078-j authority/replay repairs are on open PR #77 pending strategic acceptance; site-theme/global-region scope remains deferred |
+| 077 | Agent page, navigation, redirect, and bounded dynamic collection Render semantics | COMPLETE — E2E PROVEN and accepted/merged in PR #74 on 2026-09-08 at `ae3a4a6` |
+| 078 | Agent composition and design semantics; bounded component data plane | PARTIAL — component/local-design slice and 078-k audit repairs are on open PR #77 awaiting strategic acceptance; site-theme/global/page-style/catalog scope remains deferred |
 | 079 | Agent media semantics and references | PARTIAL |
 | 080 | Real MCP semantic parity | SCAFFOLD ONLY |
 | 081 | Human Puck editing in the exact Agent workspace | PARTIAL |

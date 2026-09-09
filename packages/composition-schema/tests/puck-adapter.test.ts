@@ -156,6 +156,22 @@ describe("puck adapter", () => {
     expect(puckToComposition(compositionToPuck(visualProps))).toEqual(visualProps);
   });
 
+  it("rejects fractional integer design tokens", () => {
+    expect(() =>
+      compositionToPuck([
+        {
+          id: "fractional-grid",
+          componentType: "Grid",
+          schemaVersion: "1",
+          parentId: null,
+          slotKey: "default",
+          orderKey: 0,
+          props: { columns: 2.5 },
+        },
+      ]),
+    ).toThrow("invalid-component-props");
+  });
+
   it("preserves nested parent and slot metadata through a Puck edit", () => {
     const puck = compositionToPuck([
       ...nodes,

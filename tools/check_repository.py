@@ -289,6 +289,7 @@ REQUIRED_FILES = (
         "services/backend/src/slaif_agent_site/db/alembic/versions/015_001_admin_read_model.py",
         "services/backend/src/slaif_agent_site/db/alembic/versions/061_001_agent_component_design_semantics.py",
         "services/backend/src/slaif_agent_site/db/alembic/versions/062_001_component_authority_repairs.py",
+        "services/backend/src/slaif_agent_site/db/alembic/versions/063_001_component_audit_repairs.py",
         "services/backend/src/slaif_agent_site/application.py",
         "services/backend/src/slaif_agent_site/authority.py",
         "services/backend/src/slaif_agent_site/config.py",
@@ -779,7 +780,6 @@ class RepositoryPolicy:
             order_exact,
             '"oap/orders/014-a-content-model-foundation.md"',
             '"oap/orders/015-a-content-model-editor-http.md"',
-            '"oap/orders/078-j-close-component-increment.md"',
         }
         for line in text.splitlines():
             stripped = line.strip().rstrip('",').strip()

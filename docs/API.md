@@ -147,8 +147,9 @@ additionally use `responsive-design:write`. Mixed changes require the union;
 caller-supplied authority labels are ignored. A PATCH JSON `null` explicitly
 removes an existing property, while absent properties in the public PATCH are
 unchanged. Responsive maps contain only the three fixed labels and use
-deterministic desktop/tablet/mobile fallback, so the same normalized props are
-consumed by Puck, Render, and Web. Resource constraints can disable responsive
+deterministic desktop-to-tablet-to-mobile cascade: a missing tablet value
+inherits desktop and a missing mobile value inherits tablet. The same
+normalized props are consumed by Puck, Render, and Web. Resource constraints can disable responsive
 editing or narrow allowed variants, and invalid, foreign, stale, wrong-version,
 or raw design input fails closed without a mutation envelope. The component
 OpenAPI operations publish one shared `x-slaif-component-authority` table that

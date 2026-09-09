@@ -738,6 +738,18 @@
             ],
             "title": "Default"
           },
+          "integer": {
+            "anyOf": [
+              {
+                "const": true,
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Integer"
+          },
           "maximum": {
             "anyOf": [
               {

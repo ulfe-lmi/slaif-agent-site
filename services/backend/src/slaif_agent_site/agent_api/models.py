@@ -243,6 +243,7 @@ class AgentDesignPropertyDescriptor(BaseModel):
     values: tuple[str, ...] | None = None
     minimum: int | float | None = None
     maximum: int | float | None = None
+    integer: Literal[True] | None = None
     default: str | int | float
     required: bool
     responsive: Literal[True]

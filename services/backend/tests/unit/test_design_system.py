@@ -108,6 +108,14 @@ def test_agent_validation_normalizes_responsive_maps_and_rejects_unsafe_design()
         validate_agent_component_props(
             "Heading", {"text": "bad", "level": 2}, {"alignment": "left"}
         )
+    with pytest.raises(ValueError, match="unknown prop"):
+        validate_agent_component_props(
+            "Button",
+            {"label": "Button", "href": "/", "variant": "primary"},
+            {"alignment": {"script": "evil"}},
+        )
+    with pytest.raises(ValueError, match="integer design prop"):
+        validate_agent_component_props("Grid", {"columns": 1}, {"columns": 2.5})
 
 
 def test_design_resource_constraints_narrow_safe_choices() -> None:

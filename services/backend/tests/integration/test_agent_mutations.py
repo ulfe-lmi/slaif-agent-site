@@ -2131,7 +2131,7 @@ async def test_agent_redirect_051_migration_round_trip_preserves_data_and_privil
             await owner.fetchval(
                 "SELECT version_num::text FROM control.alembic_version"
             )
-            == "062_001"
+            == "063_001"
         )
         assert tuple(
             await owner.fetchrow(
@@ -2478,7 +2478,7 @@ async def test_agent_060_component_migration_round_trip_restores_audit_contract(
             await owner.fetchval(
                 "SELECT version_num::text FROM control.alembic_version"
             )
-            == "062_001"
+            == "063_001"
         )
         definition = await owner.fetchval(
             "SELECT pg_get_functiondef($1::regprocedure)", signature
@@ -2527,13 +2527,112 @@ async def test_agent_062_component_authority_migration_downgrade_round_trip(
         )
         assert "p_props,false" in definition
         assert "062_DOWNGRADE_REQUIRES_060_COMPONENT_FUNCTION" not in definition
+        update_definition = await owner.fetchval(
+            "SELECT pg_get_functiondef($1::regprocedure)",
+            "content.slaif_agent_component_update(uuid,uuid,jsonb,integer)",
+        )
+        assert "new_props" not in update_definition
+        assert "control.slaif_agent_component_authorize_update" in update_definition
+        assert await owner.fetchval(
+            "SELECT has_function_privilege('slaif_agent_runtime',$1,'EXECUTE')",
+            "content.slaif_agent_component_update(uuid,uuid,jsonb,integer)",
+        )
     await run_migration(
         database.settings.resolved_owner_dsn(),
         expected_database=database.name,
         operation="upgrade",
         revision="head",
     )
-    assert (await status(database.settings)).revision == "062_001"
+    assert (await status(database.settings)).revision == "063_001"
+
+
+@pytest.mark.asyncio
+async def test_agent_063_component_audit_migration_preserves_data_on_downgrade(
+    agent_site_database: AgentSiteDatabase,
+) -> None:
+    database = agent_site_database
+    _token, seeded = await _seed(database)
+    page_id = uuid4()
+    component_id = uuid4()
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        await owner.execute(
+            "INSERT INTO content.page_base "
+            "(id,site_id,slug,title,status,locale,row_version) "
+            "VALUES ($1,$2,'migration-audit','Migration audit','DRAFT','en',1)",
+            page_id,
+            seeded["site_id"],
+        )
+        await owner.execute(
+            "INSERT INTO content.page_composition_base "
+            "(id,site_id,page_id,component_type,schema_version,parent_id,"
+            "slot_key,order_key,props) VALUES ($1,$2,$3,'Columns','1',NULL,"
+            "'default',0,'{\"count\":2}'::jsonb)",
+            component_id,
+            seeded["site_id"],
+            page_id,
+        )
+        before = tuple(
+            await owner.fetchrow(
+                "SELECT props,row_version FROM content.page_composition_base "
+                "WHERE id=$1",
+                component_id,
+            )
+        )
+    await run_migration(
+        database.settings.resolved_owner_dsn(),
+        expected_database=database.name,
+        operation="downgrade",
+        revision="062_001",
+    )
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        assert (
+            await owner.fetchval(
+                "SELECT version_num::text FROM control.alembic_version"
+            )
+            == "062_001"
+        )
+        after_downgrade = tuple(
+            await owner.fetchrow(
+                "SELECT props,row_version FROM content.page_composition_base "
+                "WHERE id=$1",
+                component_id,
+            )
+        )
+        assert after_downgrade == before
+        update_definition = await owner.fetchval(
+            "SELECT pg_get_functiondef($1::regprocedure)",
+            "content.slaif_agent_component_update(uuid,uuid,jsonb,integer)",
+        )
+        assert "new_props" in update_definition
+    await run_migration(
+        database.settings.resolved_owner_dsn(),
+        expected_database=database.name,
+        operation="upgrade",
+        revision="head",
+    )
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        assert (
+            await owner.fetchval(
+                "SELECT version_num::text FROM control.alembic_version"
+            )
+            == "063_001"
+        )
+        assert (
+            tuple(
+                await owner.fetchrow(
+                    "SELECT props,row_version FROM content.page_composition_base "
+                    "WHERE id=$1",
+                    component_id,
+                )
+            )
+            == before
+        )
 
 
 @pytest.mark.asyncio
@@ -2587,7 +2686,7 @@ async def test_agent_049_plain_page_data_downgrade_and_upgrade_preserves_data(
             await owner.fetchval(
                 "SELECT version_num::text FROM control.alembic_version"
             )
-            == "062_001"
+            == "063_001"
         )
         row = await owner.fetchrow(
             "SELECT title, route_template, deleted_at FROM content.page_base "
@@ -5641,6 +5740,83 @@ async def test_agent_component_authority_repair_regressions(
                 )
                 assert response.status_code == 200, response.text
 
+            responsive_cases: tuple[tuple[str, dict[str, Any], str], ...] = (
+                (
+                    "Button",
+                    {
+                        "label": "Responsive",
+                        "href": "/responsive",
+                        "variant": {"desktop": "primary", "tablet": "secondary"},
+                    },
+                    "repair-responsive-button",
+                ),
+                (
+                    "Image",
+                    {
+                        "mediaId": str(media_id),
+                        "alt": "Responsive",
+                        "aspectRatio": {"desktop": "16:9", "mobile": "1:1"},
+                    },
+                    "repair-responsive-image",
+                ),
+                (
+                    "CollectionGrid",
+                    {
+                        "viewId": view_id,
+                        "columns": {"desktop": 4, "tablet": 2},
+                    },
+                    "repair-responsive-collection",
+                ),
+            )
+            for component_type, props, key in responsive_cases:
+                response = await client.post(
+                    f"/api/agent/v1/pages/{page_id}/components",
+                    json={"component_type": component_type, "props": props},
+                    headers={**full_headers, "Idempotency-Key": key},
+                )
+                assert response.status_code == 201, response.text
+            scalar_token = await _capability_with_scopes(
+                database,
+                scoped_seeded,
+                [
+                    "site:read",
+                    "page:read",
+                    "composition:read",
+                    "component-structure:create",
+                    "component-props:write",
+                    "component-variant:write",
+                    "layout:write",
+                ],
+            )
+            scalar_headers = {"Authorization": f"Bearer {scalar_token}"}
+            for component_type, props, key in responsive_cases:
+                response = await client.post(
+                    f"/api/agent/v1/pages/{page_id}/components",
+                    json={"component_type": component_type, "props": props},
+                    headers={**scalar_headers, "Idempotency-Key": f"{key}-scalar"},
+                )
+                assert response.status_code == 403, response.text
+
+            bad_alignment = await client.patch(
+                f"/api/agent/v1/components/{button['id']}",
+                json={
+                    "props": {"alignment": {"script": "evil"}},
+                    "expected_row_version": 2,
+                },
+                headers={**full_headers, "Idempotency-Key": "repair-bad-alignment"},
+            )
+            assert bad_alignment.status_code == 422, bad_alignment.text
+            fractional_grid = await create("Grid", {}, "repair-fractional-grid")
+            fractional = await client.patch(
+                f"/api/agent/v1/components/{fractional_grid['id']}",
+                json={"props": {"columns": 2.5}, "expected_row_version": 1},
+                headers={
+                    **full_headers,
+                    "Idempotency-Key": "repair-fractional-columns",
+                },
+            )
+            assert fractional.status_code == 422, fractional.text
+
             low_token = await _capability_with_scopes(
                 database,
                 scoped_seeded,
@@ -5703,6 +5879,62 @@ async def test_agent_component_authority_repair_regressions(
 
             direct_create_pool = await database.role_pool("slaif_agent_runtime")
             try:
+                async with asyncpg_cow_session(
+                    direct_create_pool,
+                    session_id=workspace_id,
+                    operation_id=uuid4(),
+                ) as cow:
+                    await cow.native.execute(
+                        "SELECT set_config('app.capability_id',$1,true)",
+                        str(full_capability_id),
+                    )
+                    await cow.native.execute("SAVEPOINT alignment_authority")
+                    try:
+                        with pytest.raises(
+                            asyncpg.PostgresError,
+                            match="COMPONENT_PROP|COMPONENT_PROPS_UNSAFE",
+                        ):
+                            await cow.native.fetchrow(
+                                "SELECT * FROM content.slaif_agent_component_update("
+                                "$1,$2,$3::jsonb,$4)",
+                                seeded["site_id"],
+                                UUID(button["id"]),
+                                json.dumps(
+                                    {
+                                        "label": "Repair",
+                                        "href": "/repair",
+                                        "variant": "ghost",
+                                        "alignment": {"script": "evil"},
+                                    }
+                                ),
+                                2,
+                            )
+                    finally:
+                        await cow.native.execute(
+                            "ROLLBACK TO SAVEPOINT alignment_authority"
+                        )
+                        await cow.native.execute(
+                            "RELEASE SAVEPOINT alignment_authority"
+                        )
+                for component_type, props, _key in responsive_cases:
+                    async with asyncpg_cow_session(
+                        direct_create_pool,
+                        session_id=workspace_id,
+                        operation_id=uuid4(),
+                    ) as cow:
+                        await cow.native.execute(
+                            "SELECT set_config('app.capability_id',$1,true)",
+                            str(full_capability_id),
+                        )
+                        created = await cow.native.fetchrow(
+                            "SELECT * FROM content.slaif_agent_component_create("
+                            "$1,$2,$3,NULL,'default',NULL,NULL,$4::jsonb)",
+                            seeded["site_id"],
+                            UUID(page_id),
+                            component_type,
+                            json.dumps(props),
+                        )
+                        assert created is not None
                 for component_type, expected_props in (
                     ("Columns", {"count": 1}),
                     ("Spacer", {"size": "md"}),
@@ -9915,7 +10147,7 @@ async def test_agent_046_047_migration_round_trip_preserves_contract_and_state(
                 await owner.fetchval(
                     "SELECT version_num::text FROM control.alembic_version"
                 )
-                == "062_001"
+                == "063_001"
             )
             assert await owner.fetchval(
                 "SELECT to_regprocedure($1)",
@@ -10244,7 +10476,7 @@ async def test_agent_048_data_bearing_round_trip_preserves_relations_views_and_a
         )
         await reconcile(database.settings)
         final_status = await status(database.settings)
-        assert final_status.revision == "062_001"
+        assert final_status.revision == "063_001"
         assert final_status.state.value == "HARDENED"
         assert final_status.safe
         assert await cow_rows() == content_before
@@ -17425,7 +17657,7 @@ async def test_semantic_audit_contract_is_strict_and_reversible(
                 await owner.fetchval(
                     "SELECT version_num::text FROM control.alembic_version"
                 )
-                == "062_001"
+                == "063_001"
             )
             assert (
                 await owner.fetchval(

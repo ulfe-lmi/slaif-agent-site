@@ -20,7 +20,7 @@ RENDERER_VERSION = "renderer-v1"
 RESPONSIVE_LABELS = ("desktop", "tablet", "mobile")
 RESPONSIVE_SCOPE = "responsive-design:write"
 
-_DESIGN_SYSTEM_JSON = '{"catalog_version":"catalog-v1","components":[{"properties":[{"default":"default","name":"variant","required":false,"responsive":true,"scope":"component-variant:write","token":"variant","type":"enum","values":["default","full","narrow"]},{"default":"stretch","name":"alignment","required":false,"responsive":true,"scope":"layout:write","token":"alignment","type":"enum","values":["start","center","end","stretch"]}],"type":"Section","variants":["default","full","narrow"]},{"properties":[{"default":"md","name":"width","required":false,"responsive":true,"scope":"layout:write","token":"width","type":"enum","values":["sm","md","lg","xl"]},{"default":"stretch","name":"alignment","required":false,"responsive":true,"scope":"layout:write","token":"alignment","type":"enum","values":["start","center","end","stretch"]}],"type":"Container","variants":[]},{"properties":[{"default":1,"maximum":4,"minimum":1,"name":"count","required":true,"responsive":true,"scope":"layout:write","token":"columns","type":"number"},{"default":"md","name":"gap","required":false,"responsive":true,"scope":"layout:write","token":"gap","type":"enum","values":["none","sm","md","lg"]},{"default":"stretch","name":"alignment","required":false,"responsive":true,"scope":"layout:write","token":"alignment","type":"enum","values":["start","center","end","stretch"]}],"type":"Columns","variants":[]},{"properties":[{"default":1,"maximum":12,"minimum":1,"name":"columns","required":false,"responsive":true,"scope":"layout:write","token":"columns","type":"number"},{"default":"md","name":"gap","required":false,"responsive":true,"scope":"layout:write","token":"gap","type":"enum","values":["sm","md","lg"]},{"default":"stretch","name":"alignment","required":false,"responsive":true,"scope":"layout:write","token":"alignment","type":"enum","values":["start","center","end","stretch"]}],"type":"Grid","variants":[]},{"properties":[{"default":"vertical","name":"direction","required":false,"responsive":true,"scope":"layout:write","token":"direction","type":"enum","values":["vertical","horizontal"]},{"default":"md","name":"gap","required":false,"responsive":true,"scope":"layout:write","token":"gap","type":"enum","values":["none","sm","md","lg"]},{"default":"stretch","name":"alignment","required":false,"responsive":true,"scope":"layout:write","token":"alignment","type":"enum","values":["start","center","end","stretch"]}],"type":"Stack","variants":[]},{"properties":[{"default":"md","name":"size","required":true,"responsive":true,"scope":"layout:write","token":"spacing","type":"enum","values":["xs","sm","md","lg","xl"]}],"type":"Spacer","variants":[]},{"properties":[{"default":"start","name":"alignment","required":false,"responsive":true,"scope":"layout:write","token":"alignment","type":"enum","values":["start","center","end","stretch"]}],"type":"Heading","variants":[]},{"properties":[],"type":"RichText","variants":[]},{"properties":[{"default":"auto","name":"aspectRatio","required":false,"responsive":true,"scope":"component-props:write","token":"aspect_ratio","type":"enum","values":["auto","16:9","4:3","1:1"]}],"type":"Image","variants":[]},{"properties":[{"default":"primary","name":"variant","required":false,"responsive":true,"scope":"component-variant:write","token":"variant","type":"enum","values":["primary","secondary","ghost"]}],"type":"Button","variants":[]},{"properties":[],"type":"Quote","variants":[]},{"properties":[],"type":"CollectionList","variants":[]},{"properties":[{"default":3,"maximum":6,"minimum":1,"name":"columns","required":false,"responsive":true,"scope":"layout:write","token":"columns","type":"number"}],"type":"CollectionGrid","variants":[]},{"properties":[],"type":"CollectionDetail","variants":[]},{"properties":[],"type":"Hero","variants":[]},{"properties":[],"type":"Statistics","variants":[]},{"properties":[],"type":"Timeline","variants":[]},{"properties":[],"type":"FAQ","variants":[]},{"properties":[],"type":"Header","variants":[]},{"properties":[],"type":"Footer","variants":[]},{"properties":[],"type":"Breadcrumbs","variants":[]},{"properties":[],"type":"LanguageSwitcher","variants":[]}],"composition_schema_version":"site-composition/v1","renderer_version":"renderer-v1","responsive_fallback":["desktop","tablet","mobile"],"responsive_labels":["desktop","tablet","mobile"],"responsive_scope":"responsive-design:write","tokens":{"alignment":["start","center","end","stretch"],"aspect_ratio":["auto","16:9","4:3","1:1"],"columns":[1,2,3,4,5,6,7,8,9,10,11,12],"gap":["none","sm","md","lg"],"radius":["none","sm","md","lg","full"],"shadow":["none","sm","md","lg"],"spacing":["none","xs","sm","md","lg","xl"],"width":["sm","md","lg","xl"]},"version":"design-system/v1"}'
+_DESIGN_SYSTEM_JSON = '{"catalog_version":"catalog-v1","components":[{"properties":[{"default":"default","name":"variant","required":false,"responsive":true,"scope":"component-variant:write","token":"variant","type":"enum","values":["default","full","narrow"]},{"default":"stretch","name":"alignment","required":false,"responsive":true,"scope":"layout:write","token":"alignment","type":"enum","values":["start","center","end","stretch"]}],"type":"Section","variants":["default","full","narrow"]},{"properties":[{"default":"md","name":"width","required":false,"responsive":true,"scope":"layout:write","token":"width","type":"enum","values":["sm","md","lg","xl"]},{"default":"stretch","name":"alignment","required":false,"responsive":true,"scope":"layout:write","token":"alignment","type":"enum","values":["start","center","end","stretch"]}],"type":"Container","variants":[]},{"properties":[{"default":1,"integer":true,"maximum":4,"minimum":1,"name":"count","required":true,"responsive":true,"scope":"layout:write","token":"columns","type":"number"},{"default":"md","name":"gap","required":false,"responsive":true,"scope":"layout:write","token":"gap","type":"enum","values":["none","sm","md","lg"]},{"default":"stretch","name":"alignment","required":false,"responsive":true,"scope":"layout:write","token":"alignment","type":"enum","values":["start","center","end","stretch"]}],"type":"Columns","variants":[]},{"properties":[{"default":1,"integer":true,"maximum":12,"minimum":1,"name":"columns","required":false,"responsive":true,"scope":"layout:write","token":"columns","type":"number"},{"default":"md","name":"gap","required":false,"responsive":true,"scope":"layout:write","token":"gap","type":"enum","values":["sm","md","lg"]},{"default":"stretch","name":"alignment","required":false,"responsive":true,"scope":"layout:write","token":"alignment","type":"enum","values":["start","center","end","stretch"]}],"type":"Grid","variants":[]},{"properties":[{"default":"vertical","name":"direction","required":false,"responsive":true,"scope":"layout:write","token":"direction","type":"enum","values":["vertical","horizontal"]},{"default":"md","name":"gap","required":false,"responsive":true,"scope":"layout:write","token":"gap","type":"enum","values":["none","sm","md","lg"]},{"default":"stretch","name":"alignment","required":false,"responsive":true,"scope":"layout:write","token":"alignment","type":"enum","values":["start","center","end","stretch"]}],"type":"Stack","variants":[]},{"properties":[{"default":"md","name":"size","required":true,"responsive":true,"scope":"layout:write","token":"spacing","type":"enum","values":["xs","sm","md","lg","xl"]}],"type":"Spacer","variants":[]},{"properties":[{"default":"start","name":"alignment","required":false,"responsive":true,"scope":"layout:write","token":"alignment","type":"enum","values":["start","center","end","stretch"]}],"type":"Heading","variants":[]},{"properties":[],"type":"RichText","variants":[]},{"properties":[{"default":"auto","name":"aspectRatio","required":false,"responsive":true,"scope":"component-props:write","token":"aspect_ratio","type":"enum","values":["auto","16:9","4:3","1:1"]}],"type":"Image","variants":[]},{"properties":[{"default":"primary","name":"variant","required":false,"responsive":true,"scope":"component-variant:write","token":"variant","type":"enum","values":["primary","secondary","ghost"]}],"type":"Button","variants":[]},{"properties":[],"type":"Quote","variants":[]},{"properties":[],"type":"CollectionList","variants":[]},{"properties":[{"default":3,"integer":true,"maximum":6,"minimum":1,"name":"columns","required":false,"responsive":true,"scope":"layout:write","token":"columns","type":"number"}],"type":"CollectionGrid","variants":[]},{"properties":[],"type":"CollectionDetail","variants":[]},{"properties":[],"type":"Hero","variants":[]},{"properties":[],"type":"Statistics","variants":[]},{"properties":[],"type":"Timeline","variants":[]},{"properties":[],"type":"FAQ","variants":[]},{"properties":[],"type":"Header","variants":[]},{"properties":[],"type":"Footer","variants":[]},{"properties":[],"type":"Breadcrumbs","variants":[]},{"properties":[],"type":"LanguageSwitcher","variants":[]}],"composition_schema_version":"site-composition/v1","renderer_version":"renderer-v1","responsive_fallback":["desktop","tablet","mobile"],"responsive_labels":["desktop","tablet","mobile"],"responsive_scope":"responsive-design:write","tokens":{"alignment":["start","center","end","stretch"],"aspect_ratio":["auto","16:9","4:3","1:1"],"columns":[1,2,3,4,5,6,7,8,9,10,11,12],"gap":["none","sm","md","lg"],"radius":["none","sm","md","lg","full"],"shadow":["none","sm","md","lg"],"spacing":["none","xs","sm","md","lg","xl"],"width":["sm","md","lg","xl"]},"version":"design-system/v1"}'
 DESIGN_SYSTEM_DOCUMENT: dict[str, Any] = json.loads(_DESIGN_SYSTEM_JSON)
 _COMPONENTS = {item["type"]: item for item in DESIGN_SYSTEM_DOCUMENT["components"]}
 _PROPERTIES = {
@@ -230,10 +230,14 @@ def validate_agent_component_props(
             merged.pop(key, None)
     normalized = dict(merged)
     for key, value in patch_props.items():
-        if value is None:
-            continue
         property_definition = design_property(component_type, key)
         catalog_property = definition.props.get(key)
+        if value is None:
+            if property_definition is None and catalog_property is None:
+                raise ValueError("unknown prop")
+            continue
+        if property_definition is None and catalog_property is None:
+            raise ValueError("unknown prop")
         if property_definition is not None:
             if is_responsive_value(value):
                 normalized[key] = _normalize_responsive(value)
@@ -242,12 +246,21 @@ def validate_agent_component_props(
             raise ValueError("unsupported design prop")
     for key, value in normalized.items():
         property_definition = design_property(component_type, key)
+        catalog_property = definition.props.get(key)
         if property_definition is None:
+            if catalog_property is None:
+                raise ValueError("unknown prop")
+            if catalog_property.authority == "design":
+                raise ValueError("unsupported design prop")
             continue
         if is_responsive_value(value):
             if not property_definition["responsive"]:
                 raise ValueError("responsive prop")
             for leaf in value.values():
+                if property_definition["type"] == "number" and (
+                    isinstance(leaf, bool) or not isinstance(leaf, int)
+                ):
+                    raise ValueError("integer design prop")
                 if key == "alignment":
                     _validate_alignment(leaf)
                 else:
@@ -256,8 +269,13 @@ def validate_agent_component_props(
                     validate_component_props(
                         component_type, candidate, allow_design=True
                     )
-        elif key == "alignment":
-            _validate_alignment(value)
+        else:
+            if property_definition["type"] == "number" and (
+                isinstance(value, bool) or not isinstance(value, int)
+            ):
+                raise ValueError("integer design prop")
+            if key == "alignment":
+                _validate_alignment(value)
     validate_component_props(
         component_type,
         _collapsed(normalized),

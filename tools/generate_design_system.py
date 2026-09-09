@@ -127,6 +127,8 @@ def _document() -> dict[str, Any]:
                 or prop.get("maximum") != catalog_prop.get("maximum")
             ):
                 raise ValueError("design property bounds disagree with catalog-v1")
+            if prop["type"] == "number" and prop.get("integer") is not True:
+                raise ValueError("numeric design property must be integral")
     for component in catalog["components"]:
         design_names = {
             prop["name"] for prop in design_by_type[component["type"]]["properties"]
@@ -356,7 +358,11 @@ def validate_design_resource_constraints(
             continue
         if responsive_enabled is False and is_responsive_value(value):
             raise ValueError("responsive design resource constraint")
-        if key == "variant" and value is not None and isinstance(allowed_variants, list):
+        if (
+            key == "variant"
+            and value is not None
+            and isinstance(allowed_variants, list)
+        ):
             allowed = {{str(item) for item in allowed_variants}}
             values = value.values() if is_responsive_value(value) else (value,)
             if any(str(item) not in allowed for item in values):
@@ -377,10 +383,14 @@ def validate_agent_component_props(
             merged.pop(key, None)
     normalized = dict(merged)
     for key, value in patch_props.items():
-        if value is None:
-            continue
         property_definition = design_property(component_type, key)
         catalog_property = definition.props.get(key)
+        if value is None:
+            if property_definition is None and catalog_property is None:
+                raise ValueError("unknown prop")
+            continue
+        if property_definition is None and catalog_property is None:
+            raise ValueError("unknown prop")
         if property_definition is not None:
             if is_responsive_value(value):
                 normalized[key] = _normalize_responsive(value)
@@ -389,12 +399,21 @@ def validate_agent_component_props(
             raise ValueError("unsupported design prop")
     for key, value in normalized.items():
         property_definition = design_property(component_type, key)
+        catalog_property = definition.props.get(key)
         if property_definition is None:
+            if catalog_property is None:
+                raise ValueError("unknown prop")
+            if catalog_property.authority == "design":
+                raise ValueError("unsupported design prop")
             continue
         if is_responsive_value(value):
             if not property_definition["responsive"]:
                 raise ValueError("responsive prop")
             for leaf in value.values():
+                if property_definition["type"] == "number" and (
+                    isinstance(leaf, bool) or not isinstance(leaf, int)
+                ):
+                    raise ValueError("integer design prop")
                 if key == "alignment":
                     _validate_alignment(leaf)
                 else:
@@ -403,8 +422,13 @@ def validate_agent_component_props(
                     validate_component_props(
                         component_type, candidate, allow_design=True
                     )
-        elif key == "alignment":
-            _validate_alignment(value)
+        else:
+            if property_definition["type"] == "number" and (
+                isinstance(value, bool) or not isinstance(value, int)
+            ):
+                raise ValueError("integer design prop")
+            if key == "alignment":
+                _validate_alignment(value)
     validate_component_props(
         component_type,
         _collapsed(normalized),

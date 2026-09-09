@@ -76,6 +76,7 @@
         {
           "name": "count",
           "type": "number",
+          "integer": true,
           "minimum": 1,
           "maximum": 4,
           "default": 1,
@@ -113,6 +114,7 @@
         {
           "name": "columns",
           "type": "number",
+          "integer": true,
           "minimum": 1,
           "maximum": 12,
           "default": 1,
@@ -253,6 +255,7 @@
         {
           "name": "columns",
           "type": "number",
+          "integer": true,
           "minimum": 1,
           "maximum": 6,
           "default": 3,

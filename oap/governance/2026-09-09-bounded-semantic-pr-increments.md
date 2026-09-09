@@ -44,4 +44,3 @@ activated round until the next activation; it does not itself claim an open PR
 or objective completion. Use a current increment ledger and truth documents
 to record accepted/merged/deferred state. The final report names only its actual
 increment and evidence, never claims broader Objective 078 completion.
-

@@ -20,6 +20,7 @@ export interface DesignProperty {
   readonly values?: readonly string[];
   readonly minimum?: number;
   readonly maximum?: number;
+  readonly integer?: boolean;
   readonly default: string | number;
   readonly required: boolean;
   readonly responsive: true;

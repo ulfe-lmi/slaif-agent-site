@@ -353,6 +353,11 @@ test("site shell uses only the fixed server-side Render resolver", async () => {
   assert.doesNotMatch(layout, /RENDERER_STYLESHEET|renderer-v1\.css/);
   assert.match(rendererStyles, /"\/renderer-v1\.css"/);
   assert.match(rendererCss, /body:has\(\.renderer-surface\)/);
+  assert.match(rendererCss, /\.renderer-section--narrow/);
+  assert.match(rendererCss, /renderer-spacer--mobile-xl/);
+  assert.match(rendererCss, /@media \(max-width: 1024px\)/);
+  assert.match(rendererCss, /renderer-button--mobile-primary/);
+  assert.match(rendererCss, /renderer-image-placeholder--mobile-auto/);
   assert.match(rendererCss, /\.renderer-surface \.renderer-collection article/);
   assert.match(rendererCss, /\.renderer-collection-detail/);
   assert.doesNotMatch(rendererCss, /https?:\/\/|@import|url\s*\(/);

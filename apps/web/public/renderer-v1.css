@@ -75,7 +75,19 @@ body:has(.renderer-surface) {
 }
 
 .renderer-section {
+  width: 100%;
   padding-block: 1.5rem;
+}
+
+.renderer-section--default,
+.renderer-section--full {
+  max-width: none;
+  margin-inline: 0;
+}
+
+.renderer-section--narrow {
+  max-width: 48rem;
+  margin-inline: auto;
 }
 
 .renderer-container {
@@ -405,7 +417,7 @@ body:has(.renderer-surface) {
   }
 }
 
-@media (min-width: 761px) and (max-width: 1024px) {
+@media (max-width: 1024px) {
   [class~="renderer-align--tablet-start"] {
     align-items: flex-start;
     text-align: left;
@@ -424,6 +436,17 @@ body:has(.renderer-surface) {
   [class~="renderer-align--tablet-stretch"] {
     align-items: stretch;
     text-align: initial;
+  }
+
+  [class~="renderer-section--tablet-default"],
+  [class~="renderer-section--tablet-full"] {
+    max-width: none;
+    margin-inline: 0;
+  }
+
+  [class~="renderer-section--tablet-narrow"] {
+    max-width: 48rem;
+    margin-inline: auto;
   }
 
   [class~="renderer-container--tablet-sm"] {
@@ -531,10 +554,37 @@ body:has(.renderer-surface) {
     grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 
+  [class~="renderer-spacer--tablet-xs"] {
+    min-height: 0.25rem;
+  }
+
+  [class~="renderer-spacer--tablet-sm"] {
+    min-height: 0.5rem;
+  }
+
+  [class~="renderer-spacer--tablet-md"] {
+    min-height: 1rem;
+  }
+
+  [class~="renderer-spacer--tablet-lg"],
+  [class~="renderer-spacer--tablet-xl"] {
+    min-height: 2rem;
+  }
+
   [class~="renderer-button--tablet-secondary"],
   [class~="renderer-button--tablet-ghost"] {
     color: #f4f7f8;
     background: transparent;
+  }
+
+  [class~="renderer-button--tablet-primary"] {
+    color: #081317;
+    background: #a8c538;
+  }
+
+  [class~="renderer-image-placeholder--tablet-auto"] {
+    min-height: 12rem;
+    aspect-ratio: auto;
   }
 
   [class~="renderer-image-placeholder--tablet-16-9"] {
@@ -596,6 +646,17 @@ body:has(.renderer-surface) {
   [class~="renderer-align--mobile-stretch"] {
     align-items: stretch;
     text-align: initial;
+  }
+
+  [class~="renderer-section--mobile-default"],
+  [class~="renderer-section--mobile-full"] {
+    max-width: none;
+    margin-inline: 0;
+  }
+
+  [class~="renderer-section--mobile-narrow"] {
+    max-width: 48rem;
+    margin-inline: auto;
   }
 
   [class~="renderer-container--mobile-sm"] {
@@ -703,10 +764,37 @@ body:has(.renderer-surface) {
     grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 
+  [class~="renderer-spacer--mobile-xs"] {
+    min-height: 0.25rem;
+  }
+
+  [class~="renderer-spacer--mobile-sm"] {
+    min-height: 0.5rem;
+  }
+
+  [class~="renderer-spacer--mobile-md"] {
+    min-height: 1rem;
+  }
+
+  [class~="renderer-spacer--mobile-lg"],
+  [class~="renderer-spacer--mobile-xl"] {
+    min-height: 2rem;
+  }
+
   [class~="renderer-button--mobile-secondary"],
   [class~="renderer-button--mobile-ghost"] {
     color: #f4f7f8;
     background: transparent;
+  }
+
+  [class~="renderer-button--mobile-primary"] {
+    color: #081317;
+    background: #a8c538;
+  }
+
+  [class~="renderer-image-placeholder--mobile-auto"] {
+    min-height: 12rem;
+    aspect-ratio: auto;
   }
 
   [class~="renderer-image-placeholder--mobile-16-9"] {

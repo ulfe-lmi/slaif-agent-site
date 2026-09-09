@@ -67,6 +67,12 @@ function designClasses(
           .slice(1)
           .map((label) => `${prefix}--${label}-${normalize(value[label])}`),
       ];
+      if (value.mobile === undefined) {
+        const mobileFallback = value.tablet ?? value.desktop;
+        if (mobileFallback !== undefined) {
+          classes.push(`${prefix}--mobile-${normalize(mobileFallback)}`);
+        }
+      }
       return classes.join(" ");
     }
   }
