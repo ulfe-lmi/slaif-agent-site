@@ -185,7 +185,14 @@ def test_theme_contract_is_closed_and_has_separate_token_scope() -> None:
     patch_path = document["paths"]["/api/agent/v1/theme"]["patch"]
     assert schema_path["x-slaif-required-scopes"] == ["theme:read"]
     assert theme_path["x-slaif-required-scopes"] == ["theme:read"]
-    assert patch_path["x-slaif-required-scopes"] == ["theme-tokens:write"]
+    assert patch_path["x-slaif-required-scopes"] == ["theme:read"]
+    assert patch_path["x-slaif-conditional-scopes"] == [
+        {
+            "when_fields": ["palette", "typography", "layout", "shape"],
+            "required_scopes": ["theme-tokens:write"],
+            "condition": "changed",
+        }
+    ]
     assert patch_path["x-slaif-mutation"] is True
     assert (
         document["components"]["schemas"]["ThemeRecord"]["additionalProperties"]

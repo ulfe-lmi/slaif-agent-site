@@ -525,7 +525,10 @@ async def update_theme(
     idempotency_key: IdempotencyHeader = None,
 ) -> AgentThemeMutationResponse:
     context = await _authenticate(request)
-    _require_scope(context, "theme-tokens:write")
+    # The trusted SQL wrapper classifies the merged value under its transaction
+    # lock.  Read authority is sufficient for a true no-effect request; changed
+    # values are rechecked there against the exact token-write scope.
+    _require_scope(context, "theme:read")
     try:
         validate_theme_resource_constraints(context.resource_constraints)
     except ValueError:
@@ -538,9 +541,7 @@ async def update_theme(
         resource_type="theme",
         status_code=200,
         action="THEME_UPDATED",
-        mutate=lambda service: service.update_theme_for_site(
-            context.site_id, body, no_effect=False
-        ),
+        mutate=lambda service: service.update_theme_for_site(context.site_id, body),
     )
     return AgentThemeMutationResponse.model_validate(result.model_dump(mode="json"))
 

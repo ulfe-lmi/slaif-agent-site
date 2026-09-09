@@ -1330,7 +1330,19 @@ ROUTE_POLICIES: Final[tuple[RoutePolicy, ...]] = (
         _M,
         conditional_scopes=_component_conditional_scopes(),
     ),
-    _agent_policy("PATCH", "/api/agent/v1/theme", _M, "theme-tokens:write"),
+    _agent_policy(
+        "PATCH",
+        "/api/agent/v1/theme",
+        _M,
+        "theme:read",
+        conditional_scopes=(
+            RouteConditionalScope(
+                when_fields=("palette", "typography", "layout", "shape"),
+                required_scopes=("theme-tokens:write",),
+                condition="changed",
+            ),
+        ),
+    ),
     _agent_policy(
         "PATCH",
         "/api/agent/v1/pages/{page_id}",

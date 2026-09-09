@@ -182,6 +182,22 @@ def test_agent_design_system_is_a_capability_bound_read() -> None:
     assert design.conditional_scopes == ()
 
 
+def test_agent_theme_patch_declares_changed_value_authority() -> None:
+    theme = next(
+        policy
+        for policy in route_policies_for(ProcessKind.AGENT_API)
+        if policy.method == "PATCH" and policy.path_template == "/api/agent/v1/theme"
+    )
+    assert theme.required_scopes == ("theme:read",)
+    assert theme.conditional_scopes == (
+        RouteConditionalScope(
+            when_fields=("palette", "typography", "layout", "shape"),
+            required_scopes=("theme-tokens:write",),
+            condition="changed",
+        ),
+    )
+
+
 def test_conditional_scope_validation_rejects_scope_field_read_and_metadata_drift() -> (
     None
 ):

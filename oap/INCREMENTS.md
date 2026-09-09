@@ -6,7 +6,7 @@ is `PARTIAL`; strategy owns acceptance and merge.
 | Increment | PR and contract | State |
 |---|---|---|
 | 078/1 | [PR #77](https://github.com/ulfe-lmi/slaif-agent-site/pull/77): bounded component composition/local design with 078-j authority/replay and 078-k/078-l audit repairs | Accepted and merged at `3cae3d6cef2a92e7068856d21bc9a47b8190c22e` on 2026-09-09; 078/1 is closed |
-| 078/2 | `oap/078-2-site-theme-tokens`: bounded site-theme token data plane from verified merged `main` | Active 078-p continuation; new PR delivery is pending implementation commit |
+| 078/2 | `oap/078-2-site-theme-tokens`: bounded site-theme token data plane from verified merged `main` | Active 078-q continuation on existing PR #79; D1–D4 trusted-boundary repair is pending strategic acceptance |
 | 078-i | `567973e` implementation plus `127d7f1` report: bounded site-theme tokens | Preserved immutable history; removed from PR #77 by 078-j and deferred for deliberate reuse |
 | Next | Remaining 078 scope after 078/2 | Site-theme/global-region/page-style/catalog boundaries remain separate; numeric 078 remains PARTIAL |
 
@@ -39,12 +39,12 @@ the final pushed head before strategy accepted and merged PR #77. No
 vulnerability exception, scanner suppression, unrelated upgrade, new feature,
 or merge is recorded here.
 
-## 078-p bounded site-theme continuation
+## 078-q trusted theme-boundary continuation
 
-The 078-p order is the active 078/2 increment on a fresh branch from verified
-merged `main`. It is limited to the closed `theme-schema/v1` token data plane,
-capability-bound Agent discovery/read/PATCH, trusted SQL/COW/idempotency/audit
-semantics, existing human Editor/Puck controls, and shared Render/Web
-projection. It does not reopen PR #77 or claim completion of remaining
-global-region, page-style, catalog, review, publication, or later objective
-scope.
+The immutable 078-p implementation/report remain historical evidence on the
+existing 078/2 branch. The active 078-q continuation repairs its finite D1–D4
+trusted SQL validation, conditional no-effect authority, migration restoration,
+theme-specific PostgreSQL proof, and component lock-readiness failure in PR #79.
+The round does not claim or implement V1–V2 global rendering precedence,
+same-Agent-workspace preview, or the known Firefox browser-response failure;
+those remain reserved for the next bounded rendering/evidence round.

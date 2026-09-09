@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from importlib import import_module
+from typing import cast
 
 from alembic import op
 
@@ -11,6 +13,11 @@ revision: str = "065_001"
 down_revision: str | Sequence[str] | None = "064_001"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
+
+_M060 = import_module(
+    "slaif_agent_site.db.alembic.versions.060_001_agent_component_semantics"
+)
+_LEGACY_SCHEMA = "oap_065_legacy"
 
 _THEME_COLUMNS = """
     id uuid, site_id uuid, schema_version text, renderer_version text,
@@ -40,39 +47,48 @@ def _validate_sql() -> str:
         ) RETURNS void LANGUAGE plpgsql SECURITY DEFINER
         SET search_path=pg_catalog AS $fn$
         BEGIN
-            IF jsonb_typeof(p_palette)<>'object'
-               OR p_palette ?| ARRAY['preset'] IS FALSE
+            IF jsonb_typeof(p_palette) IS DISTINCT FROM 'object'
+               OR p_palette ?| ARRAY['preset'] IS NOT TRUE
                OR (SELECT count(*) FROM jsonb_object_keys(p_palette))<>1
-               OR p_palette->>'preset' NOT IN ('ocean','meadow','ember')
+               OR jsonb_typeof(p_palette->'preset') IS DISTINCT FROM 'string'
+               OR (p_palette->>'preset') NOT IN ('ocean','meadow','ember')
             THEN RAISE EXCEPTION 'THEME_PALETTE_INVALID' USING ERRCODE='P0003'; END IF;
-            IF jsonb_typeof(p_typography)<>'object'
+            IF jsonb_typeof(p_typography) IS DISTINCT FROM 'object'
                OR (SELECT count(*) FROM jsonb_object_keys(p_typography))<>3
                OR EXISTS (
                    SELECT 1 FROM jsonb_object_keys(p_typography) key
                    WHERE key NOT IN ('family','scale','weight')
                )
-               OR p_typography->>'family' NOT IN ('system','serif','mono')
-               OR p_typography->>'scale' NOT IN ('compact','balanced','spacious')
-               OR p_typography->>'weight' NOT IN ('regular','medium','bold')
+               OR jsonb_typeof(p_typography->'family') IS DISTINCT FROM 'string'
+               OR jsonb_typeof(p_typography->'scale') IS DISTINCT FROM 'string'
+               OR jsonb_typeof(p_typography->'weight') IS DISTINCT FROM 'string'
+               OR (p_typography->>'family') NOT IN ('system','serif','mono')
+               OR (p_typography->>'scale') NOT IN ('compact','balanced','spacious')
+               OR (p_typography->>'weight') NOT IN ('regular','medium','bold')
             THEN RAISE EXCEPTION 'THEME_TYPOGRAPHY_INVALID' USING ERRCODE='P0003'; END IF;
-            IF jsonb_typeof(p_layout)<>'object'
+            IF jsonb_typeof(p_layout) IS DISTINCT FROM 'object'
                OR (SELECT count(*) FROM jsonb_object_keys(p_layout))<>3
                OR EXISTS (
                    SELECT 1 FROM jsonb_object_keys(p_layout) key
                    WHERE key NOT IN ('content_width','spacing','grid_gap')
                )
-               OR p_layout->>'content_width' NOT IN ('sm','md','lg','xl')
-               OR p_layout->>'spacing' NOT IN ('sm','md','lg')
-               OR p_layout->>'grid_gap' NOT IN ('sm','md','lg')
+               OR jsonb_typeof(p_layout->'content_width') IS DISTINCT FROM 'string'
+               OR jsonb_typeof(p_layout->'spacing') IS DISTINCT FROM 'string'
+               OR jsonb_typeof(p_layout->'grid_gap') IS DISTINCT FROM 'string'
+               OR (p_layout->>'content_width') NOT IN ('sm','md','lg','xl')
+               OR (p_layout->>'spacing') NOT IN ('sm','md','lg')
+               OR (p_layout->>'grid_gap') NOT IN ('sm','md','lg')
             THEN RAISE EXCEPTION 'THEME_LAYOUT_INVALID' USING ERRCODE='P0003'; END IF;
-            IF jsonb_typeof(p_shape)<>'object'
+            IF jsonb_typeof(p_shape) IS DISTINCT FROM 'object'
                OR (SELECT count(*) FROM jsonb_object_keys(p_shape))<>2
                OR EXISTS (
                    SELECT 1 FROM jsonb_object_keys(p_shape) key
                    WHERE key NOT IN ('radius','shadow')
                )
-               OR p_shape->>'radius' NOT IN ('none','sm','md','lg','full')
-               OR p_shape->>'shadow' NOT IN ('none','sm','md','lg')
+               OR jsonb_typeof(p_shape->'radius') IS DISTINCT FROM 'string'
+               OR jsonb_typeof(p_shape->'shadow') IS DISTINCT FROM 'string'
+               OR (p_shape->>'radius') NOT IN ('none','sm','md','lg','full')
+               OR (p_shape->>'shadow') NOT IN ('none','sm','md','lg')
             THEN RAISE EXCEPTION 'THEME_SHAPE_INVALID' USING ERRCODE='P0003'; END IF;
             IF EXISTS (
                 SELECT 1 FROM jsonb_each_text(p_palette) item
@@ -213,8 +229,6 @@ def _agent_update_sql() -> str:
             workspace_id uuid; capability_id uuid; exists_row boolean;
             token_key text; group_name text; changed boolean:=false;
         BEGIN
-            capability_id:=control.slaif_agent_require_capability(
-                p_site_id,'theme-tokens:write');
             BEGIN
                 workspace_id:=NULLIF(current_setting('app.session_id',true),'')::uuid;
             EXCEPTION WHEN invalid_text_representation THEN
@@ -227,8 +241,10 @@ def _agent_update_sql() -> str:
             END IF;
             PERFORM pg_advisory_xact_lock(hashtextextended(
                 workspace_id::text||chr(58)||p_site_id::text||chr(58)||'theme',995));
-            SELECT c.resource_constraints INTO constraints
-            FROM control.capability c WHERE c.id=capability_id;
+            capability_id:=control.slaif_agent_require_capability(
+                p_site_id,'theme:read');
+            SELECT to_jsonb(resource_constraints) INTO constraints
+            FROM control.slaif_agent_resource_constraints(p_site_id) resource_constraints;
             SELECT * INTO current_theme FROM content.slaif_theme_project(p_site_id);
             IF current_theme.id IS NULL THEN
                 RAISE EXCEPTION 'THEME_SITE_NOT_FOUND' USING ERRCODE='P0002';
@@ -244,6 +260,27 @@ def _agent_update_sql() -> str:
             IF (
                 p_palette IS NULL AND p_typography IS NULL AND p_layout IS NULL AND p_shape IS NULL
             ) THEN RAISE EXCEPTION 'THEME_UPDATE_EMPTY' USING ERRCODE='P0003'; END IF;
+            IF p_palette IS NOT NULL AND jsonb_typeof(p_palette) IS DISTINCT FROM 'object'
+               OR p_typography IS NOT NULL AND jsonb_typeof(p_typography) IS DISTINCT FROM 'object'
+               OR p_layout IS NOT NULL AND jsonb_typeof(p_layout) IS DISTINCT FROM 'object'
+               OR p_shape IS NOT NULL AND jsonb_typeof(p_shape) IS DISTINCT FROM 'object'
+            THEN RAISE EXCEPTION 'THEME_UPDATE_INVALID' USING ERRCODE='P0003'; END IF;
+            IF p_palette IS NOT NULL AND EXISTS (
+                SELECT 1 FROM jsonb_object_keys(p_palette) key
+                WHERE key NOT IN ('preset')
+            ) THEN RAISE EXCEPTION 'THEME_PALETTE_INVALID' USING ERRCODE='P0003'; END IF;
+            IF p_typography IS NOT NULL AND EXISTS (
+                SELECT 1 FROM jsonb_object_keys(p_typography) key
+                WHERE key NOT IN ('family','scale','weight')
+            ) THEN RAISE EXCEPTION 'THEME_TYPOGRAPHY_INVALID' USING ERRCODE='P0003'; END IF;
+            IF p_layout IS NOT NULL AND EXISTS (
+                SELECT 1 FROM jsonb_object_keys(p_layout) key
+                WHERE key NOT IN ('content_width','spacing','grid_gap')
+            ) THEN RAISE EXCEPTION 'THEME_LAYOUT_INVALID' USING ERRCODE='P0003'; END IF;
+            IF p_shape IS NOT NULL AND EXISTS (
+                SELECT 1 FROM jsonb_object_keys(p_shape) key
+                WHERE key NOT IN ('radius','shadow')
+            ) THEN RAISE EXCEPTION 'THEME_SHAPE_INVALID' USING ERRCODE='P0003'; END IF;
             FOR group_name,token_key IN
                 SELECT 'palette',entry.key FROM jsonb_each(coalesce(p_palette,'{{}}'::jsonb)) entry
                 UNION ALL SELECT 'typography',entry.key FROM jsonb_each(coalesce(p_typography,'{{}}'::jsonb)) entry
@@ -265,27 +302,6 @@ def _agent_update_sql() -> str:
                AND jsonb_array_length(constraints->'allowed_theme_typography_families')>0
                AND NOT (constraints->'allowed_theme_typography_families' ? (p_typography->>'family'))
             THEN RAISE EXCEPTION 'AGENT_RESOURCE_THEME_TYPOGRAPHY_DENIED' USING ERRCODE='P0007'; END IF;
-            IF p_palette IS NOT NULL AND jsonb_typeof(p_palette)<>'object'
-               OR p_typography IS NOT NULL AND jsonb_typeof(p_typography)<>'object'
-               OR p_layout IS NOT NULL AND jsonb_typeof(p_layout)<>'object'
-               OR p_shape IS NOT NULL AND jsonb_typeof(p_shape)<>'object'
-            THEN RAISE EXCEPTION 'THEME_UPDATE_INVALID' USING ERRCODE='P0003'; END IF;
-            IF p_palette IS NOT NULL AND EXISTS (
-                SELECT 1 FROM jsonb_object_keys(p_palette) key
-                WHERE key NOT IN ('preset')
-            ) THEN RAISE EXCEPTION 'THEME_PALETTE_INVALID' USING ERRCODE='P0003'; END IF;
-            IF p_typography IS NOT NULL AND EXISTS (
-                SELECT 1 FROM jsonb_object_keys(p_typography) key
-                WHERE key NOT IN ('family','scale','weight')
-            ) THEN RAISE EXCEPTION 'THEME_TYPOGRAPHY_INVALID' USING ERRCODE='P0003'; END IF;
-            IF p_layout IS NOT NULL AND EXISTS (
-                SELECT 1 FROM jsonb_object_keys(p_layout) key
-                WHERE key NOT IN ('content_width','spacing','grid_gap')
-            ) THEN RAISE EXCEPTION 'THEME_LAYOUT_INVALID' USING ERRCODE='P0003'; END IF;
-            IF p_shape IS NOT NULL AND EXISTS (
-                SELECT 1 FROM jsonb_object_keys(p_shape) key
-                WHERE key NOT IN ('radius','shadow')
-            ) THEN RAISE EXCEPTION 'THEME_SHAPE_INVALID' USING ERRCODE='P0003'; END IF;
             next_palette:=current_theme.palette||coalesce(p_palette,'{{}}'::jsonb);
             next_typography:=current_theme.typography||coalesce(p_typography,'{{}}'::jsonb);
             next_layout:=current_theme.layout||coalesce(p_layout,'{{}}'::jsonb);
@@ -304,6 +320,8 @@ def _agent_update_sql() -> str:
                     current_theme.updated_at,true;
                 RETURN;
             END IF;
+            capability_id:=control.slaif_agent_require_capability(
+                p_site_id,'theme-tokens:write');
             IF NOT control.slaif_agent_quota_consume(capability_id,workspace_id,'mutation')
             THEN RAISE EXCEPTION 'AGENT_MUTATION_QUOTA_EXCEEDED' USING ERRCODE='P0005'; END IF;
             IF NOT exists_row THEN
@@ -331,100 +349,66 @@ def _agent_update_sql() -> str:
 
 
 def _resource_constraint_sql() -> str:
-    return """
-        DROP FUNCTION control.slaif_agent_resource_constraints(uuid);
-        CREATE FUNCTION control.slaif_agent_resource_constraints(p_site_id uuid)
-        RETURNS TABLE(
-            allowed_type_ids uuid[], allowed_type_keys text[],
-            max_content_types integer, max_fields_per_type integer,
-            delete_enabled boolean, max_deletes integer,
-            allowed_locales text[], route_prefix text,
-            allowed_page_root_ids uuid[], max_visible_pages integer,
-            max_page_depth integer, allowed_navigation_keys text[],
-            allowed_navigation_ids uuid[], max_visible_locales integer,
-            max_visible_navigations integer, max_visible_navigation_items integer,
-            max_navigation_depth integer, max_visible_redirects integer,
-            allowed_component_types text[], max_components_per_page integer,
-            max_component_depth integer, max_visible_components integer,
-            allowed_theme_palette_presets text[], allowed_theme_typography_families text[],
-            allowed_theme_tokens text[]
-        ) LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $fn$
-        DECLARE workspace_id uuid; result jsonb;
-        BEGIN
-            BEGIN workspace_id:=NULLIF(current_setting('app.session_id',true),'')::uuid;
-            EXCEPTION WHEN invalid_text_representation THEN
-                RAISE EXCEPTION 'COW_CONTEXT_REQUIRED' USING ERRCODE='22023'; END;
-            IF workspace_id IS NULL OR NULLIF(current_setting('app.operation_id',true),'') IS NULL
-            THEN RAISE EXCEPTION 'COW_CONTEXT_REQUIRED' USING ERRCODE='22023'; END IF;
-            PERFORM control.slaif_agent_require_cow_site(p_site_id);
-            SELECT w.resource_constraints INTO result FROM control.workspace w
-            JOIN control.site s ON s.id=w.site_id JOIN control.user_account a
-              ON a.id=coalesce(w.delegator_id,w.created_by)
-            WHERE w.id=workspace_id AND w.site_id=p_site_id AND w.status='ACTIVE'
-              AND w.expires_at>CURRENT_TIMESTAMP AND s.status='ACTIVE' AND a.status='ACTIVE';
-            IF result IS NULL OR jsonb_typeof(result)<>'object' THEN
-                RAISE EXCEPTION 'INVALID_RESOURCE_CONSTRAINTS' USING ERRCODE='P0001'; END IF;
-            IF EXISTS (SELECT 1 FROM jsonb_object_keys(result) key WHERE key NOT IN (
-                'allowed_type_ids','allowed_type_keys','max_content_types','max_fields_per_type',
-                'delete_enabled','max_deletes','allowed_locales','route_prefix','allowed_page_root_ids',
-                'max_visible_pages','max_page_depth','allowed_navigation_keys','allowed_navigation_ids',
-                'max_visible_locales','max_visible_navigations','max_visible_navigation_items',
-                'max_navigation_depth','max_visible_redirects','allowed_component_types',
-                'max_components_per_page','max_component_depth','max_visible_components',
-                'allowed_theme_palette_presets','allowed_theme_typography_families','allowed_theme_tokens'
-            )) THEN RAISE EXCEPTION 'INVALID_RESOURCE_CONSTRAINTS' USING ERRCODE='P0001'; END IF;
+    source = cast(str, _M060._resource_constraint_sql())
+    returns_anchor = (
+        "            max_component_depth integer, max_visible_components integer"
+    )
+    whitelist_anchor = (
+        "                    'max_component_depth','max_visible_components'\n"
+    )
+    assignment_anchor = "            allowed_type_ids:=ARRAY("
+    if source.count(returns_anchor) != 1 or source.count(whitelist_anchor) != 1:
+        raise RuntimeError("065 resource helper anchors drifted from 060")
+    source = source.replace(
+        returns_anchor,
+        returns_anchor
+        + ",\n"
+        + "            allowed_theme_palette_presets text[], "
+        + "allowed_theme_typography_families text[],\n"
+        + "            allowed_theme_tokens text[]",
+        1,
+    )
+    source = source.replace(
+        whitelist_anchor,
+        "                    'max_component_depth','max_visible_components',\n"
+        + "                    'allowed_theme_palette_presets',"
+        + "'allowed_theme_typography_families','allowed_theme_tokens'\n",
+        1,
+    )
+    theme_checks = """
             IF EXISTS (SELECT 1 FROM (VALUES
-                ('allowed_type_ids'),('allowed_type_keys'),('allowed_locales'),('allowed_page_root_ids'),
-                ('allowed_navigation_keys'),('allowed_navigation_ids'),('allowed_component_types'),
-                ('allowed_theme_palette_presets'),('allowed_theme_typography_families'),('allowed_theme_tokens')
-            ) names(key) WHERE result ? names.key AND jsonb_typeof(result->names.key)<>'array')
-            THEN RAISE EXCEPTION 'INVALID_RESOURCE_CONSTRAINTS' USING ERRCODE='P0001'; END IF;
-            IF EXISTS (SELECT 1 FROM (VALUES
-                ('max_content_types'),('max_fields_per_type'),('max_deletes'),('max_visible_pages'),
-                ('max_page_depth'),('max_visible_locales'),('max_visible_navigations'),
-                ('max_visible_navigation_items'),('max_navigation_depth'),('max_visible_redirects'),
-                ('max_components_per_page'),('max_component_depth'),('max_visible_components')
+                ('allowed_theme_palette_presets'),
+                ('allowed_theme_typography_families'),('allowed_theme_tokens')
             ) names(key) WHERE result ? names.key
-              AND (jsonb_typeof(result->names.key)<>'number' OR result->>names.key !~ '^[0-9]+$'))
+              AND jsonb_typeof(result->names.key) IS DISTINCT FROM 'array')
             THEN RAISE EXCEPTION 'INVALID_RESOURCE_CONSTRAINTS' USING ERRCODE='P0001'; END IF;
             IF jsonb_array_length(coalesce(result->'allowed_theme_palette_presets','[]'::jsonb))>3
-               OR EXISTS (SELECT 1 FROM jsonb_array_elements_text(coalesce(result->'allowed_theme_palette_presets','[]'::jsonb)) v WHERE v NOT IN ('ocean','meadow','ember'))
+               OR EXISTS (SELECT 1 FROM jsonb_array_elements(coalesce(result->'allowed_theme_palette_presets','[]'::jsonb)) v
+                   WHERE jsonb_typeof(v.value) IS DISTINCT FROM 'string'
+                      OR v.value #>> '{}' NOT IN ('ocean','meadow','ember'))
                OR jsonb_array_length(coalesce(result->'allowed_theme_typography_families','[]'::jsonb))>3
-               OR EXISTS (SELECT 1 FROM jsonb_array_elements_text(coalesce(result->'allowed_theme_typography_families','[]'::jsonb)) v WHERE v NOT IN ('system','serif','mono'))
+               OR EXISTS (SELECT 1 FROM jsonb_array_elements(coalesce(result->'allowed_theme_typography_families','[]'::jsonb)) v
+                   WHERE jsonb_typeof(v.value) IS DISTINCT FROM 'string'
+                      OR v.value #>> '{}' NOT IN ('system','serif','mono'))
                OR jsonb_array_length(coalesce(result->'allowed_theme_tokens','[]'::jsonb))>9
-               OR EXISTS (SELECT 1 FROM jsonb_array_elements_text(coalesce(result->'allowed_theme_tokens','[]'::jsonb)) v WHERE v NOT IN (
+               OR EXISTS (SELECT 1 FROM jsonb_array_elements(coalesce(result->'allowed_theme_tokens','[]'::jsonb)) v
+                   WHERE jsonb_typeof(v.value) IS DISTINCT FROM 'string'
+                      OR v.value #>> '{}' NOT IN (
                     'palette.preset','typography.family','typography.scale','typography.weight',
                     'layout.content_width','layout.spacing','layout.grid_gap','shape.radius','shape.shadow'))
             THEN RAISE EXCEPTION 'INVALID_RESOURCE_CONSTRAINTS' USING ERRCODE='P0001'; END IF;
-            allowed_type_ids:=ARRAY(SELECT value::uuid FROM jsonb_array_elements_text(coalesce(result->'allowed_type_ids','[]'::jsonb)) value);
-            allowed_type_keys:=ARRAY(SELECT value FROM jsonb_array_elements_text(coalesce(result->'allowed_type_keys','[]'::jsonb)) value);
-            max_content_types:=CASE WHEN result ? 'max_content_types' THEN (result->>'max_content_types')::integer END;
-            max_fields_per_type:=CASE WHEN result ? 'max_fields_per_type' THEN (result->>'max_fields_per_type')::integer END;
-            delete_enabled:=CASE WHEN result ? 'delete_enabled' THEN (result->>'delete_enabled')::boolean END;
-            max_deletes:=CASE WHEN result ? 'max_deletes' THEN (result->>'max_deletes')::integer END;
-            allowed_locales:=ARRAY(SELECT value FROM jsonb_array_elements_text(coalesce(result->'allowed_locales','[]'::jsonb)) value);
-            route_prefix:=CASE WHEN result ? 'route_prefix' THEN result->>'route_prefix' END;
-            allowed_page_root_ids:=ARRAY(SELECT value::uuid FROM jsonb_array_elements_text(coalesce(result->'allowed_page_root_ids','[]'::jsonb)) value);
-            max_visible_pages:=CASE WHEN result ? 'max_visible_pages' THEN (result->>'max_visible_pages')::integer END;
-            max_page_depth:=CASE WHEN result ? 'max_page_depth' THEN (result->>'max_page_depth')::integer END;
-            allowed_navigation_keys:=ARRAY(SELECT value FROM jsonb_array_elements_text(coalesce(result->'allowed_navigation_keys','[]'::jsonb)) value);
-            allowed_navigation_ids:=ARRAY(SELECT value::uuid FROM jsonb_array_elements_text(coalesce(result->'allowed_navigation_ids','[]'::jsonb)) value);
-            max_visible_locales:=CASE WHEN result ? 'max_visible_locales' THEN (result->>'max_visible_locales')::integer END;
-            max_visible_navigations:=CASE WHEN result ? 'max_visible_navigations' THEN (result->>'max_visible_navigations')::integer END;
-            max_visible_navigation_items:=CASE WHEN result ? 'max_visible_navigation_items' THEN (result->>'max_visible_navigation_items')::integer END;
-            max_navigation_depth:=CASE WHEN result ? 'max_navigation_depth' THEN (result->>'max_navigation_depth')::integer END;
-            max_visible_redirects:=CASE WHEN result ? 'max_visible_redirects' THEN (result->>'max_visible_redirects')::integer END;
-            allowed_component_types:=ARRAY(SELECT value FROM jsonb_array_elements_text(coalesce(result->'allowed_component_types','[]'::jsonb)) value);
-            max_components_per_page:=CASE WHEN result ? 'max_components_per_page' THEN (result->>'max_components_per_page')::integer END;
-            max_component_depth:=CASE WHEN result ? 'max_component_depth' THEN (result->>'max_component_depth')::integer END;
-            max_visible_components:=CASE WHEN result ? 'max_visible_components' THEN (result->>'max_visible_components')::integer END;
+"""
+    if source.count(assignment_anchor) != 1:
+        raise RuntimeError("065 resource helper assignment anchor drifted from 060")
+    source = source.replace(assignment_anchor, theme_checks + assignment_anchor, 1)
+    theme_assignments = """
             allowed_theme_palette_presets:=ARRAY(SELECT value FROM jsonb_array_elements_text(coalesce(result->'allowed_theme_palette_presets','[]'::jsonb)) value);
             allowed_theme_typography_families:=ARRAY(SELECT value FROM jsonb_array_elements_text(coalesce(result->'allowed_theme_typography_families','[]'::jsonb)) value);
             allowed_theme_tokens:=ARRAY(SELECT value FROM jsonb_array_elements_text(coalesce(result->'allowed_theme_tokens','[]'::jsonb)) value);
-            RETURN NEXT;
-        END;
-        $fn$;
-    """
+"""
+    return source.replace(
+        "            RETURN NEXT;", theme_assignments + "            RETURN NEXT;", 1
+    )
 
 
 def _semantic_completion_sql(*, include_theme: bool) -> str:
@@ -665,6 +649,19 @@ def upgrade() -> None:
     _execute_block(_validate_sql())
     _backfill()
     _execute_block(_default_sql())
+    op.execute(f"CREATE SCHEMA {_LEGACY_SCHEMA} AUTHORIZATION slaif_owner")
+    op.execute(f"REVOKE ALL ON SCHEMA {_LEGACY_SCHEMA} FROM PUBLIC")
+    op.execute(
+        "ALTER FUNCTION control.slaif_agent_resource_constraints(uuid) "
+        f"SET SCHEMA {_LEGACY_SCHEMA}"
+    )
+    op.execute(
+        f"ALTER FUNCTION content.slaif_theme_get(uuid) SET SCHEMA {_LEGACY_SCHEMA}"
+    )
+    op.execute(
+        "ALTER FUNCTION content.slaif_theme_update(uuid,jsonb,jsonb,jsonb,jsonb) "
+        f"SET SCHEMA {_LEGACY_SCHEMA}"
+    )
     _execute_block(_legacy_sql())
     _execute_block(_agent_read_sql())
     _execute_block(_agent_update_sql())
@@ -719,14 +716,14 @@ def downgrade() -> None:
         """
         DROP FUNCTION IF EXISTS content.slaif_agent_theme_update(
             uuid,integer,jsonb,jsonb,jsonb,jsonb,boolean
-        ) CASCADE;
-        DROP FUNCTION IF EXISTS content.slaif_agent_theme_get(uuid) CASCADE;
-        DROP FUNCTION IF EXISTS content.slaif_theme_project(uuid) CASCADE;
-        DROP FUNCTION IF EXISTS content.slaif_theme_default(uuid) CASCADE;
+        );
+        DROP FUNCTION IF EXISTS content.slaif_agent_theme_get(uuid);
+        DROP FUNCTION IF EXISTS content.slaif_theme_project(uuid);
+        DROP FUNCTION IF EXISTS content.slaif_theme_default(uuid);
         DROP FUNCTION IF EXISTS content.slaif_theme_validate_groups(
             jsonb,jsonb,jsonb,jsonb
-        ) CASCADE;
-        DROP FUNCTION IF EXISTS control.slaif_agent_resource_constraints(uuid) CASCADE;
+        );
+        DROP FUNCTION IF EXISTS control.slaif_agent_resource_constraints(uuid);
         ALTER TABLE content.theme
             DROP CONSTRAINT IF EXISTS theme_schema_version_exact,
             DROP CONSTRAINT IF EXISTS theme_renderer_version_exact,
@@ -832,3 +829,21 @@ def downgrade() -> None:
         GRANT EXECUTE ON FUNCTION content.slaif_theme_get(uuid),content.slaif_theme_update(uuid,jsonb,jsonb,jsonb,jsonb) TO slaif_editor_runtime,slaif_control;
         """
     )
+    # The compatibility definitions above keep this downgrade usable on a
+    # legacy database, but the private moved functions are the authoritative
+    # byte-for-byte restoration. Moving the original objects back preserves
+    # their owner, ACL, volatility, signature, and exact body without CASCADE.
+    for function, signature, target_schema in (
+        ("slaif_agent_resource_constraints", "uuid", "control"),
+        ("slaif_theme_get", "uuid", "content"),
+        ("slaif_theme_update", "uuid,jsonb,jsonb,jsonb,jsonb", "content"),
+    ):
+        current_schema = (
+            "control" if function == "slaif_agent_resource_constraints" else "content"
+        )
+        op.execute(f"DROP FUNCTION {current_schema}.{function}({signature})")
+        op.execute(
+            f"ALTER FUNCTION {_LEGACY_SCHEMA}.{function}({signature}) "
+            f"SET SCHEMA {target_schema}"
+        )
+    op.execute(f"DROP SCHEMA {_LEGACY_SCHEMA}")

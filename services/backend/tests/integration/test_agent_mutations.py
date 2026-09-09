@@ -6,6 +6,7 @@ import asyncio
 import contextlib
 import hashlib
 import json
+import time
 from collections.abc import Mapping
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
@@ -344,17 +345,40 @@ async def _set_resource_constraints(
         )
 
 
+async def _function_contract(owner: Any, signature: str) -> tuple[Any, ...]:
+    row = await owner.fetchrow(
+        "SELECT pg_get_functiondef($1::regprocedure), pg_get_userbyid(proowner), "
+        "proacl, provolatile FROM pg_proc WHERE oid=$1::regprocedure",
+        signature,
+    )
+    assert row is not None
+    return tuple(row)
+
+
 async def _wait_for_page_structure_waiters(owner: Any, expected: int) -> None:
     """Use the database lock table as a deterministic barrier, never a timer."""
 
-    for _ in range(500):
+    lock = await owner.fetchrow(
+        "SELECT classid::bigint,objid::bigint FROM pg_locks "
+        "WHERE pid=pg_backend_pid() AND locktype='advisory' AND granted"
+    )
+    if lock is None:
+        raise AssertionError("structure-lock blocker has no granted advisory lock")
+    deadline = time.monotonic() + 8.0
+    waiting = 0
+    while time.monotonic() < deadline:
         waiting = await owner.fetchval(
-            "SELECT count(*) FROM pg_locks WHERE locktype='advisory' AND NOT granted"
+            "SELECT count(*) FROM pg_locks WHERE locktype='advisory' "
+            "AND NOT granted AND classid::bigint=$1 AND objid::bigint=$2",
+            lock[0],
+            lock[1],
         )
         if waiting >= expected:
             return
-        await asyncio.sleep(0)
-    raise AssertionError(f"expected {expected} structural lock waiters, got {waiting}")
+        await asyncio.sleep(0.01)
+    raise AssertionError(
+        f"expected {expected} waiters for the blocker advisory lock, got {waiting}"
+    )
 
 
 @asynccontextmanager
@@ -19244,6 +19268,18 @@ async def test_agent_065_theme_data_round_trip_preserves_legacy_state(
         operation="downgrade",
         revision="064_001",
     )
+    legacy_signatures = (
+        "control.slaif_agent_resource_constraints(uuid)",
+        "content.slaif_theme_get(uuid)",
+        "content.slaif_theme_update(uuid,jsonb,jsonb,jsonb,jsonb)",
+    )
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        fresh_064_contracts = {
+            signature: await _function_contract(owner, signature)
+            for signature in legacy_signatures
+        }
     theme_id = uuid4()
     async with owner_connection(
         database.settings.resolved_owner_dsn(), expected_database=database.name
@@ -19295,6 +19331,11 @@ async def test_agent_065_theme_data_round_trip_preserves_legacy_state(
     async with owner_connection(
         database.settings.resolved_owner_dsn(), expected_database=database.name
     ) as owner:
+        restored_064_contracts = {
+            signature: await _function_contract(owner, signature)
+            for signature in legacy_signatures
+        }
+        assert restored_064_contracts == fresh_064_contracts
         row = await owner.fetchrow(
             "SELECT id,palette,typography,layout,shape FROM content.theme "
             "WHERE site_id=$1",

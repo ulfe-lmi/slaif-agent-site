@@ -411,7 +411,7 @@ class AgentCowContentModelService(ContentModelService):
         self.last_mutation_no_effect = False
 
     async def update_theme_for_site(
-        self, site_id: UUID, request: AgentUpdateThemeRequest, *, no_effect: bool
+        self, site_id: UUID, request: AgentUpdateThemeRequest
     ) -> ThemeRecord:
         row = await self._fetchrow(
             AGENT_THEME_UPDATE_SQL,
@@ -421,13 +421,12 @@ class AgentCowContentModelService(ContentModelService):
             theme_patch_json(request, "typography"),
             theme_patch_json(request, "layout"),
             theme_patch_json(request, "shape"),
-            no_effect,
+            False,
         )
         if row is None:
             raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
         self.last_mutation_no_effect = bool(row[11])
         return cast(ThemeRecord, _agent_theme(row))
-        self.last_mutation_no_effect = False
 
     async def create_type(
         self, site_id: UUID, request: CreateContentTypeRequest

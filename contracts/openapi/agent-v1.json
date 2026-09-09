@@ -17242,11 +17242,24 @@
           }
         ],
         "summary": "Update Theme",
-        "x-slaif-conditional-scopes": [],
+        "x-slaif-conditional-scopes": [
+          {
+            "condition": "changed",
+            "required_scopes": [
+              "theme-tokens:write"
+            ],
+            "when_fields": [
+              "palette",
+              "typography",
+              "layout",
+              "shape"
+            ]
+          }
+        ],
         "x-slaif-idempotency": "required",
         "x-slaif-mutation": true,
         "x-slaif-required-scopes": [
-          "theme-tokens:write"
+          "theme:read"
         ]
       }
     },
