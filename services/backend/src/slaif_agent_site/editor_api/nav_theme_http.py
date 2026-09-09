@@ -136,26 +136,10 @@ async def update_theme(
     try:
         return await _service(request).update_theme(  # type: ignore[no-any-return]
             site_id=site_id,
-            palette=(
-                body.palette.model_dump(exclude_unset=True, exclude_none=True)
-                if body.palette is not None
-                else None
-            ),
-            typography=(
-                body.typography.model_dump(exclude_unset=True, exclude_none=True)
-                if body.typography is not None
-                else None
-            ),
-            layout=(
-                body.layout.model_dump(exclude_unset=True, exclude_none=True)
-                if body.layout is not None
-                else None
-            ),
-            shape=(
-                body.shape.model_dump(exclude_unset=True, exclude_none=True)
-                if body.shape is not None
-                else None
-            ),
+            palette=body.palette,
+            typography=body.typography,
+            layout=None,
+            shape=None,
         )
     except ContentModelServiceError:
         raise ServiceUnavailableError() from None

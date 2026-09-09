@@ -4,7 +4,6 @@ import { getRedirectError } from "next/dist/client/components/redirect";
 import { RedirectStatusCode } from "next/dist/client/components/redirect-status-code";
 
 import { renderServiceHeaders } from "./service-auth";
-import type { ThemeRecord } from "@slaif-agent-site/composition-schema";
 
 const RENDER_CONTEXT_URL = "http://render-api:8000/internal/render/v1/site-context";
 const RENDER_PAGE_URL = "http://render-api:8000/internal/render/v1/page";
@@ -92,7 +91,7 @@ export type PageProjection = Readonly<{
     catalog_version: string;
     nodes: readonly ProjectionNode[];
   };
-  theme: ThemeRecord;
+  theme: Record<string, unknown>;
   locales: readonly ProjectionLocale[];
   navigation: readonly ProjectionNavigation[];
   bindings: Record<string, readonly Record<string, unknown>[]>;

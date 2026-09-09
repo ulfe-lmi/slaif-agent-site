@@ -3,24 +3,23 @@
 This tracker uses the contract-audit status vocabulary rather than file
 presence or completion estimates. The authoritative baseline is
 [`MVP-CONTRACT-AUDIT.md`](MVP-CONTRACT-AUDIT.md), updated for the protocol-final
-Objective-078-i source revision developed in PR #77 on 2026-09-08. GitHub's PR
+Objective-078-j source revision developed in PR #77 on 2026-09-09. GitHub's PR
 state and merge commit are authoritative for whether that revision is contained
-in `main`; its audited base is Objective 076 commit
-`067676314e0d9664d40cb8514ea549b966a4eb2d`.
+in `main`; its verified main base is the accepted Objective-077 source
+revision, `ae3a4a681bb888260192b7bb1b2a337b4906828d`.
 
 ## Current verdict
 
 **CONTRACTUAL MVP NOT COMPLETE.** Merged Objectives 065–076 prove narrow,
 bounded contracts; the Objective-077 source revision provides complete evidence
 for its bounded page/locale/navigation/redirect/dynamic-Render information
-architecture; and the Objective-078-f source revision provides complete
-evidence for the bounded Agent component data plane on open PR #77. The active
-078-g added bounded local design semantics, 078-h repaired exact
-property-level authority and existing visual-property classification, and
-078-i adds the bounded site-theme token data plane. The focused
-public-Agent/PostgreSQL/Render/Web/Puck evidence is not credited until all
-gates complete. Objective 078 remains partial because global regions,
-header/footer architecture, the later review lifecycle, publication,
+architecture; and the Objective-078-j source revision provides complete
+evidence for the bounded Agent component/local-design data plane on open PR #77. The active
+078-g added bounded local design semantics, and 078-j repairs exact
+property-level authority, initial design selection, removal/replay semantics,
+and current OpenAPI truth; the focused public-Agent/PostgreSQL/Render/Web/Puck evidence is not credited until
+all gates complete. Objective 078 remains partial because site-global theme,
+global-region behavior and the later review lifecycle, publication,
 reconstruction, or final MVP contract are not proven. PR acceptance and merge
 state remain external GitHub/OAP facts.
 
@@ -66,7 +65,7 @@ remains **NOT COMPLETE**.
 
 ## Objective 078 source revision
 
-The 078-f source revision on [PR #77](https://github.com/ulfe-lmi/slaif-agent-site/pull/77)
+The 078-j source revision on [PR #77](https://github.com/ulfe-lmi/slaif-agent-site/pull/77)
 maps the immutable 078-a through 078-f transcript to the existing public Agent
 and shared Render/Web/browser boundaries. Its bounded component slice is
 **COMPLETE — E2E PROVEN** at the open-PR source revision: a clean NGINX-only
@@ -76,19 +75,18 @@ IDs/props/hierarchy/order/versions across Agent/Render/Web restarts, deletes
 leaves then parents, and proves private browser artifacts, hostile negatives,
 idempotency/audit/quota/COW isolation, and canonical non-change. The active
 078-g added the typed `design-system/v1` authority and bounded local
-variant/layout/responsive mutation; 078-h repairs its exact property-level
-scope/OpenAPI truth and classifies the existing Button/Image/CollectionGrid
-visual properties; 078-i adds the typed site-theme schema/defaults, Agent
-read/update semantics, legacy migration, and shared Render/Web/Puck token
-consumption. Focused public-Agent/PostgreSQL/Render/Web/Puck evidence is
-required before crediting these source revisions. Global regions, header/footer,
+variant/layout/responsive mutation; 078-j repairs its exact property-level
+scope/OpenAPI truth, initial design selection, removal/replay/no-effect
+semantics, and classifies the existing Button/Image/CollectionGrid visual
+properties. Focused public-Agent/PostgreSQL/Render/Web/Puck evidence is
+required before crediting this repaired design slice. Site-global theme, global-region,
 exact-workspace Puck, review, promotion, and publication remain
 **PARTIAL/NOT IMPLEMENTED**; this does not claim that PR #77 has merged or that
 the contractual MVP is complete.
 
 ## Active and remaining sequence
 
-The active transcript pointer remains `078-i` until strategy selects and signals
+The active transcript pointer remains `078-j` until strategy selects and signals
 the next objective. The source revisions have complete bounded 077 evidence and
 complete bounded 078 component evidence; acceptance and containment in `main`
 are determined by OAP and GitHub state, not this document. All later order files
@@ -97,7 +95,7 @@ remain inert until strategy selects and signals them.
 | Order | Contractual scope | Current status |
 |---|---|---|
 | 077 | Agent page, navigation, redirect, and bounded dynamic collection Render semantics | COMPLETE — E2E PROVEN at 077-z source revision; consult authoritative PR/main state for merge |
-| 078 | Agent composition, design semantics, and bounded site-theme token data plane | PARTIAL — component slice E2E proven at 078-f on open PR #77; 078-h/i source revisions add repaired local-design and theme slices, while global-region/header-footer scope remains |
+| 078 | Agent composition and design semantics; bounded component data plane | PARTIAL — component/local-design slice and 078-j authority/replay repairs are on open PR #77 pending strategic acceptance; site-theme/global-region scope remains deferred |
 | 079 | Agent media semantics and references | PARTIAL |
 | 080 | Real MCP semantic parity | SCAFFOLD ONLY |
 | 081 | Human Puck editing in the exact Agent workspace | PARTIAL |

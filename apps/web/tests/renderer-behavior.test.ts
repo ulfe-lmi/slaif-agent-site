@@ -5,7 +5,7 @@ import {
   puckToComposition,
   type NormalizedCompositionNode,
 } from "../../../packages/composition-schema/src/puck-adapter";
-import { renderComponent, renderProjection } from "../src/renderer/components";
+import { renderComponent } from "../src/renderer/components";
 
 const fixtures: readonly NormalizedCompositionNode[] = [
   {
@@ -181,62 +181,6 @@ describe("trusted catalog renderer behavior", () => {
     expect(collection).toContain("renderer-collection-grid--4");
     expect(collection).toContain("renderer-collection-grid--tablet-2");
     expect(collection).toContain("renderer-collection-grid--mobile-1");
-  });
-
-  it("applies only schema-owned theme classes to the shared projection root", () => {
-    const rendered = renderToStaticMarkup(
-      renderProjection({
-        route_kind: "page",
-        render_mode: "preview",
-        site: {
-          id: "11111111-1111-4111-8111-111111111111",
-          key: "theme-site",
-          canonical_revision: 1,
-        },
-        requested_path: "/",
-        matched_path: "/",
-        locale: "en-US",
-        route_parameters: {},
-        page: {
-          id: "22222222-2222-4222-8222-222222222222",
-          site_id: "11111111-1111-4111-8111-111111111111",
-          slug: "home",
-          title: "Theme home",
-          status: "DRAFT",
-          locale: "en-US",
-          parent_id: null,
-          route_template: null,
-          effective_route: "/",
-          row_version: 1,
-        },
-        composition: {
-          schema_version: "site-composition/v1",
-          catalog_version: "catalog-v1",
-          nodes: [],
-        },
-        theme: {
-          id: "11111111-1111-4111-8111-111111111111",
-          site_id: "11111111-1111-4111-8111-111111111111",
-          schema_version: "theme-schema/v1",
-          renderer_version: "renderer-v1",
-          row_version: 2,
-          palette: { preset: "meadow" },
-          typography: { family: "serif", scale: "spacious", weight: "bold" },
-          layout: { content_width: "lg", spacing: "lg", grid_gap: "sm" },
-          shape: { radius: "lg", shadow: "md" },
-          created_at: "2026-01-01T00:00:00Z",
-          updated_at: "2026-01-01T00:00:01Z",
-        },
-        locales: [],
-        navigation: [],
-        bindings: {},
-      }),
-    );
-    expect(rendered).toContain("renderer-theme-palette--meadow");
-    expect(rendered).toContain("renderer-theme-family--serif");
-    expect(rendered).toContain("renderer-theme-width--lg");
-    expect(rendered).toContain("renderer-theme-radius--lg");
-    expect(rendered).not.toMatch(/style=|javascript:|data:text/i);
   });
 
   it("rejects malformed nested data before rendering", () => {

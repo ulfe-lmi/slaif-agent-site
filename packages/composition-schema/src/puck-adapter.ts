@@ -5,7 +5,6 @@ import {
   isResponsiveValue,
   type DesignProperty,
 } from "./design-system";
-export { generatePuckThemeConfig } from "./theme-schema";
 
 /**
  * Puck adapter: maps between the normalized composition tree and Puck's

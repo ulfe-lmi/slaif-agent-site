@@ -259,11 +259,8 @@ REQUIRED_FILES = (
         "tools/contracts/generate_agent_openapi.py",
         "tools/generate_component_catalog.py",
         "tools/generate_design_system.py",
-        "tools/generate_theme_schema.py",
         "packages/component-catalog/src/catalog-v1.json",
         "packages/composition-schema/src/catalog-v1.json",
-        "packages/composition-schema/src/theme-schema-v1.json",
-        "packages/composition-schema/src/theme-schema.ts",
         ".dockerignore",
         "infra/apache/Dockerfile",
         "infra/apache/slaif-agent-site.conf",
@@ -291,8 +288,7 @@ REQUIRED_FILES = (
         "services/backend/src/slaif_agent_site/db/alembic/versions/014_001_human_rbac.py",
         "services/backend/src/slaif_agent_site/db/alembic/versions/015_001_admin_read_model.py",
         "services/backend/src/slaif_agent_site/db/alembic/versions/061_001_agent_component_design_semantics.py",
-        "services/backend/src/slaif_agent_site/db/alembic/versions/062_001_bounded_theme_tokens.py",
-        "services/backend/src/slaif_agent_site/content_model/theme.py",
+        "services/backend/src/slaif_agent_site/db/alembic/versions/062_001_component_authority_repairs.py",
         "services/backend/src/slaif_agent_site/application.py",
         "services/backend/src/slaif_agent_site/authority.py",
         "services/backend/src/slaif_agent_site/config.py",
@@ -783,6 +779,7 @@ class RepositoryPolicy:
             order_exact,
             '"oap/orders/014-a-content-model-foundation.md"',
             '"oap/orders/015-a-content-model-editor-http.md"',
+            '"oap/orders/078-j-close-component-increment.md"',
         }
         for line in text.splitlines():
             stripped = line.strip().rstrip('",').strip()

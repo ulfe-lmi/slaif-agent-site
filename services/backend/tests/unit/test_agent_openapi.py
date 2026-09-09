@@ -91,6 +91,7 @@ def test_public_contract_has_scopes_headers_errors_and_no_internal_paths() -> No
         {
             "when_fields": ["slug", "locale", "route_template"],
             "required_scopes": ["route:write"],
+            "condition": "present",
         }
     ]
     move = document["components"]["schemas"]["MovePageRequest"]
@@ -102,42 +103,6 @@ def test_public_contract_has_scopes_headers_errors_and_no_internal_paths() -> No
     assert restore_schema == {"$ref": "#/components/schemas/RestorePageRequest"}
     assert "LivenessResponse" not in document["components"]["schemas"]
     assert "ReadinessResponse" not in document["components"]["schemas"]
-
-
-def test_theme_contract_is_closed_and_has_separate_token_scope() -> None:
-    document = json.loads(generate_agent_openapi())
-    schema_path = document["paths"]["/api/agent/v1/theme-schema"]["get"]
-    theme_path = document["paths"]["/api/agent/v1/theme"]["get"]
-    patch_path = document["paths"]["/api/agent/v1/theme"]["patch"]
-    assert schema_path["x-slaif-required-scopes"] == ["theme:read"]
-    assert theme_path["x-slaif-required-scopes"] == ["theme:read"]
-    assert patch_path["x-slaif-required-scopes"] == ["theme-tokens:write"]
-    assert patch_path["x-slaif-mutation"] is True
-    assert (
-        document["components"]["schemas"]["ThemeRecord"]["additionalProperties"]
-        is False
-    )
-    assert (
-        document["components"]["schemas"]["AgentThemeSchemaResponse"][
-            "additionalProperties"
-        ]
-        is False
-    )
-    assert (
-        document["components"]["schemas"]["AgentThemeMutationResponse"][
-            "additionalProperties"
-        ]
-        is False
-    )
-    request = document["components"]["schemas"]["AgentUpdateThemeRequest"]
-    assert request["additionalProperties"] is False
-    assert set(request["properties"]) == {
-        "expected_row_version",
-        "palette",
-        "typography",
-        "layout",
-        "shape",
-    }
 
 
 def test_component_catalog_contract_is_closed_and_agent_create_has_no_raw_rank() -> (
@@ -186,6 +151,23 @@ def test_design_system_contract_is_typed_and_site_catalog_bound() -> None:
     assert component_patch["x-slaif-component-property-scopes"] == (
         component_property_scope_metadata()
     )
+    component_create = document["paths"]["/api/agent/v1/pages/{page_id}/components"][
+        "post"
+    ]
+    assert (
+        component_create["x-slaif-component-authority"]
+        == component_patch["x-slaif-component-authority"]
+    )
+    assert component_patch["x-slaif-component-authority"]["operations"]["PATCH"] == {
+        "selection": "value-changed-properties",
+        "removal": ["whole-document-absent", "json-null"],
+        "responsive_transition": [
+            "map-add",
+            "map-change",
+            "map-remove",
+            "map-to-scalar",
+        ],
+    }
     image_aspect = next(
         item
         for item in component_patch["x-slaif-conditional-scopes"]
@@ -193,6 +175,7 @@ def test_design_system_contract_is_typed_and_site_catalog_bound() -> None:
         and item["when_fields"] == ["props.aspectRatio"]
     )
     assert image_aspect["required_scopes"] == ["component-props:write"]
+    assert image_aspect["condition"] == "changed"
 
 
 def test_public_edge_endpoint_returns_the_same_canonical_bytes() -> None:

@@ -422,15 +422,6 @@ AGENT_CONTENT_FUNCTIONS = {
         "slaif_agent_component_delete",
         "p_site_id uuid, p_component_id uuid, p_expected integer",
     ): "uuid, uuid, integer",
-    (
-        "slaif_agent_theme_get",
-        "p_site_id uuid",
-    ): "uuid",
-    (
-        "slaif_agent_theme_update",
-        "p_site_id uuid, p_expected integer, p_palette jsonb, p_typography jsonb, "
-        "p_layout jsonb, p_shape jsonb, p_no_effect boolean",
-    ): "uuid, integer, jsonb, jsonb, jsonb, jsonb, boolean",
     ("slaif_agent_locale_list", "p_site_id uuid"): "uuid",
     ("slaif_agent_locale_get", "p_site_id uuid, p_locale_id uuid"): "uuid, uuid",
     (
@@ -554,7 +545,6 @@ RENDER_METADATA_FUNCTIONS = {
     ("slaif_site_render_catalog", "p_site_id uuid"): "uuid",
 }
 RENDER_CONTENT_FUNCTIONS = {
-    ("slaif_theme_project", "p_site_id uuid"): "uuid",
     (
         "slaif_render_page_resolve",
         "p_site_id uuid, p_route text, p_locale text, p_statuses text[]",

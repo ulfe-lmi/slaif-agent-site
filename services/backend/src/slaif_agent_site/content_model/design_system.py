@@ -137,16 +137,47 @@ def _validate_alignment(value: Any) -> None:
 def required_scopes_for_component_update(
     component_type: str, old_props: dict[str, Any], patch_props: dict[str, Any]
 ) -> tuple[str, ...]:
-    """Derive scopes from changed trusted properties, never caller labels."""
+    """Derive scopes from changed trusted properties, including removals."""
     result: list[str] = []
     for key, value in patch_props.items():
-        if old_props.get(key) == value:
+        old_present = key in old_props
+        new_present = value is not None
+        if value is None and not old_present:
+            raise ValueError("null prop without an existing value")
+        if old_present == new_present and old_props.get(key) == value:
             continue
         property_scope = component_property_scope(component_type, key)
         if property_scope is None:
             raise ValueError("unknown prop")
         if not property_scope["supported"]:
             raise ValueError("unsupported design prop")
+        for scope in property_scope["scalar_required_scopes"]:
+            if scope not in result:
+                result.append(scope)
+        if property_scope["responsive"] and (
+            is_responsive_value(old_props.get(key)) or is_responsive_value(value)
+        ):
+            for scope in property_scope["responsive_required_scopes"]:
+                if scope not in result:
+                    result.append(scope)
+    return tuple(result)
+
+
+def required_scopes_for_component_create(
+    component_type: str, props: dict[str, Any]
+) -> tuple[str, ...]:
+    """Derive scopes for caller-selected initial design properties."""
+    result: list[str] = []
+    for key, value in props.items():
+        property_scope = component_property_scope(component_type, key)
+        if property_scope is None:
+            continue
+        if not property_scope["supported"]:
+            raise ValueError("unsupported design prop")
+        if property_scope["scalar_required_scopes"] == [
+            "component-content-props:write"
+        ]:
+            continue
         for scope in property_scope["scalar_required_scopes"]:
             if scope not in result:
                 result.append(scope)
@@ -167,14 +198,18 @@ def validate_design_resource_constraints(
     allowed_variants = constraints.get("allowed_component_variants")
     responsive_enabled = constraints.get("responsive_design_enabled", True)
     for key, value in patch_props.items():
-        if old_props.get(key) == value:
+        if key in old_props and value is not None and old_props[key] == value:
             continue
         property_definition = design_property(component_type, key)
         if property_definition is None:
             continue
         if responsive_enabled is False and is_responsive_value(value):
             raise ValueError("responsive design resource constraint")
-        if key == "variant" and isinstance(allowed_variants, list):
+        if (
+            key == "variant"
+            and value is not None
+            and isinstance(allowed_variants, list)
+        ):
             allowed = {str(item) for item in allowed_variants}
             values = value.values() if is_responsive_value(value) else (value,)
             if any(str(item) not in allowed for item in values):
@@ -186,9 +221,17 @@ def validate_agent_component_props(
 ) -> dict[str, Any]:
     """Validate the complete merged Agent composition props with design maps."""
     definition = component_definition(component_type)
-    merged = {**old_props, **patch_props}
+    merged = {**old_props}
+    merged.update(
+        {key: value for key, value in patch_props.items() if value is not None}
+    )
+    for key, value in patch_props.items():
+        if value is None:
+            merged.pop(key, None)
     normalized = dict(merged)
     for key, value in patch_props.items():
+        if value is None:
+            continue
         property_definition = design_property(component_type, key)
         catalog_property = definition.props.get(key)
         if property_definition is not None:
@@ -237,6 +280,7 @@ __all__ = [
     "design_scope_metadata",
     "design_system_document",
     "is_responsive_value",
+    "required_scopes_for_component_create",
     "required_scopes_for_component_update",
     "validate_design_resource_constraints",
     "validate_agent_component_props",

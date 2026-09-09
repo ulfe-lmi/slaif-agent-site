@@ -237,8 +237,6 @@ async def test_each_app_has_only_typed_health_routes(
             "/api/agent/v1/pages/{page_id}/components",
             "/api/agent/v1/component-catalog",
             "/api/agent/v1/design-system",
-            "/api/agent/v1/theme-schema",
-            "/api/agent/v1/theme",
             "/api/agent/v1/components/{component_id}",
             "/api/agent/v1/components/{component_id}/move",
             "/api/agent/v1/media/",

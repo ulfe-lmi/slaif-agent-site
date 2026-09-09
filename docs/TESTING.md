@@ -154,23 +154,6 @@ unchanged. These focused tests run serially because the disposable fixture
 provisions shared product role names; concurrent test-file execution is not
 valid evidence.
 
-## Bounded site-theme token acceptance
-
-The 078-i theme proof uses a fresh human-issued capability and real PostgreSQL
-through public Agent HTTP. It discovers the closed `theme-schema/v1` contract,
-reads deterministic defaults without changing the theme row, updates
-representative palette, typography, layout, and shape tokens, and verifies
-versioned COW state, Render projection, trusted Web classes, and human Editor/
-Puck schema-derived controls. It rejects missing or substitute scopes,
-foreign workspace/site state, raw CSS/color/font/device/executable/version
-input, narrowed palette/typography/token resource policies, stale versions,
-quota exhaustion, idempotency mismatch, and cancellation with no durable
-residue. Replay and byte-equivalent updates are exact no-effect operations;
-same-version PostgreSQL PATCH races have one winner and one `409` loser.
-Migration tests preserve valid legacy theme data through downgrade/re-upgrade,
-restore the prior function contracts, and prove the same defaults are visible
-in canonical and active workspace preview without lazy-write reads.
-
 ## Browser-run contract and durable control-plane proof
 
 Python and TypeScript tests compare one committed language-neutral

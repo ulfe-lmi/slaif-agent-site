@@ -53,6 +53,7 @@ from slaif_agent_site.content_model.composition_models import (
 )
 from slaif_agent_site.content_model.design_system import (
     design_system_document,
+    required_scopes_for_component_create,
     required_scopes_for_component_update,
     validate_design_resource_constraints,
 )
@@ -105,14 +106,6 @@ from slaif_agent_site.content_model.site_data_models import (
     LocaleRecord,
     NavigationItemRecord,
     RedirectRecord,
-)
-from slaif_agent_site.content_model.theme import (
-    AgentThemeMutationResponse,
-    AgentThemeSchemaResponse,
-    AgentUpdateThemeRequest,
-    ThemeRecord,
-    theme_schema_document,
-    validate_theme_resource_constraints,
 )
 from slaif_agent_site.content_model.view_models import (
     CollectionViewRecord,
@@ -262,23 +255,6 @@ async def get_design_system(request: Request) -> AgentDesignSystemResponse:
     context = await _authenticate(request)
     _require_scope(context, "theme:read")
     return AgentDesignSystemResponse.model_validate(design_system_document())
-
-
-@router.get("/theme-schema")
-async def get_theme_schema(request: Request) -> AgentThemeSchemaResponse:
-    context = await _authenticate(request)
-    _require_scope(context, "theme:read")
-    return AgentThemeSchemaResponse.model_validate(theme_schema_document())
-
-
-@router.get("/theme")
-async def get_theme(request: Request) -> ThemeRecord:
-    context = await _authenticate(request)
-    _require_scope(context, "theme:read")
-    record = await _execute_read(
-        request, context, lambda service: service.get_theme(context.site_id)
-    )
-    return cast(ThemeRecord, record)
 
 
 @router.get("/content-model/primitives")
@@ -515,33 +491,6 @@ async def list_media(request: Request) -> list[MediaAssetRecord]:
 
 
 IdempotencyHeader = Annotated[str | None, Header(alias="Idempotency-Key")]
-
-
-@router.patch("/theme", response_model=AgentThemeMutationResponse)
-async def update_theme(
-    request: Request,
-    body: AgentUpdateThemeRequest,
-    idempotency_key: IdempotencyHeader = None,
-) -> AgentThemeMutationResponse:
-    context = await _authenticate(request)
-    _require_scope(context, "theme-tokens:write")
-    try:
-        validate_theme_resource_constraints(context.resource_constraints)
-    except ValueError:
-        raise DomainValidationError() from None
-    result = await _execute_mutation(
-        request,
-        context,
-        body,
-        idempotency_key,
-        resource_type="theme",
-        status_code=200,
-        action="THEME_UPDATED",
-        mutate=lambda service: service.update_theme_for_site(
-            context.site_id, body, no_effect=False
-        ),
-    )
-    return AgentThemeMutationResponse.model_validate(result.model_dump(mode="json"))
 
 
 async def _execute_mutation(
@@ -1641,6 +1590,14 @@ async def create_component(
         str(value) for value in allowed_types
     }:
         raise AuthorizationError()
+    try:
+        required_scopes = required_scopes_for_component_create(
+            body.component_type, body.props
+        )
+    except (TypeError, ValueError):
+        raise DomainValidationError() from None
+    for scope in required_scopes:
+        _require_scope(context, scope)
     return await _execute_mutation(
         request,
         context,
@@ -1662,46 +1619,47 @@ async def update_component(
     idempotency_key: IdempotencyHeader = None,
 ) -> AgentMutationResponse:
     context = await _authenticate(request)
-    current = cast(
-        CompositionNodeRecord,
-        await _execute_read(
-            request,
-            context,
-            lambda service: service.get_component(context.site_id, component_id),
-        ),
-    )
-    try:
-        required_scopes = required_scopes_for_component_update(
-            current.component_type, current.props, body.props
+
+    async def apply_component_update(
+        service: Any,
+    ) -> CompositionNodeRecord:
+        current = cast(
+            CompositionNodeRecord,
+            await service.get_component_for_site(context.site_id, component_id),
         )
-    except (TypeError, ValueError):
-        raise DomainValidationError() from None
-    for scope in required_scopes:
-        _require_scope(context, scope)
-    try:
-        validate_design_resource_constraints(
-            current.component_type,
-            current.props,
-            body.props,
-            context.resource_constraints,
-        )
-    except ValueError:
-        raise AuthorizationError() from None
-    if not required_scopes:
-        if current.row_version != body.expected_row_version:
-            raise ResourceConflictError()
-        return await _execute_mutation(
-            request,
-            context,
-            body,
-            idempotency_key,
-            resource_type="composition_node",
-            status_code=200,
-            no_effect=True,
-            mutate=lambda service: service.get_component_for_site(
-                context.site_id, component_id
+        try:
+            required_scopes = required_scopes_for_component_update(
+                current.component_type, current.props, body.props
+            )
+            validate_design_resource_constraints(
+                current.component_type,
+                current.props,
+                body.props,
+                context.resource_constraints,
+            )
+        except ValueError as error:
+            if str(error).endswith("resource constraint"):
+                raise ContentModelServiceError(
+                    ContentModelServiceReason.AUTHORIZATION
+                ) from None
+            raise ContentModelServiceError(
+                ContentModelServiceReason.VALIDATION, code=str(error)
+            ) from None
+        for scope in required_scopes:
+            if scope not in context.scopes:
+                raise ContentModelServiceError(ContentModelServiceReason.AUTHORIZATION)
+        if not required_scopes:
+            if current.row_version != body.expected_row_version:
+                raise ContentModelServiceError(ContentModelServiceReason.CONFLICT)
+            service.last_mutation_no_effect = True
+            return current
+        return cast(
+            CompositionNodeRecord,
+            await service.update_component_for_site(
+                context.site_id, component_id, body
             ),
         )
+
     return await _execute_mutation(
         request,
         context,
@@ -1710,9 +1668,7 @@ async def update_component(
         resource_type="composition_node",
         status_code=200,
         action="COMPONENT_UPDATED",
-        mutate=lambda service: service.update_component_for_site(
-            context.site_id, component_id, body
-        ),
+        mutate=apply_component_update,
     )
 
 

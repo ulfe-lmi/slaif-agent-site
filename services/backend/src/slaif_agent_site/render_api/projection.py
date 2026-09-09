@@ -45,7 +45,6 @@ from slaif_agent_site.content_model.site_data_validators import (
     validate_redirect_source,
     validate_redirect_target,
 )
-from slaif_agent_site.content_model.theme import ThemeRecord, theme_record_from_row
 from slaif_agent_site.content_model.validators import validate_values
 from slaif_agent_site.identity.sessions import digest_secret, parse_session_token
 from slaif_agent_site.sites.models import SiteContext
@@ -250,7 +249,7 @@ class RenderPageProjection(BaseModel):
     page: ProjectionPage
     route_parameters: dict[str, str] = Field(default_factory=dict)
     composition: ProjectionComposition
-    theme: ThemeRecord
+    theme: dict[str, Any] = Field(default_factory=dict)
     locales: tuple[ProjectionLocale, ...] = ()
     navigation: tuple[ProjectionNavigation, ...] = ()
     bindings: dict[str, tuple[dict[str, Any], ...]] = Field(default_factory=dict)
@@ -1327,10 +1326,10 @@ class RenderProjectionService:
             statuses=statuses,
         )
         theme_row = await connection.fetchrow(
-            "SELECT * FROM content.slaif_theme_project($1)", context.site_id
+            "SELECT palette, typography, layout, shape FROM content.theme "
+            "WHERE site_id = $1 LIMIT 1",
+            context.site_id,
         )
-        if theme_row is None:
-            raise ProjectionError("not_found")
         catalog_row = await connection.fetchrow(
             "SELECT control.slaif_site_render_catalog($1)", context.site_id
         )
@@ -1356,7 +1355,16 @@ class RenderProjectionService:
                 catalog_version=catalog_version,
                 nodes=roots,
             ),
-            theme=theme_record_from_row(theme_row),
+            theme=(
+                {
+                    "palette": _json_value(theme_row[0]),
+                    "typography": _json_value(theme_row[1]),
+                    "layout": _json_value(theme_row[2]),
+                    "shape": _json_value(theme_row[3]),
+                }
+                if theme_row is not None
+                else {}
+            ),
             locales=projected_locales,
             navigation=navigation,
             bindings=bindings,

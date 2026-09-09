@@ -135,43 +135,31 @@ columns/radius/shadow/aspect-ratio choices, and the exact variant and local
 layout properties supported by each current component. It exposes no CSS,
 class, selector, breakpoint, URL, font, color, HTML, or executable primitive.
 
-Component PATCH remains the one normalized mutation boundary. The server and
-trusted PostgreSQL helper derive the required scope from the actual changed
-property: content uses `component-content-props:write`, general design uses
-`component-props:write`, variants use `component-variant:write`, layout uses
-`layout:write`, and responsive maps additionally use
-`responsive-design:write`. Mixed changes require the union; caller-supplied
-authority labels are ignored. Responsive maps contain only the three fixed
-labels and use deterministic desktop/tablet/mobile fallback, so the same
-normalized props are consumed by Puck, Render, and Web. Resource constraints
-can disable responsive editing or narrow allowed variants, and invalid,
-foreign, stale, wrong-version, or raw design input fails closed without a
-mutation envelope. The component PATCH OpenAPI operation has no fixed scope:
-its ordinary `x-slaif-conditional-scopes` entries identify the exact
-`props.<name>` and component type that trigger each scalar scope, while
-`x-slaif-component-property-scopes` additionally records whether that property
-accepts a responsive map and the extra responsive scope. Both are generated
-from the route policy and the same design/catalog authority.
+Component CREATE and PATCH remain the one normalized mutation boundary. CREATE
+requires `component-structure:create` plus the property-derived design scope
+for each caller-supplied design value; omitted `Columns.count` and
+`Spacer.size` receive fixed trusted defaults, while content fields do not
+gratuitously require content-write. PATCH derives the required scope from the
+actual changed property: content uses `component-content-props:write`, general
+design uses `component-props:write`, variants use `component-variant:write`,
+layout uses `layout:write`, and responsive maps or responsive removals
+additionally use `responsive-design:write`. Mixed changes require the union;
+caller-supplied authority labels are ignored. A PATCH JSON `null` explicitly
+removes an existing property, while absent properties in the public PATCH are
+unchanged. Responsive maps contain only the three fixed labels and use
+deterministic desktop/tablet/mobile fallback, so the same normalized props are
+consumed by Puck, Render, and Web. Resource constraints can disable responsive
+editing or narrow allowed variants, and invalid, foreign, stale, wrong-version,
+or raw design input fails closed without a mutation envelope. The component
+OpenAPI operations publish one shared `x-slaif-component-authority` table that
+distinguishes CREATE presence, PATCH value change, null/whole-document removal,
+and responsive transitions; PATCH also publishes its conditional/property
+scope extensions. All are generated from the route policy and the same
+design/catalog authority.
 An empty or byte-equivalent PATCH checks the optimistic row version, requires
 no write scope, returns the unchanged record with no semantic action, and
 stores only the idempotency response needed for exact replay; it consumes no
 mutation quota and creates no audit or COW mutation.
-
-The bounded site theme is a separate normalized `theme-schema/v1` record, not
-an opaque Puck blob. `GET /api/agent/v1/theme-schema` and
-`GET /api/agent/v1/theme` require `theme:read`; `PATCH /api/agent/v1/theme`
-requires `theme-tokens:write`, an `expected_row_version`, and an
-`Idempotency-Key`. The schema exposes only the product-owned palette preset,
-local typography family/scale/weight, content-width/spacing/grid-gap, and
-radius/shadow tokens. Values are enum keys with product-validated AA contrast;
-raw CSS, colors, URLs, fonts, breakpoints, device maps, and executable values
-are rejected. The same typed validator serves the human Editor/Puck surface.
-Successful changes increment one row version, charge one mutation quota, make
-one COW operation, and create `THEME_UPDATED`; replay, no-effect, stale,
-cancellation, resource, scope, and concurrency failures leave all durable
-theme/accounting state unchanged. Render projects the exact theme record and
-version, and trusted Web classes apply only the fixed token vocabulary to both
-canonical and authorized preview output.
 
 This order does not implement publication, review/freeze/promotion,
 workspace-management UI, site-global theme tokens, global regions,

@@ -8,6 +8,7 @@ from slaif_agent_site.content_model.design_system import (
     component_property_scope,
     component_property_scope_metadata,
     design_property,
+    required_scopes_for_component_create,
     required_scopes_for_component_update,
     validate_agent_component_props,
     validate_design_resource_constraints,
@@ -62,6 +63,22 @@ def test_changed_properties_derive_exact_design_and_responsive_scopes() -> None:
     )
     assert component_property_scope("Section", "background")["supported"] is False  # type: ignore[index]
     assert len(component_property_scope_metadata()) == 38
+    assert required_scopes_for_component_create("Button", {"variant": "ghost"}) == (
+        "component-variant:write",
+    )
+    assert required_scopes_for_component_create(
+        "Image", {"aspectRatio": {"mobile": "1:1"}}
+    ) == ("component-props:write", "responsive-design:write")
+    assert required_scopes_for_component_update(
+        "Button", {"variant": "primary"}, {"variant": None}
+    ) == ("component-variant:write",)
+    assert required_scopes_for_component_update(
+        "Image",
+        {"aspectRatio": {"desktop": "16:9"}},
+        {"aspectRatio": None},
+    ) == ("component-props:write", "responsive-design:write")
+    with pytest.raises(ValueError, match="null prop"):
+        required_scopes_for_component_update("Button", {}, {"variant": None})
 
 
 def test_agent_validation_normalizes_responsive_maps_and_rejects_unsafe_design() -> (
@@ -78,6 +95,11 @@ def test_agent_validation_normalizes_responsive_maps_and_rejects_unsafe_design()
     )
     assert props["columns"] == {"desktop": 4, "mobile": 1}
     assert props["alignment"] == "center"
+    assert validate_agent_component_props(
+        "Button",
+        {"label": "Button", "href": "/", "variant": "ghost"},
+        {"variant": None},
+    ) == {"label": "Button", "href": "/"}
     with pytest.raises(ValueError, match="unsupported design prop"):
         validate_agent_component_props(
             "Section", {"variant": "default"}, {"background": "#fff"}

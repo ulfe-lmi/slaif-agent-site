@@ -7,6 +7,13 @@ roadmap/product intent/architecture/acceptance/release/merge/next-order choice.
 The verbatim pre-compaction protocol is preserved by SLAIF Agent-Site PR #18,
 merge `ceeb7b76d0e78e65fcd0451218d0960cc60d39b8`.
 
+Prospective precedence notice (effective 2026-09-09):
+`oap/governance/2026-09-09-bounded-semantic-pr-increments.md` approves one
+bounded semantic merge increment per PR while allowing a numeric objective to
+span sequential PRs. Earlier protocol/orders/reports remain immutable history;
+the explicit active order mode and named PR/branch control delivery. Strategy
+alone accepts and merges.
+
 ## 1. Authority, truth, ownership
 
 ```text

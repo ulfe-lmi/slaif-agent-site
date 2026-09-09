@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
   compositionToPuck,
-  generatePuckThemeConfig,
   generatePuckConfig,
   puckToComposition,
   type NormalizedCompositionNode,
@@ -63,20 +62,6 @@ function plan(
 }
 
 describe("puck adapter", () => {
-  it("derives bounded theme controls from theme-schema/v1", () => {
-    const config = generatePuckThemeConfig();
-    expect(Object.keys(config)).toEqual(["palette", "typography", "layout", "shape"]);
-    expect(config.palette?.fields.preset?.options).toEqual(["ocean", "meadow", "ember"]);
-    expect(config.typography?.fields.family?.options).toEqual(["system", "serif", "mono"]);
-    expect(config.shape?.fields.radius?.options).toEqual([
-      "none",
-      "sm",
-      "md",
-      "lg",
-      "full",
-    ]);
-  });
-
   it("generates config for all trusted catalog components", () => {
     const config = generatePuckConfig();
     expect(Object.keys(config)).toHaveLength(22);

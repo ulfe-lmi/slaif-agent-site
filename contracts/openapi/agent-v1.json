@@ -1302,93 +1302,6 @@
         "title": "AgentPermissionsResponse",
         "type": "object"
       },
-      "AgentThemeMutationResponse": {
-        "additionalProperties": false,
-        "properties": {
-          "action": {
-            "anyOf": [
-              {
-                "const": "THEME_UPDATED",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Action"
-          },
-          "operation_id": {
-            "format": "uuid",
-            "title": "Operation Id",
-            "type": "string"
-          },
-          "record": {
-            "$ref": "#/components/schemas/ThemeRecord"
-          }
-        },
-        "required": [
-          "record",
-          "operation_id"
-        ],
-        "title": "AgentThemeMutationResponse",
-        "type": "object"
-      },
-      "AgentThemeSchemaResponse": {
-        "additionalProperties": false,
-        "properties": {
-          "compatibility_versions": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Compatibility Versions",
-            "type": "array"
-          },
-          "groups": {
-            "items": {
-              "$ref": "#/components/schemas/ThemeSchemaGroup"
-            },
-            "title": "Groups",
-            "type": "array"
-          },
-          "renderer_version": {
-            "const": "renderer-v1",
-            "title": "Renderer Version",
-            "type": "string"
-          },
-          "responsive": {
-            "const": false,
-            "title": "Responsive",
-            "type": "boolean"
-          },
-          "responsive_labels": {
-            "items": {
-              "enum": [
-                "desktop",
-                "tablet",
-                "mobile"
-              ],
-              "type": "string"
-            },
-            "title": "Responsive Labels",
-            "type": "array"
-          },
-          "version": {
-            "const": "theme-schema/v1",
-            "title": "Version",
-            "type": "string"
-          }
-        },
-        "required": [
-          "version",
-          "renderer_version",
-          "compatibility_versions",
-          "responsive",
-          "responsive_labels",
-          "groups"
-        ],
-        "title": "AgentThemeSchemaResponse",
-        "type": "object"
-      },
       "AgentUpdateCompositionNodeRequest": {
         "additionalProperties": false,
         "description": "Agent PATCH: bounded content/design props with an explicit row version.",
@@ -1706,61 +1619,6 @@
           "expected_row_version"
         ],
         "title": "AgentUpdateRedirectRequest",
-        "type": "object"
-      },
-      "AgentUpdateThemeRequest": {
-        "additionalProperties": false,
-        "properties": {
-          "expected_row_version": {
-            "exclusiveMinimum": 0.0,
-            "title": "Expected Row Version",
-            "type": "integer"
-          },
-          "layout": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/ThemeLayoutPatch"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "palette": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/ThemePalettePatch"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "shape": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/ThemeShapePatch"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "typography": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/ThemeTypographyPatch"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          }
-        },
-        "required": [
-          "expected_row_version"
-        ],
-        "title": "AgentUpdateThemeRequest",
         "type": "object"
       },
       "BrowserEvidence": {
@@ -3441,452 +3299,6 @@
           "expected_row_version"
         ],
         "title": "RestorePageRequest",
-        "type": "object"
-      },
-      "ThemeLayout": {
-        "additionalProperties": false,
-        "properties": {
-          "content_width": {
-            "enum": [
-              "sm",
-              "md",
-              "lg",
-              "xl"
-            ],
-            "title": "Content Width",
-            "type": "string"
-          },
-          "grid_gap": {
-            "enum": [
-              "sm",
-              "md",
-              "lg"
-            ],
-            "title": "Grid Gap",
-            "type": "string"
-          },
-          "spacing": {
-            "enum": [
-              "sm",
-              "md",
-              "lg"
-            ],
-            "title": "Spacing",
-            "type": "string"
-          }
-        },
-        "required": [
-          "content_width",
-          "spacing",
-          "grid_gap"
-        ],
-        "title": "ThemeLayout",
-        "type": "object"
-      },
-      "ThemeLayoutPatch": {
-        "additionalProperties": false,
-        "properties": {
-          "content_width": {
-            "anyOf": [
-              {
-                "enum": [
-                  "sm",
-                  "md",
-                  "lg",
-                  "xl"
-                ],
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Content Width"
-          },
-          "grid_gap": {
-            "anyOf": [
-              {
-                "enum": [
-                  "sm",
-                  "md",
-                  "lg"
-                ],
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Grid Gap"
-          },
-          "spacing": {
-            "anyOf": [
-              {
-                "enum": [
-                  "sm",
-                  "md",
-                  "lg"
-                ],
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Spacing"
-          }
-        },
-        "title": "ThemeLayoutPatch",
-        "type": "object"
-      },
-      "ThemePalette": {
-        "additionalProperties": false,
-        "properties": {
-          "preset": {
-            "enum": [
-              "ocean",
-              "meadow",
-              "ember"
-            ],
-            "title": "Preset",
-            "type": "string"
-          }
-        },
-        "required": [
-          "preset"
-        ],
-        "title": "ThemePalette",
-        "type": "object"
-      },
-      "ThemePalettePatch": {
-        "additionalProperties": false,
-        "properties": {
-          "preset": {
-            "anyOf": [
-              {
-                "enum": [
-                  "ocean",
-                  "meadow",
-                  "ember"
-                ],
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Preset"
-          }
-        },
-        "title": "ThemePalettePatch",
-        "type": "object"
-      },
-      "ThemeRecord": {
-        "additionalProperties": false,
-        "properties": {
-          "created_at": {
-            "format": "date-time",
-            "title": "Created At",
-            "type": "string"
-          },
-          "id": {
-            "format": "uuid",
-            "title": "Id",
-            "type": "string"
-          },
-          "layout": {
-            "$ref": "#/components/schemas/ThemeLayout"
-          },
-          "palette": {
-            "$ref": "#/components/schemas/ThemePalette"
-          },
-          "renderer_version": {
-            "const": "renderer-v1",
-            "title": "Renderer Version",
-            "type": "string"
-          },
-          "row_version": {
-            "exclusiveMinimum": 0.0,
-            "title": "Row Version",
-            "type": "integer"
-          },
-          "schema_version": {
-            "const": "theme-schema/v1",
-            "title": "Schema Version",
-            "type": "string"
-          },
-          "shape": {
-            "$ref": "#/components/schemas/ThemeShape"
-          },
-          "site_id": {
-            "format": "uuid",
-            "title": "Site Id",
-            "type": "string"
-          },
-          "typography": {
-            "$ref": "#/components/schemas/ThemeTypography"
-          },
-          "updated_at": {
-            "format": "date-time",
-            "title": "Updated At",
-            "type": "string"
-          }
-        },
-        "required": [
-          "id",
-          "site_id",
-          "schema_version",
-          "renderer_version",
-          "row_version",
-          "palette",
-          "typography",
-          "layout",
-          "shape",
-          "created_at",
-          "updated_at"
-        ],
-        "title": "ThemeRecord",
-        "type": "object"
-      },
-      "ThemeSchemaGroup": {
-        "additionalProperties": false,
-        "properties": {
-          "name": {
-            "enum": [
-              "palette",
-              "typography",
-              "layout",
-              "shape"
-            ],
-            "title": "Name",
-            "type": "string"
-          },
-          "tokens": {
-            "items": {
-              "$ref": "#/components/schemas/ThemeSchemaToken"
-            },
-            "title": "Tokens",
-            "type": "array"
-          }
-        },
-        "required": [
-          "name",
-          "tokens"
-        ],
-        "title": "ThemeSchemaGroup",
-        "type": "object"
-      },
-      "ThemeSchemaToken": {
-        "additionalProperties": false,
-        "properties": {
-          "accessibility_class": {
-            "const": "AA",
-            "title": "Accessibility Class",
-            "type": "string"
-          },
-          "default": {
-            "title": "Default",
-            "type": "string"
-          },
-          "name": {
-            "title": "Name",
-            "type": "string"
-          },
-          "responsive": {
-            "const": false,
-            "title": "Responsive",
-            "type": "boolean"
-          },
-          "type": {
-            "const": "enum",
-            "title": "Type",
-            "type": "string"
-          },
-          "values": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Values",
-            "type": "array"
-          }
-        },
-        "required": [
-          "name",
-          "type",
-          "values",
-          "default",
-          "accessibility_class",
-          "responsive"
-        ],
-        "title": "ThemeSchemaToken",
-        "type": "object"
-      },
-      "ThemeShape": {
-        "additionalProperties": false,
-        "properties": {
-          "radius": {
-            "enum": [
-              "none",
-              "sm",
-              "md",
-              "lg",
-              "full"
-            ],
-            "title": "Radius",
-            "type": "string"
-          },
-          "shadow": {
-            "enum": [
-              "none",
-              "sm",
-              "md",
-              "lg"
-            ],
-            "title": "Shadow",
-            "type": "string"
-          }
-        },
-        "required": [
-          "radius",
-          "shadow"
-        ],
-        "title": "ThemeShape",
-        "type": "object"
-      },
-      "ThemeShapePatch": {
-        "additionalProperties": false,
-        "properties": {
-          "radius": {
-            "anyOf": [
-              {
-                "enum": [
-                  "none",
-                  "sm",
-                  "md",
-                  "lg",
-                  "full"
-                ],
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Radius"
-          },
-          "shadow": {
-            "anyOf": [
-              {
-                "enum": [
-                  "none",
-                  "sm",
-                  "md",
-                  "lg"
-                ],
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Shadow"
-          }
-        },
-        "title": "ThemeShapePatch",
-        "type": "object"
-      },
-      "ThemeTypography": {
-        "additionalProperties": false,
-        "properties": {
-          "family": {
-            "enum": [
-              "system",
-              "serif",
-              "mono"
-            ],
-            "title": "Family",
-            "type": "string"
-          },
-          "scale": {
-            "enum": [
-              "compact",
-              "balanced",
-              "spacious"
-            ],
-            "title": "Scale",
-            "type": "string"
-          },
-          "weight": {
-            "enum": [
-              "regular",
-              "medium",
-              "bold"
-            ],
-            "title": "Weight",
-            "type": "string"
-          }
-        },
-        "required": [
-          "family",
-          "scale",
-          "weight"
-        ],
-        "title": "ThemeTypography",
-        "type": "object"
-      },
-      "ThemeTypographyPatch": {
-        "additionalProperties": false,
-        "properties": {
-          "family": {
-            "anyOf": [
-              {
-                "enum": [
-                  "system",
-                  "serif",
-                  "mono"
-                ],
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Family"
-          },
-          "scale": {
-            "anyOf": [
-              {
-                "enum": [
-                  "compact",
-                  "balanced",
-                  "spacious"
-                ],
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Scale"
-          },
-          "weight": {
-            "anyOf": [
-              {
-                "enum": [
-                  "regular",
-                  "medium",
-                  "bold"
-                ],
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Weight"
-          }
-        },
-        "title": "ThemeTypographyPatch",
         "type": "object"
       },
       "TranslationRecord": {
@@ -5605,6 +5017,443 @@
           }
         ],
         "summary": "Update Component",
+        "x-slaif-component-authority": {
+          "operations": {
+            "CREATE": {
+              "responsive_transition": "responsive-map-add",
+              "selection": "caller-present-properties"
+            },
+            "PATCH": {
+              "removal": [
+                "whole-document-absent",
+                "json-null"
+              ],
+              "responsive_transition": [
+                "map-add",
+                "map-change",
+                "map-remove",
+                "map-to-scalar"
+              ],
+              "selection": "value-changed-properties"
+            }
+          },
+          "properties": [
+            {
+              "component_type": "Section",
+              "property": "background",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [],
+              "supported": false
+            },
+            {
+              "component_type": "Section",
+              "property": "variant",
+              "responsive": true,
+              "responsive_required_scopes": [
+                "responsive-design:write"
+              ],
+              "scalar_required_scopes": [
+                "component-variant:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Section",
+              "property": "alignment",
+              "responsive": true,
+              "responsive_required_scopes": [
+                "responsive-design:write"
+              ],
+              "scalar_required_scopes": [
+                "layout:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Container",
+              "property": "width",
+              "responsive": true,
+              "responsive_required_scopes": [
+                "responsive-design:write"
+              ],
+              "scalar_required_scopes": [
+                "layout:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Container",
+              "property": "alignment",
+              "responsive": true,
+              "responsive_required_scopes": [
+                "responsive-design:write"
+              ],
+              "scalar_required_scopes": [
+                "layout:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Columns",
+              "property": "count",
+              "responsive": true,
+              "responsive_required_scopes": [
+                "responsive-design:write"
+              ],
+              "scalar_required_scopes": [
+                "layout:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Columns",
+              "property": "gap",
+              "responsive": true,
+              "responsive_required_scopes": [
+                "responsive-design:write"
+              ],
+              "scalar_required_scopes": [
+                "layout:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Columns",
+              "property": "alignment",
+              "responsive": true,
+              "responsive_required_scopes": [
+                "responsive-design:write"
+              ],
+              "scalar_required_scopes": [
+                "layout:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Grid",
+              "property": "columns",
+              "responsive": true,
+              "responsive_required_scopes": [
+                "responsive-design:write"
+              ],
+              "scalar_required_scopes": [
+                "layout:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Grid",
+              "property": "gap",
+              "responsive": true,
+              "responsive_required_scopes": [
+                "responsive-design:write"
+              ],
+              "scalar_required_scopes": [
+                "layout:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Grid",
+              "property": "alignment",
+              "responsive": true,
+              "responsive_required_scopes": [
+                "responsive-design:write"
+              ],
+              "scalar_required_scopes": [
+                "layout:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Stack",
+              "property": "direction",
+              "responsive": true,
+              "responsive_required_scopes": [
+                "responsive-design:write"
+              ],
+              "scalar_required_scopes": [
+                "layout:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Stack",
+              "property": "gap",
+              "responsive": true,
+              "responsive_required_scopes": [
+                "responsive-design:write"
+              ],
+              "scalar_required_scopes": [
+                "layout:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Stack",
+              "property": "alignment",
+              "responsive": true,
+              "responsive_required_scopes": [
+                "responsive-design:write"
+              ],
+              "scalar_required_scopes": [
+                "layout:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Spacer",
+              "property": "size",
+              "responsive": true,
+              "responsive_required_scopes": [
+                "responsive-design:write"
+              ],
+              "scalar_required_scopes": [
+                "layout:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Heading",
+              "property": "level",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Heading",
+              "property": "text",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Heading",
+              "property": "alignment",
+              "responsive": true,
+              "responsive_required_scopes": [
+                "responsive-design:write"
+              ],
+              "scalar_required_scopes": [
+                "layout:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "RichText",
+              "property": "content",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Image",
+              "property": "alt",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Image",
+              "property": "aspectRatio",
+              "responsive": true,
+              "responsive_required_scopes": [
+                "responsive-design:write"
+              ],
+              "scalar_required_scopes": [
+                "component-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Image",
+              "property": "mediaId",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Button",
+              "property": "href",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Button",
+              "property": "label",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Button",
+              "property": "variant",
+              "responsive": true,
+              "responsive_required_scopes": [
+                "responsive-design:write"
+              ],
+              "scalar_required_scopes": [
+                "component-variant:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Quote",
+              "property": "attribution",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Quote",
+              "property": "text",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "CollectionList",
+              "property": "limit",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "CollectionList",
+              "property": "viewId",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "CollectionGrid",
+              "property": "columns",
+              "responsive": true,
+              "responsive_required_scopes": [
+                "responsive-design:write"
+              ],
+              "scalar_required_scopes": [
+                "layout:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "CollectionGrid",
+              "property": "viewId",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "CollectionDetail",
+              "property": "viewId",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Hero",
+              "property": "heading",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Hero",
+              "property": "mediaId",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Hero",
+              "property": "subheading",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Statistics",
+              "property": "items",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Timeline",
+              "property": "items",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "FAQ",
+              "property": "items",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            }
+          ]
+        },
         "x-slaif-component-property-scopes": [
           {
             "component_type": "Section",
@@ -6026,6 +5875,7 @@
             "component_types": [
               "Section"
             ],
+            "condition": "changed",
             "required_scopes": [
               "component-variant:write"
             ],
@@ -6037,6 +5887,7 @@
             "component_types": [
               "Section"
             ],
+            "condition": "changed",
             "required_scopes": [
               "layout:write"
             ],
@@ -6048,6 +5899,7 @@
             "component_types": [
               "Container"
             ],
+            "condition": "changed",
             "required_scopes": [
               "layout:write"
             ],
@@ -6059,6 +5911,7 @@
             "component_types": [
               "Container"
             ],
+            "condition": "changed",
             "required_scopes": [
               "layout:write"
             ],
@@ -6070,6 +5923,7 @@
             "component_types": [
               "Columns"
             ],
+            "condition": "changed",
             "required_scopes": [
               "layout:write"
             ],
@@ -6081,6 +5935,7 @@
             "component_types": [
               "Columns"
             ],
+            "condition": "changed",
             "required_scopes": [
               "layout:write"
             ],
@@ -6092,6 +5947,7 @@
             "component_types": [
               "Columns"
             ],
+            "condition": "changed",
             "required_scopes": [
               "layout:write"
             ],
@@ -6103,6 +5959,7 @@
             "component_types": [
               "Grid"
             ],
+            "condition": "changed",
             "required_scopes": [
               "layout:write"
             ],
@@ -6114,6 +5971,7 @@
             "component_types": [
               "Grid"
             ],
+            "condition": "changed",
             "required_scopes": [
               "layout:write"
             ],
@@ -6125,6 +5983,7 @@
             "component_types": [
               "Grid"
             ],
+            "condition": "changed",
             "required_scopes": [
               "layout:write"
             ],
@@ -6136,6 +5995,7 @@
             "component_types": [
               "Stack"
             ],
+            "condition": "changed",
             "required_scopes": [
               "layout:write"
             ],
@@ -6147,6 +6007,7 @@
             "component_types": [
               "Stack"
             ],
+            "condition": "changed",
             "required_scopes": [
               "layout:write"
             ],
@@ -6158,6 +6019,7 @@
             "component_types": [
               "Stack"
             ],
+            "condition": "changed",
             "required_scopes": [
               "layout:write"
             ],
@@ -6169,6 +6031,7 @@
             "component_types": [
               "Spacer"
             ],
+            "condition": "changed",
             "required_scopes": [
               "layout:write"
             ],
@@ -6180,6 +6043,7 @@
             "component_types": [
               "Heading"
             ],
+            "condition": "changed",
             "required_scopes": [
               "component-content-props:write"
             ],
@@ -6191,6 +6055,7 @@
             "component_types": [
               "Heading"
             ],
+            "condition": "changed",
             "required_scopes": [
               "component-content-props:write"
             ],
@@ -6202,6 +6067,7 @@
             "component_types": [
               "Heading"
             ],
+            "condition": "changed",
             "required_scopes": [
               "layout:write"
             ],
@@ -6213,6 +6079,7 @@
             "component_types": [
               "RichText"
             ],
+            "condition": "changed",
             "required_scopes": [
               "component-content-props:write"
             ],
@@ -6224,6 +6091,7 @@
             "component_types": [
               "Image"
             ],
+            "condition": "changed",
             "required_scopes": [
               "component-content-props:write"
             ],
@@ -6235,6 +6103,7 @@
             "component_types": [
               "Image"
             ],
+            "condition": "changed",
             "required_scopes": [
               "component-props:write"
             ],
@@ -6246,6 +6115,7 @@
             "component_types": [
               "Image"
             ],
+            "condition": "changed",
             "required_scopes": [
               "component-content-props:write"
             ],
@@ -6257,6 +6127,7 @@
             "component_types": [
               "Button"
             ],
+            "condition": "changed",
             "required_scopes": [
               "component-content-props:write"
             ],
@@ -6268,6 +6139,7 @@
             "component_types": [
               "Button"
             ],
+            "condition": "changed",
             "required_scopes": [
               "component-content-props:write"
             ],
@@ -6279,6 +6151,7 @@
             "component_types": [
               "Button"
             ],
+            "condition": "changed",
             "required_scopes": [
               "component-variant:write"
             ],
@@ -6290,6 +6163,7 @@
             "component_types": [
               "Quote"
             ],
+            "condition": "changed",
             "required_scopes": [
               "component-content-props:write"
             ],
@@ -6301,6 +6175,7 @@
             "component_types": [
               "Quote"
             ],
+            "condition": "changed",
             "required_scopes": [
               "component-content-props:write"
             ],
@@ -6312,6 +6187,7 @@
             "component_types": [
               "CollectionList"
             ],
+            "condition": "changed",
             "required_scopes": [
               "component-content-props:write"
             ],
@@ -6323,6 +6199,7 @@
             "component_types": [
               "CollectionList"
             ],
+            "condition": "changed",
             "required_scopes": [
               "component-content-props:write"
             ],
@@ -6334,6 +6211,7 @@
             "component_types": [
               "CollectionGrid"
             ],
+            "condition": "changed",
             "required_scopes": [
               "layout:write"
             ],
@@ -6345,6 +6223,7 @@
             "component_types": [
               "CollectionGrid"
             ],
+            "condition": "changed",
             "required_scopes": [
               "component-content-props:write"
             ],
@@ -6356,6 +6235,7 @@
             "component_types": [
               "CollectionDetail"
             ],
+            "condition": "changed",
             "required_scopes": [
               "component-content-props:write"
             ],
@@ -6367,6 +6247,7 @@
             "component_types": [
               "Hero"
             ],
+            "condition": "changed",
             "required_scopes": [
               "component-content-props:write"
             ],
@@ -6378,6 +6259,7 @@
             "component_types": [
               "Hero"
             ],
+            "condition": "changed",
             "required_scopes": [
               "component-content-props:write"
             ],
@@ -6389,6 +6271,7 @@
             "component_types": [
               "Hero"
             ],
+            "condition": "changed",
             "required_scopes": [
               "component-content-props:write"
             ],
@@ -6400,6 +6283,7 @@
             "component_types": [
               "Statistics"
             ],
+            "condition": "changed",
             "required_scopes": [
               "component-content-props:write"
             ],
@@ -6411,6 +6295,7 @@
             "component_types": [
               "Timeline"
             ],
+            "condition": "changed",
             "required_scopes": [
               "component-content-props:write"
             ],
@@ -6422,6 +6307,7 @@
             "component_types": [
               "FAQ"
             ],
+            "condition": "changed",
             "required_scopes": [
               "component-content-props:write"
             ],
@@ -13954,6 +13840,7 @@
         "summary": "Update Page",
         "x-slaif-conditional-scopes": [
           {
+            "condition": "present",
             "required_scopes": [
               "route:write"
             ],
@@ -14249,6 +14136,443 @@
           }
         ],
         "summary": "Create Component",
+        "x-slaif-component-authority": {
+          "operations": {
+            "CREATE": {
+              "responsive_transition": "responsive-map-add",
+              "selection": "caller-present-properties"
+            },
+            "PATCH": {
+              "removal": [
+                "whole-document-absent",
+                "json-null"
+              ],
+              "responsive_transition": [
+                "map-add",
+                "map-change",
+                "map-remove",
+                "map-to-scalar"
+              ],
+              "selection": "value-changed-properties"
+            }
+          },
+          "properties": [
+            {
+              "component_type": "Section",
+              "property": "background",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [],
+              "supported": false
+            },
+            {
+              "component_type": "Section",
+              "property": "variant",
+              "responsive": true,
+              "responsive_required_scopes": [
+                "responsive-design:write"
+              ],
+              "scalar_required_scopes": [
+                "component-variant:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Section",
+              "property": "alignment",
+              "responsive": true,
+              "responsive_required_scopes": [
+                "responsive-design:write"
+              ],
+              "scalar_required_scopes": [
+                "layout:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Container",
+              "property": "width",
+              "responsive": true,
+              "responsive_required_scopes": [
+                "responsive-design:write"
+              ],
+              "scalar_required_scopes": [
+                "layout:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Container",
+              "property": "alignment",
+              "responsive": true,
+              "responsive_required_scopes": [
+                "responsive-design:write"
+              ],
+              "scalar_required_scopes": [
+                "layout:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Columns",
+              "property": "count",
+              "responsive": true,
+              "responsive_required_scopes": [
+                "responsive-design:write"
+              ],
+              "scalar_required_scopes": [
+                "layout:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Columns",
+              "property": "gap",
+              "responsive": true,
+              "responsive_required_scopes": [
+                "responsive-design:write"
+              ],
+              "scalar_required_scopes": [
+                "layout:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Columns",
+              "property": "alignment",
+              "responsive": true,
+              "responsive_required_scopes": [
+                "responsive-design:write"
+              ],
+              "scalar_required_scopes": [
+                "layout:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Grid",
+              "property": "columns",
+              "responsive": true,
+              "responsive_required_scopes": [
+                "responsive-design:write"
+              ],
+              "scalar_required_scopes": [
+                "layout:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Grid",
+              "property": "gap",
+              "responsive": true,
+              "responsive_required_scopes": [
+                "responsive-design:write"
+              ],
+              "scalar_required_scopes": [
+                "layout:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Grid",
+              "property": "alignment",
+              "responsive": true,
+              "responsive_required_scopes": [
+                "responsive-design:write"
+              ],
+              "scalar_required_scopes": [
+                "layout:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Stack",
+              "property": "direction",
+              "responsive": true,
+              "responsive_required_scopes": [
+                "responsive-design:write"
+              ],
+              "scalar_required_scopes": [
+                "layout:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Stack",
+              "property": "gap",
+              "responsive": true,
+              "responsive_required_scopes": [
+                "responsive-design:write"
+              ],
+              "scalar_required_scopes": [
+                "layout:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Stack",
+              "property": "alignment",
+              "responsive": true,
+              "responsive_required_scopes": [
+                "responsive-design:write"
+              ],
+              "scalar_required_scopes": [
+                "layout:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Spacer",
+              "property": "size",
+              "responsive": true,
+              "responsive_required_scopes": [
+                "responsive-design:write"
+              ],
+              "scalar_required_scopes": [
+                "layout:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Heading",
+              "property": "level",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Heading",
+              "property": "text",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Heading",
+              "property": "alignment",
+              "responsive": true,
+              "responsive_required_scopes": [
+                "responsive-design:write"
+              ],
+              "scalar_required_scopes": [
+                "layout:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "RichText",
+              "property": "content",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Image",
+              "property": "alt",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Image",
+              "property": "aspectRatio",
+              "responsive": true,
+              "responsive_required_scopes": [
+                "responsive-design:write"
+              ],
+              "scalar_required_scopes": [
+                "component-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Image",
+              "property": "mediaId",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Button",
+              "property": "href",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Button",
+              "property": "label",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Button",
+              "property": "variant",
+              "responsive": true,
+              "responsive_required_scopes": [
+                "responsive-design:write"
+              ],
+              "scalar_required_scopes": [
+                "component-variant:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Quote",
+              "property": "attribution",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Quote",
+              "property": "text",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "CollectionList",
+              "property": "limit",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "CollectionList",
+              "property": "viewId",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "CollectionGrid",
+              "property": "columns",
+              "responsive": true,
+              "responsive_required_scopes": [
+                "responsive-design:write"
+              ],
+              "scalar_required_scopes": [
+                "layout:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "CollectionGrid",
+              "property": "viewId",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "CollectionDetail",
+              "property": "viewId",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Hero",
+              "property": "heading",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Hero",
+              "property": "mediaId",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Hero",
+              "property": "subheading",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Statistics",
+              "property": "items",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Timeline",
+              "property": "items",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "FAQ",
+              "property": "items",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            }
+          ]
+        },
         "x-slaif-conditional-scopes": [],
         "x-slaif-idempotency": "required",
         "x-slaif-mutation": true,
@@ -16064,385 +16388,6 @@
         "x-slaif-idempotency": "not-applicable",
         "x-slaif-mutation": false,
         "x-slaif-required-scopes": []
-      }
-    },
-    "/api/agent/v1/theme": {
-      "get": {
-        "operationId": "get_theme_api_agent_v1_theme_get",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ThemeRecord"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            },
-            "description": "Malformed request or missing/invalid idempotency key."
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            },
-            "description": "Authentication is required."
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            },
-            "description": "The capability scope or resource constraint is not sufficient."
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            },
-            "description": "The resource is not available to this capability."
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            },
-            "description": "The request conflicts with current state or idempotency."
-          },
-          "413": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            },
-            "description": "The request exceeds the bounded body limit."
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            },
-            "description": "The request failed domain validation."
-          },
-          "429": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            },
-            "description": "The request exceeds an enforced quota."
-          },
-          "503": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            },
-            "description": "The service is temporarily unavailable."
-          }
-        },
-        "security": [
-          {
-            "AgentCapability": []
-          }
-        ],
-        "summary": "Get Theme",
-        "x-slaif-conditional-scopes": [],
-        "x-slaif-idempotency": "not-applicable",
-        "x-slaif-mutation": false,
-        "x-slaif-required-scopes": [
-          "theme:read"
-        ]
-      },
-      "patch": {
-        "operationId": "update_theme_api_agent_v1_theme_patch",
-        "parameters": [
-          {
-            "in": "header",
-            "name": "Idempotency-Key",
-            "required": true,
-            "schema": {
-              "maxLength": 128,
-              "minLength": 1,
-              "pattern": "^[A-Za-z0-9._~-]+$",
-              "title": "Idempotency-Key",
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/AgentUpdateThemeRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AgentThemeMutationResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            },
-            "description": "Malformed request or missing/invalid idempotency key."
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            },
-            "description": "Authentication is required."
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            },
-            "description": "The capability scope or resource constraint is not sufficient."
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            },
-            "description": "The resource is not available to this capability."
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            },
-            "description": "The request conflicts with current state or idempotency."
-          },
-          "413": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            },
-            "description": "The request exceeds the bounded body limit."
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            },
-            "description": "The request failed domain validation."
-          },
-          "429": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            },
-            "description": "The request exceeds an enforced quota."
-          },
-          "503": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            },
-            "description": "The service is temporarily unavailable."
-          }
-        },
-        "security": [
-          {
-            "AgentCapability": []
-          }
-        ],
-        "summary": "Update Theme",
-        "x-slaif-conditional-scopes": [],
-        "x-slaif-idempotency": "required",
-        "x-slaif-mutation": true,
-        "x-slaif-required-scopes": [
-          "theme-tokens:write"
-        ]
-      }
-    },
-    "/api/agent/v1/theme-schema": {
-      "get": {
-        "operationId": "get_theme_schema_api_agent_v1_theme_schema_get",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AgentThemeSchemaResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            },
-            "description": "Malformed request or missing/invalid idempotency key."
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            },
-            "description": "Authentication is required."
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            },
-            "description": "The capability scope or resource constraint is not sufficient."
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            },
-            "description": "The resource is not available to this capability."
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            },
-            "description": "The request conflicts with current state or idempotency."
-          },
-          "413": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            },
-            "description": "The request exceeds the bounded body limit."
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            },
-            "description": "The request failed domain validation."
-          },
-          "429": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            },
-            "description": "The request exceeds an enforced quota."
-          },
-          "503": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            },
-            "description": "The service is temporarily unavailable."
-          }
-        },
-        "security": [
-          {
-            "AgentCapability": []
-          }
-        ],
-        "summary": "Get Theme Schema",
-        "x-slaif-conditional-scopes": [],
-        "x-slaif-idempotency": "not-applicable",
-        "x-slaif-mutation": false,
-        "x-slaif-required-scopes": [
-          "theme:read"
-        ]
       }
     }
   }

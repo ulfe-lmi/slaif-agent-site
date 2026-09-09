@@ -350,17 +350,6 @@ async def test_preview_projection_requires_authorized_human_session(
                 "WHERE site_id = $1 AND slug = 'home' AND locale = 'en'",
                 site.site_id,
             )
-            await cow.native.execute(
-                "INSERT INTO content.theme "
-                "(id,site_id,schema_version,renderer_version,row_version,palette,"
-                "typography,layout,shape) VALUES "
-                "($1,$1,'theme-schema/v1','renderer-v1',2,"
-                '\'{"preset":"meadow"}\'::jsonb,'
-                '\'{"family":"serif","scale":"balanced","weight":"regular"}\'::jsonb,'
-                '\'{"content_width":"md","spacing":"md","grid_gap":"md"}\'::jsonb,'
-                '\'{"radius":"md","shadow":"sm"}\'::jsonb)',
-                site.site_id,
-            )
         adapter = _RenderAdapter(public_pool, preview_pool)
         service = RenderProjectionService(adapter)
         projection = await service.preview(
@@ -374,9 +363,6 @@ async def test_preview_projection_requires_authorized_human_session(
         assert projection.route_kind == "page"
         assert projection.render_mode == "preview"
         assert projection.page.title == "Preview draft"
-        assert projection.theme.palette.preset == "meadow"
-        assert projection.theme.renderer_version == "renderer-v1"
-        assert projection.theme.row_version == 2
         collection_items = next(iter(projection.bindings.values()))
         assert collection_items[0]["values"] == {"title": "Second item", "rank": 1}
         assert collection_items[0]["slug"] == "second"
@@ -385,8 +371,6 @@ async def test_preview_projection_requires_authorized_human_session(
         )
         assert canonical.route_kind == "page"
         assert canonical.page.title == "Preview home"
-        assert canonical.theme.palette.preset == "ocean"
-        assert canonical.theme.row_version == 1
         for _ in range(2):
             render_adapter = _RestartableRenderAdapter(database)
             render_app = create_render_app(
@@ -422,12 +406,6 @@ async def test_preview_projection_requires_authorized_human_session(
                     assert preview_http.status_code == 200, preview_http.text
                     assert canonical_http.json()["page"]["title"] == "Preview home"
                     assert preview_http.json()["page"]["title"] == "Preview draft"
-                    assert canonical_http.json()["theme"]["palette"] == {
-                        "preset": "ocean"
-                    }
-                    assert preview_http.json()["theme"]["palette"] == {
-                        "preset": "meadow"
-                    }
         async with owner_connection(
             database.settings.resolved_owner_dsn(), expected_database=database.name
         ) as owner:

@@ -15,6 +15,16 @@ Executor context is disposable after one PR-sized round; GitHub, repo docs,
 tests, orders/reports preserve truth. Do not carry roadmap or spend human/
 strategic labor on routine execution.
 
+Prospective governance notice (effective 2026-09-09): the approved bounded
+semantic-increment amendment at
+`oap/governance/2026-09-09-bounded-semantic-pr-increments.md` controls future
+delivery. One bounded semantic merge increment maps to one PR; a numeric
+objective may span sequential PRs, and the order's explicit PR mode, increment
+identity, verified base, and named branch/PR control delivery. Earlier orders,
+reports, and the prior one-objective/one-PR rule remain immutable historical
+records. Strategy still owns acceptance/merge and the executor never chooses
+the next increment.
+
 Before any repository change, read completely: (1) this `AGENTS.md`; (2)
 `OAP-COMMUNICATION-coding-agent.md`; (3) root `ARCHITECTURE-for-agents.md`; (4)
 exactly one order selected by `oap/active` after valid strategic FIFO signal;

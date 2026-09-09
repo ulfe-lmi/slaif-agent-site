@@ -43,28 +43,20 @@ promotion, publication execution, composition/design/media-reference expansion,
 and later MVP work remain separate. This source-revision evidence does not
 claim that the contractual MVP is complete.
 
-The Objective-078 source revision developed in [PR #77](https://github.com/ulfe-lmi/slaif-agent-site/pull/77)
+The Objective-078 source revision developed in open [PR #77](https://github.com/ulfe-lmi/slaif-agent-site/pull/77)
 adds the bounded Agent component data plane: catalog-constrained nested
 composition, semantic sibling anchors, content-prop updates, dense versioned
 reordering, dependency-safe deletion, capability/COW/idempotency/audit/quota
 boundaries, shared preview rendering, and real private browser evidence. Its
 078-g added the typed `design-system/v1` authority and capability-bound
 component-local variant, layout, and fixed-label responsive design updates
-through the same normalized composition. The 078-h continuation repairs exact
-property-level least privilege and classifies existing visual properties at
-the Agent boundary; its evidence is focused public-Agent/PostgreSQL/Render/
-Web/Puck proof;
+through the same normalized composition. The 078-j continuation repairs exact
+property-level least privilege, initial design selection, removal/replay
+classification, and current OpenAPI truth at the Agent boundary; its evidence
+is focused public-Agent/PostgreSQL/Render/Web/Puck proof;
 site-global theme, global-region expansion, exact-workspace Puck editing,
 review, promotion, publication, and the contractual MVP remain separate and
 incomplete.
-
-The active 078-i continuation adds the bounded `theme-schema/v1` data plane on
-the same PR: typed Agent schema/read/partial-update routes, reversible legacy
-theme migration, exact COW/version/scope/idempotency/audit/quota/concurrency
-semantics, and shared Render/Web/Puck token consumption. It deliberately
-excludes global regions, header/footer architecture, page style, arbitrary
-CSS/fonts/colors, media, MCP, review, promotion, publication, and final MVP
-claims.
 
 > **Pre-alpha / bounded deployable product.** This
 > repository contains the normative architecture, coding-agent governance,
@@ -183,7 +175,7 @@ site-scoped permissions:
 | --- | --- |
 | Content Editor | Edit existing content values, translations, media metadata, and content props. |
 | Site Editor | Add or reorganize pages, routes, navigation, redirects, views, and approved structure. |
-| Site Designer | Change normalized composition, variants, layout, responsive settings, and bounded theme tokens. |
+| Site Designer | Change normalized composition, variants, layout, and fixed-label responsive settings. |
 | Site Architect | Define bounded content models, global structure/design, locales, and whole-site imports inside a workspace. |
 
 **Hard ceiling:** no delegation level can publish, manage identities, run
@@ -220,7 +212,7 @@ loopback port 8080 is published. The deployable pre-alpha stack includes
 one-time first-run setup/login and site-management administration; bounded
 page/locale/navigation/redirect/dynamic-Render semantics are present in the
 Objective-077 source revision, and the bounded Agent component and local
-design data planes and the 078-h authority repair are present in the
+design data planes and the 078-j authority/replay repair are present in the
 Objective-078 source revision;
 site-global theme/media, review, and publication remain queued. See the
 [deployment guide](docs/DEPLOYMENT.md) and [operations guide](docs/OPERATIONS.md).
@@ -242,7 +234,7 @@ site-global theme/media, review, and publication remain queued. See the
 | Completed human RBAC HTTP boundary | Immutable role/permission catalogs, site membership list/get/create/update/deactivate, strict session/CSRF policy, optimistic concurrency, and complete Control/Editor route declarations. |
 | Responsive site and membership administration | Permission-driven site/profile/domain workflows plus existing-user UUID membership cards, built-in roles, bounded ceilings, separate publication overrides, complete override replacement, version refresh, and semantic deactivation. |
 | Objective-077 source revision | Capability-bound Agent pages, locales, navigation, redirects, and bounded dynamic collection Render semantics with human Editor parity, shared Render/NGINX/browser evidence, route integrity, concurrency, and recovery proof on PR #74; strategic acceptance/merge remains separate. |
-| Objective-078-h source revision | Bounded capability-bound Agent component/catalog design semantics plus exact property-level scopes, visual-property classification, scalar/responsive OpenAPI truth, no-op accounting, PostgreSQL narrowed-capability/direct-helper proof, Puck round-trip, Render/Web parity, and canonical non-change on open PR #77; strategic acceptance/merge remains separate. |
+| Objective-078-j source revision | Bounded capability-bound Agent component/catalog design semantics plus exact property-level scopes, initial design selection, removal/replay/no-op accounting, scalar/responsive OpenAPI truth, PostgreSQL narrowed-capability/direct-helper proof, Puck round-trip, Render/Web parity, and canonical non-change on open PR #77; site-theme work is deferred to a new PR and strategic acceptance/merge remains separate. |
 | Planned product work | Add review snapshots, freeze/accept/discard/promotion, approved-source and responsive-sweep orchestration, reconstruction, public media finalization, and remaining hardening. |
 
 See [Architecture Section 50](ARCHITECTURE.md#50-implementation-phases) for
@@ -288,8 +280,8 @@ site-membership lifecycle routes. Agent, Editor, Render, and Media expose their
 bounded implemented behavior; MCP remains a scaffolded adapter, while review,
 scheduler, and media-GC workers remain lifecycle scaffolds. The separately
 confined browser-worker performs Objective 072 preview runs and the bounded
-078-f component preview proof with private artifacts; 078-g/h add focused
-component-design Render/Web, Puck, and narrowed-authority contract coverage.
+078-f component preview proof with private artifacts; 078-g/j add focused
+component-design Render/Web, Puck, and narrowed-authority/replay contract coverage.
 Control readiness uses
 its dedicated database boundary and remains
 process-only for liveness. Bootstrap mutations require explicit one-shot
@@ -372,8 +364,8 @@ Ministry of Higher Education, Science and Innovation for SLAIF grant
 
 ## Implementation Status
 
-The merged Objectives 065–076, the Objective-077 source revision, and the
-Objective-078-h component/design source revision proves only the narrow, bounded slices
+The merged Objectives 065–077 and the Objective-078-j component/design source
+revision prove only the narrow, bounded slices
 recorded in [`oap/MVP-CONTRACT-AUDIT.md`](oap/MVP-CONTRACT-AUDIT.md).
 The contractual MVP remains incomplete: complete Agent semantic REST and MCP,
 immutable review snapshots, accept/discard promotion,
