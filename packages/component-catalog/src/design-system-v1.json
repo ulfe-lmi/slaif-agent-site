@@ -1,0 +1,279 @@
+{
+  "version": "design-system/v1",
+  "catalog_version": "catalog-v1",
+  "composition_schema_version": "site-composition/v1",
+  "renderer_version": "renderer-v1",
+  "responsive_labels": ["desktop", "tablet", "mobile"],
+  "responsive_scope": "responsive-design:write",
+  "responsive_fallback": ["desktop", "tablet", "mobile"],
+  "tokens": {
+    "spacing": ["none", "xs", "sm", "md", "lg", "xl"],
+    "gap": ["none", "sm", "md", "lg"],
+    "width": ["sm", "md", "lg", "xl"],
+    "alignment": ["start", "center", "end", "stretch"],
+    "columns": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
+    "radius": ["none", "sm", "md", "lg", "full"],
+    "shadow": ["none", "sm", "md", "lg"],
+    "aspect_ratio": ["auto", "16:9", "4:3", "1:1"]
+  },
+  "components": [
+    {
+      "type": "Section",
+      "variants": ["default", "full", "narrow"],
+      "properties": [
+        {
+          "name": "variant",
+          "type": "enum",
+          "values": ["default", "full", "narrow"],
+          "default": "default",
+          "required": false,
+          "responsive": true,
+          "scope": "component-variant:write",
+          "token": "variant"
+        },
+        {
+          "name": "alignment",
+          "type": "enum",
+          "values": ["start", "center", "end", "stretch"],
+          "default": "stretch",
+          "required": false,
+          "responsive": true,
+          "scope": "layout:write",
+          "token": "alignment"
+        }
+      ]
+    },
+    {
+      "type": "Container",
+      "variants": [],
+      "properties": [
+        {
+          "name": "width",
+          "type": "enum",
+          "values": ["sm", "md", "lg", "xl"],
+          "default": "md",
+          "required": false,
+          "responsive": true,
+          "scope": "layout:write",
+          "token": "width"
+        },
+        {
+          "name": "alignment",
+          "type": "enum",
+          "values": ["start", "center", "end", "stretch"],
+          "default": "stretch",
+          "required": false,
+          "responsive": true,
+          "scope": "layout:write",
+          "token": "alignment"
+        }
+      ]
+    },
+    {
+      "type": "Columns",
+      "variants": [],
+      "properties": [
+        {
+          "name": "count",
+          "type": "number",
+          "integer": true,
+          "minimum": 1,
+          "maximum": 4,
+          "default": 1,
+          "required": true,
+          "responsive": true,
+          "scope": "layout:write",
+          "token": "columns"
+        },
+        {
+          "name": "gap",
+          "type": "enum",
+          "values": ["none", "sm", "md", "lg"],
+          "default": "md",
+          "required": false,
+          "responsive": true,
+          "scope": "layout:write",
+          "token": "gap"
+        },
+        {
+          "name": "alignment",
+          "type": "enum",
+          "values": ["start", "center", "end", "stretch"],
+          "default": "stretch",
+          "required": false,
+          "responsive": true,
+          "scope": "layout:write",
+          "token": "alignment"
+        }
+      ]
+    },
+    {
+      "type": "Grid",
+      "variants": [],
+      "properties": [
+        {
+          "name": "columns",
+          "type": "number",
+          "integer": true,
+          "minimum": 1,
+          "maximum": 12,
+          "default": 1,
+          "required": false,
+          "responsive": true,
+          "scope": "layout:write",
+          "token": "columns"
+        },
+        {
+          "name": "gap",
+          "type": "enum",
+          "values": ["sm", "md", "lg"],
+          "default": "md",
+          "required": false,
+          "responsive": true,
+          "scope": "layout:write",
+          "token": "gap"
+        },
+        {
+          "name": "alignment",
+          "type": "enum",
+          "values": ["start", "center", "end", "stretch"],
+          "default": "stretch",
+          "required": false,
+          "responsive": true,
+          "scope": "layout:write",
+          "token": "alignment"
+        }
+      ]
+    },
+    {
+      "type": "Stack",
+      "variants": [],
+      "properties": [
+        {
+          "name": "direction",
+          "type": "enum",
+          "values": ["vertical", "horizontal"],
+          "default": "vertical",
+          "required": false,
+          "responsive": true,
+          "scope": "layout:write",
+          "token": "direction"
+        },
+        {
+          "name": "gap",
+          "type": "enum",
+          "values": ["none", "sm", "md", "lg"],
+          "default": "md",
+          "required": false,
+          "responsive": true,
+          "scope": "layout:write",
+          "token": "gap"
+        },
+        {
+          "name": "alignment",
+          "type": "enum",
+          "values": ["start", "center", "end", "stretch"],
+          "default": "stretch",
+          "required": false,
+          "responsive": true,
+          "scope": "layout:write",
+          "token": "alignment"
+        }
+      ]
+    },
+    {
+      "type": "Spacer",
+      "variants": [],
+      "properties": [
+        {
+          "name": "size",
+          "type": "enum",
+          "values": ["xs", "sm", "md", "lg", "xl"],
+          "default": "md",
+          "required": true,
+          "responsive": true,
+          "scope": "layout:write",
+          "token": "spacing"
+        }
+      ]
+    },
+    {
+      "type": "Heading",
+      "variants": [],
+      "properties": [
+        {
+          "name": "alignment",
+          "type": "enum",
+          "values": ["start", "center", "end", "stretch"],
+          "default": "start",
+          "required": false,
+          "responsive": true,
+          "scope": "layout:write",
+          "token": "alignment"
+        }
+      ]
+    },
+    {"type": "RichText", "variants": [], "properties": []},
+    {
+      "type": "Image",
+      "variants": [],
+      "properties": [
+        {
+          "name": "aspectRatio",
+          "type": "enum",
+          "values": ["auto", "16:9", "4:3", "1:1"],
+          "default": "auto",
+          "required": false,
+          "responsive": true,
+          "scope": "component-props:write",
+          "token": "aspect_ratio"
+        }
+      ]
+    },
+    {
+      "type": "Button",
+      "variants": [],
+      "properties": [
+        {
+          "name": "variant",
+          "type": "enum",
+          "values": ["primary", "secondary", "ghost"],
+          "default": "primary",
+          "required": false,
+          "responsive": true,
+          "scope": "component-variant:write",
+          "token": "variant"
+        }
+      ]
+    },
+    {"type": "Quote", "variants": [], "properties": []},
+    {"type": "CollectionList", "variants": [], "properties": []},
+    {
+      "type": "CollectionGrid",
+      "variants": [],
+      "properties": [
+        {
+          "name": "columns",
+          "type": "number",
+          "integer": true,
+          "minimum": 1,
+          "maximum": 6,
+          "default": 3,
+          "required": false,
+          "responsive": true,
+          "scope": "layout:write",
+          "token": "columns"
+        }
+      ]
+    },
+    {"type": "CollectionDetail", "variants": [], "properties": []},
+    {"type": "Hero", "variants": [], "properties": []},
+    {"type": "Statistics", "variants": [], "properties": []},
+    {"type": "Timeline", "variants": [], "properties": []},
+    {"type": "FAQ", "variants": [], "properties": []},
+    {"type": "Header", "variants": [], "properties": []},
+    {"type": "Footer", "variants": [], "properties": []},
+    {"type": "Breadcrumbs", "variants": [], "properties": []},
+    {"type": "LanguageSwitcher", "variants": [], "properties": []}
+  ]
+}

@@ -6,6 +6,12 @@
 > implementer or surrender roadmap/acceptance authority. The human remains
 > owner of domain truth, risk, and release.
 
+Prospective governance notice (effective 2026-09-09):
+`../governance/2026-09-09-bounded-semantic-pr-increments.md` is the approved
+amendment for future bounded semantic increments: one increment per PR, with a
+numeric objective allowed to span sequential PRs. Earlier artifacts remain
+immutable history; explicit order mode and named PR identity control delivery.
+
 ## Mandatory refresh and authority
 
 At strategic-session start, after context compaction, or on role/protocol

@@ -15,6 +15,12 @@ Human > Strategic(plan/accept/merge) > GitHub(project truth)
 OAP orders/reports/active = orchestration truth; FIFOs = synchronization only
 ```
 
+Prospective governance notice (effective 2026-09-09):
+`../governance/2026-09-09-bounded-semantic-pr-increments.md` is the approved
+amendment for future bounded semantic increments: one increment per PR, with a
+numeric objective allowed to span sequential PRs. Earlier artifacts remain
+immutable history; explicit order mode and named PR identity control delivery.
+
 GitHub exclusively determines remote default branch, PR identity/state/base/head,
 commits, diff, reviews, required checks, mergeability/protection, and merge.
 Never accept report prose, local branch/status, unpushed commit, or report-side

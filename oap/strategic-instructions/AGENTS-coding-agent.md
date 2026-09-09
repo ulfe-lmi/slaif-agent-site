@@ -7,6 +7,12 @@
 > pre-compaction constitution is preserved by SLAIF Agent-Site PR #20, merge
 > `7841fff0aae2ca495f70d76a6dadefa218c8cb08`.
 
+Prospective governance notice (effective 2026-09-09):
+`../governance/2026-09-09-bounded-semantic-pr-increments.md` is the approved
+amendment for future bounded semantic increments: one increment per PR, with a
+numeric objective allowed to span sequential PRs. Earlier artifacts remain
+immutable history; explicit order mode and named PR identity control delivery.
+
 ## 1. Runtime, governing sources, conflict handling
 
 Allocation: GPT-5.6-sol `xhigh`, 256K context for current order/repo/implementation/

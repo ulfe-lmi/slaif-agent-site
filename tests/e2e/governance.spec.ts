@@ -611,10 +611,30 @@ test("puck-editor-round-trip-through-human-editor-api", async ({ page }) => {
     order_key: 0,
   });
   const firstSectionId = firstSavedSection!.id;
+  const localDesignProps = {
+    variant: { desktop: "default", tablet: "narrow", mobile: "full" },
+  };
+  const designSave = await page.request.patch(
+    `${compositionPath}components/${firstSectionId}`,
+    {
+      headers: editorHeaders(),
+      data: { props: localDesignProps },
+    },
+  );
+  expect(designSave.status()).toBe(200);
+  expectPrivateHeaders(designSave);
+  const designSaveBody = (await designSave.json()) as {
+    props: typeof localDesignProps;
+  };
+  expect(designSaveBody.props).toEqual(localDesignProps);
+  await page.reload();
+  await expect(
+    page.getByRole("heading", { name: "Page composition", exact: true }).first(),
+  ).toBeVisible();
   const firstSectionSnapshot = {
     parent_id: firstSavedSection!.parent_id,
     slot_key: firstSavedSection!.slot_key,
-    props: firstSavedSection!.props,
+    props: localDesignProps,
   };
   await page.keyboard.press("Escape");
   await page.waitForTimeout(300);

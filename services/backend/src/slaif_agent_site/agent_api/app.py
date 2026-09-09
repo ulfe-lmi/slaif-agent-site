@@ -28,8 +28,12 @@ from ..browser_worker_client import (
 from ..config import ConfigurationError, ServiceSettings
 from ..control_api.route_policy import (
     RouteMutationClass,
+    component_authority_metadata_for_policy,
+    component_property_scope_metadata_for_policy,
     conditional_scope_metadata,
     route_policies_for,
+    validate_component_authority_openapi_document,
+    validate_component_property_scope_openapi_document,
     validate_conditional_scope_openapi_document,
     validate_route_policy_coverage,
 )
@@ -166,6 +170,20 @@ def build_public_agent_openapi_document(app: FastAPI) -> dict[str, object]:
             scopes = list(policy.required_scopes)
             operation["x-slaif-required-scopes"] = scopes
             operation["x-slaif-conditional-scopes"] = conditional_scope_metadata(policy)
+            if (
+                method.upper() == "PATCH"
+                and path == "/api/agent/v1/components/{component_id}"
+            ):
+                operation["x-slaif-component-property-scopes"] = (
+                    component_property_scope_metadata_for_policy(policy)
+                )
+            if (method.upper(), path) in {
+                ("POST", "/api/agent/v1/pages/{page_id}/components"),
+                ("PATCH", "/api/agent/v1/components/{component_id}"),
+            }:
+                operation["x-slaif-component-authority"] = (
+                    component_authority_metadata_for_policy(policy)
+                )
             operation["x-slaif-mutation"] = (
                 policy.mutation_class is RouteMutationClass.MUTATION
             )
@@ -254,9 +272,10 @@ def build_public_agent_openapi_document(app: FastAPI) -> dict[str, object]:
                         }
                     },
                 }
-    validate_conditional_scope_openapi_document(
-        document, route_policies_for(ProcessKind.AGENT_API)
-    )
+    policies_for_agent = route_policies_for(ProcessKind.AGENT_API)
+    validate_conditional_scope_openapi_document(document, policies_for_agent)
+    validate_component_property_scope_openapi_document(document, policies_for_agent)
+    validate_component_authority_openapi_document(document, policies_for_agent)
     # Only schemas reachable from the public Agent paths are exposed. This
     # removes health/internal models from the product contract.
     referenced: set[str] = set()

@@ -113,6 +113,47 @@ fallback, renamed-item route movement, and unchanged canonical visibility.
 Migration tests also prove the 054-to-055-to-054-to-055 function-definition,
 grant, and data round trip.
 
+## Bounded Agent component data-plane acceptance
+
+The public Agent Compose acceptance creates a fresh human-issued L2 workspace
+and capability, fetches the committed OpenAPI/session/permissions/catalog
+contracts, and creates a new page through NGINX. It proves an initially empty
+composition followed by a semantic `Section -> Container -> Heading` tree with
+a RichText leaf, exact per-node reads, content-only Heading PATCH, before/after
+sibling moves, dense order keys, positive row versions, and the four durable
+`COMPONENT_CREATED`/`COMPONENT_UPDATED`/`COMPONENT_MOVED`/`COMPONENT_DELETED`
+audit actions. It renders the changed page through authenticated human preview
+HTML and a real run-bound Chromium worker, retrieving four private JSON
+artifacts with matching heading/structure evidence and empty console/failed-
+request evidence.
+
+While the tree exists, the proof restarts `agent-api`, `render-api`, and `web`
+one at a time and compares public Agent state and preview HTML after every
+restart. It rejects parent deletion with children, stale versions, catalog
+type/slot/schema/design/raw-order inputs, foreign site/workspace/page/node/
+parent/sibling substitutions, idempotency mismatch, lower-scope structure
+writes, and exhausted mutation/delete/resource budgets; each negative checks
+the unchanged component tree and durable audit/idempotency counts. It deletes
+leaves before parents, verifies 404/absence and preview removal, replays one
+delete without a second effect, and confirms canonical HTML, another workspace
+on the site, another site, and site records remain unchanged. The clean smoke
+keeps this four-artifact proof alongside the existing six-artifact browser
+fixture and retains all prior acceptance gates.
+
+The focused design-semantics integration adds a real PostgreSQL/public-Agent
+slice on the same normalized tree. It fetches the exact typed
+`design-system/v1` document, changes Section/Container/Grid/Heading and the
+existing Button/Image/CollectionGrid visual properties, and proves exact
+scalar versus responsive scopes, mixed-property denials with unchanged
+props/version/quota/idempotency/audit/COW state, L1 visual denials, direct
+runtime-helper denial, malformed device input, no-op replay/accounting,
+Puck round-trip validation, Render/Web responsive consumption, and resource
+narrowing. A deterministic PostgreSQL barrier proves one optimistic design
+PATCH winner and one `409` loser; a cancelled design PATCH leaves state
+unchanged. These focused tests run serially because the disposable fixture
+provisions shared product role names; concurrent test-file execution is not
+valid evidence.
+
 ## Browser-run contract and durable control-plane proof
 
 Python and TypeScript tests compare one committed language-neutral

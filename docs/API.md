@@ -126,9 +126,46 @@ controlled data directly. Selection follows the moved component at its
 destination, and the move participates in Puck's visible undo/redo history
 without creating another semantic editor operation. A later deliberate human
 selection always takes precedence and releases that temporary continuity.
-This order does not implement publication, preview authority,
-workspace-management UI, freeze/review/promotion, responsive preview, or new
-catalog/storage types.
+The component-local design layer is exposed separately from the immutable
+`catalog-v1` bytes. `GET /api/agent/v1/design-system` requires `theme:read` and
+returns the typed `design-system/v1` authority bound to `catalog-v1`,
+`site-composition/v1`, and `renderer-v1`. It enumerates only the fixed
+`desktop`/`tablet`/`mobile` labels, bounded spacing/gap/width/alignment/
+columns/radius/shadow/aspect-ratio choices, and the exact variant and local
+layout properties supported by each current component. It exposes no CSS,
+class, selector, breakpoint, URL, font, color, HTML, or executable primitive.
+
+Component CREATE and PATCH remain the one normalized mutation boundary. CREATE
+requires `component-structure:create` plus the property-derived design scope
+for each caller-supplied design value; omitted `Columns.count` and
+`Spacer.size` receive fixed trusted defaults, while content fields do not
+gratuitously require content-write. PATCH derives the required scope from the
+actual changed property: content uses `component-content-props:write`, general
+design uses `component-props:write`, variants use `component-variant:write`,
+layout uses `layout:write`, and responsive maps or responsive removals
+additionally use `responsive-design:write`. Mixed changes require the union;
+caller-supplied authority labels are ignored. A PATCH JSON `null` explicitly
+removes an existing property, while absent properties in the public PATCH are
+unchanged. Responsive maps contain only the three fixed labels and use
+deterministic desktop-to-tablet-to-mobile cascade: a missing tablet value
+inherits desktop and a missing mobile value inherits tablet. The same
+normalized props are consumed by Puck, Render, and Web. Resource constraints can disable responsive
+editing or narrow allowed variants, and invalid, foreign, stale, wrong-version,
+or raw design input fails closed without a mutation envelope. The component
+OpenAPI operations publish one shared `x-slaif-component-authority` table that
+distinguishes CREATE presence, PATCH value change, null/whole-document removal,
+and responsive transitions; PATCH also publishes its conditional/property
+scope extensions. All are generated from the route policy and the same
+design/catalog authority.
+An empty or byte-equivalent PATCH checks the optimistic row version, requires
+no write scope, returns the unchanged record with no semantic action, and
+stores only the idempotency response needed for exact replay; it consumes no
+mutation quota and creates no audit or COW mutation.
+
+This order does not implement publication, review/freeze/promotion,
+workspace-management UI, site-global theme tokens, global regions,
+header/footer architecture, or new catalog/storage types. A full responsive
+browser sweep remains a later combined acceptance round.
 
 ## Private human Media API
 
@@ -259,7 +296,10 @@ The bounded mutation surface is:
 | `DELETE /api/agent/v1/pages/{page_id}` | 200 | `AgentDeleteRequest` |
 | `POST /api/agent/v1/pages/{page_id}:move` | 200 | `MovePageRequest` (parent-only hierarchy move) |
 | `POST /api/agent/v1/pages/{page_id}:restore` | 200 | `RestorePageRequest` with the exact tombstone row version |
-| `POST /api/agent/v1/pages/{page_id}/components` | 201 | `CreateCompositionNodeRequest` |
+| `POST /api/agent/v1/pages/{page_id}/components` | 201 | `AgentCreateCompositionNodeRequest` |
+| `PATCH /api/agent/v1/components/{component_id}` | 200 | `AgentUpdateCompositionNodeRequest` |
+| `POST /api/agent/v1/components/{component_id}/move` | 200 | `AgentMoveCompositionNodeRequest` |
+| `DELETE /api/agent/v1/components/{component_id}` | 200 | `AgentDeleteRequest` |
 | `POST /api/agent/v1/locales` | 201 | `AgentCreateLocaleRequest` |
 | `PATCH /api/agent/v1/locales/{locale_id}` | 200 | `AgentUpdateLocaleRequest` |
 | `DELETE /api/agent/v1/locales/{locale_id}` | 200 | `AgentDeleteRequest` |
@@ -270,6 +310,24 @@ The bounded mutation surface is:
 | `PATCH /api/agent/v1/navigation-items/{item_id}` | 200 | `AgentUpdateNavigationItemRequest` |
 | `POST /api/agent/v1/navigation-items/{item_id}:move` | 200 | `AgentMoveNavigationItemRequest` |
 | `DELETE /api/agent/v1/navigation-items/{item_id}` | 200 | `AgentDeleteRequest` |
+
+Component composition is a bounded normalized tree. `GET /api/agent/v1/pages/{page_id}/components`
+returns the exact visible nodes and
+`GET /api/agent/v1/components/{component_id}` returns one exact node; both are
+capability- and workspace-confined. Component creation accepts a catalog type,
+parent, slot, and at most one `before_component_id` or `after_component_id`
+sibling anchor. The server assigns dense sibling `order_key` values; callers
+cannot submit or patch a raw order key. `PATCH` changes bounded content and/or
+design props and requires the current positive `expected_row_version`; the
+server derives the exact required scope union from changed paths, while the
+trusted PostgreSQL helper repeats that derivation. `POST .../move` changes
+parent/slot and uses the same mutually exclusive semantic anchors plus the
+current row version. A
+successful move versions the moved node and any shifted siblings. `DELETE`
+requires the current row version, rejects a node with children, and returns the
+deleted record after dense resequencing. All four mutation forms are
+idempotent, semantically audited, COW-confined, quota-bound, and return stable
+`401`/`403`/`404`/`409`/`422`/`429` errors without foreign-record disclosure.
 
 Every mutation requires an `Idempotency-Key` containing 1–128 bounded ASCII
 key characters. The response is `{ "record": <semantic record>,

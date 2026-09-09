@@ -1,11 +1,33 @@
-/**
- * Trusted component catalog for SLAIF Agent-Site.
- *
- * Architecture reference: ARCHITECTURE-for-agents.md §7 (normalized
- * composition, component catalog). Components are code-defined; agents and
- * users can only instantiate/configure them. No executable code is ever
- * accepted from editorial input.
- */
+/** Generated catalog-v1 authority; edit catalog-v1.json instead. */
+
+import catalog from "./catalog-v1.json" with { type: "json" };
+
+export interface PropSchema {
+  readonly type:
+    "string" | "number" | "boolean" | "enum" | "reference" | "object" | "array";
+  readonly required?: boolean | readonly string[];
+  readonly enum_values?: readonly string[];
+  readonly minimum?: number | null;
+  readonly maximum?: number | null;
+  readonly min_items?: number;
+  readonly max_items?: number;
+  readonly max_length?: number;
+  readonly format?: "uuid";
+  readonly properties?: Readonly<Record<string, PropSchema>>;
+  readonly required_keys?: readonly string[];
+  readonly additional_properties?: boolean;
+  readonly items?: PropSchema;
+}
+
+export interface PropDefinition {
+  readonly type: PropSchema["type"];
+  readonly required: boolean;
+  readonly enumValues?: readonly string[];
+  readonly bounded?: { readonly min?: number; readonly max?: number };
+  readonly localized?: boolean;
+  readonly authority: "content" | "design";
+  readonly schema?: PropSchema;
+}
 
 export interface ComponentDefinition {
   readonly type: string;
@@ -13,297 +35,145 @@ export interface ComponentDefinition {
   readonly schemaVersion: string;
   readonly allowedSlots: readonly string[];
   readonly maxChildren: number;
-  readonly propsSchema: Record<string, PropDefinition>;
+  readonly propsSchema: Readonly<Record<string, PropDefinition>>;
+  readonly bindingKind: "none" | "collection_view" | "media_asset";
+  readonly authorityClass: "content" | "structure" | "global";
 }
 
-export interface PropDefinition {
-  readonly type:
-    "string" | "number" | "boolean" | "enum" | "reference" | "object" | "array";
+interface CatalogPropInput {
+  readonly type: PropSchema["type"];
   readonly required: boolean;
-  readonly enumValues?: readonly string[];
-  readonly bounded?: { min?: number; max?: number };
+  readonly enum_values?: readonly string[];
+  readonly minimum?: number | null;
+  readonly maximum?: number | null;
   readonly localized?: boolean;
+  readonly authority: "content" | "design";
+  readonly schema?: Record<string, unknown>;
 }
 
-const LAYOUT_COMPONENTS: readonly ComponentDefinition[] = [
-  {
-    type: "Section",
-    category: "layout",
-    schemaVersion: "1",
-    allowedSlots: ["default"],
-    maxChildren: 32,
-    propsSchema: {
-      variant: {
-        type: "enum",
-        required: false,
-        enumValues: ["default", "full", "narrow"],
-      },
-      background: { type: "string", required: false },
-    },
-  },
-  {
-    type: "Container",
-    category: "layout",
-    schemaVersion: "1",
-    allowedSlots: ["default"],
-    maxChildren: 16,
-    propsSchema: {
-      width: { type: "enum", required: false, enumValues: ["sm", "md", "lg", "xl"] },
-    },
-  },
-  {
-    type: "Columns",
-    category: "layout",
-    schemaVersion: "1",
-    allowedSlots: ["col-1", "col-2", "col-3", "col-4"],
-    maxChildren: 4,
-    propsSchema: {
-      count: { type: "number", required: true, bounded: { min: 1, max: 4 } },
-      gap: { type: "enum", required: false, enumValues: ["none", "sm", "md", "lg"] },
-    },
-  },
-  {
-    type: "Grid",
-    category: "layout",
-    schemaVersion: "1",
-    allowedSlots: ["default"],
-    maxChildren: 24,
-    propsSchema: {
-      columns: { type: "number", required: false, bounded: { min: 1, max: 12 } },
-      gap: { type: "enum", required: false, enumValues: ["sm", "md", "lg"] },
-    },
-  },
-  {
-    type: "Stack",
-    category: "layout",
-    schemaVersion: "1",
-    allowedSlots: ["default"],
-    maxChildren: 16,
-    propsSchema: {
-      direction: {
-        type: "enum",
-        required: false,
-        enumValues: ["vertical", "horizontal"],
-      },
-      gap: { type: "enum", required: false, enumValues: ["none", "sm", "md", "lg"] },
-    },
-  },
-  {
-    type: "Spacer",
-    category: "layout",
-    schemaVersion: "1",
-    allowedSlots: [],
-    maxChildren: 0,
-    propsSchema: {
-      size: {
-        type: "enum",
-        required: true,
-        enumValues: ["xs", "sm", "md", "lg", "xl"],
-      },
-    },
-  },
-];
+interface CatalogComponentInput {
+  readonly type: string;
+  readonly category: ComponentDefinition["category"];
+  readonly schema_version: string;
+  readonly allowed_slots: readonly string[];
+  readonly max_children: number;
+  readonly props: Readonly<Record<string, CatalogPropInput>>;
+  readonly binding_kind: ComponentDefinition["bindingKind"];
+  readonly authority_class: ComponentDefinition["authorityClass"];
+}
 
-const BASIC_COMPONENTS: readonly ComponentDefinition[] = [
-  {
-    type: "Heading",
-    category: "basic",
-    schemaVersion: "1",
-    allowedSlots: [],
-    maxChildren: 0,
-    propsSchema: {
-      text: { type: "string", required: true, localized: true },
-      level: { type: "number", required: true, bounded: { min: 1, max: 6 } },
-    },
-  },
-  {
-    type: "RichText",
-    category: "basic",
-    schemaVersion: "1",
-    allowedSlots: [],
-    maxChildren: 0,
-    propsSchema: {
-      content: { type: "object", required: true, localized: true },
-    },
-  },
-  {
-    type: "Image",
-    category: "basic",
-    schemaVersion: "1",
-    allowedSlots: [],
-    maxChildren: 0,
-    propsSchema: {
-      mediaId: { type: "reference", required: true },
-      alt: { type: "string", required: true, localized: true },
-      aspectRatio: {
-        type: "enum",
-        required: false,
-        enumValues: ["auto", "16:9", "4:3", "1:1"],
-      },
-    },
-  },
-  {
-    type: "Button",
-    category: "basic",
-    schemaVersion: "1",
-    allowedSlots: [],
-    maxChildren: 0,
-    propsSchema: {
-      label: { type: "string", required: true, localized: true },
-      href: { type: "string", required: true },
-      variant: {
-        type: "enum",
-        required: false,
-        enumValues: ["primary", "secondary", "ghost"],
-      },
-    },
-  },
-  {
-    type: "Quote",
-    category: "basic",
-    schemaVersion: "1",
-    allowedSlots: [],
-    maxChildren: 0,
-    propsSchema: {
-      text: { type: "string", required: true, localized: true },
-      attribution: { type: "string", required: false, localized: true },
-    },
-  },
-];
+interface CatalogDocumentInput {
+  readonly version: string;
+  readonly composition_schema_version: string;
+  readonly components: readonly CatalogComponentInput[];
+}
 
-const DATA_COMPONENTS: readonly ComponentDefinition[] = [
-  {
-    type: "CollectionList",
-    category: "data",
-    schemaVersion: "1",
-    allowedSlots: ["item"],
-    maxChildren: 0,
-    propsSchema: {
-      viewId: { type: "reference", required: true },
-      limit: { type: "number", required: false, bounded: { min: 1, max: 100 } },
-    },
-  },
-  {
-    type: "CollectionGrid",
-    category: "data",
-    schemaVersion: "1",
-    allowedSlots: ["item"],
-    maxChildren: 0,
-    propsSchema: {
-      viewId: { type: "reference", required: true },
-      columns: { type: "number", required: false, bounded: { min: 1, max: 6 } },
-    },
-  },
-  {
-    type: "CollectionDetail",
-    category: "data",
-    schemaVersion: "1",
-    allowedSlots: [],
-    maxChildren: 0,
-    propsSchema: {
-      viewId: { type: "reference", required: true },
-    },
-  },
-];
+const catalogDocument = catalog as unknown as CatalogDocumentInput;
 
-const INSTITUTIONAL_COMPONENTS: readonly ComponentDefinition[] = [
-  {
-    type: "Hero",
-    category: "institutional",
-    schemaVersion: "1",
-    allowedSlots: ["content"],
-    maxChildren: 8,
-    propsSchema: {
-      heading: { type: "string", required: true, localized: true },
-      subheading: { type: "string", required: false, localized: true },
-      mediaId: { type: "reference", required: false },
-    },
-  },
-  {
-    type: "Statistics",
-    category: "institutional",
-    schemaVersion: "1",
-    allowedSlots: [],
-    maxChildren: 0,
-    propsSchema: {
-      items: { type: "array", required: true },
-    },
-  },
-  {
-    type: "Timeline",
-    category: "institutional",
-    schemaVersion: "1",
-    allowedSlots: [],
-    maxChildren: 0,
-    propsSchema: {
-      items: { type: "array", required: true },
-    },
-  },
-  {
-    type: "FAQ",
-    category: "institutional",
-    schemaVersion: "1",
-    allowedSlots: [],
-    maxChildren: 0,
-    propsSchema: {
-      items: { type: "array", required: true },
-    },
-  },
-];
+export const COMPONENT_CATALOG_VERSION = "catalog-v1" as const;
+export const COMPOSITION_SCHEMA_VERSION = "site-composition/v1" as const;
 
-const GLOBAL_COMPONENTS: readonly ComponentDefinition[] = [
-  {
-    type: "Header",
-    category: "global",
-    schemaVersion: "1",
-    allowedSlots: ["nav"],
-    maxChildren: 12,
-    propsSchema: {},
-  },
-  {
-    type: "Footer",
-    category: "global",
-    schemaVersion: "1",
-    allowedSlots: ["links"],
-    maxChildren: 16,
-    propsSchema: {},
-  },
-  {
-    type: "Breadcrumbs",
-    category: "global",
-    schemaVersion: "1",
-    allowedSlots: [],
-    maxChildren: 0,
-    propsSchema: {},
-  },
-  {
-    type: "LanguageSwitcher",
-    category: "global",
-    schemaVersion: "1",
-    allowedSlots: [],
-    maxChildren: 0,
-    propsSchema: {},
-  },
-];
+function propSchema(value: Record<string, unknown>): PropSchema {
+  const properties = value.properties as
+    Record<string, Record<string, unknown>> | undefined;
+  return {
+    type: value.type as PropSchema["type"],
+    ...(value.required === undefined
+      ? {}
+      : { required: value.required as boolean | readonly string[] }),
+    ...(value.enum_values === undefined
+      ? {}
+      : { enum_values: value.enum_values as readonly string[] }),
+    ...(value.minimum === undefined ? {} : { minimum: value.minimum as number | null }),
+    ...(value.maximum === undefined ? {} : { maximum: value.maximum as number | null }),
+    ...(value.min_items === undefined ? {} : { min_items: value.min_items as number }),
+    ...(value.max_items === undefined ? {} : { max_items: value.max_items as number }),
+    ...(value.max_length === undefined
+      ? {}
+      : { max_length: value.max_length as number }),
+    ...(value.format === undefined ? {} : { format: value.format as "uuid" }),
+    ...(value.additional_properties === undefined
+      ? {}
+      : { additional_properties: value.additional_properties as boolean }),
+    ...(value.items === undefined
+      ? {}
+      : { items: propSchema(value.items as Record<string, unknown>) }),
+    ...(properties === undefined
+      ? {}
+      : {
+          properties: Object.fromEntries(
+            Object.entries(properties).map(([key, item]) => [key, propSchema(item)]),
+          ),
+        }),
+  };
+}
 
-export const COMPONENT_CATALOG_VERSION = "catalog-v1";
-
-export const COMPONENT_CATALOG: readonly ComponentDefinition[] = [
-  ...LAYOUT_COMPONENTS,
-  ...BASIC_COMPONENTS,
-  ...DATA_COMPONENTS,
-  ...INSTITUTIONAL_COMPONENTS,
-  ...GLOBAL_COMPONENTS,
-];
+export const COMPONENT_CATALOG: readonly ComponentDefinition[] =
+  catalogDocument.components.map((component) => ({
+    type: component.type,
+    category: component.category,
+    schemaVersion: component.schema_version,
+    allowedSlots: component.allowed_slots,
+    maxChildren: component.max_children,
+    bindingKind: component.binding_kind,
+    authorityClass: component.authority_class,
+    propsSchema: Object.fromEntries(
+      Object.entries(component.props).map(([key, prop]) => [
+        key,
+        {
+          type: prop.type,
+          required: prop.required,
+          ...((prop.enum_values ?? []).length === 0
+            ? {}
+            : { enumValues: prop.enum_values }),
+          ...(prop.minimum === null && prop.maximum === null
+            ? {}
+            : {
+                bounded: {
+                  min: prop.minimum ?? undefined,
+                  max: prop.maximum ?? undefined,
+                },
+              }),
+          ...(prop.localized ? { localized: true } : {}),
+          authority: prop.authority,
+          ...(prop.schema === undefined ? {} : { schema: propSchema(prop.schema) }),
+        },
+      ]),
+    ),
+  })) as unknown as readonly ComponentDefinition[];
 
 export const COMPONENT_TYPES: ReadonlySet<string> = new Set(
-  COMPONENT_CATALOG.map((c) => c.type),
+  COMPONENT_CATALOG.map((component) => component.type),
 );
+export const FORBIDDEN_PROP_KEYS: ReadonlySet<string> = new Set([
+  "__proto__",
+  "constructor",
+  "prototype",
+  "innerhtml",
+  "dangerouslysetinnerhtml",
+  "style",
+  "class",
+  "classname",
+  "onclick",
+  "onload",
+  "handler",
+  "script",
+  "eval",
+  "html",
+  "template",
+  "query",
+  "code",
+  "package",
+  "callback",
+]);
 
 export function getComponent(type: string): ComponentDefinition | undefined {
-  return COMPONENT_CATALOG.find((c) => c.type === type);
+  return COMPONENT_CATALOG.find((component) => component.type === type);
 }
 
 export function validateComponentType(type: string): boolean {
   return COMPONENT_TYPES.has(type);
 }
+
+export const COMPONENT_CATALOG_DOCUMENT = catalogDocument;
+export * from "./design-system";

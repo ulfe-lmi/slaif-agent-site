@@ -31,8 +31,13 @@ from slaif_agent_site.agent_state.locks import (
     prelocked_cow_session,
 )
 from slaif_agent_site.content_model.composition_models import (
+    AgentCreateCompositionNodeRequest,
+    AgentMoveCompositionNodeRequest,
+    AgentUpdateCompositionNodeRequest,
     CompositionNodeRecord,
-    CreateCompositionNodeRequest,
+)
+from slaif_agent_site.content_model.design_system import (
+    validate_agent_component_props,
 )
 from slaif_agent_site.content_model.item_models import (
     AgentUpdateContentItemRequest,
@@ -104,6 +109,10 @@ BEGIN_IDEMPOTENCY_SQL = (
 )
 COMPLETE_IDEMPOTENCY_SQL = (
     "SELECT control.slaif_agent_idempotency_complete($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)"
+)
+COMPLETE_NO_EFFECT_IDEMPOTENCY_SQL = (
+    "SELECT control.slaif_agent_idempotency_complete_no_effect("
+    "$1,$2,$3,$4,$5,$6,$7,$8,$9,$10)"
 )
 COMPLETE_SEMANTIC_IDEMPOTENCY_SQL = (
     "SELECT control.slaif_agent_idempotency_complete("
@@ -215,8 +224,19 @@ AGENT_REDIRECT_UPDATE_SQL = (
 AGENT_REDIRECT_DELETE_SQL = (
     "SELECT * FROM content.slaif_agent_redirect_delete($1,$2,$3)"
 )
+AGENT_COMPONENT_LIST_SQL = "SELECT * FROM content.slaif_agent_component_list($1,$2)"
+AGENT_COMPONENT_GET_SQL = "SELECT * FROM content.slaif_agent_component_get($1,$2)"
 AGENT_COMPONENT_CREATE_SQL = (
-    "SELECT * FROM content.slaif_agent_composition_node_add($1,$2,$3,$4,$5,$6,$7)"
+    "SELECT * FROM content.slaif_agent_component_create($1,$2,$3,$4,$5,$6,$7,$8)"
+)
+AGENT_COMPONENT_UPDATE_SQL = (
+    "SELECT * FROM content.slaif_agent_component_update($1,$2,$3,$4)"
+)
+AGENT_COMPONENT_MOVE_SQL = (
+    "SELECT * FROM content.slaif_agent_component_move($1,$2,$3,$4,$5,$6,$7)"
+)
+AGENT_COMPONENT_DELETE_SQL = (
+    "SELECT * FROM content.slaif_agent_component_delete($1,$2,$3)"
 )
 AGENT_RELATION_CREATE_SQL = (
     "SELECT * FROM content.slaif_agent_item_relation_create($1,$2,$3,$4,$5,$6)"
@@ -317,6 +337,10 @@ AGENT_SEMANTIC_CONTRACTS = {
     "REDIRECT_CREATED": ("redirect", "POST", 201, "mutation"),
     "REDIRECT_UPDATED": ("redirect", "PATCH", 200, "mutation"),
     "REDIRECT_DELETED": ("redirect", "DELETE", 200, "delete"),
+    "COMPONENT_CREATED": ("composition_node", "POST", 201, "mutation"),
+    "COMPONENT_UPDATED": ("composition_node", "PATCH", 200, "mutation"),
+    "COMPONENT_MOVED": ("composition_node", "POST", 200, "mutation"),
+    "COMPONENT_DELETED": ("composition_node", "DELETE", 200, "delete"),
 }
 AGENT_SEMANTIC_ACTIONS = frozenset(AGENT_SEMANTIC_CONTRACTS)
 
@@ -374,6 +398,7 @@ class AgentCowContentModelService(ContentModelService):
             acquire_timeout=acquire_timeout,
             cow_session=cow_session,
         )
+        self.last_mutation_no_effect = False
 
     async def create_type(
         self, site_id: UUID, request: CreateContentTypeRequest
@@ -1158,7 +1183,7 @@ class AgentCowContentModelService(ContentModelService):
         self,
         site_id: UUID,
         page_id: UUID,
-        request: CreateCompositionNodeRequest,
+        request: AgentCreateCompositionNodeRequest,
     ) -> CompositionNodeRecord:
         parent_id = UUID(request.parent_id) if request.parent_id else None
         row = await self._fetchrow(
@@ -1168,11 +1193,76 @@ class AgentCowContentModelService(ContentModelService):
             request.component_type,
             parent_id,
             request.slot_key,
-            request.order_key,
+            request.before_component_id,
+            request.after_component_id,
             json.dumps(request.props, sort_keys=True),
         )
         if row is None:
             raise ContentModelServiceError(ContentModelServiceReason.CONFLICT)
+        return cast(CompositionNodeRecord, _cmp(row))
+
+    async def get_component_for_site(
+        self, site_id: UUID, component_id: UUID
+    ) -> CompositionNodeRecord:
+        row = await self._fetchrow(AGENT_COMPONENT_GET_SQL, site_id, component_id)
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
+        return cast(CompositionNodeRecord, _cmp(row))
+
+    async def update_component_for_site(
+        self,
+        site_id: UUID,
+        component_id: UUID,
+        request: AgentUpdateCompositionNodeRequest,
+    ) -> CompositionNodeRecord:
+        current = await self.get_component_for_site(site_id, component_id)
+        try:
+            props = validate_agent_component_props(
+                current.component_type, current.props, request.props
+            )
+        except (TypeError, ValueError) as error:
+            raise ContentModelServiceError(
+                ContentModelServiceReason.VALIDATION, code=str(error)
+            ) from None
+        row = await self._fetchrow(
+            AGENT_COMPONENT_UPDATE_SQL,
+            site_id,
+            component_id,
+            json.dumps(props, sort_keys=True),
+            request.expected_row_version,
+        )
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
+        return cast(CompositionNodeRecord, _cmp(row))
+
+    async def move_component_for_site(
+        self,
+        site_id: UUID,
+        component_id: UUID,
+        request: AgentMoveCompositionNodeRequest,
+    ) -> CompositionNodeRecord:
+        row = await self._fetchrow(
+            AGENT_COMPONENT_MOVE_SQL,
+            site_id,
+            component_id,
+            request.new_parent_id,
+            request.new_slot_key,
+            request.before_component_id,
+            request.after_component_id,
+            request.expected_row_version,
+        )
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
+        return cast(CompositionNodeRecord, _cmp(row))
+
+    async def delete_component_for_site(
+        self, site_id: UUID, component_id: UUID, expected_row_version: int
+    ) -> CompositionNodeRecord:
+        row = await self._fetchrow(
+            AGENT_COMPONENT_DELETE_SQL, site_id, component_id, expected_row_version
+        )
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
         return cast(CompositionNodeRecord, _cmp(row))
 
 
@@ -1235,10 +1325,15 @@ async def _complete(
     action: str | None,
     method: str | None,
     quota_kind: str,
+    no_effect: bool,
 ) -> None:
     try:
+        if no_effect and action is not None:
+            raise AgentMutationUnavailableError()
         completion_sql = (
-            COMPLETE_SEMANTIC_IDEMPOTENCY_SQL
+            COMPLETE_NO_EFFECT_IDEMPOTENCY_SQL
+            if no_effect
+            else COMPLETE_SEMANTIC_IDEMPOTENCY_SQL
             if action is not None
             else COMPLETE_IDEMPOTENCY_SQL
         )
@@ -1277,7 +1372,7 @@ async def _complete(
 Mutation = Callable[[AgentCowContentModelService], Awaitable[Any]]
 
 _STRUCTURAL_RESOURCE_TYPES = frozenset(
-    {"page", "locale", "navigation", "navigation_item", "redirect"}
+    {"page", "locale", "navigation", "navigation_item", "redirect", "composition_node"}
 )
 
 
@@ -1296,6 +1391,7 @@ async def execute_agent_mutation(
     dependency_type_id: UUID | None = None,
     dependency_item_id: UUID | None = None,
     dependency_view_id: UUID | None = None,
+    no_effect: bool = False,
 ) -> AgentMutationResponse:
     """Reserve, execute, audit, and complete one atomic Agent mutation."""
 
@@ -1377,6 +1473,7 @@ async def execute_agent_mutation(
                 "navigation",
                 "navigation_item",
                 "redirect",
+                "composition_node",
             }:
                 try:
                     mutation_allowed = await cow.native.fetchval(
@@ -1392,18 +1489,20 @@ async def execute_agent_mutation(
 
             service = AgentCowContentModelService(cow)
             record = await mutate(service)
+            effective_no_effect = no_effect or service.last_mutation_no_effect
+            effective_action = None if effective_no_effect else action
             record_body = record.model_dump(mode="json")
-            if action is not None and (
-                action not in AGENT_SEMANTIC_ACTIONS
+            if effective_action is not None and (
+                effective_action not in AGENT_SEMANTIC_ACTIONS
                 or method is None
-                or AGENT_SEMANTIC_CONTRACTS[action]
+                or AGENT_SEMANTIC_CONTRACTS[effective_action]
                 != (resource_type, method, status_code, quota_kind)
             ):
                 raise AgentMutationUnavailableError()
             response = AgentMutationResponse(
                 record=record_body,
                 operation_id=reservation.operation_id,
-                action=action,
+                action=effective_action,
             )
             await _complete(
                 cow,
@@ -1414,9 +1513,10 @@ async def execute_agent_mutation(
                 response=response,
                 resource_type=resource_type,
                 status_code=status_code,
-                action=action,
+                action=effective_action,
                 method=method,
                 quota_kind=quota_kind,
+                no_effect=effective_no_effect,
             )
             return response
     except asyncio.CancelledError:

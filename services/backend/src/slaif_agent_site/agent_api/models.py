@@ -41,8 +41,13 @@ class AgentCapabilityContext(BaseModel):
         allowed = {
             "allowed_type_ids",
             "allowed_type_keys",
+            "allowed_component_types",
+            "allowed_component_variants",
             "max_content_types",
             "max_fields_per_type",
+            "max_components_per_page",
+            "max_component_depth",
+            "max_visible_components",
             "delete_enabled",
             "max_deletes",
             "allowed_locales",
@@ -57,12 +62,18 @@ class AgentCapabilityContext(BaseModel):
             "max_visible_navigation_items",
             "max_navigation_depth",
             "max_visible_redirects",
+            "responsive_design_enabled",
         }
         unknown = set(self.resource_constraints) - allowed
         if unknown:
             raise ValueError("unknown resource constraint")
         constraints = self.resource_constraints
-        for key in ("allowed_type_ids", "allowed_type_keys"):
+        for key in (
+            "allowed_type_ids",
+            "allowed_type_keys",
+            "allowed_component_types",
+            "allowed_component_variants",
+        ):
             value = constraints.get(key)
             if value is not None and (
                 not isinstance(value, list)
@@ -126,6 +137,9 @@ class AgentCapabilityContext(BaseModel):
         for key in (
             "max_content_types",
             "max_fields_per_type",
+            "max_components_per_page",
+            "max_component_depth",
+            "max_visible_components",
             "max_deletes",
             "max_visible_pages",
             "max_page_depth",
@@ -143,6 +157,9 @@ class AgentCapabilityContext(BaseModel):
         enabled = constraints.get("delete_enabled")
         if enabled is not None and not isinstance(enabled, bool):
             raise ValueError("delete_enabled is malformed")
+        responsive_enabled = constraints.get("responsive_design_enabled")
+        if responsive_enabled is not None and not isinstance(responsive_enabled, bool):
+            raise ValueError("responsive design setting is malformed")
         return self
 
 
@@ -161,6 +178,112 @@ class AgentDiscoveryResponse(BaseModel):
     mutation_quota: int = 0
     delete_quota: int = 0
     upload_quota: int = 0
+
+
+class AgentComponentSchemaNode(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    type: Literal["string", "number", "boolean", "enum", "reference", "object", "array"]
+    required: bool | tuple[str, ...] | None = None
+    enum_values: tuple[str, ...] | None = None
+    minimum: int | float | None = None
+    maximum: int | float | None = None
+    min_items: int | None = None
+    max_items: int | None = None
+    max_length: int | None = None
+    format: Literal["uuid"] | None = None
+    properties: dict[str, AgentComponentSchemaNode] | None = None
+    additional_properties: bool | None = None
+    items: AgentComponentSchemaNode | None = None
+
+
+class AgentComponentPropDescriptor(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    type: Literal["string", "number", "boolean", "enum", "reference", "object", "array"]
+    required: bool
+    enum_values: tuple[str, ...] | None = None
+    minimum: int | float | None = None
+    maximum: int | float | None = None
+    min_items: int | None = None
+    max_items: int | None = None
+    localized: bool | None = None
+    authority: Literal["content", "design"]
+    max_length: int | None = None
+    format: Literal["uuid"] | None = None
+    schema_: AgentComponentSchemaNode | None = Field(default=None, alias="schema")
+
+
+class AgentComponentDescriptor(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    type: str
+    category: Literal["layout", "basic", "data", "institutional", "global"]
+    schema_version: str
+    allowed_slots: tuple[str, ...]
+    max_children: int
+    binding_kind: Literal["none", "collection_view", "media_asset"]
+    authority_class: Literal["content", "structure", "global"]
+    props: dict[str, AgentComponentPropDescriptor]
+
+
+class AgentComponentCatalogResponse(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    version: Literal["catalog-v1"]
+    composition_schema_version: Literal["site-composition/v1"]
+    components: tuple[AgentComponentDescriptor, ...]
+
+
+class AgentDesignPropertyDescriptor(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    name: str
+    type: Literal["enum", "number"]
+    values: tuple[str, ...] | None = None
+    minimum: int | float | None = None
+    maximum: int | float | None = None
+    integer: Literal[True] | None = None
+    default: str | int | float
+    required: bool
+    responsive: Literal[True]
+    scope: Literal["component-props:write", "component-variant:write", "layout:write"]
+    token: str
+
+
+class AgentDesignComponentDescriptor(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    type: str
+    variants: tuple[str, ...]
+    properties: tuple[AgentDesignPropertyDescriptor, ...]
+
+
+class AgentDesignTokenSet(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    spacing: tuple[str, ...]
+    gap: tuple[str, ...]
+    width: tuple[str, ...]
+    alignment: tuple[str, ...]
+    columns: tuple[int, ...]
+    radius: tuple[str, ...]
+    shadow: tuple[str, ...]
+    aspect_ratio: tuple[str, ...]
+
+
+class AgentDesignSystemResponse(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    version: Literal["design-system/v1"]
+    catalog_version: Literal["catalog-v1"]
+    composition_schema_version: Literal["site-composition/v1"]
+    renderer_version: Literal["renderer-v1"]
+    responsive_labels: tuple[Literal["desktop", "tablet", "mobile"], ...]
+    responsive_scope: Literal["responsive-design:write"]
+    responsive_fallback: tuple[Literal["desktop", "tablet", "mobile"], ...]
+    tokens: AgentDesignTokenSet
+    components: tuple[AgentDesignComponentDescriptor, ...]
 
 
 class AgentPermissionsResponse(BaseModel):

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Request, Response
@@ -12,14 +13,23 @@ from slaif_agent_site.content_model.composition_models import (
     MoveCompositionNodeRequest,
     UpdateCompositionNodeRequest,
 )
+from slaif_agent_site.content_model.design_system import (
+    required_scopes_for_component_create,
+    required_scopes_for_component_update,
+)
 from slaif_agent_site.content_model.service import (
     ContentModelService,
     ContentModelServiceError,
     ContentModelServiceReason,
 )
-from slaif_agent_site.control_api.site_authority import authorize_site_request
+from slaif_agent_site.control_api.site_authority import (
+    SiteRequestAuthority,
+    authorize_site_request,
+)
 from slaif_agent_site.editor_api.mutations import request_service
 from slaif_agent_site.errors import (
+    AuthorizationError,
+    DomainValidationError,
     ResourceConflictError,
     ResourceNotFoundError,
     ServiceUnavailableError,
@@ -38,7 +48,7 @@ async def _page_and_node(
     page_id: UUID,
     node_id: UUID | None = None,
     parent_id: UUID | None = None,
-) -> None:
+) -> CompositionNodeRecord | None:
     service = _service(request)
     try:
         page = await service.get_page(page_id)
@@ -51,16 +61,25 @@ async def _page_and_node(
         if exc.reason is ContentModelServiceReason.NOT_FOUND:
             raise ResourceNotFoundError() from None
         raise ServiceUnavailableError() from None
-    if node_id is not None and not any(node.id == node_id for node in nodes):
+    found = next((node for node in nodes if node.id == node_id), None)
+    if node_id is not None and found is None:
         raise ResourceNotFoundError()
     if parent_id is not None and not any(node.id == parent_id for node in nodes):
         raise ResourceNotFoundError()
+    return found
+
+
+def _require_component_scopes(authority: Any, required_scopes: tuple[str, ...]) -> None:
+    if authority.platform_administrator:
+        return
+    if not set(required_scopes) <= authority.effective_permissions:
+        raise AuthorizationError()
 
 
 async def _auth(
     request: Request, site_id: UUID, *, permission: str, state_changing: bool
-) -> None:
-    await authorize_site_request(
+) -> SiteRequestAuthority:
+    return await authorize_site_request(
         request,
         request.app.state.database,
         request.app.state.settings,
@@ -77,11 +96,16 @@ async def add_component(
     request: Request,
     body: CreateCompositionNodeRequest,
 ) -> CompositionNodeRecord:
-    await _auth(
+    authority = await _auth(
         request, site_id, permission="component-structure:create", state_changing=True
     )
     parent = UUID(body.parent_id) if body.parent_id else None
     await _page_and_node(request, site_id, page_id, parent_id=parent)
+    try:
+        required = required_scopes_for_component_create(body.component_type, body.props)
+    except (TypeError, ValueError):
+        raise DomainValidationError() from None
+    _require_component_scopes(authority, required)
     try:
         return await _service(request).add_composition_node(  # type: ignore[no-any-return]
             site_id=site_id,
@@ -118,13 +142,24 @@ async def update_component(
     request: Request,
     body: UpdateCompositionNodeRequest,
 ) -> CompositionNodeRecord:
-    await _auth(
+    authority = await _auth(
         request,
         site_id,
         permission="component-content-props:write",
         state_changing=True,
     )
-    await _page_and_node(request, site_id, page_id, node_id=node_id)
+    current = await _page_and_node(request, site_id, page_id, node_id=node_id)
+    if current is None:
+        raise ResourceNotFoundError()
+    try:
+        required = required_scopes_for_component_update(
+            current.component_type,
+            current.props,
+            body.props or {},
+        )
+    except (TypeError, ValueError):
+        raise DomainValidationError() from None
+    _require_component_scopes(authority, required)
     try:
         return await _service(request).update_composition_node(  # type: ignore[no-any-return]
             node_id=node_id,

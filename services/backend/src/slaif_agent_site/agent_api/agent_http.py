@@ -15,7 +15,9 @@ from uuid import UUID
 from fastapi import APIRouter, Header, Request
 
 from slaif_agent_site.agent_api.models import (
+    AgentComponentCatalogResponse,
     AgentDeleteRequest,
+    AgentDesignSystemResponse,
     AgentDiscoveryResponse,
     AgentFieldPrimitiveDescriptor,
     AgentMutationResponse,
@@ -39,9 +41,21 @@ from slaif_agent_site.agent_state.reads import (
     execute_agent_read,
 )
 from slaif_agent_site.authority import ProcessKind
+from slaif_agent_site.content_model.component_catalog import (
+    COMPONENT_CATALOG_VERSION,
+    COMPOSITION_SCHEMA_VERSION,
+)
 from slaif_agent_site.content_model.composition_models import (
+    AgentCreateCompositionNodeRequest,
+    AgentMoveCompositionNodeRequest,
+    AgentUpdateCompositionNodeRequest,
     CompositionNodeRecord,
-    CreateCompositionNodeRequest,
+)
+from slaif_agent_site.content_model.design_system import (
+    design_system_document,
+    required_scopes_for_component_create,
+    required_scopes_for_component_update,
+    validate_design_resource_constraints,
 )
 from slaif_agent_site.content_model.item_models import (
     AgentUpdateContentItemRequest,
@@ -200,8 +214,8 @@ async def get_session(request: Request) -> AgentDiscoveryResponse:
         site_id=context.site_id,
         workspace_id=context.workspace_id,
         scopes=tuple(sorted(context.scopes)),
-        component_catalog_version="catalog-v1",
-        composition_schema_version="site-composition/v1",
+        component_catalog_version=COMPONENT_CATALOG_VERSION,
+        composition_schema_version=COMPOSITION_SCHEMA_VERSION,
         content_model_schema_version="content-model/v1",
         resource_constraints=context.resource_constraints,
         source_origins=context.source_origins,
@@ -222,6 +236,25 @@ async def get_permissions(request: Request) -> AgentPermissionsResponse:
         workspace_id=context.workspace_id,
         scopes=tuple(sorted(context.scopes)),
     )
+
+
+@router.get("/component-catalog", response_model_exclude_none=True)
+async def get_component_catalog(
+    request: Request,
+) -> AgentComponentCatalogResponse:
+    context = await _authenticate(request)
+    _require_scope(context, "component-catalog:read")
+    catalog = await _execute_read(
+        request, context, lambda service: service.component_catalog()
+    )
+    return AgentComponentCatalogResponse.model_validate(catalog)
+
+
+@router.get("/design-system", response_model_exclude_none=True)
+async def get_design_system(request: Request) -> AgentDesignSystemResponse:
+    context = await _authenticate(request)
+    _require_scope(context, "theme:read")
+    return AgentDesignSystemResponse.model_validate(design_system_document())
 
 
 @router.get("/content-model/primitives")
@@ -435,6 +468,18 @@ async def list_components(
     return [record.model_dump(mode="json") for record in records]
 
 
+@router.get("/components/{component_id}")
+async def get_component(component_id: UUID, request: Request) -> CompositionNodeRecord:
+    context = await _authenticate(request)
+    _require_scope(context, "composition:read")
+    record = await _execute_read(
+        request,
+        context,
+        lambda service: service.get_component(context.site_id, component_id),
+    )
+    return cast(CompositionNodeRecord, record.model_dump(mode="json"))
+
+
 @router.get("/media/")
 async def list_media(request: Request) -> list[MediaAssetRecord]:
     context = await _authenticate(request)
@@ -462,6 +507,7 @@ async def _execute_mutation(
     dependency_type_id: UUID | None = None,
     dependency_item_id: UUID | None = None,
     dependency_view_id: UUID | None = None,
+    no_effect: bool = False,
 ) -> AgentMutationResponse:
     try:
         key = validate_idempotency_key(idempotency_key)
@@ -489,6 +535,7 @@ async def _execute_mutation(
             dependency_type_id=dependency_type_id,
             dependency_item_id=dependency_item_id,
             dependency_view_id=dependency_view_id,
+            no_effect=no_effect,
         )
     except DurableIdempotencyMismatchError:
         raise IdempotencyMismatchError() from None
@@ -521,6 +568,9 @@ async def _execute_mutation(
                 "REDIRECT_CYCLE",
                 "REDIRECT_CHAIN_LIMIT",
                 "REDIRECT_DEPENDENCY",
+                "COMPONENT_DEPENDENCIES",
+                "COMPONENT_ANCHORS_INVALID",
+                "COMPONENT_ANCHOR_INVALID",
             }:
                 raise ResourceConflictError() from None
             if exc.code == "REDIRECT_ROUTE_PREFIX_DENIED":
@@ -1530,18 +1580,150 @@ async def restore_page(
 async def create_component(
     page_id: UUID,
     request: Request,
-    body: CreateCompositionNodeRequest,
+    body: AgentCreateCompositionNodeRequest,
     idempotency_key: IdempotencyHeader = None,
 ) -> AgentMutationResponse:
     context = await _authenticate(request)
-    _require_scope(context, "component-structure:create")
+
+    async def apply_component_create(service: Any) -> CompositionNodeRecord:
+        try:
+            required_scopes = required_scopes_for_component_create(
+                body.component_type, body.props
+            )
+        except (TypeError, ValueError) as error:
+            raise ContentModelServiceError(
+                ContentModelServiceReason.VALIDATION, code=str(error)
+            ) from None
+        if "component-structure:create" not in context.scopes or any(
+            scope not in context.scopes for scope in required_scopes
+        ):
+            raise ContentModelServiceError(ContentModelServiceReason.AUTHORIZATION)
+        allowed_types = _constraint(context, "allowed_component_types")
+        if isinstance(
+            allowed_types, (list, tuple, set)
+        ) and body.component_type not in {str(value) for value in allowed_types}:
+            raise ContentModelServiceError(ContentModelServiceReason.AUTHORIZATION)
+        return cast(
+            CompositionNodeRecord,
+            await service.add_component_for_site(context.site_id, page_id, body),
+        )
+
     return await _execute_mutation(
         request,
         context,
         body,
         idempotency_key,
         resource_type="composition_node",
-        mutate=lambda service: service.add_component_for_site(
-            context.site_id, page_id, body
+        action="COMPONENT_CREATED",
+        mutate=apply_component_create,
+    )
+
+
+@router.patch("/components/{component_id}")
+async def update_component(
+    component_id: UUID,
+    request: Request,
+    body: AgentUpdateCompositionNodeRequest,
+    idempotency_key: IdempotencyHeader = None,
+) -> AgentMutationResponse:
+    context = await _authenticate(request)
+
+    async def apply_component_update(
+        service: Any,
+    ) -> CompositionNodeRecord:
+        current = cast(
+            CompositionNodeRecord,
+            await service.get_component_for_site(context.site_id, component_id),
+        )
+        try:
+            required_scopes = required_scopes_for_component_update(
+                current.component_type, current.props, body.props
+            )
+            validate_design_resource_constraints(
+                current.component_type,
+                current.props,
+                body.props,
+                context.resource_constraints,
+            )
+        except ValueError as error:
+            if str(error).endswith("resource constraint"):
+                raise ContentModelServiceError(
+                    ContentModelServiceReason.AUTHORIZATION
+                ) from None
+            raise ContentModelServiceError(
+                ContentModelServiceReason.VALIDATION, code=str(error)
+            ) from None
+        for scope in required_scopes:
+            if scope not in context.scopes:
+                raise ContentModelServiceError(ContentModelServiceReason.AUTHORIZATION)
+        if not required_scopes:
+            if current.row_version != body.expected_row_version:
+                raise ContentModelServiceError(ContentModelServiceReason.CONFLICT)
+            service.last_mutation_no_effect = True
+            return current
+        return cast(
+            CompositionNodeRecord,
+            await service.update_component_for_site(
+                context.site_id, component_id, body
+            ),
+        )
+
+    return await _execute_mutation(
+        request,
+        context,
+        body,
+        idempotency_key,
+        resource_type="composition_node",
+        status_code=200,
+        action="COMPONENT_UPDATED",
+        mutate=apply_component_update,
+    )
+
+
+@router.post("/components/{component_id}/move", status_code=200)
+async def move_component(
+    component_id: UUID,
+    request: Request,
+    body: AgentMoveCompositionNodeRequest,
+    idempotency_key: IdempotencyHeader = None,
+) -> AgentMutationResponse:
+    context = await _authenticate(request)
+    _require_scope(context, "component-structure:move")
+    return await _execute_mutation(
+        request,
+        context,
+        body,
+        idempotency_key,
+        resource_type="composition_node",
+        status_code=200,
+        action="COMPONENT_MOVED",
+        mutate=lambda service: service.move_component_for_site(
+            context.site_id, component_id, body
+        ),
+    )
+
+
+@router.delete("/components/{component_id}")
+async def delete_component(
+    component_id: UUID,
+    request: Request,
+    body: AgentDeleteRequest,
+    idempotency_key: IdempotencyHeader = None,
+) -> AgentMutationResponse:
+    context = await _authenticate(request)
+    _require_scope(context, "component-structure:delete")
+    if _constraint(context, "delete_enabled", True) is False:
+        raise AuthorizationError()
+    return await _execute_mutation(
+        request,
+        context,
+        body,
+        idempotency_key,
+        resource_type="composition_node",
+        status_code=200,
+        quota_kind="delete",
+        action="COMPONENT_DELETED",
+        mutate=lambda service: service.delete_component_for_site(
+            context.site_id, component_id, body.expected_row_version
         ),
     )

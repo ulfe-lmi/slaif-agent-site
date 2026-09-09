@@ -129,6 +129,9 @@ def _semantic_database_error_code(error: asyncpg.PostgresError) -> str | None:
         "NAVIGATION_KEY_CONFLICT",
         "NAVIGATION_UPDATE_EMPTY",
         "LOCALE_INVALID",
+        "COMPONENT_DEPENDENCIES",
+        "COMPONENT_ANCHORS_INVALID",
+        "COMPONENT_ANCHOR_INVALID",
     }:
         return message
     return None
@@ -1724,18 +1727,29 @@ def _cmp(row: Any) -> Any:
 
     from .composition_models import CompositionNodeRecord
 
+    extended = len(row) >= 13
     return CompositionNodeRecord(
         id=row[0],
         site_id=row[1],
         page_id=row[2],
         component_type=row[3],
         schema_version=row[4],
-        parent_id=row[5],
-        slot_key=row[6],
-        order_key=row[7],
-        props=json.loads(row[8]) if isinstance(row[8], str) else row[8],
-        created_at=row[9],
-        updated_at=row[10],
+        catalog_version=row[5] if extended else "catalog-v1",
+        parent_id=row[6] if extended else row[5],
+        slot_key=row[7] if extended else row[6],
+        order_key=row[8] if extended else row[7],
+        props=json.loads(row[9])
+        if extended and isinstance(row[9], str)
+        else (
+            row[9]
+            if extended
+            else json.loads(row[8])
+            if isinstance(row[8], str)
+            else row[8]
+        ),
+        row_version=row[10] if extended else 1,
+        created_at=row[11] if extended else row[9],
+        updated_at=row[12] if extended else row[10],
     )
 
 

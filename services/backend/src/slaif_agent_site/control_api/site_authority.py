@@ -23,6 +23,7 @@ from slaif_agent_site.human_authorization import (
     HumanAuthorizationReason,
     HumanAuthorizationService,
 )
+from slaif_agent_site.human_authorization.models import HumanSiteContext
 from slaif_agent_site.identity.sessions import HumanSessionContext
 from slaif_agent_site.sites import SiteService, SiteServiceError, SiteStatus
 
@@ -33,6 +34,7 @@ from .auth_http import authenticate_human_request
 class SiteRequestAuthority:
     session: HumanSessionContext
     platform_administrator: bool
+    effective_permissions: frozenset[str]
 
 
 def _authorization(database: Any) -> HumanAuthorizationService:
@@ -76,13 +78,14 @@ async def authorize_site_request(
         raise
     except Exception:
         raise ServiceUnavailableError() from None
+    human_context: HumanSiteContext | None = None
     if not administrator:
         authorization = _authorization(database)
         try:
             membership = await authorization.membership(
                 site_id, session.user_account_id
             )
-            await authorization.authorize(
+            human_context = await authorization.authorize(
                 session.user_account_id,
                 site_id,
                 permission,
@@ -102,7 +105,14 @@ async def authorize_site_request(
         raise
     except SiteServiceError:
         raise ResourceNotFoundError() from None
-    authority = SiteRequestAuthority(session, bool(administrator))
+    effective_permissions = (
+        human_context.effective_permissions
+        if human_context is not None
+        else frozenset()
+    )
+    authority = SiteRequestAuthority(
+        session, bool(administrator), effective_permissions
+    )
     editor_database = getattr(request.app.state, "editor_database", None)
     if request.url.path.startswith("/api/editor/") and editor_database is not None:
         from slaif_agent_site.editor_api.database import (

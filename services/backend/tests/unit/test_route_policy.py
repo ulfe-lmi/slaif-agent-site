@@ -40,7 +40,7 @@ class PolicyDatabase:
 
 def test_registry_exact_inventory_and_policy_shapes() -> None:
     keys = [policy.key for policy in ROUTE_POLICIES]
-    assert len(keys) == len(set(keys)) == 173
+    assert len(keys) == len(set(keys)) == 179
     assert {policy.process for policy in ROUTE_POLICIES} == {
         ProcessKind.CONTROL_API,
         ProcessKind.EDITOR_API,
@@ -49,7 +49,7 @@ def test_registry_exact_inventory_and_policy_shapes() -> None:
     control = route_policies_for(ProcessKind.CONTROL_API)
     editor = route_policies_for(ProcessKind.EDITOR_API)
     agent = route_policies_for(ProcessKind.AGENT_API)
-    assert len(agent) == 73
+    assert len(agent) == 79
     assert all(
         policy.authority_kind
         in {RouteAuthorityKind.AGENT_CAPABILITY, RouteAuthorityKind.SYSTEM_EXEMPTION}
@@ -154,6 +154,32 @@ def test_agent_page_patch_conditional_route_scope_is_machine_auditable() -> None
         "/api/agent/v1/pages/{page_id}",
         {"route_template"},
     ) == ("route:write",)
+
+    component = next(
+        policy
+        for policy in route_policies_for(ProcessKind.AGENT_API)
+        if policy.method == "PATCH"
+        and policy.path_template == "/api/agent/v1/components/{component_id}"
+    )
+    assert component.required_scopes == ()
+    assert len(component.conditional_scopes) == 37
+    assert any(
+        condition.when_fields == ("props.variant",)
+        and condition.component_types == ("Button",)
+        and condition.required_scopes == ("component-variant:write",)
+        for condition in component.conditional_scopes
+    )
+
+
+def test_agent_design_system_is_a_capability_bound_read() -> None:
+    design = next(
+        policy
+        for policy in route_policies_for(ProcessKind.AGENT_API)
+        if policy.method == "GET"
+        and policy.path_template == "/api/agent/v1/design-system"
+    )
+    assert design.required_scopes == ("theme:read",)
+    assert design.conditional_scopes == ()
 
 
 def test_conditional_scope_validation_rejects_scope_field_read_and_metadata_drift() -> (

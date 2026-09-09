@@ -1,7 +1,7 @@
 # Contract-First MVP Audit
 
-**Audit date:** 2026-09-08
-**Authoritative audited source revision:** Objective 077-z developed on [PR #74](https://github.com/ulfe-lmi/slaif-agent-site/pull/74), based on Objective 076 commit `067676314e0d9664d40cb8514ea549b966a4eb2d`; GitHub state is authoritative for its containment in `main`
+**Audit date:** 2026-09-09
+**Authoritative audited source revision:** Objective 078-o security continuation on open [PR #77](https://github.com/ulfe-lmi/slaif-agent-site/pull/77), preserving the accepted Objective-077 source revision and based on verified main `ae3a4a681bb888260192b7bb1b2a337b4906828d`; GitHub state is authoritative for its containment in `main`
 **Normative contract:** `ARCHITECTURE.md`, Revision 2.1, read in full  
 **Verdict:** **CONTRACTUAL MVP NOT COMPLETE**
 
@@ -33,7 +33,8 @@ capability. Percentages and file presence are not acceptance evidence.
 | §§15.2, 18–20, 24.2 | Human creates an AGENT workspace and one-time capability, monitors/revokes it | Human Control/Web | Merged Objective 074 / [PR #70](https://github.com/ulfe-lmi/slaif-agent-site/pull/70) proves the public Control workspace/capability issuance path, site/CSRF/policy authority, one-time capability use, durable idempotency/audit/revoke behavior, and Control+Agent restart proof | COMPLETE — E2E PROVEN | Preserve the merged 074 evidence; later review/publication authority remains separate |
 | §§16.2, 21, 51.1 | Configurable types, fields, items, translations, relations and collection views as COW data | Human Editor and Agent semantic APIs | Merged Objective 075 / [PR #71](https://github.com/ulfe-lmi/slaif-agent-site/pull/71) proves the editable-domain substrate, bounded validators/query contract, locale/navigation/redirect integrity, production COW upgrade, and Agent binding; later semantic families remain separately scoped | COMPLETE — E2E PROVEN | Preserve 075 production-boundary evidence; 076 extends its public Agent surface |
 | §§15.4, 24.4–24.5 | Agent model/content semantic CRUD with scopes, COW, validation, idempotency and audit | External agent / REST/OpenAPI | Merged Objective 076 / [PR #72](https://github.com/ulfe-lmi/slaif-agent-site/pull/72), merged as `067676314e0d9664d40cb8514ea549b966a4eb2d`, proves capability-bound public REST model/type/field/item/translation/relation/collection-view semantics with strict scopes/resources/quotas, COW, idempotency, semantic audit, concurrency, and public NGINX/PG14–18 evidence | COMPLETE — E2E PROVEN | Preserve 076 evidence; broader 077–079 page/composition/media semantics remain partial |
-| §§15.4, 21.7–22.5, 24.6–24.7 | Agent pages/routes/navigation/redirects/composition/design/media-reference semantics | External agent / REST/OpenAPI | Protocol-final 077-z source revision developed on [PR #74](https://github.com/ulfe-lmi/slaif-agent-site/pull/74) maps 077-a through 077-z to real public Agent/Editor/Render/NGINX/browser, PostgreSQL, migration, concurrency, recovery, OpenAPI/policy, and hostile-negative evidence for the bounded page/locale/navigation/redirect/dynamic-Render surface. Composition, design, media-reference, review, and publication remain outside 077. GitHub PR/main state is authoritative for whether the revision has merged. | COMPLETE — E2E PROVEN (source revision) | Preserve accepted 077 evidence; 078–091 remain separate contracts |
+| §§15.4, 21.7–22.5, 24.6–24.7 | Agent pages/routes/navigation/redirects/composition/design/media-reference semantics | External agent / REST/OpenAPI | Protocol-final 077-z source revision developed on [PR #74](https://github.com/ulfe-lmi/slaif-agent-site/pull/74) maps 077-a through 077-z to real public Agent/Editor/Render/NGINX/browser, PostgreSQL, migration, concurrency, recovery, OpenAPI/policy, and hostile-negative evidence for the bounded page/locale/navigation/redirect/dynamic-Render surface. It was accepted and merged on 2026-09-08 at `ae3a4a6`. Composition, design, media-reference, review, and publication remain outside 077. | COMPLETE — E2E PROVEN (source revision) | Preserve accepted 077 evidence; 078–091 remain separate contracts |
+| §§15.4, 21.7–22.5, 24.6–24.7, 26–27, 30.6 | Bounded Agent component catalog/composition/design data plane with shared preview and browser evidence | External agent + human preview / REST/OpenAPI → Render/Web → browser worker | Objective 078-o on open [PR #77](https://github.com/ulfe-lmi/slaif-agent-site/pull/77) preserves the accepted component/local-design implementation, records the 078-n repair of the consumed 078-m link-format blocker, and qualifies the narrowly authorized Next.js 16.3.3 security patch against the two newly surfaced Critical advisories. Local Node/policy/Compose/edge/browser qualification passes; final remote supply-chain evidence and strategic merge remain pending. Site-theme, global-region, exact-workspace Puck, review, and publication remain outside this slice. | PARTIAL | Verify the final remote security gate and merge PR #77; site-theme/global behavior proceeds in a new PR after acceptance |
 | §§24.1, 51.1 | Versioned deterministic Agent OpenAPI describes the real public semantic contract | External agent / OpenAPI | Merged Objective 076 / [PR #72](https://github.com/ulfe-lmi/slaif-agent-site/pull/72) provides the canonical generated Agent OpenAPI through the public path, with bidirectional production-handler/route-policy/schema drift checks and required mutation metadata | COMPLETE — E2E PROVEN | Preserve 076 OpenAPI evidence; MCP parity remains Objective 080 and is not implied by OpenAPI completion |
 | §25, §51.1 | Curated MCP model/content/composition/design and browser tools delegate to Agent API | External agent / real MCP | Custom `/mcp/v1/tools` lists five reads; `/call` accepts caller-chosen method/path, references absent production configuration and uses a test-only HTTP dependency; no real call test or write-tool proof | SCAFFOLD ONLY | 080; real MCP client tools/list and tools/call E2E through NGINX, with no DB/internal bypass |
 | §§14.3, 22.4, 42.4, 52.6 | Human Puck edits the same normalized composition and exact Agent workspace under server policy | Human Web/Puck → Editor API | Objective 068 proves real Puck editing, but its resolver selects/creates a separate HUMAN workspace rather than the Agent workspace later reviewed | PARTIAL | 081 exact-workspace proof; 084/088 reuse it for human adjustment |
@@ -70,6 +71,7 @@ capability. Percentages and file presence are not acceptance evidence.
 | 075 | Complete editable-domain substrate and bounded validators/query contract with production COW upgrade and Agent binding | Complete public Agent model/content/page/composition/media/MCP surface |
 | 076 | Public capability-bound Agent model/type/field/item/translation/relation/collection-view REST semantics, strict scopes/resources/quotas/idempotency/audit/COW/concurrency, generated OpenAPI, public NGINX evidence, and PG14–18 CI | Page/navigation/redirect/composition/design/media completion, MCP parity, review, promotion, or MVP completion |
 | 077 source revision | Capability-bound page list/read/create/update/delete/move/restore, locale and navigation/redirect semantics, derived static/dynamic route integrity, shared Render projection, hostile negatives, deterministic concurrency/recovery, and public Agent/Editor/Render/NGINX/browser evidence on PR #74 | Composition/design/media-reference, MCP, exact-workspace Puck, freeze/review, promotion/publication, source reconstruction, cleanup, backup/restore, or contractual MVP completion |
+| 078 source revision | Public capability-bound catalog composition data plane plus the active 078-m repaired design-system/local variant-layout-responsive extension on open PR #77 | Remaining design/theme/global-region semantics, exact-workspace Puck, media references, MCP, freeze/review, promotion/publication, source reconstruction, cleanup, backup/restore, or contractual MVP completion |
 
 Historical objectives remain complete for those narrow scopes. None may be
 used to mark the broader row complete.
@@ -87,12 +89,12 @@ COMPLETED ON REMOTE MAIN:
   -> 074 human Agent workspace/capability product surface
       -> 075 complete editable-domain substrate and shared validators
           -> 076 Agent model/content/view/relation REST+OpenAPI
+              -> 077 page/navigation/redirect/dynamic-Render (PR74 merged ae3a4a6)
 
-OBJECTIVE 077 SOURCE REVISION:
-077 page/navigation/redirect/dynamic-Render contract is complete at the audited
-source revision developed on PR #74; OAP and GitHub record acceptance/merge.
-
-ACTIVE / REMAINING AFTER 077 ACCEPTANCE:
+ACTIVE / REMAINING AFTER MERGED 077:
+078/1 on OPEN PR77 is bounded to components and local design; its final audit
+findings are technically accepted and final merge remains pending. Theme and other
+remaining 078 work will use fresh PRs. 078-i theme history is preserved/deferred.
 078 Agent composition/design semantics
   -> 079 Agent media semantics
           -> 080 real curated MCP semantic parity
@@ -111,7 +113,8 @@ ACTIVE / REMAINING AFTER 077 ACCEPTANCE:
 
 Objectives 084–087 have independent implementation portions but must not run
 before every prerequisite their acceptance proof consumes is merged. One
-numeric objective remains one PR; `b..z` continuations may repair the same PR.
+bounded semantic merge increment maps to one PR; a numeric objective may span
+sequential PRs when a strategic continuation explicitly orders it.
 
 ## Anti-bypass acceptance law
 

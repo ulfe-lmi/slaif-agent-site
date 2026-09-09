@@ -1,6 +1,475 @@
 {
   "components": {
     "schemas": {
+      "AgentComponentCatalogResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "components": {
+            "items": {
+              "$ref": "#/components/schemas/AgentComponentDescriptor"
+            },
+            "title": "Components",
+            "type": "array"
+          },
+          "composition_schema_version": {
+            "const": "site-composition/v1",
+            "title": "Composition Schema Version",
+            "type": "string"
+          },
+          "version": {
+            "const": "catalog-v1",
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "version",
+          "composition_schema_version",
+          "components"
+        ],
+        "title": "AgentComponentCatalogResponse",
+        "type": "object"
+      },
+      "AgentComponentDescriptor": {
+        "additionalProperties": false,
+        "properties": {
+          "allowed_slots": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Allowed Slots",
+            "type": "array"
+          },
+          "authority_class": {
+            "enum": [
+              "content",
+              "structure",
+              "global"
+            ],
+            "title": "Authority Class",
+            "type": "string"
+          },
+          "binding_kind": {
+            "enum": [
+              "none",
+              "collection_view",
+              "media_asset"
+            ],
+            "title": "Binding Kind",
+            "type": "string"
+          },
+          "category": {
+            "enum": [
+              "layout",
+              "basic",
+              "data",
+              "institutional",
+              "global"
+            ],
+            "title": "Category",
+            "type": "string"
+          },
+          "max_children": {
+            "title": "Max Children",
+            "type": "integer"
+          },
+          "props": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/AgentComponentPropDescriptor"
+            },
+            "title": "Props",
+            "type": "object"
+          },
+          "schema_version": {
+            "title": "Schema Version",
+            "type": "string"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "category",
+          "schema_version",
+          "allowed_slots",
+          "max_children",
+          "binding_kind",
+          "authority_class",
+          "props"
+        ],
+        "title": "AgentComponentDescriptor",
+        "type": "object"
+      },
+      "AgentComponentPropDescriptor": {
+        "additionalProperties": false,
+        "properties": {
+          "authority": {
+            "enum": [
+              "content",
+              "design"
+            ],
+            "title": "Authority",
+            "type": "string"
+          },
+          "enum_values": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enum Values"
+          },
+          "format": {
+            "anyOf": [
+              {
+                "const": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Format"
+          },
+          "localized": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Localized"
+          },
+          "max_items": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Items"
+          },
+          "max_length": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Length"
+          },
+          "maximum": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Maximum"
+          },
+          "min_items": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min Items"
+          },
+          "minimum": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Minimum"
+          },
+          "required": {
+            "title": "Required",
+            "type": "boolean"
+          },
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AgentComponentSchemaNode"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "type": {
+            "enum": [
+              "string",
+              "number",
+              "boolean",
+              "enum",
+              "reference",
+              "object",
+              "array"
+            ],
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "required",
+          "authority"
+        ],
+        "title": "AgentComponentPropDescriptor",
+        "type": "object"
+      },
+      "AgentComponentSchemaNode": {
+        "additionalProperties": false,
+        "properties": {
+          "additional_properties": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Additional Properties"
+          },
+          "enum_values": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enum Values"
+          },
+          "format": {
+            "anyOf": [
+              {
+                "const": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Format"
+          },
+          "items": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AgentComponentSchemaNode"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "max_items": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Items"
+          },
+          "max_length": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Length"
+          },
+          "maximum": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Maximum"
+          },
+          "min_items": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min Items"
+          },
+          "minimum": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Minimum"
+          },
+          "properties": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/AgentComponentSchemaNode"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Properties"
+          },
+          "required": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Required"
+          },
+          "type": {
+            "enum": [
+              "string",
+              "number",
+              "boolean",
+              "enum",
+              "reference",
+              "object",
+              "array"
+            ],
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "title": "AgentComponentSchemaNode",
+        "type": "object"
+      },
+      "AgentCreateCompositionNodeRequest": {
+        "additionalProperties": false,
+        "description": "Agent create intent; sibling anchors replace trusted raw ordering.",
+        "properties": {
+          "after_component_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "After Component Id"
+          },
+          "before_component_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Before Component Id"
+          },
+          "component_type": {
+            "title": "Component Type",
+            "type": "string"
+          },
+          "parent_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Id"
+          },
+          "props": {
+            "additionalProperties": true,
+            "default": {},
+            "title": "Props",
+            "type": "object"
+          },
+          "slot_key": {
+            "default": "default",
+            "title": "Slot Key",
+            "type": "string"
+          }
+        },
+        "required": [
+          "component_type"
+        ],
+        "title": "AgentCreateCompositionNodeRequest",
+        "type": "object"
+      },
       "AgentCreateLocaleRequest": {
         "additionalProperties": false,
         "description": "Agent-facing alias with the same bounded locale-create contract.",
@@ -222,6 +691,304 @@
         "title": "AgentDeleteRequest",
         "type": "object"
       },
+      "AgentDesignComponentDescriptor": {
+        "additionalProperties": false,
+        "properties": {
+          "properties": {
+            "items": {
+              "$ref": "#/components/schemas/AgentDesignPropertyDescriptor"
+            },
+            "title": "Properties",
+            "type": "array"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          },
+          "variants": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Variants",
+            "type": "array"
+          }
+        },
+        "required": [
+          "type",
+          "variants",
+          "properties"
+        ],
+        "title": "AgentDesignComponentDescriptor",
+        "type": "object"
+      },
+      "AgentDesignPropertyDescriptor": {
+        "additionalProperties": false,
+        "properties": {
+          "default": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "title": "Default"
+          },
+          "integer": {
+            "anyOf": [
+              {
+                "const": true,
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Integer"
+          },
+          "maximum": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Maximum"
+          },
+          "minimum": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Minimum"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "required": {
+            "title": "Required",
+            "type": "boolean"
+          },
+          "responsive": {
+            "const": true,
+            "title": "Responsive",
+            "type": "boolean"
+          },
+          "scope": {
+            "enum": [
+              "component-props:write",
+              "component-variant:write",
+              "layout:write"
+            ],
+            "title": "Scope",
+            "type": "string"
+          },
+          "token": {
+            "title": "Token",
+            "type": "string"
+          },
+          "type": {
+            "enum": [
+              "enum",
+              "number"
+            ],
+            "title": "Type",
+            "type": "string"
+          },
+          "values": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Values"
+          }
+        },
+        "required": [
+          "name",
+          "type",
+          "default",
+          "required",
+          "responsive",
+          "scope",
+          "token"
+        ],
+        "title": "AgentDesignPropertyDescriptor",
+        "type": "object"
+      },
+      "AgentDesignSystemResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "catalog_version": {
+            "const": "catalog-v1",
+            "title": "Catalog Version",
+            "type": "string"
+          },
+          "components": {
+            "items": {
+              "$ref": "#/components/schemas/AgentDesignComponentDescriptor"
+            },
+            "title": "Components",
+            "type": "array"
+          },
+          "composition_schema_version": {
+            "const": "site-composition/v1",
+            "title": "Composition Schema Version",
+            "type": "string"
+          },
+          "renderer_version": {
+            "const": "renderer-v1",
+            "title": "Renderer Version",
+            "type": "string"
+          },
+          "responsive_fallback": {
+            "items": {
+              "enum": [
+                "desktop",
+                "tablet",
+                "mobile"
+              ],
+              "type": "string"
+            },
+            "title": "Responsive Fallback",
+            "type": "array"
+          },
+          "responsive_labels": {
+            "items": {
+              "enum": [
+                "desktop",
+                "tablet",
+                "mobile"
+              ],
+              "type": "string"
+            },
+            "title": "Responsive Labels",
+            "type": "array"
+          },
+          "responsive_scope": {
+            "const": "responsive-design:write",
+            "title": "Responsive Scope",
+            "type": "string"
+          },
+          "tokens": {
+            "$ref": "#/components/schemas/AgentDesignTokenSet"
+          },
+          "version": {
+            "const": "design-system/v1",
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "version",
+          "catalog_version",
+          "composition_schema_version",
+          "renderer_version",
+          "responsive_labels",
+          "responsive_scope",
+          "responsive_fallback",
+          "tokens",
+          "components"
+        ],
+        "title": "AgentDesignSystemResponse",
+        "type": "object"
+      },
+      "AgentDesignTokenSet": {
+        "additionalProperties": false,
+        "properties": {
+          "alignment": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Alignment",
+            "type": "array"
+          },
+          "aspect_ratio": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Aspect Ratio",
+            "type": "array"
+          },
+          "columns": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Columns",
+            "type": "array"
+          },
+          "gap": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Gap",
+            "type": "array"
+          },
+          "radius": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Radius",
+            "type": "array"
+          },
+          "shadow": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Shadow",
+            "type": "array"
+          },
+          "spacing": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Spacing",
+            "type": "array"
+          },
+          "width": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Width",
+            "type": "array"
+          }
+        },
+        "required": [
+          "spacing",
+          "gap",
+          "width",
+          "alignment",
+          "columns",
+          "radius",
+          "shadow",
+          "aspect_ratio"
+        ],
+        "title": "AgentDesignTokenSet",
+        "type": "object"
+      },
       "AgentDiscoveryResponse": {
         "properties": {
           "component_catalog_version": {
@@ -314,6 +1081,63 @@
           "primitive"
         ],
         "title": "AgentFieldPrimitiveDescriptor",
+        "type": "object"
+      },
+      "AgentMoveCompositionNodeRequest": {
+        "additionalProperties": false,
+        "description": "Agent move intent; ordering is expressed by semantic sibling anchors.",
+        "properties": {
+          "after_component_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "After Component Id"
+          },
+          "before_component_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Before Component Id"
+          },
+          "expected_row_version": {
+            "exclusiveMinimum": 0.0,
+            "title": "Expected Row Version",
+            "type": "integer"
+          },
+          "new_parent_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "New Parent Id"
+          },
+          "new_slot_key": {
+            "default": "default",
+            "title": "New Slot Key",
+            "type": "string"
+          }
+        },
+        "required": [
+          "expected_row_version"
+        ],
+        "title": "AgentMoveCompositionNodeRequest",
         "type": "object"
       },
       "AgentMoveNavigationItemRequest": {
@@ -488,6 +1312,28 @@
           "scopes"
         ],
         "title": "AgentPermissionsResponse",
+        "type": "object"
+      },
+      "AgentUpdateCompositionNodeRequest": {
+        "additionalProperties": false,
+        "description": "Agent PATCH: bounded content/design props with an explicit row version.",
+        "properties": {
+          "expected_row_version": {
+            "exclusiveMinimum": 0.0,
+            "title": "Expected Row Version",
+            "type": "integer"
+          },
+          "props": {
+            "additionalProperties": true,
+            "title": "Props",
+            "type": "object"
+          }
+        },
+        "required": [
+          "props",
+          "expected_row_version"
+        ],
+        "title": "AgentUpdateCompositionNodeRequest",
         "type": "object"
       },
       "AgentUpdateContentItemRequest": {
@@ -933,6 +1779,11 @@
       },
       "CompositionNodeRecord": {
         "properties": {
+          "catalog_version": {
+            "default": "catalog-v1",
+            "title": "Catalog Version",
+            "type": "string"
+          },
           "component_type": {
             "title": "Component Type",
             "type": "string"
@@ -972,6 +1823,11 @@
             "additionalProperties": true,
             "title": "Props",
             "type": "object"
+          },
+          "row_version": {
+            "default": 1,
+            "title": "Row Version",
+            "type": "integer"
           },
           "schema_version": {
             "title": "Schema Version",
@@ -1191,47 +2047,6 @@
           "key"
         ],
         "title": "CreateCollectionViewRequest",
-        "type": "object"
-      },
-      "CreateCompositionNodeRequest": {
-        "additionalProperties": false,
-        "properties": {
-          "component_type": {
-            "title": "Component Type",
-            "type": "string"
-          },
-          "order_key": {
-            "default": 0,
-            "title": "Order Key",
-            "type": "integer"
-          },
-          "parent_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Parent Id"
-          },
-          "props": {
-            "additionalProperties": true,
-            "default": {},
-            "title": "Props",
-            "type": "object"
-          },
-          "slot_key": {
-            "default": "default",
-            "title": "Slot Key",
-            "type": "string"
-          }
-        },
-        "required": [
-          "component_type"
-        ],
-        "title": "CreateCompositionNodeRequest",
         "type": "object"
       },
       "CreateContentItemRequest": {
@@ -3667,6 +4482,2007 @@
         "x-slaif-mutation": true,
         "x-slaif-required-scopes": [
           "collection-view:write"
+        ]
+      }
+    },
+    "/api/agent/v1/component-catalog": {
+      "get": {
+        "operationId": "get_component_catalog_api_agent_v1_component_catalog_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentComponentCatalogResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Malformed request or missing/invalid idempotency key."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Authentication is required."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The capability scope or resource constraint is not sufficient."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The resource is not available to this capability."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The request conflicts with current state or idempotency."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The request exceeds the bounded body limit."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The request failed domain validation."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The request exceeds an enforced quota."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The service is temporarily unavailable."
+          }
+        },
+        "security": [
+          {
+            "AgentCapability": []
+          }
+        ],
+        "summary": "Get Component Catalog",
+        "x-slaif-conditional-scopes": [],
+        "x-slaif-idempotency": "not-applicable",
+        "x-slaif-mutation": false,
+        "x-slaif-required-scopes": [
+          "component-catalog:read"
+        ]
+      }
+    },
+    "/api/agent/v1/components/{component_id}": {
+      "delete": {
+        "operationId": "delete_component_api_agent_v1_components__component_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "component_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Component Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9._~-]+$",
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgentDeleteRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentMutationResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Malformed request or missing/invalid idempotency key."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Authentication is required."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The capability scope or resource constraint is not sufficient."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The resource is not available to this capability."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The request conflicts with current state or idempotency."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The request exceeds the bounded body limit."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The request failed domain validation."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The request exceeds an enforced quota."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The service is temporarily unavailable."
+          }
+        },
+        "security": [
+          {
+            "AgentCapability": []
+          }
+        ],
+        "summary": "Delete Component",
+        "x-slaif-conditional-scopes": [],
+        "x-slaif-idempotency": "required",
+        "x-slaif-mutation": true,
+        "x-slaif-required-scopes": [
+          "component-structure:delete"
+        ]
+      },
+      "get": {
+        "operationId": "get_component_api_agent_v1_components__component_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "component_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Component Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompositionNodeRecord"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Malformed request or missing/invalid idempotency key."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Authentication is required."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The capability scope or resource constraint is not sufficient."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The resource is not available to this capability."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The request conflicts with current state or idempotency."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The request exceeds the bounded body limit."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The request failed domain validation."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The request exceeds an enforced quota."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The service is temporarily unavailable."
+          }
+        },
+        "security": [
+          {
+            "AgentCapability": []
+          }
+        ],
+        "summary": "Get Component",
+        "x-slaif-conditional-scopes": [],
+        "x-slaif-idempotency": "not-applicable",
+        "x-slaif-mutation": false,
+        "x-slaif-required-scopes": [
+          "composition:read"
+        ]
+      },
+      "patch": {
+        "operationId": "update_component_api_agent_v1_components__component_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "component_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Component Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9._~-]+$",
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgentUpdateCompositionNodeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentMutationResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Malformed request or missing/invalid idempotency key."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Authentication is required."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The capability scope or resource constraint is not sufficient."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The resource is not available to this capability."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The request conflicts with current state or idempotency."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The request exceeds the bounded body limit."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The request failed domain validation."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The request exceeds an enforced quota."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The service is temporarily unavailable."
+          }
+        },
+        "security": [
+          {
+            "AgentCapability": []
+          }
+        ],
+        "summary": "Update Component",
+        "x-slaif-component-authority": {
+          "operations": {
+            "CREATE": {
+              "responsive_transition": "responsive-map-add",
+              "selection": "caller-present-properties"
+            },
+            "PATCH": {
+              "removal": [
+                "whole-document-absent",
+                "json-null"
+              ],
+              "responsive_transition": [
+                "map-add",
+                "map-change",
+                "map-remove",
+                "map-to-scalar"
+              ],
+              "selection": "value-changed-properties"
+            }
+          },
+          "properties": [
+            {
+              "component_type": "Section",
+              "property": "background",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [],
+              "supported": false
+            },
+            {
+              "component_type": "Section",
+              "property": "variant",
+              "responsive": true,
+              "responsive_required_scopes": [
+                "responsive-design:write"
+              ],
+              "scalar_required_scopes": [
+                "component-variant:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Section",
+              "property": "alignment",
+              "responsive": true,
+              "responsive_required_scopes": [
+                "responsive-design:write"
+              ],
+              "scalar_required_scopes": [
+                "layout:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Container",
+              "property": "width",
+              "responsive": true,
+              "responsive_required_scopes": [
+                "responsive-design:write"
+              ],
+              "scalar_required_scopes": [
+                "layout:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Container",
+              "property": "alignment",
+              "responsive": true,
+              "responsive_required_scopes": [
+                "responsive-design:write"
+              ],
+              "scalar_required_scopes": [
+                "layout:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Columns",
+              "property": "count",
+              "responsive": true,
+              "responsive_required_scopes": [
+                "responsive-design:write"
+              ],
+              "scalar_required_scopes": [
+                "layout:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Columns",
+              "property": "gap",
+              "responsive": true,
+              "responsive_required_scopes": [
+                "responsive-design:write"
+              ],
+              "scalar_required_scopes": [
+                "layout:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Columns",
+              "property": "alignment",
+              "responsive": true,
+              "responsive_required_scopes": [
+                "responsive-design:write"
+              ],
+              "scalar_required_scopes": [
+                "layout:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Grid",
+              "property": "columns",
+              "responsive": true,
+              "responsive_required_scopes": [
+                "responsive-design:write"
+              ],
+              "scalar_required_scopes": [
+                "layout:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Grid",
+              "property": "gap",
+              "responsive": true,
+              "responsive_required_scopes": [
+                "responsive-design:write"
+              ],
+              "scalar_required_scopes": [
+                "layout:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Grid",
+              "property": "alignment",
+              "responsive": true,
+              "responsive_required_scopes": [
+                "responsive-design:write"
+              ],
+              "scalar_required_scopes": [
+                "layout:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Stack",
+              "property": "direction",
+              "responsive": true,
+              "responsive_required_scopes": [
+                "responsive-design:write"
+              ],
+              "scalar_required_scopes": [
+                "layout:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Stack",
+              "property": "gap",
+              "responsive": true,
+              "responsive_required_scopes": [
+                "responsive-design:write"
+              ],
+              "scalar_required_scopes": [
+                "layout:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Stack",
+              "property": "alignment",
+              "responsive": true,
+              "responsive_required_scopes": [
+                "responsive-design:write"
+              ],
+              "scalar_required_scopes": [
+                "layout:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Spacer",
+              "property": "size",
+              "responsive": true,
+              "responsive_required_scopes": [
+                "responsive-design:write"
+              ],
+              "scalar_required_scopes": [
+                "layout:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Heading",
+              "property": "level",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Heading",
+              "property": "text",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Heading",
+              "property": "alignment",
+              "responsive": true,
+              "responsive_required_scopes": [
+                "responsive-design:write"
+              ],
+              "scalar_required_scopes": [
+                "layout:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "RichText",
+              "property": "content",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Image",
+              "property": "alt",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Image",
+              "property": "aspectRatio",
+              "responsive": true,
+              "responsive_required_scopes": [
+                "responsive-design:write"
+              ],
+              "scalar_required_scopes": [
+                "component-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Image",
+              "property": "mediaId",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Button",
+              "property": "href",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Button",
+              "property": "label",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Button",
+              "property": "variant",
+              "responsive": true,
+              "responsive_required_scopes": [
+                "responsive-design:write"
+              ],
+              "scalar_required_scopes": [
+                "component-variant:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Quote",
+              "property": "attribution",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Quote",
+              "property": "text",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "CollectionList",
+              "property": "limit",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "CollectionList",
+              "property": "viewId",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "CollectionGrid",
+              "property": "columns",
+              "responsive": true,
+              "responsive_required_scopes": [
+                "responsive-design:write"
+              ],
+              "scalar_required_scopes": [
+                "layout:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "CollectionGrid",
+              "property": "viewId",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "CollectionDetail",
+              "property": "viewId",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Hero",
+              "property": "heading",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Hero",
+              "property": "mediaId",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Hero",
+              "property": "subheading",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Statistics",
+              "property": "items",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Timeline",
+              "property": "items",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "FAQ",
+              "property": "items",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            }
+          ]
+        },
+        "x-slaif-component-property-scopes": [
+          {
+            "component_type": "Section",
+            "property": "background",
+            "responsive": false,
+            "responsive_required_scopes": [],
+            "scalar_required_scopes": [],
+            "supported": false
+          },
+          {
+            "component_type": "Section",
+            "property": "variant",
+            "responsive": true,
+            "responsive_required_scopes": [
+              "responsive-design:write"
+            ],
+            "scalar_required_scopes": [
+              "component-variant:write"
+            ],
+            "supported": true
+          },
+          {
+            "component_type": "Section",
+            "property": "alignment",
+            "responsive": true,
+            "responsive_required_scopes": [
+              "responsive-design:write"
+            ],
+            "scalar_required_scopes": [
+              "layout:write"
+            ],
+            "supported": true
+          },
+          {
+            "component_type": "Container",
+            "property": "width",
+            "responsive": true,
+            "responsive_required_scopes": [
+              "responsive-design:write"
+            ],
+            "scalar_required_scopes": [
+              "layout:write"
+            ],
+            "supported": true
+          },
+          {
+            "component_type": "Container",
+            "property": "alignment",
+            "responsive": true,
+            "responsive_required_scopes": [
+              "responsive-design:write"
+            ],
+            "scalar_required_scopes": [
+              "layout:write"
+            ],
+            "supported": true
+          },
+          {
+            "component_type": "Columns",
+            "property": "count",
+            "responsive": true,
+            "responsive_required_scopes": [
+              "responsive-design:write"
+            ],
+            "scalar_required_scopes": [
+              "layout:write"
+            ],
+            "supported": true
+          },
+          {
+            "component_type": "Columns",
+            "property": "gap",
+            "responsive": true,
+            "responsive_required_scopes": [
+              "responsive-design:write"
+            ],
+            "scalar_required_scopes": [
+              "layout:write"
+            ],
+            "supported": true
+          },
+          {
+            "component_type": "Columns",
+            "property": "alignment",
+            "responsive": true,
+            "responsive_required_scopes": [
+              "responsive-design:write"
+            ],
+            "scalar_required_scopes": [
+              "layout:write"
+            ],
+            "supported": true
+          },
+          {
+            "component_type": "Grid",
+            "property": "columns",
+            "responsive": true,
+            "responsive_required_scopes": [
+              "responsive-design:write"
+            ],
+            "scalar_required_scopes": [
+              "layout:write"
+            ],
+            "supported": true
+          },
+          {
+            "component_type": "Grid",
+            "property": "gap",
+            "responsive": true,
+            "responsive_required_scopes": [
+              "responsive-design:write"
+            ],
+            "scalar_required_scopes": [
+              "layout:write"
+            ],
+            "supported": true
+          },
+          {
+            "component_type": "Grid",
+            "property": "alignment",
+            "responsive": true,
+            "responsive_required_scopes": [
+              "responsive-design:write"
+            ],
+            "scalar_required_scopes": [
+              "layout:write"
+            ],
+            "supported": true
+          },
+          {
+            "component_type": "Stack",
+            "property": "direction",
+            "responsive": true,
+            "responsive_required_scopes": [
+              "responsive-design:write"
+            ],
+            "scalar_required_scopes": [
+              "layout:write"
+            ],
+            "supported": true
+          },
+          {
+            "component_type": "Stack",
+            "property": "gap",
+            "responsive": true,
+            "responsive_required_scopes": [
+              "responsive-design:write"
+            ],
+            "scalar_required_scopes": [
+              "layout:write"
+            ],
+            "supported": true
+          },
+          {
+            "component_type": "Stack",
+            "property": "alignment",
+            "responsive": true,
+            "responsive_required_scopes": [
+              "responsive-design:write"
+            ],
+            "scalar_required_scopes": [
+              "layout:write"
+            ],
+            "supported": true
+          },
+          {
+            "component_type": "Spacer",
+            "property": "size",
+            "responsive": true,
+            "responsive_required_scopes": [
+              "responsive-design:write"
+            ],
+            "scalar_required_scopes": [
+              "layout:write"
+            ],
+            "supported": true
+          },
+          {
+            "component_type": "Heading",
+            "property": "level",
+            "responsive": false,
+            "responsive_required_scopes": [],
+            "scalar_required_scopes": [
+              "component-content-props:write"
+            ],
+            "supported": true
+          },
+          {
+            "component_type": "Heading",
+            "property": "text",
+            "responsive": false,
+            "responsive_required_scopes": [],
+            "scalar_required_scopes": [
+              "component-content-props:write"
+            ],
+            "supported": true
+          },
+          {
+            "component_type": "Heading",
+            "property": "alignment",
+            "responsive": true,
+            "responsive_required_scopes": [
+              "responsive-design:write"
+            ],
+            "scalar_required_scopes": [
+              "layout:write"
+            ],
+            "supported": true
+          },
+          {
+            "component_type": "RichText",
+            "property": "content",
+            "responsive": false,
+            "responsive_required_scopes": [],
+            "scalar_required_scopes": [
+              "component-content-props:write"
+            ],
+            "supported": true
+          },
+          {
+            "component_type": "Image",
+            "property": "alt",
+            "responsive": false,
+            "responsive_required_scopes": [],
+            "scalar_required_scopes": [
+              "component-content-props:write"
+            ],
+            "supported": true
+          },
+          {
+            "component_type": "Image",
+            "property": "aspectRatio",
+            "responsive": true,
+            "responsive_required_scopes": [
+              "responsive-design:write"
+            ],
+            "scalar_required_scopes": [
+              "component-props:write"
+            ],
+            "supported": true
+          },
+          {
+            "component_type": "Image",
+            "property": "mediaId",
+            "responsive": false,
+            "responsive_required_scopes": [],
+            "scalar_required_scopes": [
+              "component-content-props:write"
+            ],
+            "supported": true
+          },
+          {
+            "component_type": "Button",
+            "property": "href",
+            "responsive": false,
+            "responsive_required_scopes": [],
+            "scalar_required_scopes": [
+              "component-content-props:write"
+            ],
+            "supported": true
+          },
+          {
+            "component_type": "Button",
+            "property": "label",
+            "responsive": false,
+            "responsive_required_scopes": [],
+            "scalar_required_scopes": [
+              "component-content-props:write"
+            ],
+            "supported": true
+          },
+          {
+            "component_type": "Button",
+            "property": "variant",
+            "responsive": true,
+            "responsive_required_scopes": [
+              "responsive-design:write"
+            ],
+            "scalar_required_scopes": [
+              "component-variant:write"
+            ],
+            "supported": true
+          },
+          {
+            "component_type": "Quote",
+            "property": "attribution",
+            "responsive": false,
+            "responsive_required_scopes": [],
+            "scalar_required_scopes": [
+              "component-content-props:write"
+            ],
+            "supported": true
+          },
+          {
+            "component_type": "Quote",
+            "property": "text",
+            "responsive": false,
+            "responsive_required_scopes": [],
+            "scalar_required_scopes": [
+              "component-content-props:write"
+            ],
+            "supported": true
+          },
+          {
+            "component_type": "CollectionList",
+            "property": "limit",
+            "responsive": false,
+            "responsive_required_scopes": [],
+            "scalar_required_scopes": [
+              "component-content-props:write"
+            ],
+            "supported": true
+          },
+          {
+            "component_type": "CollectionList",
+            "property": "viewId",
+            "responsive": false,
+            "responsive_required_scopes": [],
+            "scalar_required_scopes": [
+              "component-content-props:write"
+            ],
+            "supported": true
+          },
+          {
+            "component_type": "CollectionGrid",
+            "property": "columns",
+            "responsive": true,
+            "responsive_required_scopes": [
+              "responsive-design:write"
+            ],
+            "scalar_required_scopes": [
+              "layout:write"
+            ],
+            "supported": true
+          },
+          {
+            "component_type": "CollectionGrid",
+            "property": "viewId",
+            "responsive": false,
+            "responsive_required_scopes": [],
+            "scalar_required_scopes": [
+              "component-content-props:write"
+            ],
+            "supported": true
+          },
+          {
+            "component_type": "CollectionDetail",
+            "property": "viewId",
+            "responsive": false,
+            "responsive_required_scopes": [],
+            "scalar_required_scopes": [
+              "component-content-props:write"
+            ],
+            "supported": true
+          },
+          {
+            "component_type": "Hero",
+            "property": "heading",
+            "responsive": false,
+            "responsive_required_scopes": [],
+            "scalar_required_scopes": [
+              "component-content-props:write"
+            ],
+            "supported": true
+          },
+          {
+            "component_type": "Hero",
+            "property": "mediaId",
+            "responsive": false,
+            "responsive_required_scopes": [],
+            "scalar_required_scopes": [
+              "component-content-props:write"
+            ],
+            "supported": true
+          },
+          {
+            "component_type": "Hero",
+            "property": "subheading",
+            "responsive": false,
+            "responsive_required_scopes": [],
+            "scalar_required_scopes": [
+              "component-content-props:write"
+            ],
+            "supported": true
+          },
+          {
+            "component_type": "Statistics",
+            "property": "items",
+            "responsive": false,
+            "responsive_required_scopes": [],
+            "scalar_required_scopes": [
+              "component-content-props:write"
+            ],
+            "supported": true
+          },
+          {
+            "component_type": "Timeline",
+            "property": "items",
+            "responsive": false,
+            "responsive_required_scopes": [],
+            "scalar_required_scopes": [
+              "component-content-props:write"
+            ],
+            "supported": true
+          },
+          {
+            "component_type": "FAQ",
+            "property": "items",
+            "responsive": false,
+            "responsive_required_scopes": [],
+            "scalar_required_scopes": [
+              "component-content-props:write"
+            ],
+            "supported": true
+          }
+        ],
+        "x-slaif-conditional-scopes": [
+          {
+            "component_types": [
+              "Section"
+            ],
+            "condition": "changed",
+            "required_scopes": [
+              "component-variant:write"
+            ],
+            "when_fields": [
+              "props.variant"
+            ]
+          },
+          {
+            "component_types": [
+              "Section"
+            ],
+            "condition": "changed",
+            "required_scopes": [
+              "layout:write"
+            ],
+            "when_fields": [
+              "props.alignment"
+            ]
+          },
+          {
+            "component_types": [
+              "Container"
+            ],
+            "condition": "changed",
+            "required_scopes": [
+              "layout:write"
+            ],
+            "when_fields": [
+              "props.width"
+            ]
+          },
+          {
+            "component_types": [
+              "Container"
+            ],
+            "condition": "changed",
+            "required_scopes": [
+              "layout:write"
+            ],
+            "when_fields": [
+              "props.alignment"
+            ]
+          },
+          {
+            "component_types": [
+              "Columns"
+            ],
+            "condition": "changed",
+            "required_scopes": [
+              "layout:write"
+            ],
+            "when_fields": [
+              "props.count"
+            ]
+          },
+          {
+            "component_types": [
+              "Columns"
+            ],
+            "condition": "changed",
+            "required_scopes": [
+              "layout:write"
+            ],
+            "when_fields": [
+              "props.gap"
+            ]
+          },
+          {
+            "component_types": [
+              "Columns"
+            ],
+            "condition": "changed",
+            "required_scopes": [
+              "layout:write"
+            ],
+            "when_fields": [
+              "props.alignment"
+            ]
+          },
+          {
+            "component_types": [
+              "Grid"
+            ],
+            "condition": "changed",
+            "required_scopes": [
+              "layout:write"
+            ],
+            "when_fields": [
+              "props.columns"
+            ]
+          },
+          {
+            "component_types": [
+              "Grid"
+            ],
+            "condition": "changed",
+            "required_scopes": [
+              "layout:write"
+            ],
+            "when_fields": [
+              "props.gap"
+            ]
+          },
+          {
+            "component_types": [
+              "Grid"
+            ],
+            "condition": "changed",
+            "required_scopes": [
+              "layout:write"
+            ],
+            "when_fields": [
+              "props.alignment"
+            ]
+          },
+          {
+            "component_types": [
+              "Stack"
+            ],
+            "condition": "changed",
+            "required_scopes": [
+              "layout:write"
+            ],
+            "when_fields": [
+              "props.direction"
+            ]
+          },
+          {
+            "component_types": [
+              "Stack"
+            ],
+            "condition": "changed",
+            "required_scopes": [
+              "layout:write"
+            ],
+            "when_fields": [
+              "props.gap"
+            ]
+          },
+          {
+            "component_types": [
+              "Stack"
+            ],
+            "condition": "changed",
+            "required_scopes": [
+              "layout:write"
+            ],
+            "when_fields": [
+              "props.alignment"
+            ]
+          },
+          {
+            "component_types": [
+              "Spacer"
+            ],
+            "condition": "changed",
+            "required_scopes": [
+              "layout:write"
+            ],
+            "when_fields": [
+              "props.size"
+            ]
+          },
+          {
+            "component_types": [
+              "Heading"
+            ],
+            "condition": "changed",
+            "required_scopes": [
+              "component-content-props:write"
+            ],
+            "when_fields": [
+              "props.level"
+            ]
+          },
+          {
+            "component_types": [
+              "Heading"
+            ],
+            "condition": "changed",
+            "required_scopes": [
+              "component-content-props:write"
+            ],
+            "when_fields": [
+              "props.text"
+            ]
+          },
+          {
+            "component_types": [
+              "Heading"
+            ],
+            "condition": "changed",
+            "required_scopes": [
+              "layout:write"
+            ],
+            "when_fields": [
+              "props.alignment"
+            ]
+          },
+          {
+            "component_types": [
+              "RichText"
+            ],
+            "condition": "changed",
+            "required_scopes": [
+              "component-content-props:write"
+            ],
+            "when_fields": [
+              "props.content"
+            ]
+          },
+          {
+            "component_types": [
+              "Image"
+            ],
+            "condition": "changed",
+            "required_scopes": [
+              "component-content-props:write"
+            ],
+            "when_fields": [
+              "props.alt"
+            ]
+          },
+          {
+            "component_types": [
+              "Image"
+            ],
+            "condition": "changed",
+            "required_scopes": [
+              "component-props:write"
+            ],
+            "when_fields": [
+              "props.aspectRatio"
+            ]
+          },
+          {
+            "component_types": [
+              "Image"
+            ],
+            "condition": "changed",
+            "required_scopes": [
+              "component-content-props:write"
+            ],
+            "when_fields": [
+              "props.mediaId"
+            ]
+          },
+          {
+            "component_types": [
+              "Button"
+            ],
+            "condition": "changed",
+            "required_scopes": [
+              "component-content-props:write"
+            ],
+            "when_fields": [
+              "props.href"
+            ]
+          },
+          {
+            "component_types": [
+              "Button"
+            ],
+            "condition": "changed",
+            "required_scopes": [
+              "component-content-props:write"
+            ],
+            "when_fields": [
+              "props.label"
+            ]
+          },
+          {
+            "component_types": [
+              "Button"
+            ],
+            "condition": "changed",
+            "required_scopes": [
+              "component-variant:write"
+            ],
+            "when_fields": [
+              "props.variant"
+            ]
+          },
+          {
+            "component_types": [
+              "Quote"
+            ],
+            "condition": "changed",
+            "required_scopes": [
+              "component-content-props:write"
+            ],
+            "when_fields": [
+              "props.attribution"
+            ]
+          },
+          {
+            "component_types": [
+              "Quote"
+            ],
+            "condition": "changed",
+            "required_scopes": [
+              "component-content-props:write"
+            ],
+            "when_fields": [
+              "props.text"
+            ]
+          },
+          {
+            "component_types": [
+              "CollectionList"
+            ],
+            "condition": "changed",
+            "required_scopes": [
+              "component-content-props:write"
+            ],
+            "when_fields": [
+              "props.limit"
+            ]
+          },
+          {
+            "component_types": [
+              "CollectionList"
+            ],
+            "condition": "changed",
+            "required_scopes": [
+              "component-content-props:write"
+            ],
+            "when_fields": [
+              "props.viewId"
+            ]
+          },
+          {
+            "component_types": [
+              "CollectionGrid"
+            ],
+            "condition": "changed",
+            "required_scopes": [
+              "layout:write"
+            ],
+            "when_fields": [
+              "props.columns"
+            ]
+          },
+          {
+            "component_types": [
+              "CollectionGrid"
+            ],
+            "condition": "changed",
+            "required_scopes": [
+              "component-content-props:write"
+            ],
+            "when_fields": [
+              "props.viewId"
+            ]
+          },
+          {
+            "component_types": [
+              "CollectionDetail"
+            ],
+            "condition": "changed",
+            "required_scopes": [
+              "component-content-props:write"
+            ],
+            "when_fields": [
+              "props.viewId"
+            ]
+          },
+          {
+            "component_types": [
+              "Hero"
+            ],
+            "condition": "changed",
+            "required_scopes": [
+              "component-content-props:write"
+            ],
+            "when_fields": [
+              "props.heading"
+            ]
+          },
+          {
+            "component_types": [
+              "Hero"
+            ],
+            "condition": "changed",
+            "required_scopes": [
+              "component-content-props:write"
+            ],
+            "when_fields": [
+              "props.mediaId"
+            ]
+          },
+          {
+            "component_types": [
+              "Hero"
+            ],
+            "condition": "changed",
+            "required_scopes": [
+              "component-content-props:write"
+            ],
+            "when_fields": [
+              "props.subheading"
+            ]
+          },
+          {
+            "component_types": [
+              "Statistics"
+            ],
+            "condition": "changed",
+            "required_scopes": [
+              "component-content-props:write"
+            ],
+            "when_fields": [
+              "props.items"
+            ]
+          },
+          {
+            "component_types": [
+              "Timeline"
+            ],
+            "condition": "changed",
+            "required_scopes": [
+              "component-content-props:write"
+            ],
+            "when_fields": [
+              "props.items"
+            ]
+          },
+          {
+            "component_types": [
+              "FAQ"
+            ],
+            "condition": "changed",
+            "required_scopes": [
+              "component-content-props:write"
+            ],
+            "when_fields": [
+              "props.items"
+            ]
+          }
+        ],
+        "x-slaif-idempotency": "required",
+        "x-slaif-mutation": true,
+        "x-slaif-required-scopes": []
+      }
+    },
+    "/api/agent/v1/components/{component_id}/move": {
+      "post": {
+        "operationId": "move_component_api_agent_v1_components__component_id__move_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "component_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Component Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9._~-]+$",
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgentMoveCompositionNodeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentMutationResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Malformed request or missing/invalid idempotency key."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Authentication is required."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The capability scope or resource constraint is not sufficient."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The resource is not available to this capability."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The request conflicts with current state or idempotency."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The request exceeds the bounded body limit."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The request failed domain validation."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The request exceeds an enforced quota."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The service is temporarily unavailable."
+          }
+        },
+        "security": [
+          {
+            "AgentCapability": []
+          }
+        ],
+        "summary": "Move Component",
+        "x-slaif-conditional-scopes": [],
+        "x-slaif-idempotency": "required",
+        "x-slaif-mutation": true,
+        "x-slaif-required-scopes": [
+          "component-structure:move"
         ]
       }
     },
@@ -7459,6 +10275,125 @@
         ]
       }
     },
+    "/api/agent/v1/design-system": {
+      "get": {
+        "operationId": "get_design_system_api_agent_v1_design_system_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentDesignSystemResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Malformed request or missing/invalid idempotency key."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Authentication is required."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The capability scope or resource constraint is not sufficient."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The resource is not available to this capability."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The request conflicts with current state or idempotency."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The request exceeds the bounded body limit."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The request failed domain validation."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The request exceeds an enforced quota."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The service is temporarily unavailable."
+          }
+        },
+        "security": [
+          {
+            "AgentCapability": []
+          }
+        ],
+        "summary": "Get Design System",
+        "x-slaif-conditional-scopes": [],
+        "x-slaif-idempotency": "not-applicable",
+        "x-slaif-mutation": false,
+        "x-slaif-required-scopes": [
+          "theme:read"
+        ]
+      }
+    },
     "/api/agent/v1/locales": {
       "get": {
         "operationId": "list_locales_api_agent_v1_locales_get",
@@ -10917,6 +13852,7 @@
         "summary": "Update Page",
         "x-slaif-conditional-scopes": [
           {
+            "condition": "present",
             "required_scopes": [
               "route:write"
             ],
@@ -11098,7 +14034,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/CreateCompositionNodeRequest"
+                "$ref": "#/components/schemas/AgentCreateCompositionNodeRequest"
               }
             }
           },
@@ -11212,6 +14148,443 @@
           }
         ],
         "summary": "Create Component",
+        "x-slaif-component-authority": {
+          "operations": {
+            "CREATE": {
+              "responsive_transition": "responsive-map-add",
+              "selection": "caller-present-properties"
+            },
+            "PATCH": {
+              "removal": [
+                "whole-document-absent",
+                "json-null"
+              ],
+              "responsive_transition": [
+                "map-add",
+                "map-change",
+                "map-remove",
+                "map-to-scalar"
+              ],
+              "selection": "value-changed-properties"
+            }
+          },
+          "properties": [
+            {
+              "component_type": "Section",
+              "property": "background",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [],
+              "supported": false
+            },
+            {
+              "component_type": "Section",
+              "property": "variant",
+              "responsive": true,
+              "responsive_required_scopes": [
+                "responsive-design:write"
+              ],
+              "scalar_required_scopes": [
+                "component-variant:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Section",
+              "property": "alignment",
+              "responsive": true,
+              "responsive_required_scopes": [
+                "responsive-design:write"
+              ],
+              "scalar_required_scopes": [
+                "layout:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Container",
+              "property": "width",
+              "responsive": true,
+              "responsive_required_scopes": [
+                "responsive-design:write"
+              ],
+              "scalar_required_scopes": [
+                "layout:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Container",
+              "property": "alignment",
+              "responsive": true,
+              "responsive_required_scopes": [
+                "responsive-design:write"
+              ],
+              "scalar_required_scopes": [
+                "layout:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Columns",
+              "property": "count",
+              "responsive": true,
+              "responsive_required_scopes": [
+                "responsive-design:write"
+              ],
+              "scalar_required_scopes": [
+                "layout:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Columns",
+              "property": "gap",
+              "responsive": true,
+              "responsive_required_scopes": [
+                "responsive-design:write"
+              ],
+              "scalar_required_scopes": [
+                "layout:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Columns",
+              "property": "alignment",
+              "responsive": true,
+              "responsive_required_scopes": [
+                "responsive-design:write"
+              ],
+              "scalar_required_scopes": [
+                "layout:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Grid",
+              "property": "columns",
+              "responsive": true,
+              "responsive_required_scopes": [
+                "responsive-design:write"
+              ],
+              "scalar_required_scopes": [
+                "layout:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Grid",
+              "property": "gap",
+              "responsive": true,
+              "responsive_required_scopes": [
+                "responsive-design:write"
+              ],
+              "scalar_required_scopes": [
+                "layout:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Grid",
+              "property": "alignment",
+              "responsive": true,
+              "responsive_required_scopes": [
+                "responsive-design:write"
+              ],
+              "scalar_required_scopes": [
+                "layout:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Stack",
+              "property": "direction",
+              "responsive": true,
+              "responsive_required_scopes": [
+                "responsive-design:write"
+              ],
+              "scalar_required_scopes": [
+                "layout:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Stack",
+              "property": "gap",
+              "responsive": true,
+              "responsive_required_scopes": [
+                "responsive-design:write"
+              ],
+              "scalar_required_scopes": [
+                "layout:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Stack",
+              "property": "alignment",
+              "responsive": true,
+              "responsive_required_scopes": [
+                "responsive-design:write"
+              ],
+              "scalar_required_scopes": [
+                "layout:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Spacer",
+              "property": "size",
+              "responsive": true,
+              "responsive_required_scopes": [
+                "responsive-design:write"
+              ],
+              "scalar_required_scopes": [
+                "layout:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Heading",
+              "property": "level",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Heading",
+              "property": "text",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Heading",
+              "property": "alignment",
+              "responsive": true,
+              "responsive_required_scopes": [
+                "responsive-design:write"
+              ],
+              "scalar_required_scopes": [
+                "layout:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "RichText",
+              "property": "content",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Image",
+              "property": "alt",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Image",
+              "property": "aspectRatio",
+              "responsive": true,
+              "responsive_required_scopes": [
+                "responsive-design:write"
+              ],
+              "scalar_required_scopes": [
+                "component-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Image",
+              "property": "mediaId",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Button",
+              "property": "href",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Button",
+              "property": "label",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Button",
+              "property": "variant",
+              "responsive": true,
+              "responsive_required_scopes": [
+                "responsive-design:write"
+              ],
+              "scalar_required_scopes": [
+                "component-variant:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Quote",
+              "property": "attribution",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Quote",
+              "property": "text",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "CollectionList",
+              "property": "limit",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "CollectionList",
+              "property": "viewId",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "CollectionGrid",
+              "property": "columns",
+              "responsive": true,
+              "responsive_required_scopes": [
+                "responsive-design:write"
+              ],
+              "scalar_required_scopes": [
+                "layout:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "CollectionGrid",
+              "property": "viewId",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "CollectionDetail",
+              "property": "viewId",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Hero",
+              "property": "heading",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Hero",
+              "property": "mediaId",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Hero",
+              "property": "subheading",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Statistics",
+              "property": "items",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Timeline",
+              "property": "items",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "FAQ",
+              "property": "items",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            }
+          ]
+        },
         "x-slaif-conditional-scopes": [],
         "x-slaif-idempotency": "required",
         "x-slaif-mutation": true,

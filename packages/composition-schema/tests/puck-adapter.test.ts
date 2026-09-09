@@ -80,6 +80,98 @@ describe("puck adapter", () => {
     expect(puckToComposition(puck)).toEqual(nodes);
   });
 
+  it("preserves bounded responsive design props through Puck", () => {
+    const responsive = [
+      {
+        ...nodes[0]!,
+        props: {
+          variant: { desktop: "default", tablet: "narrow", mobile: "full" },
+          alignment: { desktop: "start", tablet: "center", mobile: "stretch" },
+        },
+      },
+    ];
+    const puck = compositionToPuck(responsive);
+    expect(puckToComposition(puck)).toEqual(responsive);
+    expect(generatePuckConfig().Section!.fields.variant?.options).toEqual([
+      "default",
+      "full",
+      "narrow",
+    ]);
+    expect(generatePuckConfig().Button!.fields.variant?.options).toEqual([
+      "primary",
+      "secondary",
+      "ghost",
+    ]);
+    expect(generatePuckConfig().Image!.fields.aspectRatio?.options).toEqual([
+      "auto",
+      "16:9",
+      "4:3",
+      "1:1",
+    ]);
+    expect(generatePuckConfig().CollectionGrid!.fields.columns).toMatchObject({
+      type: "number",
+      min: 1,
+      max: 6,
+    });
+    const visualProps: readonly NormalizedCompositionNode[] = [
+      {
+        id: "visual-button",
+        componentType: "Button",
+        schemaVersion: "1",
+        parentId: null,
+        slotKey: "default",
+        orderKey: 0,
+        props: {
+          label: "Open",
+          href: "/open",
+          variant: { desktop: "primary", mobile: "ghost" },
+        },
+      },
+      {
+        id: "visual-image",
+        componentType: "Image",
+        schemaVersion: "1",
+        parentId: null,
+        slotKey: "default",
+        orderKey: 1,
+        props: {
+          mediaId: "11111111-1111-4111-8111-111111111111",
+          alt: "Preview",
+          aspectRatio: { desktop: "16:9", mobile: "1:1" },
+        },
+      },
+      {
+        id: "visual-collection",
+        componentType: "CollectionGrid",
+        schemaVersion: "1",
+        parentId: null,
+        slotKey: "default",
+        orderKey: 2,
+        props: {
+          viewId: "22222222-2222-4222-8222-222222222222",
+          columns: { desktop: 4, tablet: 2, mobile: 1 },
+        },
+      },
+    ];
+    expect(puckToComposition(compositionToPuck(visualProps))).toEqual(visualProps);
+  });
+
+  it("rejects fractional integer design tokens", () => {
+    expect(() =>
+      compositionToPuck([
+        {
+          id: "fractional-grid",
+          componentType: "Grid",
+          schemaVersion: "1",
+          parentId: null,
+          slotKey: "default",
+          orderKey: 0,
+          props: { columns: 2.5 },
+        },
+      ]),
+    ).toThrow("invalid-component-props");
+  });
+
   it("preserves nested parent and slot metadata through a Puck edit", () => {
     const puck = compositionToPuck([
       ...nodes,
@@ -218,5 +310,13 @@ describe("puck adapter", () => {
         },
       ]),
     ).toThrow("forbidden-component-prop");
+    expect(() =>
+      compositionToPuck([
+        {
+          ...nodes[1]!,
+          props: { text: "vbscript:alert(1)" },
+        },
+      ]),
+    ).toThrow("invalid-component-props");
   });
 });

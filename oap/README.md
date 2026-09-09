@@ -13,6 +13,8 @@ Programming (OAP). Full coding-agent behavior is defined by
 - `reports/` contains immutable, coding-agent-authored execution reports.
 - `NNN-a` creates one branch and one PR for numeric objective `NNN`;
   `NNN-b` through `NNN-z` amend that same branch and PR.
+- A bounded semantic merge increment maps to one PR, while a numeric objective
+  may span sequential PRs only when a strategic continuation explicitly orders it.
 - The activated order, `active`, and corresponding report are committed and
   pushed on the objective PR. Committing strategic artifacts does not transfer
   their authorship or permit the coding agent to edit them.

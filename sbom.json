@@ -17,6 +17,12 @@
     },
     {
       "type": "library",
+      "name": "@measured/puck",
+      "version": "0.20.2",
+      "purl": "pkg:npm/@measured/puck@0.20.2"
+    },
+    {
+      "type": "library",
       "name": "@playwright/test",
       "version": "1.62.1",
       "purl": "pkg:npm/@playwright/test@1.62.1"
@@ -240,8 +246,8 @@
     {
       "type": "library",
       "name": "next",
-      "version": "16.3.1",
-      "purl": "pkg:npm/next@16.3.1"
+      "version": "16.3.3",
+      "purl": "pkg:npm/next@16.3.3"
     },
     {
       "type": "library",
@@ -254,6 +260,12 @@
       "name": "pathspec",
       "version": "1.1.1",
       "purl": "pkg:pypi/pathspec@1.1.1"
+    },
+    {
+      "type": "library",
+      "name": "playwright-core",
+      "version": "1.62.1",
+      "purl": "pkg:npm/playwright-core@1.62.1"
     },
     {
       "type": "library",

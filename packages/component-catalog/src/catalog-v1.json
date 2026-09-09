@@ -1,0 +1,329 @@
+{
+  "version": "catalog-v1",
+  "composition_schema_version": "site-composition/v1",
+  "components": [
+    {
+      "type": "Section",
+      "category": "layout",
+      "schema_version": "1",
+      "allowed_slots": ["default"],
+      "max_children": 32,
+      "binding_kind": "none",
+      "authority_class": "structure",
+      "props": {
+        "variant": {"type": "enum", "required": false, "enum_values": ["default", "full", "narrow"], "localized": false, "authority": "design"},
+        "background": {"type": "string", "required": false, "max_length": 4096, "localized": false, "authority": "design"}
+      }
+    },
+    {
+      "type": "Container",
+      "category": "layout",
+      "schema_version": "1",
+      "allowed_slots": ["default"],
+      "max_children": 16,
+      "binding_kind": "none",
+      "authority_class": "structure",
+      "props": {
+        "width": {"type": "enum", "required": false, "enum_values": ["sm", "md", "lg", "xl"], "localized": false, "authority": "design"}
+      }
+    },
+    {
+      "type": "Columns",
+      "category": "layout",
+      "schema_version": "1",
+      "allowed_slots": ["col-1", "col-2", "col-3", "col-4"],
+      "max_children": 4,
+      "binding_kind": "none",
+      "authority_class": "structure",
+      "props": {
+        "count": {"type": "number", "required": true, "minimum": 1, "maximum": 4, "localized": false, "authority": "design"},
+        "gap": {"type": "enum", "required": false, "enum_values": ["none", "sm", "md", "lg"], "localized": false, "authority": "design"}
+      }
+    },
+    {
+      "type": "Grid",
+      "category": "layout",
+      "schema_version": "1",
+      "allowed_slots": ["default"],
+      "max_children": 24,
+      "binding_kind": "none",
+      "authority_class": "structure",
+      "props": {
+        "columns": {"type": "number", "required": false, "minimum": 1, "maximum": 12, "localized": false, "authority": "design"},
+        "gap": {"type": "enum", "required": false, "enum_values": ["sm", "md", "lg"], "localized": false, "authority": "design"}
+      }
+    },
+    {
+      "type": "Stack",
+      "category": "layout",
+      "schema_version": "1",
+      "allowed_slots": ["default"],
+      "max_children": 16,
+      "binding_kind": "none",
+      "authority_class": "structure",
+      "props": {
+        "direction": {"type": "enum", "required": false, "enum_values": ["vertical", "horizontal"], "localized": false, "authority": "design"},
+        "gap": {"type": "enum", "required": false, "enum_values": ["none", "sm", "md", "lg"], "localized": false, "authority": "design"}
+      }
+    },
+    {
+      "type": "Spacer",
+      "category": "layout",
+      "schema_version": "1",
+      "allowed_slots": [],
+      "max_children": 0,
+      "binding_kind": "none",
+      "authority_class": "structure",
+      "props": {
+        "size": {"type": "enum", "required": true, "enum_values": ["xs", "sm", "md", "lg", "xl"], "localized": false, "authority": "design"}
+      }
+    },
+    {
+      "type": "Heading",
+      "category": "basic",
+      "schema_version": "1",
+      "allowed_slots": [],
+      "max_children": 0,
+      "binding_kind": "none",
+      "authority_class": "content",
+      "props": {
+        "text": {"type": "string", "required": true, "max_length": 4096, "localized": true, "authority": "content"},
+        "level": {"type": "number", "required": true, "minimum": 1, "maximum": 6, "localized": false, "authority": "content"}
+      }
+    },
+    {
+      "type": "RichText",
+      "category": "basic",
+      "schema_version": "1",
+      "allowed_slots": [],
+      "max_children": 0,
+      "binding_kind": "none",
+      "authority_class": "content",
+      "props": {
+        "content": {
+          "type": "object",
+          "required": true,
+          "localized": true,
+          "authority": "content",
+          "schema": {
+            "type": "object",
+            "required": ["type", "children"],
+            "additional_properties": false,
+            "properties": {
+              "type": {"type": "enum", "required": true, "enum_values": ["paragraph", "heading", "quote"]},
+              "children": {
+                "type": "array",
+                "required": true,
+                "min_items": 1,
+                "max_items": 64,
+                "items": {
+                  "type": "object",
+                  "required": ["text"],
+                  "additional_properties": false,
+                  "properties": {
+                    "text": {"type": "string", "required": true, "max_length": 4096},
+                    "bold": {"type": "boolean", "required": false},
+                    "italic": {"type": "boolean", "required": false}
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "Image",
+      "category": "basic",
+      "schema_version": "1",
+      "allowed_slots": [],
+      "max_children": 0,
+      "binding_kind": "media_asset",
+      "authority_class": "content",
+      "props": {
+        "mediaId": {"type": "reference", "required": true, "format": "uuid", "authority": "content"},
+        "alt": {"type": "string", "required": true, "max_length": 4096, "localized": true, "authority": "content"},
+        "aspectRatio": {"type": "enum", "required": false, "enum_values": ["auto", "16:9", "4:3", "1:1"], "authority": "content"}
+      }
+    },
+    {
+      "type": "Button",
+      "category": "basic",
+      "schema_version": "1",
+      "allowed_slots": [],
+      "max_children": 0,
+      "binding_kind": "none",
+      "authority_class": "content",
+      "props": {
+        "label": {"type": "string", "required": true, "max_length": 4096, "localized": true, "authority": "content"},
+        "href": {"type": "string", "required": true, "max_length": 4096, "authority": "content"},
+        "variant": {"type": "enum", "required": false, "enum_values": ["primary", "secondary", "ghost"], "authority": "content"}
+      }
+    },
+    {
+      "type": "Quote",
+      "category": "basic",
+      "schema_version": "1",
+      "allowed_slots": [],
+      "max_children": 0,
+      "binding_kind": "none",
+      "authority_class": "content",
+      "props": {
+        "text": {"type": "string", "required": true, "max_length": 4096, "localized": true, "authority": "content"},
+        "attribution": {"type": "string", "required": false, "max_length": 4096, "localized": true, "authority": "content"}
+      }
+    },
+    {
+      "type": "CollectionList",
+      "category": "data",
+      "schema_version": "1",
+      "allowed_slots": ["item"],
+      "max_children": 0,
+      "binding_kind": "collection_view",
+      "authority_class": "content",
+      "props": {
+        "viewId": {"type": "reference", "required": true, "format": "uuid", "authority": "content"},
+        "limit": {"type": "number", "required": false, "minimum": 1, "maximum": 100, "authority": "content"}
+      }
+    },
+    {
+      "type": "CollectionGrid",
+      "category": "data",
+      "schema_version": "1",
+      "allowed_slots": ["item"],
+      "max_children": 0,
+      "binding_kind": "collection_view",
+      "authority_class": "content",
+      "props": {
+        "viewId": {"type": "reference", "required": true, "format": "uuid", "authority": "content"},
+        "columns": {"type": "number", "required": false, "minimum": 1, "maximum": 6, "authority": "content"}
+      }
+    },
+    {
+      "type": "CollectionDetail",
+      "category": "data",
+      "schema_version": "1",
+      "allowed_slots": [],
+      "max_children": 0,
+      "binding_kind": "collection_view",
+      "authority_class": "content",
+      "props": {
+        "viewId": {"type": "reference", "required": true, "format": "uuid", "authority": "content"}
+      }
+    },
+    {
+      "type": "Hero",
+      "category": "institutional",
+      "schema_version": "1",
+      "allowed_slots": ["content"],
+      "max_children": 8,
+      "binding_kind": "media_asset",
+      "authority_class": "content",
+      "props": {
+        "heading": {"type": "string", "required": true, "max_length": 4096, "localized": true, "authority": "content"},
+        "subheading": {"type": "string", "required": false, "max_length": 4096, "localized": true, "authority": "content"},
+        "mediaId": {"type": "reference", "required": false, "format": "uuid", "authority": "content"}
+      }
+    },
+    {
+      "type": "Statistics",
+      "category": "institutional",
+      "schema_version": "1",
+      "allowed_slots": [],
+      "max_children": 0,
+      "binding_kind": "none",
+      "authority_class": "content",
+      "props": {
+        "items": {
+          "type": "array",
+          "required": true,
+          "min_items": 1,
+          "max_items": 64,
+          "authority": "content",
+          "schema": {
+            "type": "array",
+            "min_items": 1,
+            "max_items": 64,
+            "items": {
+              "type": "object",
+              "required": ["label", "value"],
+              "additional_properties": false,
+              "properties": {
+                "label": {"type": "string", "required": true, "max_length": 256},
+                "value": {"type": "string", "required": true, "max_length": 256}
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "Timeline",
+      "category": "institutional",
+      "schema_version": "1",
+      "allowed_slots": [],
+      "max_children": 0,
+      "binding_kind": "none",
+      "authority_class": "content",
+      "props": {
+        "items": {
+          "type": "array",
+          "required": true,
+          "min_items": 1,
+          "max_items": 64,
+          "authority": "content",
+          "schema": {
+            "type": "array",
+            "min_items": 1,
+            "max_items": 64,
+            "items": {
+              "type": "object",
+              "required": ["title", "description"],
+              "additional_properties": false,
+              "properties": {
+                "title": {"type": "string", "required": true, "max_length": 256},
+                "description": {"type": "string", "required": true, "max_length": 4096}
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "FAQ",
+      "category": "institutional",
+      "schema_version": "1",
+      "allowed_slots": [],
+      "max_children": 0,
+      "binding_kind": "none",
+      "authority_class": "content",
+      "props": {
+        "items": {
+          "type": "array",
+          "required": true,
+          "min_items": 1,
+          "max_items": 64,
+          "authority": "content",
+          "schema": {
+            "type": "array",
+            "min_items": 1,
+            "max_items": 64,
+            "items": {
+              "type": "object",
+              "required": ["question", "answer"],
+              "additional_properties": false,
+              "properties": {
+                "question": {"type": "string", "required": true, "max_length": 4096},
+                "answer": {"type": "string", "required": true, "max_length": 4096}
+              }
+            }
+          }
+        }
+      }
+    },
+    {"type": "Header", "category": "global", "schema_version": "1", "allowed_slots": ["nav"], "max_children": 12, "binding_kind": "none", "authority_class": "global", "props": {}},
+    {"type": "Footer", "category": "global", "schema_version": "1", "allowed_slots": ["links"], "max_children": 16, "binding_kind": "none", "authority_class": "global", "props": {}},
+    {"type": "Breadcrumbs", "category": "global", "schema_version": "1", "allowed_slots": [], "max_children": 0, "binding_kind": "none", "authority_class": "global", "props": {}},
+    {"type": "LanguageSwitcher", "category": "global", "schema_version": "1", "allowed_slots": [], "max_children": 0, "binding_kind": "none", "authority_class": "global", "props": {}}
+  ]
+}

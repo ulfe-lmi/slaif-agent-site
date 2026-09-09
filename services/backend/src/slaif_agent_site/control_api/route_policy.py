@@ -13,6 +13,9 @@ from typing import Any, Final
 from fastapi.routing import APIRoute
 
 from slaif_agent_site.authority import ProcessKind
+from slaif_agent_site.content_model.design_system import (
+    component_property_scope_metadata,
+)
 from slaif_agent_site.human_authorization.catalog import (
     L1_SCOPES,
     L2_SCOPES,
@@ -26,6 +29,8 @@ _AGENT_DELEGATABLE_SCOPES = frozenset(
     READ_SCOPES | L1_SCOPES | L2_SCOPES | L3_SCOPES | L4_SCOPES
 )
 _CONDITIONAL_SCOPE_EXTENSION = "x-slaif-conditional-scopes"
+_COMPONENT_PROPERTY_SCOPE_EXTENSION = "x-slaif-component-property-scopes"
+_COMPONENT_AUTHORITY_EXTENSION = "x-slaif-component-authority"
 
 
 class RouteMutationClass(StrEnum):
@@ -62,12 +67,16 @@ class RouteConditionalScope:
 
     when_fields: tuple[str, ...]
     required_scopes: tuple[str, ...]
+    component_types: tuple[str, ...] = ()
+    condition: str = "present"
 
     def __post_init__(self) -> None:
         if not self.when_fields or not self.required_scopes:
             raise ValueError("conditional scope declaration cannot be empty")
         if any(
-            field != field.strip() or not field.isidentifier()
+            field != field.strip()
+            or not field
+            or any(not part.isidentifier() for part in field.split("."))
             for field in self.when_fields
         ):
             raise ValueError("conditional scope field is not normalized")
@@ -80,6 +89,15 @@ class RouteConditionalScope:
             for scope in self.required_scopes
         ):
             raise ValueError("conditional scope names an invalid Agent scope")
+        if any(
+            component_type != component_type.strip() or not component_type
+            for component_type in self.component_types
+        ):
+            raise ValueError("conditional scope component type is not normalized")
+        if len(set(self.component_types)) != len(self.component_types):
+            raise ValueError("conditional scope repeats a component type")
+        if self.condition not in {"present", "changed"}:
+            raise ValueError("conditional scope condition is not explicit")
 
 
 @dataclass(frozen=True, slots=True)
@@ -123,7 +141,11 @@ class RoutePolicy:
             raise ValueError("route policy repeats a scope")
         if len(self.conditional_scopes) != len(
             {
-                (condition.when_fields, condition.required_scopes)
+                (
+                    condition.when_fields,
+                    condition.required_scopes,
+                    condition.component_types,
+                )
                 for condition in self.conditional_scopes
             }
         ):
@@ -133,13 +155,18 @@ class RoutePolicy:
             or self.mutation_class is not RouteMutationClass.MUTATION
         ):
             raise ValueError("conditional scope requires an Agent mutation")
-        conditional_fields = [
-            field
-            for condition in self.conditional_scopes
-            for field in condition.when_fields
-        ]
-        if len(conditional_fields) != len(set(conditional_fields)):
-            raise ValueError("conditional scopes overlap request fields")
+        for index, condition in enumerate(self.conditional_scopes):
+            condition_types = set(condition.component_types)
+            for other in self.conditional_scopes[index + 1 :]:
+                if set(condition.when_fields).isdisjoint(other.when_fields):
+                    continue
+                other_types = set(other.component_types)
+                if (
+                    not condition_types
+                    or not other_types
+                    or condition_types & other_types
+                ):
+                    raise ValueError("conditional scopes overlap request fields")
         all_scopes = set(self.required_scopes) | {
             scope
             for condition in self.conditional_scopes
@@ -251,6 +278,19 @@ def _agent_policy(
         policy_kind=RoutePolicyKind.AGENT_CAPABILITY,
         required_scopes=tuple(scopes),
         conditional_scopes=conditional_scopes,
+    )
+
+
+def _component_conditional_scopes() -> tuple[RouteConditionalScope, ...]:
+    return tuple(
+        RouteConditionalScope(
+            when_fields=(f"props.{item['property']}",),
+            required_scopes=tuple(item["scalar_required_scopes"]),
+            component_types=(item["component_type"],),
+            condition="changed",
+        )
+        for item in component_property_scope_metadata()
+        if item["supported"]
     )
 
 
@@ -1062,6 +1102,16 @@ ROUTE_POLICIES: Final[tuple[RoutePolicy, ...]] = (
             ("GET", "/api/agent/v1/permissions", ("site:read",)),
             (
                 "GET",
+                "/api/agent/v1/component-catalog",
+                ("component-catalog:read",),
+            ),
+            (
+                "GET",
+                "/api/agent/v1/design-system",
+                ("theme:read",),
+            ),
+            (
+                "GET",
                 "/api/agent/v1/content-model/primitives",
                 ("validation:read",),
             ),
@@ -1125,6 +1175,7 @@ ROUTE_POLICIES: Final[tuple[RoutePolicy, ...]] = (
             ("GET", "/api/agent/v1/pages/", ("page:read",)),
             ("GET", "/api/agent/v1/pages/{page_id}", ("page:read",)),
             ("GET", "/api/agent/v1/pages/{page_id}/components", ("composition:read",)),
+            ("GET", "/api/agent/v1/components/{component_id}", ("composition:read",)),
             ("GET", "/api/agent/v1/media/", ("media:read",)),
             ("GET", "/api/agent/v1/locales", ("site:read",)),
             ("GET", "/api/agent/v1/locales/{locale_id}", ("site:read",)),
@@ -1238,6 +1289,16 @@ ROUTE_POLICIES: Final[tuple[RoutePolicy, ...]] = (
                 "/api/agent/v1/pages/{page_id}/components",
                 "component-structure:create",
             ),
+            (
+                "POST",
+                "/api/agent/v1/components/{component_id}/move",
+                "component-structure:move",
+            ),
+            (
+                "DELETE",
+                "/api/agent/v1/components/{component_id}",
+                "component-structure:delete",
+            ),
             ("POST", "/api/agent/v1/locales", "locale:configure"),
             ("PATCH", "/api/agent/v1/locales/{locale_id}", "locale:configure"),
             ("DELETE", "/api/agent/v1/locales/{locale_id}", "locale:configure"),
@@ -1260,6 +1321,12 @@ ROUTE_POLICIES: Final[tuple[RoutePolicy, ...]] = (
             ),
             ("DELETE", "/api/agent/v1/navigation-items/{item_id}", "navigation:delete"),
         )
+    ),
+    _agent_policy(
+        "PATCH",
+        "/api/agent/v1/components/{component_id}",
+        _M,
+        conditional_scopes=_component_conditional_scopes(),
     ),
     _agent_policy(
         "PATCH",
@@ -1369,7 +1436,9 @@ def validate_conditional_scope_schema(route: APIRoute, policy: RoutePolicy) -> N
     if not body_fields:
         raise RuntimeError("conditional scope requires a typed request body")
     for condition in policy.conditional_scopes:
-        missing = set(condition.when_fields) - body_fields
+        missing = {
+            field.split(".", 1)[0] for field in condition.when_fields
+        } - body_fields
         if missing:
             raise RuntimeError(
                 "conditional scope names a field absent from the request schema: "
@@ -1377,14 +1446,157 @@ def validate_conditional_scope_schema(route: APIRoute, policy: RoutePolicy) -> N
             )
 
 
-def conditional_scope_metadata(policy: RoutePolicy) -> list[dict[str, list[str]]]:
-    return [
-        {
+def conditional_scope_metadata(policy: RoutePolicy) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    for condition in policy.conditional_scopes:
+        metadata = {
             "when_fields": list(condition.when_fields),
             "required_scopes": list(condition.required_scopes),
+            "condition": condition.condition,
         }
-        for condition in policy.conditional_scopes
-    ]
+        if condition.component_types:
+            metadata["component_types"] = list(condition.component_types)
+        result.append(metadata)
+    return result
+
+
+def component_property_scope_metadata_for_policy(
+    policy: RoutePolicy,
+) -> list[dict[str, Any]]:
+    """Return the component PATCH scope table owned by its route policy."""
+    expected_key = (
+        ProcessKind.AGENT_API,
+        "PATCH",
+        "/api/agent/v1/components/{component_id}",
+    )
+    if policy.key != expected_key:
+        raise KeyError(f"not the component PATCH policy: {policy.key}")
+    expected_conditions = _component_conditional_scopes()
+    if policy.conditional_scopes != expected_conditions:
+        raise RuntimeError("component route policy/design authority drift")
+    return [dict(item) for item in component_property_scope_metadata()]
+
+
+def component_authority_metadata_for_policy(
+    policy: RoutePolicy,
+) -> dict[str, Any]:
+    """Publish one explicit authority table for component CREATE and PATCH."""
+    expected_keys = {
+        (
+            ProcessKind.AGENT_API,
+            "POST",
+            "/api/agent/v1/pages/{page_id}/components",
+        ),
+        (
+            ProcessKind.AGENT_API,
+            "PATCH",
+            "/api/agent/v1/components/{component_id}",
+        ),
+    }
+    if policy.key not in expected_keys:
+        raise KeyError(f"not a component authority policy: {policy.key}")
+    return {
+        "properties": [dict(item) for item in component_property_scope_metadata()],
+        "operations": {
+            "CREATE": {
+                "selection": "caller-present-properties",
+                "responsive_transition": "responsive-map-add",
+            },
+            "PATCH": {
+                "selection": "value-changed-properties",
+                "removal": ["whole-document-absent", "json-null"],
+                "responsive_transition": [
+                    "map-add",
+                    "map-change",
+                    "map-remove",
+                    "map-to-scalar",
+                ],
+            },
+        },
+    }
+
+
+def validate_component_property_scope_openapi_document(
+    document: dict[str, Any], policies: tuple[RoutePolicy, ...]
+) -> None:
+    """Require the component property scope extension to match route policy."""
+    path = "/api/agent/v1/components/{component_id}"
+    policy = next(
+        (
+            item
+            for item in policies
+            if item.key == (ProcessKind.AGENT_API, "PATCH", path)
+        ),
+        None,
+    )
+    paths_value = document.get("paths")
+    if not isinstance(paths_value, dict):
+        raise RuntimeError("component property scope paths are missing")
+    paths: dict[str, Any] = paths_value
+    operations_value = paths.get(path)
+    operation = (
+        operations_value.get("patch") if isinstance(operations_value, dict) else None
+    )
+    if policy is None or not isinstance(operation, dict):
+        raise RuntimeError("component property scope policy is missing")
+    actual = operation.get(_COMPONENT_PROPERTY_SCOPE_EXTENSION)
+    expected = component_property_scope_metadata_for_policy(policy)
+    if actual != expected:
+        raise RuntimeError("component property scope metadata mismatch")
+    for other_path, operations in paths.items():
+        if not isinstance(operations, dict):
+            continue
+        for other_operation in operations.values():
+            if not isinstance(other_operation, dict):
+                continue
+            if (
+                other_path != path or other_operation is not operation
+            ) and _COMPONENT_PROPERTY_SCOPE_EXTENSION in other_operation:
+                raise RuntimeError("component property scope extension is misplaced")
+
+
+def validate_component_authority_openapi_document(
+    document: dict[str, Any], policies: tuple[RoutePolicy, ...]
+) -> None:
+    """Require the shared CREATE/PATCH component authority table in both directions."""
+    expected_keys = {
+        "POST": "/api/agent/v1/pages/{page_id}/components",
+        "PATCH": "/api/agent/v1/components/{component_id}",
+    }
+    paths_value = document.get("paths")
+    if not isinstance(paths_value, dict):
+        raise RuntimeError("component authority paths are missing")
+    allowed_operations: set[int] = set()
+    for method, path in expected_keys.items():
+        policy = next(
+            (
+                item
+                for item in policies
+                if item.key == (ProcessKind.AGENT_API, method, path)
+            ),
+            None,
+        )
+        operations = paths_value.get(path)
+        operation = (
+            operations.get(method.lower()) if isinstance(operations, dict) else None
+        )
+        if policy is None or not isinstance(operation, dict):
+            raise RuntimeError("component authority policy is missing")
+        expected = component_authority_metadata_for_policy(policy)
+        if operation.get(_COMPONENT_AUTHORITY_EXTENSION) != expected:
+            raise RuntimeError("component authority metadata mismatch")
+        allowed_operations.add(id(operation))
+    for _path, operations in paths_value.items():
+        if not isinstance(operations, dict):
+            continue
+        for operation in operations.values():
+            if not isinstance(operation, dict):
+                continue
+            if (
+                _COMPONENT_AUTHORITY_EXTENSION in operation
+                and id(operation) not in allowed_operations
+            ):
+                raise RuntimeError("component authority extension is misplaced")
 
 
 def validate_conditional_scope_openapi_document(
@@ -1472,9 +1684,13 @@ __all__ = [
     "RoutePolicy",
     "RoutePolicyKind",
     "conditional_scope_metadata",
+    "component_authority_metadata_for_policy",
+    "component_property_scope_metadata_for_policy",
     "route_policies_for",
     "conditional_scopes_for_fields",
     "validate_conditional_scope_openapi_document",
+    "validate_component_property_scope_openapi_document",
+    "validate_component_authority_openapi_document",
     "validate_conditional_scope_schema",
     "validate_route_policy_coverage",
 ]

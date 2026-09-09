@@ -3,20 +3,26 @@
 This tracker uses the contract-audit status vocabulary rather than file
 presence or completion estimates. The authoritative baseline is
 [`MVP-CONTRACT-AUDIT.md`](MVP-CONTRACT-AUDIT.md), updated for the protocol-final
-Objective-077 source revision developed in PR #74 on 2026-09-08. GitHub's PR
-state and merge commit are authoritative for whether that revision is contained
-in `main`; its audited base is Objective 076 commit
-`067676314e0d9664d40cb8514ea549b966a4eb2d`.
+Objective 078 increment 1 on PR #77, reviewed and technically accepted on
+2026-09-09, with the active 078-o security continuation now qualifying the
+required Next.js patch. Verified remote
+`main` is `ae3a4a681bb888260192b7bb1b2a337b4906828d`, the accepted
+Objective-077 merge. PR #77 is OPEN, technically accepted by strategy, and has
+not been merged.
 
 ## Current verdict
 
-**CONTRACTUAL MVP NOT COMPLETE.** Merged Objectives 065–076 prove narrow,
-bounded contracts, and the Objective-077 source revision now provides complete
-executable evidence for its bounded page/locale/navigation/redirect/dynamic-
-Render information architecture. Objective-077 acceptance and merge state are
-external GitHub/OAP facts; neither that bounded revision nor the earlier slices
-proves the broader composition, review lifecycle, publication, reconstruction,
-or final MVP contract.
+**CONTRACTUAL MVP NOT COMPLETE.** Objectives 065–077 are accepted and merged
+for their bounded contracts. PR #77 contains Objective 078/1: component
+composition and component-local design. Its final hostile audit has been
+performed and the recorded findings are closed; the 078-m link-format blocker
+was repaired through 078-n, and 078-o is now qualifying the required Next.js
+security patch with merge still pending the authoritative remote gates.
+The 078-i theme implementation is preserved in history and
+removed from this PR. Remaining Objective 078 theme, global regions/header and
+footer, page style and catalog work belongs to fresh bounded PR increments.
+Later numbered objectives own media, MCP, exact-workspace Puck, review,
+publication, reconstruction and operations; they are not unfinished PR #77 scope.
 
 ## Merged narrow slices
 
@@ -34,7 +40,7 @@ These statuses are narrow evidence claims. They do not make Agent semantics,
 MCP, review snapshots, promotion, publication, source reconstruction, or
 operations complete.
 
-## Merged 073–076 prefix
+## Merged 073–077 prefix
 
 These rows are credited from the merged GitHub PRs and their production-boundary
 evidence, not from the existence of files or the confidence of an execution
@@ -46,6 +52,7 @@ report.
 | 074 / [PR #70](https://github.com/ulfe-lmi/slaif-agent-site/pull/70) | Public human Agent workspace/capability issuance, site/CSRF/policy authority, idempotency, audit, revoke, and restart proof, merged as `ef456e63abadddfc7d90794c03be3a63677c87f9` | COMPLETE — E2E PROVEN |
 | 075 / [PR #71](https://github.com/ulfe-lmi/slaif-agent-site/pull/71) | Editable-domain substrate, validators, query contract, locale/navigation/redirect integrity, production COW upgrade, and Agent binding, merged as `0e83b26bf9a9f63bff6756d65cbfd527d215ec51` | COMPLETE — E2E PROVEN |
 | 076 / [PR #72](https://github.com/ulfe-lmi/slaif-agent-site/pull/72) | Capability-bound Agent model/type/field/item/translation/relation/collection-view REST semantics, strict policy/audit/COW/concurrency, canonical OpenAPI, public NGINX evidence, and PostgreSQL 14–18 CI, merged as `067676314e0d9664d40cb8514ea549b966a4eb2d` | COMPLETE — E2E PROVEN |
+| 077 / [PR #74](https://github.com/ulfe-lmi/slaif-agent-site/pull/74) | Agent pages/locales/navigation/redirects and dynamic Render, accepted and merged 2026-09-08 as `ae3a4a681bb888260192b7bb1b2a337b4906828d` | COMPLETE — E2E PROVEN |
 
 ## Objective 077 source revision
 
@@ -54,22 +61,55 @@ maps the immutable 077-a through 077-z transcript to executable Agent,
 Editor, Render, NGINX/browser, migration, concurrency, recovery, contract, and
 hostile-negative evidence for bounded pages, locales, navigation, redirects,
 and dynamic collection rendering. Its narrow information-architecture
-contract is **COMPLETE — E2E PROVEN** at the source revision. GitHub records
-whether strategic acceptance has placed it in `main`. The contractual MVP
-remains **NOT COMPLETE**.
+contract is **COMPLETE — E2E PROVEN** and was accepted and merged through PR #74
+on 2026-09-08. Its merge commit is the verified main/base stated above. The
+contractual MVP remains **NOT COMPLETE**.
+
+## Objective 078 source revision
+
+The 078-m closure of the 078-j source revision on [PR #77](https://github.com/ulfe-lmi/slaif-agent-site/pull/77)
+maps the immutable 078-a through 078-f transcript to the existing public Agent
+and shared Render/Web/browser boundaries. Its bounded component slice is
+**COMPLETE — E2E PROVEN** at the open-PR source revision: a clean NGINX-only
+workflow creates and reads an empty-to-nested Section/Container/Heading/RichText
+composition, updates content props, moves with semantic anchors, preserves
+IDs/props/hierarchy/order/versions across Agent/Render/Web restarts, deletes
+leaves then parents, and proves private browser artifacts, hostile negatives,
+idempotency/audit/quota/COW isolation, and canonical non-change. The active
+078-g added the typed `design-system/v1` authority and bounded local
+variant/layout/responsive mutation; 078-j repairs its exact property-level
+scope/OpenAPI truth, initial design selection, removal/replay/no-effect
+semantics, and classifies the existing Button/Image/CollectionGrid visual
+properties. The 078-k audit closed full validation, responsive CREATE, renderer
+cascade, human Editor/Puck preservation, and migration reversibility. The 078-l
+continuation closes the responsive Agent MOVE and guarded 061-to-060 downgrade
+proof, and 078-m records strategic technical acceptance after the approved
+078-j whitespace correction. Focused public-Agent/PostgreSQL/Render/Web/Puck
+evidence is retained and credited for technical acceptance. The accepted Objective-077
+revision is in `main` at `ae3a4a6`. Site-global theme, global-region,
+exact-workspace Puck, review, promotion, and publication remain
+**PARTIAL/NOT IMPLEMENTED**; this does not claim that PR #77 has merged or that
+the contractual MVP is complete.
+
+The 078-n continuation repaired the approved consumed-order link formatting
+without changing the product tree. The active 078-o continuation is limited to
+qualifying Next.js `16.3.3` against the two newly surfaced Critical advisories,
+with matching lock/inventory/assertion updates and the required remote
+supply-chain evidence. Local Node, policy, Compose, edge, and browser gates
+pass; final acceptance remains pending remote CI and strategic merge.
 
 ## Active and remaining sequence
 
-The active transcript pointer remains the protocol-final `077-z` until strategy
-selects and signals the next objective. The source revision has complete bounded
-077 evidence; its acceptance and containment in `main` are determined by OAP
-and GitHub state, not this document. All later order files remain inert until
-strategy selects and signals them.
+The active transcript pointer is `078-o` for the current security continuation;
+the source revisions have complete bounded 077 evidence and
+complete bounded 078 component evidence; acceptance and containment in `main`
+are determined by OAP and GitHub state, not this document. All later order files
+remain inert until strategy selects and signals them.
 
 | Order | Contractual scope | Current status |
 |---|---|---|
-| 077 | Agent page, navigation, redirect, and bounded dynamic collection Render semantics | COMPLETE — E2E PROVEN at 077-z source revision; consult authoritative PR/main state for merge |
-| 078 | Agent composition and design semantics | PARTIAL |
+| 077 | Agent page, navigation, redirect, and bounded dynamic collection Render semantics | COMPLETE — E2E PROVEN and accepted/merged in PR #74 on 2026-09-08 at `ae3a4a6` |
+| 078 | Agent composition and design semantics; bounded component data plane | PARTIAL — component/local-design slice and 078-m/078-n closure repairs are accepted on open PR #77; 078-o qualifies the required Next.js security patch, with final remote security-gate acceptance and merge pending; site-theme/global/page-style/catalog scope remains deferred |
 | 079 | Agent media semantics and references | PARTIAL |
 | 080 | Real MCP semantic parity | SCAFFOLD ONLY |
 | 081 | Human Puck editing in the exact Agent workspace | PARTIAL |

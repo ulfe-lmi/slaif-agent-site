@@ -9,6 +9,9 @@ from fastapi.testclient import TestClient
 from slaif_agent_site.agent_api.app import create_app, public_agent_openapi_bytes
 from slaif_agent_site.agent_api.config import AgentDatabaseMode, AgentDatabaseSettings
 from slaif_agent_site.config import ServiceSettings
+from slaif_agent_site.content_model.design_system import (
+    component_property_scope_metadata,
+)
 from slaif_agent_site.health import ProbeResult
 
 from tools.contracts.generate_agent_openapi import CONTRACT_PATH, generate_agent_openapi
@@ -88,6 +91,7 @@ def test_public_contract_has_scopes_headers_errors_and_no_internal_paths() -> No
         {
             "when_fields": ["slug", "locale", "route_template"],
             "required_scopes": ["route:write"],
+            "condition": "present",
         }
     ]
     move = document["components"]["schemas"]["MovePageRequest"]
@@ -99,6 +103,79 @@ def test_public_contract_has_scopes_headers_errors_and_no_internal_paths() -> No
     assert restore_schema == {"$ref": "#/components/schemas/RestorePageRequest"}
     assert "LivenessResponse" not in document["components"]["schemas"]
     assert "ReadinessResponse" not in document["components"]["schemas"]
+
+
+def test_component_catalog_contract_is_closed_and_agent_create_has_no_raw_rank() -> (
+    None
+):
+    document = json.loads(generate_agent_openapi())
+    schemas = document["components"]["schemas"]
+    for name in (
+        "AgentComponentCatalogResponse",
+        "AgentComponentDescriptor",
+        "AgentComponentPropDescriptor",
+        "AgentComponentSchemaNode",
+    ):
+        assert schemas[name]["additionalProperties"] is False
+    create = schemas["AgentCreateCompositionNodeRequest"]
+    assert "order_key" not in create["properties"]
+    component_path = document["paths"]["/api/agent/v1/component-catalog"]["get"]
+    assert component_path["x-slaif-required-scopes"] == ["component-catalog:read"]
+
+
+def test_design_system_contract_is_typed_and_site_catalog_bound() -> None:
+    document = json.loads(generate_agent_openapi())
+    design_path = document["paths"]["/api/agent/v1/design-system"]["get"]
+    assert design_path["x-slaif-required-scopes"] == ["theme:read"]
+    assert design_path["x-slaif-mutation"] is False
+    schema = document["components"]["schemas"]["AgentDesignSystemResponse"]
+    assert schema["additionalProperties"] is False
+    assert set(schema["properties"]) == {
+        "catalog_version",
+        "components",
+        "composition_schema_version",
+        "renderer_version",
+        "responsive_fallback",
+        "responsive_labels",
+        "responsive_scope",
+        "tokens",
+        "version",
+    }
+    tokens = document["components"]["schemas"]["AgentDesignTokenSet"]
+    assert tokens["additionalProperties"] is False
+    assert tokens["properties"]["columns"]["items"]["type"] == "integer"
+    component_patch = document["paths"]["/api/agent/v1/components/{component_id}"][
+        "patch"
+    ]
+    assert component_patch["x-slaif-required-scopes"] == []
+    assert component_patch["x-slaif-component-property-scopes"] == (
+        component_property_scope_metadata()
+    )
+    component_create = document["paths"]["/api/agent/v1/pages/{page_id}/components"][
+        "post"
+    ]
+    assert (
+        component_create["x-slaif-component-authority"]
+        == component_patch["x-slaif-component-authority"]
+    )
+    assert component_patch["x-slaif-component-authority"]["operations"]["PATCH"] == {
+        "selection": "value-changed-properties",
+        "removal": ["whole-document-absent", "json-null"],
+        "responsive_transition": [
+            "map-add",
+            "map-change",
+            "map-remove",
+            "map-to-scalar",
+        ],
+    }
+    image_aspect = next(
+        item
+        for item in component_patch["x-slaif-conditional-scopes"]
+        if item["component_types"] == ["Image"]
+        and item["when_fields"] == ["props.aspectRatio"]
+    )
+    assert image_aspect["required_scopes"] == ["component-props:write"]
+    assert image_aspect["condition"] == "changed"
 
 
 def test_public_edge_endpoint_returns_the_same_canonical_bytes() -> None:
