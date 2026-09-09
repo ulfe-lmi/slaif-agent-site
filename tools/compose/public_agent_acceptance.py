@@ -58,6 +58,8 @@ def _semantic_contract(
 ) -> tuple[str, str, str] | None:
     """Return the exact audit identity for a successful semantic route."""
 
+    if path == "/api/agent/v1/theme" and method == "PATCH":
+        return "theme", "THEME_UPDATED", "mutation"
     segments = path.rstrip("/").split("/")
     if len(segments) >= 6 and segments[:5] == [
         "",
@@ -1896,6 +1898,8 @@ def _run_component_render_loop(
             "/api/agent/v1/pages/{page_id}/components",
             "/api/agent/v1/components/{component_id}",
             "/api/agent/v1/components/{component_id}/move",
+            "/api/agent/v1/theme-schema",
+            "/api/agent/v1/theme",
         ):
             if route not in contract["paths"]:
                 raise ProofFailure("component-openapi-route-inventory")
@@ -3171,6 +3175,8 @@ def run_acceptance(project: str) -> None:
             "navigation:create",
             "navigation:write",
             "navigation:delete",
+            "theme:read",
+            "theme-tokens:write",
         }
         if not required_scopes <= set(permissions.get("scopes", [])):
             raise ProofFailure("permissions-incomplete")
@@ -3186,6 +3192,71 @@ def run_acceptance(project: str) -> None:
             item.get("executable") is not False for item in primitives
         ):
             raise ProofFailure("primitive-discovery-invalid")
+
+        theme_schema = _agent_request(
+            client, primary_token, "/api/agent/v1/theme-schema", label="theme-schema"
+        )
+        if (
+            theme_schema.get("version") != "theme-schema/v1"
+            or theme_schema.get("renderer_version") != "renderer-v1"
+            or theme_schema.get("responsive") is not False
+            or [group.get("name") for group in theme_schema.get("groups", [])]
+            != ["palette", "typography", "layout", "shape"]
+        ):
+            raise ProofFailure("theme-schema-invalid")
+        theme_initial = _agent_request(
+            client, primary_token, "/api/agent/v1/theme", label="theme-default"
+        )
+        if (
+            theme_initial.get("id") != site_id
+            or theme_initial.get("site_id") != site_id
+            or theme_initial.get("row_version") != 1
+            or theme_initial.get("palette") != {"preset": "ocean"}
+            or theme_initial.get("typography")
+            != {"family": "system", "scale": "balanced", "weight": "regular"}
+            or theme_initial.get("layout")
+            != {"content_width": "md", "spacing": "md", "grid_gap": "md"}
+            or theme_initial.get("shape") != {"radius": "md", "shadow": "sm"}
+        ):
+            raise ProofFailure("theme-default-invalid")
+        theme_body = {
+            "expected_row_version": 1,
+            "palette": {"preset": "meadow"},
+            "typography": {
+                "family": "serif",
+                "scale": "spacious",
+                "weight": "bold",
+            },
+            "layout": {"content_width": "xl", "spacing": "lg", "grid_gap": "sm"},
+            "shape": {"radius": "lg", "shadow": "md"},
+        }
+        theme_update = _request_mutation(
+            client,
+            primary_token,
+            "/api/agent/v1/theme",
+            theme_body,
+            f"oap-078p-theme-update-{tag}",
+            status=200,
+        )
+        theme_record = theme_update.get("record")
+        if not isinstance(theme_record, dict) or theme_record.get("row_version") != 2:
+            raise ProofFailure("theme-update-invalid")
+        theme_replay = client.request(
+            "/api/agent/v1/theme",
+            method="PATCH",
+            body=theme_body,
+            headers={
+                "Authorization": f"Bearer {primary_token}",
+                "Idempotency-Key": f"oap-078p-theme-update-{tag}",
+            },
+        )
+        if _json(theme_replay, status=200, label="theme-replay") != theme_update:
+            raise ProofFailure("theme-replay-mismatch")
+        theme_readback = _agent_request(
+            client, primary_token, "/api/agent/v1/theme", label="theme-readback"
+        )
+        if theme_readback != theme_record:
+            raise ProofFailure("theme-readback-mismatch")
 
         _run_dynamic_news_edge_journey(
             client, site_id, csrf, project, tag, observer_token
@@ -4515,7 +4586,8 @@ def run_acceptance(project: str) -> None:
             f"workspace={primary_workspace} types=2 fields=3 items=2 "
             "translations=1 relations=1 views=1 pages=1 components=1 "
             "locales=1 redirects=1 navigations=1 navigation-items=3 "
-            "openapi=exact restart=verified nginx-outage=verified "
+            "theme=schema-default-patch-read-replay openapi=exact "
+            "restart=verified nginx-outage=verified "
             "crud=public quotas=mutation-429,max-delete-429 "
             "dependency-delete=422 page-delete-restore=verified "
             "canonical-independence=verified render-restart=verified"

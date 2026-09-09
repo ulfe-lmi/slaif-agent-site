@@ -58,6 +58,14 @@ site-global theme, global-region expansion, exact-workspace Puck editing,
 review, promotion, publication, and the contractual MVP remain separate and
 incomplete.
 
+The active Objective-078/2 increment adds a bounded `theme-schema/v1` data
+plane on a new PR from verified `main`: typed Agent discovery/read/partial-
+update routes, reversible legacy theme migration, exact COW/version/scope/
+idempotency/audit/quota/concurrency semantics, and shared Render/Web/Puck token
+consumption. It deliberately excludes global regions, header/footer
+architecture, page style, arbitrary CSS/fonts/colors, media, MCP, review,
+promotion, publication, and final MVP claims.
+
 > **Pre-alpha / bounded deployable product.** This
 > repository contains the normative architecture, coding-agent governance,
 > reproducible Python/TypeScript toolchains, the qualified

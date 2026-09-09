@@ -31,6 +31,7 @@ from slaif_agent_site.content_model.service import (
     ContentModelServiceError,
     ContentModelServiceReason,
     _agent_nav,
+    _agent_theme,
     _ci,
     _cmp,
     _ct,
@@ -93,6 +94,7 @@ AGENT_NAVIGATION_ITEM_GET_SQL = (
 )
 AGENT_REDIRECT_LIST_SQL = "SELECT * FROM content.slaif_agent_redirect_list($1)"
 AGENT_REDIRECT_GET_SQL = "SELECT * FROM content.slaif_agent_redirect_get($1,$2)"
+AGENT_THEME_GET_SQL = "SELECT * FROM content.slaif_agent_theme_get($1)"
 
 AgentRead = Callable[["AgentSemanticReadService"], Awaitable[Any]]
 
@@ -341,6 +343,12 @@ class AgentSemanticReadService:
         if row is None:
             raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
         return _nav_item(row)
+
+    async def get_theme(self, site_id: UUID) -> Any:
+        row = await self._fetchrow(AGENT_THEME_GET_SQL, site_id)
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
+        return _agent_theme(row)
 
 
 async def execute_agent_read(

@@ -11,6 +11,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from ..content_model.theme import validate_theme_resource_constraints
+
 
 def _bounded_text(value: str, max_length: int) -> str:
     normalized = value.strip()
@@ -133,6 +135,10 @@ class CreateWorkspaceRequest(BaseModel):
     def constraints_are_bounded(cls, value: dict[str, object]) -> dict[str, object]:
         if len(value) > 32:
             raise ValueError("workspace constraints are bounded")
+        try:
+            validate_theme_resource_constraints(value)
+        except ValueError:
+            raise ValueError("theme resource constraint is malformed") from None
         return value
 
     @field_validator("source_origins")

@@ -178,6 +178,42 @@ def test_design_system_contract_is_typed_and_site_catalog_bound() -> None:
     assert image_aspect["condition"] == "changed"
 
 
+def test_theme_contract_is_closed_and_has_separate_token_scope() -> None:
+    document = json.loads(generate_agent_openapi())
+    schema_path = document["paths"]["/api/agent/v1/theme-schema"]["get"]
+    theme_path = document["paths"]["/api/agent/v1/theme"]["get"]
+    patch_path = document["paths"]["/api/agent/v1/theme"]["patch"]
+    assert schema_path["x-slaif-required-scopes"] == ["theme:read"]
+    assert theme_path["x-slaif-required-scopes"] == ["theme:read"]
+    assert patch_path["x-slaif-required-scopes"] == ["theme-tokens:write"]
+    assert patch_path["x-slaif-mutation"] is True
+    assert (
+        document["components"]["schemas"]["ThemeRecord"]["additionalProperties"]
+        is False
+    )
+    assert (
+        document["components"]["schemas"]["AgentThemeSchemaResponse"][
+            "additionalProperties"
+        ]
+        is False
+    )
+    assert (
+        document["components"]["schemas"]["AgentThemeMutationResponse"][
+            "additionalProperties"
+        ]
+        is False
+    )
+    request = document["components"]["schemas"]["AgentUpdateThemeRequest"]
+    assert request["additionalProperties"] is False
+    assert set(request["properties"]) == {
+        "expected_row_version",
+        "palette",
+        "typography",
+        "layout",
+        "shape",
+    }
+
+
 def test_public_edge_endpoint_returns_the_same_canonical_bytes() -> None:
     with TestClient(_app()) as client:
         response = client.get("/api/agent/v1/openapi.json")

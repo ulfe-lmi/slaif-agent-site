@@ -352,3 +352,126 @@ test("renderer local design follows the documented responsive cascade", async ({
   expect(mobile.image.minHeight).toBe("192px");
   expect(mobile.image.aspectRatio).toBe("auto");
 });
+
+test("human-editor-theme-is-preview-scoped-and-computed", async ({ page }) => {
+  const workspaceId = process.env.SLAIF_E2E_PREVIEW_WORKSPACE_ID;
+  if (!workspaceId) throw new Error("missing preview fixture channel");
+  const credential = secrets();
+  const failures = observe(page);
+
+  await login(page, credential);
+  const sitesResponse = await page.request.get("/api/control/v1/me/sites");
+  expect(sitesResponse.status()).toBe(200);
+  const sites = (await sitesResponse.json()) as Array<{
+    site_id: string;
+    site_key: string;
+  }>;
+  const parity = sites.find((site) => site.site_key === "parity");
+  expect(parity).toBeDefined();
+  const csrf = (await page.context().cookies()).find(
+    (cookie) => cookie.name === "slaif_csrf",
+  )?.value;
+  expect(csrf).toBeTruthy();
+  const themeResponse = await page.request.patch(
+    `/api/editor/v1/sites/${parity!.site_id}/theme`,
+    {
+      headers: {
+        "Content-Type": "application/json",
+        "X-CSRF-Token": csrf!,
+        "Idempotency-Key": crypto.randomUUID(),
+      },
+      data: {
+        palette: { preset: "meadow" },
+        typography: { family: "serif", scale: "spacious", weight: "bold" },
+        layout: { content_width: "xl", spacing: "lg", grid_gap: "sm" },
+        shape: { radius: "lg", shadow: "md" },
+      },
+    },
+  );
+  expect(themeResponse.status()).toBe(200);
+  const savedTheme = (await themeResponse.json()) as {
+    row_version: number;
+    palette: { preset: string };
+    typography: { family: string; scale: string; weight: string };
+    layout: { content_width: string; spacing: string; grid_gap: string };
+    shape: { radius: string; shadow: string };
+  };
+  expect(savedTheme).toMatchObject({
+    row_version: 2,
+    palette: { preset: "meadow" },
+    typography: { family: "serif", scale: "spacious", weight: "bold" },
+    layout: { content_width: "xl", spacing: "lg", grid_gap: "sm" },
+    shape: { radius: "lg", shadow: "md" },
+  });
+
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const previewResponse = await page.goto(`/preview/${workspaceId}/s/parity/`);
+  expect(previewResponse?.status()).toBe(200);
+  const previewTheme = await page.locator("main.renderer-surface").evaluate((root) => {
+    const rootStyle = getComputedStyle(root);
+    const grid = document.querySelector(".renderer-grid");
+    const article = document.querySelector(".renderer-collection article");
+    if (!(grid instanceof HTMLElement) || !(article instanceof HTMLElement))
+      throw new Error("theme-computed-elements-missing");
+    const gridStyle = getComputedStyle(grid);
+    const articleStyle = getComputedStyle(article);
+    return {
+      className: root.getAttribute("class"),
+      backgroundColor: rootStyle.backgroundColor,
+      color: rootStyle.color,
+      fontFamily: rootStyle.fontFamily,
+      fontSize: rootStyle.fontSize,
+      fontWeight: rootStyle.fontWeight,
+      width: rootStyle.width,
+      paddingTop: rootStyle.paddingTop,
+      gridGap: gridStyle.gap,
+      borderRadius: articleStyle.borderRadius,
+      boxShadow: articleStyle.boxShadow,
+    };
+  });
+  expect(previewTheme.className).toContain("renderer-theme-palette--meadow");
+  expect(previewTheme.className).toContain("renderer-theme-family--serif");
+  expect(previewTheme.className).toContain("renderer-theme-scale--spacious");
+  expect(previewTheme.className).toContain("renderer-theme-weight--bold");
+  expect(previewTheme.className).toContain("renderer-theme-width--xl");
+  expect(previewTheme.className).toContain("renderer-theme-spacing--lg");
+  expect(previewTheme.className).toContain("renderer-theme-gap--sm");
+  expect(previewTheme.className).toContain("renderer-theme-radius--lg");
+  expect(previewTheme.className).toContain("renderer-theme-shadow--md");
+  expect(previewTheme.backgroundColor).toBe("rgb(240, 248, 241)");
+  expect(previewTheme.color).toBe("rgb(18, 53, 29)");
+  expect(previewTheme.fontFamily).toContain("Georgia");
+  expect(previewTheme.fontSize).toBe("17px");
+  expect(previewTheme.fontWeight).toBe("700");
+  expect(previewTheme.width).toBe("1408px");
+  expect(previewTheme.paddingTop).toBe("64px");
+  expect(previewTheme.gridGap).toBe("8px");
+  expect(previewTheme.borderRadius).toBe("20px");
+  expect(previewTheme.boxShadow).not.toBe("none");
+
+  const canonicalResponse = await page.goto("/s/parity/");
+  expect(canonicalResponse?.status()).toBe(200);
+  const canonicalClass = await page
+    .locator("main.renderer-surface")
+    .getAttribute("class");
+  expect(canonicalClass).toContain("renderer-theme-palette--ocean");
+  expect(canonicalClass).not.toContain("renderer-theme-palette--meadow");
+  const resetTheme = await page.request.patch(
+    `/api/editor/v1/sites/${parity!.site_id}/theme`,
+    {
+      headers: {
+        "Content-Type": "application/json",
+        "X-CSRF-Token": csrf!,
+        "Idempotency-Key": crypto.randomUUID(),
+      },
+      data: {
+        palette: { preset: "ocean" },
+        typography: { family: "system", scale: "balanced", weight: "regular" },
+        layout: { content_width: "md", spacing: "md", grid_gap: "md" },
+        shape: { radius: "md", shadow: "sm" },
+      },
+    },
+  );
+  expect(resetTheme.status()).toBe(200);
+  expect(failures(), "unexpected theme browser failures").toEqual([]);
+});

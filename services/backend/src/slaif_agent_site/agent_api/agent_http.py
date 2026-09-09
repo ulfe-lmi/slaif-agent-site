@@ -107,6 +107,14 @@ from slaif_agent_site.content_model.site_data_models import (
     NavigationItemRecord,
     RedirectRecord,
 )
+from slaif_agent_site.content_model.theme import (
+    AgentThemeMutationResponse,
+    AgentThemeSchemaResponse,
+    AgentUpdateThemeRequest,
+    ThemeRecord,
+    theme_schema_document,
+    validate_theme_resource_constraints,
+)
 from slaif_agent_site.content_model.view_models import (
     CollectionViewRecord,
     CreateCollectionViewRequest,
@@ -255,6 +263,23 @@ async def get_design_system(request: Request) -> AgentDesignSystemResponse:
     context = await _authenticate(request)
     _require_scope(context, "theme:read")
     return AgentDesignSystemResponse.model_validate(design_system_document())
+
+
+@router.get("/theme-schema")
+async def get_theme_schema(request: Request) -> AgentThemeSchemaResponse:
+    context = await _authenticate(request)
+    _require_scope(context, "theme:read")
+    return AgentThemeSchemaResponse.model_validate(theme_schema_document())
+
+
+@router.get("/theme")
+async def get_theme(request: Request) -> ThemeRecord:
+    context = await _authenticate(request)
+    _require_scope(context, "theme:read")
+    record = await _execute_read(
+        request, context, lambda service: service.get_theme(context.site_id)
+    )
+    return cast(ThemeRecord, record)
 
 
 @router.get("/content-model/primitives")
@@ -491,6 +516,33 @@ async def list_media(request: Request) -> list[MediaAssetRecord]:
 
 
 IdempotencyHeader = Annotated[str | None, Header(alias="Idempotency-Key")]
+
+
+@router.patch("/theme", response_model=AgentThemeMutationResponse)
+async def update_theme(
+    request: Request,
+    body: AgentUpdateThemeRequest,
+    idempotency_key: IdempotencyHeader = None,
+) -> AgentThemeMutationResponse:
+    context = await _authenticate(request)
+    _require_scope(context, "theme-tokens:write")
+    try:
+        validate_theme_resource_constraints(context.resource_constraints)
+    except ValueError:
+        raise DomainValidationError() from None
+    result = await _execute_mutation(
+        request,
+        context,
+        body,
+        idempotency_key,
+        resource_type="theme",
+        status_code=200,
+        action="THEME_UPDATED",
+        mutate=lambda service: service.update_theme_for_site(
+            context.site_id, body, no_effect=False
+        ),
+    )
+    return AgentThemeMutationResponse.model_validate(result.model_dump(mode="json"))
 
 
 async def _execute_mutation(
