@@ -346,14 +346,14 @@ docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif -Atc \
    WHERE audit.action LIKE 'POST /api/editor/v1/sites/%';" | grep -q '^t$'
 docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif -Atc \
   "SET ROLE slaif_owner;
-   SELECT count(*) = 4
-      AND count(DISTINCT operation_id) = 4
+   SELECT count(*) = 5
+      AND count(DISTINCT operation_id) = 5
       AND count(*) FILTER (WHERE status_code IS NULL) = 0
       AND bool_and(status_code BETWEEN 200 AND 299
                    AND response_body IS NOT NULL
                    AND completed_at IS NOT NULL)
    FROM control.human_editor_idempotency;" | grep -q '^t$'
-echo "human-editor-envelope: OK workspace=HUMAN active audit=idempotent sequence=page-create,component-add,component-add,component-move count=4"
+echo "human-editor-envelope: OK workspace=HUMAN active audit=idempotent sequence=page-create,component-add,component-add,component-move count=5"
 docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif -v ON_ERROR_STOP=1 -Atc \
   "SET ROLE slaif_owner;
    SELECT string_agg(
