@@ -124,3 +124,21 @@ issue in the consumed immutable order
 a lint bypass, so this is a strategy-artifact blocker rather than a product
 failure. No product code, dependency, historical report, or other order was
 changed.
+
+## 078-o security continuation evidence
+
+The 078-n continuation repaired that consumed-order Markdown blocker through
+the approved link-only historical correction; no product tree change was made.
+The active 078-o order authorizes only Next.js `16.3.1` to `16.3.3`, matching
+lock/inventory/assertion updates, and the required qualification. Registry
+verification matches the order's exact MIT package, Node engine, and integrity.
+
+The patched production Web build reports Next.js `16.3.3`, and the generated
+SBOM contains one Next component at `16.3.3`. Frozen install, Node lint,
+format, typecheck, tests, production build, repository tests, supply-chain
+tests/policy, and the full disposable Compose/edge/browser smoke pass. The
+remote implementation-head supply-chain evidence is the remaining
+authoritative gate; it must show both advisories absent from the patched Web
+artifact and no new unexcepted Critical finding. No vulnerability exception,
+scanner suppression, policy relaxation, unrelated upgrade, feature, merge, or
+historical rewrite is authorized.

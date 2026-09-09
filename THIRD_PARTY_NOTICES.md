@@ -36,8 +36,8 @@ CI SBOM evidence bundle.
 | `@jridgewell/trace-mapping` | `0.3.31` | npm / development | `MIT` | <https://github.com/jridgewell/sourcemaps/tree/main/packages/trace-mapping> | — |
 | `@measured/puck` | `0.20.2` | npm / production | `MIT` | <https://puckeditor.com> | — |
 | `@napi-rs/lzma-linux-x64-gnu` | `1.5.1` | npm / development | `MIT` | <https://github.com/Brooooooklyn/lzma#readme> | — |
-| `@next/env` | `16.3.1` | npm / production | `MIT` | <https://github.com/vercel/next.js#readme> | — |
-| `@next/swc-linux-x64-gnu` | `16.3.1` | npm / production | `MIT` | <https://github.com/vercel/next.js#readme> | — |
+| `@next/env` | `16.3.3` | npm / production | `MIT` | <https://github.com/vercel/next.js#readme> | — |
+| `@next/swc-linux-x64-gnu` | `16.3.3` | npm / production | `MIT` | <https://github.com/vercel/next.js#readme> | — |
 | `@nodelib/fs.scandir` | `2.1.5` | npm / development | `MIT` | <https://github.com/nodelib/nodelib/tree/master#readme> | — |
 | `@nodelib/fs.stat` | `2.0.5` | npm / development | `MIT` | <https://github.com/nodelib/nodelib/tree/master#readme> | — |
 | `@nodelib/fs.walk` | `1.2.8` | npm / development | `MIT` | <https://github.com/nodelib/nodelib/tree/master#readme> | — |
@@ -179,7 +179,7 @@ CI SBOM evidence bundle.
 | `mz` | `2.7.0` | npm / development | `MIT` | <https://github.com/normalize/mz#readme> | — |
 | `nanoid` | `3.3.18` | npm / production | `MIT` | <https://github.com/ai/nanoid#readme> | — |
 | `natural-compare` | `1.4.0` | npm / development | `MIT` | <https://github.com/litejs/natural-compare-lite#readme> | — |
-| `next` | `16.3.1` | npm / production | `MIT` | <https://nextjs.org> | — |
+| `next` | `16.3.3` | npm / production | `MIT` | <https://nextjs.org> | — |
 | `node-releases` | `2.0.53` | npm / development | `MIT` | <https://github.com/chicoxyzzy/node-releases#readme> | — |
 | `normalize-path` | `3.0.0` | npm / development | `MIT` | <https://github.com/jonschlinkert/normalize-path> | — |
 | `object-assign` | `4.1.1` | npm / development | `MIT` | <https://github.com/sindresorhus/object-assign#readme> | — |
