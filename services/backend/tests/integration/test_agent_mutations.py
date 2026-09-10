@@ -6,6 +6,7 @@ import asyncio
 import contextlib
 import hashlib
 import json
+import time
 from collections.abc import Mapping
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
@@ -344,17 +345,40 @@ async def _set_resource_constraints(
         )
 
 
+async def _function_contract(owner: Any, signature: str) -> tuple[Any, ...]:
+    row = await owner.fetchrow(
+        "SELECT pg_get_functiondef($1::regprocedure), pg_get_userbyid(proowner), "
+        "proacl, provolatile FROM pg_proc WHERE oid=$1::regprocedure",
+        signature,
+    )
+    assert row is not None
+    return tuple(row)
+
+
 async def _wait_for_page_structure_waiters(owner: Any, expected: int) -> None:
     """Use the database lock table as a deterministic barrier, never a timer."""
 
-    for _ in range(500):
+    lock = await owner.fetchrow(
+        "SELECT classid::bigint,objid::bigint FROM pg_locks "
+        "WHERE pid=pg_backend_pid() AND locktype='advisory' AND granted"
+    )
+    if lock is None:
+        raise AssertionError("structure-lock blocker has no granted advisory lock")
+    deadline = time.monotonic() + 8.0
+    waiting = 0
+    while time.monotonic() < deadline:
         waiting = await owner.fetchval(
-            "SELECT count(*) FROM pg_locks WHERE locktype='advisory' AND NOT granted"
+            "SELECT count(*) FROM pg_locks WHERE locktype='advisory' "
+            "AND NOT granted AND classid::bigint=$1 AND objid::bigint=$2",
+            lock[0],
+            lock[1],
         )
         if waiting >= expected:
             return
-        await asyncio.sleep(0)
-    raise AssertionError(f"expected {expected} structural lock waiters, got {waiting}")
+        await asyncio.sleep(0.01)
+    raise AssertionError(
+        f"expected {expected} waiters for the blocker advisory lock, got {waiting}"
+    )
 
 
 @asynccontextmanager
@@ -2131,7 +2155,7 @@ async def test_agent_redirect_051_migration_round_trip_preserves_data_and_privil
             await owner.fetchval(
                 "SELECT version_num::text FROM control.alembic_version"
             )
-            == "064_001"
+            == "065_001"
         )
         assert tuple(
             await owner.fetchrow(
@@ -2478,7 +2502,7 @@ async def test_agent_060_component_migration_round_trip_restores_audit_contract(
             await owner.fetchval(
                 "SELECT version_num::text FROM control.alembic_version"
             )
-            == "064_001"
+            == "065_001"
         )
         definition = await owner.fetchval(
             "SELECT pg_get_functiondef($1::regprocedure)", signature
@@ -2543,7 +2567,7 @@ async def test_agent_062_component_authority_migration_downgrade_round_trip(
         operation="upgrade",
         revision="head",
     )
-    assert (await status(database.settings)).revision == "064_001"
+    assert (await status(database.settings)).revision == "065_001"
 
 
 @pytest.mark.asyncio
@@ -2621,7 +2645,7 @@ async def test_agent_063_component_audit_migration_preserves_data_on_downgrade(
             await owner.fetchval(
                 "SELECT version_num::text FROM control.alembic_version"
             )
-            == "064_001"
+            == "065_001"
         )
         assert (
             tuple(
@@ -2736,7 +2760,7 @@ async def test_agent_064_component_downgrade_guards_and_round_trips_contract(
             await owner.fetchval(
                 "SELECT version_num::text FROM control.alembic_version"
             )
-            == "064_001"
+            == "065_001"
         )
     await _disable_content_cow(database)
     await run_migration(
@@ -2792,7 +2816,7 @@ async def test_agent_064_component_downgrade_guards_and_round_trips_contract(
             )
         )
         before_contract = await contract(owner)
-    assert before_version == "064_001"
+    assert before_version == "065_001"
     await _disable_content_cow(database)
     with pytest.raises(Exception, match="064_DOWNGRADE_RESPONSIVE_COMPONENT_STATE"):
         await run_migration(
@@ -2874,7 +2898,7 @@ async def test_agent_049_plain_page_data_downgrade_and_upgrade_preserves_data(
             await owner.fetchval(
                 "SELECT version_num::text FROM control.alembic_version"
             )
-            == "064_001"
+            == "065_001"
         )
         row = await owner.fetchrow(
             "SELECT title, route_template, deleted_at FROM content.page_base "
@@ -10726,7 +10750,7 @@ async def test_agent_046_047_migration_round_trip_preserves_contract_and_state(
                 await owner.fetchval(
                     "SELECT version_num::text FROM control.alembic_version"
                 )
-                == "064_001"
+                == "065_001"
             )
             assert await owner.fetchval(
                 "SELECT to_regprocedure($1)",
@@ -11055,7 +11079,7 @@ async def test_agent_048_data_bearing_round_trip_preserves_relations_views_and_a
         )
         await reconcile(database.settings)
         final_status = await status(database.settings)
-        assert final_status.revision == "064_001"
+        assert final_status.revision == "065_001"
         assert final_status.state.value == "HARDENED"
         assert final_status.safe
         assert await cow_rows() == content_before
@@ -18236,7 +18260,7 @@ async def test_semantic_audit_contract_is_strict_and_reversible(
                 await owner.fetchval(
                     "SELECT version_num::text FROM control.alembic_version"
                 )
-                == "064_001"
+                == "065_001"
             )
             assert (
                 await owner.fetchval(
@@ -19229,3 +19253,469 @@ async def test_agent_locale_switch_page_delete_diagnostic(
 
     finally:
         pass
+
+
+@pytest.mark.asyncio
+async def test_agent_065_theme_data_round_trip_preserves_legacy_state(
+    agent_site_database: AgentSiteDatabase,
+) -> None:
+    database = agent_site_database
+    await run_migration(
+        database.settings.resolved_owner_dsn(),
+        expected_database=database.name,
+        operation="upgrade",
+        revision="064_001",
+    )
+    legacy_signatures = (
+        "control.slaif_agent_resource_constraints(uuid)",
+        "content.slaif_theme_get(uuid)",
+        "content.slaif_theme_update(uuid,jsonb,jsonb,jsonb,jsonb)",
+        "control.slaif_agent_idempotency_complete(uuid,uuid,text,text,uuid,integer,jsonb,text,uuid,uuid,text,text,text)",
+        "control.slaif_agent_idempotency_complete_no_effect(uuid,uuid,text,text,uuid,integer,jsonb,text,uuid,uuid)",
+    )
+    site_id = uuid4()
+    theme_id = uuid4()
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        await owner.execute(
+            "INSERT INTO control.site "
+            "(id,site_key,display_name,default_locale,component_catalog_version) "
+            "VALUES ($1,'migration-064','Migration 064','en-US','catalog-v1')",
+            site_id,
+        )
+        await owner.execute(
+            "INSERT INTO content.theme "
+            "(id,site_id,palette,typography,layout,shape) VALUES "
+            "($1,$2,$3::jsonb,$4::jsonb,$5::jsonb,$6::jsonb)",
+            theme_id,
+            site_id,
+            '{"preset":"ember"}',
+            '{"family":"mono","scale":"compact","weight":"medium"}',
+            '{"content_width":"sm","spacing":"lg","grid_gap":"sm"}',
+            '{"radius":"full","shadow":"lg"}',
+        )
+        fresh_064_contracts = {
+            signature: await _function_contract(owner, signature)
+            for signature in legacy_signatures
+        }
+        fresh_064_constraint = await owner.fetchval(
+            "SELECT pg_get_constraintdef(oid,true) "
+            "FROM pg_constraint WHERE conrelid='audit.agent_mutation'::regclass "
+            "AND conname='agent_mutation_semantic_shape'"
+        )
+    await run_migration(
+        database.settings.resolved_owner_dsn(),
+        expected_database=database.name,
+        operation="upgrade",
+        revision="head",
+    )
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        upgraded_contracts = {
+            signature: await _function_contract(owner, signature)
+            for signature in legacy_signatures
+        }
+        upgraded_constraint = await owner.fetchval(
+            "SELECT pg_get_constraintdef(oid,true) "
+            "FROM pg_constraint WHERE conrelid='audit.agent_mutation'::regclass "
+            "AND conname='agent_mutation_semantic_shape'"
+        )
+        assert (
+            upgraded_contracts[legacy_signatures[3]]
+            != fresh_064_contracts[legacy_signatures[3]]
+        )
+        assert (
+            upgraded_contracts[legacy_signatures[4]]
+            != fresh_064_contracts[legacy_signatures[4]]
+        )
+        assert "THEME_UPDATED" in upgraded_contracts[legacy_signatures[3]][0]
+        assert "THEME_UPDATED" in str(upgraded_constraint)
+        row = await owner.fetchrow(
+            "SELECT id,schema_version,renderer_version,row_version,palette,typography,"
+            "layout,shape FROM content.theme WHERE site_id=$1",
+            site_id,
+        )
+        assert tuple(row[:4]) + tuple(
+            json.loads(value) if isinstance(value, str) else value for value in row[4:]
+        ) == (
+            theme_id,
+            "theme-schema/v1",
+            "renderer-v1",
+            1,
+            {"preset": "ember"},
+            {"family": "mono", "scale": "compact", "weight": "medium"},
+            {"content_width": "sm", "spacing": "lg", "grid_gap": "sm"},
+            {"radius": "full", "shadow": "lg"},
+        )
+    await run_migration(
+        database.settings.resolved_owner_dsn(),
+        expected_database=database.name,
+        operation="downgrade",
+        revision="064_001",
+    )
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        restored_064_contracts = {
+            signature: await _function_contract(owner, signature)
+            for signature in legacy_signatures
+        }
+        assert restored_064_contracts == fresh_064_contracts
+        restored_064_constraint = await owner.fetchval(
+            "SELECT pg_get_constraintdef(oid,true) "
+            "FROM pg_constraint WHERE conrelid='audit.agent_mutation'::regclass "
+            "AND conname='agent_mutation_semantic_shape'"
+        )
+        assert restored_064_constraint == fresh_064_constraint
+        row = await owner.fetchrow(
+            "SELECT id,palette,typography,layout,shape FROM content.theme "
+            "WHERE site_id=$1",
+            site_id,
+        )
+        assert tuple(row[:1]) + tuple(
+            json.loads(value) if isinstance(value, str) else value for value in row[1:]
+        ) == (
+            theme_id,
+            {"preset": "ember"},
+            {"family": "mono", "scale": "compact", "weight": "medium"},
+            {"content_width": "sm", "spacing": "lg", "grid_gap": "sm"},
+            {"radius": "full", "shadow": "lg"},
+        )
+    await run_migration(
+        database.settings.resolved_owner_dsn(),
+        expected_database=database.name,
+        operation="upgrade",
+        revision="head",
+    )
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        assert (
+            await owner.fetchval(
+                "SELECT version_num::text FROM control.alembic_version"
+            )
+            == "065_001"
+        )
+        final_row = await owner.fetchrow(
+            "SELECT id,schema_version,renderer_version,row_version,palette,typography,"
+            "layout,shape FROM content.theme WHERE site_id=$1",
+            site_id,
+        )
+        assert tuple(final_row[:4]) + tuple(
+            json.loads(value) if isinstance(value, str) else value
+            for value in final_row[4:]
+        ) == (
+            theme_id,
+            "theme-schema/v1",
+            "renderer-v1",
+            1,
+            {"preset": "ember"},
+            {"family": "mono", "scale": "compact", "weight": "medium"},
+            {"content_width": "sm", "spacing": "lg", "grid_gap": "sm"},
+            {"radius": "full", "shadow": "lg"},
+        )
+        assert await owner.fetchval(
+            "SELECT has_function_privilege($1,$2,'EXECUTE')",
+            "slaif_agent_runtime",
+            "content.slaif_agent_theme_update(uuid,integer,jsonb,jsonb,jsonb,jsonb,boolean)",
+        )
+        assert await owner.fetchval(
+            "SELECT to_regnamespace('oap_065_legacy') IS NOT NULL"
+        )
+        assert await owner.fetchval(
+            "SELECT to_regprocedure($1) IS NOT NULL",
+            "content.slaif_agent_theme_get(uuid)",
+        )
+
+
+@pytest.mark.asyncio
+async def test_agent_theme_schema_defaults_and_bounded_mutation_are_cow_bound(
+    agent_site_database: AgentSiteDatabase,
+) -> None:
+    database = agent_site_database
+    _token, seeded = await _seed(database)
+    token = await _capability_with_scopes(
+        database,
+        seeded,
+        ["site:read", "theme:read", "theme-tokens:write"],
+    )
+    app = create_agent_app(
+        settings=ServiceSettings.for_test(),
+        database_settings=_agent_settings(database),
+    )
+    agent_pool = await database.role_pool("slaif_agent_runtime")
+    try:
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            before = await owner.fetchrow(
+                "SELECT count(*), (SELECT coalesce(sum(mutation_used),0) "
+                "FROM control.capability "
+                "WHERE workspace_id=$1), (SELECT count(*) FROM audit.agent_mutation "
+                "WHERE workspace_id=$1)",
+                seeded["workspace_id"],
+            )
+        async with app.router.lifespan_context(app):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://agent.test"
+            ) as client:
+                headers = {"Authorization": f"Bearer {token}"}
+                schema = await client.get("/api/agent/v1/theme-schema", headers=headers)
+                assert schema.status_code == 200, schema.text
+                assert schema.json()["version"] == "theme-schema/v1"
+                assert schema.json()["responsive"] is False
+                assert [group["name"] for group in schema.json()["groups"]] == [
+                    "palette",
+                    "typography",
+                    "layout",
+                    "shape",
+                ]
+                initial = await client.get("/api/agent/v1/theme", headers=headers)
+                assert initial.status_code == 200, initial.text
+                initial_body = initial.json()
+                assert initial_body["id"] == initial_body["site_id"]
+                assert initial_body["schema_version"] == "theme-schema/v1"
+                assert initial_body["renderer_version"] == "renderer-v1"
+                assert initial_body["row_version"] == 1
+                assert initial_body["palette"] == {"preset": "ocean"}
+                assert initial_body["typography"] == {
+                    "family": "system",
+                    "scale": "balanced",
+                    "weight": "regular",
+                }
+                assert initial_body["layout"] == {
+                    "content_width": "md",
+                    "spacing": "md",
+                    "grid_gap": "md",
+                }
+                assert initial_body["shape"] == {"radius": "md", "shadow": "sm"}
+
+                updated_body = {
+                    "expected_row_version": 1,
+                    "palette": {"preset": "meadow"},
+                    "typography": {
+                        "family": "serif",
+                        "scale": "spacious",
+                        "weight": "bold",
+                    },
+                    "layout": {
+                        "content_width": "lg",
+                        "spacing": "lg",
+                        "grid_gap": "sm",
+                    },
+                    "shape": {"radius": "lg", "shadow": "md"},
+                }
+                updated = await client.patch(
+                    "/api/agent/v1/theme",
+                    headers={**headers, "Idempotency-Key": "theme-update-1"},
+                    json=updated_body,
+                )
+                assert updated.status_code == 200, updated.text
+                assert updated.json()["action"] == "THEME_UPDATED"
+                assert updated.json()["record"]["row_version"] == 2
+                assert updated.json()["record"]["palette"] == {"preset": "meadow"}
+                replay = await client.patch(
+                    "/api/agent/v1/theme",
+                    headers={**headers, "Idempotency-Key": "theme-update-1"},
+                    json=updated_body,
+                )
+                assert replay.status_code == 200, replay.text
+                assert replay.content == updated.content
+
+                await _set_resource_constraints(
+                    database,
+                    seeded["workspace_id"],
+                    {
+                        "allowed_theme_palette_presets": ["ocean"],
+                        "allowed_theme_tokens": ["palette.preset"],
+                    },
+                )
+                resource_denied = await client.patch(
+                    "/api/agent/v1/theme",
+                    headers={**headers, "Idempotency-Key": "theme-resource-denied"},
+                    json={
+                        "expected_row_version": 2,
+                        "palette": {"preset": "meadow"},
+                    },
+                )
+                assert resource_denied.status_code == 403, resource_denied.text
+                token_only_global = await _capability_with_scopes(
+                    database,
+                    seeded,
+                    ["site:read", "theme:read", "theme-global:write"],
+                )
+                substitute_denied = await client.patch(
+                    "/api/agent/v1/theme",
+                    headers={
+                        "Authorization": f"Bearer {token_only_global}",
+                        "Idempotency-Key": "theme-global-substitute",
+                    },
+                    json={
+                        "expected_row_version": 2,
+                        "palette": {"preset": "ocean"},
+                    },
+                )
+                assert substitute_denied.status_code == 403, substitute_denied.text
+                await _set_resource_constraints(database, seeded["workspace_id"], {})
+                token = await _capability_with_scopes(
+                    database,
+                    seeded,
+                    ["site:read", "theme:read", "theme-tokens:write"],
+                )
+                headers = {"Authorization": f"Bearer {token}"}
+
+                invalid = await client.patch(
+                    "/api/agent/v1/theme",
+                    headers={**headers, "Idempotency-Key": "theme-invalid"},
+                    json={
+                        "expected_row_version": 2,
+                        "palette": {"preset": "#ffffff"},
+                    },
+                )
+                assert invalid.status_code == 422, invalid.text
+
+                no_effect = await client.patch(
+                    "/api/agent/v1/theme",
+                    headers={**headers, "Idempotency-Key": "theme-no-effect"},
+                    json={
+                        "expected_row_version": 2,
+                        "palette": {"preset": "meadow"},
+                    },
+                )
+                assert no_effect.status_code == 200, no_effect.text
+                assert (
+                    "action" not in no_effect.json()
+                    or no_effect.json()["action"] is None
+                )
+
+                stale = await client.patch(
+                    "/api/agent/v1/theme",
+                    headers={**headers, "Idempotency-Key": "theme-stale"},
+                    json={"expected_row_version": 1, "shape": {"radius": "sm"}},
+                )
+                assert stale.status_code == 409, stale.text
+
+            async with asyncpg_cow_session(
+                agent_pool,
+                session_id=seeded["workspace_id"],
+                operation_id=uuid4(),
+            ) as cow:
+                projected = await cow.native.fetchrow(
+                    "SELECT * FROM content.slaif_agent_theme_get($1)",
+                    seeded["site_id"],
+                )
+                assert projected[4] == 2
+                projected_palette = (
+                    json.loads(projected[5])
+                    if isinstance(projected[5], str)
+                    else projected[5]
+                )
+                assert projected_palette == {"preset": "meadow"}
+
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            after = await owner.fetchrow(
+                "SELECT count(*), (SELECT coalesce(sum(mutation_used),0) "
+                "FROM control.capability "
+                "WHERE workspace_id=$1), (SELECT count(*) FROM audit.agent_mutation "
+                "WHERE workspace_id=$1)",
+                seeded["workspace_id"],
+            )
+            assert after[0] == before[0]
+            assert after[1] == before[1] + 1
+            assert after[2] == before[2] + 1
+    finally:
+        await agent_pool.close()
+
+
+@pytest.mark.asyncio
+async def test_agent_theme_same_version_race_has_one_cow_winner(
+    agent_site_database: AgentSiteDatabase,
+) -> None:
+    database = agent_site_database
+    _token, seeded = await _seed(database)
+    token_one = await _capability_with_scopes(
+        database,
+        seeded,
+        ["site:read", "theme:read", "theme-tokens:write"],
+    )
+    token_two = await _capability_with_scopes(
+        database,
+        seeded,
+        ["site:read", "theme:read", "theme-tokens:write"],
+    )
+    app = create_agent_app(
+        settings=ServiceSettings.for_test(),
+        database_settings=_agent_settings(database),
+    )
+    agent_pool = await database.role_pool("slaif_agent_runtime")
+    reviewer_pool = await database.role_pool("slaif_reviewer")
+    try:
+        async with app.router.lifespan_context(app):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://agent.test"
+            ) as client:
+                body_one = {
+                    "expected_row_version": 1,
+                    "palette": {"preset": "meadow"},
+                }
+                body_two = {
+                    "expected_row_version": 1,
+                    "palette": {"preset": "ember"},
+                }
+                responses = await asyncio.gather(
+                    client.patch(
+                        "/api/agent/v1/theme",
+                        headers={
+                            "Authorization": f"Bearer {token_one}",
+                            "Idempotency-Key": "theme-race-one",
+                        },
+                        json=body_one,
+                    ),
+                    client.patch(
+                        "/api/agent/v1/theme",
+                        headers={
+                            "Authorization": f"Bearer {token_two}",
+                            "Idempotency-Key": "theme-race-two",
+                        },
+                        json=body_two,
+                    ),
+                )
+                assert sorted(response.status_code for response in responses) == [
+                    200,
+                    409,
+                ], [response.text for response in responses]
+                winner = next(
+                    response for response in responses if response.status_code == 200
+                )
+                assert winner.json()["record"]["row_version"] == 2
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            assert (
+                await owner.fetchval(
+                    "SELECT count(*) FROM audit.agent_mutation WHERE workspace_id=$1 "
+                    "AND action='THEME_UPDATED'",
+                    seeded["workspace_id"],
+                )
+                == 1
+            )
+            assert (
+                await owner.fetchval(
+                    "SELECT count(*) FROM control.agent_idempotency "
+                    "WHERE workspace_id=$1 AND idempotency_key LIKE 'theme-race-%'",
+                    seeded["workspace_id"],
+                )
+                == 1
+            )
+        async with asyncpg_cow_reviewer(reviewer_pool) as reviewer:
+            operations = tuple(
+                await reviewer.operations(seeded["workspace_id"], schema="content")
+            )
+        assert len(operations) == 1
+    finally:
+        await reviewer_pool.close()
+        await agent_pool.close()

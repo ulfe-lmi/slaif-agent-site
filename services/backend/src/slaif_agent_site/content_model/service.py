@@ -52,6 +52,7 @@ from .site_data_validators import (
     validate_side_effect,
     validate_target,
 )
+from .theme import theme_record_from_row
 from .validators import validate_values
 
 CT_CREATE_SQL = "SELECT * FROM content.slaif_content_type_create($1,$2,$3,$4,$5)"
@@ -414,11 +415,19 @@ class NavThemeMixin:
         shape: dict[str, Any] | None,
     ) -> Any:
         row = await self._fetchrow(
-            TH_UPDATE_SQL, site_id, palette, typography, layout, shape
+            TH_UPDATE_SQL,
+            site_id,
+            json.dumps(palette, sort_keys=True) if palette is not None else None,
+            json.dumps(typography, sort_keys=True) if typography is not None else None,
+            json.dumps(layout, sort_keys=True) if layout is not None else None,
+            json.dumps(shape, sort_keys=True) if shape is not None else None,
         )
         if row is None:
             raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
-        return _th(row)
+        full_row = await self._fetchrow(TH_FULL_GET_SQL, site_id)
+        if full_row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
+        return _th(full_row)
 
 
 class MediaMixin:
@@ -1532,7 +1541,8 @@ NV_LIST_SQL = "SELECT * FROM content.slaif_navigation_list($1)"
 NV_GET_SQL = "SELECT * FROM content.slaif_navigation_get($1)"
 NV_UPDATE_SQL = "SELECT * FROM content.slaif_navigation_update($1,$2,$3)"
 NV_DELETE_SQL = "SELECT content.slaif_navigation_delete($1)"
-TH_GET_SQL = "SELECT * FROM content.slaif_theme_get($1)"
+TH_GET_SQL = "SELECT * FROM content.slaif_theme_project($1)"
+TH_FULL_GET_SQL = TH_GET_SQL
 TH_UPDATE_SQL = "SELECT * FROM content.slaif_theme_update($1,$2,$3,$4,$5)"
 
 LOCALE_CREATE_SQL = "SELECT * FROM content.slaif_locale_create($1,$2,$3,$4,$5,$6)"
@@ -1668,18 +1678,33 @@ def _agent_nav(row: Any) -> AgentNavigationRecord:
 def _th(row: Any) -> Any:
     import json
 
-    from .nav_models import ThemeRecord
-
-    return ThemeRecord(
-        id=row[0],
-        site_id=row[1],
-        palette=json.loads(row[2]) if isinstance(row[2], str) else row[2],
-        typography=json.loads(row[3]) if isinstance(row[3], str) else row[3],
-        layout=json.loads(row[4]) if isinstance(row[4], str) else row[4],
-        shape=json.loads(row[5]) if isinstance(row[5], str) else row[5],
-        created_at=row[6],
-        updated_at=row[7],
+    from .theme import (
+        THEME_RENDERER_VERSION,
+        THEME_SCHEMA_VERSION,
+        ThemeRecord,
     )
+
+    if len(row) >= 11:
+        return theme_record_from_row(row)
+    return ThemeRecord.model_validate(
+        {
+            "id": row[0],
+            "site_id": row[1],
+            "schema_version": THEME_SCHEMA_VERSION,
+            "renderer_version": THEME_RENDERER_VERSION,
+            "row_version": 1,
+            "palette": json.loads(row[2]) if isinstance(row[2], str) else row[2],
+            "typography": json.loads(row[3]) if isinstance(row[3], str) else row[3],
+            "layout": json.loads(row[4]) if isinstance(row[4], str) else row[4],
+            "shape": json.loads(row[5]) if isinstance(row[5], str) else row[5],
+            "created_at": row[6],
+            "updated_at": row[7],
+        }
+    )
+
+
+def _agent_theme(row: Any) -> Any:
+    return theme_record_from_row(row)
 
 
 PG_CREATE_SQL = "SELECT * FROM content.slaif_page_create($1,$2,$3,$4,$5)"

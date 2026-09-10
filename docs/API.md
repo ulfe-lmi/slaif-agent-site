@@ -162,9 +162,26 @@ no write scope, returns the unchanged record with no semantic action, and
 stores only the idempotency response needed for exact replay; it consumes no
 mutation quota and creates no audit or COW mutation.
 
-This order does not implement publication, review/freeze/promotion,
-workspace-management UI, site-global theme tokens, global regions,
-header/footer architecture, or new catalog/storage types. A full responsive
+The bounded site theme is a separate normalized `theme-schema/v1` record, not
+an opaque Puck blob. `GET /api/agent/v1/theme-schema` and
+`GET /api/agent/v1/theme` require `theme:read`; `PATCH /api/agent/v1/theme`
+requires `theme:read`, an `expected_row_version`, and an `Idempotency-Key`.
+`theme-tokens:write` is required only when the submitted value changes the
+theme; an exact no-effect PATCH is read-authorized. The schema exposes only the product-owned palette preset,
+local typography family/scale/weight, content-width/spacing/grid-gap, and
+radius/shadow tokens. Values are enum keys with product-validated AA contrast;
+raw CSS, colors, URLs, fonts, breakpoints, and executable values are rejected.
+The same typed validator serves the human Editor/Puck surface. Successful
+changes increment one row version, charge one mutation quota, make one COW
+operation, and create `THEME_UPDATED`; replay, no-effect, stale, cancellation,
+resource, scope, and concurrency failures leave durable theme/accounting state
+unchanged. Render projects the exact theme record and version, and trusted Web
+classes apply only the fixed token vocabulary to canonical and authorized
+preview output.
+
+This bounded theme order does not implement publication, review/freeze/promotion,
+workspace-management UI, global regions, header/footer architecture, or new
+catalog/storage types. A full responsive
 browser sweep remains a later combined acceptance round.
 
 ## Private human Media API

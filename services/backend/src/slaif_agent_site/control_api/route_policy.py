@@ -1110,6 +1110,8 @@ ROUTE_POLICIES: Final[tuple[RoutePolicy, ...]] = (
                 "/api/agent/v1/design-system",
                 ("theme:read",),
             ),
+            ("GET", "/api/agent/v1/theme-schema", ("theme:read",)),
+            ("GET", "/api/agent/v1/theme", ("theme:read",)),
             (
                 "GET",
                 "/api/agent/v1/content-model/primitives",
@@ -1327,6 +1329,19 @@ ROUTE_POLICIES: Final[tuple[RoutePolicy, ...]] = (
         "/api/agent/v1/components/{component_id}",
         _M,
         conditional_scopes=_component_conditional_scopes(),
+    ),
+    _agent_policy(
+        "PATCH",
+        "/api/agent/v1/theme",
+        _M,
+        "theme:read",
+        conditional_scopes=(
+            RouteConditionalScope(
+                when_fields=("palette", "typography", "layout", "shape"),
+                required_scopes=("theme-tokens:write",),
+                condition="changed",
+            ),
+        ),
     ),
     _agent_policy(
         "PATCH",

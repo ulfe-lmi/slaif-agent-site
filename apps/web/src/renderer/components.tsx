@@ -6,6 +6,7 @@ import {
   RESPONSIVE_LABELS,
   type ComponentDefinition,
 } from "@slaif-agent-site/component-catalog";
+import type { ThemeRecord } from "@slaif-agent-site/composition-schema";
 import type { PageProjection, ProjectionNode } from "../sites/render";
 import { RENDERER_STYLESHEET } from "./styles";
 
@@ -88,6 +89,31 @@ function alignment(value: unknown): string {
 
 function token(value: unknown, allowed: Set<string>, fallback: string): string {
   return typeof value === "string" && allowed.has(value) ? value : fallback;
+}
+
+function themeGroup(theme: ThemeRecord, name: string): Record<string, unknown> {
+  const value = (theme as unknown as Record<string, unknown>)[name];
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function themeClasses(theme: ThemeRecord): string {
+  const palette = themeGroup(theme, "palette");
+  const typography = themeGroup(theme, "typography");
+  const layout = themeGroup(theme, "layout");
+  const shape = themeGroup(theme, "shape");
+  return [
+    `renderer-theme-palette--${token(palette.preset, new Set(["ocean", "meadow", "ember"]), "ocean")}`,
+    `renderer-theme-family--${token(typography.family, new Set(["system", "serif", "mono"]), "system")}`,
+    `renderer-theme-scale--${token(typography.scale, new Set(["compact", "balanced", "spacious"]), "balanced")}`,
+    `renderer-theme-weight--${token(typography.weight, new Set(["regular", "medium", "bold"]), "regular")}`,
+    `renderer-theme-width--${token(layout.content_width, new Set(["sm", "md", "lg", "xl"]), "md")}`,
+    `renderer-theme-spacing--${token(layout.spacing, new Set(["sm", "md", "lg"]), "md")}`,
+    `renderer-theme-gap--${token(layout.grid_gap, new Set(["sm", "md", "lg"]), "md")}`,
+    `renderer-theme-radius--${token(shape.radius, new Set(["none", "sm", "md", "lg", "full"]), "md")}`,
+    `renderer-theme-shadow--${token(shape.shadow, new Set(["none", "sm", "md", "lg"]), "sm")}`,
+  ].join(" ");
 }
 
 const GAP_VALUES = new Set(["none", "sm", "md", "lg"]);
@@ -470,7 +496,7 @@ export function renderProjection(projection: PageProjection): ReactElement {
     <>
       <link rel="stylesheet" href={RENDERER_STYLESHEET} />
       <main
-        className="renderer-surface"
+        className={`renderer-surface ${themeClasses(projection.theme)}`}
         lang={projection.locale}
         data-render-mode={projection.render_mode}
         aria-labelledby="page-title"

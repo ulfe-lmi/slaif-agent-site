@@ -418,6 +418,7 @@ test("governance-visible-workflows-negatives-and-privacy", async ({ page }) => {
 });
 
 test("puck-editor-round-trip-through-human-editor-api", async ({ page }) => {
+  test.setTimeout(60_000);
   const credential = secrets();
   const failures = observe(page);
   await login(page, credential);
@@ -494,6 +495,75 @@ test("puck-editor-round-trip-through-human-editor-api", async ({ page }) => {
   ).toBeVisible();
   const rootDropZone = page.getByTestId("dropzone:root:default-zone");
   await expect(rootDropZone).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Site theme", exact: true }),
+  ).toBeVisible();
+  await expect(page.locator(".theme-controls select")).toHaveCount(9);
+  await page.getByLabel("preset (AA)").selectOption("meadow");
+  await page.getByLabel("family (AA)").selectOption("serif");
+  await page.getByLabel("scale (AA)").selectOption("spacious");
+  await page.getByLabel("weight (AA)").selectOption("bold");
+  await page.getByLabel("content_width (AA)").selectOption("xl");
+  await page.getByLabel("spacing (AA)").selectOption("lg");
+  await page.getByLabel("grid_gap (AA)").selectOption("sm");
+  await page.getByLabel("radius (AA)").selectOption("lg");
+  await page.getByLabel("shadow (AA)").selectOption("md");
+  const saveThemeButton = page.getByRole("button", { name: "Save theme", exact: true });
+  await expect(saveThemeButton).toBeVisible();
+  await expect(saveThemeButton).toBeEnabled();
+  const themeSave = page.waitForResponse(
+    (response) =>
+      response.request().method() === "PATCH" &&
+      response.url().includes(`/api/editor/v1/sites/${siteId}/theme`),
+  );
+  await saveThemeButton.click();
+  const savedTheme = await themeSave;
+  const savedThemeText = await savedTheme.text();
+  expect(savedTheme.status(), savedThemeText).toBe(200);
+  expectPrivateHeaders(savedTheme);
+  const savedThemeBody = JSON.parse(savedThemeText) as {
+    row_version: number;
+    palette: { preset: string };
+    typography: { family: string; scale: string; weight: string };
+    layout: { content_width: string; spacing: string; grid_gap: string };
+    shape: { radius: string; shadow: string };
+  };
+  expect(savedThemeBody).toMatchObject({
+    row_version: 2,
+    palette: { preset: "meadow" },
+    typography: { family: "serif", scale: "spacious", weight: "bold" },
+    layout: { content_width: "xl", spacing: "lg", grid_gap: "sm" },
+    shape: { radius: "lg", shadow: "md" },
+  });
+  const themeReadback = await page.request.get(`/api/editor/v1/sites/${siteId}/theme`);
+  expect(themeReadback.status()).toBe(200);
+  expectPrivateHeaders(themeReadback);
+  expect(await themeReadback.json()).toMatchObject(savedThemeBody);
+  const canonicalThemePage = await page.goto("/s/demo/");
+  expect(canonicalThemePage?.status()).toBe(200);
+  const canonicalTheme = await page
+    .locator("main.renderer-surface")
+    .evaluate((element) => {
+      const style = getComputedStyle(element);
+      return {
+        className: element.getAttribute("class"),
+        fontFamily: style.fontFamily,
+        fontSize: style.fontSize,
+        fontWeight: style.fontWeight,
+        width: style.width,
+      };
+    });
+  expect(canonicalTheme.className).toContain("renderer-theme-palette--ocean");
+  expect(canonicalTheme.className).toContain("renderer-theme-family--system");
+  expect(canonicalTheme.className).toContain("renderer-theme-scale--balanced");
+  expect(canonicalTheme.className).toContain("renderer-theme-weight--regular");
+  expect(canonicalTheme.className).toContain("renderer-theme-width--md");
+  expect(canonicalTheme.className).toContain("renderer-theme-radius--md");
+  expect(canonicalTheme.fontWeight).toBe("400");
+  await page.goto(`/admin/sites/${siteId}/pages/${pageRecord.id}/edit`);
+  await expect(
+    page.getByRole("heading", { name: "Site theme", exact: true }),
+  ).toBeVisible();
   async function dragUntil(
     source: Locator,
     target: Locator,

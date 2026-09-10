@@ -214,6 +214,10 @@ jobs:
           uv run --frozen pytest
           services/backend/tests/integration/test_agent_mutations.py
           -k component
+      - name: Run Agent theme trusted-boundary regressions
+        run: >-
+          uv run --frozen pytest
+          services/backend/tests/integration/test_agent_theme_boundaries.py
 
   compose-edge-packaging:
     name: Compose and edge packaging

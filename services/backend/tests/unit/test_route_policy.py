@@ -40,7 +40,7 @@ class PolicyDatabase:
 
 def test_registry_exact_inventory_and_policy_shapes() -> None:
     keys = [policy.key for policy in ROUTE_POLICIES]
-    assert len(keys) == len(set(keys)) == 179
+    assert len(keys) == len(set(keys)) == 182
     assert {policy.process for policy in ROUTE_POLICIES} == {
         ProcessKind.CONTROL_API,
         ProcessKind.EDITOR_API,
@@ -49,7 +49,7 @@ def test_registry_exact_inventory_and_policy_shapes() -> None:
     control = route_policies_for(ProcessKind.CONTROL_API)
     editor = route_policies_for(ProcessKind.EDITOR_API)
     agent = route_policies_for(ProcessKind.AGENT_API)
-    assert len(agent) == 79
+    assert len(agent) == 82
     assert all(
         policy.authority_kind
         in {RouteAuthorityKind.AGENT_CAPABILITY, RouteAuthorityKind.SYSTEM_EXEMPTION}
@@ -180,6 +180,22 @@ def test_agent_design_system_is_a_capability_bound_read() -> None:
     )
     assert design.required_scopes == ("theme:read",)
     assert design.conditional_scopes == ()
+
+
+def test_agent_theme_patch_declares_changed_value_authority() -> None:
+    theme = next(
+        policy
+        for policy in route_policies_for(ProcessKind.AGENT_API)
+        if policy.method == "PATCH" and policy.path_template == "/api/agent/v1/theme"
+    )
+    assert theme.required_scopes == ("theme:read",)
+    assert theme.conditional_scopes == (
+        RouteConditionalScope(
+            when_fields=("palette", "typography", "layout", "shape"),
+            required_scopes=("theme-tokens:write",),
+            condition="changed",
+        ),
+    )
 
 
 def test_conditional_scope_validation_rejects_scope_field_read_and_metadata_drift() -> (

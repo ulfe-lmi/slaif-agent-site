@@ -11,6 +11,7 @@ import {
 import {
   compositionToPuck,
   derivePuckSiblingReorderActions,
+  generatePuckThemeConfig,
   puckToComposition,
   shouldReleasePuckMovedSelection,
   type NormalizedCompositionNode,
@@ -18,6 +19,7 @@ import {
   type PuckData,
   type PuckNodeMetadata,
   type PuckReorderPlan,
+  type ThemeRecord,
 } from "@slaif-agent-site/composition-schema";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 
@@ -28,7 +30,9 @@ import {
   deleteCompositionNode,
   loadAuthority,
   loadComposition,
+  loadTheme,
   moveCompositionNode,
+  updateTheme,
   updateCompositionNode,
   type CurrentAuthority,
 } from "./api";
@@ -80,6 +84,93 @@ function designFieldFor(
     ...(property.minimum === undefined ? {} : { min: property.minimum }),
     ...(property.maximum === undefined ? {} : { max: property.maximum }),
   };
+}
+
+const PUCK_THEME_CONFIG = generatePuckThemeConfig();
+
+function ThemeControls({
+  siteId,
+  theme,
+  onSaved,
+}: Readonly<{
+  siteId: string;
+  theme: ThemeRecord;
+  onSaved: (theme: ThemeRecord) => void;
+}>) {
+  const [draft, setDraft] = useState(theme);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => setDraft(theme), [theme]);
+
+  async function save() {
+    setSaving(true);
+    setError("");
+    try {
+      const saved = await updateTheme(siteId, {
+        palette: draft.palette,
+        typography: draft.typography,
+        layout: draft.layout,
+        shape: draft.shape,
+      });
+      onSaved(saved);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Theme update failed.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="theme-controls" aria-labelledby="theme-controls-title">
+      <div className="theme-controls__header">
+        <div>
+          <p className="eyebrow">Puck theme controls</p>
+          <h2 id="theme-controls-title">Site theme</h2>
+        </div>
+        <Button type="button" onClick={() => void save()} disabled={saving}>
+          {saving ? "Saving theme…" : "Save theme"}
+        </Button>
+      </div>
+      {error && <StatusPanel>{error}</StatusPanel>}
+      <div className="theme-controls__groups">
+        {Object.entries(PUCK_THEME_CONFIG).map(([groupName, group]) => {
+          const values = draft[groupName as keyof ThemeRecord] as unknown as Record<
+            string,
+            unknown
+          >;
+          return (
+            <fieldset key={groupName}>
+              <legend>{group.label}</legend>
+              {Object.entries(group.fields).map(([fieldName, field]) => (
+                <label key={fieldName}>
+                  {field.label}
+                  <select
+                    value={String(values[fieldName])}
+                    onChange={(event) =>
+                      setDraft((current) => ({
+                        ...current,
+                        [groupName]: {
+                          ...(current[groupName as keyof ThemeRecord] as object),
+                          [fieldName]: event.target.value,
+                        },
+                      }))
+                    }
+                  >
+                    {field.options.map((option) => (
+                      <option key={option} value={option}>
+                        {option}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ))}
+            </fieldset>
+          );
+        })}
+      </div>
+    </div>
+  );
 }
 
 function trustedPuckComponent(
@@ -329,6 +420,7 @@ export function CompositionEditor({
 }) {
   const [authority, setAuthority] = useState<CurrentAuthority | null>(null);
   const [nodes, setNodes] = useState<NormalizedCompositionNode[] | null>(null);
+  const [theme, setTheme] = useState<ThemeRecord | null>(null);
   const [data, setData] = useState<PuckData | null>(null);
   const [puckRenderKey, setPuckRenderKey] = useState(0);
   const metadata = useRef<Record<string, PuckNodeMetadata>>({});
@@ -338,12 +430,14 @@ export function CompositionEditor({
   const [error, setError] = useState("");
 
   async function refresh() {
-    const [loadedAuthority, loadedNodes] = await Promise.all([
+    const [loadedAuthority, loadedNodes, loadedTheme] = await Promise.all([
       loadAuthority(siteId),
       loadComposition(siteId, pageId),
+      loadTheme(siteId),
     ]);
     setAuthority(loadedAuthority);
     setNodes(loadedNodes);
+    setTheme(loadedTheme);
     const converted = compositionToPuck(loadedNodes);
     metadata.current = converted.metadata ?? {};
     latestData.current = converted;
@@ -373,7 +467,7 @@ export function CompositionEditor({
   }
 
   if (error && !data) return <StatusPanel>{error}</StatusPanel>;
-  if (!authority || !data || !nodes)
+  if (!authority || !data || !nodes || !theme)
     return <p>Loading the trusted composition editor…</p>;
   const required = [
     "composition:read",
@@ -413,6 +507,9 @@ export function CompositionEditor({
       </div>
       {notice && <StatusPanel>{notice}</StatusPanel>}
       {error && <StatusPanel>{error}</StatusPanel>}
+      <Card>
+        <ThemeControls siteId={siteId} theme={theme} onSaved={setTheme} />
+      </Card>
       <Card>
         <Puck
           key={puckRenderKey}

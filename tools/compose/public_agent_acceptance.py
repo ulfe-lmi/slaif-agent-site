@@ -58,6 +58,8 @@ def _semantic_contract(
 ) -> tuple[str, str, str] | None:
     """Return the exact audit identity for a successful semantic route."""
 
+    if path == "/api/agent/v1/theme" and method == "PATCH":
+        return "theme", "THEME_UPDATED", "mutation"
     segments = path.rstrip("/").split("/")
     if len(segments) >= 6 and segments[:5] == [
         "",
@@ -1661,6 +1663,177 @@ def _assert_component_preview_html(
         raise ProofFailure(f"{label}-next-flight-leak")
 
 
+def _run_primary_theme_browser_proof(
+    client: PublicClient,
+    *,
+    token: str,
+    workspace_id: str,
+    site_id: str,
+    project: str,
+    tag: str,
+) -> None:
+    """Prove the Agent-mutated workspace through the real browser edge."""
+
+    browser_route = "/s/demo"
+    browser_body = {
+        "version": "browser-preview/v1",
+        "route": browser_route,
+        "target": "desktop-chromium",
+        "evidence": [
+            "screenshot",
+            "structure-summary",
+            "console-summary",
+            "failed-request-summary",
+        ],
+    }
+    key = f"oap-078r-theme-browser-{tag}"
+    created = _json(
+        client.request(
+            "/api/agent/v1/preview-runs",
+            method="POST",
+            body=browser_body,
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Idempotency-Key": key,
+            },
+        ),
+        status=202,
+        label="theme-browser-create",
+    )
+    run_id = _require_uuid(created.get("run_id"), "theme-browser-run")
+    if any(name in created for name in ("workspace_id", "capability_id", "token")):
+        raise ProofFailure("theme-browser-secret-disclosure")
+    _wait_browser_run(client, token, run_id, "theme-browser-run")
+    replay = _json(
+        client.request(
+            "/api/agent/v1/preview-runs",
+            method="POST",
+            body=browser_body,
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Idempotency-Key": key,
+            },
+        ),
+        status=202,
+        label="theme-browser-replay",
+    )
+    if replay.get("run_id") != run_id:
+        raise ProofFailure("theme-browser-replay-created-second-run")
+    if (
+        _sql(
+            project,
+            "SELECT workspace_id::text || ':' || site_id::text || ':' || state "
+            f"FROM control.browser_run WHERE id='{run_id}'::uuid",
+        )
+        != f"{workspace_id}:{site_id}:COMPLETED"
+    ):
+        raise ProofFailure("theme-browser-workspace-binding")
+    preview_body = _wait_preview_html(
+        client, f"/preview/{workspace_id}/s/demo", "theme-agent-preview"
+    )
+    try:
+        preview_text = preview_body.decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise ProofFailure("theme-agent-preview-invalid-html") from error
+    expected_theme_classes = (
+        "renderer-theme-palette--meadow",
+        "renderer-theme-family--serif",
+        "renderer-theme-scale--spacious",
+        "renderer-theme-weight--bold",
+        "renderer-theme-width--xl",
+        "renderer-theme-spacing--lg",
+        "renderer-theme-gap--sm",
+        "renderer-theme-radius--lg",
+        "renderer-theme-shadow--md",
+    )
+    if any(value not in preview_text for value in expected_theme_classes):
+        raise ProofFailure("theme-agent-preview-theme-classes")
+    if "renderer-theme-palette--ocean" in preview_text:
+        raise ProofFailure("theme-agent-preview-default-theme")
+    if '<link rel="stylesheet" href="/renderer-v1.css"/>' not in preview_text:
+        raise ProofFailure("theme-agent-preview-renderer-stylesheet")
+    artifacts = _list(
+        client.request(
+            f"/api/agent/v1/preview-runs/{run_id}/artifacts",
+            headers={"Authorization": f"Bearer {token}"},
+        ),
+        status=200,
+        label="theme-browser-artifacts",
+    )
+    expected_kinds = {
+        "screenshot",
+        "structure-summary",
+        "console-summary",
+        "failed-request-summary",
+    }
+    if {item.get("kind") for item in artifacts} != expected_kinds:
+        raise ProofFailure("theme-browser-artifact-inventory")
+    route_digest = hashlib.sha256(browser_route.encode("utf-8")).hexdigest()
+    metadata_keys = {
+        "version",
+        "artifact_id",
+        "run_id",
+        "kind",
+        "mime_type",
+        "sha256",
+        "size_bytes",
+        "target",
+        "route_digest",
+        "created_at",
+        "expires_at",
+        "visibility",
+    }
+    for artifact in artifacts:
+        if set(artifact) != metadata_keys:
+            raise ProofFailure("theme-browser-artifact-metadata")
+        artifact_id = _require_uuid(
+            artifact.get("artifact_id"), "theme-browser-artifact-id"
+        )
+        if (
+            artifact.get("run_id") != run_id
+            or artifact.get("target") != "desktop-chromium"
+            or artifact.get("route_digest") != route_digest
+            or artifact.get("visibility") != "PRIVATE"
+        ):
+            raise ProofFailure("theme-browser-artifact-binding")
+        response = client.request(
+            f"/api/agent/v1/preview-runs/{run_id}/artifacts/{artifact_id}",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        if (
+            response.status != 200
+            or len(response.body) != artifact.get("size_bytes")
+            or hashlib.sha256(response.body).hexdigest() != artifact.get("sha256")
+        ):
+            raise ProofFailure("theme-browser-artifact-bytes")
+        if artifact.get("kind") == "screenshot":
+            if artifact.get("mime_type") != "image/png" or not response.body.startswith(
+                b"\x89PNG\r\n\x1a\n"
+            ):
+                raise ProofFailure("theme-browser-screenshot-invalid")
+            continue
+        if artifact.get("mime_type") != "application/json":
+            raise ProofFailure("theme-browser-summary-mime")
+        try:
+            evidence = json.loads(response.body)
+        except (TypeError, ValueError) as error:
+            raise ProofFailure("theme-browser-summary-json") from error
+        if artifact.get("kind") == "structure-summary":
+            if evidence.get("main") != 1 or evidence.get("rendererStylesheets") != 1:
+                raise ProofFailure("theme-browser-structure")
+        elif artifact.get("kind") == "console-summary" and evidence != {"entries": []}:
+            raise ProofFailure("theme-browser-console-summary")
+        elif artifact.get("kind") == "failed-request-summary" and evidence != {
+            "blocked": 0,
+            "entries": [],
+        }:
+            raise ProofFailure("theme-browser-failed-request-summary")
+        if any(
+            marker in response.body.decode("utf-8") for marker in ("sas2_", "sbp1.")
+        ):
+            raise ProofFailure("theme-browser-credential-leak")
+
+
 def _run_component_browser_proof(
     client: PublicClient,
     *,
@@ -1896,6 +2069,8 @@ def _run_component_render_loop(
             "/api/agent/v1/pages/{page_id}/components",
             "/api/agent/v1/components/{component_id}",
             "/api/agent/v1/components/{component_id}/move",
+            "/api/agent/v1/theme-schema",
+            "/api/agent/v1/theme",
         ):
             if route not in contract["paths"]:
                 raise ProofFailure("component-openapi-route-inventory")
@@ -3171,6 +3346,8 @@ def run_acceptance(project: str) -> None:
             "navigation:create",
             "navigation:write",
             "navigation:delete",
+            "theme:read",
+            "theme-tokens:write",
         }
         if not required_scopes <= set(permissions.get("scopes", [])):
             raise ProofFailure("permissions-incomplete")
@@ -3186,6 +3363,79 @@ def run_acceptance(project: str) -> None:
             item.get("executable") is not False for item in primitives
         ):
             raise ProofFailure("primitive-discovery-invalid")
+
+        theme_schema = _agent_request(
+            client, primary_token, "/api/agent/v1/theme-schema", label="theme-schema"
+        )
+        if (
+            theme_schema.get("version") != "theme-schema/v1"
+            or theme_schema.get("renderer_version") != "renderer-v1"
+            or theme_schema.get("responsive") is not False
+            or [group.get("name") for group in theme_schema.get("groups", [])]
+            != ["palette", "typography", "layout", "shape"]
+        ):
+            raise ProofFailure("theme-schema-invalid")
+        theme_initial = _agent_request(
+            client, primary_token, "/api/agent/v1/theme", label="theme-default"
+        )
+        if (
+            theme_initial.get("id") != site_id
+            or theme_initial.get("site_id") != site_id
+            or theme_initial.get("row_version") != 1
+            or theme_initial.get("palette") != {"preset": "ocean"}
+            or theme_initial.get("typography")
+            != {"family": "system", "scale": "balanced", "weight": "regular"}
+            or theme_initial.get("layout")
+            != {"content_width": "md", "spacing": "md", "grid_gap": "md"}
+            or theme_initial.get("shape") != {"radius": "md", "shadow": "sm"}
+        ):
+            raise ProofFailure("theme-default-invalid")
+        theme_body = {
+            "expected_row_version": 1,
+            "palette": {"preset": "meadow"},
+            "typography": {
+                "family": "serif",
+                "scale": "spacious",
+                "weight": "bold",
+            },
+            "layout": {"content_width": "xl", "spacing": "lg", "grid_gap": "sm"},
+            "shape": {"radius": "lg", "shadow": "md"},
+        }
+        theme_update = _request_mutation(
+            client,
+            primary_token,
+            "/api/agent/v1/theme",
+            theme_body,
+            f"oap-078p-theme-update-{tag}",
+            status=200,
+        )
+        theme_record = theme_update.get("record")
+        if not isinstance(theme_record, dict) or theme_record.get("row_version") != 2:
+            raise ProofFailure("theme-update-invalid")
+        theme_replay = client.request(
+            "/api/agent/v1/theme",
+            method="PATCH",
+            body=theme_body,
+            headers={
+                "Authorization": f"Bearer {primary_token}",
+                "Idempotency-Key": f"oap-078p-theme-update-{tag}",
+            },
+        )
+        if _json(theme_replay, status=200, label="theme-replay") != theme_update:
+            raise ProofFailure("theme-replay-mismatch")
+        theme_readback = _agent_request(
+            client, primary_token, "/api/agent/v1/theme", label="theme-readback"
+        )
+        if theme_readback != theme_record:
+            raise ProofFailure("theme-readback-mismatch")
+        _run_primary_theme_browser_proof(
+            client,
+            token=primary_token,
+            workspace_id=primary_workspace,
+            site_id=site_id,
+            project=project,
+            tag=tag,
+        )
 
         _run_dynamic_news_edge_journey(
             client, site_id, csrf, project, tag, observer_token
@@ -4311,6 +4561,25 @@ def run_acceptance(project: str) -> None:
             "/api/agent/v1/session",
             label="agent-restart-session",
         )
+        restarted_theme = _agent_request(
+            client, primary_token, "/api/agent/v1/theme", label="theme-restart-read"
+        )
+        if restarted_theme != theme_record:
+            raise ProofFailure("theme-restart-state-lost")
+        restarted_replay = client.request(
+            "/api/agent/v1/theme",
+            method="PATCH",
+            body=theme_body,
+            headers={
+                "Authorization": f"Bearer {primary_token}",
+                "Idempotency-Key": f"oap-078p-theme-update-{tag}",
+            },
+        )
+        if (
+            _json(restarted_replay, status=200, label="theme-restart-replay")
+            != theme_update
+        ):
+            raise ProofFailure("theme-restart-replay-mismatch")
         _agent_request(
             client,
             primary_token,
@@ -4515,7 +4784,8 @@ def run_acceptance(project: str) -> None:
             f"workspace={primary_workspace} types=2 fields=3 items=2 "
             "translations=1 relations=1 views=1 pages=1 components=1 "
             "locales=1 redirects=1 navigations=1 navigation-items=3 "
-            "openapi=exact restart=verified nginx-outage=verified "
+            "theme=schema-default-patch-read-replay openapi=exact "
+            "restart=verified nginx-outage=verified "
             "crud=public quotas=mutation-429,max-delete-429 "
             "dependency-delete=422 page-delete-restore=verified "
             "canonical-independence=verified render-restart=verified"

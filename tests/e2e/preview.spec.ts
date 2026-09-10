@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { login, observe, secrets } from "./support";
+import { expectPrivateHeaders, login, observe, secrets } from "./support";
 
 async function rendererEvidence(page: import("@playwright/test").Page) {
   return page.evaluate(() => {
@@ -72,6 +72,100 @@ async function rendererEvidence(page: import("@playwright/test").Page) {
       title: styles("#page-title"),
     };
   });
+}
+
+type ThemeOutput = {
+  className: string;
+  backgroundColor: string;
+  color: string;
+  fontFamily: string;
+  fontSize: string;
+  fontWeight: string;
+  width: string;
+  paddingTop: string;
+  gridGap: string;
+  borderRadius: string;
+  boxShadow: string;
+};
+
+async function renderedThemeOutput(
+  page: import("@playwright/test").Page,
+): Promise<ThemeOutput> {
+  return page.locator("main.renderer-surface").evaluate((root) => {
+    const grid = document.querySelector(".renderer-grid");
+    const article = document.querySelector(".renderer-collection article");
+    if (
+      !(root instanceof HTMLElement) ||
+      !(grid instanceof HTMLElement) ||
+      !(article instanceof HTMLElement)
+    )
+      throw new Error("agent-theme-computed-elements-missing");
+    const rootStyle = getComputedStyle(root);
+    const gridStyle = getComputedStyle(grid);
+    const articleStyle = getComputedStyle(article);
+    return {
+      className: root.className,
+      backgroundColor: rootStyle.backgroundColor,
+      color: rootStyle.color,
+      fontFamily: rootStyle.fontFamily,
+      fontSize: rootStyle.fontSize,
+      fontWeight: rootStyle.fontWeight,
+      width: rootStyle.width,
+      paddingTop: rootStyle.paddingTop,
+      gridGap: gridStyle.gap,
+      borderRadius: articleStyle.borderRadius,
+      boxShadow: articleStyle.boxShadow,
+    };
+  });
+}
+
+function assertThemeOutput(
+  output: ThemeOutput,
+  expected: {
+    palette: string;
+    family: string;
+    scale: string;
+    weight: string;
+    width: string;
+    spacing: string;
+    gap: string;
+    radius: string;
+    shadow: string;
+    background: string;
+    color: string;
+    fontFamily: string;
+    fontSize: string;
+    fontWeight: string;
+    contentWidth: string;
+    paddingTop: string;
+    gridGap: string;
+    borderRadius: string;
+    boxShadow: string;
+  },
+) {
+  for (const [group, value] of [
+    ["palette", expected.palette],
+    ["family", expected.family],
+    ["scale", expected.scale],
+    ["weight", expected.weight],
+    ["width", expected.width],
+    ["spacing", expected.spacing],
+    ["gap", expected.gap],
+    ["radius", expected.radius],
+    ["shadow", expected.shadow],
+  ] as const) {
+    expect(output.className).toContain(`renderer-theme-${group}--${value}`);
+  }
+  expect(output.backgroundColor).toBe(expected.background);
+  expect(output.color).toBe(expected.color);
+  expect(output.fontFamily).toContain(expected.fontFamily);
+  expect(output.fontSize).toBe(expected.fontSize);
+  expect(output.fontWeight).toBe(expected.fontWeight);
+  expect(output.width).toBe(expected.contentWidth);
+  expect(output.paddingTop).toBe(expected.paddingTop);
+  expect(output.gridGap).toBe(expected.gridGap);
+  expect(output.borderRadius).toBe(expected.borderRadius);
+  expect(output.boxShadow).toBe(expected.boxShadow);
 }
 
 test("authenticated-preview-renders-overlay-and-keeps-canonical-unchanged", async ({
@@ -351,4 +445,515 @@ test("renderer local design follows the documented responsive cascade", async ({
   expect(mobile.button.color).toBe("rgb(8, 19, 23)");
   expect(mobile.image.minHeight).toBe("192px");
   expect(mobile.image.aspectRatio).toBe("auto");
+});
+
+test("renderer theme tokens preserve local precedence and semantic contrast", async ({
+  page,
+}) => {
+  const response = await page.goto("/s/parity/");
+  expect(response?.status()).toBe(200);
+  await page.evaluate(() => {
+    const surface = document.querySelector("main.renderer-surface");
+    if (!(surface instanceof HTMLElement)) throw new Error("theme-surface-missing");
+    const probe = document.createElement("div");
+    probe.id = "theme-token-evidence";
+    probe.innerHTML = `
+      <div id="theme-grid" class="renderer-grid renderer-grid--2 renderer-gap--none renderer-gap--mobile-sm">grid</div>
+      <a id="theme-primary" class="renderer-button renderer-button--primary" href="/">Primary</a>
+      <a id="theme-secondary" class="renderer-button renderer-button--secondary" href="/">Secondary</a>
+      <a id="theme-ghost" class="renderer-button renderer-button--ghost" href="/">Ghost</a>
+    `;
+    surface.append(probe);
+  });
+  await page.setViewportSize({ width: 1280, height: 800 });
+
+  const paletteEvidence = async (palette: "ocean" | "meadow" | "ember") =>
+    page.evaluate((nextPalette) => {
+      const surface = document.querySelector("main.renderer-surface");
+      if (!(surface instanceof HTMLElement)) throw new Error("theme-surface-missing");
+      for (const token of ["ocean", "meadow", "ember"])
+        surface.classList.remove(`renderer-theme-palette--${token}`);
+      surface.classList.add(`renderer-theme-palette--${nextPalette}`);
+      const rootStyle = getComputedStyle(surface);
+      const rgb = (value: string): [number, number, number] => {
+        const match = value.match(
+          /^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)(?:\s*,\s*[\d.]+)?\s*\)$/,
+        );
+        if (!match) throw new Error(`non-solid-color:${value}`);
+        return [Number(match[1]), Number(match[2]), Number(match[3])];
+      };
+      const luminance = (value: string) => {
+        const channels = rgb(value).map((channel) => {
+          const normalized = channel / 255;
+          return normalized <= 0.03928
+            ? normalized / 12.92
+            : ((normalized + 0.055) / 1.055) ** 2.4;
+        });
+        return 0.2126 * channels[0]! + 0.7152 * channels[1]! + 0.0722 * channels[2]!;
+      };
+      const contrast = (foreground: string, background: string) => {
+        const foregroundLuminance = luminance(foreground);
+        const backgroundLuminance = luminance(background);
+        return (
+          (Math.max(foregroundLuminance, backgroundLuminance) + 0.05) /
+          (Math.min(foregroundLuminance, backgroundLuminance) + 0.05)
+        );
+      };
+      const role = (id: string) => {
+        const element = document.getElementById(id);
+        if (!(element instanceof HTMLElement)) throw new Error(`missing-${id}`);
+        const style = getComputedStyle(element);
+        const background = style.backgroundColor.startsWith("rgba(0, 0, 0, 0)")
+          ? rootStyle.backgroundColor
+          : style.backgroundColor;
+        return {
+          background,
+          color: style.color,
+          contrast: contrast(style.color, background),
+        };
+      };
+      return {
+        palette: nextPalette,
+        background: rootStyle.backgroundColor,
+        color: rootStyle.color,
+        roles: {
+          primary: role("theme-primary"),
+          secondary: role("theme-secondary"),
+          ghost: role("theme-ghost"),
+        },
+      };
+    }, palette);
+
+  const expected = {
+    ocean: { background: "rgb(11, 28, 34)", color: "rgb(244, 247, 248)" },
+    meadow: { background: "rgb(240, 248, 241)", color: "rgb(18, 53, 29)" },
+    ember: { background: "rgb(255, 247, 237)", color: "rgb(66, 32, 6)" },
+  } as const;
+  for (const palette of ["ocean", "meadow", "ember"] as const) {
+    const evidence = await paletteEvidence(palette);
+    expect(evidence.background).toBe(expected[palette].background);
+    expect(evidence.color).toBe(expected[palette].color);
+    expect(evidence.roles.primary.contrast).toBeGreaterThanOrEqual(4.5);
+    expect(evidence.roles.secondary.contrast).toBeGreaterThanOrEqual(4.5);
+    expect(evidence.roles.ghost.contrast).toBeGreaterThanOrEqual(4.5);
+  }
+
+  const configured = await page.evaluate(() => {
+    const surface = document.querySelector("main.renderer-surface");
+    const grid = document.getElementById("theme-grid");
+    if (!(surface instanceof HTMLElement) || !(grid instanceof HTMLElement))
+      throw new Error("theme-computed-elements-missing");
+    surface.className = [
+      "renderer-surface",
+      "renderer-theme-palette--meadow",
+      "renderer-theme-family--serif",
+      "renderer-theme-scale--spacious",
+      "renderer-theme-weight--bold",
+      "renderer-theme-width--xl",
+      "renderer-theme-spacing--lg",
+      "renderer-theme-gap--lg",
+      "renderer-theme-radius--lg",
+      "renderer-theme-shadow--md",
+    ].join(" ");
+    const rootStyle = getComputedStyle(surface);
+    const gridStyle = getComputedStyle(grid);
+    return {
+      family: rootStyle.fontFamily,
+      fontSize: rootStyle.fontSize,
+      fontWeight: rootStyle.fontWeight,
+      width: rootStyle.width,
+      paddingTop: rootStyle.paddingTop,
+      gridGap: gridStyle.gap,
+    };
+  });
+  expect(configured.family).toContain("Georgia");
+  expect(configured.fontSize).toBe("17px");
+  expect(configured.fontWeight).toBe("700");
+  expect(configured.width).toBe("1248px");
+  expect(configured.paddingTop).toBe("64px");
+  expect(configured.gridGap).toBe("0px");
+
+  await page.setViewportSize({ width: 390, height: 800 });
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const grid = document.getElementById("theme-grid");
+        if (!(grid instanceof HTMLElement)) throw new Error("theme-grid-missing");
+        return getComputedStyle(grid).gap;
+      }),
+    )
+    .toBe("8px");
+
+  const reset = await page.evaluate(() => {
+    const surface = document.querySelector("main.renderer-surface");
+    if (!(surface instanceof HTMLElement)) throw new Error("theme-surface-missing");
+    surface.className = [
+      "renderer-surface",
+      "renderer-theme-palette--ocean",
+      "renderer-theme-family--system",
+      "renderer-theme-scale--balanced",
+      "renderer-theme-weight--regular",
+      "renderer-theme-width--md",
+      "renderer-theme-spacing--md",
+      "renderer-theme-gap--md",
+      "renderer-theme-radius--md",
+      "renderer-theme-shadow--sm",
+    ].join(" ");
+    const style = getComputedStyle(surface);
+    return {
+      background: style.backgroundColor,
+      color: style.color,
+      fontSize: style.fontSize,
+      fontWeight: style.fontWeight,
+    };
+  });
+  expect(reset).toEqual({
+    background: "rgb(11, 28, 34)",
+    color: "rgb(244, 247, 248)",
+    fontSize: "16px",
+    fontWeight: "400",
+  });
+});
+
+test("human-editor-theme-is-preview-scoped-and-computed", async ({ page }) => {
+  const workspaceId = process.env.SLAIF_E2E_PREVIEW_WORKSPACE_ID;
+  if (!workspaceId) throw new Error("missing preview fixture channel");
+  const credential = secrets();
+  const failures = observe(page);
+
+  await login(page, credential);
+  const sitesResponse = await page.request.get("/api/control/v1/me/sites");
+  expect(sitesResponse.status()).toBe(200);
+  const sites = (await sitesResponse.json()) as Array<{
+    site_id: string;
+    site_key: string;
+  }>;
+  const parity = sites.find((site) => site.site_key === "parity");
+  expect(parity).toBeDefined();
+  const csrf = (await page.context().cookies()).find(
+    (cookie) => cookie.name === "slaif_csrf",
+  )?.value;
+  expect(csrf).toBeTruthy();
+  const themeResponse = await page.request.patch(
+    `/api/editor/v1/sites/${parity!.site_id}/theme`,
+    {
+      headers: {
+        "Content-Type": "application/json",
+        "X-CSRF-Token": csrf!,
+        "Idempotency-Key": crypto.randomUUID(),
+      },
+      data: {
+        palette: { preset: "meadow" },
+        typography: { family: "serif", scale: "spacious", weight: "bold" },
+        layout: { content_width: "xl", spacing: "lg", grid_gap: "sm" },
+        shape: { radius: "lg", shadow: "md" },
+      },
+    },
+  );
+  expect(themeResponse.status()).toBe(200);
+  const savedTheme = (await themeResponse.json()) as {
+    row_version: number;
+    palette: { preset: string };
+    typography: { family: string; scale: string; weight: string };
+    layout: { content_width: string; spacing: string; grid_gap: string };
+    shape: { radius: string; shadow: string };
+  };
+  expect(savedTheme).toMatchObject({
+    row_version: 2,
+    palette: { preset: "meadow" },
+    typography: { family: "serif", scale: "spacious", weight: "bold" },
+    layout: { content_width: "xl", spacing: "lg", grid_gap: "sm" },
+    shape: { radius: "lg", shadow: "md" },
+  });
+
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const previewResponse = await page.goto(`/preview/${workspaceId}/s/parity/`);
+  expect(previewResponse?.status()).toBe(200);
+  const previewTheme = await page.locator("main.renderer-surface").evaluate((root) => {
+    const rootStyle = getComputedStyle(root);
+    const grid = document.querySelector(".renderer-grid");
+    const article = document.querySelector(".renderer-collection article");
+    if (!(grid instanceof HTMLElement) || !(article instanceof HTMLElement))
+      throw new Error("theme-computed-elements-missing");
+    const gridStyle = getComputedStyle(grid);
+    const articleStyle = getComputedStyle(article);
+    return {
+      className: root.getAttribute("class"),
+      backgroundColor: rootStyle.backgroundColor,
+      color: rootStyle.color,
+      fontFamily: rootStyle.fontFamily,
+      fontSize: rootStyle.fontSize,
+      fontWeight: rootStyle.fontWeight,
+      width: rootStyle.width,
+      paddingTop: rootStyle.paddingTop,
+      gridGap: gridStyle.gap,
+      borderRadius: articleStyle.borderRadius,
+      boxShadow: articleStyle.boxShadow,
+    };
+  });
+  expect(previewTheme.className).toContain("renderer-theme-palette--meadow");
+  expect(previewTheme.className).toContain("renderer-theme-family--serif");
+  expect(previewTheme.className).toContain("renderer-theme-scale--spacious");
+  expect(previewTheme.className).toContain("renderer-theme-weight--bold");
+  expect(previewTheme.className).toContain("renderer-theme-width--xl");
+  expect(previewTheme.className).toContain("renderer-theme-spacing--lg");
+  expect(previewTheme.className).toContain("renderer-theme-gap--sm");
+  expect(previewTheme.className).toContain("renderer-theme-radius--lg");
+  expect(previewTheme.className).toContain("renderer-theme-shadow--md");
+  expect(previewTheme.backgroundColor).toBe("rgb(240, 248, 241)");
+  expect(previewTheme.color).toBe("rgb(18, 53, 29)");
+  expect(previewTheme.fontFamily).toContain("Georgia");
+  expect(previewTheme.fontSize).toBe("17px");
+  expect(previewTheme.fontWeight).toBe("700");
+  expect(previewTheme.width).toBe("1408px");
+  expect(previewTheme.paddingTop).toBe("64px");
+  expect(previewTheme.gridGap).toBe("16px");
+  expect(previewTheme.borderRadius).toBe("20px");
+  expect(previewTheme.boxShadow).not.toBe("none");
+
+  const canonicalResponse = await page.goto("/s/parity/");
+  expect(canonicalResponse?.status()).toBe(200);
+  const canonicalClass = await page
+    .locator("main.renderer-surface")
+    .getAttribute("class");
+  expect(canonicalClass).toContain("renderer-theme-palette--ocean");
+  expect(canonicalClass).not.toContain("renderer-theme-palette--meadow");
+  const resetTheme = await page.request.patch(
+    `/api/editor/v1/sites/${parity!.site_id}/theme`,
+    {
+      headers: {
+        "Content-Type": "application/json",
+        "X-CSRF-Token": csrf!,
+        "Idempotency-Key": crypto.randomUUID(),
+      },
+      data: {
+        palette: { preset: "ocean" },
+        typography: { family: "system", scale: "balanced", weight: "regular" },
+        layout: { content_width: "md", spacing: "md", grid_gap: "md" },
+        shape: { radius: "md", shadow: "sm" },
+      },
+    },
+  );
+  expect(resetTheme.status()).toBe(200);
+  expect(failures(), "unexpected theme browser failures").toEqual([]);
+});
+
+test("agent-theme-patch-renders-in-the-same-authorized-workspace", async ({ page }) => {
+  const credential = secrets();
+  const failures = observe(page);
+  const tag = crypto.randomUUID();
+
+  await login(page, credential);
+  const sitesResponse = await page.request.get("/api/control/v1/me/sites");
+  expect(sitesResponse.status()).toBe(200);
+  const sites = (await sitesResponse.json()) as Array<{
+    site_id: string;
+    site_key: string;
+  }>;
+  const parity = sites.find((site) => site.site_key === "parity");
+  const demo = sites.find((site) => site.site_key === "demo");
+  expect(parity).toBeDefined();
+  expect(demo).toBeDefined();
+  const csrf =
+    (await page.context().cookies()).find((cookie) => cookie.name === "slaif_csrf")
+      ?.value ?? "";
+  expect(csrf).toBeTruthy();
+
+  const workspacePath = `/api/control/v1/sites/${parity!.site_id}/workspaces/`;
+  const createWorkspace = async (title: string, key: string) => {
+    const response = await page.request.post(workspacePath, {
+      headers: { "X-CSRF-Token": csrf, "Idempotency-Key": key },
+      data: {
+        title,
+        task_description: "Bounded Agent theme output proof",
+        delegation_preset: "L4_SITE_ARCHITECT",
+        duration_hours: 1,
+        request_quota: 1000,
+        mutation_quota: 200,
+        delete_quota: 50,
+        upload_quota: 0,
+        browser_quota: 1,
+        resource_constraints: { delete_enabled: true, max_deletes: 50 },
+      },
+    });
+    expect(response.status()).toBe(201);
+    const document = (await response.json()) as { workspace_id?: unknown };
+    expect(typeof document.workspace_id).toBe("string");
+    return document.workspace_id as string;
+  };
+  const agentWorkspace = await createWorkspace(
+    `OAP 078-s Agent theme ${tag}`,
+    `oap-078s-agent-workspace-${tag}`,
+  );
+  const defaultWorkspace = await createWorkspace(
+    `OAP 078-s default control ${tag}`,
+    `oap-078s-default-workspace-${tag}`,
+  );
+  const capabilityResponse = await page.request.post(
+    `${workspacePath}${agentWorkspace}/capabilities/`,
+    {
+      headers: {
+        "X-CSRF-Token": csrf,
+        "Idempotency-Key": `oap-078s-agent-capability-${tag}`,
+      },
+    },
+  );
+  expect(capabilityResponse.status()).toBe(201);
+  const capability = (await capabilityResponse.json()) as {
+    capability_id?: unknown;
+    token?: unknown;
+  };
+  expect(typeof capability.capability_id).toBe("string");
+  expect(typeof capability.token).toBe("string");
+  const capabilityId = capability.capability_id as string;
+  const agentToken = capability.token as string;
+
+  const initialThemeResponse = await page.request.get("/api/agent/v1/theme", {
+    headers: { Authorization: `Bearer ${agentToken}` },
+  });
+  expect(initialThemeResponse.status()).toBe(200);
+  const initialTheme = (await initialThemeResponse.json()) as {
+    row_version?: unknown;
+  };
+  expect(initialTheme.row_version).toBe(1);
+  const themeBody = {
+    expected_row_version: 1,
+    palette: { preset: "meadow" },
+    typography: { family: "serif", scale: "spacious", weight: "bold" },
+    layout: { content_width: "xl", spacing: "lg", grid_gap: "sm" },
+    shape: { radius: "lg", shadow: "md" },
+  };
+  const themeUpdateResponse = await page.request.patch("/api/agent/v1/theme", {
+    headers: {
+      Authorization: `Bearer ${agentToken}`,
+      "Idempotency-Key": `oap-078s-agent-theme-${tag}`,
+    },
+    data: themeBody,
+  });
+  expect(themeUpdateResponse.status()).toBe(200);
+  const themeUpdate = (await themeUpdateResponse.json()) as {
+    record?: Record<string, unknown>;
+  };
+  expect(themeUpdate.record).toMatchObject({
+    row_version: 2,
+    palette: { preset: "meadow" },
+    typography: { family: "serif", scale: "spacious", weight: "bold" },
+    layout: { content_width: "xl", spacing: "lg", grid_gap: "sm" },
+    shape: { radius: "lg", shadow: "md" },
+  });
+
+  const canonicalBefore = await page.request.get("/s/parity/");
+  expect(canonicalBefore.status()).toBe(200);
+  expect(await canonicalBefore.text()).toContain("renderer-theme-palette--ocean");
+
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const agentPreviewPath = `/preview/${agentWorkspace}/s/parity/`;
+  const agentPreview = await page.goto(agentPreviewPath);
+  expectPrivateHeaders(agentPreview!);
+  expect(agentPreview?.status()).toBe(200);
+  const expectedAgentOutput = {
+    palette: "meadow",
+    family: "serif",
+    scale: "spacious",
+    weight: "bold",
+    width: "xl",
+    spacing: "lg",
+    gap: "sm",
+    radius: "lg",
+    shadow: "md",
+    background: "rgb(240, 248, 241)",
+    color: "rgb(18, 53, 29)",
+    fontFamily: "Georgia",
+    fontSize: "17px",
+    fontWeight: "700",
+    contentWidth: "1408px",
+    paddingTop: "64px",
+    gridGap: "16px",
+    borderRadius: "20px",
+    boxShadow: "rgba(0, 0, 0, 0.18) 0px 8px 24px 0px",
+  };
+  const actualAgentOutput = await renderedThemeOutput(page);
+  assertThemeOutput(actualAgentOutput, expectedAgentOutput);
+
+  const routePattern = `**${agentPreviewPath}`;
+  await page.route(routePattern, async (route) => {
+    const upstream = await route.fetch();
+    const wrongTheme = (await upstream.text())
+      .replaceAll("renderer-theme-palette--meadow", "renderer-theme-palette--ocean")
+      .replaceAll("renderer-theme-family--serif", "renderer-theme-family--system")
+      .replaceAll("renderer-theme-scale--spacious", "renderer-theme-scale--balanced")
+      .replaceAll("renderer-theme-weight--bold", "renderer-theme-weight--regular")
+      .replaceAll("renderer-theme-width--xl", "renderer-theme-width--md")
+      .replaceAll("renderer-theme-spacing--lg", "renderer-theme-spacing--md")
+      .replaceAll("renderer-theme-gap--sm", "renderer-theme-gap--md")
+      .replaceAll("renderer-theme-radius--lg", "renderer-theme-radius--md")
+      .replaceAll("renderer-theme-shadow--md", "renderer-theme-shadow--sm");
+    await route.fulfill({ response: upstream, body: wrongTheme });
+  });
+  try {
+    const negativePreview = await page.goto(agentPreviewPath);
+    expectPrivateHeaders(negativePreview!);
+    const negativeOutput = await renderedThemeOutput(page);
+    let detectedWrongOutput = false;
+    try {
+      assertThemeOutput(negativeOutput, expectedAgentOutput);
+    } catch {
+      detectedWrongOutput = true;
+    }
+    expect(detectedWrongOutput).toBe(true);
+  } finally {
+    await page.unroute(routePattern);
+  }
+  const restoredPreview = await page.goto(agentPreviewPath);
+  expectPrivateHeaders(restoredPreview!);
+  assertThemeOutput(await renderedThemeOutput(page), expectedAgentOutput);
+
+  const untouchedPreview = await page.goto(`/preview/${defaultWorkspace}/s/parity/`);
+  expectPrivateHeaders(untouchedPreview!);
+  const defaultOutput = await renderedThemeOutput(page);
+  const expectedDefaultOutput = {
+    palette: "ocean",
+    family: "system",
+    scale: "balanced",
+    weight: "regular",
+    width: "md",
+    spacing: "md",
+    gap: "md",
+    radius: "md",
+    shadow: "sm",
+    background: "rgb(11, 28, 34)",
+    color: "rgb(244, 247, 248)",
+    fontFamily: "Inter",
+    fontSize: "16px",
+    fontWeight: "400",
+    contentWidth: "1152px",
+    paddingTop: "80px",
+    gridGap: "16px",
+    borderRadius: "12px",
+    boxShadow: "none",
+  };
+  assertThemeOutput(defaultOutput, expectedDefaultOutput);
+  let defaultOutputRejectedAsAgent = false;
+  try {
+    assertThemeOutput(defaultOutput, expectedAgentOutput);
+  } catch {
+    defaultOutputRejectedAsAgent = true;
+  }
+  expect(defaultOutputRejectedAsAgent).toBe(true);
+
+  const canonicalAfter = await page.request.get("/s/parity/");
+  expect(canonicalAfter.status()).toBe(200);
+  const canonicalAfterBody = await canonicalAfter.text();
+  expect(canonicalAfterBody).toContain("renderer-theme-palette--ocean");
+  expect(canonicalAfterBody).not.toContain("renderer-theme-palette--meadow");
+  const otherSiteCanonical = await page.request.get("/s/demo");
+  expect(otherSiteCanonical.status()).toBe(200);
+  expect(await otherSiteCanonical.text()).toContain("renderer-theme-palette--ocean");
+  expect(failures(), "unexpected Agent theme browser failures").toEqual([]);
+
+  const revokeResponse = await page.request.post(
+    `${workspacePath}${agentWorkspace}/capabilities/${capabilityId}/revoke`,
+    { headers: { "X-CSRF-Token": csrf } },
+  );
+  expect(revokeResponse.status()).toBe(200);
 });

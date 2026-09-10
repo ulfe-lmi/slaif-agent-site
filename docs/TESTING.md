@@ -154,6 +154,38 @@ unchanged. These focused tests run serially because the disposable fixture
 provisions shared product role names; concurrent test-file execution is not
 valid evidence.
 
+## Bounded site-theme token acceptance
+
+The 078/2 theme proof uses a fresh human-issued capability and real PostgreSQL
+through public Agent HTTP. It discovers the closed `theme-schema/v1` contract,
+reads deterministic defaults without changing the theme row, updates
+representative palette, typography, layout, and shape tokens, and verifies
+versioned COW state, Render projection, trusted Web classes, and human
+Editor/Puck schema-derived controls. It rejects missing or substitute scopes,
+foreign workspace/site state, raw CSS/color/font/device/executable/version
+input, narrowed palette/typography/token resource policies, stale versions,
+quota exhaustion, idempotency mismatch, and cancellation with no durable
+residue. Replay and byte-equivalent updates are exact no-effect operations;
+same-version PostgreSQL PATCH races have one winner and one `409` loser, with
+lifecycle advisory lock `280` proven before theme lock `995` for public and
+direct-runtime paths.
+Migration tests capture a genuine fresh-064 baseline, preserve valid legacy
+theme data through downgrade/re-upgrade, restore every replaced function and
+the semantic constraint exactly, and retain least-privilege/private-schema
+boundaries. The retained renderer regression is covered through computed
+Chromium colors and dimensions for all three palettes, numeric AA contrast for
+primary/secondary/ghost roles, local/responsive precedence, and reset tokens.
+The same real Agent workspace is then PATCHed through public NGINX and rendered
+by the authorized preview path. Browser DOM and computed-style assertions
+verify all four changed groups, same-workspace output, canonical/other-site
+isolation, private preview headers, and a same-URL wrong-theme sensitivity
+control before the real response is restored. The authorized browser worker
+also retains private screenshot/summary artifacts, and Agent restart plus exact
+idempotent replay retain its theme/version. The historical Firefox
+response-category failure retained no endpoint/status artifact; its exact cause
+is unknown/not reproduced, while current targeted desktop-Firefox runs pass.
+No response suppression or retry weakening is used.
+
 ## Browser-run contract and durable control-plane proof
 
 Python and TypeScript tests compare one committed language-neutral

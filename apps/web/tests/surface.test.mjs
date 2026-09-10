@@ -348,7 +348,7 @@ test("site shell uses only the fixed server-side Render resolver", async () => {
   assert.match(previewPage, /lang=\{resolution\.projection\.locale\}/);
   assert.match(previewPage, /resolution\.projection\.page\.title/);
   assert.match(renderer, /RENDERER_STYLESHEET/);
-  assert.match(renderer, /className="renderer-surface"/);
+  assert.match(renderer, /renderer-surface/);
   assert.match(renderer, /lang=\{projection\.locale\}/);
   assert.doesNotMatch(layout, /RENDERER_STYLESHEET|renderer-v1\.css/);
   assert.match(rendererStyles, /"\/renderer-v1\.css"/);
