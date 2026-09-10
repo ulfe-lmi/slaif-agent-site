@@ -251,6 +251,7 @@ class RenderPageProjection(BaseModel):
     route_parameters: dict[str, str] = Field(default_factory=dict)
     composition: ProjectionComposition
     theme: ThemeRecord
+    page_style: ThemeRecord
     locales: tuple[ProjectionLocale, ...] = ()
     navigation: tuple[ProjectionNavigation, ...] = ()
     bindings: dict[str, tuple[dict[str, Any], ...]] = Field(default_factory=dict)
@@ -1331,6 +1332,18 @@ class RenderProjectionService:
         )
         if theme_row is None:
             raise ProjectionError("not_found")
+        page_style_row = await connection.fetchrow(
+            "SELECT * FROM content.slaif_page_style_project($1)", page.id
+        )
+        if page_style_row is None:
+            raise ProjectionError("not_found")
+        page_style_value = _json_value(page_style_row[6])
+        if not isinstance(page_style_value, dict):
+            raise ProjectionError("page_style_state")
+        try:
+            page_style = ThemeRecord.model_validate(page_style_value)
+        except (TypeError, ValueError):
+            raise ProjectionError("page_style_state") from None
         catalog_row = await connection.fetchrow(
             "SELECT control.slaif_site_render_catalog($1)", context.site_id
         )
@@ -1357,6 +1370,7 @@ class RenderProjectionService:
                 nodes=roots,
             ),
             theme=theme_record_from_row(theme_row),
+            page_style=page_style,
             locales=projected_locales,
             navigation=navigation,
             bindings=bindings,

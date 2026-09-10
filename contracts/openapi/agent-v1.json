@@ -1286,6 +1286,37 @@
         "title": "AgentNavigationRecord",
         "type": "object"
       },
+      "AgentPageStyleMutationResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "anyOf": [
+              {
+                "const": "PAGE_STYLE_UPDATED",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Action"
+          },
+          "operation_id": {
+            "format": "uuid",
+            "title": "Operation Id",
+            "type": "string"
+          },
+          "record": {
+            "$ref": "#/components/schemas/PageStyleRecord"
+          }
+        },
+        "required": [
+          "record",
+          "operation_id"
+        ],
+        "title": "AgentPageStyleMutationResponse",
+        "type": "object"
+      },
       "AgentPermissionsResponse": {
         "properties": {
           "scopes": {
@@ -1659,6 +1690,80 @@
           "expected_row_version"
         ],
         "title": "AgentUpdateNavigationRequest",
+        "type": "object"
+      },
+      "AgentUpdatePageStyleRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_row_version": {
+            "exclusiveMinimum": 0.0,
+            "title": "Expected Row Version",
+            "type": "integer"
+          },
+          "layout": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ThemeLayoutPatch"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "palette": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ThemePalettePatch"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reset_tokens": {
+            "default": [],
+            "items": {
+              "enum": [
+                "palette.preset",
+                "typography.family",
+                "typography.scale",
+                "typography.weight",
+                "layout.content_width",
+                "layout.spacing",
+                "layout.grid_gap",
+                "shape.radius",
+                "shape.shadow"
+              ],
+              "type": "string"
+            },
+            "title": "Reset Tokens",
+            "type": "array"
+          },
+          "shape": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ThemeShapePatch"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "typography": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ThemeTypographyPatch"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "expected_row_version"
+        ],
+        "title": "AgentUpdatePageStyleRequest",
         "type": "object"
       },
       "AgentUpdateRedirectRequest": {
@@ -3057,6 +3162,69 @@
           "updated_at"
         ],
         "title": "PageRecord",
+        "type": "object"
+      },
+      "PageStyleOverrides": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "PageStyleRecord": {
+        "additionalProperties": false,
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "overrides": {
+            "$ref": "#/components/schemas/PageStyleOverrides"
+          },
+          "page_id": {
+            "format": "uuid",
+            "title": "Page Id",
+            "type": "string"
+          },
+          "resolved": {
+            "$ref": "#/components/schemas/ThemeRecord"
+          },
+          "row_version": {
+            "exclusiveMinimum": 0.0,
+            "title": "Row Version",
+            "type": "integer"
+          },
+          "schema_version": {
+            "const": "page-style/v1",
+            "title": "Schema Version",
+            "type": "string"
+          },
+          "site_id": {
+            "format": "uuid",
+            "title": "Site Id",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "page_id",
+          "site_id",
+          "schema_version",
+          "row_version",
+          "overrides",
+          "resolved",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "PageStyleRecord",
         "type": "object"
       },
       "PreviewRunCreateRequest": {
@@ -15178,6 +15346,288 @@
         "x-slaif-mutation": true,
         "x-slaif-required-scopes": [
           "component-structure:create"
+        ]
+      }
+    },
+    "/api/agent/v1/pages/{page_id}/style": {
+      "get": {
+        "operationId": "get_page_style_api_agent_v1_pages__page_id__style_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "page_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Page Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PageStyleRecord"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Malformed request or missing/invalid idempotency key."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Authentication is required."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The capability scope or resource constraint is not sufficient."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The resource is not available to this capability."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The request conflicts with current state or idempotency."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The request exceeds the bounded body limit."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The request failed domain validation."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The request exceeds an enforced quota."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The service is temporarily unavailable."
+          }
+        },
+        "security": [
+          {
+            "AgentCapability": []
+          }
+        ],
+        "summary": "Get Page Style",
+        "x-slaif-conditional-scopes": [],
+        "x-slaif-idempotency": "not-applicable",
+        "x-slaif-mutation": false,
+        "x-slaif-required-scopes": [
+          "page:read"
+        ]
+      },
+      "patch": {
+        "operationId": "update_page_style_api_agent_v1_pages__page_id__style_patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "page_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Page Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9._~-]+$",
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgentUpdatePageStyleRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentPageStyleMutationResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Malformed request or missing/invalid idempotency key."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Authentication is required."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The capability scope or resource constraint is not sufficient."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The resource is not available to this capability."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The request conflicts with current state or idempotency."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The request exceeds the bounded body limit."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The request failed domain validation."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The request exceeds an enforced quota."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The service is temporarily unavailable."
+          }
+        },
+        "security": [
+          {
+            "AgentCapability": []
+          }
+        ],
+        "summary": "Update Page Style",
+        "x-slaif-conditional-scopes": [],
+        "x-slaif-idempotency": "required",
+        "x-slaif-mutation": true,
+        "x-slaif-required-scopes": [
+          "page:read"
         ]
       }
     },

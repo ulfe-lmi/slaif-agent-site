@@ -295,6 +295,8 @@ REQUIRED_FILES = (
         "services/backend/src/slaif_agent_site/db/alembic/versions/063_001_component_audit_repairs.py",
         "services/backend/src/slaif_agent_site/db/alembic/versions/064_001_component_move_responsive.py",
         "services/backend/src/slaif_agent_site/db/alembic/versions/065_001_bounded_theme_tokens.py",
+        "services/backend/src/slaif_agent_site/db/alembic/versions/066_001_page_style_overrides.py",
+        "services/backend/src/slaif_agent_site/content_model/page_style.py",
         "services/backend/src/slaif_agent_site/content_model/theme.py",
         "services/backend/src/slaif_agent_site/application.py",
         "services/backend/src/slaif_agent_site/authority.py",

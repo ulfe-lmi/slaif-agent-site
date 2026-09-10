@@ -196,6 +196,13 @@ def _semantic_contract(
                 )
         if len(segments) == 5 and segments[4] == "pages" and method == "POST":
             return "page", "PAGE_CREATED", "mutation"
+        if (
+            len(segments) == 7
+            and segments[4] == "pages"
+            and segments[6] == "style"
+            and method == "PATCH"
+        ):
+            return "page_style", "PAGE_STYLE_UPDATED", "mutation"
         if len(segments) == 6 and segments[4] == "pages":
             if method == "PATCH":
                 return "page", "PAGE_UPDATED", "mutation"
@@ -432,6 +439,14 @@ def _canonical_request_body(
         }
     if resource_type == "page" and action == "PAGE_MOVED":
         defaults = {"parent_id": None}
+    if resource_type == "page_style" and action == "PAGE_STYLE_UPDATED":
+        defaults = {
+            "palette": None,
+            "typography": None,
+            "layout": None,
+            "shape": None,
+            "reset_tokens": [],
+        }
     if (
         resource_type == "content_item_translation"
         and action == "CONTENT_ITEM_TRANSLATION_CREATED"
@@ -1687,6 +1702,39 @@ def _run_primary_theme_browser_proof(
         ],
     }
     key = f"oap-078r-theme-browser-{tag}"
+    pages = _agent_list(client, token, "/api/agent/v1/pages/", label="page-style-pages")
+    home = next(
+        (item for item in pages if item.get("slug") == "home"),
+        None,
+    )
+    if home is None:
+        raise ProofFailure("page-style-home-missing")
+    page_id = _require_uuid(home.get("id"), "page-style-home")
+    style_path = f"/api/agent/v1/pages/{page_id}/style"
+    style_initial = _agent_request(
+        client, token, style_path, label="page-style-initial"
+    )
+    if style_initial.get("overrides") != {}:
+        raise ProofFailure("page-style-initial-not-inherited")
+    style_body = {
+        "expected_row_version": style_initial.get("row_version"),
+        "palette": {"preset": "meadow"},
+    }
+    style_update = _request_mutation(
+        client,
+        token,
+        style_path,
+        style_body,
+        f"oap-078v-page-style-set-{tag}",
+        status=200,
+    )
+    style_record = style_update.get("record")
+    if (
+        style_update.get("action") != "PAGE_STYLE_UPDATED"
+        or not isinstance(style_record, dict)
+        or style_record.get("overrides") != {"palette": {"preset": "meadow"}}
+    ):
+        raise ProofFailure("page-style-update-invalid")
     created = _json(
         client.request(
             "/api/agent/v1/preview-runs",
@@ -1752,6 +1800,24 @@ def _run_primary_theme_browser_proof(
         raise ProofFailure("theme-agent-preview-default-theme")
     if '<link rel="stylesheet" href="/renderer-v1.css"/>' not in preview_text:
         raise ProofFailure("theme-agent-preview-renderer-stylesheet")
+    restored_style = _request_mutation(
+        client,
+        token,
+        style_path,
+        {
+            "expected_row_version": style_record["row_version"],
+            "reset_tokens": ["palette.preset"],
+        },
+        f"oap-078v-page-style-reset-{tag}",
+        status=200,
+    )
+    restored_record = restored_style.get("record")
+    if (
+        restored_style.get("action") != "PAGE_STYLE_UPDATED"
+        or not isinstance(restored_record, dict)
+        or restored_record.get("overrides") != {}
+    ):
+        raise ProofFailure("page-style-reset-invalid")
     artifacts = _list(
         client.request(
             f"/api/agent/v1/preview-runs/{run_id}/artifacts",
@@ -2071,6 +2137,7 @@ def _run_component_render_loop(
             "/api/agent/v1/components/{component_id}/move",
             "/api/agent/v1/theme-schema",
             "/api/agent/v1/theme",
+            "/api/agent/v1/pages/{page_id}/style",
         ):
             if route not in contract["paths"]:
                 raise ProofFailure("component-openapi-route-inventory")
@@ -3215,6 +3282,7 @@ def run_acceptance(project: str) -> None:
             "/api/agent/v1/content-items/{item_id}/relations",
             "/api/agent/v1/collection-views/types/{type_id}",
             "/api/agent/v1/pages/",
+            "/api/agent/v1/pages/{page_id}/style",
             "/api/agent/v1/locales",
             "/api/agent/v1/locales/{locale_id}",
             "/api/agent/v1/redirects",

@@ -30,11 +30,14 @@ import {
   deleteCompositionNode,
   loadAuthority,
   loadComposition,
+  loadPageStyle,
   loadTheme,
+  updatePageStyle,
   moveCompositionNode,
   updateTheme,
   updateCompositionNode,
   type CurrentAuthority,
+  type PageStyleRecord,
 } from "./api";
 
 const ALLOWED_TYPES = [...COMPONENT_TYPES];
@@ -166,6 +169,114 @@ function ThemeControls({
                 </label>
               ))}
             </fieldset>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+const PAGE_STYLE_GROUPS = [
+  ["palette", "preset"],
+  ["typography", "family"],
+  ["typography", "scale"],
+  ["typography", "weight"],
+  ["layout", "content_width"],
+  ["layout", "spacing"],
+  ["layout", "grid_gap"],
+  ["shape", "radius"],
+  ["shape", "shadow"],
+] as const;
+
+function PageStyleControls({
+  siteId,
+  pageId,
+  style,
+  onSaved,
+}: Readonly<{
+  siteId: string;
+  pageId: string;
+  style: PageStyleRecord;
+  onSaved: (style: PageStyleRecord) => void;
+}>) {
+  const [draft, setDraft] = useState<Record<string, string>>({});
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    const next: Record<string, string> = {};
+    for (const [group, field] of PAGE_STYLE_GROUPS) {
+      const rawGroup = style.overrides[group] as Record<string, string> | undefined;
+      next[`${group}.${field}`] = rawGroup?.[field] ?? "inherit";
+    }
+    setDraft(next);
+  }, [style]);
+
+  async function save() {
+    setSaving(true);
+    setError("");
+    try {
+      const body: Record<string, unknown> = {
+        expected_row_version: style.row_version,
+        reset_tokens: [],
+      };
+      for (const [group, field] of PAGE_STYLE_GROUPS) {
+        const key = `${group}.${field}`;
+        const value = draft[key];
+        if (value === "inherit") {
+          const rawGroup = style.overrides[group] as Record<string, string> | undefined;
+          if (rawGroup?.[field] !== undefined)
+            (body.reset_tokens as string[]).push(key);
+          continue;
+        }
+        if (value === undefined) continue;
+        const current = (body[group] as Record<string, string> | undefined) ?? {};
+        current[field] = value;
+        body[group] = current;
+      }
+      const saved = await updatePageStyle(siteId, pageId, body);
+      onSaved(saved);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Page style update failed.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="page-style-controls" aria-labelledby="page-style-controls-title">
+      <div className="page-style-controls__header">
+        <div>
+          <p className="eyebrow">Page style controls</p>
+          <h2 id="page-style-controls-title">Page overrides</h2>
+        </div>
+        <Button type="button" onClick={() => void save()} disabled={saving}>
+          {saving ? "Saving page style…" : "Save page style"}
+        </Button>
+      </div>
+      {error && <StatusPanel>{error}</StatusPanel>}
+      <div className="page-style-controls__groups">
+        {PAGE_STYLE_GROUPS.map(([group, field]) => {
+          const config = PUCK_THEME_CONFIG[group]?.fields[field];
+          if (!config) return null;
+          const key = `${group}.${field}`;
+          return (
+            <label key={key}>
+              {`Page ${config.label.replace(" (AA)", " override (AA)")}`}
+              <select
+                value={draft[key] ?? "inherit"}
+                onChange={(event) =>
+                  setDraft((current) => ({ ...current, [key]: event.target.value }))
+                }
+              >
+                <option value="inherit">Inherit site theme</option>
+                {config.options.map((option) => (
+                  <option key={option} value={option}>
+                    {option}
+                  </option>
+                ))}
+              </select>
+            </label>
           );
         })}
       </div>
@@ -421,6 +532,7 @@ export function CompositionEditor({
   const [authority, setAuthority] = useState<CurrentAuthority | null>(null);
   const [nodes, setNodes] = useState<NormalizedCompositionNode[] | null>(null);
   const [theme, setTheme] = useState<ThemeRecord | null>(null);
+  const [pageStyle, setPageStyle] = useState<PageStyleRecord | null>(null);
   const [data, setData] = useState<PuckData | null>(null);
   const [puckRenderKey, setPuckRenderKey] = useState(0);
   const metadata = useRef<Record<string, PuckNodeMetadata>>({});
@@ -430,14 +542,17 @@ export function CompositionEditor({
   const [error, setError] = useState("");
 
   async function refresh() {
-    const [loadedAuthority, loadedNodes, loadedTheme] = await Promise.all([
-      loadAuthority(siteId),
-      loadComposition(siteId, pageId),
-      loadTheme(siteId),
-    ]);
+    const [loadedAuthority, loadedNodes, loadedTheme, loadedPageStyle] =
+      await Promise.all([
+        loadAuthority(siteId),
+        loadComposition(siteId, pageId),
+        loadTheme(siteId),
+        loadPageStyle(siteId, pageId),
+      ]);
     setAuthority(loadedAuthority);
     setNodes(loadedNodes);
     setTheme(loadedTheme);
+    setPageStyle(loadedPageStyle);
     const converted = compositionToPuck(loadedNodes);
     metadata.current = converted.metadata ?? {};
     latestData.current = converted;
@@ -467,7 +582,7 @@ export function CompositionEditor({
   }
 
   if (error && !data) return <StatusPanel>{error}</StatusPanel>;
-  if (!authority || !data || !nodes || !theme)
+  if (!authority || !data || !nodes || !theme || !pageStyle)
     return <p>Loading the trusted composition editor…</p>;
   const required = [
     "composition:read",
@@ -510,6 +625,17 @@ export function CompositionEditor({
       <Card>
         <ThemeControls siteId={siteId} theme={theme} onSaved={setTheme} />
       </Card>
+      {(authority.platform_administrator ||
+        authority.effective_permissions.includes("page-style:write")) && (
+        <Card>
+          <PageStyleControls
+            siteId={siteId}
+            pageId={pageId}
+            style={pageStyle}
+            onSaved={setPageStyle}
+          />
+        </Card>
+      )}
       <Card>
         <Puck
           key={puckRenderKey}

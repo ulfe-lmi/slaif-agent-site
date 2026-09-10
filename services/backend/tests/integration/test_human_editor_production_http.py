@@ -286,6 +286,24 @@ async def test_fixed_production_logins_run_public_editor_http_chain(
                 )
                 assert canonical_read.status_code == 200
                 assert canonical_read.json()["title"] == "Overlay canonical title"
+                style_path = f"{pages_path}{canonical_id}/style"
+                style_read = await client.get(style_path, headers=read_headers)
+                assert style_read.status_code == 200
+                assert style_read.json()["overrides"] == {}
+                style_update = await client.patch(
+                    style_path,
+                    headers=_mutation_headers(session, csrf, "canonical-style-update"),
+                    json={
+                        "expected_row_version": 2,
+                        "palette": {"preset": "meadow"},
+                    },
+                )
+                assert style_update.status_code == 200
+                _assert_private(style_update)
+                assert style_update.json()["row_version"] == 3
+                assert style_update.json()["overrides"] == {
+                    "palette": {"preset": "meadow"}
+                }
 
                 created = await client.post(
                     pages_path,
@@ -406,7 +424,7 @@ async def test_fixed_production_logins_run_public_editor_http_chain(
                 "(SELECT count(*) FROM audit.human_editor_mutation "
                 "WHERE response_status NOT BETWEEN 200 AND 299)"
             )
-            assert tuple(counts) == (9, 9, 0, 0)
+            assert tuple(counts) == (10, 10, 0, 0)
             operations = await get_session_operations(
                 AsyncpgExecutor(owner),
                 await owner.fetchval(
@@ -417,7 +435,7 @@ async def test_fixed_production_logins_run_public_editor_http_chain(
                 ),
                 schema="content",
             )
-            assert len(operations) == 9
+            assert len(operations) == 10
 
             grants = await owner.fetch(
                 "SELECT rolname::text, "

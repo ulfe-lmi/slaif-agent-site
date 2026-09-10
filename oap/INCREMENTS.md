@@ -1,16 +1,17 @@
 # Semantic Increment Ledger
 
 Current state is recorded against verified remote GitHub state. Objective 078
-is `PARTIAL`; strategy owns acceptance and merge. The active maintenance
-increment is 078/3.
+is `PARTIAL`; strategy owns acceptance and merge. The active semantic
+increment is 078/4.
 
 | Increment | PR and contract | State |
 |---|---|---|
 | 078/1 | [PR #77](https://github.com/ulfe-lmi/slaif-agent-site/pull/77): bounded component composition/local design with 078-j authority/replay and 078-k/078-l audit repairs | Accepted and merged at `3cae3d6cef2a92e7068856d21bc9a47b8190c22e` on 2026-09-09; 078/1 is closed |
 | 078/2 | `oap/078-2-site-theme-tokens`: bounded site-theme token data plane from verified merged `main` | Accepted and merged in PR #79 at `a9d3e6800d5e8b5fd5c9cd9e0be5010184058c6b` on 2026-09-10; 078/2 is closed |
-| 078/3 | `oap/078-3-browser-security-refresh`: qualify Chrome for Testing 153.0.8010.36 and preserve failed-scan diagnostics | Active `078-u` maintenance PR; 078-t exposed an unqualified Syft Chrome-coverage gap, now being closed without broadening 078 scope |
+| 078/3 | `oap/078-3-browser-security-refresh`: qualify Chrome for Testing 153.0.8010.36 and preserve failed-scan diagnostics | Accepted and merged in PR #80 at `fe31c9f30a7797d0916ad7f8fb56344bc61526f3` on 2026-09-10; 078/3 is closed |
+| 078/4 | `oap/078-4-page-style-overrides`: bounded page-owned theme-token overrides over the accepted site theme | Active `078-v` implementation increment from verified merged `main` `fe31c9f30a7797d0916ad7f8fb56344bc61526f3` |
 | 078-i | `567973e` implementation plus `127d7f1` report: bounded site-theme tokens | Preserved immutable history; removed from PR #77 by 078-j and deferred for deliberate reuse |
-| Next | Remaining 078 scope after 078/3 | Site-theme/global-region/page-style/catalog boundaries remain separate; numeric 078 remains PARTIAL |
+| Next | Remaining 078 scope after 078/4 | Global-region/header-footer and catalog boundaries remain separate; numeric 078 remains PARTIAL |
 
 PR #77 merged into `main` at
 `3cae3d6cef2a92e7068856d21bc9a47b8190c22e`. The 078-j closure keeps the
@@ -27,7 +28,18 @@ The merged acceptance record is
 PR #79 merged into `main` at
 `a9d3e6800d5e8b5fd5c9cd9e0be5010184058c6b`. Its accepted 078/2 theme evidence
 remains a bounded Objective-078 increment; the post-merge supply-chain
-regression is the sole reason for active maintenance 078/3.
+regression was the reason for the completed maintenance 078/3. PR #80 is
+accepted and merged at `fe31c9f30a7797d0916ad7f8fb56344bc61526f3`.
+
+## 078-v bounded page-style overrides
+
+The active 078-v increment is a fresh PR from that merged baseline. It adds only
+page-owned overrides for the existing theme tokens, with Agent read/update,
+trusted PostgreSQL authority, inheritance/reset semantics, shared Render/Web
+projection, and the existing human Editor/Puck control surface. It preserves
+page lifecycle/versioning, COW, idempotency, quota, audit, and site confinement.
+It does not implement global regions, header/footer/catalog expansion, exact
+Agent-workspace Puck, review, promotion, publication, or unrelated cleanup.
 
 The approved prospective rule is documented in
 [`governance/2026-09-09-bounded-semantic-pr-increments.md`](governance/2026-09-09-bounded-semantic-pr-increments.md): one bounded semantic
@@ -58,5 +70,5 @@ method/status/closed route family. The historical Firefox failure remains
 honestly unknown/not reproduced, with current targeted runs passing. This
 continuation does not implement global regions, page-style/catalog expansion,
 exact-workspace Puck, review, promotion, publication, or final Objective-078/
-MVP acceptance. PR #79 is accepted and merged; its post-merge browser security
-regression and the 078-t scanner-coverage gap are handled by active 078-u.
+MVP acceptance. PR #79 is accepted and merged; PR #80 closed the post-merge
+browser security regression and the 078-t scanner-coverage gap.

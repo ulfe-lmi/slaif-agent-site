@@ -496,7 +496,7 @@ export function renderProjection(projection: PageProjection): ReactElement {
     <>
       <link rel="stylesheet" href={RENDERER_STYLESHEET} />
       <main
-        className={`renderer-surface ${themeClasses(projection.theme)}`}
+        className={`renderer-surface ${themeClasses(projection.page_style)}`}
         lang={projection.locale}
         data-render-mode={projection.render_mode}
         aria-labelledby="page-title"

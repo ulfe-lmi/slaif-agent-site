@@ -11,6 +11,10 @@ from slaif_agent_site.content_model.page_models import (
     PageRecord,
     UpdatePageRequest,
 )
+from slaif_agent_site.content_model.page_style import (
+    PageStyleRecord,
+    UpdatePageStyleRequest,
+)
 from slaif_agent_site.content_model.service import (
     ContentModelService,
     ContentModelServiceError,
@@ -86,6 +90,39 @@ async def get_page(site_id: UUID, page_id: UUID, request: Request) -> PageRecord
         raise ServiceUnavailableError() from None
     if record.site_id != site_id:
         raise ResourceNotFoundError()
+    return record  # type: ignore[no-any-return]
+
+
+@router.get("/{page_id}/style")
+async def get_page_style(
+    site_id: UUID, page_id: UUID, request: Request
+) -> PageStyleRecord:
+    await _auth(request, site_id, permission="page:read", state_changing=False)
+    try:
+        record = await _service(request).get_page_style(site_id, page_id)
+    except ContentModelServiceError as exc:
+        if exc.reason is ContentModelServiceReason.NOT_FOUND:
+            raise ResourceNotFoundError() from None
+        raise ServiceUnavailableError() from None
+    return record  # type: ignore[no-any-return]
+
+
+@router.patch("/{page_id}/style")
+async def update_page_style(
+    site_id: UUID,
+    page_id: UUID,
+    request: Request,
+    body: UpdatePageStyleRequest,
+) -> PageStyleRecord:
+    await _auth(request, site_id, permission="page-style:write", state_changing=True)
+    try:
+        record = await _service(request).update_page_style(site_id, page_id, body)
+    except ContentModelServiceError as exc:
+        if exc.reason is ContentModelServiceReason.NOT_FOUND:
+            raise ResourceNotFoundError() from None
+        if exc.reason is ContentModelServiceReason.VALIDATION:
+            raise ResourceConflictError() from None
+        raise ServiceUnavailableError() from None
     return record  # type: ignore[no-any-return]
 
 

@@ -992,11 +992,25 @@ ROUTE_POLICIES: Final[tuple[RoutePolicy, ...]] = (
                 "page:read",
             ),
             (
+                "GET",
+                "/api/editor/v1/sites/{site_id}/pages/{page_id}/style",
+                _R,
+                False,
+                "page:read",
+            ),
+            (
                 "PATCH",
                 "/api/editor/v1/sites/{site_id}/pages/{page_id}",
                 _M,
                 True,
                 "page:write",
+            ),
+            (
+                "PATCH",
+                "/api/editor/v1/sites/{site_id}/pages/{page_id}/style",
+                _M,
+                True,
+                "page-style:write",
             ),
             (
                 "DELETE",
@@ -1176,6 +1190,11 @@ ROUTE_POLICIES: Final[tuple[RoutePolicy, ...]] = (
             ("GET", "/api/agent/v1/pages", ("page:read",)),
             ("GET", "/api/agent/v1/pages/", ("page:read",)),
             ("GET", "/api/agent/v1/pages/{page_id}", ("page:read",)),
+            (
+                "GET",
+                "/api/agent/v1/pages/{page_id}/style",
+                ("page:read",),
+            ),
             ("GET", "/api/agent/v1/pages/{page_id}/components", ("composition:read",)),
             ("GET", "/api/agent/v1/components/{component_id}", ("composition:read",)),
             ("GET", "/api/agent/v1/media/", ("media:read",)),
@@ -1354,6 +1373,12 @@ ROUTE_POLICIES: Final[tuple[RoutePolicy, ...]] = (
                 required_scopes=("route:write",),
             ),
         ),
+    ),
+    _agent_policy(
+        "PATCH",
+        "/api/agent/v1/pages/{page_id}/style",
+        _M,
+        "page:read",
     ),
     _agent_policy(
         "POST",

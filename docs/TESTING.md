@@ -113,6 +113,20 @@ fallback, renamed-item route movement, and unchanged canonical visibility.
 Migration tests also prove the 054-to-055-to-054-to-055 function-definition,
 grant, and data round trip.
 
+## Bounded page-style override acceptance
+
+The focused PostgreSQL page-style proof creates a page through the public Agent
+API, reads pure inherited defaults, sets representative values in all four
+existing theme groups, and verifies raw overrides, resolved values, page row
+versions, replay, stale/foreign-page confinement, and the read-authorized
+no-effect path. It also proves reset-to-inherit, site-theme sensitivity,
+trusted SQL rejection of malformed values, page-style scope denial, COW-safe
+quota/audit behavior, and the human Editor endpoint. The shared renderer test
+asserts that the effective page style—not the unoverridden site theme—controls
+the fixed trusted CSS classes. CI runs this focused gate across PostgreSQL
+14–18; Compose acceptance extends the same-workspace public Agent preview
+path through NGINX.
+
 ## Bounded Agent component data-plane acceptance
 
 The public Agent Compose acceptance creates a fresh human-issued L2 workspace

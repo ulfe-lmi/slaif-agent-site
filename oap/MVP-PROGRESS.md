@@ -4,21 +4,24 @@ This tracker uses the contract-audit status vocabulary rather than file
 presence or completion estimates. The authoritative baseline is
 [`MVP-CONTRACT-AUDIT.md`](MVP-CONTRACT-AUDIT.md), updated for the protocol-final
 Objective 078 increment 2 on PR #79, reviewed and accepted on 2026-09-10 and
-merged at `a9d3e6800d5e8b5fd5c9cd9e0be5010184058c6b`. The active 078-u
-continuation is a separate 078/3 browser-scan-coverage maintenance increment from
-that verified remote `main`.
+merged at `fe31c9f30a7797d0916ad7f8fb56344bc61526f3`. The active 078-v
+continuation is a separate 078/4 page-style increment from that verified remote
+`main`.
 
 ## Current verdict
 
 **CONTRACTUAL MVP NOT COMPLETE.** Objectives 065–077 and Objective 078/1 are
 accepted and merged for their bounded contracts. PR #77 contains the accepted
 component composition/local-design slice and its 078-m/078-n/078-o closure
-repairs; it merged at `3cae3d6`. The active 078-s continuation separately
-closes and qualifies the bounded site-theme token data plane on merged PR #79.
+repairs; it merged at `3cae3d6`. The bounded site-theme token data plane was
+closed and qualified on merged PR #79, and PR #80 closed its browser-scan
+maintenance continuation.
 The 078-i theme implementation is preserved in history and reused deliberately
-here.
-Remaining Objective 078 global regions/header and footer, page style and
-catalog work belongs to separate bounded increments. Later numbered
+here. PR #80 separately closed the 078/3 browser scan-coverage maintenance
+increment.
+Remaining Objective 078 global regions/header and footer and catalog work
+belongs to separate bounded increments. The active page-style increment is
+078-v. Later numbered
 objectives own media, MCP, exact-workspace Puck, review, publication,
 reconstruction and operations; they are not unfinished PR #77 scope.
 
@@ -86,12 +89,12 @@ proof, and 078-m records strategic technical acceptance after the approved
 evidence is retained and credited for technical acceptance. The accepted
 Objective-077 revision is in history; PR #77 is now merged at `3cae3d6`.
 Site-global theme precedence, global-region, exact-workspace Puck, review,
-promotion, and publication remain **PARTIAL/NOT IMPLEMENTED**; the 078-s
-theme increment does not claim that the contractual MVP is complete. Its
+promotion, and publication remain **PARTIAL/NOT IMPLEMENTED**; the accepted
+078/2 theme increment does not claim that the contractual MVP is complete. Its
 bounded V1–V2 renderer/browser evidence and diagnostic closure are complete on
-merged PR #79; global regions/page-style/catalog remain deferred. Active 078-u
-closes the unqualified Chrome scan-coverage gap without changing this product
-scope.
+merged PR #79; PR #80 separately closed the unqualified Chrome scan-coverage
+gap. Active 078-v implements only the bounded page-style slice; global regions
+and catalog expansion remain deferred.
 
 The 078-n continuation repaired the approved consumed-order link formatting
 without changing the product tree. The historical 078-o continuation qualified
@@ -101,16 +104,16 @@ evidence. Its result is included in the accepted and merged 078/1 revision.
 
 ## Active and remaining sequence
 
-The active transcript pointer is `078-u` for the current browser-scan-coverage
-maintenance continuation; 078/1 and 078/2 are accepted and merged while 078/3
-is the active increment. Acceptance and containment in `main` are determined by OAP and
+The active transcript pointer is `078-v` for the current page-style
+continuation; 078/1, 078/2, and 078/3 are accepted and merged while 078/4 is
+the active increment. Acceptance and containment in `main` are determined by OAP and
 GitHub state, not this document. All later order files remain inert until
 strategy selects and signals them.
 
 | Order | Contractual scope | Current status |
 |---|---|---|
 | 077 | Agent page, navigation, redirect, and bounded dynamic collection Render semantics | COMPLETE — E2E PROVEN and accepted/merged in PR #74 on 2026-09-08 at `ae3a4a6` |
-| 078 | Agent composition and design semantics; bounded component and site-theme data planes | PARTIAL — 078/1 component/local-design slice is accepted and merged in PR #77 at `3cae3d6`; 078/2 bounded site-theme evidence closure is accepted and merged in PR #79 at `a9d3e68`; active 078/3 closes the unqualified browser scan-coverage gap; global-region/page-style/catalog scope remains deferred |
+| 078 | Agent composition and design semantics; bounded component, site-theme, and page-style data planes | PARTIAL — 078/1 is accepted and merged in PR #77 at `3cae3d6`; 078/2 is accepted and merged in PR #79 at `a9d3e68`; 078/3 is accepted and merged in PR #80 at `fe31c9f`; active 078/4 page-style work is bounded to existing theme tokens; global-region/catalog scope remains deferred |
 | 079 | Agent media semantics and references | PARTIAL |
 | 080 | Real MCP semantic parity | SCAFFOLD ONLY |
 | 081 | Human Puck editing in the exact Agent workspace | PARTIAL |

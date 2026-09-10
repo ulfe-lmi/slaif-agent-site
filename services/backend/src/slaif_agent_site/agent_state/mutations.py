@@ -65,6 +65,12 @@ from slaif_agent_site.content_model.page_models import (
     RestorePageRequest,
     UpdatePageRequest,
 )
+from slaif_agent_site.content_model.page_style import (
+    AgentUpdatePageStyleRequest,
+    PageStyleRecord,
+    page_style_patch_json,
+    page_style_record_from_row,
+)
 from slaif_agent_site.content_model.query_dsl import validate_query_contract
 from slaif_agent_site.content_model.service import (
     ContentModelService,
@@ -271,6 +277,10 @@ AGENT_COLLECTION_VIEW_DELETE_SQL = (
 AGENT_THEME_UPDATE_SQL = (
     "SELECT * FROM content.slaif_agent_theme_update($1,$2,$3,$4,$5,$6,$7)"
 )
+AGENT_PAGE_STYLE_GET_SQL = "SELECT * FROM content.slaif_agent_page_style_get($1,$2)"
+AGENT_PAGE_STYLE_UPDATE_SQL = (
+    "SELECT * FROM content.slaif_agent_page_style_update($1,$2,$3,$4,$5,$6,$7,$8)"
+)
 
 _IDEMPOTENCY_KEY = re.compile(r"^[A-Za-z0-9._~-]{1,128}$")
 
@@ -351,6 +361,7 @@ AGENT_SEMANTIC_CONTRACTS = {
     "COMPONENT_MOVED": ("composition_node", "POST", 200, "mutation"),
     "COMPONENT_DELETED": ("composition_node", "DELETE", 200, "delete"),
     "THEME_UPDATED": ("theme", "PATCH", 200, "mutation"),
+    "PAGE_STYLE_UPDATED": ("page_style", "PATCH", 200, "mutation"),
 }
 AGENT_SEMANTIC_ACTIONS = frozenset(AGENT_SEMANTIC_CONTRACTS)
 
@@ -427,6 +438,36 @@ class AgentCowContentModelService(ContentModelService):
             raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
         self.last_mutation_no_effect = bool(row[11])
         return cast(ThemeRecord, _agent_theme(row))
+
+    async def get_page_style_for_site(
+        self, site_id: UUID, page_id: UUID
+    ) -> PageStyleRecord:
+        row = await self._fetchrow(AGENT_PAGE_STYLE_GET_SQL, site_id, page_id)
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
+        return page_style_record_from_row(row)
+
+    async def update_page_style_for_site(
+        self,
+        site_id: UUID,
+        page_id: UUID,
+        request: AgentUpdatePageStyleRequest,
+    ) -> PageStyleRecord:
+        row = await self._fetchrow(
+            AGENT_PAGE_STYLE_UPDATE_SQL,
+            site_id,
+            page_id,
+            request.expected_row_version,
+            page_style_patch_json(request, "palette"),
+            page_style_patch_json(request, "typography"),
+            page_style_patch_json(request, "layout"),
+            page_style_patch_json(request, "shape"),
+            list(request.reset_tokens),
+        )
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
+        self.last_mutation_no_effect = bool(row[9])
+        return page_style_record_from_row(row)
 
     async def create_type(
         self, site_id: UUID, request: CreateContentTypeRequest
@@ -1400,7 +1441,15 @@ async def _complete(
 Mutation = Callable[[AgentCowContentModelService], Awaitable[Any]]
 
 _STRUCTURAL_RESOURCE_TYPES = frozenset(
-    {"page", "locale", "navigation", "navigation_item", "redirect", "composition_node"}
+    {
+        "page",
+        "page_style",
+        "locale",
+        "navigation",
+        "navigation_item",
+        "redirect",
+        "composition_node",
+    }
 )
 
 
@@ -1503,6 +1552,7 @@ async def execute_agent_mutation(
                 "redirect",
                 "composition_node",
                 "theme",
+                "page_style",
             }:
                 try:
                     mutation_allowed = await cow.native.fetchval(

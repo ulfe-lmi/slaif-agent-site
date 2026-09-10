@@ -629,43 +629,51 @@ input:focus-visible,
   padding: 0;
   overflow: hidden;
 }
-.theme-controls {
+.theme-controls,
+.page-style-controls {
   padding: 1.25rem;
 }
-.theme-controls__header {
+.theme-controls__header,
+.page-style-controls__header {
   display: flex;
   align-items: end;
   justify-content: space-between;
   gap: 1rem;
   margin-bottom: 1rem;
 }
-.theme-controls__header h2 {
+.theme-controls__header h2,
+.page-style-controls__header h2 {
   margin: 0.25rem 0 0;
 }
-.theme-controls__groups {
+.theme-controls__groups,
+.page-style-controls__groups {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 1rem;
 }
-.theme-controls fieldset {
+.theme-controls fieldset,
+.page-style-controls fieldset {
   min-width: 0;
   border: 1px solid var(--line);
   border-radius: 0.4rem;
   padding: 0.75rem;
 }
-.theme-controls legend {
+.theme-controls legend,
+.page-style-controls legend {
   padding-inline: 0.35rem;
   color: var(--muted);
   font-weight: 700;
 }
-.theme-controls label {
+.theme-controls label,
+.page-style-controls label {
   display: grid;
   gap: 0.35rem;
   margin-top: 0.7rem;
   color: var(--muted);
   font-size: 0.85rem;
 }
-.theme-controls select {
+.theme-controls select,
+.page-style-controls select {
   min-height: 2.5rem;
   border: 1px solid var(--line);
   border-radius: 0.35rem;
@@ -697,11 +705,13 @@ input:focus-visible,
     align-items: stretch;
     flex-direction: column;
   }
-  .theme-controls__header {
+  .theme-controls__header,
+  .page-style-controls__header {
     align-items: stretch;
     flex-direction: column;
   }
-  .theme-controls__groups {
+  .theme-controls__groups,
+  .page-style-controls__groups {
     grid-template-columns: 1fr;
   }
 }

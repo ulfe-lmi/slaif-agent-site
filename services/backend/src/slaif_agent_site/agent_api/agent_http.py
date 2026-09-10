@@ -87,6 +87,11 @@ from slaif_agent_site.content_model.page_models import (
     RestorePageRequest,
     UpdatePageRequest,
 )
+from slaif_agent_site.content_model.page_style import (
+    AgentPageStyleMutationResponse,
+    AgentUpdatePageStyleRequest,
+    PageStyleRecord,
+)
 from slaif_agent_site.content_model.primitives import FieldPrimitive
 from slaif_agent_site.content_model.service import (
     ContentModelServiceError,
@@ -137,6 +142,7 @@ from slaif_agent_site.errors import (
 )
 
 router = APIRouter(prefix="/api/agent/v1")
+IdempotencyHeader = Annotated[str | None, Header(alias="Idempotency-Key")]
 
 
 def _require_scope(context: Any, scope: str) -> None:
@@ -383,6 +389,45 @@ async def get_page(page_id: UUID, request: Request) -> PageRecord:
     return cast(PageRecord, record.model_dump(mode="json"))
 
 
+@router.get("/pages/{page_id}/style")
+async def get_page_style(page_id: UUID, request: Request) -> PageStyleRecord:
+    context = await _authenticate(request)
+    _require_scope(context, "page:read")
+    record = await _execute_read(
+        request,
+        context,
+        lambda service: service.get_page_style(context.site_id, page_id),
+    )
+    return cast(PageStyleRecord, record.model_dump(mode="json"))
+
+
+@router.patch("/pages/{page_id}/style")
+async def update_page_style(
+    page_id: UUID,
+    request: Request,
+    body: AgentUpdatePageStyleRequest,
+    idempotency_key: IdempotencyHeader = None,
+) -> AgentPageStyleMutationResponse:
+    context = await _authenticate(request)
+    # The trusted page-style SQL wrapper compares raw override state first and
+    # requires page-style:write only for a real state change.  This preserves
+    # read-only no-effect retries without widening the route's base scope.
+    _require_scope(context, "page:read")
+    result = await _execute_mutation(
+        request,
+        context,
+        body,
+        idempotency_key,
+        resource_type="page_style",
+        status_code=200,
+        action="PAGE_STYLE_UPDATED",
+        mutate=lambda service: service.update_page_style_for_site(
+            context.site_id, page_id, body
+        ),
+    )
+    return AgentPageStyleMutationResponse.model_validate(result.model_dump(mode="json"))
+
+
 @router.get("/locales")
 async def list_locales(request: Request) -> list[LocaleRecord]:
     context = await _authenticate(request)
@@ -513,9 +558,6 @@ async def list_media(request: Request) -> list[MediaAssetRecord]:
         request, context, lambda service: service.list_media(context.site_id)
     )
     return [record.model_dump(mode="json") for record in records]
-
-
-IdempotencyHeader = Annotated[str | None, Header(alias="Idempotency-Key")]
 
 
 @router.patch("/theme", response_model=AgentThemeMutationResponse)

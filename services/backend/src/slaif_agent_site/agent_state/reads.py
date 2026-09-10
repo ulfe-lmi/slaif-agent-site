@@ -27,6 +27,10 @@ from slaif_agent_site.content_model.models import (
     TranslationRecord,
 )
 from slaif_agent_site.content_model.page_models import PageRecord
+from slaif_agent_site.content_model.page_style import (
+    PageStyleRecord,
+    page_style_record_from_row,
+)
 from slaif_agent_site.content_model.service import (
     ContentModelServiceError,
     ContentModelServiceReason,
@@ -95,6 +99,7 @@ AGENT_NAVIGATION_ITEM_GET_SQL = (
 AGENT_REDIRECT_LIST_SQL = "SELECT * FROM content.slaif_agent_redirect_list($1)"
 AGENT_REDIRECT_GET_SQL = "SELECT * FROM content.slaif_agent_redirect_get($1,$2)"
 AGENT_THEME_GET_SQL = "SELECT * FROM content.slaif_agent_theme_get($1)"
+AGENT_PAGE_STYLE_GET_SQL = "SELECT * FROM content.slaif_agent_page_style_get($1,$2)"
 
 AgentRead = Callable[["AgentSemanticReadService"], Awaitable[Any]]
 
@@ -262,6 +267,12 @@ class AgentSemanticReadService:
         if row is None:
             raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
         return cast(PageRecord, _pg(row))
+
+    async def get_page_style(self, site_id: UUID, page_id: UUID) -> PageStyleRecord:
+        row = await self._fetchrow(AGENT_PAGE_STYLE_GET_SQL, site_id, page_id)
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
+        return page_style_record_from_row(row)
 
     async def list_redirects_for_site(
         self, site_id: UUID

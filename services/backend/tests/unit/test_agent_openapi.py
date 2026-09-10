@@ -221,6 +221,27 @@ def test_theme_contract_is_closed_and_has_separate_token_scope() -> None:
     }
 
 
+def test_page_style_contract_is_page_bound_and_resettable() -> None:
+    document = json.loads(generate_agent_openapi())
+    paths = document["paths"]
+    read = paths["/api/agent/v1/pages/{page_id}/style"]["get"]
+    patch = paths["/api/agent/v1/pages/{page_id}/style"]["patch"]
+    assert read["x-slaif-required-scopes"] == ["page:read"]
+    assert patch["x-slaif-required-scopes"] == ["page:read"]
+    assert patch["x-slaif-mutation"] is True
+    request = document["components"]["schemas"]["AgentUpdatePageStyleRequest"]
+    assert request["additionalProperties"] is False
+    assert set(request["properties"]) == {
+        "expected_row_version",
+        "palette",
+        "typography",
+        "layout",
+        "shape",
+        "reset_tokens",
+    }
+    assert "page-style/v1" in str(document["components"]["schemas"]["PageStyleRecord"])
+
+
 def test_public_edge_endpoint_returns_the_same_canonical_bytes() -> None:
     with TestClient(_app()) as client:
         response = client.get("/api/agent/v1/openapi.json")

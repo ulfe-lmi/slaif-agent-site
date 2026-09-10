@@ -93,6 +93,7 @@ export type PageProjection = Readonly<{
     nodes: readonly ProjectionNode[];
   };
   theme: ThemeRecord;
+  page_style: ThemeRecord;
   locales: readonly ProjectionLocale[];
   navigation: readonly ProjectionNavigation[];
   bindings: Record<string, readonly Record<string, unknown>[]>;

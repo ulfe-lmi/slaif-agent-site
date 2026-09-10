@@ -107,6 +107,8 @@ are private, no-store, noindex, and request-ID correlated.
 | --- | --- | --- |
 | `POST /api/editor/v1/sites/{site_id}/pages/` | 201 | bounded page model |
 | `GET /api/editor/v1/sites/{site_id}/pages/{page_id}` | 200 | none |
+| `GET /api/editor/v1/sites/{site_id}/pages/{page_id}/style` | 200 | `page:read` |
+| `PATCH /api/editor/v1/sites/{site_id}/pages/{page_id}/style` | 200 | `UpdatePageStyleRequest`, `page-style:write` |
 | `POST /api/editor/v1/sites/{site_id}/pages/{page_id}/composition/components` | 201 | trusted catalog type, bounded props, parent/slot/order |
 | `GET /api/editor/v1/sites/{site_id}/pages/{page_id}/composition/` | 200 | none |
 | `PATCH /api/editor/v1/sites/{site_id}/pages/{page_id}/composition/components/{node_id}` | 200 | bounded props and optional slot/order |
@@ -178,6 +180,19 @@ resource, scope, and concurrency failures leave durable theme/accounting state
 unchanged. Render projects the exact theme record and version, and trusted Web
 classes apply only the fixed token vocabulary to canonical and authorized
 preview output.
+
+Pages may own explicit overrides for those same nine tokens through
+`page-style/v1`. `GET /api/agent/v1/pages/{page_id}/style` requires only
+`page:read`; `PATCH` also requires a positive `expected_row_version` and an
+`Idempotency-Key`. The request accepts closed partial token groups and a unique
+`reset_tokens` list for returning selected tokens to site-theme inheritance.
+`page-style:write` is checked by trusted SQL only when raw override state
+changes, so an exact no-effect request remains read-authorized and creates no
+mutation quota, audit, or COW effect. The response keeps `overrides` separate
+from the resolved theme. The human Editor exposes the same schema at
+`/api/editor/v1/sites/{site_id}/pages/{page_id}/style` under
+`page-style:write`; Render/Web applies site theme, then page overrides, then
+component-local and responsive values.
 
 This bounded theme order does not implement publication, review/freeze/promotion,
 workspace-management UI, global regions, header/footer architecture, or new
@@ -252,6 +267,7 @@ The capability-bound read surface is:
 | `GET /api/agent/v1/content-items/types/{type_id}` | 200 | `content-item:read` |
 | `GET /api/agent/v1/pages` (trailing slash alias) | 200 | `page:read` |
 | `GET /api/agent/v1/pages/{page_id}` | 200 | `page:read` |
+| `GET /api/agent/v1/pages/{page_id}/style` | 200 | `page:read` |
 | `GET /api/agent/v1/pages/{page_id}/components` | 200 | `composition:read` |
 | `GET /api/agent/v1/media/` | 200 | `media:read` |
 | `GET /api/agent/v1/locales` | 200 | `site:read` |
@@ -310,6 +326,7 @@ The bounded mutation surface is:
 | `DELETE /api/agent/v1/collection-views/{view_id}` | 200 | `AgentDeleteRequest` |
 | `POST /api/agent/v1/pages` (trailing slash alias) | 201 | `CreatePageRequest` |
 | `PATCH /api/agent/v1/pages/{page_id}` | 200 | `UpdatePageRequest` |
+| `PATCH /api/agent/v1/pages/{page_id}/style` | 200 | `AgentUpdatePageStyleRequest` |
 | `DELETE /api/agent/v1/pages/{page_id}` | 200 | `AgentDeleteRequest` |
 | `POST /api/agent/v1/pages/{page_id}:move` | 200 | `MovePageRequest` (parent-only hierarchy move) |
 | `POST /api/agent/v1/pages/{page_id}:restore` | 200 | `RestorePageRequest` with the exact tombstone row version |
