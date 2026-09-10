@@ -4,7 +4,7 @@ This tracker uses the contract-audit status vocabulary rather than file
 presence or completion estimates. The authoritative baseline is
 [`MVP-CONTRACT-AUDIT.md`](MVP-CONTRACT-AUDIT.md), updated for the protocol-final
 Objective 078 increment 1 on PR #77, reviewed and accepted on 2026-09-09 and
-merged at `3cae3d6cef2a92e7068856d21bc9a47b8190c22e`. The active 078-r
+merged at `3cae3d6cef2a92e7068856d21bc9a47b8190c22e`. The active 078-s
 continuation is a separate 078/2 site-theme increment from that verified
 remote `main`.
 
@@ -13,7 +13,7 @@ remote `main`.
 **CONTRACTUAL MVP NOT COMPLETE.** Objectives 065–077 and Objective 078/1 are
 accepted and merged for their bounded contracts. PR #77 contains the accepted
 component composition/local-design slice and its 078-m/078-n/078-o closure
-repairs; it merged at `3cae3d6`. The active 078-r continuation separately
+repairs; it merged at `3cae3d6`. The active 078-s continuation separately
 closes and qualifies the bounded site-theme token data plane on open PR #79. The 078-i theme
 implementation is preserved in history and reused deliberately here.
 Remaining Objective 078 global regions/header and footer, page style and
@@ -85,10 +85,11 @@ proof, and 078-m records strategic technical acceptance after the approved
 evidence is retained and credited for technical acceptance. The accepted
 Objective-077 revision is in history; PR #77 is now merged at `3cae3d6`.
 Site-global theme precedence, global-region, exact-workspace Puck, review,
-promotion, and publication remain **PARTIAL/NOT IMPLEMENTED**; the 078-r
+promotion, and publication remain **PARTIAL/NOT IMPLEMENTED**; the 078-s
 theme increment does not claim that the contractual MVP is complete. Its
-bounded V1–V2 renderer/browser evidence is complete on open PR #79 pending
-strategic acceptance; global regions/page-style/catalog remain deferred.
+bounded V1–V2 renderer/browser evidence and diagnostic closure are complete on
+open PR #79 pending strategic acceptance; global regions/page-style/catalog
+remain deferred.
 
 The 078-n continuation repaired the approved consumed-order link formatting
 without changing the product tree. The historical 078-o continuation qualified
@@ -98,7 +99,7 @@ evidence. Its result is included in the accepted and merged 078/1 revision.
 
 ## Active and remaining sequence
 
-The active transcript pointer is `078-r` for the current site-theme
+The active transcript pointer is `078-s` for the current site-theme
 continuation; 078/1 is accepted and merged while 078/2 is a separate active
 increment. Acceptance and containment in `main` are determined by OAP and
 GitHub state, not this document. All later order files remain inert until
@@ -107,7 +108,7 @@ strategy selects and signals them.
 | Order | Contractual scope | Current status |
 |---|---|---|
 | 077 | Agent page, navigation, redirect, and bounded dynamic collection Render semantics | COMPLETE — E2E PROVEN and accepted/merged in PR #74 on 2026-09-08 at `ae3a4a6` |
-| 078 | Agent composition and design semantics; bounded component and site-theme data planes | PARTIAL — 078/1 component/local-design slice is accepted and merged in PR #77 at `3cae3d6`; 078/2 bounded site-theme closure is complete on open PR #79 in 078-r pending strategic acceptance/merge; global-region/page-style/catalog scope remains deferred |
+| 078 | Agent composition and design semantics; bounded component and site-theme data planes | PARTIAL — 078/1 component/local-design slice is accepted and merged in PR #77 at `3cae3d6`; 078/2 bounded site-theme evidence closure is complete on open PR #79 in 078-s pending strategic acceptance/merge; global-region/page-style/catalog scope remains deferred |
 | 079 | Agent media semantics and references | PARTIAL |
 | 080 | Real MCP semantic parity | SCAFFOLD ONLY |
 | 081 | Human Puck editing in the exact Agent workspace | PARTIAL |

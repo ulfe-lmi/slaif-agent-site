@@ -179,9 +179,9 @@ unchanged. Render projects the exact theme record and version, and trusted Web
 classes apply only the fixed token vocabulary to canonical and authorized
 preview output.
 
-This order does not implement publication, review/freeze/promotion,
-workspace-management UI, site-global theme tokens, global regions,
-header/footer architecture, or new catalog/storage types. A full responsive
+This bounded theme order does not implement publication, review/freeze/promotion,
+workspace-management UI, global regions, header/footer architecture, or new
+catalog/storage types. A full responsive
 browser sweep remains a later combined acceptance round.
 
 ## Private human Media API

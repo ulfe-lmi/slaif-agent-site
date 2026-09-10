@@ -6,7 +6,11 @@ import {
   type Response,
 } from "@playwright/test";
 import { readFileSync } from "node:fs";
-import { classifyConsoleMessage, classifyConsoleSource } from "./observation";
+import {
+  classifyConsoleMessage,
+  classifyConsoleSource,
+  classifyResponseFailure,
+} from "./observation";
 
 export type Secrets = {
   setupToken: string;
@@ -55,7 +59,14 @@ export function observe(
       response.status() >= 400 &&
       !expectedFailures.some((pattern) => pattern.test(response.url()))
     ) {
-      failures.push("response");
+      failures.push(
+        classifyResponseFailure(
+          response.request().method(),
+          response.status(),
+          response.url(),
+          page.url(),
+        ),
+      );
     }
   });
   return () => [...new Set(failures)].sort();

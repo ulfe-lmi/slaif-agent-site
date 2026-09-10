@@ -63,7 +63,8 @@ plane on PR #79 from verified `main`: typed Agent discovery/read/partial-update
 routes, reversible legacy theme migration, exact COW/version/scope/
 idempotency/audit/quota/concurrency semantics, shared Render/Web/Puck token
 consumption, computed renderer precedence/contrast proof, and same-Agent-
-workspace NGINX/browser evidence. The 078-r implementation is complete for
+workspace NGINX/browser evidence, including actual Agent-to-preview DOM and
+computed-style assertions. The 078-s implementation is complete for
 this bounded increment and remains pending strategic acceptance/merge. It
 deliberately excludes global regions, header/footer architecture, page style,
 arbitrary CSS/fonts/colors, media, MCP, review, promotion, publication, and
@@ -245,7 +246,7 @@ site-global theme/media, review, and publication remain queued. See the
 | Completed human RBAC HTTP boundary | Immutable role/permission catalogs, site membership list/get/create/update/deactivate, strict session/CSRF policy, optimistic concurrency, and complete Control/Editor route declarations. |
 | Responsive site and membership administration | Permission-driven site/profile/domain workflows plus existing-user UUID membership cards, built-in roles, bounded ceilings, separate publication overrides, complete override replacement, version refresh, and semantic deactivation. |
 | Objective-077 source revision | Capability-bound Agent pages, locales, navigation, redirects, and bounded dynamic collection Render semantics with human Editor parity, shared Render/NGINX/browser evidence, route integrity, concurrency, and recovery proof, accepted and merged in PR #74 on 2026-09-08 at `ae3a4a6`; later review/publication remains separate. |
-| Objective-078/2 closure | Bounded `theme-schema/v1` Agent data plane, exact migration restoration, lifecycle-before-theme concurrency, computed palette/contrast/local-precedence renderer proof, same-workspace Agent browser evidence, and Firefox rerun on open PR #79; strategic acceptance/merge remains separate and global regions/page-style/catalog remain deferred. |
+| Objective-078/2 closure | Bounded `theme-schema/v1` Agent data plane, exact migration restoration, lifecycle-before-theme concurrency, computed palette/contrast/local-precedence renderer proof, same-workspace Agent API-to-preview DOM/computed-style/browser evidence, diagnostic response classification, and honest Firefox rerun evidence on open PR #79; strategic acceptance/merge remains separate and global regions/page-style/catalog remain deferred. |
 | Planned product work | Add review snapshots, freeze/accept/discard/promotion, approved-source and responsive-sweep orchestration, reconstruction, public media finalization, and remaining hardening. |
 
 See [Architecture Section 50](ARCHITECTURE.md#50-implementation-phases) for

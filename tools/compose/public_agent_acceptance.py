@@ -1728,6 +1728,30 @@ def _run_primary_theme_browser_proof(
         != f"{workspace_id}:{site_id}:COMPLETED"
     ):
         raise ProofFailure("theme-browser-workspace-binding")
+    preview_body = _wait_preview_html(
+        client, f"/preview/{workspace_id}/s/demo", "theme-agent-preview"
+    )
+    try:
+        preview_text = preview_body.decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise ProofFailure("theme-agent-preview-invalid-html") from error
+    expected_theme_classes = (
+        "renderer-theme-palette--meadow",
+        "renderer-theme-family--serif",
+        "renderer-theme-scale--spacious",
+        "renderer-theme-weight--bold",
+        "renderer-theme-width--xl",
+        "renderer-theme-spacing--lg",
+        "renderer-theme-gap--sm",
+        "renderer-theme-radius--lg",
+        "renderer-theme-shadow--md",
+    )
+    if any(value not in preview_text for value in expected_theme_classes):
+        raise ProofFailure("theme-agent-preview-theme-classes")
+    if "renderer-theme-palette--ocean" in preview_text:
+        raise ProofFailure("theme-agent-preview-default-theme")
+    if '<link rel="stylesheet" href="/renderer-v1.css"/>' not in preview_text:
+        raise ProofFailure("theme-agent-preview-renderer-stylesheet")
     artifacts = _list(
         client.request(
             f"/api/agent/v1/preview-runs/{run_id}/artifacts",

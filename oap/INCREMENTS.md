@@ -6,7 +6,7 @@ is `PARTIAL`; strategy owns acceptance and merge.
 | Increment | PR and contract | State |
 |---|---|---|
 | 078/1 | [PR #77](https://github.com/ulfe-lmi/slaif-agent-site/pull/77): bounded component composition/local design with 078-j authority/replay and 078-k/078-l audit repairs | Accepted and merged at `3cae3d6cef2a92e7068856d21bc9a47b8190c22e` on 2026-09-09; 078/1 is closed |
-| 078/2 | `oap/078-2-site-theme-tokens`: bounded site-theme token data plane from verified merged `main` | 078-r bounded closure complete on existing PR #79; pending strategic acceptance/merge; numeric Objective 078 remains PARTIAL |
+| 078/2 | `oap/078-2-site-theme-tokens`: bounded site-theme token data plane from verified merged `main` | 078-s evidence closure complete on existing PR #79; pending strategic acceptance/merge; numeric Objective 078 remains PARTIAL |
 | 078-i | `567973e` implementation plus `127d7f1` report: bounded site-theme tokens | Preserved immutable history; removed from PR #77 by 078-j and deferred for deliberate reuse |
 | Next | Remaining 078 scope after 078/2 | Site-theme/global-region/page-style/catalog boundaries remain separate; numeric 078 remains PARTIAL |
 
@@ -39,16 +39,17 @@ the final pushed head before strategy accepted and merged PR #77. No
 vulnerability exception, scanner suppression, unrelated upgrade, new feature,
 or merge is recorded here.
 
-## 078-r bounded theme closure
+## 078-s Agent theme output evidence closure
 
-The immutable 078-p and 078-q implementation/report artifacts remain historical
-evidence on the existing 078/2 branch. The 078-r continuation closes the
-finite bounded increment in PR #79: lifecycle-before-theme locking and
-deterministic race evidence, exact fresh-064 restoration of every replaced
-function and semantic constraint, computed V1 renderer precedence and numeric
-palette-role contrast, real same-Agent-workspace NGINX/browser evidence with
-restart/replay retention, and diagnosis/rerun evidence for the historical
-Firefox response-category failure. It does not implement global regions,
-page-style/catalog expansion, exact-workspace Puck, review, promotion,
-publication, or final Objective-078/MVP acceptance. PR #79 remains open pending
-independent strategic acceptance and merge.
+The immutable 078-p/q/r implementation and report artifacts remain historical
+evidence on the existing 078/2 branch. The 078-s continuation closes the
+remaining evidence boundary in PR #79: actual public Agent PATCH output is
+observed in the same authorized preview workspace with DOM/computed-style
+assertions, a same-URL wrong-theme sensitivity control, final 064-to-065
+re-upgrade continuity, and redacted future response diagnostics preserving
+method/status/closed route family. The historical Firefox failure remains
+honestly unknown/not reproduced, with current targeted runs passing. This
+continuation does not implement global regions, page-style/catalog expansion,
+exact-workspace Puck, review, promotion, publication, or final Objective-078/
+MVP acceptance. PR #79 remains open pending independent strategic acceptance
+and merge.

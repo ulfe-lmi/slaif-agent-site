@@ -176,11 +176,15 @@ boundaries. The retained renderer regression is covered through computed
 Chromium colors and dimensions for all three palettes, numeric AA contrast for
 primary/secondary/ghost roles, local/responsive precedence, and reset tokens.
 The same real Agent workspace is then PATCHed through public NGINX and rendered
-by the authorized browser worker with private screenshot/summary artifacts;
-Agent restart and exact idempotent replay retain its theme/version. The
-historical Firefox response-category failure retained no endpoint/status
-artifact, while the targeted desktop-Firefox rerun passed in the clean matrix;
-no response suppression or retry weakening is used.
+by the authorized preview path. Browser DOM and computed-style assertions
+verify all four changed groups, same-workspace output, canonical/other-site
+isolation, private preview headers, and a same-URL wrong-theme sensitivity
+control before the real response is restored. The authorized browser worker
+also retains private screenshot/summary artifacts, and Agent restart plus exact
+idempotent replay retain its theme/version. The historical Firefox
+response-category failure retained no endpoint/status artifact; its exact cause
+is unknown/not reproduced, while current targeted desktop-Firefox runs pass.
+No response suppression or retry weakening is used.
 
 ## Browser-run contract and durable control-plane proof
 

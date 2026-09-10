@@ -19383,6 +19383,51 @@ async def test_agent_065_theme_data_round_trip_preserves_legacy_state(
             {"content_width": "sm", "spacing": "lg", "grid_gap": "sm"},
             {"radius": "full", "shadow": "lg"},
         )
+    await run_migration(
+        database.settings.resolved_owner_dsn(),
+        expected_database=database.name,
+        operation="upgrade",
+        revision="head",
+    )
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        assert (
+            await owner.fetchval(
+                "SELECT version_num::text FROM control.alembic_version"
+            )
+            == "065_001"
+        )
+        final_row = await owner.fetchrow(
+            "SELECT id,schema_version,renderer_version,row_version,palette,typography,"
+            "layout,shape FROM content.theme WHERE site_id=$1",
+            site_id,
+        )
+        assert tuple(final_row[:4]) + tuple(
+            json.loads(value) if isinstance(value, str) else value
+            for value in final_row[4:]
+        ) == (
+            theme_id,
+            "theme-schema/v1",
+            "renderer-v1",
+            1,
+            {"preset": "ember"},
+            {"family": "mono", "scale": "compact", "weight": "medium"},
+            {"content_width": "sm", "spacing": "lg", "grid_gap": "sm"},
+            {"radius": "full", "shadow": "lg"},
+        )
+        assert await owner.fetchval(
+            "SELECT has_function_privilege($1,$2,'EXECUTE')",
+            "slaif_agent_runtime",
+            "content.slaif_agent_theme_update(uuid,integer,jsonb,jsonb,jsonb,jsonb,boolean)",
+        )
+        assert await owner.fetchval(
+            "SELECT to_regnamespace('oap_065_legacy') IS NOT NULL"
+        )
+        assert await owner.fetchval(
+            "SELECT to_regprocedure($1) IS NOT NULL",
+            "content.slaif_agent_theme_get(uuid)",
+        )
 
 
 @pytest.mark.asyncio
