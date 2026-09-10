@@ -29,6 +29,7 @@ temporary_root=$(mktemp -d -p "${TMPDIR:-/tmp}" slaif-supply-chain.XXXXXX)
 run_identity="slaif-supply-$$"
 created_tags=""
 created_containers=""
+run_succeeded=0
 
 if docker info >/dev/null 2>&1; then
   docker_command=docker
@@ -71,7 +72,22 @@ cleanup() {
   done
   rm -rf -- "$temporary_root"
 }
-trap cleanup EXIT HUP INT TERM
+
+on_exit() {
+  exit_status=$?
+  if [ "$run_succeeded" -ne 1 ]; then
+    (cd "$repository_root" && python -m tools.supply_chain.failure_diagnostics retain \
+      --temporary-root "$temporary_root" \
+      --evidence "$evidence_directory" \
+      --exit-status "$exit_status") || true
+  fi
+  cleanup
+  exit "$exit_status"
+}
+trap on_exit EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 mkdir -p \
   "$evidence_directory/artifacts" \
@@ -343,4 +359,5 @@ python -m tools.supply_chain.evidence validate-bundle \
   --evidence "$evidence_directory"
 
 git diff --exit-code -- uv.lock pnpm-lock.yaml THIRD_PARTY_NOTICES.md
+run_succeeded=1
 echo "supply-chain-gate: OK evidence=$evidence_directory"

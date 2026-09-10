@@ -33,7 +33,7 @@ SPDX_ID = re.compile(r"SPDXRef-[A-Za-z0-9.-]+")
 IMAGE_PREFIXES = {
     "apache": ("etc/apache2/",),
     "backend": ("opt/slaif/",),
-    "browser-worker": ("opt/slaif/", "ms-playwright/chromium-1669021/"),
+    "browser-worker": ("opt/slaif/", "ms-playwright/chromium-1681091/"),
     "nginx": ("etc/nginx/nginx.conf",),
     "postgres": ("usr/local/bin/docker-entrypoint.sh",),
     "web": ("opt/slaif/",),
