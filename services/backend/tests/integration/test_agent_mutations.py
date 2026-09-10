@@ -19260,40 +19260,49 @@ async def test_agent_065_theme_data_round_trip_preserves_legacy_state(
     agent_site_database: AgentSiteDatabase,
 ) -> None:
     database = agent_site_database
-    _token, seeded = await _seed(database)
-    await _disable_content_cow(database)
     await run_migration(
         database.settings.resolved_owner_dsn(),
         expected_database=database.name,
-        operation="downgrade",
+        operation="upgrade",
         revision="064_001",
     )
     legacy_signatures = (
         "control.slaif_agent_resource_constraints(uuid)",
         "content.slaif_theme_get(uuid)",
         "content.slaif_theme_update(uuid,jsonb,jsonb,jsonb,jsonb)",
+        "control.slaif_agent_idempotency_complete(uuid,uuid,text,text,uuid,integer,jsonb,text,uuid,uuid,text,text,text)",
+        "control.slaif_agent_idempotency_complete_no_effect(uuid,uuid,text,text,uuid,integer,jsonb,text,uuid,uuid)",
     )
-    async with owner_connection(
-        database.settings.resolved_owner_dsn(), expected_database=database.name
-    ) as owner:
-        fresh_064_contracts = {
-            signature: await _function_contract(owner, signature)
-            for signature in legacy_signatures
-        }
+    site_id = uuid4()
     theme_id = uuid4()
     async with owner_connection(
         database.settings.resolved_owner_dsn(), expected_database=database.name
     ) as owner:
         await owner.execute(
+            "INSERT INTO control.site "
+            "(id,site_key,display_name,default_locale,component_catalog_version) "
+            "VALUES ($1,'migration-064','Migration 064','en-US','catalog-v1')",
+            site_id,
+        )
+        await owner.execute(
             "INSERT INTO content.theme "
             "(id,site_id,palette,typography,layout,shape) VALUES "
             "($1,$2,$3::jsonb,$4::jsonb,$5::jsonb,$6::jsonb)",
             theme_id,
-            seeded["site_id"],
+            site_id,
             '{"preset":"ember"}',
             '{"family":"mono","scale":"compact","weight":"medium"}',
             '{"content_width":"sm","spacing":"lg","grid_gap":"sm"}',
             '{"radius":"full","shadow":"lg"}',
+        )
+        fresh_064_contracts = {
+            signature: await _function_contract(owner, signature)
+            for signature in legacy_signatures
+        }
+        fresh_064_constraint = await owner.fetchval(
+            "SELECT pg_get_constraintdef(oid,true) "
+            "FROM pg_constraint WHERE conrelid='audit.agent_mutation'::regclass "
+            "AND conname='agent_mutation_semantic_shape'"
         )
     await run_migration(
         database.settings.resolved_owner_dsn(),
@@ -19301,14 +19310,32 @@ async def test_agent_065_theme_data_round_trip_preserves_legacy_state(
         operation="upgrade",
         revision="head",
     )
-    await reconcile(database.settings)
     async with owner_connection(
         database.settings.resolved_owner_dsn(), expected_database=database.name
     ) as owner:
+        upgraded_contracts = {
+            signature: await _function_contract(owner, signature)
+            for signature in legacy_signatures
+        }
+        upgraded_constraint = await owner.fetchval(
+            "SELECT pg_get_constraintdef(oid,true) "
+            "FROM pg_constraint WHERE conrelid='audit.agent_mutation'::regclass "
+            "AND conname='agent_mutation_semantic_shape'"
+        )
+        assert (
+            upgraded_contracts[legacy_signatures[3]]
+            != fresh_064_contracts[legacy_signatures[3]]
+        )
+        assert (
+            upgraded_contracts[legacy_signatures[4]]
+            != fresh_064_contracts[legacy_signatures[4]]
+        )
+        assert "THEME_UPDATED" in upgraded_contracts[legacy_signatures[3]][0]
+        assert "THEME_UPDATED" in str(upgraded_constraint)
         row = await owner.fetchrow(
             "SELECT id,schema_version,renderer_version,row_version,palette,typography,"
             "layout,shape FROM content.theme WHERE site_id=$1",
-            seeded["site_id"],
+            site_id,
         )
         assert tuple(row[:4]) + tuple(
             json.loads(value) if isinstance(value, str) else value for value in row[4:]
@@ -19336,10 +19363,16 @@ async def test_agent_065_theme_data_round_trip_preserves_legacy_state(
             for signature in legacy_signatures
         }
         assert restored_064_contracts == fresh_064_contracts
+        restored_064_constraint = await owner.fetchval(
+            "SELECT pg_get_constraintdef(oid,true) "
+            "FROM pg_constraint WHERE conrelid='audit.agent_mutation'::regclass "
+            "AND conname='agent_mutation_semantic_shape'"
+        )
+        assert restored_064_constraint == fresh_064_constraint
         row = await owner.fetchrow(
             "SELECT id,palette,typography,layout,shape FROM content.theme "
             "WHERE site_id=$1",
-            seeded["site_id"],
+            site_id,
         )
         assert tuple(row[:1]) + tuple(
             json.loads(value) if isinstance(value, str) else value for value in row[1:]
@@ -19350,13 +19383,6 @@ async def test_agent_065_theme_data_round_trip_preserves_legacy_state(
             {"content_width": "sm", "spacing": "lg", "grid_gap": "sm"},
             {"radius": "full", "shadow": "lg"},
         )
-    await run_migration(
-        database.settings.resolved_owner_dsn(),
-        expected_database=database.name,
-        operation="upgrade",
-        revision="head",
-    )
-    await reconcile(database.settings)
 
 
 @pytest.mark.asyncio

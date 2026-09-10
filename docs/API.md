@@ -165,8 +165,9 @@ mutation quota and creates no audit or COW mutation.
 The bounded site theme is a separate normalized `theme-schema/v1` record, not
 an opaque Puck blob. `GET /api/agent/v1/theme-schema` and
 `GET /api/agent/v1/theme` require `theme:read`; `PATCH /api/agent/v1/theme`
-requires `theme-tokens:write`, an `expected_row_version`, and an
-`Idempotency-Key`. The schema exposes only the product-owned palette preset,
+requires `theme:read`, an `expected_row_version`, and an `Idempotency-Key`.
+`theme-tokens:write` is required only when the submitted value changes the
+theme; an exact no-effect PATCH is read-authorized. The schema exposes only the product-owned palette preset,
 local typography family/scale/weight, content-width/spacing/grid-gap, and
 radius/shadow tokens. Values are enum keys with product-validated AA contrast;
 raw CSS, colors, URLs, fonts, breakpoints, and executable values are rejected.

@@ -353,6 +353,174 @@ test("renderer local design follows the documented responsive cascade", async ({
   expect(mobile.image.aspectRatio).toBe("auto");
 });
 
+test("renderer theme tokens preserve local precedence and semantic contrast", async ({
+  page,
+}) => {
+  const response = await page.goto("/s/parity/");
+  expect(response?.status()).toBe(200);
+  await page.evaluate(() => {
+    const surface = document.querySelector("main.renderer-surface");
+    if (!(surface instanceof HTMLElement)) throw new Error("theme-surface-missing");
+    const probe = document.createElement("div");
+    probe.id = "theme-token-evidence";
+    probe.innerHTML = `
+      <div id="theme-grid" class="renderer-grid renderer-grid--2 renderer-gap--none renderer-gap--mobile-sm">grid</div>
+      <a id="theme-primary" class="renderer-button renderer-button--primary" href="/">Primary</a>
+      <a id="theme-secondary" class="renderer-button renderer-button--secondary" href="/">Secondary</a>
+      <a id="theme-ghost" class="renderer-button renderer-button--ghost" href="/">Ghost</a>
+    `;
+    surface.append(probe);
+  });
+  await page.setViewportSize({ width: 1280, height: 800 });
+
+  const paletteEvidence = async (palette: "ocean" | "meadow" | "ember") =>
+    page.evaluate((nextPalette) => {
+      const surface = document.querySelector("main.renderer-surface");
+      if (!(surface instanceof HTMLElement)) throw new Error("theme-surface-missing");
+      for (const token of ["ocean", "meadow", "ember"])
+        surface.classList.remove(`renderer-theme-palette--${token}`);
+      surface.classList.add(`renderer-theme-palette--${nextPalette}`);
+      const rootStyle = getComputedStyle(surface);
+      const rgb = (value: string): [number, number, number] => {
+        const match = value.match(
+          /^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)(?:\s*,\s*[\d.]+)?\s*\)$/,
+        );
+        if (!match) throw new Error(`non-solid-color:${value}`);
+        return [Number(match[1]), Number(match[2]), Number(match[3])];
+      };
+      const luminance = (value: string) => {
+        const channels = rgb(value).map((channel) => {
+          const normalized = channel / 255;
+          return normalized <= 0.03928
+            ? normalized / 12.92
+            : ((normalized + 0.055) / 1.055) ** 2.4;
+        });
+        return 0.2126 * channels[0]! + 0.7152 * channels[1]! + 0.0722 * channels[2]!;
+      };
+      const contrast = (foreground: string, background: string) => {
+        const foregroundLuminance = luminance(foreground);
+        const backgroundLuminance = luminance(background);
+        return (
+          (Math.max(foregroundLuminance, backgroundLuminance) + 0.05) /
+          (Math.min(foregroundLuminance, backgroundLuminance) + 0.05)
+        );
+      };
+      const role = (id: string) => {
+        const element = document.getElementById(id);
+        if (!(element instanceof HTMLElement)) throw new Error(`missing-${id}`);
+        const style = getComputedStyle(element);
+        const background = style.backgroundColor.startsWith("rgba(0, 0, 0, 0)")
+          ? rootStyle.backgroundColor
+          : style.backgroundColor;
+        return {
+          background,
+          color: style.color,
+          contrast: contrast(style.color, background),
+        };
+      };
+      return {
+        palette: nextPalette,
+        background: rootStyle.backgroundColor,
+        color: rootStyle.color,
+        roles: {
+          primary: role("theme-primary"),
+          secondary: role("theme-secondary"),
+          ghost: role("theme-ghost"),
+        },
+      };
+    }, palette);
+
+  const expected = {
+    ocean: { background: "rgb(11, 28, 34)", color: "rgb(244, 247, 248)" },
+    meadow: { background: "rgb(240, 248, 241)", color: "rgb(18, 53, 29)" },
+    ember: { background: "rgb(255, 247, 237)", color: "rgb(66, 32, 6)" },
+  } as const;
+  for (const palette of ["ocean", "meadow", "ember"] as const) {
+    const evidence = await paletteEvidence(palette);
+    expect(evidence.background).toBe(expected[palette].background);
+    expect(evidence.color).toBe(expected[palette].color);
+    expect(evidence.roles.primary.contrast).toBeGreaterThanOrEqual(4.5);
+    expect(evidence.roles.secondary.contrast).toBeGreaterThanOrEqual(4.5);
+    expect(evidence.roles.ghost.contrast).toBeGreaterThanOrEqual(4.5);
+  }
+
+  const configured = await page.evaluate(() => {
+    const surface = document.querySelector("main.renderer-surface");
+    const grid = document.getElementById("theme-grid");
+    if (!(surface instanceof HTMLElement) || !(grid instanceof HTMLElement))
+      throw new Error("theme-computed-elements-missing");
+    surface.className = [
+      "renderer-surface",
+      "renderer-theme-palette--meadow",
+      "renderer-theme-family--serif",
+      "renderer-theme-scale--spacious",
+      "renderer-theme-weight--bold",
+      "renderer-theme-width--xl",
+      "renderer-theme-spacing--lg",
+      "renderer-theme-gap--lg",
+      "renderer-theme-radius--lg",
+      "renderer-theme-shadow--md",
+    ].join(" ");
+    const rootStyle = getComputedStyle(surface);
+    const gridStyle = getComputedStyle(grid);
+    return {
+      family: rootStyle.fontFamily,
+      fontSize: rootStyle.fontSize,
+      fontWeight: rootStyle.fontWeight,
+      width: rootStyle.width,
+      paddingTop: rootStyle.paddingTop,
+      gridGap: gridStyle.gap,
+    };
+  });
+  expect(configured.family).toContain("Georgia");
+  expect(configured.fontSize).toBe("17px");
+  expect(configured.fontWeight).toBe("700");
+  expect(configured.width).toBe("1248px");
+  expect(configured.paddingTop).toBe("64px");
+  expect(configured.gridGap).toBe("0px");
+
+  await page.setViewportSize({ width: 390, height: 800 });
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const grid = document.getElementById("theme-grid");
+        if (!(grid instanceof HTMLElement)) throw new Error("theme-grid-missing");
+        return getComputedStyle(grid).gap;
+      }),
+    )
+    .toBe("8px");
+
+  const reset = await page.evaluate(() => {
+    const surface = document.querySelector("main.renderer-surface");
+    if (!(surface instanceof HTMLElement)) throw new Error("theme-surface-missing");
+    surface.className = [
+      "renderer-surface",
+      "renderer-theme-palette--ocean",
+      "renderer-theme-family--system",
+      "renderer-theme-scale--balanced",
+      "renderer-theme-weight--regular",
+      "renderer-theme-width--md",
+      "renderer-theme-spacing--md",
+      "renderer-theme-gap--md",
+      "renderer-theme-radius--md",
+      "renderer-theme-shadow--sm",
+    ].join(" ");
+    const style = getComputedStyle(surface);
+    return {
+      background: style.backgroundColor,
+      color: style.color,
+      fontSize: style.fontSize,
+      fontWeight: style.fontWeight,
+    };
+  });
+  expect(reset).toEqual({
+    background: "rgb(11, 28, 34)",
+    color: "rgb(244, 247, 248)",
+    fontSize: "16px",
+    fontWeight: "400",
+  });
+});
+
 test("human-editor-theme-is-preview-scoped-and-computed", async ({ page }) => {
   const workspaceId = process.env.SLAIF_E2E_PREVIEW_WORKSPACE_ID;
   if (!workspaceId) throw new Error("missing preview fixture channel");
@@ -445,7 +613,7 @@ test("human-editor-theme-is-preview-scoped-and-computed", async ({ page }) => {
   expect(previewTheme.fontWeight).toBe("700");
   expect(previewTheme.width).toBe("1408px");
   expect(previewTheme.paddingTop).toBe("64px");
-  expect(previewTheme.gridGap).toBe("8px");
+  expect(previewTheme.gridGap).toBe("16px");
   expect(previewTheme.borderRadius).toBe("20px");
   expect(previewTheme.boxShadow).not.toBe("none");
 

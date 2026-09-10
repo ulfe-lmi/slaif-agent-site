@@ -1663,6 +1663,153 @@ def _assert_component_preview_html(
         raise ProofFailure(f"{label}-next-flight-leak")
 
 
+def _run_primary_theme_browser_proof(
+    client: PublicClient,
+    *,
+    token: str,
+    workspace_id: str,
+    site_id: str,
+    project: str,
+    tag: str,
+) -> None:
+    """Prove the Agent-mutated workspace through the real browser edge."""
+
+    browser_route = "/s/demo"
+    browser_body = {
+        "version": "browser-preview/v1",
+        "route": browser_route,
+        "target": "desktop-chromium",
+        "evidence": [
+            "screenshot",
+            "structure-summary",
+            "console-summary",
+            "failed-request-summary",
+        ],
+    }
+    key = f"oap-078r-theme-browser-{tag}"
+    created = _json(
+        client.request(
+            "/api/agent/v1/preview-runs",
+            method="POST",
+            body=browser_body,
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Idempotency-Key": key,
+            },
+        ),
+        status=202,
+        label="theme-browser-create",
+    )
+    run_id = _require_uuid(created.get("run_id"), "theme-browser-run")
+    if any(name in created for name in ("workspace_id", "capability_id", "token")):
+        raise ProofFailure("theme-browser-secret-disclosure")
+    _wait_browser_run(client, token, run_id, "theme-browser-run")
+    replay = _json(
+        client.request(
+            "/api/agent/v1/preview-runs",
+            method="POST",
+            body=browser_body,
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Idempotency-Key": key,
+            },
+        ),
+        status=202,
+        label="theme-browser-replay",
+    )
+    if replay.get("run_id") != run_id:
+        raise ProofFailure("theme-browser-replay-created-second-run")
+    if (
+        _sql(
+            project,
+            "SELECT workspace_id::text || ':' || site_id::text || ':' || state "
+            f"FROM control.browser_run WHERE id='{run_id}'::uuid",
+        )
+        != f"{workspace_id}:{site_id}:COMPLETED"
+    ):
+        raise ProofFailure("theme-browser-workspace-binding")
+    artifacts = _list(
+        client.request(
+            f"/api/agent/v1/preview-runs/{run_id}/artifacts",
+            headers={"Authorization": f"Bearer {token}"},
+        ),
+        status=200,
+        label="theme-browser-artifacts",
+    )
+    expected_kinds = {
+        "screenshot",
+        "structure-summary",
+        "console-summary",
+        "failed-request-summary",
+    }
+    if {item.get("kind") for item in artifacts} != expected_kinds:
+        raise ProofFailure("theme-browser-artifact-inventory")
+    route_digest = hashlib.sha256(browser_route.encode("utf-8")).hexdigest()
+    metadata_keys = {
+        "version",
+        "artifact_id",
+        "run_id",
+        "kind",
+        "mime_type",
+        "sha256",
+        "size_bytes",
+        "target",
+        "route_digest",
+        "created_at",
+        "expires_at",
+        "visibility",
+    }
+    for artifact in artifacts:
+        if set(artifact) != metadata_keys:
+            raise ProofFailure("theme-browser-artifact-metadata")
+        artifact_id = _require_uuid(
+            artifact.get("artifact_id"), "theme-browser-artifact-id"
+        )
+        if (
+            artifact.get("run_id") != run_id
+            or artifact.get("target") != "desktop-chromium"
+            or artifact.get("route_digest") != route_digest
+            or artifact.get("visibility") != "PRIVATE"
+        ):
+            raise ProofFailure("theme-browser-artifact-binding")
+        response = client.request(
+            f"/api/agent/v1/preview-runs/{run_id}/artifacts/{artifact_id}",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        if (
+            response.status != 200
+            or len(response.body) != artifact.get("size_bytes")
+            or hashlib.sha256(response.body).hexdigest() != artifact.get("sha256")
+        ):
+            raise ProofFailure("theme-browser-artifact-bytes")
+        if artifact.get("kind") == "screenshot":
+            if artifact.get("mime_type") != "image/png" or not response.body.startswith(
+                b"\x89PNG\r\n\x1a\n"
+            ):
+                raise ProofFailure("theme-browser-screenshot-invalid")
+            continue
+        if artifact.get("mime_type") != "application/json":
+            raise ProofFailure("theme-browser-summary-mime")
+        try:
+            evidence = json.loads(response.body)
+        except (TypeError, ValueError) as error:
+            raise ProofFailure("theme-browser-summary-json") from error
+        if artifact.get("kind") == "structure-summary":
+            if evidence.get("main") != 1 or evidence.get("rendererStylesheets") != 1:
+                raise ProofFailure("theme-browser-structure")
+        elif artifact.get("kind") == "console-summary" and evidence != {"entries": []}:
+            raise ProofFailure("theme-browser-console-summary")
+        elif artifact.get("kind") == "failed-request-summary" and evidence != {
+            "blocked": 0,
+            "entries": [],
+        }:
+            raise ProofFailure("theme-browser-failed-request-summary")
+        if any(
+            marker in response.body.decode("utf-8") for marker in ("sas2_", "sbp1.")
+        ):
+            raise ProofFailure("theme-browser-credential-leak")
+
+
 def _run_component_browser_proof(
     client: PublicClient,
     *,
@@ -3257,6 +3404,14 @@ def run_acceptance(project: str) -> None:
         )
         if theme_readback != theme_record:
             raise ProofFailure("theme-readback-mismatch")
+        _run_primary_theme_browser_proof(
+            client,
+            token=primary_token,
+            workspace_id=primary_workspace,
+            site_id=site_id,
+            project=project,
+            tag=tag,
+        )
 
         _run_dynamic_news_edge_journey(
             client, site_id, csrf, project, tag, observer_token
@@ -4382,6 +4537,25 @@ def run_acceptance(project: str) -> None:
             "/api/agent/v1/session",
             label="agent-restart-session",
         )
+        restarted_theme = _agent_request(
+            client, primary_token, "/api/agent/v1/theme", label="theme-restart-read"
+        )
+        if restarted_theme != theme_record:
+            raise ProofFailure("theme-restart-state-lost")
+        restarted_replay = client.request(
+            "/api/agent/v1/theme",
+            method="PATCH",
+            body=theme_body,
+            headers={
+                "Authorization": f"Bearer {primary_token}",
+                "Idempotency-Key": f"oap-078p-theme-update-{tag}",
+            },
+        )
+        if (
+            _json(restarted_replay, status=200, label="theme-restart-replay")
+            != theme_update
+        ):
+            raise ProofFailure("theme-restart-replay-mismatch")
         _agent_request(
             client,
             primary_token,

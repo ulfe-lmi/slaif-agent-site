@@ -239,6 +239,12 @@ def _agent_update_sql() -> str:
             IF p_expected IS NULL OR p_expected<=0 THEN
                 RAISE EXCEPTION 'ROW_VERSION_REQUIRED' USING ERRCODE='P0003';
             END IF;
+            -- Lifecycle is the outer workspace lock.  Take only its advisory
+            -- phase here; the capability helper performs its row-locking and
+            -- scope checks after the resource lock, avoiding lock conversion
+            -- deadlocks while keeping every mutation behind lifecycle 280.
+            PERFORM pg_advisory_xact_lock_shared(hashtextextended(
+                workspace_id::text,280));
             PERFORM pg_advisory_xact_lock(hashtextextended(
                 workspace_id::text||chr(58)||p_site_id::text||chr(58)||'theme',995));
             capability_id:=control.slaif_agent_require_capability(
@@ -662,6 +668,16 @@ def upgrade() -> None:
         "ALTER FUNCTION content.slaif_theme_update(uuid,jsonb,jsonb,jsonb,jsonb) "
         f"SET SCHEMA {_LEGACY_SCHEMA}"
     )
+    op.execute(
+        "ALTER FUNCTION control.slaif_agent_idempotency_complete("
+        "uuid,uuid,text,text,uuid,integer,jsonb,text,uuid,uuid,text,text,text) "
+        f"SET SCHEMA {_LEGACY_SCHEMA}"
+    )
+    op.execute(
+        "ALTER FUNCTION control.slaif_agent_idempotency_complete_no_effect("
+        "uuid,uuid,text,text,uuid,integer,jsonb,text,uuid,uuid) "
+        f"SET SCHEMA {_LEGACY_SCHEMA}"
+    )
     _execute_block(_legacy_sql())
     _execute_block(_agent_read_sql())
     _execute_block(_agent_update_sql())
@@ -739,11 +755,10 @@ def downgrade() -> None:
     op.execute(_semantic_constraint_sql(include_theme=False))
     _execute_block(_semantic_completion_sql(include_theme=False))
     _execute_block(_no_effect_completion_sql(include_theme=False))
-    # Recreate the exact pre-062 resource function from 050/060 by replaying
-    # the current migration's historical implementation through a small
-    # compatibility wrapper; its output shape is restored by migration 060 on
-    # a full downgrade.  The immediate downgrade remains data-bearing and
-    # leaves the legacy theme rows intact.
+    # Recreate the legacy resource function only as a temporary name holder;
+    # the private moved object below is the authoritative restoration.  The
+    # immediate downgrade remains data-bearing and leaves legacy theme rows
+    # intact.
     _execute_block(
         """
         CREATE FUNCTION control.slaif_agent_resource_constraints(p_site_id uuid)
@@ -837,9 +852,26 @@ def downgrade() -> None:
         ("slaif_agent_resource_constraints", "uuid", "control"),
         ("slaif_theme_get", "uuid", "content"),
         ("slaif_theme_update", "uuid,jsonb,jsonb,jsonb,jsonb", "content"),
+        (
+            "slaif_agent_idempotency_complete",
+            "uuid,uuid,text,text,uuid,integer,jsonb,text,uuid,uuid,text,text,text",
+            "control",
+        ),
+        (
+            "slaif_agent_idempotency_complete_no_effect",
+            "uuid,uuid,text,text,uuid,integer,jsonb,text,uuid,uuid",
+            "control",
+        ),
     ):
         current_schema = (
-            "control" if function == "slaif_agent_resource_constraints" else "content"
+            "control"
+            if function
+            in {
+                "slaif_agent_resource_constraints",
+                "slaif_agent_idempotency_complete",
+                "slaif_agent_idempotency_complete_no_effect",
+            }
+            else "content"
         )
         op.execute(f"DROP FUNCTION {current_schema}.{function}({signature})")
         op.execute(

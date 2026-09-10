@@ -59,12 +59,15 @@ review, promotion, publication, and the contractual MVP remain separate and
 incomplete.
 
 The active Objective-078/2 increment adds a bounded `theme-schema/v1` data
-plane on a new PR from verified `main`: typed Agent discovery/read/partial-
-update routes, reversible legacy theme migration, exact COW/version/scope/
-idempotency/audit/quota/concurrency semantics, and shared Render/Web/Puck token
-consumption. It deliberately excludes global regions, header/footer
-architecture, page style, arbitrary CSS/fonts/colors, media, MCP, review,
-promotion, publication, and final MVP claims.
+plane on PR #79 from verified `main`: typed Agent discovery/read/partial-update
+routes, reversible legacy theme migration, exact COW/version/scope/
+idempotency/audit/quota/concurrency semantics, shared Render/Web/Puck token
+consumption, computed renderer precedence/contrast proof, and same-Agent-
+workspace NGINX/browser evidence. The 078-r implementation is complete for
+this bounded increment and remains pending strategic acceptance/merge. It
+deliberately excludes global regions, header/footer architecture, page style,
+arbitrary CSS/fonts/colors, media, MCP, review, promotion, publication, and
+final MVP claims.
 
 > **Pre-alpha / bounded deployable product.** This
 > repository contains the normative architecture, coding-agent governance,
@@ -220,8 +223,8 @@ loopback port 8080 is published. The deployable pre-alpha stack includes
 one-time first-run setup/login and site-management administration; bounded
 page/locale/navigation/redirect/dynamic-Render semantics are present in the
 Objective-077 source revision, and the bounded Agent component and local
-design data planes and the 078-k authority/replay/audit closure is present in the
-Objective-078 source revision;
+design data planes and the 078/2 site-theme token data plane are present on the
+open Objective-078 PR #79;
 site-global theme/media, review, and publication remain queued. See the
 [deployment guide](docs/DEPLOYMENT.md) and [operations guide](docs/OPERATIONS.md).
 
@@ -242,7 +245,7 @@ site-global theme/media, review, and publication remain queued. See the
 | Completed human RBAC HTTP boundary | Immutable role/permission catalogs, site membership list/get/create/update/deactivate, strict session/CSRF policy, optimistic concurrency, and complete Control/Editor route declarations. |
 | Responsive site and membership administration | Permission-driven site/profile/domain workflows plus existing-user UUID membership cards, built-in roles, bounded ceilings, separate publication overrides, complete override replacement, version refresh, and semantic deactivation. |
 | Objective-077 source revision | Capability-bound Agent pages, locales, navigation, redirects, and bounded dynamic collection Render semantics with human Editor parity, shared Render/NGINX/browser evidence, route integrity, concurrency, and recovery proof, accepted and merged in PR #74 on 2026-09-08 at `ae3a4a6`; later review/publication remains separate. |
-| Objective-078-k source revision | Bounded capability-bound Agent component/catalog design semantics plus exact property-level scopes, responsive CREATE, full validation, renderer cascade, Editor/Puck preservation, removal/replay/no-op accounting, scalar/responsive OpenAPI truth, PostgreSQL narrowed-capability/direct-helper proof, and canonical non-change on open PR #77; site-theme work is deferred to a new PR and strategic acceptance/merge remains separate. |
+| Objective-078/2 closure | Bounded `theme-schema/v1` Agent data plane, exact migration restoration, lifecycle-before-theme concurrency, computed palette/contrast/local-precedence renderer proof, same-workspace Agent browser evidence, and Firefox rerun on open PR #79; strategic acceptance/merge remains separate and global regions/page-style/catalog remain deferred. |
 | Planned product work | Add review snapshots, freeze/accept/discard/promotion, approved-source and responsive-sweep orchestration, reconstruction, public media finalization, and remaining hardening. |
 
 See [Architecture Section 50](ARCHITECTURE.md#50-implementation-phases) for

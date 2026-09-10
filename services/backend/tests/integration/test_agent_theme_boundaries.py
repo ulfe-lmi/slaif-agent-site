@@ -633,6 +633,27 @@ async def _theme_lock_key(connection: Any, seeded: dict[str, UUID]) -> int:
     )
 
 
+async def _lifecycle_lock_key(connection: Any, seeded: dict[str, UUID]) -> int:
+    return int(
+        await connection.fetchval(
+            "SELECT hashtextextended($1,280)", str(seeded["workspace_id"])
+        )
+    )
+
+
+async def _lock_counts(connection: Any, lock_key: int) -> tuple[int, int]:
+    row = await connection.fetchrow(
+        "SELECT count(*) FILTER (WHERE granted), "
+        "count(*) FILTER (WHERE NOT granted) FROM pg_locks "
+        "WHERE locktype='advisory' "
+        "AND classid::bigint=(($1::bigint >> 32) & 4294967295) "
+        "AND objid::bigint=($1::bigint & 4294967295)",
+        lock_key,
+    )
+    assert row is not None
+    return int(row[0]), int(row[1])
+
+
 async def _wait_for_theme_waiters(
     connection: Any, lock_key: int, expected: int
 ) -> None:
@@ -651,6 +672,16 @@ async def _wait_for_theme_waiters(
     raise AssertionError(f"expected {expected} theme lock waiters")
 
 
+async def _wait_for_lock_waiters(connection: Any, lock_key: int, expected: int) -> None:
+    deadline = time.monotonic() + 8
+    while time.monotonic() < deadline:
+        _granted, waiting = await _lock_counts(connection, lock_key)
+        if waiting >= expected:
+            return
+        await asyncio.sleep(0.01)
+    raise AssertionError(f"expected {expected} advisory lock waiters")
+
+
 @asynccontextmanager
 async def _hold_theme_lock(
     database: AgentSiteDatabase, seeded: dict[str, UUID]
@@ -664,6 +695,77 @@ async def _hold_theme_lock(
                 f"{seeded['workspace_id']}:{seeded['site_id']}:theme",
             )
             yield owner
+
+
+@asynccontextmanager
+async def _hold_lifecycle_lock(
+    database: AgentSiteDatabase, seeded: dict[str, UUID]
+) -> AsyncIterator[Any]:
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        async with owner.transaction():
+            await owner.fetchval(
+                "SELECT pg_advisory_xact_lock(hashtextextended($1,280))",
+                str(seeded["workspace_id"]),
+            )
+            yield owner
+
+
+@pytest.mark.asyncio
+async def test_theme_mutation_waits_on_lifecycle_before_theme_for_public_and_runtime(
+    agent_site_database: AgentSiteDatabase,
+) -> None:
+    database = agent_site_database
+    _unused_token, seeded = await _seed(database)
+    token = await _capability_with_scopes(
+        database, seeded, ["site:read", "theme:read", "theme-tokens:write"]
+    )
+    agent_pool = await database.role_pool("slaif_agent_runtime")
+    lifecycle_key: int
+    theme_key: int
+    try:
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            lifecycle_key = await _lifecycle_lock_key(owner, seeded)
+            theme_key = await _theme_lock_key(owner, seeded)
+
+        async with _agent_client(database) as client:
+            async with _hold_lifecycle_lock(database, seeded) as blocker:
+                public_task = asyncio.create_task(
+                    client.patch(
+                        "/api/agent/v1/theme",
+                        headers={
+                            "Authorization": f"Bearer {token}",
+                            "Idempotency-Key": "theme-lifecycle-public",
+                        },
+                        json={
+                            "expected_row_version": 1,
+                            "palette": {"preset": "meadow"},
+                        },
+                    )
+                )
+                await _wait_for_lock_waiters(blocker, lifecycle_key, 1)
+                assert await _lock_counts(blocker, theme_key) == (0, 0)
+            public_response = await public_task
+            assert public_response.status_code == 200, public_response.text
+
+        async with _hold_lifecycle_lock(database, seeded) as blocker:
+            runtime_task = asyncio.create_task(
+                _direct_theme_update(
+                    agent_pool,
+                    seeded,
+                    group="palette",
+                    encoded_value='{"preset":"ember"}',
+                    expected=2,
+                )
+            )
+            await _wait_for_lock_waiters(blocker, lifecycle_key, 1)
+            assert await _lock_counts(blocker, theme_key) == (0, 0)
+        await runtime_task
+    finally:
+        await agent_pool.close()
 
 
 @pytest.mark.asyncio
@@ -681,37 +783,62 @@ async def test_theme_races_use_database_barrier_and_cancel_without_residue(
     reviewer_pool = await database.role_pool("slaif_reviewer")
     try:
         async with _agent_client(database) as client:
-            async with _hold_theme_lock(database, seeded) as blocker:
-                task_a = asyncio.create_task(
-                    client.patch(
-                        "/api/agent/v1/theme",
-                        headers={
-                            "Authorization": f"Bearer {token_a}",
-                            "Idempotency-Key": "theme-barrier-first-a",
-                        },
-                        json={
-                            "expected_row_version": 1,
-                            "palette": {"preset": "meadow"},
-                        },
+
+            async def barrier_race(
+                first_token: str,
+                first_key: str,
+                first_expected: int,
+                first_palette: str,
+                second_token: str,
+                second_key: str,
+                second_expected: int,
+                second_palette: str,
+            ) -> list[httpx.Response]:
+                async with _hold_theme_lock(database, seeded) as blocker:
+                    first = asyncio.create_task(
+                        client.patch(
+                            "/api/agent/v1/theme",
+                            headers={
+                                "Authorization": f"Bearer {first_token}",
+                                "Idempotency-Key": first_key,
+                            },
+                            json={
+                                "expected_row_version": first_expected,
+                                "palette": {"preset": first_palette},
+                            },
+                        )
                     )
-                )
-                task_b = asyncio.create_task(
-                    client.patch(
-                        "/api/agent/v1/theme",
-                        headers={
-                            "Authorization": f"Bearer {token_b}",
-                            "Idempotency-Key": "theme-barrier-first-b",
-                        },
-                        json={
-                            "expected_row_version": 1,
-                            "palette": {"preset": "ember"},
-                        },
+                    await _wait_for_theme_waiters(
+                        blocker, await _theme_lock_key(blocker, seeded), 1
                     )
-                )
-                await _wait_for_theme_waiters(
-                    blocker, await _theme_lock_key(blocker, seeded), 2
-                )
-            responses = await asyncio.gather(task_a, task_b)
+                    second = asyncio.create_task(
+                        client.patch(
+                            "/api/agent/v1/theme",
+                            headers={
+                                "Authorization": f"Bearer {second_token}",
+                                "Idempotency-Key": second_key,
+                            },
+                            json={
+                                "expected_row_version": second_expected,
+                                "palette": {"preset": second_palette},
+                            },
+                        )
+                    )
+                    await _wait_for_theme_waiters(
+                        blocker, await _theme_lock_key(blocker, seeded), 2
+                    )
+                return list(await asyncio.gather(first, second))
+
+            responses = await barrier_race(
+                token_a,
+                "theme-barrier-first-a",
+                1,
+                "meadow",
+                token_b,
+                "theme-barrier-first-b",
+                1,
+                "ember",
+            )
             assert sorted(response.status_code for response in responses) == [200, 409]
             first_state = await _theme_state(database, seeded, reviewer_pool)
             assert first_state[0][0] == 0
@@ -720,37 +847,25 @@ async def test_theme_races_use_database_barrier_and_cancel_without_residue(
             assert first_state[2][2] == 1
             assert first_state[4] == 1
 
-            async with _hold_theme_lock(database, seeded) as blocker:
-                existing_a = asyncio.create_task(
-                    client.patch(
-                        "/api/agent/v1/theme",
-                        headers={
-                            "Authorization": f"Bearer {token_a}",
-                            "Idempotency-Key": "theme-barrier-existing-a",
-                        },
-                        json={
-                            "expected_row_version": 2,
-                            "palette": {"preset": "ocean"},
-                        },
-                    )
-                )
-                existing_b = asyncio.create_task(
-                    client.patch(
-                        "/api/agent/v1/theme",
-                        headers={
-                            "Authorization": f"Bearer {token_b}",
-                            "Idempotency-Key": "theme-barrier-existing-b",
-                        },
-                        json={
-                            "expected_row_version": 2,
-                            "palette": {"preset": "ember"},
-                        },
-                    )
-                )
-                await _wait_for_theme_waiters(
-                    blocker, await _theme_lock_key(blocker, seeded), 2
-                )
-            existing_responses = await asyncio.gather(existing_a, existing_b)
+            first_winner = next(
+                response for response in responses if response.status_code == 200
+            )
+            winner_palette = first_winner.json()["record"]["palette"]["preset"]
+            remaining_palettes = [
+                palette
+                for palette in ("ocean", "meadow", "ember")
+                if palette != winner_palette
+            ]
+            existing_responses = await barrier_race(
+                token_b,
+                "theme-barrier-existing-b",
+                2,
+                remaining_palettes[0],
+                token_a,
+                "theme-barrier-existing-a",
+                2,
+                remaining_palettes[1],
+            )
             assert sorted(response.status_code for response in existing_responses) == [
                 200,
                 409,
@@ -762,6 +877,16 @@ async def test_theme_races_use_database_barrier_and_cancel_without_residue(
             assert existing_state[4] == 2
 
             before_cancel = await _theme_state(database, seeded, reviewer_pool)
+            current_palette = next(
+                response
+                for response in existing_responses
+                if response.status_code == 200
+            ).json()["record"]["palette"]["preset"]
+            cancellation_palette = next(
+                palette
+                for palette in ("ocean", "meadow", "ember")
+                if palette != current_palette
+            )
             async with _hold_theme_lock(database, seeded) as blocker:
                 cancellation = asyncio.create_task(
                     client.patch(
@@ -772,7 +897,7 @@ async def test_theme_races_use_database_barrier_and_cancel_without_residue(
                         },
                         json={
                             "expected_row_version": 3,
-                            "palette": {"preset": "ocean"},
+                            "palette": {"preset": cancellation_palette},
                         },
                     )
                 )

@@ -166,10 +166,21 @@ foreign workspace/site state, raw CSS/color/font/device/executable/version
 input, narrowed palette/typography/token resource policies, stale versions,
 quota exhaustion, idempotency mismatch, and cancellation with no durable
 residue. Replay and byte-equivalent updates are exact no-effect operations;
-same-version PostgreSQL PATCH races have one winner and one `409` loser.
-Migration tests preserve valid legacy theme data through downgrade/re-upgrade,
-restore the prior function contracts, and prove the same defaults are visible
-in canonical and active workspace preview without lazy-write reads.
+same-version PostgreSQL PATCH races have one winner and one `409` loser, with
+lifecycle advisory lock `280` proven before theme lock `995` for public and
+direct-runtime paths.
+Migration tests capture a genuine fresh-064 baseline, preserve valid legacy
+theme data through downgrade/re-upgrade, restore every replaced function and
+the semantic constraint exactly, and retain least-privilege/private-schema
+boundaries. The retained renderer regression is covered through computed
+Chromium colors and dimensions for all three palettes, numeric AA contrast for
+primary/secondary/ghost roles, local/responsive precedence, and reset tokens.
+The same real Agent workspace is then PATCHed through public NGINX and rendered
+by the authorized browser worker with private screenshot/summary artifacts;
+Agent restart and exact idempotent replay retain its theme/version. The
+historical Firefox response-category failure retained no endpoint/status
+artifact, while the targeted desktop-Firefox rerun passed in the clean matrix;
+no response suppression or retry weakening is used.
 
 ## Browser-run contract and durable control-plane proof
 

@@ -621,9 +621,9 @@ fi
 BROWSER_ARTIFACT_BASELINE=$(docker run --rm --network none --read-only --cap-drop ALL --cap-add DAC_READ_SEARCH \
   --user 0:0 --volume "${PROJECT}_browser-artifacts:/artifacts:ro" \
   --entrypoint python slaif-agent-site-backend:local -c \
-  "import pathlib,stat; root=pathlib.Path('/artifacts'); info=root.stat(); files=sorted(root.iterdir()); assert stat.S_IMODE(info.st_mode)==0o700 and info.st_uid==10001 and info.st_gid==10001; assert len(files)==12 and sum(p.suffix=='.bin' for p in files)==6 and sum(p.suffix=='.json' for p in files)==6; assert all(p.is_file() and not p.is_symlink() and stat.S_IMODE(p.stat().st_mode)==0o600 and p.stat().st_uid==10001 and p.stat().st_nlink==1 for p in files); assert not any(marker in p.read_bytes() for p in files for marker in (b'sbp1.',b'sbws1:',b'sas2_')); print(len(files))")
-test "$BROWSER_ARTIFACT_BASELINE" = 12
-echo "browser-artifact-root-policy: OK retained-files=$BROWSER_ARTIFACT_BASELINE retained-artifacts=6 mode=0600 owner=10001"
+  "import pathlib,stat; root=pathlib.Path('/artifacts'); info=root.stat(); files=sorted(root.iterdir()); assert stat.S_IMODE(info.st_mode)==0o700 and info.st_uid==10001 and info.st_gid==10001; assert len(files)==20 and sum(p.suffix=='.bin' for p in files)==10 and sum(p.suffix=='.json' for p in files)==10; assert all(p.is_file() and not p.is_symlink() and stat.S_IMODE(p.stat().st_mode)==0o600 and p.stat().st_uid==10001 and p.stat().st_nlink==1 for p in files); assert not any(marker in p.read_bytes() for p in files for marker in (b'sbp1.',b'sbws1:',b'sas2_')); print(len(files))")
+test "$BROWSER_ARTIFACT_BASELINE" = 20
+echo "browser-artifact-root-policy: OK retained-files=$BROWSER_ARTIFACT_BASELINE retained-artifacts=10 mode=0600 owner=10001"
 
 docker run --rm --network none --read-only --cap-drop ALL --cap-add DAC_READ_SEARCH \
   --user 0:0 --volume "${PROJECT}_local-secrets:/master:ro" \
