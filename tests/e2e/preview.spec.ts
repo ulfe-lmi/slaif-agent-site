@@ -742,9 +742,6 @@ test("agent-theme-patch-renders-in-the-same-authorized-workspace", async ({ page
   const credential = secrets();
   const failures = observe(page);
   const tag = crypto.randomUUID();
-  let capabilityId = "";
-  let agentToken = "";
-  let csrf = "";
 
   await login(page, credential);
   const sitesResponse = await page.request.get("/api/control/v1/me/sites");
@@ -757,7 +754,7 @@ test("agent-theme-patch-renders-in-the-same-authorized-workspace", async ({ page
   const demo = sites.find((site) => site.site_key === "demo");
   expect(parity).toBeDefined();
   expect(demo).toBeDefined();
-  csrf =
+  const csrf =
     (await page.context().cookies()).find((cookie) => cookie.name === "slaif_csrf")
       ?.value ?? "";
   expect(csrf).toBeTruthy();
@@ -808,14 +805,17 @@ test("agent-theme-patch-renders-in-the-same-authorized-workspace", async ({ page
   };
   expect(typeof capability.capability_id).toBe("string");
   expect(typeof capability.token).toBe("string");
-  capabilityId = capability.capability_id as string;
-  agentToken = capability.token as string;
+  const capabilityId = capability.capability_id as string;
+  const agentToken = capability.token as string;
 
   const initialThemeResponse = await page.request.get("/api/agent/v1/theme", {
     headers: { Authorization: `Bearer ${agentToken}` },
   });
   expect(initialThemeResponse.status()).toBe(200);
-  expect((await initialThemeResponse.json()).row_version).toBe(1);
+  const initialTheme = (await initialThemeResponse.json()) as {
+    row_version?: unknown;
+  };
+  expect(initialTheme.row_version).toBe(1);
   const themeBody = {
     expected_row_version: 1,
     palette: { preset: "meadow" },
@@ -956,5 +956,4 @@ test("agent-theme-patch-renders-in-the-same-authorized-workspace", async ({ page
     { headers: { "X-CSRF-Token": csrf } },
   );
   expect(revokeResponse.status()).toBe(200);
-  agentToken = "";
 });
