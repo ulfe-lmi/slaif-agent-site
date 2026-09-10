@@ -168,6 +168,14 @@ function assertThemeOutput(
   expect(output.boxShadow).toBe(expected.boxShadow);
 }
 
+function canonicalRendererFingerprint(body: string) {
+  const match = body.match(
+    /<main class="([^"]*renderer-surface[^"]*)"[^>]*data-render-mode="canonical"[^>]*>([\s\S]*)<\/main>/,
+  );
+  if (!match) throw new Error("canonical-renderer-fingerprint-missing");
+  return { className: match[1], content: match[2] };
+}
+
 test("authenticated-preview-renders-overlay-and-keeps-canonical-unchanged", async ({
   page,
 }) => {
@@ -844,7 +852,17 @@ test("agent-theme-patch-renders-in-the-same-authorized-workspace", async ({ page
 
   const canonicalBefore = await page.request.get("/s/parity/");
   expect(canonicalBefore.status()).toBe(200);
-  expect(await canonicalBefore.text()).toContain("renderer-theme-palette--ocean");
+  const canonicalBeforeBody = await canonicalBefore.text();
+  const canonicalBeforeFingerprint = canonicalRendererFingerprint(canonicalBeforeBody);
+  expect(canonicalBeforeBody).toContain("renderer-theme-palette--ocean");
+  const otherSiteBefore = await page.request.get("/s/demo");
+  expect(otherSiteBefore.status()).toBe(200);
+  const otherSiteBeforeBody = await otherSiteBefore.text();
+  const otherSiteBeforeFingerprint = canonicalRendererFingerprint(otherSiteBeforeBody);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const defaultBefore = await page.goto(`/preview/${defaultWorkspace}/s/parity/`);
+  expectPrivateHeaders(defaultBefore!);
+  const defaultBeforeOutput = await renderedThemeOutput(page);
 
   await page.setViewportSize({ width: 1440, height: 900 });
   const agentPreviewPath = `/preview/${agentWorkspace}/s/parity/`;
@@ -908,9 +926,320 @@ test("agent-theme-patch-renders-in-the-same-authorized-workspace", async ({ page
   expectPrivateHeaders(restoredPreview!);
   assertThemeOutput(await renderedThemeOutput(page), expectedAgentOutput);
 
+  const pagesResponse = await page.request.get("/api/agent/v1/pages/", {
+    headers: { Authorization: `Bearer ${agentToken}` },
+  });
+  expect(pagesResponse.status()).toBe(200);
+  const pages = (await pagesResponse.json()) as Array<{
+    id?: unknown;
+    slug?: unknown;
+  }>;
+  const otherPageCreate = await page.request.post("/api/agent/v1/pages/", {
+    headers: {
+      Authorization: `Bearer ${agentToken}`,
+      "Idempotency-Key": `oap-078y-untouched-page-${tag}`,
+    },
+    data: { slug: `untouched-${tag}`, title: "Untouched page", locale: "en" },
+  });
+  expect(otherPageCreate.status()).toBe(201);
+  const otherPageCreateBody = (await otherPageCreate.json()) as {
+    record?: { id?: unknown };
+  };
+  expect(typeof otherPageCreateBody.record?.id).toBe("string");
+  const otherPageId = otherPageCreateBody.record!.id as string;
+  const otherPageStyleBeforeResponse = await page.request.get(
+    `/api/agent/v1/pages/${otherPageId}/style`,
+    { headers: { Authorization: `Bearer ${agentToken}` } },
+  );
+  expect(otherPageStyleBeforeResponse.status()).toBe(200);
+  const otherPageStyleBefore = (await otherPageStyleBeforeResponse.json()) as Record<
+    string,
+    unknown
+  >;
+  const homePage = pages.find((candidate) => candidate.slug === "home");
+  expect(typeof homePage?.id).toBe("string");
+  const homePageId = homePage?.id as string;
+  const pageStylePath = `/api/agent/v1/pages/${homePageId}/style`;
+  const initialPageStyle = await page.request.get(pageStylePath, {
+    headers: { Authorization: `Bearer ${agentToken}` },
+  });
+  expect(initialPageStyle.status()).toBe(200);
+  const initialPageStyleRecord = (await initialPageStyle.json()) as {
+    row_version?: unknown;
+    overrides?: unknown;
+  };
+  expect(initialPageStyleRecord.overrides).toEqual({});
+  expect(initialPageStyleRecord.row_version).toBe(1);
+  const pageStyleUpdate = await page.request.patch(pageStylePath, {
+    headers: {
+      Authorization: `Bearer ${agentToken}`,
+      "Idempotency-Key": `oap-078w-page-style-${tag}`,
+    },
+    data: {
+      expected_row_version: 1,
+      palette: { preset: "ember" },
+      typography: { family: "system", scale: "compact", weight: "regular" },
+      layout: { content_width: "sm", spacing: "sm", grid_gap: "lg" },
+      shape: { radius: "none", shadow: "none" },
+      reset_tokens: [],
+    },
+  });
+  expect(pageStyleUpdate.status()).toBe(200);
+  const pageStyleUpdateBody = (await pageStyleUpdate.json()) as {
+    action?: unknown;
+    record?: { row_version?: unknown; overrides?: unknown };
+  };
+  expect(pageStyleUpdateBody.action).toBe("PAGE_STYLE_UPDATED");
+  expect(pageStyleUpdateBody.record).toMatchObject({
+    row_version: 2,
+    overrides: {
+      palette: { preset: "ember" },
+      typography: { family: "system", scale: "compact", weight: "regular" },
+      layout: { content_width: "sm", spacing: "sm", grid_gap: "lg" },
+      shape: { radius: "none", shadow: "none" },
+    },
+  });
+  const pageStylePreview = await page.goto(agentPreviewPath);
+  expectPrivateHeaders(pageStylePreview!);
+  assertThemeOutput(await renderedThemeOutput(page), {
+    palette: "ember",
+    family: "system",
+    scale: "compact",
+    weight: "regular",
+    width: "sm",
+    spacing: "sm",
+    gap: "lg",
+    radius: "none",
+    shadow: "none",
+    background: "rgb(255, 247, 237)",
+    color: "rgb(66, 32, 6)",
+    fontFamily: "Inter",
+    fontSize: "15px",
+    fontWeight: "400",
+    contentWidth: "768px",
+    paddingTop: "24px",
+    // The page-style gap class is present, but the existing component-local
+    // gap remains authoritative at the rendered component.
+    gridGap: "16px",
+    borderRadius: "0px",
+    boxShadow: "none",
+  });
+  const pageStyleReset = await page.request.patch(pageStylePath, {
+    headers: {
+      Authorization: `Bearer ${agentToken}`,
+      "Idempotency-Key": `oap-078w-page-style-reset-${tag}`,
+    },
+    data: {
+      expected_row_version: 2,
+      reset_tokens: [
+        "palette.preset",
+        "typography.family",
+        "typography.scale",
+        "typography.weight",
+        "layout.content_width",
+        "layout.spacing",
+        "layout.grid_gap",
+        "shape.radius",
+        "shape.shadow",
+      ],
+    },
+  });
+  expect(pageStyleReset.status()).toBe(200);
+  const pageStyleResetBody = (await pageStyleReset.json()) as {
+    record?: { row_version?: unknown; overrides?: unknown };
+  };
+  expect(pageStyleResetBody.record).toMatchObject({
+    row_version: 3,
+    overrides: {},
+  });
+  const inheritedPageStylePreview = await page.goto(agentPreviewPath);
+  expectPrivateHeaders(inheritedPageStylePreview!);
+  assertThemeOutput(await renderedThemeOutput(page), expectedAgentOutput);
+
+  const partialPageStyleUpdate = await page.request.patch(pageStylePath, {
+    headers: {
+      Authorization: `Bearer ${agentToken}`,
+      "Idempotency-Key": `oap-078y-page-style-partial-${tag}`,
+    },
+    data: {
+      expected_row_version: 3,
+      palette: { preset: "ember" },
+      typography: { family: "mono" },
+      layout: { content_width: "sm" },
+      shape: { radius: "none" },
+      reset_tokens: [],
+    },
+  });
+  expect(partialPageStyleUpdate.status()).toBe(200);
+  const partialPageStyleBody = (await partialPageStyleUpdate.json()) as {
+    action?: unknown;
+    record?: { row_version?: unknown; overrides?: unknown };
+  };
+  expect(partialPageStyleBody).toMatchObject({
+    action: "PAGE_STYLE_UPDATED",
+    record: {
+      row_version: 4,
+      overrides: {
+        palette: { preset: "ember" },
+        typography: { family: "mono" },
+        layout: { content_width: "sm" },
+        shape: { radius: "none" },
+      },
+    },
+  });
+  const partialExpected = {
+    palette: "ember",
+    family: "mono",
+    scale: "spacious",
+    weight: "bold",
+    width: "sm",
+    spacing: "lg",
+    gap: "sm",
+    radius: "none",
+    shadow: "md",
+    background: "rgb(255, 247, 237)",
+    color: "rgb(66, 32, 6)",
+    fontFamily: "ui-monospace",
+    fontSize: "17px",
+    fontWeight: "700",
+    contentWidth: "768px",
+    paddingTop: "64px",
+    gridGap: "16px",
+    borderRadius: "0px",
+    boxShadow: "rgba(0, 0, 0, 0.18) 0px 8px 24px 0px",
+  };
+  const partialPreview = await page.goto(agentPreviewPath);
+  expectPrivateHeaders(partialPreview!);
+  assertThemeOutput(await renderedThemeOutput(page), partialExpected);
+
+  const inheritedOnlyRoute = `**${agentPreviewPath}`;
+  await page.route(inheritedOnlyRoute, async (route) => {
+    const upstream = await route.fetch();
+    const inheritedOnlyPage = (await upstream.text())
+      .replaceAll("renderer-theme-palette--ember", "renderer-theme-palette--meadow")
+      .replaceAll("renderer-theme-family--mono", "renderer-theme-family--serif")
+      .replaceAll("renderer-theme-width--sm", "renderer-theme-width--xl")
+      .replaceAll("renderer-theme-radius--none", "renderer-theme-radius--lg");
+    await route.fulfill({ response: upstream, body: inheritedOnlyPage });
+  });
+  try {
+    const inheritedOnlyPreview = await page.goto(agentPreviewPath);
+    expectPrivateHeaders(inheritedOnlyPreview!);
+    let rejectedInheritedOnly = false;
+    try {
+      assertThemeOutput(await renderedThemeOutput(page), partialExpected);
+    } catch {
+      rejectedInheritedOnly = true;
+    }
+    expect(rejectedInheritedOnly).toBe(true);
+  } finally {
+    await page.unroute(inheritedOnlyRoute);
+  }
+  const restoredPartialPreview = await page.reload();
+  expectPrivateHeaders(restoredPartialPreview!);
+  assertThemeOutput(await renderedThemeOutput(page), partialExpected);
+
+  const changedInheritedTheme = await page.request.patch("/api/agent/v1/theme", {
+    headers: {
+      Authorization: `Bearer ${agentToken}`,
+      "Idempotency-Key": `oap-078y-page-style-theme-change-${tag}`,
+    },
+    data: {
+      expected_row_version: 2,
+      typography: { scale: "compact", weight: "regular" },
+      layout: { spacing: "sm", grid_gap: "lg" },
+      shape: { shadow: "none" },
+    },
+  });
+  expect(changedInheritedTheme.status()).toBe(200);
+  const changedInheritedThemeBody = (await changedInheritedTheme.json()) as {
+    record?: Record<string, unknown>;
+  };
+  expect(changedInheritedThemeBody.record).toMatchObject({
+    row_version: 3,
+    palette: { preset: "meadow" },
+    typography: { family: "serif", scale: "compact", weight: "regular" },
+    layout: { content_width: "xl", spacing: "sm", grid_gap: "lg" },
+    shape: { radius: "lg", shadow: "none" },
+  });
+  const partialAfterThemeExpected = {
+    ...partialExpected,
+    scale: "compact",
+    weight: "regular",
+    spacing: "sm",
+    gap: "lg",
+    shadow: "none",
+    fontSize: "15px",
+    fontWeight: "400",
+    paddingTop: "24px",
+    boxShadow: "none",
+  };
+  const partialAfterTheme = await page.goto(agentPreviewPath);
+  expectPrivateHeaders(partialAfterTheme!);
+  assertThemeOutput(await renderedThemeOutput(page), partialAfterThemeExpected);
+  const explicitAfterTheme = await page.request.get(pageStylePath, {
+    headers: { Authorization: `Bearer ${agentToken}` },
+  });
+  expect(await explicitAfterTheme.json()).toMatchObject({
+    row_version: 4,
+    overrides: {
+      palette: { preset: "ember" },
+      typography: { family: "mono" },
+      layout: { content_width: "sm" },
+      shape: { radius: "none" },
+    },
+  });
+
+  const resumedInheritance = await page.request.patch(pageStylePath, {
+    headers: {
+      Authorization: `Bearer ${agentToken}`,
+      "Idempotency-Key": `oap-078y-page-style-reset-palette-${tag}`,
+    },
+    data: { expected_row_version: 4, reset_tokens: ["palette.preset"] },
+  });
+  expect(resumedInheritance.status()).toBe(200);
+  const resumedInheritanceBody = (await resumedInheritance.json()) as {
+    record?: Record<string, unknown>;
+  };
+  expect(resumedInheritanceBody.record).toMatchObject({
+    row_version: 5,
+    overrides: {
+      typography: { family: "mono" },
+      layout: { content_width: "sm" },
+      shape: { radius: "none" },
+    },
+    resolved: { palette: { preset: "meadow" } },
+  });
+  const resumedExpected = {
+    ...partialAfterThemeExpected,
+    palette: "meadow",
+    family: "mono",
+    background: "rgb(240, 248, 241)",
+    color: "rgb(18, 53, 29)",
+  };
+  const resumedPreview = await page.goto(agentPreviewPath);
+  expectPrivateHeaders(resumedPreview!);
+  assertThemeOutput(await renderedThemeOutput(page), resumedExpected);
+  const otherPageStyleAfter = await page.request.get(
+    `/api/agent/v1/pages/${otherPageId}/style`,
+    { headers: { Authorization: `Bearer ${agentToken}` } },
+  );
+  const otherPageStyleAfterBody = (await otherPageStyleAfter.json()) as {
+    row_version?: unknown;
+    overrides?: unknown;
+    resolved?: { palette?: { preset?: unknown } };
+  };
+  expect(otherPageStyleBefore).toMatchObject({ row_version: 1, overrides: {} });
+  expect(otherPageStyleAfterBody).toMatchObject({
+    row_version: 1,
+    overrides: {},
+    resolved: { palette: { preset: "meadow" } },
+  });
+
   const untouchedPreview = await page.goto(`/preview/${defaultWorkspace}/s/parity/`);
   expectPrivateHeaders(untouchedPreview!);
   const defaultOutput = await renderedThemeOutput(page);
+  expect(defaultOutput).toEqual(defaultBeforeOutput);
   const expectedDefaultOutput = {
     palette: "ocean",
     family: "system",
@@ -944,11 +1273,18 @@ test("agent-theme-patch-renders-in-the-same-authorized-workspace", async ({ page
   const canonicalAfter = await page.request.get("/s/parity/");
   expect(canonicalAfter.status()).toBe(200);
   const canonicalAfterBody = await canonicalAfter.text();
+  expect(canonicalRendererFingerprint(canonicalAfterBody)).toEqual(
+    canonicalBeforeFingerprint,
+  );
   expect(canonicalAfterBody).toContain("renderer-theme-palette--ocean");
   expect(canonicalAfterBody).not.toContain("renderer-theme-palette--meadow");
   const otherSiteCanonical = await page.request.get("/s/demo");
   expect(otherSiteCanonical.status()).toBe(200);
-  expect(await otherSiteCanonical.text()).toContain("renderer-theme-palette--ocean");
+  const otherSiteAfterBody = await otherSiteCanonical.text();
+  expect(canonicalRendererFingerprint(otherSiteAfterBody)).toEqual(
+    otherSiteBeforeFingerprint,
+  );
+  expect(otherSiteAfterBody).toContain("renderer-theme-palette--ocean");
   expect(failures(), "unexpected Agent theme browser failures").toEqual([]);
 
   const revokeResponse = await page.request.post(

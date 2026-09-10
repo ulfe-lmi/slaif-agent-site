@@ -113,6 +113,39 @@ fallback, renamed-item route movement, and unchanged canonical visibility.
 Migration tests also prove the 054-to-055-to-054-to-055 function-definition,
 grant, and data round trip.
 
+## Bounded page-style override acceptance
+
+The focused PostgreSQL page-style proof creates pages through the public Agent
+API, reads pure inherited defaults, sets representative values in all four
+existing theme groups, and verifies raw overrides, resolved values, page row
+versions, replay, stale/foreign-page confinement, and the read-authorized
+no-effect path. It also proves exact reset overlap, strict positive Agent
+versions, full page resource visibility, narrowed token and reset-destination
+constraints, unrelated-scope denial, quota/lifecycle/revocation failures,
+delete/restore preservation, no-effect mutation/audit accounting, service
+restart with non-empty overrides, direct-runtime/helper privileges, and the
+066 fresh legacy round trip with pending/data-bearing downgrade refusal. Real
+PostgreSQL barriers cover competing style changes and style versus page
+update/move/delete plus lifecycle/theme serialization. The browser proof
+asserts all four effective page-style groups and computed styles in the same
+authorized NGINX preview, then resets to site-theme inheritance; human
+Editor/Puck controls and composition persistence are exercised separately.
+CI runs this focused gate across PostgreSQL 14–18; Compose acceptance extends
+the same-workspace public Agent preview path through NGINX.
+
+The 078-x continuation additionally captures a genuinely fresh 065 baseline
+before applying 066, compares restored function definitions byte-for-byte with
+owner/ACL/volatility/configuration and the audit constraint, isolates audit-only
+downgrade refusal, cancels after real style DML and verifies rollback/retry,
+checks exact audit/idempotency identity, and exercises both lock orderings with
+page update/move/delete plus concurrent theme-change/reset serialization. The
+human proof includes viewer denial and a same-group update/reset request.
+The 078-y continuation adds the omitted inherited-only browser negative and
+real resumed-inheritance proof, requires two distinct blocked backends before
+releasing the concurrent theme barrier, and cancels a public Agent style
+request while it waits on the prelocked mutation path, verifying rollback,
+accounting, COW, and idempotency reuse.
+
 ## Bounded Agent component data-plane acceptance
 
 The public Agent Compose acceptance creates a fresh human-issued L2 workspace

@@ -16,6 +16,7 @@ from slaif_agent_site.authority import ProcessKind
 from slaif_agent_site.content_model.design_system import (
     component_property_scope_metadata,
 )
+from slaif_agent_site.content_model.theme import THEME_TOKEN_KEYS
 from slaif_agent_site.human_authorization.catalog import (
     L1_SCOPES,
     L2_SCOPES,
@@ -31,6 +32,7 @@ _AGENT_DELEGATABLE_SCOPES = frozenset(
 _CONDITIONAL_SCOPE_EXTENSION = "x-slaif-conditional-scopes"
 _COMPONENT_PROPERTY_SCOPE_EXTENSION = "x-slaif-component-property-scopes"
 _COMPONENT_AUTHORITY_EXTENSION = "x-slaif-component-authority"
+_PAGE_STYLE_AUTHORITY_EXTENSION = "x-slaif-page-style-authority"
 
 
 class RouteMutationClass(StrEnum):
@@ -113,6 +115,7 @@ class RoutePolicy:
     required_permissions: tuple[str, ...] = ()
     required_scopes: tuple[str, ...] = ()
     conditional_scopes: tuple[RouteConditionalScope, ...] = ()
+    page_style_authority: bool = False
 
     def __post_init__(self) -> None:
         if self.process not in {
@@ -139,6 +142,19 @@ class RoutePolicy:
             raise ValueError("route policy repeats a permission")
         if len(set(self.required_scopes)) != len(self.required_scopes):
             raise ValueError("route policy repeats a scope")
+        page_style_key = (
+            ProcessKind.AGENT_API,
+            "PATCH",
+            "/api/agent/v1/pages/{page_id}/style",
+        )
+        if self.page_style_authority and (
+            self.key != page_style_key
+            or self.required_scopes != ("page:read",)
+            or self.conditional_scopes
+        ):
+            raise ValueError("page-style authority policy shape is invalid")
+        if self.key == page_style_key and not self.page_style_authority:
+            raise ValueError("page-style authority metadata is required")
         if len(self.conditional_scopes) != len(
             {
                 (
@@ -266,6 +282,7 @@ def _agent_policy(
     mutation: RouteMutationClass,
     *scopes: str,
     conditional_scopes: tuple[RouteConditionalScope, ...] = (),
+    page_style_authority: bool = False,
 ) -> RoutePolicy:
     return RoutePolicy(
         process=_AGENT,
@@ -278,6 +295,7 @@ def _agent_policy(
         policy_kind=RoutePolicyKind.AGENT_CAPABILITY,
         required_scopes=tuple(scopes),
         conditional_scopes=conditional_scopes,
+        page_style_authority=page_style_authority,
     )
 
 
@@ -992,11 +1010,25 @@ ROUTE_POLICIES: Final[tuple[RoutePolicy, ...]] = (
                 "page:read",
             ),
             (
+                "GET",
+                "/api/editor/v1/sites/{site_id}/pages/{page_id}/style",
+                _R,
+                False,
+                "page:read",
+            ),
+            (
                 "PATCH",
                 "/api/editor/v1/sites/{site_id}/pages/{page_id}",
                 _M,
                 True,
                 "page:write",
+            ),
+            (
+                "PATCH",
+                "/api/editor/v1/sites/{site_id}/pages/{page_id}/style",
+                _M,
+                True,
+                "page-style:write",
             ),
             (
                 "DELETE",
@@ -1176,6 +1208,11 @@ ROUTE_POLICIES: Final[tuple[RoutePolicy, ...]] = (
             ("GET", "/api/agent/v1/pages", ("page:read",)),
             ("GET", "/api/agent/v1/pages/", ("page:read",)),
             ("GET", "/api/agent/v1/pages/{page_id}", ("page:read",)),
+            (
+                "GET",
+                "/api/agent/v1/pages/{page_id}/style",
+                ("page:read",),
+            ),
             ("GET", "/api/agent/v1/pages/{page_id}/components", ("composition:read",)),
             ("GET", "/api/agent/v1/components/{component_id}", ("composition:read",)),
             ("GET", "/api/agent/v1/media/", ("media:read",)),
@@ -1356,6 +1393,13 @@ ROUTE_POLICIES: Final[tuple[RoutePolicy, ...]] = (
         ),
     ),
     _agent_policy(
+        "PATCH",
+        "/api/agent/v1/pages/{page_id}/style",
+        _M,
+        "page:read",
+        page_style_authority=True,
+    ),
+    _agent_policy(
         "POST",
         "/api/agent/v1/pages/{page_id}:move",
         _M,
@@ -1529,6 +1573,65 @@ def component_authority_metadata_for_policy(
             },
         },
     }
+
+
+def page_style_authority_metadata_for_policy(
+    policy: RoutePolicy,
+) -> dict[str, Any]:
+    """Publish the raw-state rule for the deferred page-style write scope."""
+
+    expected_key = (
+        ProcessKind.AGENT_API,
+        "PATCH",
+        "/api/agent/v1/pages/{page_id}/style",
+    )
+    if policy.key != expected_key or not policy.page_style_authority:
+        raise KeyError(f"not a page-style authority policy: {policy.key}")
+    if policy.required_scopes != ("page:read",) or policy.conditional_scopes:
+        raise RuntimeError("page-style authority route policy drift")
+    return {
+        "base_scopes": ["page:read"],
+        "changed_scope": "page-style:write",
+        "change_basis": "raw_override_inheritance_state",
+        "no_effect": {
+            "allowed_with": ["page:read"],
+            "requires_changed_scope": False,
+            "mutation_quota": False,
+            "semantic_audit": False,
+            "cow_operation": False,
+        },
+        "set_tokens": list(THEME_TOKEN_KEYS),
+        "reset_field": "reset_tokens",
+        "reset_tokens": list(THEME_TOKEN_KEYS),
+        "overlap": "exact_token_key_intersection_rejected",
+    }
+
+
+def validate_page_style_authority_openapi_document(
+    document: dict[str, Any], policies: tuple[RoutePolicy, ...]
+) -> None:
+    """Require the page-style raw-state authority extension to be exact."""
+
+    path = "/api/agent/v1/pages/{page_id}/style"
+    policy = next(
+        (
+            item
+            for item in policies
+            if item.key == (ProcessKind.AGENT_API, "PATCH", path)
+        ),
+        None,
+    )
+    paths_value = document.get("paths")
+    operation = (
+        paths_value.get(path, {}).get("patch")
+        if isinstance(paths_value, dict) and isinstance(paths_value.get(path), dict)
+        else None
+    )
+    if policy is None or not isinstance(operation, dict):
+        raise RuntimeError("page-style authority policy is missing")
+    actual = operation.get(_PAGE_STYLE_AUTHORITY_EXTENSION)
+    if actual != page_style_authority_metadata_for_policy(policy):
+        raise RuntimeError("page-style authority metadata mismatch")
 
 
 def validate_component_property_scope_openapi_document(

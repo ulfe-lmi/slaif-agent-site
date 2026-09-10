@@ -145,6 +145,7 @@ NEW_PACKAGE_FILES = {
     "slaif_agent_site/db/alembic/versions/063_001_component_audit_repairs.py",
     "slaif_agent_site/db/alembic/versions/064_001_component_move_responsive.py",
     "slaif_agent_site/db/alembic/versions/065_001_bounded_theme_tokens.py",
+    "slaif_agent_site/db/alembic/versions/066_001_page_style_overrides.py",
     "slaif_agent_site/db/connections.py",
     "slaif_agent_site/db/executor.py",
     "slaif_agent_site/db/migrations.py",
@@ -219,6 +220,7 @@ EXPECTED_PACKAGE_FILES = NEW_PACKAGE_FILES | {
     "slaif_agent_site/content_model/view_models.py",
     "slaif_agent_site/content_model/nav_models.py",
     "slaif_agent_site/content_model/page_models.py",
+    "slaif_agent_site/content_model/page_style.py",
     "slaif_agent_site/content_model/composition_models.py",
     "slaif_agent_site/content_model/media_models.py",
     "slaif_agent_site/content_model/theme.py",
@@ -344,6 +346,7 @@ EXPECTED_SDIST_FILES = {
     "services/backend/src/slaif_agent_site/content_model/composition_models.py",
     "services/backend/src/slaif_agent_site/editor_api/page_http.py",
     "services/backend/src/slaif_agent_site/content_model/page_models.py",
+    "services/backend/src/slaif_agent_site/content_model/page_style.py",
     "services/backend/src/slaif_agent_site/editor_api/nav_theme_http.py",
     "services/backend/src/slaif_agent_site/content_model/nav_models.py",
     "services/backend/src/slaif_agent_site/editor_api/view_http.py",
@@ -611,8 +614,9 @@ def test_locked_foundation_artifact_hash_constants_are_sha256() -> None:
 
 
 def test_alembic_graph_and_offline_sql_need_no_locator_or_network() -> None:
-    assert migration_heads() == ("065_001",)
+    assert migration_heads() == ("066_001",)
     assert migration_history() == (
+        "066_001",
         "065_001",
         "064_001",
         "063_001",

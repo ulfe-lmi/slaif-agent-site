@@ -43,6 +43,7 @@ _STRUCTURAL_PERMISSIONS = frozenset(
         "page:create",
         "page:write",
         "page:delete",
+        "page-style:write",
         "locale:configure",
         "navigation:create",
         "navigation:write",

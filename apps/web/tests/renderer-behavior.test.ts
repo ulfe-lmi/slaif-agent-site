@@ -227,15 +227,28 @@ describe("trusted catalog renderer behavior", () => {
           created_at: "2026-01-01T00:00:00Z",
           updated_at: "2026-01-01T00:00:01Z",
         },
+        page_style: {
+          id: "11111111-1111-4111-8111-111111111111",
+          site_id: "11111111-1111-4111-8111-111111111111",
+          schema_version: "theme-schema/v1",
+          renderer_version: "renderer-v1",
+          row_version: 2,
+          palette: { preset: "ember" },
+          typography: { family: "mono", scale: "compact", weight: "medium" },
+          layout: { content_width: "xl", spacing: "sm", grid_gap: "lg" },
+          shape: { radius: "full", shadow: "none" },
+          created_at: "2026-01-01T00:00:00Z",
+          updated_at: "2026-01-01T00:00:01Z",
+        },
         locales: [],
         navigation: [],
         bindings: {},
       }),
     );
-    expect(rendered).toContain("renderer-theme-palette--meadow");
-    expect(rendered).toContain("renderer-theme-family--serif");
-    expect(rendered).toContain("renderer-theme-width--lg");
-    expect(rendered).toContain("renderer-theme-radius--lg");
+    expect(rendered).toContain("renderer-theme-palette--ember");
+    expect(rendered).toContain("renderer-theme-family--mono");
+    expect(rendered).toContain("renderer-theme-width--xl");
+    expect(rendered).toContain("renderer-theme-radius--full");
     expect(rendered).not.toMatch(/style=|javascript:|data:text/i);
   });
 

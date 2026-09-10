@@ -160,6 +160,7 @@ async def test_fixed_production_logins_run_public_editor_http_chain(
     owner_pool = await database.role_pool("slaif_owner")
     site_id = uuid4()
     human_id = uuid4()
+    viewer_id = uuid4()
     canonical_id = uuid4()
     site_key = f"production-editor-{uuid4().hex[:12]}"
     fixed_logins = (
@@ -180,6 +181,14 @@ async def test_fixed_production_logins_run_public_editor_http_chain(
                 str(human_id),
             )
             await owner.execute(
+                "INSERT INTO control.user_account "
+                "(id, identity_kind, oidc_issuer, oidc_subject, display_name) "
+                "VALUES ($1, 'OIDC', 'https://production-editor.test', $2, "
+                "'Production Viewer Human')",
+                viewer_id,
+                str(viewer_id),
+            )
+            await owner.execute(
                 "INSERT INTO control.platform_administrator (user_account_id) "
                 "VALUES ($1)",
                 human_id,
@@ -198,6 +207,13 @@ async def test_fixed_production_logins_run_public_editor_http_chain(
                 "VALUES ($1, $2, 'canonical', 'Canonical title', 'DRAFT', 'en')",
                 canonical_id,
                 site_id,
+            )
+            await owner.execute(
+                "INSERT INTO control.site_membership "
+                "(site_id,user_account_id,role_key,delegation_ceiling) "
+                "VALUES ($1,$2,'VIEWER',0)",
+                site_id,
+                viewer_id,
             )
         await reconcile(database.settings)
 
@@ -265,6 +281,23 @@ async def test_fixed_production_logins_run_public_editor_http_chain(
                 transport=httpx.ASGITransport(app=app),
                 base_url="http://public-editor.test",
             ) as client:
+                viewer = await control.human_session_service().create(viewer_id)
+                viewer_session = viewer.token.get_secret_value()
+                viewer_csrf = viewer.csrf_token.get_secret_value()
+                viewer_denied_style = await client.patch(
+                    f"/api/editor/v1/sites/{site_id}/pages/{canonical_id}/style",
+                    headers=_mutation_headers(
+                        viewer_session, viewer_csrf, "viewer-style-denied"
+                    ),
+                    json={
+                        "expected_row_version": 1,
+                        "palette": {"preset": "meadow"},
+                    },
+                )
+                # The Editor boundary intentionally hides unauthorized site
+                # resources as a not-found response.
+                assert viewer_denied_style.status_code == 404
+
                 initial = await client.get(pages_path, headers=read_headers)
                 assert initial.status_code == 200
                 _assert_private(initial)
@@ -286,6 +319,51 @@ async def test_fixed_production_logins_run_public_editor_http_chain(
                 )
                 assert canonical_read.status_code == 200
                 assert canonical_read.json()["title"] == "Overlay canonical title"
+                style_path = f"{pages_path}{canonical_id}/style"
+                style_read = await client.get(style_path, headers=read_headers)
+                assert style_read.status_code == 200
+                assert style_read.json()["overrides"] == {}
+                style_update = await client.patch(
+                    style_path,
+                    headers=_mutation_headers(session, csrf, "canonical-style-update"),
+                    json={
+                        "expected_row_version": 2,
+                        "palette": {"preset": "meadow"},
+                    },
+                )
+                assert style_update.status_code == 200
+                _assert_private(style_update)
+                assert style_update.json()["row_version"] == 3
+                assert style_update.json()["overrides"] == {
+                    "palette": {"preset": "meadow"}
+                }
+                typography_update = await client.patch(
+                    style_path,
+                    headers=_mutation_headers(
+                        session, csrf, "canonical-style-typography"
+                    ),
+                    json={
+                        "expected_row_version": 3,
+                        "typography": {"family": "serif", "weight": "bold"},
+                    },
+                )
+                assert typography_update.status_code == 200
+                assert typography_update.json()["row_version"] == 4
+                mixed_style_update = await client.patch(
+                    style_path,
+                    headers=_mutation_headers(session, csrf, "canonical-style-mixed"),
+                    json={
+                        "expected_row_version": 4,
+                        "typography": {"weight": "medium"},
+                        "reset_tokens": ["typography.family"],
+                    },
+                )
+                assert mixed_style_update.status_code == 200
+                assert mixed_style_update.json()["row_version"] == 5
+                assert mixed_style_update.json()["overrides"] == {
+                    "palette": {"preset": "meadow"},
+                    "typography": {"weight": "medium"},
+                }
 
                 created = await client.post(
                     pages_path,
@@ -406,7 +484,7 @@ async def test_fixed_production_logins_run_public_editor_http_chain(
                 "(SELECT count(*) FROM audit.human_editor_mutation "
                 "WHERE response_status NOT BETWEEN 200 AND 299)"
             )
-            assert tuple(counts) == (9, 9, 0, 0)
+            assert tuple(counts) == (12, 12, 0, 0)
             operations = await get_session_operations(
                 AsyncpgExecutor(owner),
                 await owner.fetchval(
@@ -417,7 +495,7 @@ async def test_fixed_production_logins_run_public_editor_http_chain(
                 ),
                 schema="content",
             )
-            assert len(operations) == 9
+            assert len(operations) == 12
 
             grants = await owner.fetch(
                 "SELECT rolname::text, "

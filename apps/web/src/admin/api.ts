@@ -26,6 +26,22 @@ export type CurrentSite = {
   platform_administrator: boolean;
 };
 export type CurrentAuthority = CurrentSite & { effective_permissions: string[] };
+export type PageStyleRecord = {
+  id: string;
+  page_id: string;
+  site_id: string;
+  schema_version: "page-style/v1";
+  row_version: number;
+  overrides: Partial<{
+    palette: { preset: string };
+    typography: { family: string; scale: string; weight: string };
+    layout: { content_width: string; spacing: string; grid_gap: string };
+    shape: { radius: string; shadow: string };
+  }>;
+  resolved: ThemeRecord;
+  created_at: string;
+  updated_at: string;
+};
 export type SiteRecord = Pick<
   CurrentSite,
   | "site_id"
@@ -394,6 +410,24 @@ function themeRecord(value: unknown): ThemeRecord {
   return item as unknown as ThemeRecord;
 }
 
+function pageStyleRecord(value: unknown): PageStyleRecord {
+  const item = object(value);
+  const rowVersion = item.row_version;
+  if (
+    !isUuidValue(item.id) ||
+    !isUuidValue(item.page_id) ||
+    !isUuidValue(item.site_id) ||
+    item.schema_version !== "page-style/v1" ||
+    typeof rowVersion !== "number" ||
+    !Number.isInteger(rowVersion) ||
+    rowVersion < 1 ||
+    !isPlainObject(item.overrides) ||
+    !isPlainObject(item.resolved)
+  )
+    throw new Error("invalid-response");
+  return item as unknown as PageStyleRecord;
+}
+
 function editorPath(siteId: string, pageId: string, suffix = "") {
   return `/sites/${encodeURIComponent(siteId)}/pages/${encodeURIComponent(pageId)}/composition/${suffix}`;
 }
@@ -423,6 +457,30 @@ export async function updateTheme(
   return themeRecord(
     await editorJson(
       `/sites/${encodeURIComponent(siteId)}/theme`,
+      editorMutation("PATCH", body),
+    ),
+  );
+}
+
+export async function loadPageStyle(
+  siteId: string,
+  pageId: string,
+): Promise<PageStyleRecord> {
+  return pageStyleRecord(
+    await editorJson(
+      `/sites/${encodeURIComponent(siteId)}/pages/${encodeURIComponent(pageId)}/style`,
+    ),
+  );
+}
+
+export async function updatePageStyle(
+  siteId: string,
+  pageId: string,
+  body: Record<string, unknown>,
+): Promise<PageStyleRecord> {
+  return pageStyleRecord(
+    await editorJson(
+      `/sites/${encodeURIComponent(siteId)}/pages/${encodeURIComponent(pageId)}/style`,
       editorMutation("PATCH", body),
     ),
   );

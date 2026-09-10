@@ -564,6 +564,66 @@ test("puck-editor-round-trip-through-human-editor-api", async ({ page }) => {
   await expect(
     page.getByRole("heading", { name: "Site theme", exact: true }),
   ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Page overrides", exact: true }),
+  ).toBeVisible();
+  await page.getByLabel("Page preset override (AA)").selectOption("ember");
+  await page.getByLabel("Page family override (AA)").selectOption("system");
+  await page.getByLabel("Page scale override (AA)").selectOption("compact");
+  await page.getByLabel("Page weight override (AA)").selectOption("regular");
+  await page.getByLabel("Page content_width override (AA)").selectOption("sm");
+  await page.getByLabel("Page spacing override (AA)").selectOption("sm");
+  await page.getByLabel("Page grid_gap override (AA)").selectOption("lg");
+  await page.getByLabel("Page radius override (AA)").selectOption("none");
+  await page.getByLabel("Page shadow override (AA)").selectOption("none");
+  const pageStyleSave = page.waitForResponse(
+    (response) =>
+      response.request().method() === "PATCH" &&
+      response
+        .url()
+        .includes(`/api/editor/v1/sites/${siteId}/pages/${pageRecord.id}/style`),
+  );
+  await page.getByRole("button", { name: "Save page style", exact: true }).click();
+  const savedPageStyle = await pageStyleSave;
+  const savedPageStyleText = await savedPageStyle.text();
+  expect(savedPageStyle.status(), savedPageStyleText).toBe(200);
+  expectPrivateHeaders(savedPageStyle);
+  expect(JSON.parse(savedPageStyleText)).toMatchObject({
+    row_version: 2,
+    overrides: {
+      palette: { preset: "ember" },
+      typography: { family: "system", scale: "compact", weight: "regular" },
+      layout: { content_width: "sm", spacing: "sm", grid_gap: "lg" },
+      shape: { radius: "none", shadow: "none" },
+    },
+  });
+  await page.reload();
+  await expect(
+    page.getByRole("heading", { name: "Page composition", exact: true }).first(),
+  ).toBeVisible();
+  await page.getByLabel("Page family override (AA)").selectOption("mono");
+  await page.getByLabel("Page weight override (AA)").selectOption("inherit");
+  const mixedPageStyleSave = page.waitForResponse(
+    (response) =>
+      response.request().method() === "PATCH" &&
+      response
+        .url()
+        .includes(`/api/editor/v1/sites/${siteId}/pages/${pageRecord.id}/style`),
+  );
+  await page.getByRole("button", { name: "Save page style", exact: true }).click();
+  const savedMixedPageStyle = await mixedPageStyleSave;
+  const savedMixedPageStyleText = await savedMixedPageStyle.text();
+  expect(savedMixedPageStyle.status(), savedMixedPageStyleText).toBe(200);
+  expectPrivateHeaders(savedMixedPageStyle);
+  expect(JSON.parse(savedMixedPageStyleText)).toMatchObject({
+    row_version: 3,
+    overrides: {
+      palette: { preset: "ember" },
+      typography: { family: "mono", scale: "compact" },
+      layout: { content_width: "sm", spacing: "sm", grid_gap: "lg" },
+      shape: { radius: "none", shadow: "none" },
+    },
+  });
   async function dragUntil(
     source: Locator,
     target: Locator,
@@ -807,5 +867,18 @@ test("puck-editor-round-trip-through-human-editor-api", async ({ page }) => {
   await page.reload();
   await expect(page.locator(".puck-trusted-component")).toHaveCount(2);
   expect(await loadPersistedNodes()).toEqual(persistedNodes);
+  const pageStyleAfterPuck = await page.request.get(
+    `/api/editor/v1/sites/${siteId}/pages/${pageRecord.id}/style`,
+  );
+  expect(pageStyleAfterPuck.status()).toBe(200);
+  expect(await pageStyleAfterPuck.json()).toMatchObject({
+    row_version: 3,
+    overrides: {
+      palette: { preset: "ember" },
+      typography: { family: "mono", scale: "compact" },
+      layout: { content_width: "sm", spacing: "sm", grid_gap: "lg" },
+      shape: { radius: "none", shadow: "none" },
+    },
+  });
   expect(failures(), "unexpected Puck browser failure category").toEqual([]);
 });

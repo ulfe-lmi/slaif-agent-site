@@ -58,17 +58,28 @@ site-global theme, global-region expansion, exact-workspace Puck editing,
 review, promotion, publication, and the contractual MVP remain separate and
 incomplete.
 
-The active Objective-078/2 increment adds a bounded `theme-schema/v1` data
-plane on PR #79 from verified `main`: typed Agent discovery/read/partial-update
-routes, reversible legacy theme migration, exact COW/version/scope/
+The active Objective-078/4 increment adds a bounded `page-style/v1` data plane
+on PR #81 from verified `main`: typed Agent discovery/read/partial-update
+routes, strict page resource/version/reset authority, reversible legacy
+migration, exact COW/version/scope/idempotency/audit/quota/concurrency
+semantics, shared Render/Web resolution, and same-workspace NGINX/browser plus
+human Editor/Puck evidence. The 078-v implementation claim was rejected after
+a real probe found authority/evidence defects; 078-w, 078-x, and 078-y repair
+those defects and close the remaining proof gaps without reimplementing the passing
+style data plane. It remains pending
+strategic acceptance/merge. It deliberately excludes global regions,
+header/footer architecture, catalog breadth, media, MCP, review, promotion,
+publication, and final MVP claims.
+
+The historical Objective-078/2 increment added the bounded `theme-schema/v1`
+data plane on PR #79 from verified `main`: typed Agent discovery/read/partial-
+update routes, reversible legacy theme migration, exact COW/version/scope/
 idempotency/audit/quota/concurrency semantics, shared Render/Web/Puck token
 consumption, computed renderer precedence/contrast proof, and same-Agent-
-workspace NGINX/browser evidence, including actual Agent-to-preview DOM and
-computed-style assertions. The 078-s implementation is complete for
-this bounded increment and remains pending strategic acceptance/merge. It
-deliberately excludes global regions, header/footer architecture, page style,
-arbitrary CSS/fonts/colors, media, MCP, review, promotion, publication, and
-final MVP claims.
+workspace NGINX/browser evidence. It is accepted and merged; its evidence is
+preserved in PR #79. It deliberately excluded global regions, header/footer
+architecture, page style, arbitrary CSS/fonts/colors, media, MCP, review,
+promotion, publication, and final MVP claims.
 
 > **Pre-alpha / bounded deployable product.** This
 > repository contains the normative architecture, coding-agent governance,
@@ -225,10 +236,10 @@ step is required. Wait for health, then open <http://localhost:8080/>. Only
 loopback port 8080 is published. The deployable pre-alpha stack includes
 one-time first-run setup/login and site-management administration; bounded
 page/locale/navigation/redirect/dynamic-Render semantics are present in the
-Objective-077 source revision, and the bounded Agent component and local
-design data planes and the 078/2 site-theme token data plane are present on the
-open Objective-078 PR #79;
-site-global theme/media, review, and publication remain queued. See the
+Objective-077 source revision, and the bounded Agent component and local design
+data planes and the accepted 078/2 site-theme token data plane are present on
+`main`; the active 078/4 page-style authority/evidence repair is on PR #81.
+Site-global regions, media, review, and publication remain queued. See the
 [deployment guide](docs/DEPLOYMENT.md) and [operations guide](docs/OPERATIONS.md).
 
 ## Delivery sequence
@@ -248,7 +259,7 @@ site-global theme/media, review, and publication remain queued. See the
 | Completed human RBAC HTTP boundary | Immutable role/permission catalogs, site membership list/get/create/update/deactivate, strict session/CSRF policy, optimistic concurrency, and complete Control/Editor route declarations. |
 | Responsive site and membership administration | Permission-driven site/profile/domain workflows plus existing-user UUID membership cards, built-in roles, bounded ceilings, separate publication overrides, complete override replacement, version refresh, and semantic deactivation. |
 | Objective-077 source revision | Capability-bound Agent pages, locales, navigation, redirects, and bounded dynamic collection Render semantics with human Editor parity, shared Render/NGINX/browser evidence, route integrity, concurrency, and recovery proof, accepted and merged in PR #74 on 2026-09-08 at `ae3a4a6`; later review/publication remains separate. |
-| Objective-078/2 closure | Bounded `theme-schema/v1` Agent data plane, exact migration restoration, lifecycle-before-theme concurrency, computed palette/contrast/local-precedence renderer proof, same-workspace Agent API-to-preview DOM/computed-style/browser evidence, diagnostic response classification, and honest Firefox rerun evidence on open PR #79; strategic acceptance/merge remains separate and global regions/page-style/catalog remain deferred. |
+| Objective-078/4 page-style repair | Bounded `page-style/v1` Agent data plane, strict page resource/version authority, exact reset overlap, machine-readable write-scope metadata, migration downgrade safety, deterministic accounting/race/restart proof, and real NGINX/browser plus human Editor/Puck evidence on PR #81; strategic acceptance/merge remains separate and global regions/catalog remain deferred. |
 | Planned product work | Add review snapshots, freeze/accept/discard/promotion, approved-source and responsive-sweep orchestration, reconstruction, public media finalization, and remaining hardening. |
 
 See [Architecture Section 50](ARCHITECTURE.md#50-implementation-phases) for

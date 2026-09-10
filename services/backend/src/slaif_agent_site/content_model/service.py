@@ -31,6 +31,11 @@ from .models import (
     UpdateRelationRequest,
     UpdateTranslationRequest,
 )
+from .page_style import (
+    UpdatePageStyleRequest,
+    page_style_patch_json,
+    page_style_record_from_row,
+)
 from .query_dsl import validate_query_contract
 from .site_data_models import (
     AgentNavigationRecord,
@@ -358,6 +363,30 @@ class PageMixin:
 
     async def delete_page(self, page_id: UUID) -> None:
         await self._fetchrow(PG_DELETE_SQL, page_id)
+
+    async def get_page_style(self, site_id: UUID, page_id: UUID) -> Any:
+        row = await self._fetchrow(PG_STYLE_GET_SQL, site_id, page_id)
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
+        return page_style_record_from_row(row)
+
+    async def update_page_style(
+        self, site_id: UUID, page_id: UUID, request: UpdatePageStyleRequest
+    ) -> Any:
+        row = await self._fetchrow(
+            PG_STYLE_UPDATE_SQL,
+            site_id,
+            page_id,
+            request.expected_row_version,
+            page_style_patch_json(request, "palette"),
+            page_style_patch_json(request, "typography"),
+            page_style_patch_json(request, "layout"),
+            page_style_patch_json(request, "shape"),
+            list(request.reset_tokens),
+        )
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
+        return page_style_record_from_row(row)
 
 
 class NavThemeMixin:
@@ -1712,6 +1741,10 @@ PG_LIST_SQL = "SELECT * FROM content.slaif_page_list($1)"
 PG_GET_SQL = "SELECT * FROM content.slaif_page_get($1)"
 PG_UPDATE_SQL = "SELECT * FROM content.slaif_page_update($1,$2,$3,$4,$5)"
 PG_DELETE_SQL = "SELECT content.slaif_page_delete($1)"
+PG_STYLE_GET_SQL = "SELECT * FROM content.slaif_page_style_get($1,$2)"
+PG_STYLE_UPDATE_SQL = (
+    "SELECT * FROM content.slaif_page_style_update($1,$2,$3,$4,$5,$6,$7,$8)"
+)
 
 
 def _pg(row: Any) -> Any:

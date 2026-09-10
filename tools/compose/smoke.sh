@@ -307,8 +307,8 @@ cmp "$ROOT/docs/screenshots/01-landing-page.png" "$MEDIA_CONTENT_FILE"
 echo "media-e2e: OK edge=nginx upload=validated-private-read=byte-identical"
 docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif -Atc \
   "SET ROLE slaif_owner;
-   SELECT count(*) = 5
-      AND count(DISTINCT audit.operation_id) = 5
+   SELECT count(*) = 7
+      AND count(DISTINCT audit.operation_id) = 7
       AND count(DISTINCT audit.workspace_id) = 1
       AND bool_and(workspace.actor_type = 'HUMAN'
                    AND workspace.status = 'ACTIVE'
@@ -328,6 +328,9 @@ docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif -Atc \
               THEN 'component-move'
             WHEN audit.action LIKE 'PATCH /api/editor/v1/sites/%/theme'
               THEN 'theme-update'
+            WHEN audit.action LIKE
+              'PATCH /api/editor/v1/sites/%/pages/%/style'
+              THEN 'page-style-update'
             ELSE 'unexpected'
           END = 'unexpected') = 0
       AND array_agg(
@@ -342,18 +345,24 @@ docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif -Atc \
               THEN 'component-move'
             WHEN audit.action LIKE 'PATCH /api/editor/v1/sites/%/theme'
               THEN 'theme-update'
+            WHEN audit.action LIKE
+              'PATCH /api/editor/v1/sites/%/pages/%/style'
+              THEN 'page-style-update'
             ELSE 'unexpected'
           END ORDER BY audit.occurred_at, audit.operation_id
-      ) = ARRAY['page-create', 'theme-update', 'component-add', 'component-add', 'component-move']
+      ) = ARRAY['page-create', 'theme-update', 'page-style-update',
+                'page-style-update', 'component-add', 'component-add',
+                'component-move']
    FROM audit.human_editor_mutation audit
    JOIN control.workspace workspace ON workspace.id = audit.workspace_id
    WHERE (audit.action LIKE 'POST /api/editor/v1/sites/%'
-      OR audit.action LIKE 'PATCH /api/editor/v1/sites/%/theme')
+      OR audit.action LIKE 'PATCH /api/editor/v1/sites/%/theme'
+      OR audit.action LIKE 'PATCH /api/editor/v1/sites/%/pages/%/style')
      AND workspace.site_id = (SELECT id FROM control.site WHERE site_key = 'demo');" | grep -q '^t$'
 docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif -Atc \
   "SET ROLE slaif_owner;
-   SELECT count(*) = 6
-      AND count(DISTINCT operation_id) = 6
+   SELECT count(*) = 8
+      AND count(DISTINCT operation_id) = 8
       AND count(*) FILTER (WHERE status_code IS NULL) = 0
       AND bool_and(status_code BETWEEN 200 AND 299
                    AND response_body IS NOT NULL
@@ -361,7 +370,7 @@ docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif -Atc \
    FROM control.human_editor_idempotency idempotency
    JOIN control.workspace workspace ON workspace.id = idempotency.workspace_id
    WHERE workspace.site_id = (SELECT id FROM control.site WHERE site_key = 'demo');" | grep -q '^t$'
-echo "human-editor-envelope: OK workspace=HUMAN active audit=idempotent sequence=page-create,theme-update,component-add,component-add,component-move count=6"
+echo "human-editor-envelope: OK workspace=HUMAN active audit=idempotent sequence=page-create,theme-update,page-style-update,page-style-update,component-add,component-add,component-move count=8"
 docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif -v ON_ERROR_STOP=1 -Atc \
   "SET ROLE slaif_owner;
    SELECT string_agg(
