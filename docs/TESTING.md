@@ -115,17 +115,23 @@ grant, and data round trip.
 
 ## Bounded page-style override acceptance
 
-The focused PostgreSQL page-style proof creates a page through the public Agent
+The focused PostgreSQL page-style proof creates pages through the public Agent
 API, reads pure inherited defaults, sets representative values in all four
 existing theme groups, and verifies raw overrides, resolved values, page row
 versions, replay, stale/foreign-page confinement, and the read-authorized
-no-effect path. It also proves reset-to-inherit, site-theme sensitivity,
-trusted SQL rejection of malformed values, page-style scope denial, COW-safe
-quota/audit behavior, and the human Editor endpoint. The shared renderer test
-asserts that the effective page style—not the unoverridden site theme—controls
-the fixed trusted CSS classes. CI runs this focused gate across PostgreSQL
-14–18; Compose acceptance extends the same-workspace public Agent preview
-path through NGINX.
+no-effect path. It also proves exact reset overlap, strict positive Agent
+versions, full page resource visibility, narrowed token and reset-destination
+constraints, unrelated-scope denial, quota/lifecycle/revocation failures,
+delete/restore preservation, no-effect mutation/audit accounting, service
+restart with non-empty overrides, direct-runtime/helper privileges, and the
+066 fresh legacy round trip with pending/data-bearing downgrade refusal. Real
+PostgreSQL barriers cover competing style changes and style versus page
+update/move/delete plus lifecycle/theme serialization. The browser proof
+asserts all four effective page-style groups and computed styles in the same
+authorized NGINX preview, then resets to site-theme inheritance; human
+Editor/Puck controls and composition persistence are exercised separately.
+CI runs this focused gate across PostgreSQL 14–18; Compose acceptance extends
+the same-workspace public Agent preview path through NGINX.
 
 ## Bounded Agent component data-plane acceptance
 

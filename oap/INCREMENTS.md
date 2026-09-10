@@ -9,7 +9,7 @@ increment is 078/4.
 | 078/1 | [PR #77](https://github.com/ulfe-lmi/slaif-agent-site/pull/77): bounded component composition/local design with 078-j authority/replay and 078-k/078-l audit repairs | Accepted and merged at `3cae3d6cef2a92e7068856d21bc9a47b8190c22e` on 2026-09-09; 078/1 is closed |
 | 078/2 | `oap/078-2-site-theme-tokens`: bounded site-theme token data plane from verified merged `main` | Accepted and merged in PR #79 at `a9d3e6800d5e8b5fd5c9cd9e0be5010184058c6b` on 2026-09-10; 078/2 is closed |
 | 078/3 | `oap/078-3-browser-security-refresh`: qualify Chrome for Testing 153.0.8010.36 and preserve failed-scan diagnostics | Accepted and merged in PR #80 at `fe31c9f30a7797d0916ad7f8fb56344bc61526f3` on 2026-09-10; 078/3 is closed |
-| 078/4 | `oap/078-4-page-style-overrides`: bounded page-owned theme-token overrides over the accepted site theme | Active `078-v` implementation increment from verified merged `main` `fe31c9f30a7797d0916ad7f8fb56344bc61526f3` |
+| 078/4 | `oap/078-4-page-style-overrides`: bounded page-owned theme-token overrides over the accepted site theme | Active `078-w` authority/evidence repair continuation on PR #81 from verified merged `main` `fe31c9f30a7797d0916ad7f8fb56344bc61526f3` |
 | 078-i | `567973e` implementation plus `127d7f1` report: bounded site-theme tokens | Preserved immutable history; removed from PR #77 by 078-j and deferred for deliberate reuse |
 | Next | Remaining 078 scope after 078/4 | Global-region/header-footer and catalog boundaries remain separate; numeric 078 remains PARTIAL |
 
@@ -45,6 +45,18 @@ The approved prospective rule is documented in
 [`governance/2026-09-09-bounded-semantic-pr-increments.md`](governance/2026-09-09-bounded-semantic-pr-increments.md): one bounded semantic
 merge increment maps to one PR, while a numeric objective may span sequential
 PRs. Later objective numbers are not unfinished parts of PR #77.
+
+## 078-w page-style authority and evidence repair
+
+Strategy rejected the 078-v COMPLETE claim after an independent real-PostgreSQL
+probe found a page resource-filter bypass, nullable Agent expected versions,
+overbroad same-group reset rejection, and missing machine-readable
+`page-style:write` authority metadata. The 078-w continuation preserves the
+immutable v order/report and repairs only those boundaries, adds deterministic
+PostgreSQL/accounting/migration/restart/race evidence, and refreshes the real
+NGINX/browser and human Editor/Puck proofs. PR #81 remains the sole open PR;
+Objective 078 remains PARTIAL until strategy independently accepts the exact
+remote head and merges it.
 
 ## 078-o security continuation
 

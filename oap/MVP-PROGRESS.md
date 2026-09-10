@@ -4,8 +4,8 @@ This tracker uses the contract-audit status vocabulary rather than file
 presence or completion estimates. The authoritative baseline is
 [`MVP-CONTRACT-AUDIT.md`](MVP-CONTRACT-AUDIT.md), updated for the protocol-final
 Objective 078 increment 2 on PR #79, reviewed and accepted on 2026-09-10 and
-merged at `fe31c9f30a7797d0916ad7f8fb56344bc61526f3`. The active 078-v
-continuation is a separate 078/4 page-style increment from that verified remote
+merged at `fe31c9f30a7797d0916ad7f8fb56344bc61526f3`. The active 078-w
+continuation is a separate 078/4 page-style authority/evidence repair from that verified remote
 `main`.
 
 ## Current verdict
@@ -21,7 +21,8 @@ here. PR #80 separately closed the 078/3 browser scan-coverage maintenance
 increment.
 Remaining Objective 078 global regions/header and footer and catalog work
 belongs to separate bounded increments. The active page-style increment is
-078-v. Later numbered
+078-w, repairing the rejected 078-v evidence/authority claim without broadening
+the contract. Later numbered
 objectives own media, MCP, exact-workspace Puck, review, publication,
 reconstruction and operations; they are not unfinished PR #77 scope.
 
@@ -104,7 +105,7 @@ evidence. Its result is included in the accepted and merged 078/1 revision.
 
 ## Active and remaining sequence
 
-The active transcript pointer is `078-v` for the current page-style
+The active transcript pointer is `078-w` for the current page-style
 continuation; 078/1, 078/2, and 078/3 are accepted and merged while 078/4 is
 the active increment. Acceptance and containment in `main` are determined by OAP and
 GitHub state, not this document. All later order files remain inert until
@@ -113,7 +114,7 @@ strategy selects and signals them.
 | Order | Contractual scope | Current status |
 |---|---|---|
 | 077 | Agent page, navigation, redirect, and bounded dynamic collection Render semantics | COMPLETE — E2E PROVEN and accepted/merged in PR #74 on 2026-09-08 at `ae3a4a6` |
-| 078 | Agent composition and design semantics; bounded component, site-theme, and page-style data planes | PARTIAL — 078/1 is accepted and merged in PR #77 at `3cae3d6`; 078/2 is accepted and merged in PR #79 at `a9d3e68`; 078/3 is accepted and merged in PR #80 at `fe31c9f`; active 078/4 page-style work is bounded to existing theme tokens; global-region/catalog scope remains deferred |
+| 078 | Agent composition and design semantics; bounded component, site-theme, and page-style data planes | PARTIAL — 078/1 is accepted and merged in PR #77 at `3cae3d6`; 078/2 is accepted and merged in PR #79 at `a9d3e68`; 078/3 is accepted and merged in PR #80 at `fe31c9f`; active 078-w repairs the bounded 078/4 page-style authority/evidence claim over existing theme tokens; global-region/catalog scope remains deferred |
 | 079 | Agent media semantics and references | PARTIAL |
 | 080 | Real MCP semantic parity | SCAFFOLD ONLY |
 | 081 | Human Puck editing in the exact Agent workspace | PARTIAL |

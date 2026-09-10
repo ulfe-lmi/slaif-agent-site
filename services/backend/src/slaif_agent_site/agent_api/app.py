@@ -31,10 +31,12 @@ from ..control_api.route_policy import (
     component_authority_metadata_for_policy,
     component_property_scope_metadata_for_policy,
     conditional_scope_metadata,
+    page_style_authority_metadata_for_policy,
     route_policies_for,
     validate_component_authority_openapi_document,
     validate_component_property_scope_openapi_document,
     validate_conditional_scope_openapi_document,
+    validate_page_style_authority_openapi_document,
     validate_route_policy_coverage,
 )
 from ..errors import ErrorEnvelope
@@ -177,6 +179,13 @@ def build_public_agent_openapi_document(app: FastAPI) -> dict[str, object]:
                 operation["x-slaif-component-property-scopes"] = (
                     component_property_scope_metadata_for_policy(policy)
                 )
+            if (
+                method.upper() == "PATCH"
+                and path == "/api/agent/v1/pages/{page_id}/style"
+            ):
+                operation["x-slaif-page-style-authority"] = (
+                    page_style_authority_metadata_for_policy(policy)
+                )
             if (method.upper(), path) in {
                 ("POST", "/api/agent/v1/pages/{page_id}/components"),
                 ("PATCH", "/api/agent/v1/components/{component_id}"),
@@ -276,6 +285,7 @@ def build_public_agent_openapi_document(app: FastAPI) -> dict[str, object]:
     validate_conditional_scope_openapi_document(document, policies_for_agent)
     validate_component_property_scope_openapi_document(document, policies_for_agent)
     validate_component_authority_openapi_document(document, policies_for_agent)
+    validate_page_style_authority_openapi_document(document, policies_for_agent)
     # Only schemas reachable from the public Agent paths are exposed. This
     # removes health/internal models from the product contract.
     referenced: set[str] = set()

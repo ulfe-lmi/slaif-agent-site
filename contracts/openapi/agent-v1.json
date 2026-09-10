@@ -15626,6 +15626,46 @@
         "x-slaif-conditional-scopes": [],
         "x-slaif-idempotency": "required",
         "x-slaif-mutation": true,
+        "x-slaif-page-style-authority": {
+          "base_scopes": [
+            "page:read"
+          ],
+          "change_basis": "raw_override_inheritance_state",
+          "changed_scope": "page-style:write",
+          "no_effect": {
+            "allowed_with": [
+              "page:read"
+            ],
+            "cow_operation": false,
+            "mutation_quota": false,
+            "requires_changed_scope": false,
+            "semantic_audit": false
+          },
+          "overlap": "exact_token_key_intersection_rejected",
+          "reset_field": "reset_tokens",
+          "reset_tokens": [
+            "palette.preset",
+            "typography.family",
+            "typography.scale",
+            "typography.weight",
+            "layout.content_width",
+            "layout.spacing",
+            "layout.grid_gap",
+            "shape.radius",
+            "shape.shadow"
+          ],
+          "set_tokens": [
+            "palette.preset",
+            "typography.family",
+            "typography.scale",
+            "typography.weight",
+            "layout.content_width",
+            "layout.spacing",
+            "layout.grid_gap",
+            "shape.radius",
+            "shape.shadow"
+          ]
+        },
         "x-slaif-required-scopes": [
           "page:read"
         ]

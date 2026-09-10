@@ -208,14 +208,23 @@ def _style_data_sql() -> str:
             END;
             IF workspace_id IS NULL OR NULLIF(current_setting('app.operation_id',true),'') IS NULL
             THEN RAISE EXCEPTION 'COW_CONTEXT_REQUIRED' USING ERRCODE='22023'; END IF;
-            IF p_expected IS NOT NULL AND p_expected<=0 THEN
+            IF p_agent AND (p_expected IS NULL OR p_expected<=0) THEN
                 RAISE EXCEPTION 'ROW_VERSION_REQUIRED' USING ERRCODE='P0003';
             END IF;
             PERFORM pg_advisory_xact_lock_shared(hashtextextended(workspace_id::text,280));
             PERFORM pg_advisory_xact_lock(hashtextextended(
                 workspace_id::text||chr(58)||p_site_id::text||chr(58)||'page-structure',994));
+            -- Page-style resolution reads the site theme more than once while
+            -- applying a raw override. Serialize that read against a theme
+            -- mutation after the lifecycle and structure barriers, so the
+            -- returned effective state has one theme serialization point.
+            PERFORM pg_advisory_xact_lock_shared(hashtextextended(
+                workspace_id::text||chr(58)||p_site_id::text||chr(58)||'theme',995));
             IF p_agent THEN
                 capability_id:=control.slaif_agent_require_capability(p_site_id,'page:read');
+                IF NOT content.slaif_agent_page_accessible(p_site_id,p_page_id) THEN
+                    RAISE EXCEPTION 'PAGE_NOT_FOUND' USING ERRCODE='P0002';
+                END IF;
             END IF;
             SELECT p.* INTO page_row FROM content.page p
             WHERE p.id=p_page_id AND p.site_id=p_site_id AND p.deleted_at IS NULL;
@@ -255,16 +264,14 @@ def _style_data_sql() -> str:
                 'palette.preset','typography.family','typography.scale','typography.weight',
                 'layout.content_width','layout.spacing','layout.grid_gap','shape.radius','shape.shadow'))
             THEN RAISE EXCEPTION 'PAGE_STYLE_RESET_INVALID' USING ERRCODE='P0003'; END IF;
-            IF p_palette ? 'preset' AND 'palette.preset'=ANY(reset_tokens)
-               OR p_typography ?| ARRAY['family','scale','weight'] AND EXISTS (
-                   SELECT 1 FROM unnest(reset_tokens) value
-                   WHERE value IN ('typography.family','typography.scale','typography.weight'))
-               OR p_layout ?| ARRAY['content_width','spacing','grid_gap'] AND EXISTS (
-                   SELECT 1 FROM unnest(reset_tokens) value
-                   WHERE value IN ('layout.content_width','layout.spacing','layout.grid_gap'))
-               OR p_shape ?| ARRAY['radius','shadow'] AND EXISTS (
-                   SELECT 1 FROM unnest(reset_tokens) value
-                   WHERE value IN ('shape.radius','shape.shadow'))
+            IF coalesce(p_palette ? 'preset',false)
+                   AND 'palette.preset'=ANY(reset_tokens)
+               OR EXISTS (SELECT 1 FROM jsonb_object_keys(coalesce(p_typography,'{{}}'::jsonb)) key
+                   WHERE ('typography.'||key)=ANY(reset_tokens))
+               OR EXISTS (SELECT 1 FROM jsonb_object_keys(coalesce(p_layout,'{{}}'::jsonb)) key
+                   WHERE ('layout.'||key)=ANY(reset_tokens))
+               OR EXISTS (SELECT 1 FROM jsonb_object_keys(coalesce(p_shape,'{{}}'::jsonb)) key
+                   WHERE ('shape.'||key)=ANY(reset_tokens))
             THEN RAISE EXCEPTION 'PAGE_STYLE_RESET_OVERLAP' USING ERRCODE='P0003'; END IF;
             IF NOT (coalesce(p_palette ? 'preset',false)
                 OR coalesce(p_typography ?| ARRAY['family','scale','weight'],false)
@@ -587,6 +594,27 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     _drop_cow_for_page_change()
+    op.execute(
+        """
+        DO $guard$
+        BEGIN
+            IF EXISTS (
+                SELECT 1 FROM content.page
+                WHERE style_overrides IS DISTINCT FROM '{}'::jsonb
+            ) THEN
+                RAISE EXCEPTION 'PAGE_STYLE_MIGRATION_DATA_PRESENT'
+                    USING ERRCODE='P0001';
+            END IF;
+            IF EXISTS (
+                SELECT 1 FROM audit.agent_mutation
+                WHERE action='PAGE_STYLE_UPDATED'
+            ) THEN
+                RAISE EXCEPTION 'PAGE_STYLE_MIGRATION_AUDIT_PRESENT'
+                    USING ERRCODE='P0001';
+            END IF;
+        END $guard$;
+        """
+    )
     _execute_block(
         """
         DROP FUNCTION IF EXISTS content.slaif_agent_page_style_update(

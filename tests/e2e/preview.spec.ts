@@ -908,6 +908,114 @@ test("agent-theme-patch-renders-in-the-same-authorized-workspace", async ({ page
   expectPrivateHeaders(restoredPreview!);
   assertThemeOutput(await renderedThemeOutput(page), expectedAgentOutput);
 
+  const pagesResponse = await page.request.get("/api/agent/v1/pages/", {
+    headers: { Authorization: `Bearer ${agentToken}` },
+  });
+  expect(pagesResponse.status()).toBe(200);
+  const pages = (await pagesResponse.json()) as Array<{
+    id?: unknown;
+    slug?: unknown;
+  }>;
+  const homePage = pages.find((candidate) => candidate.slug === "home");
+  expect(typeof homePage?.id).toBe("string");
+  const homePageId = homePage?.id as string;
+  const pageStylePath = `/api/agent/v1/pages/${homePageId}/style`;
+  const initialPageStyle = await page.request.get(pageStylePath, {
+    headers: { Authorization: `Bearer ${agentToken}` },
+  });
+  expect(initialPageStyle.status()).toBe(200);
+  const initialPageStyleRecord = (await initialPageStyle.json()) as {
+    row_version?: unknown;
+    overrides?: unknown;
+  };
+  expect(initialPageStyleRecord.overrides).toEqual({});
+  expect(initialPageStyleRecord.row_version).toBe(1);
+  const pageStyleUpdate = await page.request.patch(pageStylePath, {
+    headers: {
+      Authorization: `Bearer ${agentToken}`,
+      "Idempotency-Key": `oap-078w-page-style-${tag}`,
+    },
+    data: {
+      expected_row_version: 1,
+      palette: { preset: "ember" },
+      typography: { family: "system", scale: "compact", weight: "regular" },
+      layout: { content_width: "sm", spacing: "sm", grid_gap: "lg" },
+      shape: { radius: "none", shadow: "none" },
+      reset_tokens: [],
+    },
+  });
+  expect(pageStyleUpdate.status()).toBe(200);
+  const pageStyleUpdateBody = (await pageStyleUpdate.json()) as {
+    action?: unknown;
+    record?: { row_version?: unknown; overrides?: unknown };
+  };
+  expect(pageStyleUpdateBody.action).toBe("PAGE_STYLE_UPDATED");
+  expect(pageStyleUpdateBody.record).toMatchObject({
+    row_version: 2,
+    overrides: {
+      palette: { preset: "ember" },
+      typography: { family: "system", scale: "compact", weight: "regular" },
+      layout: { content_width: "sm", spacing: "sm", grid_gap: "lg" },
+      shape: { radius: "none", shadow: "none" },
+    },
+  });
+  const pageStylePreview = await page.goto(agentPreviewPath);
+  expectPrivateHeaders(pageStylePreview!);
+  assertThemeOutput(await renderedThemeOutput(page), {
+    palette: "ember",
+    family: "system",
+    scale: "compact",
+    weight: "regular",
+    width: "sm",
+    spacing: "sm",
+    gap: "lg",
+    radius: "none",
+    shadow: "none",
+    background: "rgb(255, 247, 237)",
+    color: "rgb(66, 32, 6)",
+    fontFamily: "Inter",
+    fontSize: "15px",
+    fontWeight: "400",
+    contentWidth: "768px",
+    paddingTop: "24px",
+    // The page-style gap class is present, but the existing component-local
+    // gap remains authoritative at the rendered component.
+    gridGap: "16px",
+    borderRadius: "0px",
+    boxShadow: "none",
+  });
+  const pageStyleReset = await page.request.patch(pageStylePath, {
+    headers: {
+      Authorization: `Bearer ${agentToken}`,
+      "Idempotency-Key": `oap-078w-page-style-reset-${tag}`,
+    },
+    data: {
+      expected_row_version: 2,
+      reset_tokens: [
+        "palette.preset",
+        "typography.family",
+        "typography.scale",
+        "typography.weight",
+        "layout.content_width",
+        "layout.spacing",
+        "layout.grid_gap",
+        "shape.radius",
+        "shape.shadow",
+      ],
+    },
+  });
+  expect(pageStyleReset.status()).toBe(200);
+  const pageStyleResetBody = (await pageStyleReset.json()) as {
+    record?: { row_version?: unknown; overrides?: unknown };
+  };
+  expect(pageStyleResetBody.record).toMatchObject({
+    row_version: 3,
+    overrides: {},
+  });
+  const inheritedPageStylePreview = await page.goto(agentPreviewPath);
+  expectPrivateHeaders(inheritedPageStylePreview!);
+  assertThemeOutput(await renderedThemeOutput(page), expectedAgentOutput);
+
   const untouchedPreview = await page.goto(`/preview/${defaultWorkspace}/s/parity/`);
   expectPrivateHeaders(untouchedPreview!);
   const defaultOutput = await renderedThemeOutput(page);

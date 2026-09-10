@@ -1718,7 +1718,11 @@ def _run_primary_theme_browser_proof(
         raise ProofFailure("page-style-initial-not-inherited")
     style_body = {
         "expected_row_version": style_initial.get("row_version"),
-        "palette": {"preset": "meadow"},
+        "palette": {"preset": "ember"},
+        "typography": {"family": "system", "scale": "compact", "weight": "regular"},
+        "layout": {"content_width": "sm", "spacing": "sm", "grid_gap": "lg"},
+        "shape": {"radius": "none", "shadow": "none"},
+        "reset_tokens": [],
     }
     style_update = _request_mutation(
         client,
@@ -1732,7 +1736,13 @@ def _run_primary_theme_browser_proof(
     if (
         style_update.get("action") != "PAGE_STYLE_UPDATED"
         or not isinstance(style_record, dict)
-        or style_record.get("overrides") != {"palette": {"preset": "meadow"}}
+        or style_record.get("overrides")
+        != {
+            "layout": {"content_width": "sm", "grid_gap": "lg", "spacing": "sm"},
+            "palette": {"preset": "ember"},
+            "shape": {"radius": "none", "shadow": "none"},
+            "typography": {"family": "system", "scale": "compact", "weight": "regular"},
+        }
     ):
         raise ProofFailure("page-style-update-invalid")
     created = _json(
@@ -1783,7 +1793,77 @@ def _run_primary_theme_browser_proof(
         preview_text = preview_body.decode("utf-8")
     except UnicodeDecodeError as error:
         raise ProofFailure("theme-agent-preview-invalid-html") from error
-    expected_theme_classes = (
+    expected_page_style_classes = (
+        "renderer-theme-palette--ember",
+        "renderer-theme-family--system",
+        "renderer-theme-scale--compact",
+        "renderer-theme-weight--regular",
+        "renderer-theme-width--sm",
+        "renderer-theme-spacing--sm",
+        "renderer-theme-gap--lg",
+        "renderer-theme-radius--none",
+        "renderer-theme-shadow--none",
+    )
+    if any(value not in preview_text for value in expected_page_style_classes):
+        raise ProofFailure("page-style-agent-preview-classes")
+    if "renderer-theme-palette--meadow" in preview_text:
+        raise ProofFailure("page-style-agent-preview-site-theme-leak")
+    if '<link rel="stylesheet" href="/renderer-v1.css"/>' not in preview_text:
+        raise ProofFailure("theme-agent-preview-renderer-stylesheet")
+    for service in ("agent-api", "render-api", "web"):
+        _compose(project, "restart", service)
+        if service == "agent-api":
+            _wait_agent_ready(client)
+        else:
+            _wait_preview_html(
+                client,
+                f"/preview/{workspace_id}/s/demo",
+                f"page-style-{service}-restart",
+            )
+        restarted_style = _agent_request(
+            client, token, style_path, label=f"page-style-{service}-readback"
+        )
+        if restarted_style.get("overrides") != style_record.get("overrides"):
+            raise ProofFailure(f"page-style-{service}-state-changed")
+        restarted_preview = _wait_preview_html(
+            client,
+            f"/preview/{workspace_id}/s/demo",
+            f"page-style-{service}-preview",
+        ).decode("utf-8")
+        if any(value not in restarted_preview for value in expected_page_style_classes):
+            raise ProofFailure(f"page-style-{service}-preview-classes")
+    restored_style = _request_mutation(
+        client,
+        token,
+        style_path,
+        {
+            "expected_row_version": style_record["row_version"],
+            "reset_tokens": [
+                "palette.preset",
+                "typography.family",
+                "typography.scale",
+                "typography.weight",
+                "layout.content_width",
+                "layout.spacing",
+                "layout.grid_gap",
+                "shape.radius",
+                "shape.shadow",
+            ],
+        },
+        f"oap-078w-page-style-reset-{tag}",
+        status=200,
+    )
+    restored_record = restored_style.get("record")
+    if (
+        restored_style.get("action") != "PAGE_STYLE_UPDATED"
+        or not isinstance(restored_record, dict)
+        or restored_record.get("overrides") != {}
+    ):
+        raise ProofFailure("page-style-reset-invalid")
+    inherited_preview = _wait_preview_html(
+        client, f"/preview/{workspace_id}/s/demo", "page-style-inherited-preview"
+    ).decode("utf-8")
+    inherited_classes = (
         "renderer-theme-palette--meadow",
         "renderer-theme-family--serif",
         "renderer-theme-scale--spacious",
@@ -1794,30 +1874,8 @@ def _run_primary_theme_browser_proof(
         "renderer-theme-radius--lg",
         "renderer-theme-shadow--md",
     )
-    if any(value not in preview_text for value in expected_theme_classes):
-        raise ProofFailure("theme-agent-preview-theme-classes")
-    if "renderer-theme-palette--ocean" in preview_text:
-        raise ProofFailure("theme-agent-preview-default-theme")
-    if '<link rel="stylesheet" href="/renderer-v1.css"/>' not in preview_text:
-        raise ProofFailure("theme-agent-preview-renderer-stylesheet")
-    restored_style = _request_mutation(
-        client,
-        token,
-        style_path,
-        {
-            "expected_row_version": style_record["row_version"],
-            "reset_tokens": ["palette.preset"],
-        },
-        f"oap-078v-page-style-reset-{tag}",
-        status=200,
-    )
-    restored_record = restored_style.get("record")
-    if (
-        restored_style.get("action") != "PAGE_STYLE_UPDATED"
-        or not isinstance(restored_record, dict)
-        or restored_record.get("overrides") != {}
-    ):
-        raise ProofFailure("page-style-reset-invalid")
+    if any(value not in inherited_preview for value in inherited_classes):
+        raise ProofFailure("page-style-inherited-preview-classes")
     artifacts = _list(
         client.request(
             f"/api/agent/v1/preview-runs/{run_id}/artifacts",

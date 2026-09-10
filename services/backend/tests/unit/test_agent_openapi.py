@@ -229,6 +229,29 @@ def test_page_style_contract_is_page_bound_and_resettable() -> None:
     assert read["x-slaif-required-scopes"] == ["page:read"]
     assert patch["x-slaif-required-scopes"] == ["page:read"]
     assert patch["x-slaif-mutation"] is True
+    authority = patch["x-slaif-page-style-authority"]
+    assert authority["base_scopes"] == ["page:read"]
+    assert authority["changed_scope"] == "page-style:write"
+    assert authority["change_basis"] == "raw_override_inheritance_state"
+    assert authority["reset_field"] == "reset_tokens"
+    assert authority["set_tokens"] == [
+        "palette.preset",
+        "typography.family",
+        "typography.scale",
+        "typography.weight",
+        "layout.content_width",
+        "layout.spacing",
+        "layout.grid_gap",
+        "shape.radius",
+        "shape.shadow",
+    ]
+    assert authority["no_effect"] == {
+        "allowed_with": ["page:read"],
+        "requires_changed_scope": False,
+        "mutation_quota": False,
+        "semantic_audit": False,
+        "cow_operation": False,
+    }
     request = document["components"]["schemas"]["AgentUpdatePageStyleRequest"]
     assert request["additionalProperties"] is False
     assert set(request["properties"]) == {

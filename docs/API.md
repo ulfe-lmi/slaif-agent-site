@@ -194,7 +194,14 @@ from the resolved theme. The human Editor exposes the same schema at
 `page-style:write`; Render/Web applies site theme, then page overrides, then
 component-local and responsive values.
 
-This bounded theme order does not implement publication, review/freeze/promotion,
+The generated Agent PATCH operation publishes
+`x-slaif-page-style-authority`: its base scope is `page:read`, changed raw
+override/inheritance state requires `page-style:write`, and reset tokens use
+the same nine-token vocabulary. The extension explicitly marks no-effect
+requests as exempt from the changed scope, mutation quota, semantic audit,
+and COW mutation; exact token overlap between update and reset is rejected.
+
+This bounded page-style order does not implement publication, review/freeze/promotion,
 workspace-management UI, global regions, header/footer architecture, or new
 catalog/storage types. A full responsive
 browser sweep remains a later combined acceptance round.
