@@ -140,6 +140,11 @@ downgrade refusal, cancels after real style DML and verifies rollback/retry,
 checks exact audit/idempotency identity, and exercises both lock orderings with
 page update/move/delete plus concurrent theme-change/reset serialization. The
 human proof includes viewer denial and a same-group update/reset request.
+The 078-y continuation adds the omitted inherited-only browser negative and
+real resumed-inheritance proof, requires two distinct blocked backends before
+releasing the concurrent theme barrier, and cancels a public Agent style
+request while it waits on the prelocked mutation path, verifying rollback,
+accounting, COW, and idempotency reuse.
 
 ## Bounded Agent component data-plane acceptance
 

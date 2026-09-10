@@ -64,8 +64,8 @@ routes, strict page resource/version/reset authority, reversible legacy
 migration, exact COW/version/scope/idempotency/audit/quota/concurrency
 semantics, shared Render/Web resolution, and same-workspace NGINX/browser plus
 human Editor/Puck evidence. The 078-v implementation claim was rejected after
-a real probe found authority/evidence defects; 078-w and 078-x repair those
-defects and close the remaining proof gaps without reimplementing the passing
+a real probe found authority/evidence defects; 078-w, 078-x, and 078-y repair
+those defects and close the remaining proof gaps without reimplementing the passing
 style data plane. It remains pending
 strategic acceptance/merge. It deliberately excludes global regions,
 header/footer architecture, catalog breadth, media, MCP, review, promotion,

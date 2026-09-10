@@ -9,7 +9,7 @@ increment is 078/4.
 | 078/1 | [PR #77](https://github.com/ulfe-lmi/slaif-agent-site/pull/77): bounded component composition/local design with 078-j authority/replay and 078-k/078-l audit repairs | Accepted and merged at `3cae3d6cef2a92e7068856d21bc9a47b8190c22e` on 2026-09-09; 078/1 is closed |
 | 078/2 | `oap/078-2-site-theme-tokens`: bounded site-theme token data plane from verified merged `main` | Accepted and merged in PR #79 at `a9d3e6800d5e8b5fd5c9cd9e0be5010184058c6b` on 2026-09-10; 078/2 is closed |
 | 078/3 | `oap/078-3-browser-security-refresh`: qualify Chrome for Testing 153.0.8010.36 and preserve failed-scan diagnostics | Accepted and merged in PR #80 at `fe31c9f30a7797d0916ad7f8fb56344bc61526f3` on 2026-09-10; 078/3 is closed |
-| 078/4 | `oap/078-4-page-style-overrides`: bounded page-owned theme-token overrides over the accepted site theme | Active `078-x` proof-closure continuation on PR #81 from verified merged `main` `fe31c9f30a7797d0916ad7f8fb56344bc61526f3` |
+| 078/4 | `oap/078-4-page-style-overrides`: bounded page-owned theme-token overrides over the accepted site theme | Active `078-y` proof-closure continuation on PR #81 from verified merged `main` `fe31c9f30a7797d0916ad7f8fb56344bc61526f3` |
 | 078-i | `567973e` implementation plus `127d7f1` report: bounded site-theme tokens | Preserved immutable history; removed from PR #77 by 078-j and deferred for deliberate reuse |
 | Next | Remaining 078 scope after 078/4 | Global-region/header-footer and catalog boundaries remain separate; numeric 078 remains PARTIAL |
 
@@ -57,6 +57,18 @@ PostgreSQL/accounting/migration/restart/race evidence, and refreshes the real
 NGINX/browser and human Editor/Puck proofs. PR #81 remains the sole open PR;
 Objective 078 remains PARTIAL until strategy independently accepts the exact
 remote head and merges it.
+
+## 078-y finish omitted page-style proof
+
+The 078-y continuation closes the three executable proof items omitted from
+078-x: a same-workspace NGINX/browser page-style proof with an inherited-only
+negative fixture, explicit-versus-inherited changes across a site-theme update
+and reset, an exact two-distinct-waiter theme barrier, and cancellation of a
+public Agent style request before its prelocked mutation path. It adds no
+page-style functionality or broader Objective-078 scope, and preserves all
+historical orders and reports. PR #81 remains the sole open PR; Objective 078
+remains PARTIAL until strategy independently reviews, accepts, and merges the
+exact report-only head.
 
 ## 078-x page-style proof closure
 

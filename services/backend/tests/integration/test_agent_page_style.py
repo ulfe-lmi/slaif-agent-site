@@ -49,20 +49,22 @@ async def _agent_client(
             yield client
 
 
-async def _wait_for_advisory_waiters(connection: Any, lock_key: int) -> None:
+async def _wait_for_advisory_waiters(
+    connection: Any, lock_key: int, expected: int = 1
+) -> None:
     deadline = time.monotonic() + 8
     while time.monotonic() < deadline:
         waiting = await connection.fetchval(
-            "SELECT count(*) FROM pg_locks WHERE locktype='advisory' "
+            "SELECT count(DISTINCT pid) FROM pg_locks WHERE locktype='advisory' "
             "AND NOT granted "
             "AND classid::bigint=(($1::bigint >> 32) & 4294967295) "
             "AND objid::bigint=($1::bigint & 4294967295)",
             lock_key,
         )
-        if waiting:
+        if waiting >= expected:
             return
         await asyncio.sleep(0.01)
-    raise AssertionError("expected advisory lock waiter")
+    raise AssertionError(f"expected {expected} distinct advisory lock waiters")
 
 
 @asynccontextmanager
@@ -1099,6 +1101,109 @@ async def test_page_style_cancellation_after_dml_rolls_back_everything(
 
 
 @pytest.mark.asyncio
+async def test_page_style_public_cancellation_while_waiting_leaves_no_residue(
+    agent_site_database: AgentSiteDatabase,
+) -> None:
+    database = agent_site_database
+    _unused_token, seeded = await _seed(database)
+    token = await _capability_with_scopes(
+        database,
+        seeded,
+        ["site:read", "page:create", "page:read", "page-style:write"],
+    )
+    reviewer_pool = await database.role_pool("slaif_reviewer")
+
+    async def durable_state() -> tuple[Any, tuple[Any, ...]]:
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            row = await owner.fetchrow(
+                "SELECT coalesce(sum(mutation_used),0), "
+                "(SELECT count(*) FROM control.agent_idempotency "
+                "WHERE workspace_id=$1), "
+                "(SELECT count(*) FROM audit.agent_mutation "
+                "WHERE workspace_id=$1 AND action='PAGE_STYLE_UPDATED') "
+                "FROM control.capability WHERE workspace_id=$1",
+                seeded["workspace_id"],
+            )
+            assert row is not None
+        async with asyncpg_cow_reviewer(reviewer_pool) as reviewer:
+            operations = tuple(
+                await reviewer.operations(seeded["workspace_id"], schema="content")
+            )
+        return tuple(row), operations
+
+    try:
+        async with _agent_client(database) as client:
+            created = await client.post(
+                "/api/agent/v1/pages",
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Idempotency-Key": "page-style-public-cancel-create",
+                },
+                json={
+                    "slug": "public-cancel-style",
+                    "title": "Public cancel style",
+                    "locale": "en-US",
+                },
+            )
+            assert created.status_code == 201, created.text
+            page_id = UUID(created.json()["record"]["id"])
+            path = f"/api/agent/v1/pages/{page_id}/style"
+            baseline = await durable_state()
+            async with _hold_agent_structure_lock(
+                database, seeded["workspace_id"], seeded["site_id"]
+            ) as blocker:
+                task = asyncio.create_task(
+                    client.patch(
+                        path,
+                        headers={
+                            "Authorization": f"Bearer {token}",
+                            "Idempotency-Key": "page-style-public-cancel-reuse",
+                        },
+                        json={
+                            "expected_row_version": 1,
+                            "palette": {"preset": "ember"},
+                        },
+                    )
+                )
+                await _wait_for_page_structure_waiters(blocker, 1)
+                task.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await task
+            assert await durable_state() == baseline
+            async with owner_connection(
+                database.settings.resolved_owner_dsn(), expected_database=database.name
+            ) as owner:
+                lock_key = await owner.fetchval(
+                    "SELECT hashtextextended($1,994)",
+                    f"{seeded['workspace_id']}:{seeded['site_id']}:page-structure",
+                )
+                leaked = await owner.fetchval(
+                    "SELECT count(*) FROM pg_locks WHERE locktype='advisory' "
+                    "AND classid::bigint=(($1::bigint >> 32) & 4294967295) "
+                    "AND objid::bigint=($1::bigint & 4294967295)",
+                    lock_key,
+                )
+                assert leaked == 0
+            retry = await client.patch(
+                path,
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Idempotency-Key": "page-style-public-cancel-reuse",
+                },
+                json={
+                    "expected_row_version": 1,
+                    "palette": {"preset": "ember"},
+                },
+            )
+            assert retry.status_code == 200, retry.text
+            assert retry.json()["record"]["row_version"] == 2
+    finally:
+        await reviewer_pool.close()
+
+
+@pytest.mark.asyncio
 async def test_page_style_raw_changes_require_write_when_pixels_are_equal(
     agent_site_database: AgentSiteDatabase,
 ) -> None:
@@ -2112,7 +2217,7 @@ async def test_page_style_reset_serializes_with_concurrent_theme_change(
                     },
                 )
             )
-            await _wait_for_advisory_waiters(blocker, theme_lock)
+            await _wait_for_advisory_waiters(blocker, theme_lock, expected=2)
         theme_response, reset_response = await asyncio.gather(theme_task, reset_task)
         assert theme_response.status_code == 200, theme_response.text
         assert reset_response.status_code == 200, reset_response.text
