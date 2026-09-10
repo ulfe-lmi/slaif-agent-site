@@ -191,8 +191,8 @@ remain historical evidence in
 [`supply-chain/browser-worker-critical-matrix.json`](../supply-chain/browser-worker-critical-matrix.json)
 while the active maintenance qualification uses Chrome for Testing
 `153.0.8010.36` at CfT revision `1681091`. The 078-t attempt is retained as
-unqualified coverage-gap evidence until the measured component is scanned. The
-closed risk record remains at
+unqualified coverage-gap evidence; 078-u records the measured component in the
+remote CI bundle and passes the exact six-image scan. The closed risk record remains at
 [issue #67](https://github.com/ulfe-lmi/slaif-agent-site/issues/67); coding does
 not reopen it. Validation requires every non-empty exception set to match
 a current Critical finding's exact ID, PURL, and scope; unused, stale,

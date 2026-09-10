@@ -133,7 +133,7 @@
       "archive_sha256": "167a098c4fdec156b58a9f678c90a84f9072d789f9c6e7b35496a6987b8b7ef8",
       "runtime": {
         "image": "browser-worker",
-        "image_digest": "sha256:632fb088e6e4c6e4e5d871b41d3cfd1c8c300c408b052a76795c28b9bacd1444",
+        "image_digest": "sha256:e415620b08523cdbfb39c56ff1cd1103d70a38688409c40097fe09b7142cb1d9",
         "base_image": "mcr.microsoft.com/playwright:v1.62.1-noble@sha256:dcc5531e97840b9b5e794f2814476b21571c5124a3fca2267d73041f56e7580e",
         "executable": "/ms-playwright/chromium-1681091/chrome-linux64/chrome",
         "executable_version": "Google Chrome for Testing 153.0.8010.36",
@@ -150,8 +150,8 @@
       },
       "sbom": {
         "format": "SPDX-2.3",
-        "browser_worker_sbom_sha256": "cd4808482af0a6a7c15fdb3d03a44c288b0653f27fdfb5cd8ad6da67e25ae79b",
-        "browser_worker_scan_sbom_sha256": "1cece8fc300fba7a3c3da22b05f9e00364e7979e9d6489c6bac6674c322de8bf",
+        "browser_worker_sbom_sha256": "cf97da205f9e4b48489fc7a7422f03469de2d4b650a2e08b6bad402bc2bb4c78",
+        "browser_worker_scan_sbom_sha256": "312f80acbdccb5fa4ad60799ba53358d3c806b1017ff4f3938e4eab397666649",
         "chrome_purl": "pkg:generic/chrome@153.0.8010.36",
         "playwright_purl": "pkg:npm/playwright-core@1.62.1",
         "identity_source": "supplemental-measured-runtime"
@@ -169,7 +169,10 @@
         "browser_worker_low": 92,
         "browser_worker_negligible": 14,
         "exception_count": 0,
-        "browser_worker_scan_sha256": "df7f8b9702d52582b4f5861eb4ae4efeb5890903a5611b881e3da4107c7b8e77",
+        "browser_worker_scan_sha256": "6c15399ef094d6fdef731b921285c9f140fb34ed248e9feab8ec22f5f0b6b3da",
+        "ci_run": "34467063708",
+        "ci_evidence_artifact": "supply-chain-evidence-a26b5de70f9fbd6ed3420fe4a4556157e855a00d",
+        "evidence_revision": "a26b5de70f9fbd6ed3420fe4a4556157e855a00d",
         "checksum_validation": "PASS"
       },
       "qualification_date": "2026-09-10",

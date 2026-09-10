@@ -243,6 +243,11 @@ class SupplyChainPolicyTests(unittest.TestCase):
             current["runtime"]["executable"],
             "/ms-playwright/chromium-1681091/chrome-linux64/chrome",
         )
+        self.assertEqual(
+            current["runtime"]["image_digest"],
+            "sha256:e415620b08523cdbfb39c56ff1cd1103d70a38688409c40097fe09b7142cb1d9",
+        )
+        self.assertEqual(current["scan_result"]["ci_run"], "34467063708")
         self.assertEqual(current["scan_result"]["browser_worker_matches"], 1436)
         self.assertEqual(current["scan_result"]["result"], "PASS")
         self.assertEqual(current["scan_result"]["unexcepted_critical"], 0)
