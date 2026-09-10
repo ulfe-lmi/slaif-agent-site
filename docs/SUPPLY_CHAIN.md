@@ -141,6 +141,17 @@ and `playwright-core`, rejects Firefox/WebKit inventory, and hashes the retained
 root E2E runner still installs all three test-only browser families outside the
 product image.
 
+Syft 1.51.0's default binary catalogers can identify the Chrome 152 payload but
+returned only an unowned ELF file for the current 153 payload. The runner
+therefore measures the real image executable with `chrome --version` and
+`sha256sum`, then adds one explicitly attributed supplemental Chrome component
+to both the retained SPDX inventory and the exact Syft JSON consumed by Grype.
+That component is bound to the image ID, executable path and SHA-256, official
+archive URL and SHA-256, measured version, and both Google Chrome CPEs. It is
+not represented as native Syft discovery. Finalization and bundle validation
+reject missing, duplicate, conflicting, or mismatched browser identity before
+the vulnerability conclusion is accepted.
+
 The Apache adapter uses the official
 `httpd:2.4.68-trixie@sha256:979c38c2228d28c2edfd45c6e27dcee1c7b4a101a5526721ae8ece454e89e99e`
 multi-platform image. Its deterministic Debian Trixie package overlay pins
@@ -179,7 +190,9 @@ findings in that older payload. The 152.0.7977.82 qualification and finding set
 remain historical evidence in
 [`supply-chain/browser-worker-critical-matrix.json`](../supply-chain/browser-worker-critical-matrix.json)
 while the active maintenance qualification uses Chrome for Testing
-`153.0.8010.36` at CfT revision `1681091`. The closed risk record remains at
+`153.0.8010.36` at CfT revision `1681091`. The 078-t attempt is retained as
+unqualified coverage-gap evidence until the measured component is scanned. The
+closed risk record remains at
 [issue #67](https://github.com/ulfe-lmi/slaif-agent-site/issues/67); coding does
 not reopen it. Validation requires every non-empty exception set to match
 a current Critical finding's exact ID, PURL, and scope; unused, stale,

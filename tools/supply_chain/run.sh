@@ -170,6 +170,24 @@ inspect_image() {
         --output "$output"
 }
 
+measure_browser_identity() {
+  reference=$1
+  metadata=$2
+  output=$3
+  image_id=$(python -c \
+    'import json,sys; print(json.load(open(sys.argv[1]))["image_id"])' "$metadata")
+  executable_version=$(docker_run run --rm --network none "$reference" sh -c \
+    '"$BROWSER_WORKER_CHROMIUM_EXECUTABLE" --version')
+  executable_sha256=$(docker_run run --rm --network none "$reference" sh -c \
+    'sha256sum "$BROWSER_WORKER_CHROMIUM_EXECUTABLE" | cut -d" " -f1')
+  python -m tools.supply_chain.evidence browser-identity \
+    --output "$output" \
+    --image-id "$image_id" \
+    --executable-version "$executable_version" \
+    --executable-sha256 "$executable_sha256" \
+    --source-revision "$revision"
+}
+
 archive_image() {
   reference=$1
   destination=$2
@@ -194,6 +212,7 @@ generate_sbom() {
   archive=$2
   metadata=$3
   destination=$4
+  browser_identity=$5
   raw="$temporary_root/$image_name.raw.spdx.json"
   docker_run run \
     --rm \
@@ -208,12 +227,22 @@ generate_sbom() {
     > "$raw"
   image_id=$(python -c \
     'import json,sys; print(json.load(open(sys.argv[1]))["image_id"])' "$metadata")
-  python -m tools.supply_chain.evidence normalize-sbom \
-    --input "$raw" \
-    --output "$destination" \
-    --image-name "$image_name" \
-    --image-id "$image_id" \
-    --source-revision "$revision"
+  if [ -n "$browser_identity" ]; then
+    python -m tools.supply_chain.evidence normalize-sbom \
+      --input "$raw" \
+      --output "$destination" \
+      --image-name "$image_name" \
+      --image-id "$image_id" \
+      --source-revision "$revision" \
+      --browser-identity "$browser_identity"
+  else
+    python -m tools.supply_chain.evidence normalize-sbom \
+      --input "$raw" \
+      --output "$destination" \
+      --image-name "$image_name" \
+      --image-id "$image_id" \
+      --source-revision "$revision"
+  fi
 }
 
 generate_scan_sbom() {
@@ -221,6 +250,7 @@ generate_scan_sbom() {
   archive=$2
   metadata=$3
   destination=$4
+  browser_identity=$5
   raw="$temporary_root/$image_name.raw.syft.json"
   docker_run run \
     --rm \
@@ -238,13 +268,24 @@ generate_scan_sbom() {
     'import json,sys; print(json.load(open(sys.argv[1]))["image_id"])' "$metadata")
   archive_config_id=$(python -m tools.supply_chain.evidence archive-config-id \
     --archive "$archive")
-  python -m tools.supply_chain.evidence normalize-scan-sbom \
-    --input "$raw" \
-    --output "$destination" \
-    --image-name "$image_name" \
-    --image-id "$image_id" \
-    --archive-config-id "$archive_config_id" \
-    --source-revision "$revision"
+  if [ -n "$browser_identity" ]; then
+    python -m tools.supply_chain.evidence normalize-scan-sbom \
+      --input "$raw" \
+      --output "$destination" \
+      --image-name "$image_name" \
+      --image-id "$image_id" \
+      --archive-config-id "$archive_config_id" \
+      --source-revision "$revision" \
+      --browser-identity "$browser_identity"
+  else
+    python -m tools.supply_chain.evidence normalize-scan-sbom \
+      --input "$raw" \
+      --output "$destination" \
+      --image-name "$image_name" \
+      --image-id "$image_id" \
+      --archive-config-id "$archive_config_id" \
+      --source-revision "$revision"
+  fi
 }
 
 build_and_compare() {
@@ -258,19 +299,50 @@ build_and_compare() {
   second_metadata="$temporary_root/second/$image_name.image.json"
   inspect_image "$first_tag" "$first_metadata"
   inspect_image "$second_tag" "$second_metadata"
+  first_browser_identity=""
+  second_browser_identity=""
+  if [ "$image_name" = browser-worker ]; then
+    first_identity="$temporary_root/first/browser-runtime.json"
+    second_identity="$temporary_root/second/browser-runtime.json"
+    measure_browser_identity "$first_tag" "$first_metadata" "$first_identity"
+    measure_browser_identity "$second_tag" "$second_metadata" "$second_identity"
+    python - "$first_identity" "$second_identity" <<'PY'
+import json
+import sys
+
+first = json.load(open(sys.argv[1], encoding="utf-8"))
+second = json.load(open(sys.argv[2], encoding="utf-8"))
+for key in (
+    "cataloger",
+    "executable",
+    "executable_sha256",
+    "executable_version",
+    "source_archive_sha256",
+    "source_archive_url",
+    "source_revision",
+):
+    if first[key] != second[key]:
+        raise SystemExit(f"browser identity drift: {key}")
+PY
+    first_browser_identity="$first_identity"
+    second_browser_identity="$second_identity"
+  fi
   first_archive="$temporary_root/first/$image_name.image.tar"
   second_archive="$temporary_root/second/$image_name.image.tar"
   archive_image "$first_tag" "$first_archive"
   archive_image "$second_tag" "$second_archive"
   first_sbom="$evidence_directory/sboms/$image_name.spdx.json"
   second_sbom="$temporary_root/second/$image_name.spdx.json"
-  generate_sbom "$image_name" "$first_archive" "$first_metadata" "$first_sbom"
-  generate_sbom "$image_name" "$second_archive" "$second_metadata" "$second_sbom"
+  generate_sbom \
+    "$image_name" "$first_archive" "$first_metadata" "$first_sbom" "$first_browser_identity"
+  generate_sbom \
+    "$image_name" "$second_archive" "$second_metadata" "$second_sbom" "$second_browser_identity"
   generate_scan_sbom \
     "$image_name" \
     "$first_archive" \
     "$first_metadata" \
-    "$evidence_directory/scan-sboms/$image_name.syft.json"
+    "$evidence_directory/scan-sboms/$image_name.syft.json" \
+    "$first_browser_identity"
   first_rootfs="$temporary_root/first/$image_name.rootfs.tar"
   second_rootfs="$temporary_root/second/$image_name.rootfs.tar"
   export_rootfs "$image_name" "$first_tag" first "$first_rootfs"

@@ -209,7 +209,7 @@
     "browser-worker": {
       "local_reference": "slaif-agent-site-browser-worker:local",
       "base": "playwright",
-      "expected_components": ["@slaif-agent-site/browser-worker", "playwright-core"]
+      "expected_components": ["@slaif-agent-site/browser-worker", "playwright-core", "chrome"]
     },
     "nginx": {
       "local_reference": "slaif-agent-site-nginx:local",

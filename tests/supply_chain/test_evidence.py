@@ -13,6 +13,8 @@ from pathlib import Path
 
 from tools.supply_chain.evidence import (
     FIXED_CREATED,
+    add_browser_identity_to_spdx,
+    add_browser_identity_to_syft,
     docker_archive_config_id,
     finalize_bundle,
     normalize_database_status,
@@ -98,30 +100,88 @@ class EvidenceTests(unittest.TestCase):
             packages = [
                 spdx_package(name, index)
                 for index, name in enumerate(configured["expected_components"], 1)
+                if not (image == "browser-worker" and name == "chrome")
             ]
+            document = {
+                "dataLicense": "CC0-1.0",
+                "documentNamespace": f"https://example.invalid/{image}",
+                "name": image,
+                "packages": packages,
+                "relationships": [
+                    {
+                        "relatedSpdxElement": packages[0]["SPDXID"],
+                        "relationshipType": "DESCRIBES",
+                        "spdxElementId": "SPDXRef-DOCUMENT",
+                    }
+                ],
+                "SPDXID": "SPDXRef-DOCUMENT",
+                "spdxVersion": "SPDX-2.3",
+            }
+            if image == "browser-worker":
+                image_id = "sha256:" + "a" * 64
+                identity = {
+                    "cataloger": "supplemental-measured-runtime",
+                    "executable": self.policy["browser_runtime"]["chromium_executable"],
+                    "executable_sha256": "c" * 64,
+                    "executable_version": (
+                        "Google Chrome for Testing "
+                        + self.policy["browser_runtime"]["chromium_version"]
+                    ),
+                    "image_id": image_id,
+                    "source_archive_sha256": self.policy["browser_runtime"][
+                        "chromium_archive_sha256"
+                    ],
+                    "source_archive_url": self.policy["browser_runtime"][
+                        "chromium_archive_url"
+                    ],
+                    "source_revision": "local",
+                }
+                document["packages"].append(
+                    {
+                        "SPDXID": "SPDXRef-DocumentRoot-Image",
+                        "name": "image",
+                        "primaryPackagePurpose": "CONTAINER",
+                        "versionInfo": "local",
+                    }
+                )
+                document["files"] = [
+                    {
+                        "SPDXID": "SPDXRef-File-Chrome",
+                        "fileName": identity["executable"].removeprefix("/"),
+                        "checksums": [],
+                    }
+                ]
+                add_browser_identity_to_spdx(document, identity, image_id, "local")
             write_json(
                 self.root / f"sboms/{image}.spdx.json",
-                {
-                    "dataLicense": "CC0-1.0",
-                    "documentNamespace": f"https://example.invalid/{image}",
-                    "name": image,
-                    "packages": packages,
-                    "relationships": [
-                        {
-                            "relatedSpdxElement": packages[0]["SPDXID"],
-                            "relationshipType": "DESCRIBES",
-                            "spdxElementId": "SPDXRef-DOCUMENT",
-                        }
-                    ],
-                    "SPDXID": "SPDXRef-DOCUMENT",
-                    "spdxVersion": "SPDX-2.3",
-                },
+                document,
             )
             scan_sbom_path = self.root / f"scan-sboms/{image}.syft.json"
-            write_json(
-                scan_sbom_path,
-                {"slaifEvidence": {"image_id": "sha256:" + "a" * 64}},
-            )
+            scan_document = {
+                "artifacts": [
+                    {
+                        "name": "playwright-core",
+                        "purl": "pkg:npm/playwright-core@1.62.1",
+                        "type": "npm",
+                        "version": "1.62.1",
+                    }
+                ],
+                "files": [
+                    {
+                        "location": {
+                            "path": self.policy["browser_runtime"][
+                                "chromium_executable"
+                            ]
+                        }
+                    }
+                ],
+                "slaifEvidence": {"image_id": "sha256:" + "a" * 64},
+            }
+            if image == "browser-worker":
+                add_browser_identity_to_syft(
+                    scan_document, identity, "sha256:" + "a" * 64, "local"
+                )
+            write_json(scan_sbom_path, scan_document)
             matches: list[dict[str, object]] = []
             if image == "browser-worker":
                 for exception in load_json(
@@ -365,6 +425,40 @@ class EvidenceTests(unittest.TestCase):
         self.populate()
         (self.root / "sboms/web.spdx.json").unlink()
         with self.assertRaisesRegex(PolicyError, "invalid JSON"):
+            finalize_bundle(self.root, "local")
+
+    def test_browser_inventory_is_required_and_bound_to_measured_identity(self) -> None:
+        self.populate()
+        sbom_path = self.root / "sboms/browser-worker.spdx.json"
+        sbom = load_json(sbom_path)
+        sbom["packages"] = [
+            package for package in sbom["packages"] if package["name"] != "chrome"
+        ]
+        write_json(sbom_path, sbom)
+        with self.assertRaisesRegex(PolicyError, "expected SBOM component.*chrome"):
+            finalize_bundle(self.root, "local")
+
+        self.populate()
+        scan_path = self.root / "scan-sboms/browser-worker.syft.json"
+        scan_sbom = load_json(scan_path)
+        scan_sbom["slaifEvidence"]["browser_runtime"]["executable_sha256"] = "d" * 64
+        write_json(scan_path, scan_sbom)
+        scan = load_json(self.root / "scans/browser-worker.grype.json")
+        scan["slaifEvidence"]["sbom_sha256"] = sha256_file(scan_path)
+        write_json(self.root / "scans/browser-worker.grype.json", scan)
+        with self.assertRaisesRegex(PolicyError, "SPDX executable hash binding"):
+            finalize_bundle(self.root, "local")
+
+        self.populate()
+        scan_sbom = load_json(scan_path)
+        scan_sbom["slaifEvidence"]["browser_runtime"]["executable_version"] = (
+            "Google Chrome for Testing 152.0.7977.82"
+        )
+        write_json(scan_path, scan_sbom)
+        scan = load_json(self.root / "scans/browser-worker.grype.json")
+        scan["slaifEvidence"]["sbom_sha256"] = sha256_file(scan_path)
+        write_json(self.root / "scans/browser-worker.grype.json", scan)
+        with self.assertRaisesRegex(PolicyError, "measured Chrome version"):
             finalize_bundle(self.root, "local")
 
     def test_rootfs_manifest_is_normalized_and_bounded(self) -> None:

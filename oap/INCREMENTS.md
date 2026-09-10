@@ -8,7 +8,7 @@ increment is 078/3.
 |---|---|---|
 | 078/1 | [PR #77](https://github.com/ulfe-lmi/slaif-agent-site/pull/77): bounded component composition/local design with 078-j authority/replay and 078-k/078-l audit repairs | Accepted and merged at `3cae3d6cef2a92e7068856d21bc9a47b8190c22e` on 2026-09-09; 078/1 is closed |
 | 078/2 | `oap/078-2-site-theme-tokens`: bounded site-theme token data plane from verified merged `main` | Accepted and merged in PR #79 at `a9d3e6800d5e8b5fd5c9cd9e0be5010184058c6b` on 2026-09-10; 078/2 is closed |
-| 078/3 | `oap/078-3-browser-security-refresh`: qualify Chrome for Testing 153.0.8010.36 and preserve failed-scan diagnostics | Active `078-t` maintenance PR; supersedes the vulnerable 152.0.7977.82 runtime pin without broadening 078 scope |
+| 078/3 | `oap/078-3-browser-security-refresh`: qualify Chrome for Testing 153.0.8010.36 and preserve failed-scan diagnostics | Active `078-u` maintenance PR; 078-t exposed an unqualified Syft Chrome-coverage gap, now being closed without broadening 078 scope |
 | 078-i | `567973e` implementation plus `127d7f1` report: bounded site-theme tokens | Preserved immutable history; removed from PR #77 by 078-j and deferred for deliberate reuse |
 | Next | Remaining 078 scope after 078/3 | Site-theme/global-region/page-style/catalog boundaries remain separate; numeric 078 remains PARTIAL |
 
@@ -59,4 +59,4 @@ honestly unknown/not reproduced, with current targeted runs passing. This
 continuation does not implement global regions, page-style/catalog expansion,
 exact-workspace Puck, review, promotion, publication, or final Objective-078/
 MVP acceptance. PR #79 is accepted and merged; its post-merge browser security
-regression is handled by active 078-t.
+regression and the 078-t scanner-coverage gap are handled by active 078-u.

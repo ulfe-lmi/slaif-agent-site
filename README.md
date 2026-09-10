@@ -95,9 +95,10 @@ final MVP claims.
 
 The supply-chain policy now qualifies Chrome for Testing `153.0.8010.36` at CfT
 revision `1681091`, replacing the vulnerable `152.0.7977.82` payload. The
-fresh local six-image qualification passed with zero unexcepted Critical
-findings; required remote checks remain pending, and no vulnerability exception
-is added. Earlier
+078-t built and scanned the six images, but its apparent zero-Critical result
+was unqualified because Syft omitted the Chrome 153 identity from the Grype
+input. Active 078-u closes that scanner-coverage gap with a measured,
+artifact-bound component; no vulnerability exception is added. Earlier
 qualifications remain historical evidence in
 [`supply-chain/browser-worker-critical-matrix.json`](supply-chain/browser-worker-critical-matrix.json)
 and the closed [issue #67](https://github.com/ulfe-lmi/slaif-agent-site/issues/67).

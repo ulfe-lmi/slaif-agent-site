@@ -4,8 +4,8 @@ This tracker uses the contract-audit status vocabulary rather than file
 presence or completion estimates. The authoritative baseline is
 [`MVP-CONTRACT-AUDIT.md`](MVP-CONTRACT-AUDIT.md), updated for the protocol-final
 Objective 078 increment 2 on PR #79, reviewed and accepted on 2026-09-10 and
-merged at `a9d3e6800d5e8b5fd5c9cd9e0be5010184058c6b`. The active 078-t
-continuation is a separate 078/3 browser-security maintenance increment from
+merged at `a9d3e6800d5e8b5fd5c9cd9e0be5010184058c6b`. The active 078-u
+continuation is a separate 078/3 browser-scan-coverage maintenance increment from
 that verified remote `main`.
 
 ## Current verdict
@@ -89,9 +89,9 @@ Site-global theme precedence, global-region, exact-workspace Puck, review,
 promotion, and publication remain **PARTIAL/NOT IMPLEMENTED**; the 078-s
 theme increment does not claim that the contractual MVP is complete. Its
 bounded V1–V2 renderer/browser evidence and diagnostic closure are complete on
-merged PR #79; global regions/page-style/catalog remain deferred. Active 078-t
-qualifies the browser security update and preserves failed-scan evidence without
-changing this product scope.
+merged PR #79; global regions/page-style/catalog remain deferred. Active 078-u
+closes the unqualified Chrome scan-coverage gap without changing this product
+scope.
 
 The 078-n continuation repaired the approved consumed-order link formatting
 without changing the product tree. The historical 078-o continuation qualified
@@ -101,7 +101,7 @@ evidence. Its result is included in the accepted and merged 078/1 revision.
 
 ## Active and remaining sequence
 
-The active transcript pointer is `078-t` for the current browser-security
+The active transcript pointer is `078-u` for the current browser-scan-coverage
 maintenance continuation; 078/1 and 078/2 are accepted and merged while 078/3
 is the active increment. Acceptance and containment in `main` are determined by OAP and
 GitHub state, not this document. All later order files remain inert until
@@ -110,7 +110,7 @@ strategy selects and signals them.
 | Order | Contractual scope | Current status |
 |---|---|---|
 | 077 | Agent page, navigation, redirect, and bounded dynamic collection Render semantics | COMPLETE — E2E PROVEN and accepted/merged in PR #74 on 2026-09-08 at `ae3a4a6` |
-| 078 | Agent composition and design semantics; bounded component and site-theme data planes | PARTIAL — 078/1 component/local-design slice is accepted and merged in PR #77 at `3cae3d6`; 078/2 bounded site-theme evidence closure is accepted and merged in PR #79 at `a9d3e68`; active 078/3 qualifies the browser security update; global-region/page-style/catalog scope remains deferred |
+| 078 | Agent composition and design semantics; bounded component and site-theme data planes | PARTIAL — 078/1 component/local-design slice is accepted and merged in PR #77 at `3cae3d6`; 078/2 bounded site-theme evidence closure is accepted and merged in PR #79 at `a9d3e68`; active 078/3 closes the unqualified browser scan-coverage gap; global-region/page-style/catalog scope remains deferred |
 | 079 | Agent media semantics and references | PARTIAL |
 | 080 | Real MCP semantic parity | SCAFFOLD ONLY |
 | 081 | Human Puck editing in the exact Agent workspace | PARTIAL |
