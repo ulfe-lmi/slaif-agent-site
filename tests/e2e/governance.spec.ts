@@ -601,6 +601,29 @@ test("puck-editor-round-trip-through-human-editor-api", async ({ page }) => {
   await expect(
     page.getByRole("heading", { name: "Page composition", exact: true }).first(),
   ).toBeVisible();
+  await page.getByLabel("Page family override (AA)").selectOption("mono");
+  await page.getByLabel("Page weight override (AA)").selectOption("inherit");
+  const mixedPageStyleSave = page.waitForResponse(
+    (response) =>
+      response.request().method() === "PATCH" &&
+      response
+        .url()
+        .includes(`/api/editor/v1/sites/${siteId}/pages/${pageRecord.id}/style`),
+  );
+  await page.getByRole("button", { name: "Save page style", exact: true }).click();
+  const savedMixedPageStyle = await mixedPageStyleSave;
+  const savedMixedPageStyleText = await savedMixedPageStyle.text();
+  expect(savedMixedPageStyle.status(), savedMixedPageStyleText).toBe(200);
+  expectPrivateHeaders(savedMixedPageStyle);
+  expect(JSON.parse(savedMixedPageStyleText)).toMatchObject({
+    row_version: 3,
+    overrides: {
+      palette: { preset: "ember" },
+      typography: { family: "mono", scale: "compact" },
+      layout: { content_width: "sm", spacing: "sm", grid_gap: "lg" },
+      shape: { radius: "none", shadow: "none" },
+    },
+  });
   async function dragUntil(
     source: Locator,
     target: Locator,
@@ -849,10 +872,10 @@ test("puck-editor-round-trip-through-human-editor-api", async ({ page }) => {
   );
   expect(pageStyleAfterPuck.status()).toBe(200);
   expect(await pageStyleAfterPuck.json()).toMatchObject({
-    row_version: 2,
+    row_version: 3,
     overrides: {
       palette: { preset: "ember" },
-      typography: { family: "system", scale: "compact", weight: "regular" },
+      typography: { family: "mono", scale: "compact" },
       layout: { content_width: "sm", spacing: "sm", grid_gap: "lg" },
       shape: { radius: "none", shadow: "none" },
     },

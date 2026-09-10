@@ -260,7 +260,7 @@ def _style_data_sql() -> str:
             IF cardinality(reset_tokens)<>cardinality(
                 ARRAY(SELECT DISTINCT value FROM unnest(reset_tokens) value))
             THEN RAISE EXCEPTION 'PAGE_STYLE_RESET_INVALID' USING ERRCODE='P0003'; END IF;
-            IF EXISTS (SELECT 1 FROM unnest(reset_tokens) value WHERE value NOT IN (
+            IF EXISTS (SELECT 1 FROM unnest(reset_tokens) value WHERE value IS NULL OR value NOT IN (
                 'palette.preset','typography.family','typography.scale','typography.weight',
                 'layout.content_width','layout.spacing','layout.grid_gap','shape.radius','shape.shadow'))
             THEN RAISE EXCEPTION 'PAGE_STYLE_RESET_INVALID' USING ERRCODE='P0003'; END IF;
@@ -411,6 +411,11 @@ def _semantic_completion_sql(*, include_style: bool) -> str:
         if include_style
         else ""
     )
+    theme_row = (
+        "                       ('THEME_UPDATED','theme','PATCH',200,'mutation'),\n"
+        if include_style
+        else "\n                       ('THEME_UPDATED','theme','PATCH',200,'mutation'),\n"
+    )
     return f"""
         CREATE OR REPLACE FUNCTION control.slaif_agent_idempotency_complete(
             p_capability_id uuid,p_workspace_id uuid,p_idempotency_key text,
@@ -429,7 +434,8 @@ def _semantic_completion_sql(*, include_style: bool) -> str:
                OR p_response_body->>'action' IS DISTINCT FROM p_action
                OR p_response_body->>'operation_id' IS DISTINCT FROM p_operation_id::text
                OR p_response_body->'record'->>'id' IS DISTINCT FROM p_resource_id::text
-               OR NOT EXISTS (SELECT 1 FROM (VALUES
+               OR NOT EXISTS (
+                   SELECT 1 FROM (VALUES
                        ('CONTENT_TYPE_CREATED','content_type','POST',201,'mutation'),
                        ('FIELD_DEFINITION_CREATED','field_definition','POST',201,'mutation'),
                        ('CONTENT_ITEM_CREATED','content_item','POST',201,'mutation'),
@@ -454,8 +460,7 @@ def _semantic_completion_sql(*, include_style: bool) -> str:
                        ('NAVIGATION_ITEM_UPDATED','navigation_item','PATCH',200,'mutation'),
                        ('REDIRECT_UPDATED','redirect','PATCH',200,'mutation'),
                        ('COMPONENT_UPDATED','composition_node','PATCH',200,'mutation'),
-{style_row}                       ('THEME_UPDATED','theme','PATCH',200,'mutation'),
-                       ('CONTENT_TYPE_DELETED','content_type','DELETE',200,'delete'),
+{style_row}{theme_row}                       ('CONTENT_TYPE_DELETED','content_type','DELETE',200,'delete'),
                        ('FIELD_DEFINITION_DELETED','field_definition','DELETE',200,'delete'),
                        ('CONTENT_ITEM_DELETED','content_item','DELETE',200,'delete'),
                        ('CONTENT_ITEM_TRANSLATION_DELETED','content_item_translation','DELETE',200,'delete'),
@@ -474,7 +479,8 @@ def _semantic_completion_sql(*, include_style: bool) -> str:
                    ) AS allowed(action,resource_type,http_method,response_status,quota_kind)
                    WHERE allowed.action=p_action AND allowed.resource_type=p_resource_type
                      AND allowed.http_method=p_http_method AND allowed.response_status=p_status_code
-                     AND allowed.quota_kind=p_quota_kind)
+                     AND allowed.quota_kind=p_quota_kind
+               )
             THEN RAISE EXCEPTION 'INVALID_SEMANTIC_COMPLETION' USING ERRCODE='P0001'; END IF;
             SELECT w.site_id INTO expected_site FROM control.capability c
             JOIN control.workspace w ON w.id=c.workspace_id
@@ -502,13 +508,16 @@ def _semantic_constraint_sql(*, include_style: bool) -> str:
         if include_style
         else ""
     )
+    theme_clause = """
+        OR (action='THEME_UPDATED' AND resource_type='theme' AND http_method='PATCH'
+            AND response_status=200 AND quota_kind='mutation')
+"""
     return f"""
         ALTER TABLE audit.agent_mutation ADD CONSTRAINT agent_mutation_semantic_shape CHECK (
             (http_method IS NULL AND quota_kind IS NULL)
             OR (action IN ('CONTENT_TYPE_CREATED','FIELD_DEFINITION_CREATED','CONTENT_ITEM_CREATED','CONTENT_ITEM_TRANSLATION_CREATED','ITEM_RELATION_CREATED','COLLECTION_VIEW_CREATED','PAGE_CREATED','LOCALE_CREATED','NAVIGATION_CREATED','NAVIGATION_ITEM_CREATED','REDIRECT_CREATED','COMPONENT_CREATED') AND http_method='POST' AND response_status=201 AND quota_kind='mutation')
             OR (action IN ('CONTENT_TYPE_UPDATED','FIELD_DEFINITION_UPDATED','CONTENT_ITEM_UPDATED','CONTENT_ITEM_TRANSLATION_UPDATED','ITEM_RELATION_UPDATED','COLLECTION_VIEW_UPDATED','PAGE_UPDATED','LOCALE_UPDATED','NAVIGATION_UPDATED','NAVIGATION_ITEM_UPDATED','REDIRECT_UPDATED','COMPONENT_UPDATED') AND http_method='PATCH' AND response_status=200 AND quota_kind='mutation')
-{style_clause}            OR (action='THEME_UPDATED' AND resource_type='theme' AND http_method='PATCH' AND response_status=200 AND quota_kind='mutation')
-            OR (action IN ('CONTENT_TYPE_DELETED','FIELD_DEFINITION_DELETED','CONTENT_ITEM_DELETED','CONTENT_ITEM_TRANSLATION_DELETED','ITEM_RELATION_DELETED','COLLECTION_VIEW_DELETED','PAGE_DELETED','LOCALE_DELETED','NAVIGATION_DELETED','NAVIGATION_ITEM_DELETED','REDIRECT_DELETED','COMPONENT_DELETED') AND http_method='DELETE' AND response_status=200 AND quota_kind='delete')
+{style_clause}{theme_clause}            OR (action IN ('CONTENT_TYPE_DELETED','FIELD_DEFINITION_DELETED','CONTENT_ITEM_DELETED','CONTENT_ITEM_TRANSLATION_DELETED','ITEM_RELATION_DELETED','COLLECTION_VIEW_DELETED','PAGE_DELETED','LOCALE_DELETED','NAVIGATION_DELETED','NAVIGATION_ITEM_DELETED','REDIRECT_DELETED','COMPONENT_DELETED') AND http_method='DELETE' AND response_status=200 AND quota_kind='delete')
             OR (action IN ('PAGE_MOVED','PAGE_RESTORED','NAVIGATION_ITEM_MOVED','COMPONENT_MOVED') AND http_method='POST' AND response_status=200 AND quota_kind='mutation')
         )
     """
@@ -540,7 +549,8 @@ def _no_effect_completion_sql(*, include_style: bool) -> str:
             WHERE capability_id=p_capability_id AND workspace_id=p_workspace_id
               AND idempotency_key=p_idempotency_key AND request_digest=p_request_digest
               AND operation_id=p_operation_id AND status_code IS NULL;
-            IF NOT FOUND THEN RAISE EXCEPTION 'IDEMPOTENCY_RESERVATION_NOT_FOUND' USING ERRCODE='P0002'; END IF;
+            IF NOT FOUND THEN RAISE EXCEPTION 'IDEMPOTENCY_RESERVATION_NOT_FOUND'
+                USING ERRCODE='P0002'; END IF;
         END;
         $fn$;
         ALTER FUNCTION control.slaif_agent_idempotency_complete_no_effect(

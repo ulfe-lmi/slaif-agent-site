@@ -133,6 +133,14 @@ Editor/Puck controls and composition persistence are exercised separately.
 CI runs this focused gate across PostgreSQL 14–18; Compose acceptance extends
 the same-workspace public Agent preview path through NGINX.
 
+The 078-x continuation additionally captures a genuinely fresh 065 baseline
+before applying 066, compares restored function definitions byte-for-byte with
+owner/ACL/volatility/configuration and the audit constraint, isolates audit-only
+downgrade refusal, cancels after real style DML and verifies rollback/retry,
+checks exact audit/idempotency identity, and exercises both lock orderings with
+page update/move/delete plus concurrent theme-change/reset serialization. The
+human proof includes viewer denial and a same-group update/reset request.
+
 ## Bounded Agent component data-plane acceptance
 
 The public Agent Compose acceptance creates a fresh human-issued L2 workspace
