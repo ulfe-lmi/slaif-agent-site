@@ -93,14 +93,16 @@ final MVP claims.
 > runs with durable private artifact retrieval. Review snapshots, promotion,
 > publication, and public media finalization remain separate work.
 
-The supply-chain policy now uses qualified Chrome for Testing `152.0.7977.82`
-and has no current vulnerability exception after a fresh full six-image scan
-reported zero unexcepted Critical findings. The former 41-finding
-`152.0.7977.64` qualification remains historical evidence in
+The supply-chain policy now qualifies Chrome for Testing `153.0.8010.36` at CfT
+revision `1681091`, replacing the vulnerable `152.0.7977.82` payload. The
+078-t built and scanned the six images, but its apparent zero-Critical result
+was unqualified because Syft omitted the Chrome 153 identity from the Grype
+input. Active 078-u closes that scanner-coverage gap with a measured,
+artifact-bound component; no vulnerability exception is added. Earlier
+qualifications remain historical evidence in
 [`supply-chain/browser-worker-critical-matrix.json`](supply-chain/browser-worker-critical-matrix.json)
-and [issue #67](https://github.com/ulfe-lmi/slaif-agent-site/issues/67). Policy
-keeps that issue open until the containing Objective-077 merge is verified and
-then closes it as resolved; this does not claim release readiness.
+and the closed [issue #67](https://github.com/ulfe-lmi/slaif-agent-site/issues/67).
+The maintenance qualification does not claim release readiness.
 
 The current automation also migrates/rebuilds disposable databases, verifies
 the exact role/ownership/grant matrix, exercises COW runtime/reviewer paths,

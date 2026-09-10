@@ -163,11 +163,11 @@
     "base_image": "playwright",
     "node_version": "24.18.1",
     "playwright_core_version": "1.62.1",
-    "chromium_revision": "1669021",
-    "chromium_version": "152.0.7977.82",
-    "chromium_executable": "/ms-playwright/chromium-1669021/chrome-linux64/chrome",
-    "chromium_archive_url": "https://storage.googleapis.com/chrome-for-testing-public/152.0.7977.82/linux64/chrome-linux64.zip",
-    "chromium_archive_sha256": "0704631fb3e4f741092e08f55272f90abc3e307f991f05f332924364415b02e0",
+    "chromium_revision": "1681091",
+    "chromium_version": "153.0.8010.36",
+    "chromium_executable": "/ms-playwright/chromium-1681091/chrome-linux64/chrome",
+    "chromium_archive_url": "https://storage.googleapis.com/chrome-for-testing-public/153.0.8010.36/linux64/chrome-linux64.zip",
+    "chromium_archive_sha256": "167a098c4fdec156b58a9f678c90a84f9072d789f9c6e7b35496a6987b8b7ef8",
     "platform": "linux/amd64",
     "seccomp_profile_sha256": "294a5523dd03c8dad52215d7970d38711b03f7e6624e09f2ff109ea3628a645c",
     "allowed_capabilities": ["SYS_CHROOT"],
@@ -209,7 +209,7 @@
     "browser-worker": {
       "local_reference": "slaif-agent-site-browser-worker:local",
       "base": "playwright",
-      "expected_components": ["@slaif-agent-site/browser-worker", "playwright-core"]
+      "expected_components": ["@slaif-agent-site/browser-worker", "playwright-core", "chrome"]
     },
     "nginx": {
       "local_reference": "slaif-agent-site-nginx:local",

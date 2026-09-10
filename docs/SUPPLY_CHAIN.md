@@ -130,15 +130,27 @@ retains Go standard-library symbol evidence needed for accurate Grype matches.
 Grype scans that checksummed document; the index links both forms.
 
 The browser worker uses the digest-pinned official Playwright 1.62.1 Noble
-image, Node 24.18.1, exact `playwright-core==1.62.1`, and Chromium revision 1669021
-(`152.0.7977.82`). The exact linux/amd64 archive is SHA-256 verified before
+image, Node 24.18.1, exact `playwright-core==1.62.1`, and Chrome for Testing
+`153.0.8010.36` at CfT revision `1681091`. The exact linux/amd64 archive is
+SHA-256 verified before
 extraction by the bounded source-controlled parser. Its runtime removes
 Firefox, WebKit, the duplicate Chromium
 headless shell, ffmpeg, npm, and Corepack. Evidence requires the worker package
 and `playwright-core`, rejects Firefox/WebKit inventory, and hashes the retained
-`/ms-playwright/chromium-1669021` tree during both clean image builds. The separate
+`/ms-playwright/chromium-1681091` tree during both clean image builds. The separate
 root E2E runner still installs all three test-only browser families outside the
 product image.
+
+Syft 1.51.0's default binary catalogers can identify the Chrome 152 payload but
+returned only an unowned ELF file for the current 153 payload. The runner
+therefore measures the real image executable with `chrome --version` and
+`sha256sum`, then adds one explicitly attributed supplemental Chrome component
+to both the retained SPDX inventory and the exact Syft JSON consumed by Grype.
+That component is bound to the image ID, executable path and SHA-256, official
+archive URL and SHA-256, measured version, and both Google Chrome CPEs. It is
+not represented as native Syft discovery. Finalization and bundle validation
+reject missing, duplicate, conflicting, or mismatched browser identity before
+the vulnerability conclusion is accepted.
 
 The Apache adapter uses the official
 `httpd:2.4.68-trixie@sha256:979c38c2228d28c2edfd45c6e27dcee1c7b4a101a5526721ae8ece454e89e99e`
@@ -172,13 +184,17 @@ findings do not pass silently: per-image and total counts remain in JSON,
 unknown severity counts also remain visible. A pass means zero unexcepted
 Critical findings in that time-bounded database; it does not mean zero
 vulnerabilities. The expired 2026-08-28 exception for the former Chrome
-152.0.7977.64 findings was removed after the fixed 152.0.7977.82 image passed a
-fresh full scan with zero unexcepted Critical findings. The prior qualification
-and finding set remain historical evidence in
+152.0.7977.64 findings was removed after the 152.0.7977.82 image passed its
+qualification scan; the subsequent post-merge scan found 26 unexcepted Critical
+findings in that older payload. The 152.0.7977.82 qualification and finding set
+remain historical evidence in
 [`supply-chain/browser-worker-critical-matrix.json`](../supply-chain/browser-worker-critical-matrix.json)
-and the risk record remains tracked at
+while the active maintenance qualification uses Chrome for Testing
+`153.0.8010.36` at CfT revision `1681091`. The 078-t attempt is retained as
+unqualified coverage-gap evidence; 078-u records the measured component in the
+remote CI bundle and passes the exact six-image scan. The closed risk record remains at
 [issue #67](https://github.com/ulfe-lmi/slaif-agent-site/issues/67); coding does
-not close that issue. Validation requires every non-empty exception set to match
+not reopen it. Validation requires every non-empty exception set to match
 a current Critical finding's exact ID, PURL, and scope; unused, stale,
 near-match, duplicate, or wrong-severity entries fail closed.
 
@@ -214,6 +230,15 @@ The official upload action is full-commit pinned, rejects an empty path, does
 not overwrite, excludes hidden files, and retains the artifact for 14 days.
 The artifact is private CI evidence, not a release, publication, or deployment.
 
+If the build or scan fails before a verified `index.json` exists, the runner's
+exit trap retains only bounded raw scanner JSON and available scan SBOMs under
+`failure-diagnostics/`. That directory contains an explicitly
+`INCOMPLETE`/`UNQUALIFIED` `STATUS.json`, the original exit status, and its own
+SHA-256 manifest; it can never substitute for the normal verified bundle. CI
+uploads it only on a failed supply-chain step for the same 14-day private
+retention period. Safety filtering excludes credential, private-key, and host
+path markers.
+
 Image publication requires a separate durable review and packaging step for
 OS/runtime license texts, notices, and any applicable source-offer material.
 The 14-day CI artifact preserves time-bounded inventory evidence but is not a
@@ -244,8 +269,8 @@ stale, near-match, and wrong-severity entries fail closed. A valid exception
 changes only the conclusion for that exact finding; it never removes the
 component or finding from evidence. Coding agents must not author an exception
 merely to make a gate green. The owner removed this exception after the official
-stable Chrome 152.0.7977.82 qualification; coding does not close issue #67 or
-claim release readiness.
+stable Chrome 152.0.7977.82 qualification; the current 153.0.8010.36
+maintenance qualification does not reopen issue #67 or claim release readiness.
 
 An authorized update must preserve readable tags plus top-level digests,
 review source/license/signature metadata, update the machine policy and narrow

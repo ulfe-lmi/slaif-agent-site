@@ -33,7 +33,7 @@ SPDX_ID = re.compile(r"SPDXRef-[A-Za-z0-9.-]+")
 IMAGE_PREFIXES = {
     "apache": ("etc/apache2/",),
     "backend": ("opt/slaif/",),
-    "browser-worker": ("opt/slaif/", "ms-playwright/chromium-1669021/"),
+    "browser-worker": ("opt/slaif/", "ms-playwright/chromium-1681091/"),
     "nginx": ("etc/nginx/nginx.conf",),
     "postgres": ("usr/local/bin/docker-entrypoint.sh",),
     "web": ("opt/slaif/",),
@@ -48,6 +48,18 @@ NEXT_SERVER_REFERENCE_JS = (
     "opt/slaif/apps/web/.next/server/server-reference-manifest.js"
 )
 NORMALIZED_SECRET = "<normalized-per-build-cryptographic-value>"
+BROWSER_IDENTITY_KEYS = frozenset(
+    {
+        "cataloger",
+        "executable",
+        "executable_sha256",
+        "executable_version",
+        "image_id",
+        "source_archive_sha256",
+        "source_archive_url",
+        "source_revision",
+    }
+)
 
 
 def sha256_bytes(value: bytes) -> str:
@@ -60,6 +72,396 @@ def sha256_file(path: Path) -> str:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def browser_runtime_policy() -> dict[str, Any]:
+    policy = load_json(ROOT / POLICY_PATH.relative_to(ROOT))
+    runtime = policy.get("browser_runtime")
+    if not isinstance(runtime, dict):
+        raise PolicyError("browser runtime policy is missing")
+    return runtime
+
+
+def is_browser_identity(value: dict[str, Any]) -> bool:
+    if str(value.get("name", "")).casefold() in {"chrome", "chromium"}:
+        return True
+    for reference in value.get("externalRefs", value.get("cpes", [])):
+        if not isinstance(reference, dict):
+            continue
+        locator = str(
+            reference.get("referenceLocator", reference.get("cpe", ""))
+        ).casefold()
+        if (
+            locator.startswith("pkg:generic/chrome@")
+            or locator.startswith("cpe:2.3:a:google:chrome:")
+            or locator.startswith("cpe:2.3:a:chrome:chrome:")
+        ):
+            return True
+    return False
+
+
+def validate_browser_identity(
+    identity: dict[str, Any], image_id: str, source_revision: str
+) -> dict[str, Any]:
+    if set(identity) != BROWSER_IDENTITY_KEYS:
+        raise PolicyError("browser-worker: measured identity fields are invalid")
+    runtime = browser_runtime_policy()
+    expected_version = str(runtime["chromium_version"])
+    expected_output = f"Google Chrome for Testing {expected_version}"
+    if identity["cataloger"] != "supplemental-measured-runtime":
+        raise PolicyError("browser-worker: identity provenance is invalid")
+    if identity["image_id"] != image_id:
+        raise PolicyError("browser-worker: identity image binding mismatches")
+    if identity["executable"] != runtime["chromium_executable"]:
+        raise PolicyError("browser-worker: identity executable mismatches policy")
+    if str(identity["executable_version"]).strip() != expected_output:
+        raise PolicyError("browser-worker: measured Chrome version mismatches policy")
+    if not re.fullmatch(r"[0-9a-f]{64}", str(identity["executable_sha256"])):
+        raise PolicyError("browser-worker: executable SHA-256 is malformed")
+    if identity["source_archive_sha256"] != runtime["chromium_archive_sha256"]:
+        raise PolicyError("browser-worker: source archive hash mismatches policy")
+    if identity["source_archive_url"] != runtime["chromium_archive_url"]:
+        raise PolicyError("browser-worker: source archive URL mismatches policy")
+    if identity["source_revision"] != source_revision:
+        raise PolicyError("browser-worker: identity source revision mismatches")
+    return {
+        "cataloger": "supplemental-measured-runtime",
+        "executable": str(identity["executable"]),
+        "executable_sha256": str(identity["executable_sha256"]),
+        "executable_version": expected_output,
+        "image_id": image_id,
+        "source_archive_sha256": str(identity["source_archive_sha256"]),
+        "source_archive_url": str(identity["source_archive_url"]),
+        "source_revision": source_revision,
+    }
+
+
+def browser_component_facts(identity: dict[str, Any]) -> dict[str, Any]:
+    runtime = browser_runtime_policy()
+    version = str(runtime["chromium_version"])
+    return {
+        "cpes": [
+            f"cpe:2.3:a:google:chrome:{version}:*:*:*:*:*:*:*",
+            f"cpe:2.3:a:chrome:chrome:{version}:*:*:*:*:*:*:*",
+        ],
+        "executable": str(identity["executable"]),
+        "executable_sha256": str(identity["executable_sha256"]),
+        "purl": f"pkg:generic/chrome@{version}",
+        "version": version,
+    }
+
+
+def add_browser_identity_to_spdx(
+    document: dict[str, Any],
+    identity: dict[str, Any],
+    image_id: str,
+    source_revision: str,
+) -> None:
+    identity = validate_browser_identity(identity, image_id, source_revision)
+    facts = browser_component_facts(identity)
+    packages = document.get("packages")
+    files = document.get("files")
+    relationships = document.get("relationships")
+    if not isinstance(packages, list) or not isinstance(files, list):
+        raise PolicyError("browser-worker: SPDX files/packages are missing")
+    if not isinstance(relationships, list):
+        raise PolicyError("browser-worker: SPDX relationships are missing")
+    if any(
+        isinstance(package, dict) and is_browser_identity(package)
+        for package in packages
+    ):
+        raise PolicyError("browser-worker: conflicting native browser identity")
+    executable_name = facts["executable"].removeprefix("/")
+    matching_files = [
+        item
+        for item in files
+        if isinstance(item, dict) and item.get("fileName") == executable_name
+    ]
+    if len(matching_files) != 1:
+        raise PolicyError("browser-worker: executable file is absent from SPDX")
+    executable_file = matching_files[0]
+    checksums = executable_file.get("checksums")
+    if not isinstance(checksums, list):
+        checksums = []
+    existing_sha256 = [
+        str(item.get("checksumValue"))
+        for item in checksums
+        if isinstance(item, dict) and item.get("algorithm") == "SHA256"
+    ]
+    if existing_sha256 and existing_sha256 != [facts["executable_sha256"]]:
+        raise PolicyError("browser-worker: SPDX executable hash conflicts")
+    executable_file["checksums"] = [
+        {"algorithm": "SHA256", "checksumValue": facts["executable_sha256"]}
+    ]
+    executable_file["comment"] = (
+        f"measured by {identity['cataloger']}; "
+        f"source_archive_sha256={identity['source_archive_sha256']}"
+    )
+    package_id = (
+        "SPDXRef-Package-ChromeForTesting-"
+        f"{facts['version'].replace('.', '-')}-{facts['executable_sha256'][:16]}"
+    )
+    package = {
+        "SPDXID": package_id,
+        "copyrightText": "NOASSERTION",
+        "description": "Official Google Chrome for Testing runtime binary",
+        "downloadLocation": identity["source_archive_url"],
+        "externalRefs": [
+            {
+                "referenceCategory": "PACKAGE-MANAGER",
+                "referenceLocator": facts["purl"],
+                "referenceType": "purl",
+            },
+            *(
+                {
+                    "referenceCategory": "SECURITY",
+                    "referenceLocator": cpe,
+                    "referenceType": "cpe23Type",
+                }
+                for cpe in facts["cpes"]
+            ),
+        ],
+        "filesAnalyzed": True,
+        "licenseConcluded": "NOASSERTION",
+        "licenseDeclared": "NOASSERTION",
+        "name": "chrome",
+        "originator": "Organization: Google LLC",
+        "sourceInfo": (
+            "supplemental measured runtime identity; "
+            f"cataloger={identity['cataloger']}; "
+            f"executable={facts['executable']}; "
+            f"executable_sha256={facts['executable_sha256']}; "
+            f"source_archive_url={identity['source_archive_url']}; "
+            f"source_archive_sha256={identity['source_archive_sha256']}; "
+            f"measured_version={identity['executable_version']}"
+        ),
+        "supplier": "Organization: Google LLC",
+        "versionInfo": facts["version"],
+    }
+    container = next(
+        (
+            item
+            for item in packages
+            if isinstance(item, dict)
+            and item.get("primaryPackagePurpose") == "CONTAINER"
+        ),
+        None,
+    )
+    if not isinstance(container, dict):
+        raise PolicyError("browser-worker: SPDX container package is missing")
+    packages.append(package)
+    relation_values = {
+        (
+            str(item.get("spdxElementId")),
+            str(item.get("relationshipType")),
+            str(item.get("relatedSpdxElement")),
+        )
+        for item in relationships
+        if isinstance(item, dict)
+    }
+    relations = [
+        (container["SPDXID"], "CONTAINS", package_id),
+        (package_id, "CONTAINS", executable_file["SPDXID"]),
+    ]
+    for source, relationship_type, target in relations:
+        if (source, relationship_type, target) not in relation_values:
+            relationships.append(
+                {
+                    "spdxElementId": source,
+                    "relationshipType": relationship_type,
+                    "relatedSpdxElement": target,
+                }
+            )
+    document["slaifEvidence"] = {"browser_runtime": identity}
+
+
+def add_browser_identity_to_syft(
+    document: dict[str, Any],
+    identity: dict[str, Any],
+    image_id: str,
+    source_revision: str,
+) -> None:
+    identity = validate_browser_identity(identity, image_id, source_revision)
+    facts = browser_component_facts(identity)
+    artifacts = document.get("artifacts")
+    files = document.get("files")
+    if not isinstance(artifacts, list) or not isinstance(files, list):
+        raise PolicyError("browser-worker: Syft artifacts/files are missing")
+    if any(
+        isinstance(artifact, dict) and is_browser_identity(artifact)
+        for artifact in artifacts
+    ):
+        raise PolicyError("browser-worker: conflicting native browser identity")
+    matching_files = [
+        item
+        for item in files
+        if isinstance(item, dict)
+        and isinstance(item.get("location"), dict)
+        and item["location"].get("path") == facts["executable"]
+    ]
+    if len(matching_files) != 1:
+        raise PolicyError("browser-worker: executable file is absent from Syft")
+    location = dict(matching_files[0]["location"])
+    annotations = dict(location.get("annotations") or {})
+    annotations.update({"evidence": "primary", "provenance": identity["cataloger"]})
+    location["annotations"] = annotations
+    artifacts.append(
+        {
+            "cpes": [
+                {"cpe": cpe, "source": identity["cataloger"]} for cpe in facts["cpes"]
+            ],
+            "foundBy": identity["cataloger"],
+            "id": f"cft-chrome-{facts['executable_sha256'][:16]}",
+            "language": "",
+            "licenses": [],
+            "locations": [location],
+            "metadata": {
+                "cataloger": identity["cataloger"],
+                "executable": facts["executable"],
+                "executable_sha256": facts["executable_sha256"],
+                "source_archive_sha256": identity["source_archive_sha256"],
+                "source_archive_url": identity["source_archive_url"],
+                "version_source": "runtime chrome --version",
+            },
+            "metadataType": "binary-signature",
+            "name": "chrome",
+            "purl": facts["purl"],
+            "type": "binary",
+            "version": facts["version"],
+        }
+    )
+    document["slaifEvidence"]["browser_runtime"] = identity
+
+
+def validate_browser_coverage(
+    sbom: dict[str, Any],
+    scan_sbom: dict[str, Any],
+    image_metadata: dict[str, Any],
+    source_revision: str,
+) -> dict[str, Any]:
+    image_id = image_metadata.get("image_id")
+    if not isinstance(image_id, str):
+        raise PolicyError("browser-worker: image identity is missing")
+    evidence = scan_sbom.get("slaifEvidence")
+    if not isinstance(evidence, dict):
+        raise PolicyError("browser-worker: scan SBOM evidence is missing")
+    identity = evidence.get("browser_runtime")
+    if not isinstance(identity, dict):
+        raise PolicyError("browser-worker: scan SBOM browser identity is missing")
+    identity = validate_browser_identity(identity, image_id, source_revision)
+    facts = browser_component_facts(identity)
+    expected_cpes = set(facts["cpes"])
+
+    packages = sbom.get("packages")
+    files = sbom.get("files")
+    relationships = sbom.get("relationships")
+    if not isinstance(packages, list) or not isinstance(files, list):
+        raise PolicyError("browser-worker: SPDX coverage data is missing")
+    if not isinstance(relationships, list):
+        raise PolicyError("browser-worker: SPDX relationships are missing")
+    browser_packages = [
+        package
+        for package in packages
+        if isinstance(package, dict) and is_browser_identity(package)
+    ]
+    if len(browser_packages) != 1:
+        raise PolicyError("browser-worker: SPDX browser identity coverage is invalid")
+    package = browser_packages[0]
+    purls = [
+        str(reference.get("referenceLocator"))
+        for reference in package.get("externalRefs", [])
+        if isinstance(reference, dict) and reference.get("referenceType") == "purl"
+    ]
+    cpes = {
+        str(reference.get("referenceLocator"))
+        for reference in package.get("externalRefs", [])
+        if isinstance(reference, dict) and reference.get("referenceType") == "cpe23Type"
+    }
+    if (
+        package.get("name") != "chrome"
+        or package.get("versionInfo") != facts["version"]
+        or purls != [facts["purl"]]
+        or cpes != expected_cpes
+        or package.get("filesAnalyzed") is not True
+    ):
+        raise PolicyError("browser-worker: SPDX browser identity is inconsistent")
+    executable_name = facts["executable"].removeprefix("/")
+    matching_files = [
+        item
+        for item in files
+        if isinstance(item, dict) and item.get("fileName") == executable_name
+    ]
+    if len(matching_files) != 1:
+        raise PolicyError("browser-worker: SPDX executable binding is missing")
+    executable_file = matching_files[0]
+    sha256_values = [
+        str(item.get("checksumValue"))
+        for item in executable_file.get("checksums", [])
+        if isinstance(item, dict) and item.get("algorithm") == "SHA256"
+    ]
+    if sha256_values != [facts["executable_sha256"]]:
+        raise PolicyError("browser-worker: SPDX executable hash binding is invalid")
+    relation = {
+        (
+            str(item.get("spdxElementId")),
+            str(item.get("relationshipType")),
+            str(item.get("relatedSpdxElement")),
+        )
+        for item in relationships
+        if isinstance(item, dict)
+    }
+    if (
+        str(package.get("SPDXID")),
+        "CONTAINS",
+        str(executable_file.get("SPDXID")),
+    ) not in relation:
+        raise PolicyError("browser-worker: SPDX package/file relationship is missing")
+    source_info = str(package.get("sourceInfo", ""))
+    for value in (
+        identity["source_archive_url"],
+        identity["source_archive_sha256"],
+        identity["executable_sha256"],
+        identity["executable"],
+    ):
+        if value not in source_info:
+            raise PolicyError("browser-worker: SPDX provenance binding is incomplete")
+
+    artifacts = scan_sbom.get("artifacts")
+    if not isinstance(artifacts, list):
+        raise PolicyError("browser-worker: scan SBOM artifacts are missing")
+    browser_artifacts = [
+        artifact
+        for artifact in artifacts
+        if isinstance(artifact, dict) and is_browser_identity(artifact)
+    ]
+    if len(browser_artifacts) != 1:
+        raise PolicyError("browser-worker: Grype input browser coverage is invalid")
+    artifact = browser_artifacts[0]
+    artifact_cpes = {
+        str(item.get("cpe"))
+        for item in artifact.get("cpes", [])
+        if isinstance(item, dict)
+    }
+    locations = artifact.get("locations")
+    metadata = artifact.get("metadata")
+    if not isinstance(locations, list) or len(locations) != 1:
+        raise PolicyError("browser-worker: Grype browser location is invalid")
+    if not isinstance(metadata, dict):
+        raise PolicyError("browser-worker: Grype browser provenance is missing")
+    if (
+        artifact.get("name") != "chrome"
+        or artifact.get("type") != "binary"
+        or artifact.get("version") != facts["version"]
+        or artifact.get("purl") != facts["purl"]
+        or artifact_cpes != expected_cpes
+        or locations[0].get("path") != facts["executable"]
+        or artifact.get("foundBy") != identity["cataloger"]
+        or metadata.get("executable_sha256") != facts["executable_sha256"]
+        or metadata.get("source_archive_sha256") != identity["source_archive_sha256"]
+        or metadata.get("source_archive_url") != identity["source_archive_url"]
+    ):
+        raise PolicyError("browser-worker: Grype browser identity is inconsistent")
+    return identity
 
 
 def read_json(path: str) -> dict[str, Any]:
@@ -107,6 +509,7 @@ def normalize_spdx(
     image_name: str,
     image_id: str,
     source_revision: str,
+    browser_identity: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     if document.get("spdxVersion") != "SPDX-2.3":
         raise PolicyError(f"{image_name}: Syft output is not SPDX 2.3")
@@ -151,6 +554,14 @@ def normalize_spdx(
                     str(item.get("referenceLocator", "")),
                 ),
             )
+    if image_name == "browser-worker":
+        if browser_identity is None:
+            raise PolicyError("browser-worker: measured browser identity is missing")
+        add_browser_identity_to_spdx(
+            document, browser_identity, image_id, source_revision
+        )
+    elif browser_identity is not None:
+        raise PolicyError(f"{image_name}: unexpected browser identity")
     document["packages"] = sorted(
         packages,
         key=lambda item: (
@@ -237,6 +648,7 @@ def normalize_syft_sbom(
     image_id: str,
     archive_config_id: str,
     source_revision: str,
+    browser_identity: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     schema = document.get("schema")
     descriptor = document.get("descriptor")
@@ -295,6 +707,23 @@ def normalize_syft_sbom(
         "image_id": image_id,
         "source_revision": source_revision,
     }
+    if image_name == "browser-worker":
+        if browser_identity is None:
+            raise PolicyError("browser-worker: measured browser identity is missing")
+        add_browser_identity_to_syft(
+            document, browser_identity, image_id, source_revision
+        )
+        document["artifacts"] = sorted(
+            document["artifacts"],
+            key=lambda item: (
+                str(item.get("name", "")).casefold(),
+                str(item.get("version", "")),
+                str(item.get("type", "")),
+                str(item.get("id", "")),
+            ),
+        )
+    elif browser_identity is not None:
+        raise PolicyError(f"{image_name}: unexpected browser identity")
     return document
 
 
@@ -688,6 +1117,11 @@ def finalize_bundle(root: Path, revision: str) -> dict[str, Any]:
         validate_expected_components(
             image_name, sbom, configured["expected_components"]
         )
+        browser_inventory = None
+        if image_name == "browser-worker":
+            browser_inventory = validate_browser_coverage(
+                sbom, scan_sbom, metadata, revision
+            )
         severities: Counter[str] = Counter()
         unexcepted_critical: list[str] = []
         critical_findings: list[dict[str, str]] = []
@@ -744,26 +1178,27 @@ def finalize_bundle(root: Path, revision: str) -> dict[str, Any]:
             item.get("licenseDeclared") in {None, "", "NOASSERTION"}
             for item in sbom["packages"]
         )
-        images.append(
-            {
-                "base_reference": policy["oci_sources"][configured["base"]],
-                "critical_findings": critical_findings,
-                "image": image_name,
-                "image_id": metadata["image_id"],
-                "local_reference": configured["local_reference"],
-                "os_runtime_unknown_license_count": unknown_licenses,
-                "package_counts_by_purl_type": dict(sorted(package_counts.items())),
-                "package_count": len(sbom["packages"]),
-                "sbom": str(sbom_path.relative_to(root)),
-                "sbom_sha256": sha256_file(sbom_path),
-                "scan": str(scan_path.relative_to(root)),
-                "scan_sha256": sha256_file(scan_path),
-                "scan_sbom": str(scan_sbom_path.relative_to(root)),
-                "scan_sbom_sha256": sha256_file(scan_sbom_path),
-                "severity_counts": dict(sorted(severities.items())),
-                "unexcepted_critical": 0,
-            }
-        )
+        image_record = {
+            "base_reference": policy["oci_sources"][configured["base"]],
+            "critical_findings": critical_findings,
+            "image": image_name,
+            "image_id": metadata["image_id"],
+            "local_reference": configured["local_reference"],
+            "os_runtime_unknown_license_count": unknown_licenses,
+            "package_counts_by_purl_type": dict(sorted(package_counts.items())),
+            "package_count": len(sbom["packages"]),
+            "sbom": str(sbom_path.relative_to(root)),
+            "sbom_sha256": sha256_file(sbom_path),
+            "scan": str(scan_path.relative_to(root)),
+            "scan_sha256": sha256_file(scan_path),
+            "scan_sbom": str(scan_sbom_path.relative_to(root)),
+            "scan_sbom_sha256": sha256_file(scan_sbom_path),
+            "severity_counts": dict(sorted(severities.items())),
+            "unexcepted_critical": 0,
+        }
+        if browser_inventory is not None:
+            image_record["browser_inventory"] = browser_inventory
+        images.append(image_record)
     exception_keys = {
         (entry["identifier"], entry["affected"], entry["scope"])
         for entry in vulnerability_document["exceptions"]
@@ -795,6 +1230,16 @@ def finalize_bundle(root: Path, revision: str) -> dict[str, Any]:
         "severity_totals": dict(sorted(total_severities.items())),
     }
     write_json(root / "index.json", index)
+    browser_inventory = next(
+        (
+            image["browser_inventory"]
+            for image in images
+            if image["image"] == "browser-worker"
+        ),
+        None,
+    )
+    if not isinstance(browser_inventory, dict):
+        raise PolicyError("browser-worker: final inventory is missing")
     summary = [
         "SLAIF Agent-Site supply-chain evidence",
         f"revision: {revision}",
@@ -804,7 +1249,9 @@ def finalize_bundle(root: Path, revision: str) -> dict[str, Any]:
         "vulnerability_gate: PASS (zero unexcepted Critical)",
         "high_findings: "
         f"{total_severities.get('High', 0)} (visible review evidence; not clean)",
-        "browser_binary_inventory: empty",
+        "browser_binary_inventory: measured-and-scan-bound "
+        f"version={browser_inventory['executable_version']} "
+        f"sha256={browser_inventory['executable_sha256']}",
     ]
     (root / "SUMMARY.txt").write_text("\n".join(summary) + "\n", encoding="utf-8")
     scan_bundle_forbidden_content(root, policy)
@@ -841,7 +1288,49 @@ def validate_bundle(root: Path) -> None:
         raise PolicyError("index.json: schema version drift")
     if len(index.get("images", [])) != 6:
         raise PolicyError("index.json: required six-image coverage is missing")
+    revision = index.get("revision")
+    if not isinstance(revision, str):
+        raise PolicyError("index.json: source revision is missing")
+    browser_inventory = validate_browser_coverage(
+        load_json(root / "sboms/browser-worker.spdx.json"),
+        load_json(root / "scan-sboms/browser-worker.syft.json"),
+        load_json(root / "images/browser-worker.json"),
+        revision,
+    )
+    indexed_browser = next(
+        (
+            image.get("browser_inventory")
+            for image in index["images"]
+            if isinstance(image, dict) and image.get("image") == "browser-worker"
+        ),
+        None,
+    )
+    if indexed_browser != browser_inventory:
+        raise PolicyError("index.json: browser inventory identity drift")
     scan_bundle_forbidden_content(root, policy)
+
+
+def create_browser_identity(
+    image_id: str,
+    executable_version: str,
+    executable_sha256: str,
+    source_revision: str,
+) -> dict[str, Any]:
+    runtime = browser_runtime_policy()
+    return validate_browser_identity(
+        {
+            "cataloger": "supplemental-measured-runtime",
+            "executable": runtime["chromium_executable"],
+            "executable_sha256": executable_sha256,
+            "executable_version": executable_version,
+            "image_id": image_id,
+            "source_archive_sha256": runtime["chromium_archive_sha256"],
+            "source_archive_url": runtime["chromium_archive_url"],
+            "source_revision": source_revision,
+        },
+        image_id,
+        source_revision,
+    )
 
 
 def main() -> int:
@@ -858,6 +1347,7 @@ def main() -> int:
     spdx.add_argument("--image-name", required=True)
     spdx.add_argument("--image-id", required=True)
     spdx.add_argument("--source-revision", required=True)
+    spdx.add_argument("--browser-identity", type=Path)
 
     syft = subparsers.add_parser("normalize-scan-sbom")
     syft.add_argument("--input", required=True)
@@ -866,6 +1356,14 @@ def main() -> int:
     syft.add_argument("--image-id", required=True)
     syft.add_argument("--archive-config-id", required=True)
     syft.add_argument("--source-revision", required=True)
+    syft.add_argument("--browser-identity", type=Path)
+
+    browser_identity = subparsers.add_parser("browser-identity")
+    browser_identity.add_argument("--output", type=Path, required=True)
+    browser_identity.add_argument("--image-id", required=True)
+    browser_identity.add_argument("--executable-version", required=True)
+    browser_identity.add_argument("--executable-sha256", required=True)
+    browser_identity.add_argument("--source-revision", required=True)
 
     archive_id = subparsers.add_parser("archive-config-id")
     archive_id.add_argument("--archive", type=Path, required=True)
@@ -917,6 +1415,19 @@ def main() -> int:
                     arguments.image_name,
                     arguments.image_id,
                     arguments.source_revision,
+                    load_json(arguments.browser_identity)
+                    if arguments.browser_identity is not None
+                    else None,
+                ),
+            )
+        elif arguments.command == "browser-identity":
+            write_json(
+                arguments.output,
+                create_browser_identity(
+                    arguments.image_id,
+                    arguments.executable_version,
+                    arguments.executable_sha256,
+                    arguments.source_revision,
                 ),
             )
         elif arguments.command == "archive-config-id":
@@ -930,6 +1441,9 @@ def main() -> int:
                     arguments.image_id,
                     arguments.archive_config_id,
                     arguments.source_revision,
+                    load_json(arguments.browser_identity)
+                    if arguments.browser_identity is not None
+                    else None,
                 ),
             )
         elif arguments.command == "rootfs-manifest":

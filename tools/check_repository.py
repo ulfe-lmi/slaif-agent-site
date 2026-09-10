@@ -376,6 +376,7 @@ REQUIRED_FILES = (
         "tools/local_secrets/initialize.py",
         "tools/supply_chain/__init__.py",
         "tools/supply_chain/evidence.py",
+        "tools/supply_chain/failure_diagnostics.py",
         "tools/supply_chain/policy.py",
         "tools/supply_chain/reproducible.py",
         "tools/supply_chain/run.sh",

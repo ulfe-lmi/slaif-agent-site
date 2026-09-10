@@ -195,7 +195,7 @@ class SupplyChainPolicyTests(unittest.TestCase):
     ) -> None:
         matrix = load_json(ROOT / "supply-chain/browser-worker-critical-matrix.json")
         qualifications = matrix["qualification_history"]
-        self.assertEqual(len(qualifications), 1)
+        self.assertEqual(len(qualifications), 3)
         qualification = qualifications[0]
         self.assertEqual(qualification["candidate"], "candidate-3 CfT: 152.0.7977.82")
         metadata = qualification["official_metadata"]
@@ -223,6 +223,34 @@ class SupplyChainPolicyTests(unittest.TestCase):
             ),
             38,
         )
+        attempt = qualifications[1]
+        self.assertEqual(attempt["candidate"], "candidate-4 CfT: 153.0.8010.36")
+        self.assertEqual(attempt["scan_result"]["result"], "INCOMPLETE")
+        self.assertEqual(attempt["scan_result"]["qualification"], "UNQUALIFIED")
+
+        current = qualifications[-1]
+        self.assertEqual(
+            current["candidate"],
+            "candidate-5 CfT: 153.0.8010.36 measured scan coverage",
+        )
+        self.assertEqual(current["official_metadata"]["revision"], "1681091")
+        self.assertEqual(current["official_metadata"]["version"], "153.0.8010.36")
+        self.assertEqual(
+            current["archive_sha256"],
+            "167a098c4fdec156b58a9f678c90a84f9072d789f9c6e7b35496a6987b8b7ef8",
+        )
+        self.assertEqual(
+            current["runtime"]["executable"],
+            "/ms-playwright/chromium-1681091/chrome-linux64/chrome",
+        )
+        self.assertEqual(
+            current["runtime"]["image_digest"],
+            "sha256:e415620b08523cdbfb39c56ff1cd1103d70a38688409c40097fe09b7142cb1d9",
+        )
+        self.assertEqual(current["scan_result"]["ci_run"], "34467063708")
+        self.assertEqual(current["scan_result"]["browser_worker_matches"], 1436)
+        self.assertEqual(current["scan_result"]["result"], "PASS")
+        self.assertEqual(current["scan_result"]["unexcepted_critical"], 0)
 
     def test_notice_generation_is_sorted_and_deterministic(self) -> None:
         component = {

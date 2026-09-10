@@ -284,11 +284,23 @@ jobs:
       - name: Build reproducible artifacts, SBOMs, scans, and evidence
         run: sh tools/supply_chain/run.sh "${RUNNER_TEMP}/supply-chain-evidence"
       - name: Upload checksummed supply-chain evidence
+        if: success()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: supply-chain-evidence-${{ github.sha }}
           path: ${{ runner.temp }}/supply-chain-evidence
           if-no-files-found: error
+          retention-days: 14
+          compression-level: 6
+          overwrite: false
+          include-hidden-files: false
+      - name: Upload incomplete supply-chain failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: supply-chain-failure-diagnostics-${{ github.sha }}
+          path: ${{ runner.temp }}/supply-chain-evidence/failure-diagnostics
+          if-no-files-found: ignore
           retention-days: 14
           compression-level: 6
           overwrite: false
