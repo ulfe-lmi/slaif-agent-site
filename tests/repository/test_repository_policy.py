@@ -30,6 +30,7 @@ from tools.check_repository import (
     SCAFFOLD_EXEMPT_PACKAGES,
     WORKSPACE_PACKAGES,
     RepositoryPolicy,
+    parse_oap_identifier,
 )
 
 
@@ -296,7 +297,7 @@ class RepositoryPolicyTestCase(unittest.TestCase):
         self.write("oap/active", "001-a\n")
         self.write("oap/orders/000-a-history.md")
         self.write("oap/orders/001-a-active.md")
-        self.write("oap/reports/.keep", "")
+        self.write("oap/reports/keep", "")
 
         errors = self.errors_from("check_oap")
 
@@ -317,6 +318,119 @@ class RepositoryPolicyTestCase(unittest.TestCase):
         self.assertTrue(any("2 order files" in error for error in errors))
         self.assertTrue(any("more than one report" in error for error in errors))
         self.assertTrue(any("temporary/publication" in error for error in errors))
+
+    def test_oap_accepts_legacy_active_078_y(self) -> None:
+        self.write("oap/active", "078-y\n")
+        self.write("oap/orders/000-a-history.md")
+        self.write("oap/reports/000-a-history.md")
+        self.write("oap/orders/078-y-current.md")
+
+        self.assertEqual(self.errors_from("check_oap"), [])
+
+    def test_oap_accepts_reserved_final_legacy_round_078_z(self) -> None:
+        self.write("oap/active", "078-z\n")
+        self.write("oap/orders/078-z-transition.md")
+        self.write("oap/reports/keep", "")
+
+        self.assertEqual(self.errors_from("check_oap"), [])
+
+    def test_oap_accepts_increment_qualified_identifiers(self) -> None:
+        for identifier in ("078-5-a", "078-5-z", "078-6-a", "078-10-a"):
+            self.write("oap/active", f"{identifier}\n")
+            self.write(f"oap/orders/{identifier}-current.md")
+            self.write(f"oap/reports/{identifier}-current.md")
+
+            self.assertEqual(self.errors_from("check_oap"), [])
+
+    def test_oap_rejects_malformed_active_identifiers(self) -> None:
+        for content in (
+            "078-Y\n",
+            "078-aa\n",
+            "78-a\n",
+            "078-5\n",
+            "078-0-a\n",
+            "078-05-a\n",
+            "078-y \n",
+            "078-y\n\n",
+            "\n",
+        ):
+            self.write("oap/active", content)
+
+            errors = self.errors_from("check_oap")
+            self.assertTrue(
+                any("NNN-L or NNN-I-L" in error for error in errors), content
+            )
+
+    def test_oap_rejects_malformed_artifact_filenames(self) -> None:
+        self.write("oap/active", "001-a\n")
+        self.write("oap/orders/001-a-active.md")
+        for name in (
+            "078-0-a-x.md",
+            "078-05-a-x.md",
+            "078-aa-x.md",
+            "078-A-x.md",
+            "78-a-x.md",
+            "078-5.md",
+            "078-5a-x.md",
+        ):
+            self.write(f"oap/orders/{name}")
+
+        errors = self.errors_from("check_oap")
+        self.assertEqual(sum("valid NNN-L or NNN-I-L" in error for error in errors), 7)
+
+    def test_oap_rejects_duplicate_qualified_identities(self) -> None:
+        self.write("oap/active", "078-5-a\n")
+        self.write("oap/orders/078-5-a-one.md")
+        self.write("oap/orders/078-5-a-two.md")
+        self.write("oap/reports/078-5-a-one.md")
+        self.write("oap/reports/078-5-a-two.md")
+
+        errors = self.errors_from("check_oap")
+        self.assertTrue(any("2 order files" in error for error in errors))
+        self.assertTrue(any("more than one report" in error for error in errors))
+
+    def test_oap_rejects_duplicate_historical_qualified_reports(self) -> None:
+        self.write("oap/active", "001-a\n")
+        self.write("oap/orders/001-a-active.md")
+        self.write("oap/orders/078-5-a-history.md")
+        self.write("oap/reports/078-5-a-one.md")
+        self.write("oap/reports/078-5-a-two.md")
+
+        errors = self.errors_from("check_oap")
+        self.assertTrue(
+            any("078-5-a must have exactly one report" in error for error in errors)
+        )
+
+    def test_oap_legacy_and_qualified_same_objective_coexist(self) -> None:
+        self.write("oap/active", "078-y\n")
+        self.write("oap/orders/078-y-current.md")
+        self.write("oap/orders/078-5-a-future.md")
+        self.write("oap/reports/078-5-a-future.md")
+
+        self.assertEqual(self.errors_from("check_oap"), [])
+
+        self.write("oap/orders/078-y-second.md")
+        errors = self.errors_from("check_oap")
+        self.assertTrue(any("078-y has 2 order files" in error for error in errors))
+
+    def test_oap_identifier_extraction_objective_increment_round(self) -> None:
+        self.assertEqual(parse_oap_identifier("078-y"), ("078", None, "y"))
+        self.assertEqual(parse_oap_identifier("078-z"), ("078", None, "z"))
+        self.assertEqual(parse_oap_identifier("078-5-a"), ("078", "5", "a"))
+        self.assertEqual(parse_oap_identifier("078-5-z"), ("078", "5", "z"))
+        self.assertEqual(parse_oap_identifier("078-10-a"), ("078", "10", "a"))
+        self.assertEqual(
+            parse_oap_identifier("078-5-a")[0], parse_oap_identifier("078-y")[0]
+        )
+        for malformed in (
+            "078-0-a",
+            "078-05-a",
+            "078-aa",
+            "078-Y",
+            "78-a",
+            "078-5",
+        ):
+            self.assertIsNone(parse_oap_identifier(malformed), malformed)
 
     def test_logo_hash_and_safe_shape_pass_then_tampering_fails(self) -> None:
         svg = b'<svg xmlns="http://www.w3.org/2000/svg"><path d="M0 0"/></svg>\n'

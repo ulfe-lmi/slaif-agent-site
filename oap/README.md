@@ -11,8 +11,22 @@ Programming (OAP). Full coding-agent behavior is defined by
   or numbering.
 - `orders/` contains immutable, strategic-model-authored work orders.
 - `reports/` contains immutable, coding-agent-authored execution reports.
+- Round identifiers exist in two forms: legacy flat `NNN-L` and
+  increment-qualified `NNN-I-L` (numeric objective, increment number with no
+  leading zero, one lowercase round letter), per
+  [`governance/2026-09-14-increment-qualified-round-ids.md`](governance/2026-09-14-increment-qualified-round-ids.md).
+  Qualified IDs appear only when a strategic order activates them; the coding
+  agent never invents or chooses an ID in either form. `078-z` is the reserved
+  final legacy-format round of Objective 078; after it merges the next
+  Objective-078 product increment is `078-5-a`, then `078-6-a`, `078-7-a`, and
+  so on. First-increment flat history of other objectives (for example
+  `079-a`) remains valid, with later increments qualified (`079-2-a`).
 - `NNN-a` creates one branch and one PR for numeric objective `NNN`;
-  `NNN-b` through `NNN-z` amend that same branch and PR.
+  `NNN-b` through `NNN-z` amend that same branch and PR. The first round of an
+  increment-qualified namespace (for example `078-5-a`) creates that
+  increment's branch and PR; later letters of the same increment amend it.
+- `active` names the last activated round until the next activation; it does
+  not itself claim an open PR or objective completion.
 - A bounded semantic merge increment maps to one PR, while a numeric objective
   may span sequential PRs only when a strategic continuation explicitly orders it.
 - The activated order, `active`, and corresponding report are committed and

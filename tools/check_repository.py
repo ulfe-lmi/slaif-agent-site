@@ -498,9 +498,29 @@ SKIP_DIRS = {
 CONFLICT_MARKER = re.compile(r"^(?:<<<<<<<(?: |$)|=======$|>>>>>>>)(?: |$)")
 USES_LINE = re.compile(r"^\s*-?\s*uses:\s*([^\s#]+)(?:\s+#\s*(\S.*))?\s*$")
 FULL_SHA = re.compile(r"[0-9a-f]{40}")
-OAP_IDENTIFIER = re.compile(r"\d{3}-[a-z]")
-OAP_ARTIFACT = re.compile(r"^(\d{3}-[a-z])(?:-.+)?\.md$")
+OAP_IDENTIFIER = re.compile(r"\d{3}-(?:[1-9]\d*-)?[a-z]")
+OAP_ARTIFACT = re.compile(r"^(\d{3}-(?:[1-9]\d*-)?[a-z])(?:-.+)?\.md$")
+OAP_ACTIVE = re.compile(r"\d{3}-(?:[1-9]\d*-)?[a-z]\n?")
+OAP_LEGACY = re.compile(r"^(\d{3})-([a-z])$")
+OAP_QUALIFIED = re.compile(r"^(\d{3})-([1-9]\d*)-([a-z])$")
 INERT_PLANNED_OAP_IDENTIFIERS = {f"{number:03d}-a" for number in range(74, 92)}
+
+
+def parse_oap_identifier(identifier: str) -> tuple[str, str | None, str] | None:
+    """Parse a legacy ``NNN-L`` or qualified ``NNN-I-L`` OAP identifier.
+
+    Returns ``(objective, increment, round)`` where ``increment`` is ``None``
+    for legacy identifiers, or ``None`` when the identifier is malformed.
+    """
+    match = OAP_LEGACY.fullmatch(identifier)
+    if match is not None:
+        return match.group(1), None, match.group(2)
+    match = OAP_QUALIFIED.fullmatch(identifier)
+    if match is not None:
+        return match.group(1), match.group(2), match.group(3)
+    return None
+
+
 MARKDOWN_LINK = re.compile(r"!?\[[^\]]*\]\(([^)\s]+)(?:\s+['\"][^)]*['\"])?\)")
 HTML_LINK = re.compile(r"(?:href|src)\s*=\s*['\"]([^'\"]+)['\"]", re.IGNORECASE)
 MANIFEST_NAMES = {
@@ -817,13 +837,18 @@ class RepositoryPolicy:
         if active_path.is_file():
             text = self.read_utf8(active_path)
             if text is not None:
-                if not re.fullmatch(r"\d{3}-[a-z]\n?", text):
+                stripped = text.strip()
+                if (
+                    OAP_ACTIVE.fullmatch(text) is None
+                    or parse_oap_identifier(stripped) is None
+                ):
                     self.error(
                         active_path,
-                        "must contain one NNN-x identifier and optional final newline",
+                        "must contain one NNN-L or NNN-I-L identifier and "
+                        "optional final newline",
                     )
                 else:
-                    active = text.strip()
+                    active = stripped
 
         orders = self.group_oap_artifacts(orders_dir, "order")
         reports = self.group_oap_artifacts(reports_dir, "report")
@@ -868,7 +893,11 @@ class RepositoryPolicy:
         for path in sorted(directory.glob("*.md")):
             match = OAP_ARTIFACT.fullmatch(path.name)
             if match is None:
-                self.error(path, f"OAP {label} filename does not start with NNN-x")
+                self.error(
+                    path,
+                    f"OAP {label} filename does not start with a valid"
+                    " NNN-L or NNN-I-L identifier",
+                )
                 continue
             grouped[match.group(1)].append(path)
         for identifier, paths in sorted(grouped.items()):

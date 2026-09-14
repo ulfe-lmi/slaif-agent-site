@@ -21,6 +21,15 @@ amendment for future bounded semantic increments: one increment per PR, with a
 numeric objective allowed to span sequential PRs. Earlier artifacts remain
 immutable history; explicit order mode and named PR identity control delivery.
 
+Prospective governance notice (effective 2026-09-14):
+`../governance/2026-09-14-review-unit-governance.md` binds CLOSURE_ONLY mode
+and the finite rejection checklist from this amendment onward: when Strategy
+rejects COMPLETE it publishes one finite list of unresolved criteria and the
+executable evidence required for each, and a later report may claim COMPLETE
+only if every named criterion was actually executed. The predeclared review
+budget and cumulative base-to-head size recording of the same amendment also
+bind prospectively.
+
 GitHub exclusively determines remote default branch, PR identity/state/base/head,
 commits, diff, reviews, required checks, mergeability/protection, and merge.
 Never accept report prose, local branch/status, unpushed commit, or report-side
@@ -58,14 +67,24 @@ selected after synchronization does.
 
 ## 3. IDs and one-objective/one-PR law
 
-ID=`NNN-L`, `NNN` zero-padded `000..999`, `L=a..z`; `000`=initial setup.
-`NNN-a`=initial round and MUST create exactly one new PR. `NNN-b..NNN-z`=same
-objective and MUST amend that exact branch/PR, never create another. PR/URL/head
-established by `a` become durable objective identity. Strategic alone chooses
-same-number next letter vs, only after accepted merge verification, `NNN+1-a`.
-If `z` insufficient, escalate; no `aa`. Deliberate abandonment requires explicit
-strategic/human decision, PR closure + reason; never silently accept or resume
-after terminal abandonment without explicit recovery.
+ID=`NNN-L` (legacy flat: `NNN` zero-padded `000..999`, `L=a..z`; `000`=initial
+setup) or `NNN-I-L` (increment-qualified: numeric objective, increment number
+with no leading zero, one lowercase round letter), per the 2026-09-14
+ID-namespace amendment (`../governance/2026-09-14-increment-qualified-round-ids.md`).
+Qualified IDs appear only when a strategic order activates them; the coding
+agent never invents or chooses an ID in either form. `078-z` is the reserved
+final legacy-format round of Objective 078; the next Objective-078 product
+increment is `078-5-a`, then `078-6-a`, `078-7-a`, etc. First-increment flat
+history of other objectives (for example `079-a`) remains valid, with later
+increments qualified (`079-2-a`). The first round of an increment namespace
+MUST create exactly one new PR; later letters of that increment MUST amend
+that exact branch/PR, never create another. PR/URL/head established by the
+first round become durable increment identity. Strategic alone chooses the next
+letter vs, only after accepted merge verification, the next increment's `a`.
+If an increment's `a..z` sequence is insufficient, escalate; no `aa`.
+Deliberate abandonment requires explicit strategic/human decision, PR closure +
+reason; never silently accept or resume after terminal abandonment without
+explicit recovery.
 
 Order filename begins `<ID>-`, e.g. `013-a-add-news.md`; at most one
 `orders/<ID>-*.md`. Preferred report same basename; at minimum exactly one

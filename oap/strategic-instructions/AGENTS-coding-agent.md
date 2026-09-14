@@ -191,6 +191,17 @@ head; exact response `OK`; wait.
 `NNN-b..z` amend same branch/PR. Never second objective PR, choose next ID,
 merge/auto-merge/close as accepted. GitHub is branch/commit/PR/check/merge truth;
 VM disposable; unpushed≠delivered.
+ID-namespace amendment (effective 2026-09-14,
+`../governance/2026-09-14-increment-qualified-round-ids.md`): two round-ID
+forms exist — legacy flat `NNN-L` and increment-qualified `NNN-I-L` (numeric
+objective, increment number with no leading zero, one lowercase round letter).
+Qualified IDs appear only when a strategic order activates them; coding never
+invents or chooses any ID. `078-z` is the reserved final legacy-format round
+of Objective 078; after it merges, the next Objective-078 product increment is
+`078-5-a`, then `078-6-a`, `078-7-a`, etc. First-increment flat history of
+other objectives (for example `079-a`) remains valid, with later increments
+qualified (`079-2-a`). No `aa`-style suffixes; each increment-qualified
+namespace has its own `a..z`; escalate on exhaustion.
 
 Versioned transcript: strategy owns/publishes order+active content; coding never
 edits them but commits exact bytes with implementation. Coding atomically owns
