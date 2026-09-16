@@ -188,7 +188,12 @@ SELF`; final report-only commit parent=implementation SHA; push/verify remote PR
 head; exact response `OK`; wait.
 
 `NNN-a` creates one fresh branch+one new PR from authoritative remote main;
-`NNN-b..z` amend same branch/PR. Never second objective PR, choose next ID,
+`NNN-b..z` amend same branch/PR. Qualified `NNN-I-a` creates one fresh branch
++exactly one new PR for that semantic increment from verified remote main (or
+the order-named base); `NNN-I-b..z` amend that same branch/PR. One bounded
+semantic increment equals one PR; a new PR for a new increment of the same
+numeric objective uses the new increment ID and does not require a new numeric
+objective. Never a second PR for the same increment, choose next ID,
 merge/auto-merge/close as accepted. GitHub is branch/commit/PR/check/merge truth;
 VM disposable; unpushed≠delivered.
 ID-namespace amendment (effective 2026-09-14,

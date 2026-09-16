@@ -504,6 +504,17 @@ OAP_ACTIVE = re.compile(r"\d{3}-(?:[1-9]\d*-)?[a-z]\n?")
 OAP_LEGACY = re.compile(r"^(\d{3})-([a-z])$")
 OAP_QUALIFIED = re.compile(r"^(\d{3})-([1-9]\d*)-([a-z])$")
 INERT_PLANNED_OAP_IDENTIFIERS = {f"{number:03d}-a" for number in range(74, 92)}
+MERGE_FACT_LEDGER_FILE = "oap/INCREMENTS.md"
+MERGE_FACT_SCAN_FILES = (
+    "README.md",
+    "oap/INCREMENTS.md",
+    "oap/MVP-PROGRESS.md",
+    "oap/MVP-CONTRACT-AUDIT.md",
+)
+MERGE_FACT_SHA = re.compile(r"(?<![0-9a-fA-F])([0-9a-f]{40})(?![0-9a-fA-F])")
+MERGE_FACT_DATE = re.compile(r"(20\d{2}-\d{2}-\d{2})")
+MERGE_FACT_LEDGER_ENTRY = re.compile(r"`([0-9a-f]{40})` on (20\d{2}-\d{2}-\d{2})")
+MERGE_FACT_NEAR_LIMIT = 120
 
 
 def parse_oap_identifier(identifier: str) -> tuple[str, str | None, str] | None:
@@ -559,6 +570,7 @@ class RepositoryPolicy:
         self.check_readme()
         self.check_markdown_configuration()
         self.check_oap()
+        self.check_merge_facts()
         self.check_workflows()
         self.check_python_quality_configuration()
         self.check_foundation_dependencies()
@@ -906,6 +918,68 @@ class RepositoryPolicy:
                     directory, f"identifier {identifier} has {len(paths)} {label} files"
                 )
         return grouped
+
+    def check_merge_facts(self) -> None:
+        """Enforce merge-fact consistency against the INCREMENTS.md ledger.
+
+        Blank-line-separated paragraphs of the current-state documents that
+        mention ``merged`` with exactly one distinct 40-hex SHA and at least
+        one date must pair the nearest date (within MERGE_FACT_NEAR_LIMIT
+        characters) with an (SHA, date) ledger entry parsed from the
+        oap/INCREMENTS.md table rows. Paragraphs containing two or more
+        distinct 40-hex SHAs are skipped because pairing is ambiguous.
+        """
+        ledger_path = self.root / MERGE_FACT_LEDGER_FILE
+        if not ledger_path.is_file():
+            return
+        ledger_text = self.read_utf8(ledger_path)
+        if ledger_text is None:
+            return
+        ledger: set[tuple[str, str]] = set()
+        for line in ledger_text.splitlines():
+            if line.lstrip().startswith("|"):
+                for entry in MERGE_FACT_LEDGER_ENTRY.finditer(line):
+                    ledger.add((entry.group(1), entry.group(2)))
+        for relative in MERGE_FACT_SCAN_FILES:
+            document_path = self.root / relative
+            if not document_path.is_file():
+                continue
+            document = self.read_utf8(document_path)
+            if document is None:
+                continue
+            for paragraph in re.split(r"\n[ \t]*\n", document):
+                if "merged" not in paragraph.lower():
+                    continue
+                sha_matches = list(MERGE_FACT_SHA.finditer(paragraph))
+                if len({match.group(1) for match in sha_matches}) != 1:
+                    continue
+                date_matches = list(MERGE_FACT_DATE.finditer(paragraph))
+                if not date_matches:
+                    continue
+                nearest_distance: int | None = None
+                nearest_pair: tuple[str, str] | None = None
+                for date_match in date_matches:
+                    distance = min(
+                        abs(date_match.start() - sha_match.start())
+                        for sha_match in sha_matches
+                    )
+                    if nearest_distance is None or distance < nearest_distance:
+                        nearest_distance = distance
+                        nearest_pair = (
+                            sha_matches[0].group(1),
+                            date_match.group(1),
+                        )
+                if (
+                    nearest_distance is not None
+                    and nearest_distance <= MERGE_FACT_NEAR_LIMIT
+                    and nearest_pair is not None
+                    and nearest_pair not in ledger
+                ):
+                    self.error(
+                        relative,
+                        f"merge-fact {nearest_pair[0]} on {nearest_pair[1]}"
+                        f" is not recorded in the {MERGE_FACT_LEDGER_FILE} ledger",
+                    )
 
     def check_workflows(self) -> None:
         directory = self.root / ".github/workflows"

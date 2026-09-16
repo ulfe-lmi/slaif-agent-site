@@ -5,13 +5,16 @@ authoritative for live acceptance and merge state. Objective 078 is
 `PARTIAL`; strategy owns acceptance and merge. Increments 078/1 through 078/4
 are accepted and merged; the next Objective-078 product increment starts at
 `078-5-a` under the 2026-09-14 increment-qualified round-ID amendment.
+The table is the authoritative ledger of verified merge facts (SHA and
+merge date) referenced from current-state documents.
 
 | Increment | PR and contract | State |
 |---|---|---|
+| 077 cross-reference | PR #74: Objective-077 source revision (capability-bound Agent pages/locales/navigation/redirects and dynamic collection Render) | Accepted and merged in PR #74 at `ae3a4a681bb888260192b7bb1b2a337b4906828d` on 2026-09-08; recorded as the verified merge fact referenced from current-state documents |
 | 078/1 | [PR #77](https://github.com/ulfe-lmi/slaif-agent-site/pull/77): bounded component composition/local design with 078-j authority/replay and 078-k/078-l audit repairs | Accepted and merged at `3cae3d6cef2a92e7068856d21bc9a47b8190c22e` on 2026-09-09; 078/1 is closed |
 | 078/2 | `oap/078-2-site-theme-tokens`: bounded site-theme token data plane from verified merged `main` | Accepted and merged in PR #79 at `a9d3e6800d5e8b5fd5c9cd9e0be5010184058c6b` on 2026-09-10; 078/2 is closed |
 | 078/3 | `oap/078-3-browser-security-refresh`: qualify Chrome for Testing 153.0.8010.36 and preserve failed-scan diagnostics | Accepted and merged in PR #80 at `fe31c9f30a7797d0916ad7f8fb56344bc61526f3` on 2026-09-10; 078/3 is closed |
-| 078/4 | `oap/078-4-page-style-overrides`: bounded page-owned theme-token overrides over the accepted site theme | Accepted and merged in PR #81 at `26cafc1c0c91de5eee8406e8d477c50ea0208058` on 2026-09-14; 078/4 is closed |
+| 078/4 | `oap/078-4-page-style-overrides`: bounded page-owned theme-token overrides over the accepted site theme | Accepted and merged in PR #81 at `26cafc1c0c91de5eee8406e8d477c50ea0208058` on 2026-09-10; 078/4 is closed |
 | 078-i | `567973e` implementation plus `127d7f1` report: bounded site-theme tokens | Preserved immutable history; removed from PR #77 by 078-j and deferred for deliberate reuse |
 | Next | Remaining 078 scope after 078/4 | Global-region/header-footer and catalog boundaries remain separate; numeric 078 remains PARTIAL; the next product increment starts at `078-5-a` per [`governance/2026-09-14-increment-qualified-round-ids.md`](governance/2026-09-14-increment-qualified-round-ids.md) |
 

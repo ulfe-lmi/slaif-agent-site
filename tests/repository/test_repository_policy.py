@@ -432,6 +432,98 @@ class RepositoryPolicyTestCase(unittest.TestCase):
         ):
             self.assertIsNone(parse_oap_identifier(malformed), malformed)
 
+    def test_merge_facts_accepts_current_shape_documents_and_ledger(self) -> None:
+        self.write(
+            "oap/INCREMENTS.md",
+            "# Semantic Increment Ledger\n\n"
+            "The table is the authoritative ledger of verified merge facts.\n\n"
+            "| Increment | PR and contract | State |\n"
+            "|---|---|---|\n"
+            "| 077 cross-reference | PR #74 | Accepted and merged in PR #74 at "
+            "`ae3a4a681bb888260192b7bb1b2a337b4906828d` on 2026-09-08; recorded |\n"
+            "| 078/1 | PR #77 | Accepted and merged at "
+            "`3cae3d6cef2a92e7068856d21bc9a47b8190c22e` on 2026-09-09; closed |\n"
+            "| 078/4 | PR #81 | Accepted and merged at "
+            "`26cafc1c0c91de5eee8406e8d477c50ea0208058` on 2026-09-10; closed |\n",
+        )
+        self.write(
+            "README.md",
+            "# README\n\n"
+            "The increment was accepted and merged at\n"
+            "`26cafc1c0c91de5eee8406e8d477c50ea0208058` on 2026-09-10. No work open.\n",
+        )
+
+        self.assertEqual(self.errors_from("check_merge_facts"), [])
+
+    def test_merge_facts_rejects_ledgered_sha_with_wrong_date(self) -> None:
+        self.write(
+            "oap/INCREMENTS.md",
+            "# Semantic Increment Ledger\n\n"
+            "| Increment | PR and contract | State |\n"
+            "|---|---|---|\n"
+            "| 078/4 | PR #81 | Accepted and merged at "
+            "`26cafc1c0c91de5eee8406e8d477c50ea0208058` on 2026-09-10; closed |\n",
+        )
+        self.write(
+            "README.md",
+            "# README\n\n"
+            "The increment was accepted and merged at\n"
+            "`26cafc1c0c91de5eee8406e8d477c50ea0208058` on 2026-09-14. No work open.\n",
+        )
+
+        errors = self.errors_from("check_merge_facts")
+
+        self.assertTrue(
+            any(
+                "26cafc1c0c91de5eee8406e8d477c50ea0208058 on 2026-09-14" in error
+                for error in errors
+            )
+        )
+
+    def test_merge_facts_rejects_unknown_sha_with_date(self) -> None:
+        self.write(
+            "oap/INCREMENTS.md",
+            "# Semantic Increment Ledger\n\n"
+            "| Increment | PR and contract | State |\n"
+            "|---|---|---|\n"
+            "| 078/4 | PR #81 | Accepted and merged at "
+            "`26cafc1c0c91de5eee8406e8d477c50ea0208058` on 2026-09-10; closed |\n",
+        )
+        self.write(
+            "README.md",
+            "# README\n\n"
+            "The revision was merged on 2026-09-08 at\n"
+            "`deadbeefdeadbeefdeadbeefdeadbeefdeadbeef`.\n",
+        )
+
+        errors = self.errors_from("check_merge_facts")
+
+        self.assertTrue(
+            any(
+                "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef on 2026-09-08" in error
+                for error in errors
+            )
+        )
+
+    def test_merge_facts_skips_ambiguous_two_sha_paragraphs(self) -> None:
+        self.write(
+            "oap/INCREMENTS.md",
+            "# Semantic Increment Ledger\n\n"
+            "| Increment | PR and contract | State |\n"
+            "|---|---|---|\n"
+            "| 078/4 | PR #81 | Accepted and merged at "
+            "`26cafc1c0c91de5eee8406e8d477c50ea0208058` on 2026-09-10; closed |\n",
+        )
+        self.write(
+            "README.md",
+            "# README\n\n"
+            "Merged at `26cafc1c0c91de5eee8406e8d477c50ea0208058` and later\n"
+            "superseded at `deadbeefdeadbeefdeadbeefdeadbeefdeadbeef` on "
+            "2026-09-08; both revisions are referenced here.\n",
+        )
+
+        self.assertEqual(self.errors_from("check_merge_facts"), [])
+
     def test_logo_hash_and_safe_shape_pass_then_tampering_fails(self) -> None:
         svg = b'<svg xmlns="http://www.w3.org/2000/svg"><path d="M0 0"/></svg>\n'
         path = self.write("docs/assets/slaif-logo.svg", svg)

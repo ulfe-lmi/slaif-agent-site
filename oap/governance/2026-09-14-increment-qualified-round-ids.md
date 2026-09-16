@@ -60,3 +60,23 @@ refines the identifier namespace only. All unchanged OAP laws continue: exact
 FIFO `OK`, atomic order/`active` publication, immutable orders/reports,
 reports as claims, report-only `SELF` commit with exact implementation parent,
 independent GitHub review, tests/security/isolation, and strategic-only merge.
+
+## Final-legacy-round rejection (prospective, effective 2026-09-17)
+
+1. If strategy rejects the completion claim of a final legacy-format
+   transition round (such as `078-z`) and the objective's legacy round
+   letter sequence is exhausted, no letter continuation exists under this
+   amendment and the protocol requires escalation to the human.
+2. The only legal repair is a human-authorized one-off bounded erratum on
+   that round's existing PR: documentation/protocol/tooling-only changes;
+   one erratum commit on top of the existing report-only head (explicitly
+   recorded exception to the report-only-head pattern); no new identifier,
+   no new order, no new report; `oap/active` unchanged; the erratum
+   recorded as a governance record under `oap/governance/` and
+   cross-referenced from this amendment and from the strategic acceptance
+   record.
+3. This clause does not amend the ID grammar, does not permit wider
+   suffixes, and does not permit using `078-5-a` before the 078-z merge.
+4. The 2026-09-17 078-z erratum
+   (`oap/governance/2026-09-17-078-z-final-legacy-round-erratum.md`) is the
+   first instance.

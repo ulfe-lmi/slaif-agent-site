@@ -49,7 +49,7 @@ implementation head; verify it as remote PR head; signal response FIFO; wait.
 
 Coding never: changes roadmap/acceptance/next ID; creates own order; writes
 `oap/active` content or `control.fifo`; edits activated orders or earlier
-reports; creates a second objective PR; merges/closes/auto-merges an OAP PR;
+reports; creates a second PR for the same increment; merges/closes/auto-merges an OAP PR;
 weakens scope/security/tests to claim completion; transfers safe routine VM
 setup to human/strategy. Committing exact strategic-authored order/active bytes
 does not transfer content ownership. Reports are claims; strategy independently
@@ -100,9 +100,14 @@ of Objective 078; the next Objective-078 product increment is `078-5-a`, then
 (`079-2-a`). No `aa`-style suffixes; each increment-qualified namespace has its
 own `a..z`; escalate on exhaustion.
 `NNN-a` creates one fresh branch and exactly one new PR for objective `NNN`.
-`NNN-b..NNN-z` amend that exact branch/PR and never create another. Only a new
-numeric `NNN+1-a` creates another PR. Coding never invents/chooses an ID or
-continuation-vs-next transition.
+`NNN-b..NNN-z` amend that exact branch/PR and never create another.
+Qualified: the first round of an increment-qualified namespace, `NNN-I-a`,
+creates one fresh branch and exactly one new PR for that semantic increment
+from verified remote main (or the order-named base); later rounds
+`NNN-I-b..NNN-z` amend that same branch/PR. One bounded semantic increment
+equals one PR; a new PR for a new increment of the same numeric objective uses
+the new increment ID and does not require a new numeric objective. Coding
+never invents/chooses an ID or continuation-vs-next transition.
 
 ## 4. Exact FIFO wire contract
 
