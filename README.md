@@ -43,41 +43,47 @@ promotion, publication execution, composition/design/media-reference expansion,
 and later MVP work remain separate. This source-revision evidence does not
 claim that the contractual MVP is complete.
 
-The Objective-078 source revision developed in open [PR #77](https://github.com/ulfe-lmi/slaif-agent-site/pull/77)
-adds the bounded Agent component data plane: catalog-constrained nested
+The Objective-078/1 source revision developed in [PR #77](https://github.com/ulfe-lmi/slaif-agent-site/pull/77)
+added the bounded Agent component data plane: catalog-constrained nested
 composition, semantic sibling anchors, content-prop updates, dense versioned
 reordering, dependency-safe deletion, capability/COW/idempotency/audit/quota
 boundaries, shared preview rendering, and real private browser evidence. Its
 078-g added the typed `design-system/v1` authority and capability-bound
 component-local variant, layout, and fixed-label responsive design updates
-through the same normalized composition. The 078-j continuation repairs exact
+through the same normalized composition. The 078-j continuation repaired exact
 property-level least privilege, initial design selection, removal/replay
 classification, and current OpenAPI truth at the Agent boundary; its evidence
-is focused public-Agent/PostgreSQL/Render/Web/Puck proof;
-site-global theme, global-region expansion, exact-workspace Puck editing,
-review, promotion, publication, and the contractual MVP remain separate and
-incomplete.
+was focused public-Agent/PostgreSQL/Render/Web/Puck proof. The increment was
+accepted and merged at `3cae3d6cef2a92e7068856d21bc9a47b8190c22e` on
+2026-09-09. Site-global theme, global-region expansion, exact-workspace Puck
+editing, review, promotion, publication, and the contractual MVP remain
+separate.
 
-The active Objective-078/4 increment adds a bounded `page-style/v1` data plane
-on PR #81 from verified `main`: typed Agent discovery/read/partial-update
-routes, strict page resource/version/reset authority, reversible legacy
-migration, exact COW/version/scope/idempotency/audit/quota/concurrency
-semantics, shared Render/Web resolution, and same-workspace NGINX/browser plus
-human Editor/Puck evidence. The 078-v implementation claim was rejected after
-a real probe found authority/evidence defects; 078-w, 078-x, and 078-y repair
-those defects and close the remaining proof gaps without reimplementing the passing
-style data plane. It remains pending
-strategic acceptance/merge. It deliberately excludes global regions,
-header/footer architecture, catalog breadth, media, MCP, review, promotion,
-publication, and final MVP claims.
+The Objective-078/4 increment added a bounded `page-style/v1` data plane on
+PR #81 from verified `main`: typed Agent discovery/read/partial-update routes,
+strict page resource/version/reset authority, reversible legacy migration,
+exact COW/version/scope/idempotency/audit/quota/concurrency semantics, shared
+Render/Web resolution, and same-workspace NGINX/browser plus human Editor/Puck
+evidence. The 078-v implementation claim was rejected after a real probe found
+authority/evidence defects; the 078-w, 078-x, and 078-y continuations repaired
+those defects and closed the remaining proof gaps without reimplementing the
+passing style data plane. The increment was accepted and merged at
+`26cafc1c0c91de5eee8406e8d477c50ea0208058` on 2026-09-10. No Objective-078
+product increment PR is open; numeric Objective 078 remains PARTIAL, with
+global-region/header-footer and catalog scope remaining, to start at
+increment `078-5-a` under the 2026-09-14 ID-namespace amendment. The increment
+deliberately excluded global regions, header/footer architecture, catalog
+breadth, media, MCP, review, promotion, publication, and final MVP claims.
 
 The historical Objective-078/2 increment added the bounded `theme-schema/v1`
 data plane on PR #79 from verified `main`: typed Agent discovery/read/partial-
 update routes, reversible legacy theme migration, exact COW/version/scope/
 idempotency/audit/quota/concurrency semantics, shared Render/Web/Puck token
 consumption, computed renderer precedence/contrast proof, and same-Agent-
-workspace NGINX/browser evidence. It is accepted and merged; its evidence is
-preserved in PR #79. It deliberately excluded global regions, header/footer
+workspace NGINX/browser evidence. It is accepted and merged at
+`a9d3e6800d5e8b5fd5c9cd9e0be5010184058c6b` in PR #79 on 2026-09-10; its
+evidence is preserved in PR #79. It deliberately excluded global regions,
+header/footer
 architecture, page style, arbitrary CSS/fonts/colors, media, MCP, review,
 promotion, publication, and final MVP claims.
 
@@ -104,13 +110,15 @@ promotion, publication, and final MVP claims.
 > runs with durable private artifact retrieval. Review snapshots, promotion,
 > publication, and public media finalization remain separate work.
 
-The supply-chain policy now qualifies Chrome for Testing `153.0.8010.36` at CfT
+The supply-chain policy qualifies Chrome for Testing `153.0.8010.36` at CfT
 revision `1681091`, replacing the vulnerable `152.0.7977.82` payload. The
 078-t built and scanned the six images, but its apparent zero-Critical result
 was unqualified because Syft omitted the Chrome 153 identity from the Grype
-input. Active 078-u closes that scanner-coverage gap with a measured,
-artifact-bound component; no vulnerability exception is added. Earlier
-qualifications remain historical evidence in
+input. The 078-u continuation closed that scanner-coverage gap with a
+measured, artifact-bound component; 078/3 was accepted and merged at
+`fe31c9f30a7797d0916ad7f8fb56344bc61526f3` in PR #80 on 2026-09-10. No
+vulnerability exception was added. Earlier qualifications remain historical
+evidence in
 [`supply-chain/browser-worker-critical-matrix.json`](supply-chain/browser-worker-critical-matrix.json)
 and the closed [issue #67](https://github.com/ulfe-lmi/slaif-agent-site/issues/67).
 The maintenance qualification does not claim release readiness.
@@ -236,10 +244,12 @@ step is required. Wait for health, then open <http://localhost:8080/>. Only
 loopback port 8080 is published. The deployable pre-alpha stack includes
 one-time first-run setup/login and site-management administration; bounded
 page/locale/navigation/redirect/dynamic-Render semantics are present in the
-Objective-077 source revision, and the bounded Agent component and local design
-data planes and the accepted 078/2 site-theme token data plane are present on
-`main`; the active 078/4 page-style authority/evidence repair is on PR #81.
-Site-global regions, media, review, and publication remain queued. See the
+Objective-077 source revision, and the bounded Agent component and local
+design data planes, the accepted 078/2 site-theme token data plane, and the
+accepted 078/4 page-style data plane are present on `main`; 078/1 through
+078/4 were accepted and merged at `3cae3d6`, `a9d3e68`, `fe31c9f`, and
+`26cafc1` respectively. Site-global regions, media, review, and publication
+remain queued. See the
 [deployment guide](docs/DEPLOYMENT.md) and [operations guide](docs/OPERATIONS.md).
 
 ## Delivery sequence
@@ -259,7 +269,7 @@ Site-global regions, media, review, and publication remain queued. See the
 | Completed human RBAC HTTP boundary | Immutable role/permission catalogs, site membership list/get/create/update/deactivate, strict session/CSRF policy, optimistic concurrency, and complete Control/Editor route declarations. |
 | Responsive site and membership administration | Permission-driven site/profile/domain workflows plus existing-user UUID membership cards, built-in roles, bounded ceilings, separate publication overrides, complete override replacement, version refresh, and semantic deactivation. |
 | Objective-077 source revision | Capability-bound Agent pages, locales, navigation, redirects, and bounded dynamic collection Render semantics with human Editor parity, shared Render/NGINX/browser evidence, route integrity, concurrency, and recovery proof, accepted and merged in PR #74 on 2026-09-08 at `ae3a4a6`; later review/publication remains separate. |
-| Objective-078/4 page-style repair | Bounded `page-style/v1` Agent data plane, strict page resource/version authority, exact reset overlap, machine-readable write-scope metadata, migration downgrade safety, deterministic accounting/race/restart proof, and real NGINX/browser plus human Editor/Puck evidence on PR #81; strategic acceptance/merge remains separate and global regions/catalog remain deferred. |
+| Objective-078/4 page-style data plane (merged) | Bounded `page-style/v1` Agent data plane, strict page resource/version authority, exact reset overlap, machine-readable write-scope metadata, migration downgrade safety, deterministic accounting/race/restart proof, and real NGINX/browser plus human Editor/Puck evidence, accepted and merged in PR #81 on 2026-09-10 at `26cafc1c0c91de5eee8406e8d477c50ea0208058`; global regions/catalog remain deferred at increment `078-5-a`. |
 | Planned product work | Add review snapshots, freeze/accept/discard/promotion, approved-source and responsive-sweep orchestration, reconstruction, public media finalization, and remaining hardening. |
 
 See [Architecture Section 50](ARCHITECTURE.md#50-implementation-phases) for
@@ -389,8 +399,8 @@ Ministry of Higher Education, Science and Innovation for SLAIF grant
 
 ## Implementation Status
 
-The merged Objectives 065–077 and the Objective-078-j component/design source
-revision prove only the narrow, bounded slices
+The merged Objectives 065–077 and the merged Objective-078 increments 078/1
+through 078/4 prove only the narrow, bounded slices
 recorded in [`oap/MVP-CONTRACT-AUDIT.md`](oap/MVP-CONTRACT-AUDIT.md).
 The contractual MVP remains incomplete: complete Agent semantic REST and MCP,
 immutable review snapshots, accept/discard promotion,

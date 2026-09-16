@@ -12,6 +12,18 @@ amendment for future bounded semantic increments: one increment per PR, with a
 numeric objective allowed to span sequential PRs. Earlier artifacts remain
 immutable history; explicit order mode and named PR identity control delivery.
 
+ID-namespace amendment (effective 2026-09-14,
+`../governance/2026-09-14-increment-qualified-round-ids.md`): two round-ID
+forms exist — legacy flat `NNN-L` and increment-qualified `NNN-I-L` (numeric
+objective, increment number with no leading zero, one lowercase round letter).
+Qualified IDs appear only when a strategic order activates them; the coding
+agent never invents or chooses any ID. `078-z` is the reserved final
+legacy-format round of Objective 078; after it merges, the next Objective-078
+product increment is `078-5-a`, then `078-6-a`, `078-7-a`, etc. First-increment
+flat history of other objectives (for example `079-a`) remains valid, with
+later increments qualified (`079-2-a`). No `aa`-style suffixes; each
+increment-qualified namespace has its own `a..z`; escalate on exhaustion.
+
 ## Mandatory refresh and authority
 
 At strategic-session start, after context compaction, or on role/protocol
@@ -121,8 +133,10 @@ commit and its parent is the literal reported implementation-head SHA.
 
 ## IDs, PRs, immutability
 
-- ID=`NNN-L`; `000` setup; `NNN-a` creates exactly one new PR; `NNN-b..z`
-  amend that same branch/PR; one numeric objective=one PR.
+- ID=`NNN-L` (legacy flat) or `NNN-I-L` (increment-qualified per the
+  2026-09-14 ID-namespace amendment); `000` setup; the first round of an
+  increment namespace creates exactly one new PR and later letters of that
+  increment amend that same branch/PR; one bounded semantic increment=one PR.
 - Never activate `NNN+1-a` while `NNN` unresolved. If `z` is exhausted,
   escalate; never invent `aa`.
 - Never edit an activated/OK order or published report; corrections use next

@@ -2,29 +2,30 @@
 
 This tracker uses the contract-audit status vocabulary rather than file
 presence or completion estimates. The authoritative baseline is
-[`MVP-CONTRACT-AUDIT.md`](MVP-CONTRACT-AUDIT.md), updated for the protocol-final
-Objective 078 increment 2 on PR #79, reviewed and accepted on 2026-09-10 and
-merged at `fe31c9f30a7797d0916ad7f8fb56344bc61526f3`. The active 078-y
-continuation is a separate 078/4 page-style proof-closure continuation from that verified remote
-`main`.
+[`MVP-CONTRACT-AUDIT.md`](MVP-CONTRACT-AUDIT.md). Objective-078 increments are
+merged on `main`: 078/1 at `3cae3d6cef2a92e7068856d21bc9a47b8190c22e`, 078/2
+at `a9d3e6800d5e8b5fd5c9cd9e0be5010184058c6b` (PR #79), 078/3 at
+`fe31c9f30a7797d0916ad7f8fb56344bc61526f3` (PR #80), and 078/4 at
+`26cafc1c0c91de5eee8406e8d477c50ea0208058` (PR #81). The 078-y continuation
+was the final 078/4 page-style proof-closure round on that branch.
 
 ## Current verdict
 
-**CONTRACTUAL MVP NOT COMPLETE.** Objectives 065–077 and Objective 078/1 are
-accepted and merged for their bounded contracts. PR #77 contains the accepted
-component composition/local-design slice and its 078-m/078-n/078-o closure
-repairs; it merged at `3cae3d6`. The bounded site-theme token data plane was
-closed and qualified on merged PR #79, and PR #80 closed its browser-scan
-maintenance continuation.
+**CONTRACTUAL MVP NOT COMPLETE.** Objectives 065–077 and Objective-078
+increments 078/1 through 078/4 are accepted and merged for their bounded
+contracts. PR #77 contains the accepted component composition/local-design
+slice and its 078-m/078-n/078-o closure repairs; it merged at `3cae3d6`.
+The bounded site-theme token data plane was closed and qualified on merged
+PR #79 (`a9d3e68`), and PR #80 closed the 078/3 browser-scan maintenance
+continuation (`fe31c9f`).
 The 078-i theme implementation is preserved in history and reused deliberately
-here. PR #80 separately closed the 078/3 browser scan-coverage maintenance
-increment.
-Remaining Objective 078 global regions/header and footer and catalog work
-belongs to separate bounded increments. The active page-style increment is
-078-y, closing the remaining 078-x proof gaps without broadening the contract.
-Later numbered
-objectives own media, MCP, exact-workspace Puck, review, publication,
-reconstruction and operations; they are not unfinished PR #77 scope.
+here. PR #81 closed the 078/4 page-style increment, including the 078-y
+proof-closure continuation (`26cafc1`).
+Remaining Objective 078 global-region/header-footer and catalog work belongs
+to separate bounded increments starting at `078-5-a`.
+Later numbered objectives own media, MCP, exact-workspace Puck, review,
+publication, reconstruction and operations; they are not unfinished PR #77
+scope.
 
 ## Merged narrow slices
 
@@ -72,13 +73,13 @@ contractual MVP remains **NOT COMPLETE**.
 The 078-m closure of the 078-j source revision on [PR #77](https://github.com/ulfe-lmi/slaif-agent-site/pull/77)
 maps the immutable 078-a through 078-f transcript to the existing public Agent
 and shared Render/Web/browser boundaries. Its bounded component slice is
-**COMPLETE — E2E PROVEN** at the open-PR source revision: a clean NGINX-only
+**COMPLETE — E2E PROVEN** at the merged source revision: a clean NGINX-only
 workflow creates and reads an empty-to-nested Section/Container/Heading/RichText
 composition, updates content props, moves with semantic anchors, preserves
 IDs/props/hierarchy/order/versions across Agent/Render/Web restarts, deletes
 leaves then parents, and proves private browser artifacts, hostile negatives,
-idempotency/audit/quota/COW isolation, and canonical non-change. The active
-078-g added the typed `design-system/v1` authority and bounded local
+idempotency/audit/quota/COW isolation, and canonical non-change. The 078-g
+continuation added the typed `design-system/v1` authority and bounded local
 variant/layout/responsive mutation; 078-j repairs its exact property-level
 scope/OpenAPI truth, initial design selection, removal/replay/no-effect
 semantics, and classifies the existing Button/Image/CollectionGrid visual
@@ -94,8 +95,9 @@ promotion, and publication remain **PARTIAL/NOT IMPLEMENTED**; the accepted
 078/2 theme increment does not claim that the contractual MVP is complete. Its
 bounded V1–V2 renderer/browser evidence and diagnostic closure are complete on
 merged PR #79; PR #80 separately closed the unqualified Chrome scan-coverage
-gap. Active 078-v implements only the bounded page-style slice; global regions
-and catalog expansion remain deferred.
+gap. 078-v through 078-y implemented only the bounded page-style slice,
+accepted and merged in PR #81 at `26cafc1`; global regions and catalog
+expansion remain deferred.
 
 The 078-n continuation repaired the approved consumed-order link formatting
 without changing the product tree. The historical 078-o continuation qualified
@@ -105,16 +107,17 @@ evidence. Its result is included in the accepted and merged 078/1 revision.
 
 ## Active and remaining sequence
 
-The active transcript pointer is `078-y` for the current page-style
-continuation; 078/1, 078/2, and 078/3 are accepted and merged while 078/4 is
-the active increment. Acceptance and containment in `main` are determined by OAP and
-GitHub state, not this document. All later order files remain inert until
-strategy selects and signals them.
+`oap/active` names the last activated round until the next activation.
+078/1, 078/2, 078/3, and 078/4 are all accepted and merged; the next
+Objective-078 product increment starts at `078-5-a`. Acceptance and
+containment in `main` are determined by OAP and GitHub state, not this
+document. All later order files remain inert until strategy selects and
+signals them.
 
 | Order | Contractual scope | Current status |
 |---|---|---|
 | 077 | Agent page, navigation, redirect, and bounded dynamic collection Render semantics | COMPLETE — E2E PROVEN and accepted/merged in PR #74 on 2026-09-08 at `ae3a4a6` |
-| 078 | Agent composition and design semantics; bounded component, site-theme, and page-style data planes | PARTIAL — 078/1 is accepted and merged in PR #77 at `3cae3d6`; 078/2 is accepted and merged in PR #79 at `a9d3e68`; 078/3 is accepted and merged in PR #80 at `fe31c9f`; active 078-y closes the remaining 078-x proof gaps over existing theme tokens; global-region/catalog scope remains deferred |
+| 078 | Agent composition and design semantics; bounded component, site-theme, and page-style data planes | PARTIAL — 078/1 is accepted and merged in PR #77 at `3cae3d6`; 078/2 is accepted and merged in PR #79 at `a9d3e68`; 078/3 is accepted and merged in PR #80 at `fe31c9f`; 078/4 is accepted and merged in PR #81 at `26cafc1`; global-region/catalog scope remains deferred, starting at `078-5-a` |
 | 079 | Agent media semantics and references | PARTIAL |
 | 080 | Real MCP semantic parity | SCAFFOLD ONLY |
 | 081 | Human Puck editing in the exact Agent workspace | PARTIAL |

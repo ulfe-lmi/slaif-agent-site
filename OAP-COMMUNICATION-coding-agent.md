@@ -13,6 +13,14 @@ bounded semantic merge increment per PR while allowing a numeric objective to
 span sequential PRs. Earlier protocol/orders/reports remain immutable history;
 the explicit active order mode and named PR/branch control delivery. Strategy
 alone accepts and merges.
+Prospective governance notice (effective 2026-09-14):
+`oap/governance/2026-09-14-review-unit-governance.md` binds CLOSURE_ONLY mode
+and the finite rejection checklist from this amendment onward. A coding report
+may claim COMPLETE only when every named criterion of the latest published
+rejection list (or the order's acceptance criteria when no rejection list
+exists) was actually executed; omitted required browser, PostgreSQL, migration,
+concurrency, or public-boundary proof requires PARTIAL or BLOCKED, never
+COMPLETE.
 
 ## 1. Authority, truth, ownership
 
@@ -41,7 +49,7 @@ implementation head; verify it as remote PR head; signal response FIFO; wait.
 
 Coding never: changes roadmap/acceptance/next ID; creates own order; writes
 `oap/active` content or `control.fifo`; edits activated orders or earlier
-reports; creates a second objective PR; merges/closes/auto-merges an OAP PR;
+reports; creates a second PR for the same increment; merges/closes/auto-merges an OAP PR;
 weakens scope/security/tests to claim completion; transfers safe routine VM
 setup to human/strategy. Committing exact strategic-authored order/active bytes
 does not transfer content ownership. Reports are claims; strategy independently
@@ -79,11 +87,27 @@ is protocol error, never guess. Report uses the exact ID and preferably matching
 basename (`orders/013-a-add-news.md` → `reports/013-a-add-news.md`); require an
 exact unique report mapping.
 
-ID=`NNN-L`, zero-padded numeric objective plus `a..z`; `000` is initial setup.
+ID=`NNN-L` (legacy flat: zero-padded numeric objective plus one lowercase round
+letter `a..z`; `000` is initial setup) or `NNN-I-L` (increment-qualified:
+numeric objective, increment number with no leading zero, one lowercase round
+letter). Both forms are valid per the 2026-09-14 ID-namespace amendment
+(`oap/governance/2026-09-14-increment-qualified-round-ids.md`); qualified IDs
+appear only when a strategic order activates them. Coding never invents or
+chooses an ID in either form. `078-z` is the reserved final legacy-format round
+of Objective 078; the next Objective-078 product increment is `078-5-a`, then
+`078-6-a`, `078-7-a`, etc. First-increment flat history of other objectives
+(for example `079-a`) remains valid, with later increments qualified
+(`079-2-a`). No `aa`-style suffixes; each increment-qualified namespace has its
+own `a..z`; escalate on exhaustion.
 `NNN-a` creates one fresh branch and exactly one new PR for objective `NNN`.
-`NNN-b..NNN-z` amend that exact branch/PR and never create another. Only a new
-numeric `NNN+1-a` creates another PR. Coding never invents/chooses an ID or
-continuation-vs-next transition.
+`NNN-b..NNN-z` amend that exact branch/PR and never create another.
+Qualified: the first round of an increment-qualified namespace, `NNN-I-a`,
+creates one fresh branch and exactly one new PR for that semantic increment
+from verified remote main (or the order-named base); later rounds
+`NNN-I-b..NNN-z` amend that same branch/PR. One bounded semantic increment
+equals one PR; a new PR for a new increment of the same numeric objective uses
+the new increment ID and does not require a new numeric objective. Coding
+never invents/chooses an ID or continuation-vs-next transition.
 
 ## 4. Exact FIFO wire contract
 
@@ -231,7 +255,8 @@ Unless order is stricter, use this information-complete structure:
 # OAP Coding-Agent Report — NNN-L
 
 ## Work order
-- Identifier; work-order file; numeric objective
+- Identifier (NNN-L or NNN-I-L); work-order file; numeric objective (and
+  increment number for qualified IDs)
 - PR mode: CREATED_NEW_PR | AMENDED_EXISTING_PR
 
 ## Status

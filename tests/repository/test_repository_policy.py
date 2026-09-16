@@ -30,6 +30,7 @@ from tools.check_repository import (
     SCAFFOLD_EXEMPT_PACKAGES,
     WORKSPACE_PACKAGES,
     RepositoryPolicy,
+    parse_oap_identifier,
 )
 
 
@@ -296,7 +297,7 @@ class RepositoryPolicyTestCase(unittest.TestCase):
         self.write("oap/active", "001-a\n")
         self.write("oap/orders/000-a-history.md")
         self.write("oap/orders/001-a-active.md")
-        self.write("oap/reports/.keep", "")
+        self.write("oap/reports/keep", "")
 
         errors = self.errors_from("check_oap")
 
@@ -317,6 +318,211 @@ class RepositoryPolicyTestCase(unittest.TestCase):
         self.assertTrue(any("2 order files" in error for error in errors))
         self.assertTrue(any("more than one report" in error for error in errors))
         self.assertTrue(any("temporary/publication" in error for error in errors))
+
+    def test_oap_accepts_legacy_active_078_y(self) -> None:
+        self.write("oap/active", "078-y\n")
+        self.write("oap/orders/000-a-history.md")
+        self.write("oap/reports/000-a-history.md")
+        self.write("oap/orders/078-y-current.md")
+
+        self.assertEqual(self.errors_from("check_oap"), [])
+
+    def test_oap_accepts_reserved_final_legacy_round_078_z(self) -> None:
+        self.write("oap/active", "078-z\n")
+        self.write("oap/orders/078-z-transition.md")
+        self.write("oap/reports/keep", "")
+
+        self.assertEqual(self.errors_from("check_oap"), [])
+
+    def test_oap_accepts_increment_qualified_identifiers(self) -> None:
+        for identifier in ("078-5-a", "078-5-z", "078-6-a", "078-10-a"):
+            self.write("oap/active", f"{identifier}\n")
+            self.write(f"oap/orders/{identifier}-current.md")
+            self.write(f"oap/reports/{identifier}-current.md")
+
+            self.assertEqual(self.errors_from("check_oap"), [])
+
+    def test_oap_rejects_malformed_active_identifiers(self) -> None:
+        for content in (
+            "078-Y\n",
+            "078-aa\n",
+            "78-a\n",
+            "078-5\n",
+            "078-0-a\n",
+            "078-05-a\n",
+            "078-y \n",
+            "078-y\n\n",
+            "\n",
+        ):
+            self.write("oap/active", content)
+
+            errors = self.errors_from("check_oap")
+            self.assertTrue(
+                any("NNN-L or NNN-I-L" in error for error in errors), content
+            )
+
+    def test_oap_rejects_malformed_artifact_filenames(self) -> None:
+        self.write("oap/active", "001-a\n")
+        self.write("oap/orders/001-a-active.md")
+        for name in (
+            "078-0-a-x.md",
+            "078-05-a-x.md",
+            "078-aa-x.md",
+            "078-A-x.md",
+            "78-a-x.md",
+            "078-5.md",
+            "078-5a-x.md",
+        ):
+            self.write(f"oap/orders/{name}")
+
+        errors = self.errors_from("check_oap")
+        self.assertEqual(sum("valid NNN-L or NNN-I-L" in error for error in errors), 7)
+
+    def test_oap_rejects_duplicate_qualified_identities(self) -> None:
+        self.write("oap/active", "078-5-a\n")
+        self.write("oap/orders/078-5-a-one.md")
+        self.write("oap/orders/078-5-a-two.md")
+        self.write("oap/reports/078-5-a-one.md")
+        self.write("oap/reports/078-5-a-two.md")
+
+        errors = self.errors_from("check_oap")
+        self.assertTrue(any("2 order files" in error for error in errors))
+        self.assertTrue(any("more than one report" in error for error in errors))
+
+    def test_oap_rejects_duplicate_historical_qualified_reports(self) -> None:
+        self.write("oap/active", "001-a\n")
+        self.write("oap/orders/001-a-active.md")
+        self.write("oap/orders/078-5-a-history.md")
+        self.write("oap/reports/078-5-a-one.md")
+        self.write("oap/reports/078-5-a-two.md")
+
+        errors = self.errors_from("check_oap")
+        self.assertTrue(
+            any("078-5-a must have exactly one report" in error for error in errors)
+        )
+
+    def test_oap_legacy_and_qualified_same_objective_coexist(self) -> None:
+        self.write("oap/active", "078-y\n")
+        self.write("oap/orders/078-y-current.md")
+        self.write("oap/orders/078-5-a-future.md")
+        self.write("oap/reports/078-5-a-future.md")
+
+        self.assertEqual(self.errors_from("check_oap"), [])
+
+        self.write("oap/orders/078-y-second.md")
+        errors = self.errors_from("check_oap")
+        self.assertTrue(any("078-y has 2 order files" in error for error in errors))
+
+    def test_oap_identifier_extraction_objective_increment_round(self) -> None:
+        self.assertEqual(parse_oap_identifier("078-y"), ("078", None, "y"))
+        self.assertEqual(parse_oap_identifier("078-z"), ("078", None, "z"))
+        self.assertEqual(parse_oap_identifier("078-5-a"), ("078", "5", "a"))
+        self.assertEqual(parse_oap_identifier("078-5-z"), ("078", "5", "z"))
+        self.assertEqual(parse_oap_identifier("078-10-a"), ("078", "10", "a"))
+        self.assertEqual(
+            parse_oap_identifier("078-5-a")[0], parse_oap_identifier("078-y")[0]
+        )
+        for malformed in (
+            "078-0-a",
+            "078-05-a",
+            "078-aa",
+            "078-Y",
+            "78-a",
+            "078-5",
+        ):
+            self.assertIsNone(parse_oap_identifier(malformed), malformed)
+
+    def test_merge_facts_accepts_current_shape_documents_and_ledger(self) -> None:
+        self.write(
+            "oap/INCREMENTS.md",
+            "# Semantic Increment Ledger\n\n"
+            "The table is the authoritative ledger of verified merge facts.\n\n"
+            "| Increment | PR and contract | State |\n"
+            "|---|---|---|\n"
+            "| 077 cross-reference | PR #74 | Accepted and merged in PR #74 at "
+            "`ae3a4a681bb888260192b7bb1b2a337b4906828d` on 2026-09-08; recorded |\n"
+            "| 078/1 | PR #77 | Accepted and merged at "
+            "`3cae3d6cef2a92e7068856d21bc9a47b8190c22e` on 2026-09-09; closed |\n"
+            "| 078/4 | PR #81 | Accepted and merged at "
+            "`26cafc1c0c91de5eee8406e8d477c50ea0208058` on 2026-09-10; closed |\n",
+        )
+        self.write(
+            "README.md",
+            "# README\n\n"
+            "The increment was accepted and merged at\n"
+            "`26cafc1c0c91de5eee8406e8d477c50ea0208058` on 2026-09-10. No work open.\n",
+        )
+
+        self.assertEqual(self.errors_from("check_merge_facts"), [])
+
+    def test_merge_facts_rejects_ledgered_sha_with_wrong_date(self) -> None:
+        self.write(
+            "oap/INCREMENTS.md",
+            "# Semantic Increment Ledger\n\n"
+            "| Increment | PR and contract | State |\n"
+            "|---|---|---|\n"
+            "| 078/4 | PR #81 | Accepted and merged at "
+            "`26cafc1c0c91de5eee8406e8d477c50ea0208058` on 2026-09-10; closed |\n",
+        )
+        self.write(
+            "README.md",
+            "# README\n\n"
+            "The increment was accepted and merged at\n"
+            "`26cafc1c0c91de5eee8406e8d477c50ea0208058` on 2026-09-14. No work open.\n",
+        )
+
+        errors = self.errors_from("check_merge_facts")
+
+        self.assertTrue(
+            any(
+                "26cafc1c0c91de5eee8406e8d477c50ea0208058 on 2026-09-14" in error
+                for error in errors
+            )
+        )
+
+    def test_merge_facts_rejects_unknown_sha_with_date(self) -> None:
+        self.write(
+            "oap/INCREMENTS.md",
+            "# Semantic Increment Ledger\n\n"
+            "| Increment | PR and contract | State |\n"
+            "|---|---|---|\n"
+            "| 078/4 | PR #81 | Accepted and merged at "
+            "`26cafc1c0c91de5eee8406e8d477c50ea0208058` on 2026-09-10; closed |\n",
+        )
+        self.write(
+            "README.md",
+            "# README\n\n"
+            "The revision was merged on 2026-09-08 at\n"
+            "`deadbeefdeadbeefdeadbeefdeadbeefdeadbeef`.\n",
+        )
+
+        errors = self.errors_from("check_merge_facts")
+
+        self.assertTrue(
+            any(
+                "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef on 2026-09-08" in error
+                for error in errors
+            )
+        )
+
+    def test_merge_facts_skips_ambiguous_two_sha_paragraphs(self) -> None:
+        self.write(
+            "oap/INCREMENTS.md",
+            "# Semantic Increment Ledger\n\n"
+            "| Increment | PR and contract | State |\n"
+            "|---|---|---|\n"
+            "| 078/4 | PR #81 | Accepted and merged at "
+            "`26cafc1c0c91de5eee8406e8d477c50ea0208058` on 2026-09-10; closed |\n",
+        )
+        self.write(
+            "README.md",
+            "# README\n\n"
+            "Merged at `26cafc1c0c91de5eee8406e8d477c50ea0208058` and later\n"
+            "superseded at `deadbeefdeadbeefdeadbeefdeadbeefdeadbeef` on "
+            "2026-09-08; both revisions are referenced here.\n",
+        )
+
+        self.assertEqual(self.errors_from("check_merge_facts"), [])
 
     def test_logo_hash_and_safe_shape_pass_then_tampering_fails(self) -> None:
         svg = b'<svg xmlns="http://www.w3.org/2000/svg"><path d="M0 0"/></svg>\n'

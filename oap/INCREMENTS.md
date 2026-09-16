@@ -1,17 +1,22 @@
 # Semantic Increment Ledger
 
-Current state is recorded against verified remote GitHub state. Objective 078
-is `PARTIAL`; strategy owns acceptance and merge. The active semantic
-increment is 078/4.
+Current state is recorded against verified remote GitHub state; GitHub is
+authoritative for live acceptance and merge state. Objective 078 is
+`PARTIAL`; strategy owns acceptance and merge. Increments 078/1 through 078/4
+are accepted and merged; the next Objective-078 product increment starts at
+`078-5-a` under the 2026-09-14 increment-qualified round-ID amendment.
+The table is the authoritative ledger of verified merge facts (SHA and
+merge date) referenced from current-state documents.
 
 | Increment | PR and contract | State |
 |---|---|---|
+| 077 cross-reference | PR #74: Objective-077 source revision (capability-bound Agent pages/locales/navigation/redirects and dynamic collection Render) | Accepted and merged in PR #74 at `ae3a4a681bb888260192b7bb1b2a337b4906828d` on 2026-09-08; recorded as the verified merge fact referenced from current-state documents |
 | 078/1 | [PR #77](https://github.com/ulfe-lmi/slaif-agent-site/pull/77): bounded component composition/local design with 078-j authority/replay and 078-k/078-l audit repairs | Accepted and merged at `3cae3d6cef2a92e7068856d21bc9a47b8190c22e` on 2026-09-09; 078/1 is closed |
 | 078/2 | `oap/078-2-site-theme-tokens`: bounded site-theme token data plane from verified merged `main` | Accepted and merged in PR #79 at `a9d3e6800d5e8b5fd5c9cd9e0be5010184058c6b` on 2026-09-10; 078/2 is closed |
 | 078/3 | `oap/078-3-browser-security-refresh`: qualify Chrome for Testing 153.0.8010.36 and preserve failed-scan diagnostics | Accepted and merged in PR #80 at `fe31c9f30a7797d0916ad7f8fb56344bc61526f3` on 2026-09-10; 078/3 is closed |
-| 078/4 | `oap/078-4-page-style-overrides`: bounded page-owned theme-token overrides over the accepted site theme | Active `078-y` proof-closure continuation on PR #81 from verified merged `main` `fe31c9f30a7797d0916ad7f8fb56344bc61526f3` |
+| 078/4 | `oap/078-4-page-style-overrides`: bounded page-owned theme-token overrides over the accepted site theme | Accepted and merged in PR #81 at `26cafc1c0c91de5eee8406e8d477c50ea0208058` on 2026-09-10; 078/4 is closed |
 | 078-i | `567973e` implementation plus `127d7f1` report: bounded site-theme tokens | Preserved immutable history; removed from PR #77 by 078-j and deferred for deliberate reuse |
-| Next | Remaining 078 scope after 078/4 | Global-region/header-footer and catalog boundaries remain separate; numeric 078 remains PARTIAL |
+| Next | Remaining 078 scope after 078/4 | Global-region/header-footer and catalog boundaries remain separate; numeric 078 remains PARTIAL; the next product increment starts at `078-5-a` per [`governance/2026-09-14-increment-qualified-round-ids.md`](governance/2026-09-14-increment-qualified-round-ids.md) |
 
 PR #77 merged into `main` at
 `3cae3d6cef2a92e7068856d21bc9a47b8190c22e`. The 078-j closure keeps the
@@ -29,11 +34,12 @@ PR #79 merged into `main` at
 `a9d3e6800d5e8b5fd5c9cd9e0be5010184058c6b`. Its accepted 078/2 theme evidence
 remains a bounded Objective-078 increment; the post-merge supply-chain
 regression was the reason for the completed maintenance 078/3. PR #80 is
-accepted and merged at `fe31c9f30a7797d0916ad7f8fb56344bc61526f3`.
+accepted and merged at `fe31c9f30a7797d0916ad7f8fb56344bc61526f3`. PR #81 is
+accepted and merged at `26cafc1c0c91de5eee8406e8d477c50ea0208058`.
 
 ## 078-v bounded page-style overrides
 
-The active 078-v increment is a fresh PR from that merged baseline. It adds only
+The 078-v increment opened a fresh PR from that merged baseline. It added only
 page-owned overrides for the existing theme tokens, with Agent read/update,
 trusted PostgreSQL authority, inheritance/reset semantics, shared Render/Web
 projection, and the existing human Editor/Puck control surface. It preserves
@@ -54,9 +60,9 @@ overbroad same-group reset rejection, and missing machine-readable
 `page-style:write` authority metadata. The 078-w continuation preserves the
 immutable v order/report and repairs only those boundaries, adds deterministic
 PostgreSQL/accounting/migration/restart/race evidence, and refreshes the real
-NGINX/browser and human Editor/Puck proofs. PR #81 remains the sole open PR;
-Objective 078 remains PARTIAL until strategy independently accepts the exact
-remote head and merges it.
+NGINX/browser and human Editor/Puck proofs. PR #81 was accepted and merged at
+`26cafc1c0c91de5eee8406e8d477c50ea0208058`; Objective 078 remains PARTIAL with
+its remaining scope pending.
 
 ## 078-y finish omitted page-style proof
 
@@ -66,9 +72,9 @@ negative fixture, explicit-versus-inherited changes across a site-theme update
 and reset, an exact two-distinct-waiter theme barrier, and cancellation of a
 public Agent style request before its prelocked mutation path. It adds no
 page-style functionality or broader Objective-078 scope, and preserves all
-historical orders and reports. PR #81 remains the sole open PR; Objective 078
-remains PARTIAL until strategy independently reviews, accepts, and merges the
-exact report-only head.
+historical orders and reports. PR #81 was accepted and merged at
+`26cafc1c0c91de5eee8406e8d477c50ea0208058`; Objective 078 remains PARTIAL with
+its remaining scope pending.
 
 ## 078-x page-style proof closure
 
@@ -78,8 +84,9 @@ downgrade refusal, cancellation after real style DML with rollback and retry,
 both structural lock orderings, concurrent theme-change/reset serialization,
 raw-equal write authority, complete named page resource bounds, and exact
 audit/idempotency identity. It adds no page-style functionality or broader
-Objective-078 scope. PR #81 remains the sole open PR and Objective 078 remains
-PARTIAL until strategy reviews and merges the exact report-only head.
+Objective-078 scope. PR #81 was accepted and merged at
+`26cafc1c0c91de5eee8406e8d477c50ea0208058`; Objective 078 remains PARTIAL with
+its remaining scope pending.
 
 ## 078-o security continuation
 
