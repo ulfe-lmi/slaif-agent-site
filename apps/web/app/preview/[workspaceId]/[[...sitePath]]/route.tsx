@@ -30,6 +30,7 @@ function notFoundResponse() {
 async function renderResolution(
   request: NextRequest,
   resolution: WorkspacePreviewResolution,
+  workspaceId: string,
 ) {
   if (resolution.kind === "login") {
     return NextResponse.redirect(new URL("/login", request.url), 307);
@@ -49,7 +50,10 @@ async function renderResolution(
         <title>{resolution.projection.page.title}</title>
       </head>
       <body>
-        <PageProjectionShell projection={resolution.projection} />
+        <PageProjectionShell
+          projection={resolution.projection}
+          basePath={`/preview/${workspaceId}/s/${resolution.projection.site.key}`}
+        />
       </body>
     </html>,
   );
@@ -79,5 +83,5 @@ export async function GET(
       browserToken: request.headers.get("x-slaif-browser-preview"),
     },
   );
-  return renderResolution(request, resolution);
+  return renderResolution(request, resolution, workspaceId);
 }

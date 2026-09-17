@@ -197,6 +197,101 @@ async def test_canonical_projection_is_site_confined_and_typed(
         await control_pool.close()
 
 
+async def test_canonical_language_switcher_resolves_mixed_case_locale(
+    agent_site_database: AgentSiteDatabase,
+) -> None:
+    """Switcher targets resolve mixed-case locale tags fail-closed.
+
+    Tagged effective routes keep the stored tag case, while the page
+    resolver validates and matches lowercased routes (mirroring
+    normalize_request_path).  Locales without a mirror page stay inert.
+    """
+    database = agent_site_database
+    await upgrade(database.settings)
+    await reconcile(database.settings)
+    control_pool = await database.role_pool("slaif_control")
+    public_pool = await database.role_pool("slaif_public_reader")
+    try:
+        control = SiteService(control_pool)
+        site = await control.create(
+            CreateSiteRequest(site_key="docs", display_name="Docs", default_locale="en")
+        )
+        context = await control.resolve("localhost", "/s/docs")
+        await control.put_domain(
+            context, DomainMappingRequest(hostname="example.test", path_prefix="/")
+        )
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            await owner.execute(
+                "INSERT INTO content.site_locale_base "
+                "(site_id,tag,enabled,is_default,position) VALUES "
+                "($1,'en',true,true,0),($1,'sl-SI',true,false,1),"
+                "($1,'de-DE',true,false,2)",
+                site.site_id,
+            )
+            en_home_id = await owner.fetchval(
+                "INSERT INTO content.page_base "
+                "(site_id,slug,title,status,locale) VALUES "
+                "($1,'home','Docs home','PUBLISHED','en') RETURNING id",
+                site.site_id,
+            )
+            en_guide_id = await owner.fetchval(
+                "INSERT INTO content.page_base "
+                "(site_id,slug,title,status,locale,parent_id) VALUES "
+                "($1,'guide','Docs guide','PUBLISHED','en',$2) RETURNING id",
+                site.site_id,
+                en_home_id,
+            )
+            sl_home_id = await owner.fetchval(
+                "INSERT INTO content.page_base "
+                "(site_id,slug,title,status,locale) VALUES "
+                "($1,'home','Domov','PUBLISHED','sl-SI') RETURNING id",
+                site.site_id,
+            )
+            await owner.execute(
+                "INSERT INTO content.page_base "
+                "(site_id,slug,title,status,locale,parent_id) VALUES "
+                "($1,'guide','Vodnik','PUBLISHED','sl-SI',$2)",
+                site.site_id,
+                sl_home_id,
+            )
+            await owner.execute(
+                "INSERT INTO content.page_composition_base "
+                "(site_id,page_id,component_type,schema_version,slot_key, "
+                "order_key, props) "
+                "VALUES ($1, $2, 'Heading', '1', 'default', 0, $3::jsonb)",
+                site.site_id,
+                en_guide_id,
+                '{"text":"Guide","level":2}',
+            )
+        service = RenderProjectionService(_RenderAdapter(public_pool))
+        projection = await service.canonical(
+            RenderPageRequest(authority="localhost", path="/s/docs/guide")
+        )
+        assert projection.route_kind == "page"
+        assert projection.page.effective_route == "/guide"
+        locales = {locale.tag: locale for locale in projection.locales}
+        assert locales["en"].switcher_href is None
+        assert locales["sl-SI"].switcher_href == "/sl-SI/guide"
+        assert locales["de-DE"].switcher_href is None
+        # The mirror page switches back to the default locale without any
+        # locale prefix in the target route.
+        mirror = await service.canonical(
+            RenderPageRequest(authority="localhost", path="/s/docs/sl-SI/guide")
+        )
+        assert mirror.route_kind == "page"
+        assert mirror.page.effective_route == "/sl-SI/guide"
+        mirror_locales = {locale.tag: locale for locale in mirror.locales}
+        assert mirror_locales["en"].switcher_href == "/guide"
+        assert mirror_locales["sl-SI"].switcher_href is None
+        assert mirror_locales["de-DE"].switcher_href is None
+        await _assert_clean_connection(public_pool)
+    finally:
+        await public_pool.close()
+        await control_pool.close()
+
+
 async def test_preview_projection_requires_authorized_human_session(
     agent_site_database: AgentSiteDatabase, monkeypatch: pytest.MonkeyPatch
 ) -> None:

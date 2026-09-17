@@ -57,6 +57,12 @@ from slaif_agent_site.sites.normalization import (
 
 LOGGER = logging.getLogger(__name__)
 
+
+_REGION_VARIANTS = {
+    "header": ("institutional", "minimal"),
+    "footer": ("multi-column", "single-column"),
+}
+
 _BROWSER_STAGES = frozenset(
     {
         "context",
@@ -192,6 +198,7 @@ class ProjectionLocale(BaseModel):
     is_default: bool
     position: int
     metadata: dict[str, Any]
+    switcher_href: str | None = None
 
 
 class ProjectionNavigationTarget(BaseModel):
@@ -238,6 +245,31 @@ class ProjectionRedirect(BaseModel):
     locale: str | None
 
 
+class ProjectionRegionEntry(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    label: str
+    href: str
+
+
+class ProjectionRegion(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    id: UUID
+    region_key: Literal["header", "footer"]
+    variant: Literal["institutional", "minimal", "multi-column", "single-column"]
+    entries: tuple[ProjectionRegionEntry, ...] = ()
+    note: str | None = None
+    row_version: int
+
+
+class ProjectionAncestor(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    title: str
+    effective_route: str
+
+
 class RenderPageProjection(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -255,6 +287,9 @@ class RenderPageProjection(BaseModel):
     locales: tuple[ProjectionLocale, ...] = ()
     navigation: tuple[ProjectionNavigation, ...] = ()
     bindings: dict[str, tuple[dict[str, Any], ...]] = Field(default_factory=dict)
+    regions: tuple[ProjectionRegion, ...] = ()
+    ancestors: tuple[ProjectionAncestor, ...] = ()
+    default_locale: str
 
 
 class RenderRedirectProjection(BaseModel):
@@ -918,6 +953,69 @@ class RenderProjectionService:
             raise ProjectionError("locale_state")
         return rows, tuple(projected), str(default_rows[0][2])
 
+    @staticmethod
+    def _locale_target_route(
+        current_route: str, current_locale: str, default_locale: str, target_locale: str
+    ) -> str:
+        """Effective-route contract: re-root the current page under the tag.
+
+        Default-locale pages carry no locale prefix; other locales are
+        prefixed with their tag.  The target keeps the same site-relative
+        path under the target tag.
+        """
+        rest = current_route
+        if current_locale.casefold() != default_locale.casefold():
+            prefix = f"/{current_locale}/"
+            if rest.startswith(prefix):
+                rest = f"/{rest[len(prefix) :]}"
+            elif rest == f"/{current_locale}":
+                rest = "/"
+        if target_locale.casefold() == default_locale.casefold():
+            # Default-locale routes carry no locale prefix.
+            return rest
+        if rest == "/":
+            return f"/{target_locale}"
+        return f"/{target_locale}{rest}"
+
+    async def _locale_switcher(
+        self,
+        connection: Any,
+        *,
+        site_id: UUID,
+        locales: tuple[ProjectionLocale, ...],
+        current_locale: str,
+        default_locale: str,
+        current_route: str,
+        statuses: list[str],
+    ) -> tuple[ProjectionLocale, ...]:
+        resolved: list[ProjectionLocale] = []
+        for locale in locales:
+            if locale.tag.casefold() == current_locale.casefold():
+                resolved.append(locale)
+                continue
+            target = self._locale_target_route(
+                current_route, current_locale, default_locale, locale.tag
+            )
+            try:
+                # The resolver validates and matches routes case-insensitively
+                # on lowercased input, mirroring normalize_request_path; the
+                # stored tag case of the resolved page is what switcher_href
+                # reports.
+                row = await self._resolve_page(
+                    connection,
+                    site_id=site_id,
+                    route=target.lower(),
+                    locale=locale.tag,
+                    statuses=statuses,
+                )
+            except ProjectionError:
+                resolved.append(locale)
+                continue
+            resolved.append(
+                locale.model_copy(update={"switcher_href": _page(row).effective_route})
+            )
+        return tuple(resolved)
+
     async def _resolve_page(
         self,
         connection: Any,
@@ -1243,6 +1341,151 @@ class RenderProjectionService:
             result.append(ProjectionNavigation(**navigation, items=projected_roots))
         return tuple(result)
 
+    async def _regions(
+        self,
+        connection: Any,
+        *,
+        site_id: UUID,
+        rows: Any,
+    ) -> tuple[ProjectionRegion, ...]:
+        rows = list(rows)
+        if len(rows) > 2:
+            raise ProjectionError("region_state")
+        seen: set[str] = set()
+        regions: list[ProjectionRegion] = []
+        for row in rows:
+            (
+                region_id,
+                row_site_id,
+                region_key,
+                variant,
+                content,
+                _schema_version,
+                row_version,
+                _created_at,
+                _updated_at,
+            ) = row
+            if row_site_id != site_id:
+                raise ProjectionError("region_scope")
+            if region_key not in _REGION_VARIANTS or region_key in seen:
+                raise ProjectionError("region_state")
+            seen.add(str(region_key))
+            if variant not in _REGION_VARIANTS[region_key]:
+                raise ProjectionError("region_state")
+            if not isinstance(row_version, int) or row_version <= 0:
+                raise ProjectionError("region_state")
+            content = _json_value(content)
+            if not isinstance(content, dict):
+                raise ProjectionError("region_state")
+            note: str | None = None
+            if region_key == "header":
+                if set(content) != {"nav"} or not isinstance(content["nav"], list):
+                    raise ProjectionError("region_state")
+                entries_value: list[Any] = content["nav"]
+            else:
+                if (
+                    not {"links"} <= set(content)
+                    or set(content) - {"links", "note"}
+                    or not isinstance(content["links"], list)
+                ):
+                    raise ProjectionError("region_state")
+                entries_value = content["links"]
+                note = content.get("note")
+                if note is not None and (not isinstance(note, str) or len(note) > 4096):
+                    raise ProjectionError("region_state")
+            entries: list[ProjectionRegionEntry] = []
+            for entry in entries_value:
+                if (
+                    not isinstance(entry, dict)
+                    or set(entry) != {"label", "target"}
+                    or not isinstance(entry["label"], str)
+                    or not entry["label"]
+                    or len(entry["label"]) > 256
+                ):
+                    raise ProjectionError("region_state")
+                target = entry["target"]
+                if not isinstance(target, dict) or set(target) != {"kind", "value"}:
+                    raise ProjectionError("region_state")
+                kind = target["kind"]
+                value = target["value"]
+                if not isinstance(value, str) or not value:
+                    raise ProjectionError("region_state")
+                if kind == "page":
+                    try:
+                        href = await connection.fetchval(
+                            "SELECT content.slaif_agent_page_effective_route($1)",
+                            value,
+                        )
+                    except asyncpg.PostgresError:
+                        raise ProjectionError("region_state") from None
+                    if not isinstance(href, str) or not href.startswith("/"):
+                        raise ProjectionError("region_state")
+                elif kind == "internal":
+                    try:
+                        href = validate_internal_route(value)
+                    except ValueError:
+                        raise ProjectionError("region_state") from None
+                elif kind == "external":
+                    try:
+                        href = validate_external_url(value)
+                    except ValueError:
+                        raise ProjectionError("region_state") from None
+                else:
+                    raise ProjectionError("region_state")
+                entries.append(ProjectionRegionEntry(label=entry["label"], href=href))
+            if region_key == "header" and not 1 <= len(entries) <= 12:
+                raise ProjectionError("region_state")
+            if region_key == "footer" and len(entries) > 16:
+                raise ProjectionError("region_state")
+            regions.append(
+                ProjectionRegion(
+                    id=region_id,
+                    region_key=region_key,
+                    variant=variant,
+                    entries=tuple(entries),
+                    note=note,
+                    row_version=row_version,
+                )
+            )
+        return tuple(regions)
+
+    @staticmethod
+    def _ancestors(
+        *,
+        site_id: UUID,
+        rows: Any,
+    ) -> tuple[ProjectionAncestor, ...]:
+        rows = list(rows)
+        if len(rows) > 64:
+            raise ProjectionError("region_state")
+        ancestors: list[ProjectionAncestor] = []
+        previous_position = 0
+        for row in rows:
+            (
+                position,
+                _ancestor_id,
+                row_site_id,
+                title,
+                _locale,
+                effective_route,
+            ) = row
+            if row_site_id != site_id:
+                raise ProjectionError("region_scope")
+            if (
+                not isinstance(title, str)
+                or not title
+                or not isinstance(effective_route, str)
+                or not effective_route.startswith("/")
+            ):
+                raise ProjectionError("region_state")
+            if int(position) != previous_position + 1:
+                raise ProjectionError("region_state")
+            previous_position = int(position)
+            ancestors.append(
+                ProjectionAncestor(title=title, effective_route=effective_route)
+            )
+        return tuple(ancestors)
+
     async def _query(
         self,
         connection: Any,
@@ -1293,6 +1536,15 @@ class RenderProjectionService:
         )
         page = _page(row)
         route_parameter = _dynamic_route_parameter(page.effective_route, route)
+        projected_locales = await self._locale_switcher(
+            connection,
+            site_id=context.site_id,
+            locales=projected_locales,
+            current_locale=locale,
+            default_locale=default_locale,
+            current_route=page.effective_route,
+            statuses=statuses,
+        )
         node_rows = list(
             await connection.fetch(
                 "SELECT id, site_id, page_id, component_type, schema_version, "
@@ -1350,6 +1602,21 @@ class RenderProjectionService:
         catalog_version = catalog_row[0] if catalog_row is not None else None
         if catalog_version != "catalog-v1":
             raise ProjectionError("catalog_mismatch")
+        regions = await self._regions(
+            connection,
+            site_id=context.site_id,
+            rows=await connection.fetch(
+                "SELECT * FROM content.slaif_region_list($1)", context.site_id
+            ),
+        )
+        ancestors = self._ancestors(
+            site_id=context.site_id,
+            rows=await connection.fetch(
+                "SELECT * FROM content.slaif_page_ancestor_chain($1,$2)",
+                context.site_id,
+                page.id,
+            ),
+        )
         return RenderPageProjection(
             render_mode=render_mode,
             site=ProjectionSite(
@@ -1374,6 +1641,9 @@ class RenderProjectionService:
             locales=projected_locales,
             navigation=navigation,
             bindings=bindings,
+            regions=regions,
+            ancestors=ancestors,
+            default_locale=default_locale,
         )
 
     async def canonical(self, request: RenderPageRequest) -> RenderRouteProjection:

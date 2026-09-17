@@ -72,6 +72,12 @@ from slaif_agent_site.content_model.page_style import (
     page_style_record_from_row,
 )
 from slaif_agent_site.content_model.query_dsl import validate_query_contract
+from slaif_agent_site.content_model.region_models import (
+    AgentUpdateGlobalRegionRequest,
+    GlobalRegionRecord,
+    global_region_content_json,
+    global_region_record_from_row,
+)
 from slaif_agent_site.content_model.service import (
     ContentModelService,
     ContentModelServiceError,
@@ -281,6 +287,10 @@ AGENT_PAGE_STYLE_GET_SQL = "SELECT * FROM content.slaif_agent_page_style_get($1,
 AGENT_PAGE_STYLE_UPDATE_SQL = (
     "SELECT * FROM content.slaif_agent_page_style_update($1,$2,$3,$4,$5,$6,$7,$8)"
 )
+AGENT_REGION_LIST_SQL = "SELECT * FROM content.slaif_agent_region_list($1)"
+AGENT_REGION_UPDATE_SQL = (
+    "SELECT * FROM content.slaif_agent_region_update($1,$2,$3,$4,$5)"
+)
 
 _IDEMPOTENCY_KEY = re.compile(r"^[A-Za-z0-9._~-]{1,128}$")
 
@@ -362,6 +372,7 @@ AGENT_SEMANTIC_CONTRACTS = {
     "COMPONENT_DELETED": ("composition_node", "DELETE", 200, "delete"),
     "THEME_UPDATED": ("theme", "PATCH", 200, "mutation"),
     "PAGE_STYLE_UPDATED": ("page_style", "PATCH", 200, "mutation"),
+    "GLOBAL_REGION_UPDATED": ("global_region", "PATCH", 200, "mutation"),
 }
 AGENT_SEMANTIC_ACTIONS = frozenset(AGENT_SEMANTIC_CONTRACTS)
 
@@ -468,6 +479,32 @@ class AgentCowContentModelService(ContentModelService):
             raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
         self.last_mutation_no_effect = bool(row[9])
         return page_style_record_from_row(row)
+
+    async def update_global_region_for_site(
+        self,
+        site_id: UUID,
+        region_id: UUID,
+        request: AgentUpdateGlobalRegionRequest,
+    ) -> GlobalRegionRecord:
+        for row in await self._fetch(AGENT_REGION_LIST_SQL, site_id):
+            candidate = global_region_record_from_row(row)
+            if candidate.id == region_id:
+                current = candidate
+                break
+        else:
+            raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
+        row = await self._fetchrow(
+            AGENT_REGION_UPDATE_SQL,
+            site_id,
+            current.region_key,
+            request.expected_row_version,
+            request.variant,
+            global_region_content_json(request.content),
+        )
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
+        self.last_mutation_no_effect = bool(row[9])
+        return global_region_record_from_row(row)
 
     async def create_type(
         self, site_id: UUID, request: CreateContentTypeRequest

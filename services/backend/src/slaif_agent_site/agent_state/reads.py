@@ -31,6 +31,10 @@ from slaif_agent_site.content_model.page_style import (
     PageStyleRecord,
     page_style_record_from_row,
 )
+from slaif_agent_site.content_model.region_models import (
+    GlobalRegionRecord,
+    global_region_record_from_row,
+)
 from slaif_agent_site.content_model.service import (
     ContentModelServiceError,
     ContentModelServiceReason,
@@ -100,6 +104,7 @@ AGENT_REDIRECT_LIST_SQL = "SELECT * FROM content.slaif_agent_redirect_list($1)"
 AGENT_REDIRECT_GET_SQL = "SELECT * FROM content.slaif_agent_redirect_get($1,$2)"
 AGENT_THEME_GET_SQL = "SELECT * FROM content.slaif_agent_theme_get($1)"
 AGENT_PAGE_STYLE_GET_SQL = "SELECT * FROM content.slaif_agent_page_style_get($1,$2)"
+AGENT_REGION_LIST_SQL = "SELECT * FROM content.slaif_agent_region_list($1)"
 
 AgentRead = Callable[["AgentSemanticReadService"], Awaitable[Any]]
 
@@ -360,6 +365,12 @@ class AgentSemanticReadService:
         if row is None:
             raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
         return _agent_theme(row)
+
+    async def list_global_regions(
+        self, site_id: UUID
+    ) -> tuple[GlobalRegionRecord, ...]:
+        rows = await self._fetch(AGENT_REGION_LIST_SQL, site_id)
+        return tuple(global_region_record_from_row(row) for row in rows)
 
 
 async def execute_agent_read(

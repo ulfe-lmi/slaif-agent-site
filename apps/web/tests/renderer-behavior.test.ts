@@ -243,6 +243,9 @@ describe("trusted catalog renderer behavior", () => {
         locales: [],
         navigation: [],
         bindings: {},
+        regions: [],
+        ancestors: [],
+        default_locale: "en-US",
       }),
     );
     expect(rendered).toContain("renderer-theme-palette--ember");
@@ -287,5 +290,112 @@ describe("trusted catalog renderer behavior", () => {
         },
       ]),
     ).toThrow("invalid-component-props");
+  });
+
+  it("renders the server-resolved language switcher fail-closed", () => {
+    const locale = (tag: string, position: number, href: string | null) => ({
+      id: `${position}${"0".repeat(29)}-0000-4000-8000-00000000000${position}`,
+      site_id: "33333333-3333-4333-8333-333333333333",
+      tag,
+      enabled: true as const,
+      is_default: position === 0,
+      position,
+      metadata: {},
+      switcher_href: href,
+    });
+    const base = {
+      route_kind: "page" as const,
+      render_mode: "canonical" as const,
+      site: {
+        id: "33333333-3333-4333-8333-333333333333",
+        key: "switch-site",
+        canonical_revision: 1,
+      },
+      requested_path: "/",
+      matched_path: "/",
+      locale: "en-US",
+      route_parameters: {},
+      page: {
+        id: "44444444-4444-4444-8444-444444444444",
+        site_id: "33333333-3333-4333-8333-333333333333",
+        slug: "home",
+        title: "Switch home",
+        status: "PUBLISHED" as const,
+        locale: "en-US",
+        parent_id: null,
+        route_template: null,
+        effective_route: "/",
+        row_version: 1,
+      },
+      composition: {
+        schema_version: "site-composition/v1",
+        catalog_version: "catalog-v1",
+        nodes: [],
+      },
+      theme: {
+        id: "33333333-3333-4333-8333-333333333333",
+        site_id: "33333333-3333-4333-8333-333333333333",
+        schema_version: "theme-schema/v1",
+        renderer_version: "renderer-v1",
+        row_version: 1,
+        palette: { preset: "ocean" },
+        typography: { family: "system", scale: "balanced", weight: "regular" },
+        layout: { content_width: "md", spacing: "md", grid_gap: "md" },
+        shape: { radius: "md", shadow: "sm" },
+        created_at: "2026-01-01T00:00:00Z",
+        updated_at: "2026-01-01T00:00:01Z",
+      },
+      page_style: {
+        id: "33333333-3333-4333-8333-333333333333",
+        site_id: "33333333-3333-4333-8333-333333333333",
+        schema_version: "theme-schema/v1",
+        renderer_version: "renderer-v1",
+        row_version: 1,
+        palette: { preset: "ocean" },
+        typography: { family: "system", scale: "balanced", weight: "regular" },
+        layout: { content_width: "md", spacing: "md", grid_gap: "md" },
+        shape: { radius: "md", shadow: "sm" },
+        created_at: "2026-01-01T00:00:00Z",
+        updated_at: "2026-01-01T00:00:01Z",
+      },
+      navigation: [],
+      bindings: {},
+      ancestors: [],
+      default_locale: "en-US",
+    } as const;
+    const region = (region_key: "header" | "footer") => ({
+      id: `${region_key === "header" ? 5 : 6}${"0".repeat(26)}-0000-4000-8000-00000000000${
+        region_key === "header" ? 1 : 2
+      }`,
+      region_key,
+      variant:
+        region_key === "header"
+          ? ("institutional" as const)
+          : ("single-column" as const),
+      entries: region_key === "header" ? [{ label: "switch-site", href: "/" }] : [],
+      note: null,
+      row_version: 1,
+    });
+    const resolvable = renderToStaticMarkup(
+      renderProjection({
+        ...base,
+        locales: [locale("en-US", 0, null), locale("sl-SI", 1, "/sl-SI/home")],
+        regions: [region("header"), region("footer")],
+      }),
+    );
+    expect(resolvable).toContain(`<span aria-current="true">en-US</span>`);
+    expect(resolvable).toContain(`<a href="/s/switch-site/sl-SI/home">sl-SI</a>`);
+    expect(resolvable).not.toContain("renderer-region-language-inert");
+    const unresolvable = renderToStaticMarkup(
+      renderProjection({
+        ...base,
+        locales: [locale("en-US", 0, null), locale("sl-SI", 1, null)],
+        regions: [region("header"), region("footer")],
+      }),
+    );
+    expect(unresolvable).toContain(`<span aria-current="true">en-US</span>`);
+    expect(unresolvable).toContain("renderer-region-language-inert");
+    expect(unresolvable).toContain(">sl-SI</span>");
+    expect(unresolvable).not.toContain(`/s/switch-site/sl-SI`);
   });
 });

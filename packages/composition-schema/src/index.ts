@@ -54,3 +54,4 @@ export * from "./puck-adapter";
 export * from "./puck-reorder";
 export * from "./design-system";
 export * from "./theme-schema";
+export * from "./region-schema";

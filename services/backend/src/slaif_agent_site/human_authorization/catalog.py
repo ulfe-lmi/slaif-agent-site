@@ -19,8 +19,8 @@ class PermissionDefinition:
 READ_SCOPES = frozenset(
     """site:read content-model:read content-item:read collection-view:read
     page:read composition:read navigation:read translation:read media:read
-    theme:read redirect:read component-catalog:read preview:inspect
-    validation:read""".split()
+    theme:read global-region:read redirect:read component-catalog:read
+    preview:inspect validation:read""".split()
 )
 L1_SCOPES = frozenset(
     """content-item:create content-item:write content-item:delete

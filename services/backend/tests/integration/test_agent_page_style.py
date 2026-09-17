@@ -693,7 +693,7 @@ async def test_page_style_066_round_trip_preserves_legacy_data_and_blocks_loss(
             await owner.fetchval(
                 "SELECT version_num::text FROM control.alembic_version"
             )
-            == "066_001"
+            == "067_001"
         )
         round_trip = await owner.fetchrow(
             "SELECT slug,title,status,locale,row_version,style_overrides::text "
@@ -881,7 +881,7 @@ async def test_page_style_fresh_065_baseline_restores_exactly_through_066(
         database.settings.resolved_owner_dsn(),
         expected_database=database.name,
         operation="upgrade",
-        revision="066_001",
+        revision="head",
     )
     await reconcile(database.settings)
     async with owner_connection(
@@ -891,7 +891,7 @@ async def test_page_style_fresh_065_baseline_restores_exactly_through_066(
             await owner.fetchval(
                 "SELECT version_num::text FROM control.alembic_version"
             )
-            == "066_001"
+            == "067_001"
         )
         round_trip = await owner.fetchrow(
             "SELECT slug,title,status,locale,row_version,style_overrides::text "
@@ -985,7 +985,7 @@ async def test_page_style_downgrade_rejects_style_audit_without_data_loss(
             await owner.fetchval(
                 "SELECT version_num::text FROM control.alembic_version"
             )
-            == "066_001"
+            == "067_001"
         )
         assert (
             await owner.fetchval(
