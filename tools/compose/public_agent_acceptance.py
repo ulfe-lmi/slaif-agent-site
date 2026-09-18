@@ -1332,7 +1332,7 @@ def _run_dynamic_news_edge_journey(
                 },
                 "htmlLang": selected_locale,
                 "main": 1,
-                "navigation": 2,
+                "navigation": 3,
                 "rendererStylesheets": 1,
                 "sections": 0,
             }:
