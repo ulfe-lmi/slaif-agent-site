@@ -4096,7 +4096,7 @@ def run_acceptance(project: str) -> None:
             catalog.get("version") != "catalog-v1"
             or catalog.get("composition_schema_version") != "site-composition/v1"
             or not isinstance(catalog.get("components"), list)
-            or len(catalog["components"]) != 27
+            or len(catalog["components"]) != 29
         ):
             raise ProofFailure("component-catalog-invalid")
         required_scopes = {
