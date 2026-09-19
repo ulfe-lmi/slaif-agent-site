@@ -230,6 +230,7 @@
         }
       ]
     },
+    {"type": "VideoEmbed", "variants": [], "properties": []},
     {
       "type": "Button",
       "variants": [],
@@ -270,7 +271,7 @@
     {"type": "Hero", "variants": [], "properties": []},
     {"type": "Statistics", "variants": [], "properties": []},
     {"type": "Timeline", "variants": [], "properties": []},
-    {"type": "FAQ", "variants": [], "properties": []},{"type": "ContactBlock", "variants": [], "properties": []},
+    {"type": "FAQ", "variants": [], "properties": []},{"type": "ContactBlock", "variants": [], "properties": []},{"type": "MapBlock", "variants": [], "properties": []},
     {"type": "Header", "variants": [], "properties": []},
     {"type": "Footer", "variants": [], "properties": []},
     {"type": "Breadcrumbs", "variants": [], "properties": []},

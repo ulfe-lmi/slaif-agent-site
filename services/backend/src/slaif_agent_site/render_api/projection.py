@@ -22,6 +22,10 @@ from slaif_agent_site.browser_preview_credentials import (
     BrowserPreviewCredentialSigner,
     BrowserPreviewExpectedBinding,
 )
+from slaif_agent_site.content_model.bounded_embed import (
+    validate_map_embed_props,
+    validate_video_embed_props,
+)
 from slaif_agent_site.content_model.component_catalog import (
     COMPONENT_BY_TYPE,
     MAX_COMPONENT_DEPTH,
@@ -555,6 +559,17 @@ def _node_tree(
         if any(key.lower() in forbidden_keys for key in props):
             raise ProjectionError("executable_prop")
         _validate_props(component_type, props)
+        # Defense in depth: re-validate embed props against the bounded policy
+        # at projection time so the renderer can never receive an
+        # un-canonicalizable embed (R1 is pure and deterministic).
+        if component_type == "VideoEmbed":
+            ok, _key = validate_video_embed_props(props)
+        elif component_type == "MapBlock":
+            ok, _key = validate_map_embed_props(props)
+        else:
+            ok = True
+        if not ok:
+            raise ProjectionError("embed_props_invalid")
         item = {
             "id": node_id,
             "component_type": component_type,

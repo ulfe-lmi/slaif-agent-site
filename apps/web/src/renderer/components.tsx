@@ -153,6 +153,65 @@ function aspectRatioClass(value: unknown): string {
   return token(value, ASPECT_RATIO_VALUES, "auto").replace(":", "-");
 }
 
+// Bounded embed policy (bounded-embed/v1): the trusted renderer rebuilds
+// canonical embed URLs exclusively from structured props. The allowlist is
+// the reduced-tracking endpoints only (youtube-nocookie, player.vimeo.com,
+// www.openstreetmap.org); no autoplay/marketing/tracking parameter is ever
+// emitted, and any non-canonical prop set renders the bounded placeholder
+// instead of an iframe (fail-closed).
+const EMBED_TITLE_MAX_LENGTH = 120;
+const EMBED_MAP_LAYERS = new Set(["mapnik", "cycle", "transport"]);
+const EMBED_MAP_DEFAULT_LAYER = "mapnik";
+
+function formatEmbedCoordinate(value: number): string {
+  if (Number.isInteger(value)) return String(value);
+  const text = value.toFixed(10).replace(/0+$/, "").replace(/\.$/, "");
+  if (text === "" || text === "-") return "0";
+  return text;
+}
+
+function canonicalVideoEmbedUrl(provider: unknown, videoId: unknown): string | null {
+  if (typeof provider !== "string" || typeof videoId !== "string") return null;
+  if (provider === "youtube-nocookie") {
+    if (videoId.length !== 11 || !/^[A-Za-z0-9_-]+$/.test(videoId)) return null;
+    return `https://www.youtube-nocookie.com/embed/${videoId}`;
+  }
+  if (provider === "vimeo") {
+    if (videoId.length < 6 || !/^[0-9]+$/.test(videoId)) return null;
+    return `https://player.vimeo.com/video/${videoId}`;
+  }
+  return null;
+}
+
+function canonicalMapEmbedUrl(props: Record<string, unknown>): string | null {
+  const raw = props.bbox;
+  if (typeof raw !== "object" || raw === null) return null;
+  const bbox = raw as Record<string, unknown>;
+  const values = [bbox.west, bbox.south, bbox.east, bbox.north];
+  if (values.some((value) => typeof value !== "number" || !Number.isFinite(value)))
+    return null;
+  const [west, south, east, north] = values as [number, number, number, number];
+  if (Math.abs(west) > 180 || Math.abs(east) > 180) return null;
+  if (Math.abs(south) > 85.05112877 || Math.abs(north) > 85.05112877) return null;
+  if (!(west < east) || !(south < north)) return null;
+  const layer = props.layer === undefined ? EMBED_MAP_DEFAULT_LAYER : props.layer;
+  if (typeof layer !== "string" || !EMBED_MAP_LAYERS.has(layer)) return null;
+  const bboxText = [west, south, east, north].map(formatEmbedCoordinate).join(",");
+  const query: Record<string, string> = { bbox: bboxText };
+  if (layer !== EMBED_MAP_DEFAULT_LAYER) query.layer = layer;
+  const rendered = Object.keys(query)
+    .sort()
+    .map((key) => `${key}=${query[key]}`)
+    .join("&");
+  return `https://www.openstreetmap.org/export/embed.html?${rendered}`;
+}
+
+function embedTitle(value: unknown): string | null {
+  if (typeof value !== "string" || !value) return null;
+  if (value.length > EMBED_TITLE_MAX_LENGTH) return null;
+  return value;
+}
+
 function Section({ props, children }: RenderProps) {
   return (
     <section
@@ -269,6 +328,28 @@ function Image({ props }: RenderProps) {
     />
   );
 }
+function VideoEmbed({ props }: RenderProps) {
+  const src = canonicalVideoEmbedUrl(props.provider, props.video_id);
+  const title = embedTitle(props.title);
+  if (src === null || title === null) {
+    return (
+      <div
+        aria-label={title ?? "Video unavailable"}
+        className="sl-embed sl-embed--video sl-embed--placeholder"
+        role="img"
+      />
+    );
+  }
+  return (
+    <iframe
+      className="sl-embed sl-embed--video"
+      src={src}
+      title={title}
+      loading="lazy"
+      referrerPolicy="no-referrer"
+    />
+  );
+}
 function Button({ props }: RenderProps) {
   return (
     <a
@@ -316,6 +397,28 @@ function ContactBlock({ props }: RenderProps) {
       {email ? <p className="renderer-contact-email">{email}</p> : null}
       {hours ? <p className="renderer-contact-hours">{hours}</p> : null}
     </section>
+  );
+}
+function MapBlock({ props }: RenderProps) {
+  const src = canonicalMapEmbedUrl(props);
+  const title = embedTitle(props.title);
+  if (src === null || title === null) {
+    return (
+      <div
+        aria-label={title ?? "Map unavailable"}
+        className="sl-embed sl-embed--map sl-embed--placeholder"
+        role="img"
+      />
+    );
+  }
+  return (
+    <iframe
+      className="sl-embed sl-embed--map"
+      src={src}
+      title={title}
+      loading="lazy"
+      referrerPolicy="no-referrer"
+    />
   );
 }
 function RelatedItems({ props, data }: RenderProps) {
@@ -601,7 +704,9 @@ const RENDERERS: Record<string, (props: RenderProps) => ReactElement> = {
   Button,
   Quote,
   CallToAction,
+  VideoEmbed,
   ContactBlock,
+  MapBlock,
   Hero,
   Statistics,
   Timeline,

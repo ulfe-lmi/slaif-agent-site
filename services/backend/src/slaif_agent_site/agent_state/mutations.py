@@ -30,6 +30,10 @@ from slaif_agent_site.agent_state.locks import (
     acquire_workspace_lifecycle_lock,
     prelocked_cow_session,
 )
+from slaif_agent_site.content_model.bounded_embed import (
+    validate_map_embed_props,
+    validate_video_embed_props,
+)
 from slaif_agent_site.content_model.component_facets import (
     FacetValidationError,
     field_primitive_map,
@@ -1306,6 +1310,11 @@ class AgentCowContentModelService(ContentModelService):
         await self._validate_collection_filter_facets(
             site_id, request.component_type, request.props
         )
+        embed_error = self._embed_prop_error(request.component_type, {}, request.props)
+        if embed_error is not None:
+            raise ContentModelServiceError(
+                ContentModelServiceReason.VALIDATION, code=embed_error
+            )
         row = await self._fetchrow(
             AGENT_COMPONENT_CREATE_SQL,
             site_id,
@@ -1336,6 +1345,13 @@ class AgentCowContentModelService(ContentModelService):
         request: AgentUpdateCompositionNodeRequest,
     ) -> CompositionNodeRecord:
         current = await self.get_component_for_site(site_id, component_id)
+        embed_error = self._embed_prop_error(
+            current.component_type, current.props, request.props
+        )
+        if embed_error is not None:
+            raise ContentModelServiceError(
+                ContentModelServiceReason.VALIDATION, code=embed_error
+            )
         try:
             props = validate_agent_component_props(
                 current.component_type, current.props, request.props
@@ -1436,6 +1452,34 @@ class AgentCowContentModelService(ContentModelService):
             raise ContentModelServiceError(
                 ContentModelServiceReason.VALIDATION, code=error.code
             ) from None
+
+    @staticmethod
+    def _embed_prop_error(
+        component_type: str, old_props: dict[str, Any], patch_props: dict[str, Any]
+    ) -> str | None:
+        """Bounded embed-policy decision for the merged post-write state.
+
+        Only VideoEmbed and MapBlock are governed by the versioned bounded
+        embed policy; all other component types return ``None``.  The merge
+        mirrors ``validate_agent_component_props`` for these content-only
+        types (non-null patch entries override, null entries remove), so the
+        R1 error key is the first decision surface for embed writes: the
+        catalog guard and the content function still re-verify the same
+        state downstream (defense in depth).
+        """
+        if component_type not in ("VideoEmbed", "MapBlock"):
+            return None
+        merged = dict(old_props)
+        for patch_key, patch_value in patch_props.items():
+            if patch_value is None:
+                merged.pop(patch_key, None)
+            else:
+                merged[patch_key] = patch_value
+        if component_type == "VideoEmbed":
+            ok, error_key = validate_video_embed_props(merged)
+        else:
+            ok, error_key = validate_map_embed_props(merged)
+        return None if ok else error_key
 
 
 async def _cow_fetchrow(cow: CowSession, sql: str, *arguments: object) -> Any:

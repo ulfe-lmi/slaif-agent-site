@@ -6237,6 +6237,36 @@
               "supported": true
             },
             {
+              "component_type": "VideoEmbed",
+              "property": "provider",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "VideoEmbed",
+              "property": "title",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "VideoEmbed",
+              "property": "video_id",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
               "component_type": "Button",
               "property": "href",
               "responsive": false,
@@ -6589,6 +6619,36 @@
                 "component-content-props:write"
               ],
               "supported": true
+            },
+            {
+              "component_type": "MapBlock",
+              "property": "bbox",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "MapBlock",
+              "property": "layer",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "MapBlock",
+              "property": "title",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
             }
           ]
         },
@@ -6836,6 +6896,36 @@
           {
             "component_type": "Image",
             "property": "mediaId",
+            "responsive": false,
+            "responsive_required_scopes": [],
+            "scalar_required_scopes": [
+              "component-content-props:write"
+            ],
+            "supported": true
+          },
+          {
+            "component_type": "VideoEmbed",
+            "property": "provider",
+            "responsive": false,
+            "responsive_required_scopes": [],
+            "scalar_required_scopes": [
+              "component-content-props:write"
+            ],
+            "supported": true
+          },
+          {
+            "component_type": "VideoEmbed",
+            "property": "title",
+            "responsive": false,
+            "responsive_required_scopes": [],
+            "scalar_required_scopes": [
+              "component-content-props:write"
+            ],
+            "supported": true
+          },
+          {
+            "component_type": "VideoEmbed",
+            "property": "video_id",
             "responsive": false,
             "responsive_required_scopes": [],
             "scalar_required_scopes": [
@@ -7196,6 +7286,36 @@
               "component-content-props:write"
             ],
             "supported": true
+          },
+          {
+            "component_type": "MapBlock",
+            "property": "bbox",
+            "responsive": false,
+            "responsive_required_scopes": [],
+            "scalar_required_scopes": [
+              "component-content-props:write"
+            ],
+            "supported": true
+          },
+          {
+            "component_type": "MapBlock",
+            "property": "layer",
+            "responsive": false,
+            "responsive_required_scopes": [],
+            "scalar_required_scopes": [
+              "component-content-props:write"
+            ],
+            "supported": true
+          },
+          {
+            "component_type": "MapBlock",
+            "property": "title",
+            "responsive": false,
+            "responsive_required_scopes": [],
+            "scalar_required_scopes": [
+              "component-content-props:write"
+            ],
+            "supported": true
           }
         ],
         "x-slaif-conditional-scopes": [
@@ -7449,6 +7569,42 @@
             ],
             "when_fields": [
               "props.mediaId"
+            ]
+          },
+          {
+            "component_types": [
+              "VideoEmbed"
+            ],
+            "condition": "changed",
+            "required_scopes": [
+              "component-content-props:write"
+            ],
+            "when_fields": [
+              "props.provider"
+            ]
+          },
+          {
+            "component_types": [
+              "VideoEmbed"
+            ],
+            "condition": "changed",
+            "required_scopes": [
+              "component-content-props:write"
+            ],
+            "when_fields": [
+              "props.title"
+            ]
+          },
+          {
+            "component_types": [
+              "VideoEmbed"
+            ],
+            "condition": "changed",
+            "required_scopes": [
+              "component-content-props:write"
+            ],
+            "when_fields": [
+              "props.video_id"
             ]
           },
           {
@@ -7869,6 +8025,42 @@
             ],
             "when_fields": [
               "props.phone"
+            ]
+          },
+          {
+            "component_types": [
+              "MapBlock"
+            ],
+            "condition": "changed",
+            "required_scopes": [
+              "component-content-props:write"
+            ],
+            "when_fields": [
+              "props.bbox"
+            ]
+          },
+          {
+            "component_types": [
+              "MapBlock"
+            ],
+            "condition": "changed",
+            "required_scopes": [
+              "component-content-props:write"
+            ],
+            "when_fields": [
+              "props.layer"
+            ]
+          },
+          {
+            "component_types": [
+              "MapBlock"
+            ],
+            "condition": "changed",
+            "required_scopes": [
+              "component-content-props:write"
+            ],
+            "when_fields": [
+              "props.title"
             ]
           }
         ],
@@ -16261,6 +16453,36 @@
               "supported": true
             },
             {
+              "component_type": "VideoEmbed",
+              "property": "provider",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "VideoEmbed",
+              "property": "title",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "VideoEmbed",
+              "property": "video_id",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
               "component_type": "Button",
               "property": "href",
               "responsive": false,
@@ -16607,6 +16829,36 @@
             {
               "component_type": "ContactBlock",
               "property": "phone",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "MapBlock",
+              "property": "bbox",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "MapBlock",
+              "property": "layer",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "MapBlock",
+              "property": "title",
               "responsive": false,
               "responsive_required_scopes": [],
               "scalar_required_scopes": [

@@ -62,7 +62,7 @@ def test_changed_properties_derive_exact_design_and_responsive_scopes() -> None:
         == ()
     )
     assert component_property_scope("Section", "background")["supported"] is False  # type: ignore[index]
-    assert len(component_property_scope_metadata()) == 57
+    assert len(component_property_scope_metadata()) == 63
     assert required_scopes_for_component_create("Button", {"variant": "ghost"}) == (
         "component-variant:write",
     )

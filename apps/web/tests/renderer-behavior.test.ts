@@ -499,6 +499,119 @@ describe("trusted catalog renderer behavior", () => {
     ).toBe("");
   });
 
+  it("renders the bounded embed family with pinned canonical markup", () => {
+    const youtube = renderToStaticMarkup(
+      renderComponent(
+        {
+          componentType: "VideoEmbed",
+          props: {
+            provider: "youtube-nocookie",
+            video_id: "dQw4w9WgXcQ",
+            title: "Product talk",
+          },
+        },
+        "en",
+      ),
+    );
+    expect(youtube).toBe(
+      '<iframe class="sl-embed sl-embed--video" ' +
+        'src="https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ" ' +
+        'title="Product talk" loading="lazy" referrerPolicy="no-referrer"></iframe>',
+    );
+    const vimeo = renderToStaticMarkup(
+      renderComponent(
+        {
+          componentType: "VideoEmbed",
+          props: { provider: "vimeo", video_id: "123456", title: "Studio reel" },
+        },
+        "en",
+      ),
+    );
+    expect(vimeo).toBe(
+      '<iframe class="sl-embed sl-embed--video" ' +
+        'src="https://player.vimeo.com/video/123456" ' +
+        'title="Studio reel" loading="lazy" referrerPolicy="no-referrer"></iframe>',
+    );
+    const mapDefault = renderToStaticMarkup(
+      renderComponent(
+        {
+          componentType: "MapBlock",
+          props: {
+            bbox: { west: -12.5, south: 55, east: -12.4, north: 55.1 },
+            title: "Ljubljana campus",
+          },
+        },
+        "en",
+      ),
+    );
+    expect(mapDefault).toBe(
+      '<iframe class="sl-embed sl-embed--map" ' +
+        'src="https://www.openstreetmap.org/export/embed.html?bbox=-12.5,55,-12.4,55.1" ' +
+        'title="Ljubljana campus" loading="lazy" referrerPolicy="no-referrer"></iframe>',
+    );
+    const mapCycle = renderToStaticMarkup(
+      renderComponent(
+        {
+          componentType: "MapBlock",
+          props: {
+            bbox: { west: -12.5, south: 55, east: -12.4, north: 55.1 },
+            layer: "cycle",
+            title: "Bike loop",
+          },
+        },
+        "en",
+      ),
+    );
+    expect(mapCycle).toBe(
+      '<iframe class="sl-embed sl-embed--map" ' +
+        'src="https://www.openstreetmap.org/export/embed.html?bbox=-12.5,55,-12.4,55.1&amp;layer=cycle" ' +
+        'title="Bike loop" loading="lazy" referrerPolicy="no-referrer"></iframe>',
+    );
+    for (const markup of [youtube, vimeo, mapDefault, mapCycle]) {
+      // No sandbox, allow, allowfullscreen, or inline style attributes.
+      expect(markup).not.toContain("sandbox");
+      expect(markup).not.toContain("allow=");
+      expect(markup).not.toContain("allowfullscreen");
+      expect(markup).not.toContain('style="');
+      expect(markup).not.toContain("autoplay");
+    }
+    // Fail-closed: non-canonical props render the bounded placeholder,
+    // never an iframe with an unvalidated URL.
+    const badVideo = renderToStaticMarkup(
+      renderComponent(
+        {
+          componentType: "VideoEmbed",
+          props: {
+            provider: "youtube",
+            video_id: "dQw4w9WgXcQ",
+            title: "Blocked",
+          },
+        },
+        "en",
+      ),
+    );
+    expect(badVideo).toBe(
+      '<div aria-label="Blocked" ' +
+        'class="sl-embed sl-embed--video sl-embed--placeholder" role="img"></div>',
+    );
+    const badMap = renderToStaticMarkup(
+      renderComponent(
+        {
+          componentType: "MapBlock",
+          props: {
+            bbox: { west: 56, south: 55, east: 55, north: 56 },
+            title: "Blocked map",
+          },
+        },
+        "en",
+      ),
+    );
+    expect(badMap).toBe(
+      '<div aria-label="Blocked map" ' +
+        'class="sl-embed sl-embed--map sl-embed--placeholder" role="img"></div>',
+    );
+  });
+
   it("renders the bounded client-filter components statelessly", () => {
     const items = [
       { id: "1", slug: "a", values: { title: "Alpha news", rank: 3 } },

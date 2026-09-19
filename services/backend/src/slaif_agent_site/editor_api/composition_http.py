@@ -7,6 +7,10 @@ from uuid import UUID
 
 from fastapi import APIRouter, Request, Response
 
+from slaif_agent_site.content_model.bounded_embed import (
+    validate_map_embed_props,
+    validate_video_embed_props,
+)
 from slaif_agent_site.content_model.component_facets import (
     FacetValidationError,
     field_primitive_map,
@@ -116,6 +120,24 @@ async def _validate_collection_filter_facets(
         raise DomainValidationError() from None
 
 
+async def _validate_embed_props(component_type: str, props: dict[str, Any]) -> None:
+    """Fail-closed bounded embed policy validation for the human Puck path.
+
+    Only VideoEmbed and MapBlock are governed by the versioned bounded embed
+    policy; all other component types pass through.  The Editor update
+    endpoint replaces props wholesale, so the supplied props are exactly the
+    post-write state.
+    """
+    if component_type == "VideoEmbed":
+        ok, _key = validate_video_embed_props(props)
+    elif component_type == "MapBlock":
+        ok, _key = validate_map_embed_props(props)
+    else:
+        return
+    if not ok:
+        raise DomainValidationError() from None
+
+
 async def _auth(
     request: Request, site_id: UUID, *, permission: str, state_changing: bool
 ) -> SiteRequestAuthority:
@@ -149,6 +171,7 @@ async def add_component(
     await _validate_collection_filter_facets(
         request, site_id, body.component_type, body.props
     )
+    await _validate_embed_props(body.component_type, body.props)
     try:
         return await _service(request).add_composition_node(  # type: ignore[no-any-return]
             site_id=site_id,
@@ -207,6 +230,7 @@ async def update_component(
         await _validate_collection_filter_facets(
             request, site_id, current.component_type, body.props
         )
+        await _validate_embed_props(current.component_type, body.props)
     try:
         return await _service(request).update_composition_node(  # type: ignore[no-any-return]
             node_id=node_id,
