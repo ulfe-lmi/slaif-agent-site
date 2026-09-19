@@ -2039,7 +2039,10 @@ test("bounded-embed-family-renders-canonically-and-rejects-hostile-writes", asyn
     expect(body.error?.details?.prop_error).toBe(hostileCase.key);
   }
 
-  // The Editor path rejects the same inputs with a bounded 422.
+  // The Editor path rejects the same inputs with a bounded 422.  The human
+  // editor session resolves to its own server-owned HUMAN COW workspace
+  // (distinct from the agent workspace above), so update rejections are
+  // exercised against components the editor itself created there.
   const editorHeaders = (key = crypto.randomUUID()) => ({
     "X-CSRF-Token": csrf,
     "Idempotency-Key": key,
@@ -2061,14 +2064,6 @@ test("bounded-embed-family-renders-canonically-and-rejects-hostile-writes", asyn
     },
   );
   expect(editorVideoCreate.status()).toBe(422);
-  const editorVideoUpdate = await page.request.patch(
-    `${editorCompositionPath}/components/${videoComponentId}`,
-    {
-      headers: editorHeaders(),
-      data: { props: { ...videoProps, video_id: "data:text/html,x" } },
-    },
-  );
-  expect(editorVideoUpdate.status()).toBe(422);
   const editorMapCreate = await page.request.post(
     `${editorCompositionPath}/components`,
     {
@@ -2084,14 +2079,98 @@ test("bounded-embed-family-renders-canonically-and-rejects-hostile-writes", asyn
     },
   );
   expect(editorMapCreate.status()).toBe(422);
-  const editorMapUpdate = await page.request.patch(
-    `${editorCompositionPath}/components/${mapComponentId}`,
+  const editorVideoValidCreate = await page.request.post(
+    `${editorCompositionPath}/components`,
     {
       headers: editorHeaders(),
-      data: { props: { ...mapProps, layer: "satellite" } },
+      data: {
+        component_type: "VideoEmbed",
+        slot_key: "default",
+        props: {
+          provider: "youtube-nocookie",
+          video_id: "dQw4w9WgXcQ",
+          title: "E2E product talk",
+        },
+      },
+    },
+  );
+  expect(editorVideoValidCreate.status()).toBe(201);
+  const editorVideoRecord = (await editorVideoValidCreate.json()) as {
+    id?: unknown;
+    row_version?: unknown;
+    props?: unknown;
+  };
+  expect(typeof editorVideoRecord.id).toBe("string");
+  expect(editorVideoRecord.row_version).toBe(1);
+  const editorVideoId = editorVideoRecord.id as string;
+  const editorMapValidCreate = await page.request.post(
+    `${editorCompositionPath}/components`,
+    {
+      headers: editorHeaders(),
+      data: {
+        component_type: "MapBlock",
+        slot_key: "default",
+        props: {
+          bbox: { west: -12.5, south: 55, east: -12.4, north: 55.1 },
+          layer: "cycle",
+          title: "E2E campus map",
+        },
+      },
+    },
+  );
+  expect(editorMapValidCreate.status()).toBe(201);
+  const editorMapRecord = (await editorMapValidCreate.json()) as {
+    id?: unknown;
+    row_version?: unknown;
+    props?: unknown;
+  };
+  expect(typeof editorMapRecord.id).toBe("string");
+  expect(editorMapRecord.row_version).toBe(1);
+  const editorMapId = editorMapRecord.id as string;
+  const editorVideoUpdate = await page.request.patch(
+    `${editorCompositionPath}/components/${editorVideoId}`,
+    {
+      headers: editorHeaders(),
+      data: {
+        props: {
+          ...(editorVideoRecord.props as Record<string, unknown>),
+          video_id: "data:text/html,x",
+        },
+      },
+    },
+  );
+  expect(editorVideoUpdate.status()).toBe(422);
+  const editorMapUpdate = await page.request.patch(
+    `${editorCompositionPath}/components/${editorMapId}`,
+    {
+      headers: editorHeaders(),
+      data: {
+        props: {
+          ...(editorMapRecord.props as Record<string, unknown>),
+          layer: "satellite",
+        },
+      },
     },
   );
   expect(editorMapUpdate.status()).toBe(422);
+  const editorTreeAfterRejections = await page.request.get(`${editorCompositionPath}/`);
+  expect(editorTreeAfterRejections.status()).toBe(200);
+  const editorTreeRecords = (await editorTreeAfterRejections.json()) as Array<{
+    id: string;
+    row_version: number;
+    props: Record<string, unknown>;
+  }>;
+  expect(editorTreeRecords).toHaveLength(2);
+  const editorVideoReadback = editorTreeRecords.find(
+    (record) => record.id === editorVideoId,
+  );
+  const editorMapReadback = editorTreeRecords.find(
+    (record) => record.id === editorMapId,
+  );
+  expect(editorVideoReadback?.row_version).toBe(1);
+  expect(editorMapReadback?.row_version).toBe(1);
+  expect(editorVideoReadback?.props).toEqual(videoProps);
+  expect(editorMapReadback?.props).toEqual(mapProps);
 
   // No rejected write changed the tree or any row version.
   const treeAfterRejections = await page.request.get(compositionPath, {
@@ -2103,24 +2182,45 @@ test("bounded-embed-family-renders-canonically-and-rejects-hostile-writes", asyn
   >;
   expect(treeAfterRejectionsBody).toEqual(treeSnapshot);
 
-  // Public page: exact pinned markup, exact frame-src, no autoplay.
-  const publicResponse = await page.request.get("/s/parity/");
-  expect(publicResponse.status()).toBe(200);
-  const publicBody = await publicResponse.text();
-  const publicCsp = publicResponse.headers()["content-security-policy"] ?? "";
-  expect(publicCsp).toContain(frameSrc);
-  expect(publicBody).toContain(videoIframe);
-  expect(publicBody).toContain(mapIframe);
-  expect(publicBody).not.toContain("autoplay");
+  // Public canonical page: the exact frame-src backstop, canonical render
+  // mode, and COW suppression — no workspace-created embed (no iframe at
+  // all) reaches public markup before promotion.
+  const publicResponse = await page.goto("/s/parity/");
+  expect(publicResponse?.status()).toBe(200);
+  expect(publicResponse?.headers()["content-security-policy"] ?? "").toContain(
+    frameSrc,
+  );
+  const publicHtml = await page.content();
+  expect(publicHtml).toContain('data-render-mode="canonical"');
+  expect(publicHtml).not.toContain("<iframe");
+  expect(publicHtml).toContain("Parity canonical heading");
+  const publicRichText = await page.evaluate(
+    () => document.querySelector('[data-component="RichText"]')?.outerHTML ?? "",
+  );
+  expect(publicRichText.length).toBeGreaterThan(0);
 
-  // Preview page: byte-identical markup for both components, private headers.
+  // Preview of the agent workspace: exact pinned markup for both
+  // components, private headers, same frame-src backstop.
   const previewPath = `/preview/${workspaceId}/s/parity/`;
   const previewResponse = await page.goto(previewPath);
   expectPrivateHeaders(previewResponse!);
   expect(previewResponse?.status()).toBe(200);
+  expect(previewResponse?.headers()["content-security-policy"] ?? "").toContain(
+    frameSrc,
+  );
   const previewBody = await previewResponse!.text();
   expect(previewBody).toContain(videoIframe);
   expect(previewBody).toContain(mapIframe);
+  expect(previewBody).toContain('data-render-mode="preview"');
+  expect(previewBody).not.toContain("autoplay");
+
+  // Byte-identical shared-base markup between the public and preview
+  // surfaces: one trusted renderer serves both, so the pinned embed
+  // contract applies to both; only the mode attribute and COW data differ.
+  const previewRichText = await page.evaluate(
+    () => document.querySelector('[data-component="RichText"]')?.outerHTML ?? "",
+  );
+  expect(previewRichText).toBe(publicRichText);
 
   // Emitted iframe srcs: exactly the two canonical URLs, https only.
   const iframeSrcs = await page.evaluate(() =>
