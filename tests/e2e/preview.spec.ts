@@ -1293,3 +1293,471 @@ test("agent-theme-patch-renders-in-the-same-authorized-workspace", async ({ page
   );
   expect(revokeResponse.status()).toBe(200);
 });
+
+const DEFAULT_PARITY_HEADER = {
+  variant: "institutional",
+  content: {
+    nav: [{ label: "parity", target: { kind: "internal", value: "/" } }],
+  },
+};
+const DEFAULT_PARITY_FOOTER = {
+  variant: "single-column",
+  content: { links: [], note: "" },
+};
+
+test("global-regions-render-canonical-defaults-and-editor-save-is-preview-scoped", async ({
+  page,
+}) => {
+  const workspaceId = process.env.SLAIF_E2E_PREVIEW_WORKSPACE_ID;
+  if (!workspaceId) throw new Error("missing preview fixture channel");
+  const credential = secrets();
+  const failures = observe(page);
+
+  await login(page, credential);
+  const sitesResponse = await page.request.get("/api/control/v1/me/sites");
+  expect(sitesResponse.status()).toBe(200);
+  const sites = (await sitesResponse.json()) as Array<{
+    site_id: string;
+    site_key: string;
+  }>;
+  const parity = sites.find((site) => site.site_key === "parity");
+  expect(parity).toBeDefined();
+  const csrf = (await page.context().cookies()).find(
+    (cookie) => cookie.name === "slaif_csrf",
+  )?.value;
+  expect(csrf).toBeTruthy();
+
+  // Public canonical renders the virtual defaults before any write.
+  const canonical = await page.goto("/s/parity/");
+  expect(canonical?.status()).toBe(200);
+  const canonicalHeaderClass = await page
+    .locator("header.renderer-region-header")
+    .getAttribute("class");
+  expect(canonicalHeaderClass).toContain("renderer-region-header--institutional");
+  await expect(page.locator("header .renderer-region-brand")).toHaveText("parity");
+  await expect(page.locator("header .renderer-region-brand")).toHaveAttribute(
+    "href",
+    "/s/parity",
+  );
+  const canonicalNavLinks = page.locator('header nav[aria-label="Site"] a');
+  expect(await canonicalNavLinks.count()).toBe(1);
+  await expect(canonicalNavLinks.first()).toHaveText("parity");
+  await expect(canonicalNavLinks.first()).toHaveAttribute("href", "/s/parity");
+  await expect(
+    page.locator('header nav[aria-label="Language"] span[aria-current="true"]'),
+  ).toHaveText("en");
+  // The sl-SI locale is enabled, but no page exists at the tagged root
+  // route (the fixture's sl-SI page is /sl-SI/parity), so the switcher
+  // renders it fail-closed as an inert tag, never a broken link.
+  const languageLinks = page.locator('header nav[aria-label="Language"] a');
+  expect(await languageLinks.count()).toBe(0);
+  await expect(
+    page.locator('header nav[aria-label="Language"] .renderer-region-language-inert'),
+  ).toHaveText("sl-SI");
+  const canonicalFooterClass = await page
+    .locator("footer.renderer-region-footer")
+    .getAttribute("class");
+  expect(canonicalFooterClass).toContain("renderer-region-footer--single-column");
+  expect(await page.locator('footer nav[aria-label="Footer"]').count()).toBe(0);
+  expect(await page.locator("footer .renderer-region-note").count()).toBe(0);
+  expect(await page.locator('nav[aria-label="Breadcrumb"]').count()).toBe(0);
+
+  // Human Editor saves land in the preview workspace overlay only.
+  const listResponse = await page.request.get(
+    `/api/editor/v1/sites/${parity!.site_id}/global-regions`,
+  );
+  expect(listResponse.status()).toBe(200);
+  const regions = (await listResponse.json()) as Array<{
+    region_key: string;
+    id: string;
+    variant: string;
+    content: Record<string, unknown>;
+    row_version: number;
+  }>;
+  const header = regions.find((region) => region.region_key === "header")!;
+  const footer = regions.find((region) => region.region_key === "footer")!;
+  expect(header.variant).toBe("institutional");
+  expect(header.row_version).toBe(1);
+  const editorHeaders = {
+    "Content-Type": "application/json",
+    "X-CSRF-Token": csrf!,
+  } as const;
+  const headerSave = await page.request.patch(
+    `/api/editor/v1/sites/${parity!.site_id}/global-regions/${header.id}`,
+    {
+      headers: { ...editorHeaders, "Idempotency-Key": crypto.randomUUID() },
+      data: {
+        variant: "minimal",
+        content: {
+          nav: [
+            { label: "Parity Home", target: { kind: "internal", value: "/" } },
+            {
+              label: "Docs",
+              target: { kind: "external", value: "https://docs.example.org/" },
+            },
+          ],
+        },
+      },
+    },
+  );
+  expect(headerSave.status()).toBe(200);
+  expect(((await headerSave.json()) as { row_version: number }).row_version).toBe(2);
+  const footerSave = await page.request.patch(
+    `/api/editor/v1/sites/${parity!.site_id}/global-regions/${footer.id}`,
+    {
+      headers: { ...editorHeaders, "Idempotency-Key": crypto.randomUUID() },
+      data: { content: { links: [], note: "E2E footer note" } },
+    },
+  );
+  expect(footerSave.status()).toBe(200);
+
+  const preview = await page.goto(`/preview/${workspaceId}/s/parity/`);
+  expectPrivateHeaders(preview!);
+  expect(preview?.status()).toBe(200);
+  const previewHeaderClass = await page
+    .locator("header.renderer-region-header")
+    .getAttribute("class");
+  expect(previewHeaderClass).toContain("renderer-region-header--minimal");
+  const previewNav = page.locator('header nav[aria-label="Site"] a');
+  expect(await previewNav.count()).toBe(2);
+  await expect(previewNav.nth(0)).toHaveText("Parity Home");
+  // Relative preview href: no private workspace identifier in the HTML.
+  await expect(previewNav.nth(0)).toHaveAttribute("href", "parity");
+  await expect(previewNav.nth(1)).toHaveText("Docs");
+  await expect(previewNav.nth(1)).toHaveAttribute("href", "https://docs.example.org/");
+  await expect(page.locator("footer .renderer-region-note")).toHaveText(
+    "E2E footer note",
+  );
+
+  // Canonical is untouched by the preview-workspace save.
+  const canonicalAfter = await page.goto("/s/parity/");
+  expect(canonicalAfter?.status()).toBe(200);
+  const canonicalAfterClass = await page
+    .locator("header.renderer-region-header")
+    .getAttribute("class");
+  expect(canonicalAfterClass).toContain("renderer-region-header--institutional");
+  expect(await page.locator('header nav[aria-label="Site"] a').count()).toBe(1);
+  expect(await page.locator("footer .renderer-region-note").count()).toBe(0);
+
+  // Restore the defaults so later preview evidence starts clean.
+  for (const [region, body] of [
+    [header, DEFAULT_PARITY_HEADER],
+    [footer, DEFAULT_PARITY_FOOTER],
+  ] as const) {
+    const restore = await page.request.patch(
+      `/api/editor/v1/sites/${parity!.site_id}/global-regions/${region.id}`,
+      {
+        headers: { ...editorHeaders, "Idempotency-Key": crypto.randomUUID() },
+        data: {
+          variant: body.variant,
+          content: body.content,
+          expected_row_version: region.row_version + 1,
+        },
+      },
+    );
+    expect(restore.status()).toBe(200);
+  }
+  const restoredPreview = await page.goto(`/preview/${workspaceId}/s/parity/`);
+  expectPrivateHeaders(restoredPreview!);
+  const restoredClass = await page
+    .locator("header.renderer-region-header")
+    .getAttribute("class");
+  expect(restoredClass).toContain("renderer-region-header--institutional");
+  expect(await page.locator("footer .renderer-region-note").count()).toBe(0);
+  expect(failures(), "unexpected region browser failures").toEqual([]);
+});
+
+test("global-regions-agent-patch-renders-in-the-same-authorized-workspace", async ({
+  page,
+}) => {
+  const credential = secrets();
+  const failures = observe(page);
+  const tag = crypto.randomUUID();
+
+  await login(page, credential);
+  const sitesResponse = await page.request.get("/api/control/v1/me/sites");
+  expect(sitesResponse.status()).toBe(200);
+  const sites = (await sitesResponse.json()) as Array<{
+    site_id: string;
+    site_key: string;
+  }>;
+  const parity = sites.find((site) => site.site_key === "parity");
+  expect(parity).toBeDefined();
+  const csrf =
+    (await page.context().cookies()).find((cookie) => cookie.name === "slaif_csrf")
+      ?.value ?? "";
+  expect(csrf).toBeTruthy();
+
+  const workspacePath = `/api/control/v1/sites/${parity!.site_id}/workspaces/`;
+  const createWorkspace = async (title: string, key: string) => {
+    const response = await page.request.post(workspacePath, {
+      headers: { "X-CSRF-Token": csrf, "Idempotency-Key": key },
+      data: {
+        title,
+        task_description: "Bounded Agent global-region proof",
+        delegation_preset: "L4_SITE_ARCHITECT",
+        duration_hours: 1,
+        request_quota: 1000,
+        mutation_quota: 200,
+        delete_quota: 50,
+        upload_quota: 0,
+        browser_quota: 1,
+        resource_constraints: { delete_enabled: true, max_deletes: 50 },
+      },
+    });
+    expect(response.status()).toBe(201);
+    const document = (await response.json()) as { workspace_id?: unknown };
+    expect(typeof document.workspace_id).toBe("string");
+    return document.workspace_id as string;
+  };
+  const agentWorkspace = await createWorkspace(
+    `OAP 078-5-a Agent regions ${tag}`,
+    `oap-0785a-agent-workspace-${tag}`,
+  );
+  const defaultWorkspace = await createWorkspace(
+    `OAP 078-5-a default control ${tag}`,
+    `oap-0785a-default-workspace-${tag}`,
+  );
+  const capabilityResponse = await page.request.post(
+    `${workspacePath}${agentWorkspace}/capabilities/`,
+    {
+      headers: {
+        "X-CSRF-Token": csrf,
+        "Idempotency-Key": `oap-0785a-agent-capability-${tag}`,
+      },
+    },
+  );
+  expect(capabilityResponse.status()).toBe(201);
+  const capability = (await capabilityResponse.json()) as {
+    capability_id?: unknown;
+    token?: unknown;
+  };
+  expect(typeof capability.capability_id).toBe("string");
+  expect(typeof capability.token).toBe("string");
+  const agentToken = capability.token as string;
+  const agentHeaders = { Authorization: `Bearer ${agentToken}` } as const;
+
+  const initial = await page.request.get("/api/agent/v1/global-regions", {
+    headers: agentHeaders,
+  });
+  expect(initial.status()).toBe(200);
+  const initialRegions = (await initial.json()) as Array<{
+    region_key: string;
+    id: string;
+    variant: string;
+    content: Record<string, unknown>;
+    row_version: number;
+  }>;
+  const initialHeader = initialRegions.find(
+    (region) => region.region_key === "header",
+  )!;
+  expect(initialHeader.variant).toBe("institutional");
+  expect(initialHeader.row_version).toBe(1);
+
+  // Hostile documents are rejected before any state change.
+  const hostile = [
+    { expected_row_version: 1, variant: "bogus" },
+    {
+      expected_row_version: 1,
+      content: { nav: [] },
+    },
+    {
+      expected_row_version: 1,
+      content: {
+        nav: Array.from({ length: 13 }, () => ({
+          label: "X",
+          target: { kind: "internal", value: "/x" },
+        })),
+      },
+    },
+    {
+      expected_row_version: 1,
+      content: {
+        nav: [
+          {
+            label: "Bad",
+            target: { kind: "external", value: "javascript:alert(1)" },
+          },
+        ],
+      },
+    },
+    { variant: "minimal" },
+  ];
+  for (const [index, body] of hostile.entries()) {
+    const rejected = await page.request.patch(
+      `/api/agent/v1/global-regions/${initialHeader.id}`,
+      {
+        headers: { ...agentHeaders, "Idempotency-Key": `${tag}-hostile-${index}` },
+        data: body,
+      },
+    );
+    expect(rejected.status()).toBe(422);
+  }
+
+  const updated = await page.request.patch(
+    `/api/agent/v1/global-regions/${initialHeader.id}`,
+    {
+      headers: { ...agentHeaders, "Idempotency-Key": `${tag}-header-update` },
+      data: {
+        expected_row_version: 1,
+        variant: "minimal",
+        content: {
+          nav: [
+            { label: "OAP Home", target: { kind: "internal", value: "/" } },
+            {
+              label: "Docs",
+              target: { kind: "external", value: "https://docs.example.org/" },
+            },
+          ],
+        },
+      },
+    },
+  );
+  expect(updated.status()).toBe(200);
+  const updateRecord = (await updated.json()) as {
+    record?: { row_version?: unknown; variant?: unknown };
+  };
+  expect(updateRecord.record).toMatchObject({
+    row_version: 2,
+    variant: "minimal",
+  });
+
+  // Page targets resolve to same-site static pages in the rendered href.
+  const parentCreate = await page.request.post("/api/agent/v1/pages/", {
+    headers: { ...agentHeaders, "Idempotency-Key": `${tag}-region-parent` },
+    data: {
+      slug: "region-parent",
+      title: "Region parent",
+      status: "PUBLISHED",
+      locale: "en",
+    },
+  });
+  expect(parentCreate.status()).toBe(201);
+  const parentRecord = (await parentCreate.json()) as {
+    record?: { id?: unknown };
+  };
+  expect(typeof parentRecord.record?.id).toBe("string");
+  const childCreate = await page.request.post("/api/agent/v1/pages/", {
+    headers: { ...agentHeaders, "Idempotency-Key": `${tag}-region-child` },
+    data: {
+      slug: "region-child",
+      title: "Region child",
+      status: "PUBLISHED",
+      locale: "en",
+      parent_id: parentRecord.record!.id as string,
+    },
+  });
+  expect(childCreate.status()).toBe(201);
+  const childRecord = (await childCreate.json()) as {
+    record?: { id?: unknown };
+  };
+  expect(typeof childRecord.record?.id).toBe("string");
+  const pageTargetUpdate = await page.request.patch(
+    `/api/agent/v1/global-regions/${initialHeader.id}`,
+    {
+      headers: { ...agentHeaders, "Idempotency-Key": `${tag}-page-target` },
+      data: {
+        expected_row_version: 2,
+        content: {
+          nav: [
+            { label: "OAP Home", target: { kind: "internal", value: "/" } },
+            {
+              label: "Child",
+              target: { kind: "page", value: childRecord.record!.id as string },
+            },
+          ],
+        },
+      },
+    },
+  );
+  expect(pageTargetUpdate.status()).toBe(200);
+
+  const previewBase = `/preview/${agentWorkspace}/s/parity`;
+  const preview = await page.goto(`${previewBase}/`);
+  expectPrivateHeaders(preview!);
+  expect(preview?.status()).toBe(200);
+  const previewHeaderClass = await page
+    .locator("header.renderer-region-header")
+    .getAttribute("class");
+  expect(previewHeaderClass).toContain("renderer-region-header--minimal");
+  const previewNav = page.locator('header nav[aria-label="Site"] a');
+  expect(await previewNav.count()).toBe(2);
+  await expect(previewNav.nth(1)).toHaveText("Child");
+  // Preview region links are relative so the private workspace identifier
+  // never appears in the page HTML; clicking resolves inside the preview.
+  await expect(previewNav.nth(1)).toHaveAttribute(
+    "href",
+    "parity/region-parent/region-child",
+  );
+  await previewNav.nth(1).click();
+  expect(new URL(page.url()).pathname).toBe(
+    `${previewBase}/region-parent/region-child`,
+  );
+
+  // Breadcrumbs render the ancestor chain on the child preview page.
+  const childPreview = await page.goto(`${previewBase}/region-parent/region-child`);
+  expectPrivateHeaders(childPreview!);
+  expect(childPreview?.status()).toBe(200);
+  const breadcrumbs = page.locator('nav[aria-label="Breadcrumb"] a');
+  expect(await breadcrumbs.count()).toBe(1);
+  await expect(breadcrumbs.first()).toHaveText("Region parent");
+  await expect(breadcrumbs.first()).toHaveAttribute("href", "../region-parent");
+  await breadcrumbs.first().click();
+  expect(new URL(page.url()).pathname).toBe(`${previewBase}/region-parent`);
+  // The parent has no ancestors, so no breadcrumb nav is rendered there.
+  expect(await page.locator('nav[aria-label="Breadcrumb"]').count()).toBe(0);
+
+  // Language switcher: the sl-SI mirror page makes the tagged route
+  // resolvable, so the switcher renders a real link in the preview.
+  const siParentCreate = await page.request.post("/api/agent/v1/pages/", {
+    headers: { ...agentHeaders, "Idempotency-Key": `${tag}-region-parent-si` },
+    data: {
+      slug: "region-parent",
+      title: "Region parent sl",
+      status: "PUBLISHED",
+      locale: "sl-SI",
+    },
+  });
+  expect(siParentCreate.status()).toBe(201);
+  const parentPreview = await page.goto(`${previewBase}/region-parent`);
+  expectPrivateHeaders(parentPreview!);
+  expect(parentPreview?.status()).toBe(200);
+  const languageHref = page.locator(
+    'header nav[aria-label="Language"] a[href="sl-SI/region-parent"]',
+  );
+  await expect(languageHref).toHaveText("sl-SI");
+  await languageHref.click();
+  expect(new URL(page.url()).pathname).toBe(`${previewBase}/sl-SI/region-parent`);
+  await expect(
+    page.locator('header nav[aria-label="Language"] span[aria-current="true"]'),
+  ).toHaveText("sl-SI");
+  const backHref = page.locator(
+    'header nav[aria-label="Language"] a[href="../region-parent"]',
+  );
+  await expect(backHref).toHaveText("en");
+  await backHref.click();
+  expect(new URL(page.url()).pathname).toBe(`${previewBase}/region-parent`);
+
+  // Canonical and the other workspace are untouched.
+  const canonical = await page.goto("/s/parity/");
+  expect(canonical?.status()).toBe(200);
+  const canonicalClass = await page
+    .locator("header.renderer-region-header")
+    .getAttribute("class");
+  expect(canonicalClass).toContain("renderer-region-header--institutional");
+  const defaultPreview = await page.goto(`/preview/${defaultWorkspace}/s/parity/`);
+  expectPrivateHeaders(defaultPreview!);
+  const defaultClass = await page
+    .locator("header.renderer-region-header")
+    .getAttribute("class");
+  expect(defaultClass).toContain("renderer-region-header--institutional");
+
+  // Reload persistence: the overlay state survives a page reload.
+  const reloaded = await page.goto(`${previewBase}/`);
+  expectPrivateHeaders(reloaded!);
+  const reloadedClass = await page
+    .locator("header.renderer-region-header")
+    .getAttribute("class");
+  expect(reloadedClass).toContain("renderer-region-header--minimal");
+  expect(failures(), "unexpected agent region browser failures").toEqual([]);
+});

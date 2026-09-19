@@ -38,6 +38,7 @@ export type ProjectionLocale = Readonly<{
   is_default: boolean;
   position: number;
   metadata: Record<string, unknown>;
+  switcher_href: string | null;
 }>;
 
 export type ProjectionNavigationItem = Readonly<{
@@ -65,6 +66,27 @@ export type ProjectionNavigation = Readonly<{
   labels: Record<string, unknown>;
   settings: Record<string, unknown>;
   items: readonly ProjectionNavigationItem[];
+}>;
+
+export type RegionTargetKind = "page" | "internal" | "external";
+
+export type ProjectionRegionEntry = Readonly<{
+  label: string;
+  href: string;
+}>;
+
+export type ProjectionRegion = Readonly<{
+  id: string;
+  region_key: "header" | "footer";
+  variant: "institutional" | "minimal" | "multi-column" | "single-column";
+  entries: readonly ProjectionRegionEntry[];
+  note: string | null;
+  row_version: number;
+}>;
+
+export type ProjectionAncestor = Readonly<{
+  title: string;
+  effective_route: string;
 }>;
 
 export type PageProjection = Readonly<{
@@ -97,6 +119,9 @@ export type PageProjection = Readonly<{
   locales: readonly ProjectionLocale[];
   navigation: readonly ProjectionNavigation[];
   bindings: Record<string, readonly Record<string, unknown>[]>;
+  regions: readonly ProjectionRegion[];
+  ancestors: readonly ProjectionAncestor[];
+  default_locale: string;
 }>;
 
 export type RedirectProjection = Readonly<{

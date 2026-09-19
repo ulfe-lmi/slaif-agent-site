@@ -1083,6 +1083,37 @@
         "title": "AgentFieldPrimitiveDescriptor",
         "type": "object"
       },
+      "AgentGlobalRegionMutationResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "anyOf": [
+              {
+                "const": "GLOBAL_REGION_UPDATED",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Action"
+          },
+          "operation_id": {
+            "format": "uuid",
+            "title": "Operation Id",
+            "type": "string"
+          },
+          "record": {
+            "$ref": "#/components/schemas/GlobalRegionRecord"
+          }
+        },
+        "required": [
+          "record",
+          "operation_id"
+        ],
+        "title": "AgentGlobalRegionMutationResponse",
+        "type": "object"
+      },
       "AgentMoveCompositionNodeRequest": {
         "additionalProperties": false,
         "description": "Agent move intent; ordering is expressed by semantic sibling anchors.",
@@ -1502,6 +1533,54 @@
           "expected_row_version"
         ],
         "title": "AgentUpdateContentItemRequest",
+        "type": "object"
+      },
+      "AgentUpdateGlobalRegionRequest": {
+        "additionalProperties": false,
+        "description": "Agent updates always carry the observed row version (optimistic).",
+        "properties": {
+          "content": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GlobalRegionContent"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "expected_row_version": {
+            "exclusiveMinimum": 0.0,
+            "title": "Expected Row Version",
+            "type": "integer"
+          },
+          "variant": {
+            "anyOf": [
+              {
+                "enum": [
+                  "institutional",
+                  "minimal"
+                ],
+                "type": "string"
+              },
+              {
+                "enum": [
+                  "multi-column",
+                  "single-column"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Variant"
+          }
+        },
+        "required": [
+          "expected_row_version"
+        ],
+        "title": "AgentUpdateGlobalRegionRequest",
         "type": "object"
       },
       "AgentUpdateLocaleRequest": {
@@ -2747,6 +2826,61 @@
         "title": "FieldPrimitive",
         "type": "string"
       },
+      "GlobalRegionContent": {
+        "additionalProperties": false,
+        "description": "Bounded region content document.\n\nHeader content is exactly ``{\"nav\": [...]}`` (1-12 entries). Footer content\nis ``{\"links\": [...]}`` (0-16 entries) with an optional ``note``. The\nserialized document is bounded to 16 KiB.",
+        "properties": {
+          "links": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/RegionEntry"
+                },
+                "maxItems": 16,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Links"
+          },
+          "nav": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/RegionEntry"
+                },
+                "maxItems": 12,
+                "minItems": 1,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Nav"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "maxLength": 4096,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          }
+        },
+        "title": "GlobalRegionContent",
+        "type": "object"
+      },
+      "GlobalRegionRecord": {
+        "additionalProperties": true,
+        "type": "object"
+      },
       "JSONScalar": {
         "anyOf": [
           {
@@ -3540,6 +3674,52 @@
           "updated_at"
         ],
         "title": "RedirectRecord",
+        "type": "object"
+      },
+      "RegionEntry": {
+        "additionalProperties": false,
+        "description": "One ordered nav/link entry with a bounded localized label and target.",
+        "properties": {
+          "label": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Label",
+            "type": "string"
+          },
+          "target": {
+            "$ref": "#/components/schemas/RegionTarget"
+          }
+        },
+        "required": [
+          "label",
+          "target"
+        ],
+        "title": "RegionEntry",
+        "type": "object"
+      },
+      "RegionTarget": {
+        "additionalProperties": false,
+        "description": "Bounded header/footer entry target: page, internal route, or http(s).",
+        "properties": {
+          "kind": {
+            "enum": [
+              "page",
+              "internal",
+              "external"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "value": {
+            "title": "Value",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "value"
+        ],
+        "title": "RegionTarget",
         "type": "object"
       },
       "RelationRecord": {
@@ -11147,6 +11327,303 @@
         "x-slaif-mutation": false,
         "x-slaif-required-scopes": [
           "theme:read"
+        ]
+      }
+    },
+    "/api/agent/v1/global-regions": {
+      "get": {
+        "description": "List the bounded header/footer regions for the capability site.",
+        "operationId": "list_global_regions_api_agent_v1_global_regions_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/GlobalRegionRecord"
+                  },
+                  "title": "Response List Global Regions Api Agent V1 Global Regions Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Malformed request or missing/invalid idempotency key."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Authentication is required."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The capability scope or resource constraint is not sufficient."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The resource is not available to this capability."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The request conflicts with current state or idempotency."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The request exceeds the bounded body limit."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The request failed domain validation."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The request exceeds an enforced quota."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The service is temporarily unavailable."
+          }
+        },
+        "security": [
+          {
+            "AgentCapability": []
+          }
+        ],
+        "summary": "List Global Regions",
+        "x-slaif-conditional-scopes": [],
+        "x-slaif-idempotency": "not-applicable",
+        "x-slaif-mutation": false,
+        "x-slaif-required-scopes": [
+          "global-region:read"
+        ]
+      }
+    },
+    "/api/agent/v1/global-regions/{region_id}": {
+      "patch": {
+        "operationId": "update_global_region_api_agent_v1_global_regions__region_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "region_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Region Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9._~-]+$",
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgentUpdateGlobalRegionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentGlobalRegionMutationResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Malformed request or missing/invalid idempotency key."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Authentication is required."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The capability scope or resource constraint is not sufficient."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The resource is not available to this capability."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The request conflicts with current state or idempotency."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The request exceeds the bounded body limit."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The request failed domain validation."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The request exceeds an enforced quota."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The service is temporarily unavailable."
+          }
+        },
+        "security": [
+          {
+            "AgentCapability": []
+          }
+        ],
+        "summary": "Update Global Region",
+        "x-slaif-conditional-scopes": [
+          {
+            "condition": "changed",
+            "required_scopes": [
+              "global-region:write"
+            ],
+            "when_fields": [
+              "content"
+            ]
+          },
+          {
+            "condition": "changed",
+            "required_scopes": [
+              "global-region:write",
+              "header-footer:write"
+            ],
+            "when_fields": [
+              "variant"
+            ]
+          }
+        ],
+        "x-slaif-idempotency": "required",
+        "x-slaif-mutation": true,
+        "x-slaif-required-scopes": [
+          "global-region:read"
         ]
       }
     },

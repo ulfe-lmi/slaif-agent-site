@@ -1,8 +1,10 @@
 import { CONTROL, csrfCookie } from "../auth/client";
 import type {
+  GlobalRegionRecord,
   NormalizedCompositionNode,
   ThemeRecord,
 } from "@slaif-agent-site/composition-schema";
+import { isGlobalRegionRecord } from "@slaif-agent-site/composition-schema";
 
 const EDITOR = "/api/editor/v1";
 
@@ -444,6 +446,36 @@ export async function loadComposition(
       throw new Error("invalid-response");
     return node;
   });
+}
+
+function globalRegionRecord(value: unknown): GlobalRegionRecord {
+  if (!isGlobalRegionRecord(value)) throw new Error("invalid-response");
+  return value;
+}
+
+export type UpdateGlobalRegionBody = Partial<{
+  variant: string;
+  content: unknown;
+  expected_row_version: number;
+}>;
+
+export async function loadGlobalRegions(siteId: string): Promise<GlobalRegionRecord[]> {
+  const value = await editorJson(`/sites/${encodeURIComponent(siteId)}/global-regions`);
+  if (!Array.isArray(value)) throw new Error("invalid-response");
+  return value.map(globalRegionRecord);
+}
+
+export async function updateGlobalRegion(
+  siteId: string,
+  regionId: string,
+  body: UpdateGlobalRegionBody,
+): Promise<GlobalRegionRecord> {
+  return globalRegionRecord(
+    await editorJson(
+      `/sites/${encodeURIComponent(siteId)}/global-regions/${encodeURIComponent(regionId)}`,
+      editorMutation("PATCH", body),
+    ),
+  );
 }
 
 export async function loadTheme(siteId: string): Promise<ThemeRecord> {

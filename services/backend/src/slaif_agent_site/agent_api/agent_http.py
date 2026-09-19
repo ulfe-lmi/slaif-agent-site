@@ -93,6 +93,11 @@ from slaif_agent_site.content_model.page_style import (
     PageStyleRecord,
 )
 from slaif_agent_site.content_model.primitives import FieldPrimitive
+from slaif_agent_site.content_model.region_models import (
+    AgentGlobalRegionMutationResponse,
+    AgentUpdateGlobalRegionRequest,
+    GlobalRegionRecord,
+)
 from slaif_agent_site.content_model.service import (
     ContentModelServiceError,
     ContentModelServiceReason,
@@ -286,6 +291,47 @@ async def get_theme(request: Request) -> ThemeRecord:
         request, context, lambda service: service.get_theme(context.site_id)
     )
     return cast(ThemeRecord, record)
+
+
+@router.get("/global-regions")
+async def list_global_regions(request: Request) -> tuple[GlobalRegionRecord, ...]:
+    """List the bounded header/footer regions for the capability site."""
+    context = await _authenticate(request)
+    _require_scope(context, "global-region:read")
+    records = await _execute_read(
+        request, context, lambda service: service.list_global_regions(context.site_id)
+    )
+    return cast("tuple[GlobalRegionRecord, ...]", records)
+
+
+@router.patch("/global-regions/{region_id}")
+async def update_global_region(
+    region_id: UUID,
+    request: Request,
+    body: AgentUpdateGlobalRegionRequest,
+    idempotency_key: IdempotencyHeader = None,
+) -> AgentGlobalRegionMutationResponse:
+    context = await _authenticate(request)
+    # The trusted region SQL wrapper compares raw state first and requires
+    # global-region:write (plus header-footer:write on a variant change) only
+    # for a real state change, preserving read-only no-effect retries without
+    # widening the route's base scope.
+    _require_scope(context, "global-region:read")
+    result = await _execute_mutation(
+        request,
+        context,
+        body,
+        idempotency_key,
+        resource_type="global_region",
+        status_code=200,
+        action="GLOBAL_REGION_UPDATED",
+        mutate=lambda service: service.update_global_region_for_site(
+            context.site_id, region_id, body
+        ),
+    )
+    return AgentGlobalRegionMutationResponse.model_validate(
+        result.model_dump(mode="json")
+    )
 
 
 @router.get("/content-model/primitives")

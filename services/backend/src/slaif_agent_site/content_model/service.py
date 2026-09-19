@@ -37,6 +37,12 @@ from .page_style import (
     page_style_record_from_row,
 )
 from .query_dsl import validate_query_contract
+from .region_models import (
+    GlobalRegionRecord,
+    UpdateGlobalRegionRequest,
+    global_region_content_json,
+    global_region_record_from_row,
+)
 from .site_data_models import (
     AgentNavigationRecord,
     CreateLocaleRequest,
@@ -387,6 +393,40 @@ class PageMixin:
         if row is None:
             raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
         return page_style_record_from_row(row)
+
+
+class GlobalRegionMixin:
+    _fetchrow: Any
+    _fetch: Any
+
+    async def list_global_regions(
+        self, site_id: UUID
+    ) -> tuple[GlobalRegionRecord, ...]:
+        rows = await self._fetch(REGION_LIST_SQL, site_id)
+        return tuple(global_region_record_from_row(row) for row in rows)
+
+    async def get_global_region(
+        self, site_id: UUID, region_id: UUID
+    ) -> GlobalRegionRecord:
+        for record in await self.list_global_regions(site_id):
+            if record.id == region_id:
+                return record
+        raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
+
+    async def update_global_region(
+        self, site_id: UUID, region_key: str, request: UpdateGlobalRegionRequest
+    ) -> GlobalRegionRecord:
+        row = await self._fetchrow(
+            REGION_UPDATE_SQL,
+            site_id,
+            region_key,
+            request.expected_row_version,
+            request.variant,
+            global_region_content_json(request.content),
+        )
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
+        return global_region_record_from_row(row)
 
 
 class NavThemeMixin:
@@ -1219,6 +1259,7 @@ class ContentModelService(
     EditableDomainMixin,
     SiteDataMixin,
     CollectionViewMixin,
+    GlobalRegionMixin,
     NavThemeMixin,
     PageMixin,
     CompositionMixin,
@@ -1745,6 +1786,8 @@ PG_STYLE_GET_SQL = "SELECT * FROM content.slaif_page_style_get($1,$2)"
 PG_STYLE_UPDATE_SQL = (
     "SELECT * FROM content.slaif_page_style_update($1,$2,$3,$4,$5,$6,$7,$8)"
 )
+REGION_LIST_SQL = "SELECT * FROM content.slaif_region_list($1)"
+REGION_UPDATE_SQL = "SELECT * FROM content.slaif_region_update($1,$2,$3,$4,$5)"
 
 
 def _pg(row: Any) -> Any:

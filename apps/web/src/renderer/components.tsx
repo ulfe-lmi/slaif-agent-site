@@ -7,7 +7,12 @@ import {
   type ComponentDefinition,
 } from "@slaif-agent-site/component-catalog";
 import type { ThemeRecord } from "@slaif-agent-site/composition-schema";
-import type { PageProjection, ProjectionNode } from "../sites/render";
+import type {
+  PageProjection,
+  ProjectionAncestor,
+  ProjectionNode,
+  ProjectionRegion,
+} from "../sites/render";
 import { RENDERER_STYLESHEET } from "./styles";
 
 interface RenderProps {
@@ -491,21 +496,205 @@ function renderNode(
   );
 }
 
-export function renderProjection(projection: PageProjection): ReactElement {
+function regionHref(
+  siteKey: string,
+  basePath: string,
+  currentRoute: string,
+  targetRoute: string,
+): string {
+  // External targets render as-is; they are already §34.2-validated.
+  if (targetRoute.startsWith("http://") || targetRoute.startsWith("https://"))
+    return targetRoute;
+  const target = targetRoute === "/" ? "" : targetRoute.replace(/^\//, "");
+  const base = basePath.replace(/\/$/, "");
+  // Canonical renders use absolute site-rooted hrefs.
+  if (!base.startsWith("/preview/")) {
+    return target ? `${base}/${target}` : base;
+  }
+  // Preview renders use relative hrefs so the private workspace identifier
+  // never enters the page HTML (privacy contract).
+  const current = currentRoute === "/" ? "" : currentRoute.replace(/^\//, "");
+  const depth = current ? current.split("/").length : 0;
+  if (depth === 0) {
+    return target ? `${siteKey}/${target}` : siteKey;
+  }
+  // Page URLs never carry a trailing slash, so the browser's relative
+  // base directory already excludes the page's own last segment: one
+  // fewer "../" hop than the site-path depth.
+  const ups = "../".repeat(depth - 1);
+  return target ? `${ups}${target}` : `${ups}./`;
+}
+
+function SiteLanguageSwitcher({
+  projection,
+  basePath,
+}: Readonly<{ projection: PageProjection; basePath: string }>): ReactElement {
+  const locales = [...projection.locales].sort(
+    (a, b) => a.position - b.position || a.tag.localeCompare(b.tag),
+  );
+  return (
+    <nav aria-label="Language" className="renderer-region-language">
+      {locales.map((locale) => (
+        <span key={locale.tag} className="renderer-region-language-item">
+          {locale.tag === projection.locale ? (
+            <span aria-current="true">{locale.tag}</span>
+          ) : locale.switcher_href ? (
+            <a
+              href={regionHref(
+                projection.site.key,
+                basePath,
+                projection.page.effective_route,
+                locale.switcher_href,
+              )}
+            >
+              {locale.tag}
+            </a>
+          ) : (
+            <span className="renderer-region-language-inert" aria-disabled="true">
+              {locale.tag}
+            </span>
+          )}
+        </span>
+      ))}
+    </nav>
+  );
+}
+
+function SiteBreadcrumbs({
+  projection,
+  ancestors,
+  currentTitle,
+  basePath,
+}: Readonly<{
+  projection: PageProjection;
+  ancestors: readonly ProjectionAncestor[];
+  currentTitle: string;
+  basePath: string;
+}>): ReactElement {
+  return (
+    <nav aria-label="Breadcrumb" className="renderer-region-breadcrumbs">
+      <ol>
+        {ancestors.map((ancestor) => (
+          <li key={ancestor.effective_route}>
+            <a
+              href={regionHref(
+                projection.site.key,
+                basePath,
+                projection.page.effective_route,
+                ancestor.effective_route,
+              )}
+            >
+              {ancestor.title}
+            </a>
+          </li>
+        ))}
+        <li aria-current="page">{currentTitle}</li>
+      </ol>
+    </nav>
+  );
+}
+
+function SiteRegionShell({
+  region,
+  projection,
+  basePath,
+}: Readonly<{
+  region: ProjectionRegion;
+  projection: PageProjection;
+  basePath: string;
+}>): ReactElement {
+  const isHeader = region.region_key === "header";
+  const className = isHeader
+    ? `renderer-region renderer-region-header renderer-region-header--${region.variant}`
+    : `renderer-region renderer-region-footer renderer-region-footer--${region.variant}`;
+  const links = (
+    <nav aria-label={isHeader ? "Site" : "Footer"} className="renderer-region-links">
+      <ul>
+        {region.entries.map((entry) => (
+          <li key={entry.href}>
+            <a
+              href={regionHref(
+                projection.site.key,
+                basePath,
+                projection.page.effective_route,
+                entry.href,
+              )}
+            >
+              {entry.label}
+            </a>
+          </li>
+        ))}
+      </ul>
+    </nav>
+  );
+  if (isHeader) {
+    return (
+      <header className={className}>
+        <div className="renderer-region-inner">
+          <a
+            className="renderer-region-brand"
+            href={regionHref(
+              projection.site.key,
+              basePath,
+              projection.page.effective_route,
+              "/",
+            )}
+          >
+            {projection.site.key}
+          </a>
+          {region.entries.length > 0 ? links : null}
+          <SiteLanguageSwitcher projection={projection} basePath={basePath} />
+        </div>
+      </header>
+    );
+  }
+  return (
+    <footer className={className}>
+      <div className="renderer-region-inner">
+        {region.entries.length > 0 ? links : null}
+        {region.note ? <p className="renderer-region-note">{region.note}</p> : null}
+      </div>
+    </footer>
+  );
+}
+
+export function renderProjection(
+  projection: PageProjection,
+  basePath?: string,
+): ReactElement {
+  const base = basePath ?? `/s/${projection.site.key}`;
+  const header = projection.regions.find((region) => region.region_key === "header");
+  const footer = projection.regions.find((region) => region.region_key === "footer");
   return (
     <>
       <link rel="stylesheet" href={RENDERER_STYLESHEET} />
-      <main
-        className={`renderer-surface ${themeClasses(projection.page_style)}`}
-        lang={projection.locale}
-        data-render-mode={projection.render_mode}
-        aria-labelledby="page-title"
-      >
-        <h1 id="page-title">{projection.page.title}</h1>
-        {projection.composition.nodes.map((node) =>
-          renderNode(node, projection.locale, projection.bindings),
-        )}
-      </main>
+      <div className="renderer-page">
+        {header ? (
+          <SiteRegionShell region={header} projection={projection} basePath={base} />
+        ) : null}
+        <main
+          className={`renderer-surface ${themeClasses(projection.page_style)}`}
+          lang={projection.locale}
+          data-render-mode={projection.render_mode}
+          aria-labelledby="page-title"
+        >
+          {projection.ancestors.length > 0 ? (
+            <SiteBreadcrumbs
+              projection={projection}
+              ancestors={projection.ancestors}
+              currentTitle={projection.page.title}
+              basePath={base}
+            />
+          ) : null}
+          <h1 id="page-title">{projection.page.title}</h1>
+          {projection.composition.nodes.map((node) =>
+            renderNode(node, projection.locale, projection.bindings),
+          )}
+        </main>
+        {footer ? (
+          <SiteRegionShell region={footer} projection={projection} basePath={base} />
+        ) : null}
+      </div>
     </>
   );
 }

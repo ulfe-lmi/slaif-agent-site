@@ -4,8 +4,9 @@ import { renderProjection } from "../renderer/components";
 
 export function PageProjectionShell({
   projection,
-}: Readonly<{ projection: PageProjection }>) {
-  return renderProjection(projection);
+  basePath,
+}: Readonly<{ projection: PageProjection; basePath?: string }>) {
+  return renderProjection(projection, basePath);
 }
 
 export function SiteContextShell({ context }: Readonly<{ context: SiteContext }>) {

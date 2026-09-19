@@ -992,3 +992,193 @@ body:has(.renderer-surface) {
     grid-template-columns: repeat(6, minmax(0, 1fr));
   }
 }
+
+/* Site-global region shells (global-region/v1): header/footer, breadcrumbs,
+   and the language switcher shared by canonical and preview renders. */
+
+.renderer-page {
+  width: 100%;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.renderer-page > .renderer-surface {
+  flex: 1 0 auto;
+}
+
+.renderer-region {
+  width: 100%;
+  background: rgba(8, 19, 23, 0.82);
+  border-color: rgba(168, 197, 56, 0.24);
+}
+
+.renderer-region-inner {
+  width: min(72rem, calc(100% - 2rem));
+  margin: 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem 1.5rem;
+}
+
+.renderer-region-brand {
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--renderer-content-foreground);
+  text-decoration: none;
+}
+
+.renderer-region-links ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 1.25rem;
+}
+
+.renderer-region-links a {
+  color: var(--renderer-link-foreground);
+  text-decoration: none;
+}
+
+.renderer-region-links a:hover,
+.renderer-region-links a:focus-visible {
+  text-decoration: underline;
+}
+
+.renderer-region-header {
+  border-bottom: 1px solid var(--renderer-card-border);
+}
+
+.renderer-region-header .renderer-region-inner {
+  padding: 0.9rem 0;
+}
+
+.renderer-region-header .renderer-region-links {
+  margin-left: auto;
+}
+
+.renderer-region-header--minimal {
+  background: transparent;
+  border-bottom-color: transparent;
+}
+
+.renderer-region-header--minimal .renderer-region-inner {
+  padding: 0.6rem 0;
+}
+
+.renderer-region-footer {
+  border-top: 1px solid var(--renderer-card-border);
+  margin-top: auto;
+}
+
+.renderer-region-footer .renderer-region-inner {
+  padding: 1.5rem 0 2rem;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.75rem;
+}
+
+.renderer-region-footer--multi-column .renderer-region-links ul {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.5rem 2rem;
+  width: 100%;
+}
+
+.renderer-region-footer--single-column .renderer-region-links ul {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.renderer-region-note {
+  margin: 0;
+  color: var(--renderer-muted-foreground);
+  font-size: 0.9rem;
+}
+
+.renderer-region-breadcrumbs {
+  margin: 0 0 1rem;
+}
+
+.renderer-region-breadcrumbs ol {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.5rem;
+  font-size: 0.9rem;
+  color: var(--renderer-muted-foreground);
+}
+
+.renderer-region-breadcrumbs a {
+  color: var(--renderer-link-foreground);
+  text-decoration: none;
+}
+
+.renderer-region-breadcrumbs a:hover,
+.renderer-region-breadcrumbs a:focus-visible {
+  text-decoration: underline;
+}
+
+.renderer-region-breadcrumbs [aria-current="page"] {
+  color: var(--renderer-content-foreground);
+}
+
+.renderer-region-breadcrumbs li + li::before {
+  content: "/";
+  margin-right: 0.5rem;
+  color: var(--renderer-muted-foreground);
+}
+
+.renderer-region-language {
+  display: flex;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+}
+
+.renderer-region-language-item a {
+  color: var(--renderer-link-foreground);
+  text-decoration: none;
+}
+
+.renderer-region-language-item a:hover,
+.renderer-region-language-item a:focus-visible {
+  text-decoration: underline;
+}
+
+.renderer-region-language-item [aria-current="true"] {
+  color: var(--renderer-content-foreground);
+  font-weight: 600;
+}
+
+.renderer-region-language-inert {
+  color: var(--renderer-muted-foreground, #94a3b8);
+  cursor: default;
+}
+
+@media (max-width: 40rem) {
+  .renderer-region-header .renderer-region-inner {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .renderer-region-header .renderer-region-links {
+    margin-left: 0;
+  }
+
+  .renderer-region-footer--multi-column .renderer-region-links ul {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 28rem) {
+  .renderer-region-footer--multi-column .renderer-region-links ul {
+    grid-template-columns: 1fr;
+  }
+}

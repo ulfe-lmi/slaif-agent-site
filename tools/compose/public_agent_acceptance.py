@@ -1332,7 +1332,7 @@ def _run_dynamic_news_edge_journey(
                 },
                 "htmlLang": selected_locale,
                 "main": 1,
-                "navigation": 0,
+                "navigation": 3,
                 "rendererStylesheets": 1,
                 "sections": 0,
             }:
@@ -2064,7 +2064,7 @@ def _run_component_browser_proof(
             "detailStyle": None,
             "htmlLang": "en",
             "main": 1,
-            "navigation": 0,
+            "navigation": 2,
             "rendererStylesheets": 1,
             "sections": 1,
         },

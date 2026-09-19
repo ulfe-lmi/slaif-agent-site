@@ -100,5 +100,10 @@ export async function renderWorkspacePreview(
   if (resolution.kind === "login") redirect("/login");
   if (resolution.kind === "not_found") notFound();
   if (resolution.kind === "redirect") redirectProjection(resolution.projection);
-  return <PageProjectionShell projection={resolution.projection} />;
+  return (
+    <PageProjectionShell
+      projection={resolution.projection}
+      basePath={`/preview/${workspaceId}/s/${resolution.projection.site.key}`}
+    />
+  );
 }

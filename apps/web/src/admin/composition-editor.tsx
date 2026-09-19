@@ -13,12 +13,15 @@ import {
   derivePuckSiblingReorderActions,
   generatePuckThemeConfig,
   puckToComposition,
+  REGION_VARIANTS,
   shouldReleasePuckMovedSelection,
+  type GlobalRegionRecord,
   type NormalizedCompositionNode,
   type PuckComponentConfig,
   type PuckData,
   type PuckNodeMetadata,
   type PuckReorderPlan,
+  type RegionTargetKind,
   type ThemeRecord,
 } from "@slaif-agent-site/composition-schema";
 import { type ReactNode, useEffect, useRef, useState } from "react";
@@ -30,8 +33,10 @@ import {
   deleteCompositionNode,
   loadAuthority,
   loadComposition,
+  loadGlobalRegions,
   loadPageStyle,
   loadTheme,
+  updateGlobalRegion,
   updatePageStyle,
   moveCompositionNode,
   updateTheme,
@@ -522,6 +527,234 @@ async function reconcileComposition(
   }
 }
 
+type RegionDraftEntry = {
+  label: string;
+  kind: RegionTargetKind;
+  value: string;
+};
+
+type RegionDraft = {
+  variant: string;
+  entries: RegionDraftEntry[];
+  note: string;
+};
+
+function regionDraft(region: GlobalRegionRecord): RegionDraft {
+  const content = region.content as unknown as Record<string, unknown>;
+  const rawEntries = (
+    region.region_key === "header" ? content.nav : content.links
+  ) as Array<{ label: string; target: { kind: RegionTargetKind; value: string } }>;
+  return {
+    variant: region.variant,
+    entries: rawEntries.map((entry) => ({
+      label: entry.label,
+      kind: entry.target.kind,
+      value: entry.target.value,
+    })),
+    note:
+      region.region_key === "footer" && typeof content.note === "string"
+        ? content.note
+        : "",
+  };
+}
+
+function GlobalRegionControls({
+  siteId,
+  regions,
+  onSaved,
+}: Readonly<{
+  siteId: string;
+  regions: readonly GlobalRegionRecord[];
+  onSaved: (region: GlobalRegionRecord) => void;
+}>) {
+  const [drafts, setDrafts] = useState<Record<string, RegionDraft>>(() =>
+    Object.fromEntries(regions.map((region) => [region.id, regionDraft(region)])),
+  );
+  const [versions, setVersions] = useState<Record<string, number>>(() =>
+    Object.fromEntries(regions.map((region) => [region.id, region.row_version])),
+  );
+  const [savingId, setSavingId] = useState<string | null>(null);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    setDrafts(
+      Object.fromEntries(regions.map((region) => [region.id, regionDraft(region)])),
+    );
+    setVersions(
+      Object.fromEntries(regions.map((region) => [region.id, region.row_version])),
+    );
+  }, [regions]);
+
+  async function save(region: GlobalRegionRecord) {
+    const draft = drafts[region.id];
+    if (!draft) return;
+    setSavingId(region.id);
+    setError("");
+    try {
+      const entries = draft.entries.map((entry) => ({
+        label: entry.label,
+        target: { kind: entry.kind, value: entry.value },
+      }));
+      const content =
+        region.region_key === "header"
+          ? { nav: entries }
+          : { links: entries, note: draft.note };
+      const saved = await updateGlobalRegion(siteId, region.id, {
+        variant: draft.variant,
+        content,
+        expected_row_version: versions[region.id] ?? region.row_version,
+      });
+      onSaved(saved);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Region update failed.");
+    } finally {
+      setSavingId(null);
+    }
+  }
+
+  function updateDraft(regionId: string, update: (draft: RegionDraft) => RegionDraft) {
+    setDrafts((current) => {
+      const existing = current[regionId];
+      if (!existing) return current;
+      return { ...current, [regionId]: update(existing) };
+    });
+  }
+
+  function setEntry(regionId: string, index: number, patch: Partial<RegionDraftEntry>) {
+    updateDraft(regionId, (draft) => ({
+      ...draft,
+      entries: draft.entries.map((entry, position) =>
+        position === index ? { ...entry, ...patch } : entry,
+      ),
+    }));
+  }
+
+  return (
+    <div className="page-style-controls" aria-labelledby="global-region-controls-title">
+      <div className="page-style-controls__header">
+        <p className="eyebrow">Puck region controls</p>
+        <h2 id="global-region-controls-title">Site header and footer regions</h2>
+      </div>
+      {error && <StatusPanel>{error}</StatusPanel>}
+      {regions.map((region) => {
+        const draft = drafts[region.id];
+        if (!draft) return null;
+        const isHeader = region.region_key === "header";
+        return (
+          <fieldset key={region.id}>
+            <legend>{isHeader ? "Header" : "Footer"}</legend>
+            <label>
+              Variant
+              <select
+                value={draft.variant}
+                onChange={(event) =>
+                  updateDraft(region.id, (draft) => ({
+                    ...draft,
+                    variant: event.target.value,
+                  }))
+                }
+              >
+                {REGION_VARIANTS[region.region_key].map((variant) => (
+                  <option key={variant} value={variant}>
+                    {variant}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {draft.entries.map((entry, index) => (
+              <div key={index}>
+                <label>
+                  Label
+                  <input
+                    maxLength={256}
+                    value={entry.label}
+                    onChange={(event) =>
+                      setEntry(region.id, index, { label: event.target.value })
+                    }
+                  />
+                </label>
+                <label>
+                  Target kind
+                  <select
+                    value={entry.kind}
+                    onChange={(event) =>
+                      setEntry(region.id, index, {
+                        kind: event.target.value as RegionTargetKind,
+                      })
+                    }
+                  >
+                    <option value="page">page (page UUID)</option>
+                    <option value="internal">internal (route)</option>
+                    <option value="external">external (http/https URL)</option>
+                  </select>
+                </label>
+                <label>
+                  Target value
+                  <input
+                    value={entry.value}
+                    onChange={(event) =>
+                      setEntry(region.id, index, { value: event.target.value })
+                    }
+                  />
+                </label>
+                <Button
+                  type="button"
+                  onClick={() =>
+                    updateDraft(region.id, (draft) => ({
+                      ...draft,
+                      entries: draft.entries.filter(
+                        (_item, position) => position !== index,
+                      ),
+                    }))
+                  }
+                >
+                  Remove
+                </Button>
+              </div>
+            ))}
+            <Button
+              type="button"
+              onClick={() =>
+                updateDraft(region.id, (draft) => ({
+                  ...draft,
+                  entries: [
+                    ...draft.entries,
+                    { label: "", kind: "internal", value: "/" },
+                  ],
+                }))
+              }
+            >
+              Add entry
+            </Button>
+            {!isHeader ? (
+              <label>
+                Note
+                <textarea
+                  maxLength={4096}
+                  value={draft.note}
+                  onChange={(event) =>
+                    updateDraft(region.id, (draft) => ({
+                      ...draft,
+                      note: event.target.value,
+                    }))
+                  }
+                />
+              </label>
+            ) : null}
+            <Button
+              type="button"
+              onClick={() => void save(region)}
+              disabled={savingId !== null}
+            >
+              {savingId === region.id ? "Saving region…" : "Save region"}
+            </Button>
+          </fieldset>
+        );
+      })}
+    </div>
+  );
+}
+
 export function CompositionEditor({
   siteId,
   pageId,
@@ -533,6 +766,7 @@ export function CompositionEditor({
   const [nodes, setNodes] = useState<NormalizedCompositionNode[] | null>(null);
   const [theme, setTheme] = useState<ThemeRecord | null>(null);
   const [pageStyle, setPageStyle] = useState<PageStyleRecord | null>(null);
+  const [regions, setRegions] = useState<GlobalRegionRecord[] | null>(null);
   const [data, setData] = useState<PuckData | null>(null);
   const [puckRenderKey, setPuckRenderKey] = useState(0);
   const metadata = useRef<Record<string, PuckNodeMetadata>>({});
@@ -542,17 +776,19 @@ export function CompositionEditor({
   const [error, setError] = useState("");
 
   async function refresh() {
-    const [loadedAuthority, loadedNodes, loadedTheme, loadedPageStyle] =
+    const [loadedAuthority, loadedNodes, loadedTheme, loadedPageStyle, regionLoad] =
       await Promise.all([
         loadAuthority(siteId),
         loadComposition(siteId, pageId),
         loadTheme(siteId),
         loadPageStyle(siteId, pageId),
+        loadGlobalRegions(siteId).catch(() => null),
       ]);
     setAuthority(loadedAuthority);
     setNodes(loadedNodes);
     setTheme(loadedTheme);
     setPageStyle(loadedPageStyle);
+    setRegions(regionLoad);
     const converted = compositionToPuck(loadedNodes);
     metadata.current = converted.metadata ?? {};
     latestData.current = converted;
@@ -636,6 +872,23 @@ export function CompositionEditor({
           />
         </Card>
       )}
+      {(authority.platform_administrator ||
+        authority.effective_permissions.includes("global-region:write")) &&
+      regions ? (
+        <Card>
+          <GlobalRegionControls
+            siteId={siteId}
+            regions={regions}
+            onSaved={(saved) =>
+              setRegions((current) =>
+                current
+                  ? current.map((region) => (region.id === saved.id ? saved : region))
+                  : current,
+              )
+            }
+          />
+        </Card>
+      ) : null}
       <Card>
         <Puck
           key={puckRenderKey}

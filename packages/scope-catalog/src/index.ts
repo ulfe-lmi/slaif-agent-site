@@ -18,6 +18,7 @@ export const AGENT_READ_SCOPES = [
   "translation:read",
   "media:read",
   "theme:read",
+  "global-region:read",
   "redirect:read",
   "component-catalog:read",
   "preview:inspect",

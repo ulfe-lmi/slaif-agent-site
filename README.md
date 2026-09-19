@@ -68,12 +68,14 @@ evidence. The 078-v implementation claim was rejected after a real probe found
 authority/evidence defects; the 078-w, 078-x, and 078-y continuations repaired
 those defects and closed the remaining proof gaps without reimplementing the
 passing style data plane. The increment was accepted and merged at
-`26cafc1c0c91de5eee8406e8d477c50ea0208058` on 2026-09-10. No Objective-078
-product increment PR is open; numeric Objective 078 remains PARTIAL, with
-global-region/header-footer and catalog scope remaining, to start at
-increment `078-5-a` under the 2026-09-14 ID-namespace amendment. The increment
-deliberately excluded global regions, header/footer architecture, catalog
-breadth, media, MCP, review, promotion, publication, and final MVP claims.
+`26cafc1c0c91de5eee8406e8d477c50ea0208058` on 2026-09-10. Objective-078
+product increment 078/5 is opened at `078-5-a`
+(`oap/078-5-a-global-regions-header-footer`, PR pending) from verified remote
+`main` under the 2026-09-14 ID-namespace amendment; numeric Objective 078
+remains PARTIAL with catalog scope remaining for a later bounded increment.
+The 078/4 increment deliberately excluded global regions, header/footer
+architecture, catalog breadth, media, MCP, review, promotion, publication,
+and final MVP claims.
 
 The historical Objective-078/2 increment added the bounded `theme-schema/v1`
 data plane on PR #79 from verified `main`: typed Agent discovery/read/partial-

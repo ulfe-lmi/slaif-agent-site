@@ -401,6 +401,12 @@ AGENT_CONTENT_FUNCTIONS = {
         "p_palette jsonb, p_typography jsonb, p_layout jsonb, p_shape jsonb, "
         "p_reset_tokens text[]",
     ): "uuid, uuid, integer, jsonb, jsonb, jsonb, jsonb, text[]",
+    ("slaif_agent_region_list", "p_site_id uuid"): "uuid",
+    (
+        "slaif_agent_region_update",
+        "p_site_id uuid, p_region_key text, p_expected integer, "
+        "p_variant text, p_content jsonb",
+    ): "uuid, text, integer, text, jsonb",
     (
         "slaif_agent_composition_node_add",
         "p_site_id uuid, p_page_id uuid, p_component_type text, "
@@ -566,6 +572,9 @@ RENDER_METADATA_FUNCTIONS = {
 RENDER_CONTENT_FUNCTIONS = {
     ("slaif_theme_project", "p_site_id uuid"): "uuid",
     ("slaif_page_style_project", "p_page_id uuid"): "uuid",
+    ("slaif_region_list", "p_site_id uuid"): "uuid",
+    ("slaif_page_ancestor_chain", "p_site_id uuid, p_page_id uuid"): "uuid, uuid",
+    ("slaif_agent_page_effective_route", "p_page_id uuid"): "uuid",
     (
         "slaif_render_page_resolve",
         "p_site_id uuid, p_route text, p_locale text, p_statuses text[]",
@@ -1460,6 +1469,7 @@ async def _function_violations(
                 )
                 or (schema == "content" and name.startswith("slaif_theme_"))
                 or (schema == "content" and name.startswith("slaif_page_"))
+                or (schema == "content" and name.startswith("slaif_region_"))
                 or (schema == "content" and name.startswith("slaif_composition_"))
                 or (schema == "content" and name.startswith("slaif_media_"))
             )

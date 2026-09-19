@@ -304,7 +304,7 @@ async def test_upgrade_rebuilds_enabled_cow_without_pending_workspace_operations
             await owner.fetchval(
                 "SELECT version_num::text FROM control.alembic_version"
             )
-            == "066_001"
+            == "067_001"
         )
         assert await owner.fetchval("SELECT to_regclass('content.page') IS NOT NULL")
         assert await owner.fetchval("SELECT to_regclass('content.page_base') IS NULL")

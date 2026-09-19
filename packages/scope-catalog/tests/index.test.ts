@@ -21,12 +21,13 @@ describe("AGENT_READ_SCOPES", () => {
       "translation:read",
       "media:read",
       "theme:read",
+      "global-region:read",
       "redirect:read",
       "component-catalog:read",
       "preview:inspect",
       "validation:read",
     ]);
-    expect(AGENT_READ_SCOPES).toHaveLength(14);
+    expect(AGENT_READ_SCOPES).toHaveLength(15);
   });
 });
 

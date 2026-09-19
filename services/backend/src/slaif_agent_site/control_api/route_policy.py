@@ -985,6 +985,27 @@ ROUTE_POLICIES: Final[tuple[RoutePolicy, ...]] = (
                 True,
                 "theme-global:write",
             ),
+            (
+                "GET",
+                "/api/editor/v1/sites/{site_id}/global-regions",
+                _R,
+                False,
+                "global-region:read",
+            ),
+            (
+                "GET",
+                "/api/editor/v1/sites/{site_id}/global-regions/{region_id}",
+                _R,
+                False,
+                "global-region:read",
+            ),
+            (
+                "PATCH",
+                "/api/editor/v1/sites/{site_id}/global-regions/{region_id}",
+                _M,
+                True,
+                "global-region:write",
+            ),
         )
     ),
     *(
@@ -1144,6 +1165,7 @@ ROUTE_POLICIES: Final[tuple[RoutePolicy, ...]] = (
             ),
             ("GET", "/api/agent/v1/theme-schema", ("theme:read",)),
             ("GET", "/api/agent/v1/theme", ("theme:read",)),
+            ("GET", "/api/agent/v1/global-regions", ("global-region:read",)),
             (
                 "GET",
                 "/api/agent/v1/content-model/primitives",
@@ -1376,6 +1398,24 @@ ROUTE_POLICIES: Final[tuple[RoutePolicy, ...]] = (
             RouteConditionalScope(
                 when_fields=("palette", "typography", "layout", "shape"),
                 required_scopes=("theme-tokens:write",),
+                condition="changed",
+            ),
+        ),
+    ),
+    _agent_policy(
+        "PATCH",
+        "/api/agent/v1/global-regions/{region_id}",
+        _M,
+        "global-region:read",
+        conditional_scopes=(
+            RouteConditionalScope(
+                when_fields=("content",),
+                required_scopes=("global-region:write",),
+                condition="changed",
+            ),
+            RouteConditionalScope(
+                when_fields=("variant",),
+                required_scopes=("global-region:write", "header-footer:write"),
                 condition="changed",
             ),
         ),
