@@ -110,7 +110,7 @@ promotion, publication, and final MVP claims.
 > runs with durable private artifact retrieval. Review snapshots, promotion,
 > publication, and public media finalization remain separate work.
 
-The supply-chain policy qualifies Chrome for Testing `153.0.8010.36` at CfT
+The supply-chain policy qualifies Chrome for Testing `153.0.8010.52` at CfT
 revision `1681091`, replacing the vulnerable `152.0.7977.82` payload. The
 078-t built and scanned the six images, but its apparent zero-Critical result
 was unqualified because Syft omitted the Chrome 153 identity from the Grype
