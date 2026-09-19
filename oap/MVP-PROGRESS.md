@@ -93,13 +93,15 @@ proof, and 078-m records strategic technical acceptance after the approved
 evidence is retained and credited for technical acceptance. The accepted
 Objective-077 revision is in history; PR #77 is now merged at `3cae3d6`.
 Site-global theme precedence, global-region, exact-workspace Puck, review,
-promotion, and publication remain **PARTIAL/NOT IMPLEMENTED**; the accepted
+promotion, and publication remained **PARTIAL/NOT IMPLEMENTED** at the
+time of the 078/2 increment; the accepted
 078/2 theme increment does not claim that the contractual MVP is complete. Its
 bounded V1–V2 renderer/browser evidence and diagnostic closure are complete on
 merged PR #79; PR #80 separately closed the unqualified Chrome scan-coverage
 gap. 078-v through 078-y implemented only the bounded page-style slice,
 accepted and merged in PR #81 at `26cafc1`; global regions and catalog
-expansion remain deferred.
+expansion remained deferred at 078/4 (global regions were delivered in
+078/5; catalog breadth is in delivery from 078/7 onward).
 
 The 078-n continuation repaired the approved consumed-order link formatting
 without changing the product tree. The historical 078-o continuation qualified
@@ -110,15 +112,16 @@ evidence. Its result is included in the accepted and merged 078/1 revision.
 ## Active and remaining sequence
 
 `oap/active` names the last activated round until the next activation.
-078/1, 078/2, 078/3, 078/4, 078/5, and 078/6 are all accepted and
-merged (verified merge SHAs per `oap/INCREMENTS.md`: PR #77 at
+078/1, 078/2, 078/3, 078/4, 078/5, 078/6, and 078/7 are all accepted
+and merged (verified merge SHAs per `oap/INCREMENTS.md`: PR #77 at
 `3cae3d6cef2a92e7068856d21bc9a47b8190c22e`, PR #79 at
 `a9d3e6800d5e8b5fd5c9cd9e0be5010184058c6b`, PR #80 at
 `fe31c9f30a7797d0916ad7f8fb56344bc61526f3`, PR #81 at
 `26cafc1c0c91de5eee8406e8d477c50ea0208058`, PR #85 at
 `2746c9f08c00fd84dff59bfd1536ce7319e16ff9`, PR #86 at
-`0faebd98cc0d9b14d4e00b7da165f08b815e7df6`); increment 078/7 is opened
-at `078-7-a` (PR #87). Acceptance and containment in `main` are
+`0faebd98cc0d9b14d4e00b7da165f08b815e7df6`, PR #87 at
+`d9a7555662a976483b9716e41863de8ecd00decf`); increment 078/8 is opened
+at `078-8-a` (PR #88). Acceptance and containment in `main` are
 determined by OAP and GitHub state, not this document; GitHub remains
 authoritative for live acceptance and merge state. All later order
 files remain inert until strategy selects and signals them.
@@ -126,7 +129,7 @@ files remain inert until strategy selects and signals them.
 | Order | Contractual scope | Current status |
 |---|---|---|
 | 077 | Agent page, navigation, redirect, and bounded dynamic collection Render semantics | COMPLETE — E2E PROVEN and accepted/merged in PR #74 on 2026-09-08 at `ae3a4a6` |
-| 078 | Agent composition and design semantics; bounded component, site-theme, and page-style data planes | PARTIAL — 078/1 is accepted and merged in PR #77 at `3cae3d6`; 078/2 is accepted and merged in PR #79 at `a9d3e68`; 078/3 is accepted and merged in PR #80 at `fe31c9f`; 078/4 is accepted and merged in PR #81 at `26cafc1`; 078/5 is accepted and merged in PR #85 at `2746c9f08c00fd84dff59bfd1536ce7319e16ff9`; 078/6 is accepted and merged in PR #86 at `0faebd98cc0d9b14d4e00b7da165f08b815e7df6`; increment 078/7 is opened at `078-7-a` (PR #87) |
+| 078 | Agent composition and design semantics; bounded component, site-theme, and page-style data planes | PARTIAL — 078/1 is accepted and merged in PR #77 at `3cae3d6`; 078/2 is accepted and merged in PR #79 at `a9d3e68`; 078/3 is accepted and merged in PR #80 at `fe31c9f`; 078/4 is accepted and merged in PR #81 at `26cafc1`; 078/5 is accepted and merged in PR #85 at `2746c9f08c00fd84dff59bfd1536ce7319e16ff9`; 078/6 is accepted and merged in PR #86 at `0faebd98cc0d9b14d4e00b7da165f08b815e7df6`; 078/7 is accepted and merged in PR #87 at `d9a7555662a976483b9716e41863de8ecd00decf`; increment 078/8 is opened at `078-8-a` (PR #88) |
 | 079 | Agent media semantics and references | PARTIAL |
 | 080 | Real MCP semantic parity | SCAFFOLD ONLY |
 | 081 | Human Puck editing in the exact Agent workspace | PARTIAL |
