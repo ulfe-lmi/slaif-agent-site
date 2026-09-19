@@ -343,9 +343,19 @@ test("governance-visible-workflows-negatives-and-privacy", async ({ page }) => {
   expect(adminResponse.status()).toBe(200);
   const adminHeaders = adminResponse.headers();
   expect(adminHeaders["x-request-id"]).toMatch(/^[0-9a-f]{32}$/);
-  const csp = adminHeaders["content-security-policy"];
+  const csp = adminHeaders["content-security-policy"] ?? "";
   expect(csp).toContain("default-src 'self'");
-  expect(csp).not.toMatch(/unsafe-inline|unsafe-eval|https?:|wss?:/);
+  // The bounded embed allowlist (OAP 078-8-a) is the only permitted
+  // remote source; strip that exact directive so the backstay below
+  // stays equally strong for every other directive.
+  expect(csp).toContain(
+    "frame-src https://www.openstreetmap.org https://www.youtube-nocookie.com https://player.vimeo.com",
+  );
+  const cspWithoutFrameSrc = csp.replace(
+    "frame-src https://www.openstreetmap.org https://www.youtube-nocookie.com https://player.vimeo.com;",
+    "",
+  );
+  expect(cspWithoutFrameSrc).not.toMatch(/unsafe-inline|unsafe-eval|https?:|wss?:/);
   expectPrivateHeaders(await page.request.get(membershipPath));
   expect(
     await page.evaluate(() => ({
