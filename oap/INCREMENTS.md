@@ -20,7 +20,7 @@ merge date) referenced from current-state documents.
 | 078/6 | `oap/078-6-a-browser-security-refresh`: browser-worker Chrome for Testing 153.0.8010.52 refresh (six-CVE closure) | Accepted and merged in PR #86 at `0faebd98cc0d9b14d4e00b7da165f08b815e7df6` on 2026-09-19; 078/6 is closed |
 | 078/7 | `oap/078-7-a-catalog-content-collection-components`: catalog content and collection components (CallToAction, ContactBlock, CollectionSearch, CollectionFilter, RelatedItems) | Opened at `078-7-a` from verified remote main `2746c9f08c00fd84dff59bfd1536ce7319e16ff9`; PR pending; strategy owns acceptance and merge |
 | 078-i | `567973e` implementation plus `127d7f1` report: bounded site-theme tokens | Preserved immutable history; removed from PR #77 by 078-j and deferred for deliberate reuse |
-| Next | Remaining 078 scope after 078/5 | Catalog boundaries remain separate; numeric 078 remains PARTIAL; strategy selects the next bounded increment per [`governance/2026-09-14-increment-qualified-round-ids.md`](governance/2026-09-14-increment-qualified-round-ids.md) |
+| Next | Remaining 078 scope after 078/7 | Catalog boundaries remain separate; numeric 078 remains PARTIAL; strategy selects the next bounded increment per [`governance/2026-09-14-increment-qualified-round-ids.md`](governance/2026-09-14-increment-qualified-round-ids.md) |
 
 PR #77 merged into `main` at
 `3cae3d6cef2a92e7068856d21bc9a47b8190c22e`. The 078-j closure keeps the
