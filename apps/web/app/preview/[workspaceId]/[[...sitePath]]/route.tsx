@@ -50,9 +50,15 @@ async function renderResolution(
         <title>{resolution.projection.page.title}</title>
       </head>
       <body>
+        {/*
+         * The preview contract is a flight-free server-rendered document:
+         * no client bundle, so the bounded client-state components render
+         * their static initial-state variants here.
+         */}
         <PageProjectionShell
           projection={resolution.projection}
           basePath={`/preview/${workspaceId}/s/${resolution.projection.site.key}`}
+          clientState={false}
         />
       </body>
     </html>,

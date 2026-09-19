@@ -7,6 +7,11 @@ from uuid import UUID
 
 from fastapi import APIRouter, Request, Response
 
+from slaif_agent_site.content_model.component_facets import (
+    FacetValidationError,
+    field_primitive_map,
+    validate_collection_filter_facets,
+)
 from slaif_agent_site.content_model.composition_models import (
     CompositionNodeRecord,
     CreateCompositionNodeRequest,
@@ -76,6 +81,41 @@ def _require_component_scopes(authority: Any, required_scopes: tuple[str, ...]) 
         raise AuthorizationError()
 
 
+async def _validate_collection_filter_facets(
+    request: Request,
+    site_id: UUID,
+    component_type: str,
+    props: dict[str, Any],
+) -> None:
+    """Fail-closed facet vocabulary validation for the human Puck path.
+
+    Resolves the site-scoped collection view and its content-type fields,
+    then rejects any facet whose fieldKey is absent or whose operator is
+    outside the field's per-primitive query vocabulary.  The Editor update
+    endpoint replaces props wholesale, so the supplied props are exactly
+    the post-write state.
+    """
+    if component_type != "CollectionFilter":
+        return
+    raw_view_id = props.get("viewId")
+    try:
+        view_id = UUID(str(raw_view_id))
+    except (TypeError, ValueError):
+        raise DomainValidationError() from None
+    service = _service(request)
+    try:
+        view = await service.get_view(site_id, view_id)
+    except ContentModelServiceError as error:
+        if error.reason is ContentModelServiceReason.NOT_FOUND:
+            raise DomainValidationError() from None
+        raise
+    fields = field_primitive_map(await service.list_fields(view.type_id))
+    try:
+        validate_collection_filter_facets(props.get("facets"), fields)
+    except FacetValidationError:
+        raise DomainValidationError() from None
+
+
 async def _auth(
     request: Request, site_id: UUID, *, permission: str, state_changing: bool
 ) -> SiteRequestAuthority:
@@ -106,6 +146,9 @@ async def add_component(
     except (TypeError, ValueError):
         raise DomainValidationError() from None
     _require_component_scopes(authority, required)
+    await _validate_collection_filter_facets(
+        request, site_id, body.component_type, body.props
+    )
     try:
         return await _service(request).add_composition_node(  # type: ignore[no-any-return]
             site_id=site_id,
@@ -160,6 +203,10 @@ async def update_component(
     except (TypeError, ValueError):
         raise DomainValidationError() from None
     _require_component_scopes(authority, required)
+    if body.props is not None:
+        await _validate_collection_filter_facets(
+            request, site_id, current.component_type, body.props
+        )
     try:
         return await _service(request).update_composition_node(  # type: ignore[no-any-return]
             node_id=node_id,

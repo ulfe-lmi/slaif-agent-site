@@ -246,7 +246,7 @@
         }
       ]
     },
-    {"type": "Quote", "variants": [], "properties": []},
+    {"type": "Quote", "variants": [], "properties": []},{"type": "CallToAction", "variants": [], "properties": []},
     {"type": "CollectionList", "variants": [], "properties": []},
     {
       "type": "CollectionGrid",
@@ -266,11 +266,11 @@
         }
       ]
     },
-    {"type": "CollectionDetail", "variants": [], "properties": []},
+    {"type": "CollectionDetail", "variants": [], "properties": []},{"type": "CollectionSearch", "variants": [], "properties": []},{"type": "CollectionFilter", "variants": [], "properties": []},{"type": "RelatedItems", "variants": [], "properties": []},
     {"type": "Hero", "variants": [], "properties": []},
     {"type": "Statistics", "variants": [], "properties": []},
     {"type": "Timeline", "variants": [], "properties": []},
-    {"type": "FAQ", "variants": [], "properties": []},
+    {"type": "FAQ", "variants": [], "properties": []},{"type": "ContactBlock", "variants": [], "properties": []},
     {"type": "Header", "variants": [], "properties": []},
     {"type": "Footer", "variants": [], "properties": []},
     {"type": "Breadcrumbs", "variants": [], "properties": []},

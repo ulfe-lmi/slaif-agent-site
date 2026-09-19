@@ -76,6 +76,7 @@ NEW_PACKAGE_FILES = {
     "slaif_agent_site/agent_state/mutations.py",
     "slaif_agent_site/agent_state/reads.py",
     "slaif_agent_site/agent_state/locks.py",
+    "slaif_agent_site/content_model/component_facets.py",
     "slaif_agent_site/application.py",
     "slaif_agent_site/authority.py",
     "slaif_agent_site/bootstrap/__init__.py",

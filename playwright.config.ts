@@ -36,6 +36,11 @@ export default defineConfig({
       use: { ...devices["Desktop Chrome"] },
     },
     {
+      name: "preview-filtering",
+      testMatch: /collection-filtering\.spec\.ts/,
+      use: { ...devices["Desktop Chrome"] },
+    },
+    {
       name: "desktop-chromium",
       dependencies: ["governance"],
       testMatch: /auth\.spec\.ts/,

@@ -1,6 +1,15 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import {
+  capSearchInput,
+  matchesAllFacets,
+  matchesFacet,
+  matchesSearch,
+  splitInList,
+  type CollectionFacet,
+  type FilterField,
+} from "../src/renderer/bounded-collection-filter";
+import {
   compositionToPuck,
   puckToComposition,
   type NormalizedCompositionNode,
@@ -243,6 +252,7 @@ describe("trusted catalog renderer behavior", () => {
         locales: [],
         navigation: [],
         bindings: {},
+        binding_meta: {},
         regions: [],
         ancestors: [],
         default_locale: "en-US",
@@ -360,6 +370,7 @@ describe("trusted catalog renderer behavior", () => {
       },
       navigation: [],
       bindings: {},
+      binding_meta: {},
       ancestors: [],
       default_locale: "en-US",
     } as const;
@@ -397,5 +408,271 @@ describe("trusted catalog renderer behavior", () => {
     expect(unresolvable).toContain("renderer-region-language-inert");
     expect(unresolvable).toContain(">sl-SI</span>");
     expect(unresolvable).not.toContain(`/s/switch-site/sl-SI`);
+  });
+
+  it("renders the 078/7 static catalog components with bounded markup", () => {
+    const cta = renderToStaticMarkup(
+      renderComponent(
+        {
+          componentType: "CallToAction",
+          props: {
+            heading: "Ship it",
+            text: "Bounded copy",
+            label: "Read more",
+            href: "/news",
+            variant: "secondary",
+          },
+        },
+        "en",
+      ),
+    );
+    expect(cta).toContain("renderer-call-to-action--secondary");
+    expect(cta).toContain("<h2>Ship it</h2>");
+    expect(cta).toContain("<p>Bounded copy</p>");
+    expect(cta).toContain('href="/news"');
+    expect(cta).toContain("Read more");
+    const ctaUnsafeHref = renderToStaticMarkup(
+      renderComponent(
+        {
+          componentType: "CallToAction",
+          props: {
+            heading: "Ship it",
+            label: "Read more",
+            href: "https://evil.example",
+          },
+        },
+        "en",
+      ),
+    );
+    expect(ctaUnsafeHref).toContain('href="/"');
+    expect(ctaUnsafeHref).not.toContain("evil.example");
+
+    const contact = renderToStaticMarkup(
+      renderComponent(
+        {
+          componentType: "ContactBlock",
+          props: {
+            organization: "SLAIF Institute",
+            address: "Trubarjeva 1",
+            phone: "01 000",
+            email: "contact@example",
+            hours: "Mon-Fri 9-17",
+          },
+        },
+        "en",
+      ),
+    );
+    expect(contact).toContain("renderer-contact");
+    expect(contact).toContain("<h2>SLAIF Institute</h2>");
+    expect(contact).toContain("renderer-contact-address");
+    expect(contact).toContain("renderer-contact-phone");
+    expect(contact).toContain("renderer-contact-email");
+    expect(contact).toContain("renderer-contact-hours");
+
+    const related = renderToStaticMarkup(
+      renderComponent(
+        {
+          componentType: "RelatedItems",
+          props: { heading: "Related" },
+        },
+        "en",
+        [
+          {
+            id: "99999999-9999-4999-8999-999999999999",
+            slug: "second",
+            values: { title: "Second story", summary: "Body" },
+          },
+        ],
+      ),
+    );
+    expect(related).toContain("renderer-related");
+    expect(related).toContain("<h2>Related</h2>");
+    expect(related).toContain("<h2>Second story</h2>");
+    expect(
+      renderToStaticMarkup(
+        renderComponent(
+          { componentType: "RelatedItems", props: { heading: "Related" } },
+          "en",
+          [],
+        ),
+      ),
+    ).toBe("");
+  });
+
+  it("renders the bounded client-filter components statelessly", () => {
+    const items = [
+      { id: "1", slug: "a", values: { title: "Alpha news", rank: 3 } },
+      { id: "2", slug: "b", values: { title: "Beta news", rank: 7 } },
+    ];
+    const search = renderToStaticMarkup(
+      renderComponent(
+        {
+          componentType: "CollectionSearch",
+          props: { placeholder: "Find stories" },
+        },
+        "en",
+        items,
+        { filter_fields: [{ key: "title", primitive: "short_text" }] },
+      ),
+    );
+    expect(search).toContain("renderer-collection-search");
+    expect(search).toContain('maxLength="256"');
+    expect(search).toContain("Find stories");
+    expect(search).toContain(">Alpha news<");
+
+    const filterMarkup = renderToStaticMarkup(
+      renderComponent(
+        {
+          componentType: "CollectionFilter",
+          props: {
+            facets: [{ fieldKey: "rank", operator: "gte", value: "5" }],
+          },
+        },
+        "en",
+        items,
+        { filter_fields: [{ key: "rank", primitive: "integer" }] },
+      ),
+    );
+    expect(filterMarkup).toContain("renderer-collection-filter");
+    expect(filterMarkup).toContain("rank gte");
+    expect(filterMarkup).not.toContain(">Alpha news<");
+    expect(filterMarkup).toContain(">Beta news<");
+
+    const emptyFilter = renderToStaticMarkup(
+      renderComponent(
+        {
+          componentType: "CollectionFilter",
+          props: { facets: [{ fieldKey: "rank", operator: "gte", value: "9" }] },
+        },
+        "en",
+        items,
+        { filter_fields: [{ key: "rank", primitive: "integer" }] },
+      ),
+    );
+    expect(emptyFilter).toContain("renderer-collection-filter-empty");
+  });
+
+  it("keeps the bounded in-memory filter semantics fixed and fail-closed", () => {
+    const fields: readonly FilterField[] = [
+      { key: "title", primitive: "short_text" },
+      { key: "body", primitive: "long_text" },
+      { key: "rank", primitive: "integer" },
+      { key: "kind", primitive: "enum" },
+      { key: "when", primitive: "date" },
+      { key: "active", primitive: "boolean" },
+    ];
+    const item = {
+      id: "1",
+      slug: "s",
+      values: {
+        title: "Weekly Brief",
+        body: "the details",
+        rank: 7,
+        kind: "News",
+        when: "2026-09-01",
+        active: true,
+      },
+    };
+    expect(matchesSearch(item, fields, "weekly")).toBe(true);
+    expect(matchesSearch(item, fields, "details")).toBe(true);
+    expect(matchesSearch(item, fields, "absent")).toBe(false);
+    expect(capSearchInput("x".repeat(300))).toHaveLength(256);
+
+    const facet = (
+      fieldKey: string,
+      operator: string,
+      value: string,
+    ): CollectionFacet => ({ fieldKey, operator, value });
+    expect(matchesFacet(item, fields, facet("title", "contains", "week"))).toBe(true);
+    expect(matchesFacet(item, fields, facet("title", "prefix", "weekly"))).toBe(true);
+    expect(matchesFacet(item, fields, facet("rank", "gte", "7"))).toBe(true);
+    expect(matchesFacet(item, fields, facet("rank", "lt", "7"))).toBe(false);
+    expect(matchesFacet(item, fields, facet("kind", "in", "blog, news ,press"))).toBe(
+      true,
+    );
+    expect(matchesFacet(item, fields, facet("kind", "in", "blog,press"))).toBe(false);
+    expect(matchesFacet(item, fields, facet("when", "gte", "2026-09-01"))).toBe(true);
+    expect(matchesFacet(item, fields, facet("when", "lt", "2026-09-01"))).toBe(false);
+    expect(matchesFacet(item, fields, facet("active", "eq", "true"))).toBe(true);
+    // fail-closed: unknown primitive, missing value, unknown field, bad number
+    expect(matchesFacet(item, fields, facet("missing", "eq", "x"))).toBe(false);
+    expect(matchesFacet(item, fields, facet("kind", "contains", "news"))).toBe(false);
+    expect(
+      matchesFacet(
+        { id: "2", slug: "t", values: {} },
+        fields,
+        facet("title", "contains", "weekly"),
+      ),
+    ).toBe(false);
+    expect(matchesFacet(item, fields, facet("rank", "eq", "nope"))).toBe(false);
+    expect(
+      matchesAllFacets(item, fields, [
+        facet("title", "contains", "week"),
+        facet("rank", "gte", "5"),
+      ]),
+    ).toBe(true);
+    expect(
+      matchesAllFacets(item, fields, [
+        facet("title", "contains", "week"),
+        facet("rank", "gt", "7"),
+      ]),
+    ).toBe(false);
+    expect(splitInList(",a,,b,")).toEqual(["a", "b"]);
+    expect(splitInList("x".repeat(40))).toEqual(["x".repeat(40)]);
+  });
+
+  it("renders flight-free static variants with identical initial-state markup", () => {
+    const items = [
+      { id: "1", slug: "a", values: { title: "Alpha news", rank: 3 } },
+      { id: "2", slug: "b", values: { title: "Beta news", rank: 7 } },
+    ];
+    const interactiveSearch = renderToStaticMarkup(
+      renderComponent(
+        { componentType: "CollectionSearch", props: { placeholder: "Find" } },
+        "en",
+        items,
+        { filter_fields: [{ key: "title", primitive: "short_text" }] },
+      ),
+    );
+    const staticSearch = renderToStaticMarkup(
+      renderComponent(
+        { componentType: "CollectionSearch", props: { placeholder: "Find" } },
+        "en",
+        items,
+        { filter_fields: [{ key: "title", primitive: "short_text" }] },
+        false,
+      ),
+    );
+    // The only SSR artifact difference is the controlled-input value
+    // attribute React emits for the interactive variant; normalize it and
+    // the initial-state markup is byte-identical.
+    const normalized = (markup: string) =>
+      markup.replace(/ value=""/g, "").replace(/\s+/g, " ");
+    expect(normalized(staticSearch)).toBe(normalized(interactiveSearch));
+
+    const facets = [{ fieldKey: "rank", operator: "gte", value: "5" }];
+    const interactiveFilter = renderToStaticMarkup(
+      renderComponent(
+        { componentType: "CollectionFilter", props: { facets } },
+        "en",
+        items,
+        { filter_fields: [{ key: "rank", primitive: "integer" }] },
+      ),
+    );
+    const staticFilter = renderToStaticMarkup(
+      renderComponent(
+        { componentType: "CollectionFilter", props: { facets } },
+        "en",
+        items,
+        { filter_fields: [{ key: "rank", primitive: "integer" }] },
+        false,
+      ),
+    );
+    expect(staticFilter).toBe(interactiveFilter);
+    // Initial facet state: only rank 7 is visible; the empty state is not
+    // rendered because the initial visible set is non-empty.
+    expect(staticFilter).toContain(">Beta news<");
+    expect(staticFilter).not.toContain(">Alpha news<");
+    expect(staticFilter).not.toContain("renderer-collection-filter-empty");
   });
 });

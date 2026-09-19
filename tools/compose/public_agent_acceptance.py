@@ -949,30 +949,43 @@ def _run_dynamic_news_edge_journey(
             f"oap-077u-news-type-{tag}",
         )
         type_id = _require_uuid(news_type["record"]["id"], "news-type")
-        for key, label, field_type, localized, position in (
-            ("title", "Title", "short_text", True, 0),
-            ("summary", "Summary", "long_text", True, 1),
-            ("rank", "Rank", "integer", False, 2),
+        for key, label, field_type, localized, position, field_validation in (
+            ("title", "Title", "short_text", True, 0, None),
+            ("summary", "Summary", "long_text", True, 1, None),
+            ("rank", "Rank", "integer", False, 2, None),
+            (
+                "kind",
+                "Kind",
+                "enum",
+                False,
+                3,
+                {"choices": ["News", "Press", "Blog"]},
+            ),
         ):
+            field_body: dict[str, Any] = {
+                "key": key,
+                "label": label,
+                "field_type": field_type,
+                "localized": localized,
+                "required": True,
+                "position": position,
+            }
+            if field_validation is not None:
+                field_body["validation"] = field_validation
             _mutation(
                 client,
                 token,
                 f"/api/agent/v1/content-model/types/{type_id}/fields",
-                {
-                    "key": key,
-                    "label": label,
-                    "field_type": field_type,
-                    "localized": localized,
-                    "required": True,
-                    "position": position,
-                },
+                field_body,
                 f"oap-077u-news-field-{key}-{tag}",
             )
         items: dict[str, tuple[str, str, str]] = {}
-        for slug, status, rank in (
-            ("published", "PUBLISHED", 3),
-            ("draft", "DRAFT", 2),
-            ("archived", "ARCHIVED", 1),
+        for slug, status, rank, kind in (
+            ("published", "PUBLISHED", 3, "News"),
+            ("draft", "DRAFT", 2, "Press"),
+            ("archived", "ARCHIVED", 1, "Blog"),
+            ("fourth", "PUBLISHED", 4, "News"),
+            ("first", "PUBLISHED", 0, "Blog"),
         ):
             item = _mutation(
                 client,
@@ -982,22 +995,26 @@ def _run_dynamic_news_edge_journey(
                     "type_id": type_id,
                     "slug": slug,
                     "status": status,
-                    "values": {"rank": rank},
+                    "values": {"rank": rank, "kind": kind},
                 },
                 f"oap-077u-news-item-{slug}-{tag}",
             )
             item_id = _require_uuid(item["record"]["id"], f"news-{slug}-item")
             translations: dict[str, str] = {}
+            # The two extra PUBLISHED items carry slug-based titles so the
+            # detail assertions can distinguish the current route item from
+            # the other PUBLISHED related items.
+            name = status.title() if slug not in ("fourth", "first") else slug.title()
             for locale, title, summary in (
                 (
                     default_locale,
-                    f"{status.title()} title",
-                    f"{status.title()} summary",
+                    f"{name} title",
+                    f"{name} summary",
                 ),
                 (
                     selected_locale,
-                    f"{status.title()} naslov",
-                    f"{status.title()} povzetek",
+                    f"{name} naslov",
+                    f"{name} povzetek",
                 ),
             ):
                 translation = _mutation(
@@ -1028,13 +1045,14 @@ def _run_dynamic_news_edge_journey(
                 "key": f"oap-news-{tag}",
                 "filter_spec": {},
                 "sort_spec": {"field": "rank", "direction": "desc"},
-                "projection_spec": {"fields": ["title", "summary", "rank"]},
+                "projection_spec": {"fields": ["title", "summary", "rank", "kind"]},
                 "pagination_spec": {"limit": 10, "offset": 0},
             },
             f"oap-077u-news-view-{tag}",
         )
         view_id = _require_uuid(view["record"]["id"], "news-view")
         pages: dict[str, str] = {}
+        filter_ids: dict[str, str] = {}
         for locale, suffix, title in (
             (default_locale, "default", "News"),
             (selected_locale, "selected", "Novice"),
@@ -1084,6 +1102,79 @@ def _run_dynamic_news_edge_journey(
             _mutation(
                 client,
                 token,
+                f"/api/agent/v1/pages/{listing_id}/components",
+                {
+                    "component_type": "CallToAction",
+                    "slot_key": "default",
+                    "props": {
+                        "heading": "Read the news",
+                        "text": "Bounded edge proof copy.",
+                        "label": "Subscribe",
+                        "href": "/news",
+                        "variant": "secondary",
+                    },
+                },
+                f"oap-077u-news-ct-{suffix}-{tag}",
+            )
+            _mutation(
+                client,
+                token,
+                f"/api/agent/v1/pages/{listing_id}/components",
+                {
+                    "component_type": "ContactBlock",
+                    "slot_key": "default",
+                    "props": {
+                        "organization": "OAP Newsroom",
+                        "address": "Trubarjeva 1, Ljubljana",
+                        "phone": "+386 1 000 0000",
+                        "email": "newsroom@example.org",
+                        "hours": "Mon-Fri 9-17",
+                    },
+                },
+                f"oap-077u-news-contact-{suffix}-{tag}",
+            )
+            _mutation(
+                client,
+                token,
+                f"/api/agent/v1/pages/{listing_id}/components",
+                {
+                    "component_type": "CollectionSearch",
+                    "slot_key": "default",
+                    "props": {
+                        "viewId": view_id,
+                        "placeholder": "Search news",
+                        "limit": 10,
+                    },
+                },
+                f"oap-077u-news-search-{suffix}-{tag}",
+            )
+            filter_node = _mutation(
+                client,
+                token,
+                f"/api/agent/v1/pages/{listing_id}/components",
+                {
+                    "component_type": "CollectionFilter",
+                    "slot_key": "default",
+                    "props": {
+                        "viewId": view_id,
+                        "facets": [
+                            {
+                                "fieldKey": "kind",
+                                "operator": "in",
+                                "value": "News, Press, Blog",
+                            },
+                            {"fieldKey": "rank", "operator": "gte", "value": "0"},
+                        ],
+                    },
+                },
+                f"oap-077u-news-filter-{suffix}-{tag}",
+            )
+            filter_ids[suffix] = _require_uuid(
+                filter_node["record"]["id"], f"news-filter-{suffix}"
+            )
+            _mutation(
+                client,
+                token,
                 f"/api/agent/v1/pages/{detail_id}/components",
                 {
                     "component_type": "CollectionDetail",
@@ -1091,6 +1182,21 @@ def _run_dynamic_news_edge_journey(
                     "props": {"viewId": view_id},
                 },
                 f"oap-077u-news-detail-node-{suffix}-{tag}",
+            )
+            _mutation(
+                client,
+                token,
+                f"/api/agent/v1/pages/{detail_id}/components",
+                {
+                    "component_type": "RelatedItems",
+                    "slot_key": "default",
+                    "props": {
+                        "viewId": view_id,
+                        "heading": "Related",
+                        "limit": 8,
+                    },
+                },
+                f"oap-077u-news-related-{suffix}-{tag}",
             )
         navigation = _mutation(
             client,
@@ -1137,8 +1243,28 @@ def _run_dynamic_news_edge_journey(
             label="news-default-listing",
             locale=default_locale,
             title="News",
-            expected=("Published title", "Draft title", "Published summary"),
-            forbidden=("Archived title", "sas2_", "internal"),
+            expected=(
+                "Published title",
+                "Draft title",
+                "Published summary",
+                "renderer-call-to-action",
+                "Read the news",
+                "Subscribe",
+                "renderer-contact",
+                "OAP Newsroom",
+                "renderer-collection-search",
+                "Search news",
+                "renderer-collection-filter",
+                "kind in",
+                "rank gte",
+            ),
+            forbidden=(
+                "Archived title",
+                "sas2_",
+                "internal",
+                "renderer-related",
+                "renderer-collection-detail",
+            ),
             known_ids=(
                 ("workspace", workspace),
                 ("site", site_id),
@@ -1163,19 +1289,35 @@ def _run_dynamic_news_edge_journey(
             label="news-default-detail",
             locale=default_locale,
             title="News detail",
-            expected=("Published title", "Published summary"),
-            forbidden=("Draft title", "Archived title"),
+            expected=(
+                "Published title",
+                "Published summary",
+                "Fourth title",
+                "First title",
+                "Draft title",
+                "renderer-related",
+                "Related",
+                "renderer-collection-list",
+            ),
+            forbidden=(
+                "Archived title",
+                "renderer-collection-search",
+                "renderer-collection-filter",
+            ),
             known_ids=(
                 ("workspace", workspace),
                 ("site", site_id),
                 ("type", type_id),
                 ("view", view_id),
                 *[
-                    ("published-item-or-translation", value)
-                    for value in items["published"]
+                    (f"{slug}-item-or-translation", value)
+                    for slug, item in items.items()
+                    for value in item
                 ],
             ),
         )
+        if default_detail.count(b"Published title") != 1:
+            raise ProofFailure("news-default-detail-current-item-not-excluded")
         selected_detail = _wait_preview_html(
             client, f"{selected_preview}/published", "news-selected-detail"
         )
@@ -1184,19 +1326,36 @@ def _run_dynamic_news_edge_journey(
             label="news-selected-detail",
             locale=selected_locale,
             title="Podrobnosti",
-            expected=("Published naslov", "Published povzetek"),
-            forbidden=("Published title", "Archived naslov"),
+            expected=(
+                "Published naslov",
+                "Published povzetek",
+                "Fourth naslov",
+                "First naslov",
+                "Draft naslov",
+                "renderer-related",
+                "Related",
+                "renderer-collection-list",
+            ),
+            forbidden=(
+                "Published title",
+                "Archived naslov",
+                "renderer-collection-search",
+                "renderer-collection-filter",
+            ),
             known_ids=(
                 ("workspace", workspace),
                 ("site", site_id),
                 ("type", type_id),
                 ("view", view_id),
                 *[
-                    ("published-item-or-translation", value)
-                    for value in items["published"]
+                    (f"{slug}-item-or-translation", value)
+                    for slug, item in items.items()
+                    for value in item
                 ],
             ),
         )
+        if selected_detail.count(b"Published naslov") != 1:
+            raise ProofFailure("news-selected-detail-current-item-not-excluded")
         stylesheet = client.request("/renderer-v1.css")
         if (
             stylesheet.status != 200
@@ -1319,12 +1478,21 @@ def _run_dynamic_news_edge_journey(
             except (TypeError, ValueError) as error:
                 raise ProofFailure("news-browser-artifact-json-invalid") from error
             if artifact.get("kind") == "heading-summary":
-                if evidence != {"headings": ["Podrobnosti", "Published naslov"]}:
+                if evidence != {
+                    "headings": [
+                        "Podrobnosti",
+                        "Published naslov",
+                        "Related",
+                        "Fourth naslov",
+                        "Draft naslov",
+                        "First naslov",
+                    ]
+                }:
                     raise ProofFailure("news-browser-heading-evidence-invalid")
             elif evidence != {
-                "articles": 1,
+                "articles": 4,
                 "collectionDetails": 1,
-                "components": 1,
+                "components": 2,
                 "detailStyle": {
                     "borderTopStyle": "solid",
                     "display": "block",
@@ -1334,7 +1502,7 @@ def _run_dynamic_news_edge_journey(
                 "main": 1,
                 "navigation": 3,
                 "rendererStylesheets": 1,
-                "sections": 0,
+                "sections": 1,
             }:
                 raise ProofFailure("news-browser-structure-evidence-invalid")
 
@@ -1514,17 +1682,515 @@ def _run_dynamic_news_edge_journey(
                 f"before-hex={canonical_before_stable[max(0, first_difference - 8) : first_difference + 16].hex()}-"
                 f"after-hex={canonical_after_stable[max(0, first_difference - 8) : first_difference + 16].hex()}"
             )
+        foreign_view_id = "12000000-0000-4000-8000-000000000315"
+        listing_page_id = pages[default_locale]
+        filter_node_id = filter_ids["default"]
+
+        def _news_component_count() -> int:
+            nodes = _agent_list(
+                client,
+                token,
+                f"/api/agent/v1/pages/{listing_page_id}/components",
+                label="news-hostile-count",
+            )
+            return len(nodes)
+
+        def _assert_preview_overlay(body: bytes, *, label: str) -> None:
+            try:
+                text = body.decode("utf-8")
+            except UnicodeDecodeError as error:
+                raise ProofFailure(f"{label}-invalid-html") from error
+            if f'<html lang="{default_locale}">' not in text:
+                raise ProofFailure(f"{label}-locale-missing")
+            for value in (
+                "<title>SLAIF Demo Site</title>",
+                "renderer-call-to-action",
+                "Puck call",
+                "Saved through the Puck path.",
+                "A trusted canonical page projection.",
+            ):
+                if value not in text:
+                    raise ProofFailure(f"{label}-expected-text-missing")
+            for value in (
+                "sas2_",
+                "sbp1.",
+                "sbws1:",
+                "newsroom@example.org",
+                "renderer-related",
+                "__next_f",
+                "NEXT_DATA",
+            ):
+                if value in text:
+                    raise ProofFailure(f"{label}-forbidden-text-present")
+            for id_value in (site_id, puck_component_id, editor_workspace_id):
+                if id_value in text:
+                    raise ProofFailure(f"{label}-id-leak")
+            if re.search(
+                r"[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}"
+                r"-[89ab][0-9a-f]{3}-[0-9a-f]{12}",
+                text,
+                re.IGNORECASE,
+            ):
+                raise ProofFailure(f"{label}-uuid-leak")
+
+        base_component_count = _news_component_count()
+        agent_hostile = (
+            (
+                "news-hostile-unknown-field",
+                {
+                    "component_type": "CollectionFilter",
+                    "slot_key": "default",
+                    "props": {
+                        "viewId": view_id,
+                        "facets": [
+                            {"fieldKey": "nope", "operator": "eq", "value": "x"}
+                        ],
+                    },
+                },
+            ),
+            (
+                "news-hostile-out-of-vocab-enum",
+                {
+                    "component_type": "CollectionFilter",
+                    "slot_key": "default",
+                    "props": {
+                        "viewId": view_id,
+                        "facets": [
+                            {
+                                "fieldKey": "kind",
+                                "operator": "contains",
+                                "value": "News",
+                            }
+                        ],
+                    },
+                },
+            ),
+            (
+                "news-hostile-out-of-vocab-integer",
+                {
+                    "component_type": "CollectionFilter",
+                    "slot_key": "default",
+                    "props": {
+                        "viewId": view_id,
+                        "facets": [
+                            {
+                                "fieldKey": "rank",
+                                "operator": "prefix",
+                                "value": "1",
+                            }
+                        ],
+                    },
+                },
+            ),
+            (
+                "news-hostile-fifth-facet",
+                {
+                    "component_type": "CollectionFilter",
+                    "slot_key": "default",
+                    "props": {
+                        "viewId": view_id,
+                        "facets": [
+                            {
+                                "fieldKey": "kind",
+                                "operator": "eq",
+                                "value": "News",
+                            },
+                            {
+                                "fieldKey": "rank",
+                                "operator": "gte",
+                                "value": "0",
+                            },
+                            {
+                                "fieldKey": "title",
+                                "operator": "contains",
+                                "value": "a",
+                            },
+                            {
+                                "fieldKey": "title",
+                                "operator": "prefix",
+                                "value": "b",
+                            },
+                            {
+                                "fieldKey": "summary",
+                                "operator": "contains",
+                                "value": "c",
+                            },
+                        ],
+                    },
+                },
+            ),
+            (
+                "news-hostile-nine-entry-in",
+                {
+                    "component_type": "CollectionFilter",
+                    "slot_key": "default",
+                    "props": {
+                        "viewId": view_id,
+                        "facets": [
+                            {
+                                "fieldKey": "kind",
+                                "operator": "in",
+                                "value": "a,b,c,d,e,f,g,h,i",
+                            }
+                        ],
+                    },
+                },
+            ),
+            (
+                "news-hostile-cross-site-view",
+                {
+                    "component_type": "CollectionFilter",
+                    "slot_key": "default",
+                    "props": {
+                        "viewId": foreign_view_id,
+                        "facets": [
+                            {
+                                "fieldKey": "kind",
+                                "operator": "eq",
+                                "value": "News",
+                            }
+                        ],
+                    },
+                },
+            ),
+        )
+        for label, body in agent_hostile:
+            _expect_component_error(
+                client.request(
+                    f"/api/agent/v1/pages/{listing_page_id}/components",
+                    method="POST",
+                    body=body,
+                    headers={
+                        "Authorization": f"Bearer {token}",
+                        "Idempotency-Key": f"oap-077u-{label}-{tag}",
+                    },
+                ),
+                status=422,
+                code="DOMAIN_VALIDATION_FAILED",
+                label=label,
+            )
+        limit_hostile = client.request(
+            f"/api/agent/v1/components/{filter_node_id}",
+            method="PATCH",
+            body={"props": {"limit": 101}, "expected_row_version": 1},
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Idempotency-Key": f"oap-077u-news-hostile-limit-{tag}",
+            },
+        )
+        _expect_component_error(
+            limit_hostile,
+            status=422,
+            code="DOMAIN_VALIDATION_FAILED",
+            label="news-hostile-limit",
+        )
+        if _news_component_count() != base_component_count:
+            raise ProofFailure("news-hostile-mutation-leaked")
+
+        home_pages = _agent_list(
+            client, token, "/api/agent/v1/pages/", label="news-home-pages"
+        )
+        home_page_id = next(
+            (
+                str(record.get("id"))
+                for record in home_pages
+                if record.get("slug") == "home"
+                and record.get("locale") == default_locale
+                and record.get("status") == "PUBLISHED"
+            ),
+            None,
+        )
+        if not home_page_id:
+            raise ProofFailure("news-home-page-missing")
+        workspaces_before_puck = _list(
+            client.request(f"/api/control/v1/sites/{site_id}/workspaces/"),
+            status=200,
+            label="news-workspaces-before-puck",
+        )
+        editor_path = f"/api/editor/v1/sites/{site_id}/pages/{home_page_id}/composition"
+        editor_hostile = (
+            (
+                "news-puck-workspace-view",
+                {
+                    "component_type": "CollectionFilter",
+                    "slot_key": "default",
+                    "order_key": 2,
+                    "props": {
+                        "viewId": view_id,
+                        "facets": [
+                            {
+                                "fieldKey": "kind",
+                                "operator": "eq",
+                                "value": "News",
+                            }
+                        ],
+                    },
+                },
+            ),
+            (
+                "news-puck-cross-site-view",
+                {
+                    "component_type": "CollectionFilter",
+                    "slot_key": "default",
+                    "order_key": 2,
+                    "props": {
+                        "viewId": foreign_view_id,
+                        "facets": [
+                            {
+                                "fieldKey": "kind",
+                                "operator": "eq",
+                                "value": "News",
+                            }
+                        ],
+                    },
+                },
+            ),
+            (
+                "news-puck-fifth-facet",
+                {
+                    "component_type": "CollectionFilter",
+                    "slot_key": "default",
+                    "order_key": 2,
+                    "props": {
+                        "viewId": view_id,
+                        "facets": [
+                            {
+                                "fieldKey": "kind",
+                                "operator": "eq",
+                                "value": "News",
+                            },
+                            {
+                                "fieldKey": "rank",
+                                "operator": "gte",
+                                "value": "0",
+                            },
+                            {
+                                "fieldKey": "title",
+                                "operator": "contains",
+                                "value": "a",
+                            },
+                            {
+                                "fieldKey": "title",
+                                "operator": "prefix",
+                                "value": "b",
+                            },
+                            {
+                                "fieldKey": "summary",
+                                "operator": "contains",
+                                "value": "c",
+                            },
+                        ],
+                    },
+                },
+            ),
+            (
+                "news-puck-limit-101",
+                {
+                    "component_type": "CollectionFilter",
+                    "slot_key": "default",
+                    "order_key": 2,
+                    "props": {
+                        "viewId": view_id,
+                        "limit": 101,
+                        "facets": [
+                            {
+                                "fieldKey": "kind",
+                                "operator": "eq",
+                                "value": "News",
+                            }
+                        ],
+                    },
+                },
+            ),
+        )
+        for label, body in editor_hostile:
+            _expect_component_error(
+                client.request(
+                    f"{editor_path}/components",
+                    method="POST",
+                    body=body,
+                    headers={
+                        "X-CSRF-Token": csrf,
+                        "Idempotency-Key": f"oap-077u-{label}-{tag}",
+                    },
+                ),
+                status=422,
+                code="DOMAIN_VALIDATION_FAILED",
+                label=label,
+            )
+        editor_created = client.request(
+            f"{editor_path}/components",
+            method="POST",
+            body={
+                "component_type": "CallToAction",
+                "slot_key": "default",
+                "order_key": 2,
+                "props": {
+                    "heading": "Puck call",
+                    "text": "Saved through the Puck path.",
+                    "label": "Open",
+                    "href": "/news",
+                    "variant": "primary",
+                },
+            },
+            headers={
+                "X-CSRF-Token": csrf,
+                "Idempotency-Key": f"oap-077u-news-puck-ct-{tag}",
+            },
+        )
+        editor_record = _json(editor_created, status=201, label="news-puck-create")
+        puck_component_id = _require_uuid(
+            editor_record.get("id"), "news-puck-component"
+        )
+        if (
+            editor_record.get("component_type") != "CallToAction"
+            or editor_record.get("page_id") != home_page_id
+            or editor_record.get("site_id") != site_id
+            or editor_record.get("slot_key") != "default"
+            or editor_record.get("order_key") != 2
+            or editor_record.get("row_version") != 1
+        ):
+            raise ProofFailure("news-puck-create-record-invalid")
+        workspaces_after_puck = _list(
+            client.request(f"/api/control/v1/sites/{site_id}/workspaces/"),
+            status=200,
+            label="news-workspaces-after-puck",
+        )
+        if len(workspaces_after_puck) not in {
+            len(workspaces_before_puck),
+            len(workspaces_before_puck) + 1,
+        }:
+            raise ProofFailure("news-puck-workspace-count-drift")
+        # The server-owned human editor workspace is a HUMAN-actor workspace;
+        # the control listing above exposes AGENT workspaces only, so its
+        # identity and uniqueness are asserted against the database.
+        editor_workspace_rows = [
+            row.strip()
+            for row in _sql(
+                project,
+                "SELECT id::text FROM control.workspace "
+                f"WHERE site_id = '{site_id}'::uuid "
+                "AND title = 'Human page editor' "
+                "AND actor_type = 'HUMAN' "
+                "AND status = 'ACTIVE' "
+                "AND expires_at > CURRENT_TIMESTAMP;",
+            ).splitlines()
+            if row.strip()
+        ]
+        if len(editor_workspace_rows) != 1:
+            raise ProofFailure("news-puck-editor-workspace-invalid")
+        editor_workspace_id = editor_workspace_rows[0]
+        editor_preview = f"/preview/{editor_workspace_id}/s/demo/"
+        editor_preview_body = _wait_preview_html(
+            client, editor_preview, "news-puck-preview"
+        )
+        _assert_preview_overlay(editor_preview_body, label="news-puck-preview")
+        canonical_puck = client.request("/s/demo")
+        if (
+            canonical_puck.status != 200
+            or _canonical_stable_bytes(canonical_puck.body) != canonical_before_stable
+        ):
+            raise ProofFailure("news-canonical-puck-bytes-changed")
+
         _compose(project, "restart", "agent-api")
         _wait_agent_ready(client)
         _compose(project, "restart", "render-api")
         _wait_preview_html(client, default_preview, "news-render-restart")
+        _wait_preview_html(
+            client, f"{default_preview}/fourth", "news-render-restart-detail"
+        )
         _compose(project, "restart", "web")
-        _wait_preview_html(client, default_preview, "news-web-restart")
+        restart_listing = _wait_preview_html(
+            client, default_preview, "news-web-restart"
+        )
+        _assert_preview_html(
+            restart_listing,
+            label="news-web-restart",
+            locale=default_locale,
+            title="News",
+            expected=(
+                "Fourth title",
+                "Fourth summary",
+                "First title",
+                "First summary",
+                "renderer-call-to-action",
+                "Read the news",
+                "Subscribe",
+                "renderer-contact",
+                "OAP Newsroom",
+                "renderer-collection-search",
+                "Search news",
+                "renderer-collection-filter",
+            ),
+            forbidden=(
+                "Archived title",
+                "Published title",
+                "Draft title",
+                "renderer-related",
+                "renderer-collection-detail",
+                "sas2_",
+            ),
+            known_ids=(
+                ("workspace", workspace),
+                ("site", site_id),
+                ("type", type_id),
+                ("view", view_id),
+                *[
+                    (f"{slug}-item-or-translation", value)
+                    for slug, item in items.items()
+                    for value in item
+                ],
+            ),
+        )
+        restart_detail = _wait_preview_html(
+            client, f"{default_preview}/fourth", "news-web-restart-detail"
+        )
+        _assert_preview_html(
+            restart_detail,
+            label="news-web-restart-detail",
+            locale=default_locale,
+            title="News detail",
+            expected=(
+                "Fourth title",
+                "Fourth summary",
+                "First title",
+                "First summary",
+                "renderer-related",
+                "Related",
+                "renderer-collection-list",
+            ),
+            forbidden=(
+                "Archived title",
+                "Published title",
+                "Draft title",
+                "renderer-collection-search",
+                "renderer-collection-filter",
+                "sas2_",
+            ),
+            known_ids=(
+                ("workspace", workspace),
+                ("site", site_id),
+                ("type", type_id),
+                ("view", view_id),
+                *[
+                    (f"{slug}-item-or-translation", value)
+                    for slug, item in items.items()
+                    for value in item
+                ],
+            ),
+        )
+        restart_editor_body = _wait_preview_html(
+            client, editor_preview, "news-web-restart-puck"
+        )
+        _assert_preview_overlay(restart_editor_body, label="news-web-restart-puck")
         print(
             "public-agent-news-edge: OK "
             f"workspace={workspace} routes=default,non-default detail=exact "
             "listing-sort=verified status-slug-translation=verified "
-            "canonical-isolation=byte-identical restart=agent,render,web "
+            "canonical-isolation=byte-identical "
+            "components=ct,contact,search,filter,related,puck "
+            "hostile=agent-7,puck-4 "
+            "restart=agent,render,web "
             "html=uuid-token-flight-free css=canonical-parity "
             "browser-artifacts=public-verified-retained authorization=one-use"
         )
@@ -3430,7 +4096,7 @@ def run_acceptance(project: str) -> None:
             catalog.get("version") != "catalog-v1"
             or catalog.get("composition_schema_version") != "site-composition/v1"
             or not isinstance(catalog.get("components"), list)
-            or len(catalog["components"]) != 22
+            or len(catalog["components"]) != 27
         ):
             raise ProofFailure("component-catalog-invalid")
         required_scopes = {

@@ -119,6 +119,10 @@ export type PageProjection = Readonly<{
   locales: readonly ProjectionLocale[];
   navigation: readonly ProjectionNavigation[];
   bindings: Record<string, readonly Record<string, unknown>[]>;
+  binding_meta: Record<
+    string,
+    Readonly<{ filter_fields: Readonly<{ key: string; primitive: string }[]> }>
+  >;
   regions: readonly ProjectionRegion[];
   ancestors: readonly ProjectionAncestor[];
   default_locale: string;

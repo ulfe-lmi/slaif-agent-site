@@ -21,9 +21,10 @@ continuation (`fe31c9f`).
 The 078-i theme implementation is preserved in history and reused deliberately
 here. PR #81 closed the 078/4 page-style increment, including the 078-y
 proof-closure continuation (`26cafc1`).
-The Objective 078 global-region/header-footer increment is opened at
-`078-5-a` (PR pending, strategy owns acceptance and merge); remaining
-Objective 078 catalog work belongs to a later separate bounded increment.
+The Objective 078 global-region/header-footer increment is accepted and
+merged in PR #85 at `2746c9f08c00fd84dff59bfd1536ce7319e16ff9` on 2026-09-19;
+remaining Objective 078 catalog work belongs to a later separate bounded
+increment.
 Later numbered objectives own media, MCP, exact-workspace Puck, review,
 publication, reconstruction and operations; they are not unfinished PR #77
 scope.

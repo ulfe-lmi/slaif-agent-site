@@ -69,8 +69,9 @@ authority/evidence defects; the 078-w, 078-x, and 078-y continuations repaired
 those defects and closed the remaining proof gaps without reimplementing the
 passing style data plane. The increment was accepted and merged at
 `26cafc1c0c91de5eee8406e8d477c50ea0208058` on 2026-09-10. Objective-078
-product increment 078/5 is opened at `078-5-a`
-(`oap/078-5-a-global-regions-header-footer`, PR pending) from verified remote
+product increment 078/5 is accepted and merged in PR #85 at
+`2746c9f08c00fd84dff59bfd1536ce7319e16ff9` on 2026-09-19
+(`oap/078-5-a-global-regions-header-footer`) from verified remote
 `main` under the 2026-09-14 ID-namespace amendment; numeric Objective 078
 remains PARTIAL with catalog scope remaining for a later bounded increment.
 The 078/4 increment deliberately excluded global regions, header/footer

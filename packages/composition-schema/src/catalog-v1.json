@@ -174,6 +174,22 @@
       }
     },
     {
+      "type": "CallToAction",
+      "category": "basic",
+      "schema_version": "1",
+      "allowed_slots": [],
+      "max_children": 0,
+      "binding_kind": "none",
+      "authority_class": "content",
+      "props": {
+        "heading": {"type": "string", "required": true, "max_length": 256, "localized": true, "authority": "content"},
+        "text": {"type": "string", "required": false, "max_length": 1024, "localized": true, "authority": "content"},
+        "label": {"type": "string", "required": true, "max_length": 64, "localized": true, "authority": "content"},
+        "href": {"type": "string", "required": true, "max_length": 4096, "authority": "content"},
+        "variant": {"type": "enum", "required": false, "enum_values": ["primary", "secondary", "ghost"], "authority": "content"}
+      }
+    },
+    {
       "type": "CollectionList",
       "category": "data",
       "schema_version": "1",
@@ -209,6 +225,69 @@
       "authority_class": "content",
       "props": {
         "viewId": {"type": "reference", "required": true, "format": "uuid", "authority": "content"}
+      }
+    },
+    {
+      "type": "CollectionSearch",
+      "category": "data",
+      "schema_version": "1",
+      "allowed_slots": [],
+      "max_children": 0,
+      "binding_kind": "collection_view",
+      "authority_class": "content",
+      "props": {
+        "viewId": {"type": "reference", "required": true, "format": "uuid", "authority": "content"},
+        "limit": {"type": "number", "required": false, "minimum": 1, "maximum": 100, "authority": "content"},
+        "placeholder": {"type": "string", "required": false, "max_length": 64, "localized": true, "authority": "content"}
+      }
+    },
+    {
+      "type": "CollectionFilter",
+      "category": "data",
+      "schema_version": "1",
+      "allowed_slots": [],
+      "max_children": 0,
+      "binding_kind": "collection_view",
+      "authority_class": "content",
+      "props": {
+        "viewId": {"type": "reference", "required": true, "format": "uuid", "authority": "content"},
+        "limit": {"type": "number", "required": false, "minimum": 1, "maximum": 100, "authority": "content"},
+        "facets": {
+          "type": "array",
+          "required": true,
+          "min_items": 1,
+          "max_items": 4,
+          "authority": "content",
+          "schema": {
+            "type": "array",
+            "min_items": 1,
+            "max_items": 4,
+            "items": {
+              "type": "object",
+              "required": ["fieldKey", "operator", "value"],
+              "additional_properties": false,
+              "properties": {
+                "fieldKey": {"type": "string", "required": true, "max_length": 64},
+                "operator": {"type": "enum", "required": true, "enum_values": ["eq", "contains", "prefix", "lt", "lte", "gt", "gte", "in"]},
+                "value": {"type": "string", "required": true, "max_length": 4096}
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "RelatedItems",
+      "category": "data",
+      "schema_version": "1",
+      "allowed_slots": [],
+      "max_children": 0,
+      "binding_kind": "collection_view",
+      "authority_class": "content",
+      "props": {
+        "viewId": {"type": "reference", "required": true, "format": "uuid", "authority": "content"},
+        "limit": {"type": "number", "required": false, "minimum": 1, "maximum": 20, "authority": "content"},
+        "heading": {"type": "string", "required": false, "max_length": 256, "localized": true, "authority": "content"}
       }
     },
     {
@@ -319,6 +398,22 @@
             }
           }
         }
+      }
+    },
+    {
+      "type": "ContactBlock",
+      "category": "institutional",
+      "schema_version": "1",
+      "allowed_slots": [],
+      "max_children": 0,
+      "binding_kind": "none",
+      "authority_class": "content",
+      "props": {
+        "organization": {"type": "string", "required": true, "max_length": 256, "localized": true, "authority": "content"},
+        "address": {"type": "string", "required": false, "max_length": 512, "localized": true, "authority": "content"},
+        "phone": {"type": "string", "required": false, "max_length": 32, "authority": "content"},
+        "email": {"type": "string", "required": false, "max_length": 254, "authority": "content"},
+        "hours": {"type": "string", "required": false, "max_length": 512, "localized": true, "authority": "content"}
       }
     },
     {"type": "Header", "category": "global", "schema_version": "1", "allowed_slots": ["nav"], "max_children": 12, "binding_kind": "none", "authority_class": "global", "props": {}},

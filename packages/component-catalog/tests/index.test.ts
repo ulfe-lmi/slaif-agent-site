@@ -85,7 +85,7 @@ describe("component catalog", () => {
   });
 
   it("publishes exact nested schemas for every structured prop", () => {
-    expect(COMPONENT_CATALOG_DOCUMENT.components).toHaveLength(22);
+    expect(COMPONENT_CATALOG_DOCUMENT.components).toHaveLength(27);
     for (const component of COMPONENT_CATALOG) {
       for (const prop of Object.values(component.propsSchema)) {
         if (prop.type === "object" || prop.type === "array") {
@@ -111,7 +111,7 @@ describe("component catalog", () => {
       "end",
       "stretch",
     ]);
-    expect(DESIGN_SYSTEM_DOCUMENT.components).toHaveLength(22);
+    expect(DESIGN_SYSTEM_DOCUMENT.components).toHaveLength(27);
     expect(DESIGN_SYSTEM_DOCUMENT.components.map((item) => item.type)).toEqual(
       Array.from(COMPONENT_TYPES),
     );
