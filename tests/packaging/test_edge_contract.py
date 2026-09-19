@@ -50,8 +50,7 @@ def _expected_csp_policy(nonce: str, *, editor: bool) -> str:
     )
     if editor:
         policy += (
-            " style-src-elem 'self' 'unsafe-inline'; "
-            "style-src-attr 'unsafe-inline';"
+            " style-src-elem 'self' 'unsafe-inline'; style-src-attr 'unsafe-inline';"
         )
     policy += " img-src 'self' data:;"
     if not editor:
@@ -195,7 +194,9 @@ class EdgeContractTests(unittest.TestCase):
             for public_policy in public_policies:
                 # Exact full-line pin for both adapters (nginx/apache parity);
                 # apache's two public lines must be byte-identical.
-                self.assertEqual(public_policy, _expected_csp_policy(nonce, editor=False))
+                self.assertEqual(
+                    public_policy, _expected_csp_policy(nonce, editor=False)
+                )
             public_policy = public_policies[0]
             editor_policy = editor_policies[0]
             self.assertEqual(editor_policy, _expected_csp_policy(nonce, editor=True))
