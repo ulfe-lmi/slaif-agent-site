@@ -22,7 +22,7 @@ source, and required attribution note.
 Fonts will use the attribution-review class when they enter scope. No font
 package is currently present. The browser-worker image contains the exact
 Apache-2.0 `playwright-core==1.62.1` application dependency and Chrome for
-Testing `153.0.8010.36` from Google's exact SHA-256-verified archive over the
+Testing `153.0.8010.52` from Google's exact SHA-256-verified archive over the
 reviewed official Playwright dependency image. Firefox
 and WebKit product binaries are absent. Browser/Ubuntu runtime metadata and
 license facts remain fully inventoried in the container SBOM for human legal

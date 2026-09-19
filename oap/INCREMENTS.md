@@ -15,8 +15,9 @@ merge date) referenced from current-state documents.
 | 078/2 | `oap/078-2-site-theme-tokens`: bounded site-theme token data plane from verified merged `main` | Accepted and merged in PR #79 at `a9d3e6800d5e8b5fd5c9cd9e0be5010184058c6b` on 2026-09-10; 078/2 is closed |
 | 078/3 | `oap/078-3-browser-security-refresh`: qualify Chrome for Testing 153.0.8010.36 and preserve failed-scan diagnostics | Accepted and merged in PR #80 at `fe31c9f30a7797d0916ad7f8fb56344bc61526f3` on 2026-09-10; 078/3 is closed |
 | 078/4 | `oap/078-4-page-style-overrides`: bounded page-owned theme-token overrides over the accepted site theme | Accepted and merged in PR #81 at `26cafc1c0c91de5eee8406e8d477c50ea0208058` on 2026-09-10; 078/4 is closed |
-| 078-i | `567973e` implementation plus `127d7f1` report: bounded site-theme tokens | Preserved immutable history; removed from PR #77 by 078-j and deferred for deliberate reuse |
 | 078/5 | `oap/078-5-a-global-regions-header-footer`: site-global regions and header/footer management | Opened at `078-5-a` from verified remote main `d576fecf5c0d1a9c12f9a7b3b2475a407670a7ba`; PR pending; strategy owns acceptance and merge |
+| 078/6 | `oap/078-6-a-browser-security-refresh`: browser-worker Chrome for Testing 153.0.8010.52 refresh (six-CVE closure) | Accepted and merged in PR #86 at `0faebd98cc0d9b14d4e00b7da165f08b815e7df6` on 2026-09-19; 078/6 is closed |
+| 078-i | `567973e` implementation plus `127d7f1` report: bounded site-theme tokens | Preserved immutable history; removed from PR #77 by 078-j and deferred for deliberate reuse |
 | Next | Remaining 078 scope after 078/5 | Catalog boundaries remain separate; numeric 078 remains PARTIAL; strategy selects the next bounded increment per [`governance/2026-09-14-increment-qualified-round-ids.md`](governance/2026-09-14-increment-qualified-round-ids.md) |
 
 PR #77 merged into `main` at

@@ -177,6 +177,63 @@
       },
       "qualification_date": "2026-09-10",
       "history_note": "Measured supplemental Chrome identity is present in both retained SBOM forms and the exact Grype input; the 078-u qualification passed without an exception or gate weakening."
+    },
+    {
+      "candidate": "candidate-6 CfT: 153.0.8010.52 measured scan coverage",
+      "official_metadata": {
+        "last_known_good_url": "https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions-with-downloads.json",
+        "exact_version_url": "https://googlechromelabs.github.io/chrome-for-testing/known-good-versions-with-downloads.json",
+        "timestamp": "2026-09-18T21:16:57Z",
+        "channel": "Stable",
+        "version": "153.0.8010.52",
+        "revision": "1681091",
+        "platform": "linux64",
+        "archive_url": "https://storage.googleapis.com/chrome-for-testing-public/153.0.8010.52/linux64/chrome-linux64.zip"
+      },
+      "archive_sha256": "e66f66d4802a46d4a022667e668aa950e277cadbfbed4b3777915b47413a0ef9",
+      "runtime": {
+        "image": "browser-worker",
+        "image_digest": "sha256:4177c64fae4cb7d61e114e6e5c797fa239cc0f394e9d6f3f1d4dfeef9a6bf5b2",
+        "base_image": "mcr.microsoft.com/playwright:v1.62.1-noble@sha256:dcc5531e97840b9b5e794f2814476b21571c5124a3fca2267d73041f56e7580e",
+        "executable": "/ms-playwright/chromium-1681091/chrome-linux64/chrome",
+        "executable_version": "Google Chrome for Testing 153.0.8010.52",
+        "executable_sha256": "328fbee82d8e58b05a755b2343abfd192d92ca7066353cb357fad389bc7e3989"
+      },
+      "scanner": {
+        "name": "grype",
+        "version": "0.117.0",
+        "database_schema": "v6.1.9",
+        "database_built": "2026-09-18T06:30:15Z",
+        "database_checksum": "sha256:5776a9b7190b6e6eccdb47023eb1cb7bffcfc4cb9ed2b11d777484a577ca3336",
+        "syft_name": "syft",
+        "syft_version": "1.51.0"
+      },
+      "sbom": {
+        "format": "SPDX-2.3",
+        "browser_worker_sbom_sha256": "06b66f335aa03d643abc730dd2d0a053a6e417943070390c46107307f50a2486",
+        "browser_worker_scan_sbom_sha256": "3f297f9185968f42a0546346b2e49f087708f3a9833a389f42ffb2b8af427945",
+        "chrome_purl": "pkg:generic/chrome@153.0.8010.52",
+        "playwright_purl": "pkg:npm/playwright-core@1.62.1",
+        "identity_source": "supplemental-measured-runtime"
+      },
+      "scan_result": {
+        "result": "PASS",
+        "evidence_runner": "tools/supply_chain/run.sh",
+        "image_count": 6,
+        "critical": 0,
+        "unexcepted_critical": 0,
+        "high_review_findings": 47,
+        "browser_worker_matches": 1486,
+        "browser_worker_high": 2,
+        "browser_worker_medium": 1379,
+        "browser_worker_low": 91,
+        "browser_worker_negligible": 14,
+        "exception_count": 0,
+        "browser_worker_scan_sha256": "c9e6946e5f493c8f916ae842463477e0f0fa420924bb7291924497ed897f4ffa",
+        "checksum_validation": "PASS"
+      },
+      "qualification_date": "2026-09-19",
+      "history_note": "The 078-6-a refresh pins CfT 153.0.8010.52 (same revision 1681091) and clears all six Critical CVE-2026-917xx findings (fixed in 153.0.8010.47 per the pinned Grype advisory data) with pinned Grype 0.117.0 on the fresh v6.1.9 database built 2026-09-18T06:30:15Z. Local measured pipeline run; final remote revalidation is the Supply-chain evidence required check on the exact report-only head per order 078-6-a acceptance criterion 4. No exception added and no gate weakened."
     }
   ],
   "entries": [
