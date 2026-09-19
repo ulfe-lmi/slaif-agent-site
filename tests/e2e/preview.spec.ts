@@ -1761,3 +1761,398 @@ test("global-regions-agent-patch-renders-in-the-same-authorized-workspace", asyn
   expect(reloadedClass).toContain("renderer-region-header--minimal");
   expect(failures(), "unexpected agent region browser failures").toEqual([]);
 });
+
+test("bounded-embed-family-renders-canonically-and-rejects-hostile-writes", async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  const credential = secrets();
+  const failures = observe(page);
+  const tag = crypto.randomUUID();
+  const frameSrc =
+    "frame-src https://www.openstreetmap.org https://www.youtube-nocookie.com https://player.vimeo.com";
+  const videoIframe =
+    '<iframe class="sl-embed sl-embed--video" src="https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ" title="E2E product talk" loading="lazy" referrerPolicy="no-referrer"></iframe>';
+  const mapIframe =
+    '<iframe class="sl-embed sl-embed--map" src="https://www.openstreetmap.org/export/embed.html?bbox=-12.5,55,-12.4,55.1&amp;layer=cycle" title="E2E campus map" loading="lazy" referrerPolicy="no-referrer"></iframe>';
+  const videoSrc = "https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ";
+  const mapSrc =
+    "https://www.openstreetmap.org/export/embed.html?bbox=-12.5,55,-12.4,55.1&layer=cycle";
+
+  // Hermetic provider fixture: the edge CSP allowlists exactly these three
+  // hosts, and the evidence is the emitted markup, never live provider state.
+  const embedFixture = async (route: import("@playwright/test").Route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "text/html",
+      body: "<!doctype html><html><body>bounded embed fixture</body></html>",
+    });
+  };
+  await page.route("**//www.youtube-nocookie.com/**", embedFixture);
+  await page.route("**//player.vimeo.com/**", embedFixture);
+  await page.route("**//www.openstreetmap.org/**", embedFixture);
+
+  await login(page, credential);
+  const sitesResponse = await page.request.get("/api/control/v1/me/sites");
+  expect(sitesResponse.status()).toBe(200);
+  const sites = (await sitesResponse.json()) as Array<{
+    site_id: string;
+    site_key: string;
+  }>;
+  const parity = sites.find((site) => site.site_key === "parity");
+  expect(parity).toBeDefined();
+  const csrf =
+    (await page.context().cookies()).find((cookie) => cookie.name === "slaif_csrf")
+      ?.value ?? "";
+  expect(csrf).toBeTruthy();
+
+  const workspacePath = `/api/control/v1/sites/${parity!.site_id}/workspaces/`;
+  const workspaceCreate = await page.request.post(workspacePath, {
+    headers: {
+      "X-CSRF-Token": csrf,
+      "Idempotency-Key": `oap-0788a-embed-workspace-${tag}`,
+    },
+    data: {
+      title: `OAP 078-8-a bounded embed ${tag}`,
+      task_description: "Bounded embed family output proof",
+      delegation_preset: "L4_SITE_ARCHITECT",
+      duration_hours: 1,
+      request_quota: 1000,
+      mutation_quota: 200,
+      delete_quota: 0,
+      upload_quota: 0,
+      browser_quota: 0,
+    },
+  });
+  expect(workspaceCreate.status()).toBe(201);
+  const workspace = (await workspaceCreate.json()) as {
+    workspace_id?: unknown;
+  };
+  expect(typeof workspace.workspace_id).toBe("string");
+  const workspaceId = workspace.workspace_id as string;
+  const capabilityResponse = await page.request.post(
+    `${workspacePath}${workspaceId}/capabilities/`,
+    {
+      headers: {
+        "X-CSRF-Token": csrf,
+        "Idempotency-Key": `oap-0788a-embed-capability-${tag}`,
+      },
+    },
+  );
+  expect(capabilityResponse.status()).toBe(201);
+  const capability = (await capabilityResponse.json()) as {
+    token?: unknown;
+  };
+  expect(typeof capability.token).toBe("string");
+  const agentToken = capability.token as string;
+  const agentHeaders = { Authorization: `Bearer ${agentToken}` };
+
+  const pagesResponse = await page.request.get("/api/agent/v1/pages/", {
+    headers: agentHeaders,
+  });
+  expect(pagesResponse.status()).toBe(200);
+  const pages = (await pagesResponse.json()) as Array<{
+    id?: unknown;
+    slug?: unknown;
+  }>;
+  const homePage = pages.find((candidate) => candidate.slug === "home");
+  expect(typeof homePage?.id).toBe("string");
+  const homePageId = homePage!.id as string;
+  const compositionPath = `/api/agent/v1/pages/${homePageId}/components`;
+
+  const videoCreate = await page.request.post(compositionPath, {
+    headers: {
+      ...agentHeaders,
+      "Idempotency-Key": `oap-0788a-embed-video-${tag}`,
+    },
+    data: {
+      component_type: "VideoEmbed",
+      slot_key: "default",
+      props: {
+        provider: "youtube-nocookie",
+        video_id: "dQw4w9WgXcQ",
+        title: "E2E product talk",
+      },
+    },
+  });
+  expect(videoCreate.status()).toBe(201);
+  const videoRecord = (
+    (await videoCreate.json()) as {
+      record?: {
+        id?: unknown;
+        row_version?: unknown;
+        props?: unknown;
+      };
+    }
+  ).record;
+  expect(typeof videoRecord?.id).toBe("string");
+  expect(videoRecord?.row_version).toBe(1);
+  const videoProps = videoRecord!.props as Record<string, unknown>;
+  const videoComponentId = videoRecord!.id as string;
+
+  const mapCreate = await page.request.post(compositionPath, {
+    headers: {
+      ...agentHeaders,
+      "Idempotency-Key": `oap-0788a-embed-map-${tag}`,
+    },
+    data: {
+      component_type: "MapBlock",
+      slot_key: "default",
+      props: {
+        bbox: { west: -12.5, south: 55, east: -12.4, north: 55.1 },
+        layer: "cycle",
+        title: "E2E campus map",
+      },
+    },
+  });
+  expect(mapCreate.status()).toBe(201);
+  const mapRecord = (
+    (await mapCreate.json()) as {
+      record?: {
+        id?: unknown;
+        row_version?: unknown;
+        props?: unknown;
+      };
+    }
+  ).record;
+  expect(typeof mapRecord?.id).toBe("string");
+  expect(mapRecord?.row_version).toBe(1);
+  const mapComponentId = mapRecord!.id as string;
+  const mapProps = mapRecord!.props as {
+    bbox: { west: number; south: number; east: number; north: number };
+    layer?: string;
+    title: string;
+  };
+
+  const treeAfterCreate = await page.request.get(compositionPath, {
+    headers: agentHeaders,
+  });
+  expect(treeAfterCreate.status()).toBe(200);
+  const treeSnapshot = (await treeAfterCreate.json()) as Array<Record<string, unknown>>;
+
+  // Hostile Agent PATCH suite: every case must 422 with the exact R1 key.
+  const hostile: Array<{
+    componentId: string;
+    rowVersion: number;
+    props: Record<string, unknown>;
+    key: string;
+  }> = [
+    {
+      componentId: videoComponentId,
+      rowVersion: 1,
+      props: { ...videoProps, provider: "youtube" },
+      key: "embed.provider-unknown",
+    },
+    {
+      componentId: videoComponentId,
+      rowVersion: 1,
+      props: { ...videoProps, provider: "evil.example" },
+      key: "embed.provider-unknown",
+    },
+    {
+      componentId: videoComponentId,
+      rowVersion: 1,
+      props: { ...videoProps, video_id: "abc" },
+      key: "embed.video-id-invalid",
+    },
+    {
+      componentId: videoComponentId,
+      rowVersion: 1,
+      props: { ...videoProps, video_id: "dQw4w9WgXcQ?autoplay=1" },
+      key: "embed.video-id-invalid",
+    },
+    {
+      componentId: videoComponentId,
+      rowVersion: 1,
+      props: { ...videoProps, video_id: "javascript:alert(1)" },
+      key: "embed.video-id-invalid",
+    },
+    {
+      componentId: videoComponentId,
+      rowVersion: 1,
+      props: { ...videoProps, video_id: "file:///etc/passwd" },
+      key: "embed.video-id-invalid",
+    },
+    {
+      componentId: videoComponentId,
+      rowVersion: 1,
+      props: { ...videoProps, title: null },
+      key: "embed.title-missing",
+    },
+    {
+      componentId: videoComponentId,
+      rowVersion: 1,
+      props: { ...videoProps, title: "x".repeat(121) },
+      key: "embed.title-too-long",
+    },
+    {
+      componentId: mapComponentId,
+      rowVersion: 1,
+      props: { ...mapProps, bbox: { ...mapProps.bbox, west: 181 } },
+      key: "embed.bbox-out-of-range",
+    },
+    {
+      componentId: mapComponentId,
+      rowVersion: 1,
+      props: { ...mapProps, bbox: { ...mapProps.bbox, west: 56, east: 55 } },
+      key: "embed.bbox-invalid-order",
+    },
+    {
+      componentId: mapComponentId,
+      rowVersion: 1,
+      props: { bbox: { ...mapProps.bbox, north: undefined } },
+      key: "embed.bbox-missing",
+    },
+    {
+      componentId: mapComponentId,
+      rowVersion: 1,
+      props: { ...mapProps, layer: "satellite" },
+      key: "embed.layer-unknown",
+    },
+    {
+      componentId: mapComponentId,
+      rowVersion: 1,
+      props: { ...mapProps, title: "" },
+      key: "embed.title-missing",
+    },
+  ];
+  expect(hostile.length).toBeGreaterThanOrEqual(10);
+  for (const [index, hostileCase] of hostile.entries()) {
+    const response = await page.request.patch(
+      `/api/agent/v1/components/${hostileCase.componentId}`,
+      {
+        headers: {
+          ...agentHeaders,
+          "Idempotency-Key": `oap-0788a-hostile-${index}-${tag}`,
+        },
+        data: {
+          props: hostileCase.props,
+          expected_row_version: hostileCase.rowVersion,
+        },
+      },
+    );
+    expect(response.status()).toBe(422);
+    const body = (await response.json()) as {
+      error?: { code?: unknown; details?: { prop_error?: unknown } };
+    };
+    expect(body.error?.code).toBe("DOMAIN_VALIDATION_FAILED");
+    expect(body.error?.details?.prop_error).toBe(hostileCase.key);
+  }
+
+  // The Editor path rejects the same inputs with a bounded 422.
+  const editorHeaders = (key = crypto.randomUUID()) => ({
+    "X-CSRF-Token": csrf,
+    "Idempotency-Key": key,
+  });
+  const editorCompositionPath = `/api/editor/v1/sites/${parity!.site_id}/pages/${homePageId}/composition`;
+  const editorVideoCreate = await page.request.post(
+    `${editorCompositionPath}/components`,
+    {
+      headers: editorHeaders(),
+      data: {
+        component_type: "VideoEmbed",
+        slot_key: "default",
+        props: {
+          provider: "youtube",
+          video_id: "dQw4w9WgXcQ",
+          title: "Blocked video",
+        },
+      },
+    },
+  );
+  expect(editorVideoCreate.status()).toBe(422);
+  const editorVideoUpdate = await page.request.patch(
+    `${editorCompositionPath}/components/${videoComponentId}`,
+    {
+      headers: editorHeaders(),
+      data: { props: { ...videoProps, video_id: "data:text/html,x" } },
+    },
+  );
+  expect(editorVideoUpdate.status()).toBe(422);
+  const editorMapCreate = await page.request.post(
+    `${editorCompositionPath}/components`,
+    {
+      headers: editorHeaders(),
+      data: {
+        component_type: "MapBlock",
+        slot_key: "default",
+        props: {
+          bbox: { west: 181, south: 55, east: 182, north: 56 },
+          title: "Blocked map",
+        },
+      },
+    },
+  );
+  expect(editorMapCreate.status()).toBe(422);
+  const editorMapUpdate = await page.request.patch(
+    `${editorCompositionPath}/components/${mapComponentId}`,
+    {
+      headers: editorHeaders(),
+      data: { props: { ...mapProps, layer: "satellite" } },
+    },
+  );
+  expect(editorMapUpdate.status()).toBe(422);
+
+  // No rejected write changed the tree or any row version.
+  const treeAfterRejections = await page.request.get(compositionPath, {
+    headers: agentHeaders,
+  });
+  expect(treeAfterRejections.status()).toBe(200);
+  const treeAfterRejectionsBody = (await treeAfterRejections.json()) as Array<
+    Record<string, unknown>
+  >;
+  expect(treeAfterRejectionsBody).toEqual(treeSnapshot);
+
+  // Public page: exact pinned markup, exact frame-src, no autoplay.
+  const publicResponse = await page.request.get("/s/parity/");
+  expect(publicResponse.status()).toBe(200);
+  const publicBody = await publicResponse.text();
+  const publicCsp = publicResponse.headers()["content-security-policy"] ?? "";
+  expect(publicCsp).toContain(frameSrc);
+  expect(publicBody).toContain(videoIframe);
+  expect(publicBody).toContain(mapIframe);
+  expect(publicBody).not.toContain("autoplay");
+
+  // Preview page: byte-identical markup for both components, private headers.
+  const previewPath = `/preview/${workspaceId}/s/parity/`;
+  const previewResponse = await page.goto(previewPath);
+  expectPrivateHeaders(previewResponse!);
+  expect(previewResponse?.status()).toBe(200);
+  const previewBody = await previewResponse!.text();
+  expect(previewBody).toContain(videoIframe);
+  expect(previewBody).toContain(mapIframe);
+
+  // Emitted iframe srcs: exactly the two canonical URLs, https only.
+  const iframeSrcs = await page.evaluate(() =>
+    Array.from(document.querySelectorAll("iframe")).map(
+      (element) => element.getAttribute("src") ?? "",
+    ),
+  );
+  expect(iframeSrcs).toEqual([videoSrc, mapSrc]);
+  for (const src of iframeSrcs) {
+    expect(src.startsWith("https://")).toBe(true);
+    expect(src).not.toContain("autoplay");
+  }
+
+  // Pinned markup and bounded responsive boxes at desktop and tablet.
+  for (const viewport of [
+    { width: 1440, height: 900 },
+    { width: 768, height: 1024 },
+  ]) {
+    await page.setViewportSize(viewport);
+    const videoFrame = page.locator("iframe.sl-embed--video");
+    const mapFrame = page.locator("iframe.sl-embed--map");
+    await expect(videoFrame).toHaveAttribute("src", videoSrc);
+    await expect(mapFrame).toHaveAttribute("src", mapSrc);
+    expect(await videoFrame.getAttribute("class")).toBe("sl-embed sl-embed--video");
+    expect(await mapFrame.getAttribute("class")).toBe("sl-embed sl-embed--map");
+    const videoBox = await videoFrame.boundingBox();
+    const mapBox = await mapFrame.boundingBox();
+    expect(videoBox?.width ?? 0).toBeGreaterThan(0);
+    expect(mapBox?.width ?? 0).toBeGreaterThan(0);
+    // 16/9 video box and 4/3 map box, responsive by container width.
+    expect((videoBox?.height ?? 0) / (videoBox?.width ?? 1)).toBeCloseTo(9 / 16, 1);
+    expect((mapBox?.height ?? 0) / (mapBox?.width ?? 1)).toBeCloseTo(3 / 4, 1);
+  }
+  expect(failures(), "unexpected embed browser failures").toEqual([]);
+});

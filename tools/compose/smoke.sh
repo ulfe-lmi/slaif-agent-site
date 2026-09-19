@@ -461,6 +461,7 @@ assert_edge_headers() {
     "default-src 'self'" \
     "base-uri 'none'" \
     "object-src 'none'" \
+    "frame-src https://www.openstreetmap.org https://www.youtube-nocookie.com https://player.vimeo.com" \
     "frame-ancestors 'none'" \
     "form-action 'self'" \
     "script-src 'self'" \
@@ -470,6 +471,10 @@ assert_edge_headers() {
   do
     printf '%s' "$csp" | grep -Fq "$directive"
   done
+  # The bounded embed frame-src allowlist is the only permitted remote
+  # source; strip it so the backstay below stays equally strong for every
+  # other directive.
+  csp=$(printf '%s' "$csp" | sed 's/frame-src https:\/\/www\.openstreetmap\.org https:\/\/www\.youtube-nocookie\.com https:\/\/player\.vimeo\.com;//')
   if printf '%s' "$csp" | grep -Eqi "unsafe-inline|unsafe-eval|report-uri|report-to|https?:|wss?:|(^|[[:space:]])\\*([;[:space:]]|$)"
   then
     echo "compose-smoke: forbidden CSP source or directive" >&2

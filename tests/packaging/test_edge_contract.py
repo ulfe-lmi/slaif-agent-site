@@ -21,6 +21,43 @@ NGINX_UPSTREAMS = {
     "/": "slaif_web",
 }
 
+# Bounded embed allowlist (OAP 078-8-a): the ONLY external frame sources
+# permitted by the edge CSP.  The edge backstop mirrors the code-defined
+# bounded-embed policy; any other remote source stays blocked by default-src.
+FRAME_SRC_ALLOWLIST = (
+    "frame-src https://www.openstreetmap.org "
+    "https://www.youtube-nocookie.com https://player.vimeo.com"
+)
+
+
+def _csp_policy_lines(content: str) -> list[str]:
+    """Extract the exact CSP policy text from each adapter policy line."""
+    policies = []
+    for line in content.splitlines():
+        if "default-src" not in line:
+            continue
+        parts = [part for part in line.strip().rstrip(";").split('"') if part]
+        policies.append(parts[-1])
+    return policies
+
+
+def _expected_csp_policy(nonce: str, *, editor: bool) -> str:
+    policy = (
+        "default-src 'self'; base-uri 'none'; object-src 'none'; "
+        f"{FRAME_SRC_ALLOWLIST}; frame-ancestors 'none'; "
+        f"form-action 'self'; script-src 'self' 'nonce-{nonce}'; "
+        "style-src 'self';"
+    )
+    if editor:
+        policy += (
+            " style-src-elem 'self' 'unsafe-inline'; "
+            "style-src-attr 'unsafe-inline';"
+        )
+    policy += " img-src 'self' data:;"
+    if not editor:
+        policy += " font-src 'self';"
+    return policy + " connect-src 'self'"
+
 
 class EdgeContractTests(unittest.TestCase):
     def test_route_contract_is_equivalent(self) -> None:
@@ -145,38 +182,44 @@ class EdgeContractTests(unittest.TestCase):
         self.assertEqual(nginx.count("proxy_hide_header Content-Security-Policy;"), 1)
         self.assertEqual(apache.count("Header always set Content-Security-Policy"), 2)
         self.assertEqual(apache.count("unset Content-Security-Policy"), 2)
-        for content in (nginx, apache):
-            csp_lines = "\n".join(
-                line for line in content.splitlines() if "default-src" in line
-            )
-            for directive in (
-                "default-src 'self'",
-                "base-uri 'none'",
-                "object-src 'none'",
-                "frame-ancestors 'none'",
-                "form-action 'self'",
-                "script-src 'self'",
-                "style-src 'self'",
-                "img-src 'self' data:",
-                "connect-src 'self'",
-            ):
-                self.assertIn(directive, csp_lines)
-            policies = csp_lines.splitlines()
-            public_policy = next(
-                line for line in policies if "style-src-attr" not in line
-            )
-            editor_policy = next(line for line in policies if "style-src-attr" in line)
+        for content, nonce, policy_line_count in (
+            (nginx, "$request_id", 2),
+            (apache, "%{UNIQUE_ID}e", 3),
+        ):
+            policies = _csp_policy_lines(content)
+            self.assertEqual(len(policies), policy_line_count)
+            public_policies = [p for p in policies if "style-src-attr" not in p]
+            editor_policies = [p for p in policies if "style-src-attr" in p]
+            self.assertEqual(len(editor_policies), 1)
+            self.assertGreaterEqual(len(public_policies), 1)
+            for public_policy in public_policies:
+                # Exact full-line pin for both adapters (nginx/apache parity);
+                # apache's two public lines must be byte-identical.
+                self.assertEqual(public_policy, _expected_csp_policy(nonce, editor=False))
+            public_policy = public_policies[0]
+            editor_policy = editor_policies[0]
+            self.assertEqual(editor_policy, _expected_csp_policy(nonce, editor=True))
+            for policy in (public_policy, editor_policy):
+                directives = [d.strip() for d in policy.split(";") if d.strip()]
+                frame = [d for d in directives if d.startswith("frame-src")]
+                # The frame-src directive equals EXACTLY the three-host
+                # allowlist; every OTHER directive stays free of remote
+                # (http/https/wss) sources.
+                self.assertEqual(len(frame), 1)
+                self.assertEqual(frame[0], FRAME_SRC_ALLOWLIST)
+                for directive in directives:
+                    if directive.startswith("frame-src"):
+                        continue
+                    for forbidden in ("http:", "https:", "wss:"):
+                        self.assertNotIn(forbidden, directive)
             for forbidden in (
                 "unsafe-inline",
                 "unsafe-eval",
                 "report-uri",
                 "report-to",
-                "http:",
-                "https:",
-                "wss:",
+                " * ",
             ):
                 self.assertNotIn(forbidden, public_policy)
-            self.assertNotIn(" * ", public_policy)
             self.assertIn("style-src-elem 'self' 'unsafe-inline'", editor_policy)
             self.assertIn("style-src-attr 'unsafe-inline'", editor_policy)
             self.assertNotIn("unsafe-eval", editor_policy)

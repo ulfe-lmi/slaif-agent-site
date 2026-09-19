@@ -329,6 +329,27 @@ body:has(.renderer-surface) {
   aspect-ratio: 1 / 1;
 }
 
+.sl-embed {
+  display: block;
+  width: 100%;
+  border: 0;
+}
+
+.sl-embed--video {
+  aspect-ratio: 16 / 9;
+}
+
+.sl-embed--map {
+  aspect-ratio: 4 / 3;
+}
+
+.sl-embed--placeholder {
+  min-height: 0;
+  border: 1px solid rgba(168, 197, 56, 0.32);
+  border-radius: 0.75rem;
+  background: rgba(15, 30, 36, 0.78);
+}
+
 .renderer-button {
   display: inline-flex;
   min-height: 2.75rem;

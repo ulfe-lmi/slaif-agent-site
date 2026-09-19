@@ -18,7 +18,7 @@ def test_catalog_document_is_the_runtime_catalog_and_is_complete() -> None:
     assert catalog_document() == CATALOG_DOCUMENT
     assert CATALOG_DOCUMENT["version"] == "catalog-v1"
     assert CATALOG_DOCUMENT["composition_schema_version"] == "site-composition/v1"
-    assert len(COMPONENT_CATALOG) == 27
+    assert len(COMPONENT_CATALOG) == 29
     assert all(
         item["authority_class"] in {"content", "structure", "global"}
         for item in CATALOG_DOCUMENT["components"]
