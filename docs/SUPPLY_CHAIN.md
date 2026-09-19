@@ -131,7 +131,7 @@ Grype scans that checksummed document; the index links both forms.
 
 The browser worker uses the digest-pinned official Playwright 1.62.1 Noble
 image, Node 24.18.1, exact `playwright-core==1.62.1`, and Chrome for Testing
-`153.0.8010.36` at CfT revision `1681091`. The exact linux/amd64 archive is
+`153.0.8010.52` at CfT revision `1681091`. The exact linux/amd64 archive is
 SHA-256 verified before
 extraction by the bounded source-controlled parser. Its runtime removes
 Firefox, WebKit, the duplicate Chromium
@@ -190,7 +190,7 @@ findings in that older payload. The 152.0.7977.82 qualification and finding set
 remain historical evidence in
 [`supply-chain/browser-worker-critical-matrix.json`](../supply-chain/browser-worker-critical-matrix.json)
 while the active maintenance qualification uses Chrome for Testing
-`153.0.8010.36` at CfT revision `1681091`. The 078-t attempt is retained as
+`153.0.8010.52` at CfT revision `1681091`. The 078-t attempt is retained as
 unqualified coverage-gap evidence; 078-u records the measured component in the
 remote CI bundle and passes the exact six-image scan. The closed risk record remains at
 [issue #67](https://github.com/ulfe-lmi/slaif-agent-site/issues/67); coding does
@@ -269,7 +269,7 @@ stale, near-match, and wrong-severity entries fail closed. A valid exception
 changes only the conclusion for that exact finding; it never removes the
 component or finding from evidence. Coding agents must not author an exception
 merely to make a gate green. The owner removed this exception after the official
-stable Chrome 152.0.7977.82 qualification; the current 153.0.8010.36
+stable Chrome 152.0.7977.82 qualification; the current 153.0.8010.52
 maintenance qualification does not reopen issue #67 or claim release readiness.
 
 An authorized update must preserve readable tags plus top-level digests,
