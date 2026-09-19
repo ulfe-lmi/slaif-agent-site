@@ -2127,6 +2127,11 @@ test("bounded-embed-family-renders-canonically-and-rejects-hostile-writes", asyn
   expect(typeof editorMapRecord.id).toBe("string");
   expect(editorMapRecord.row_version).toBe(1);
   const editorMapId = editorMapRecord.id as string;
+  const editorTreeBefore = await page.request.get(`${editorCompositionPath}/`);
+  expect(editorTreeBefore.status()).toBe(200);
+  const editorTreeSnapshot = (await editorTreeBefore.json()) as Array<
+    Record<string, unknown>
+  >;
   const editorVideoUpdate = await page.request.patch(
     `${editorCompositionPath}/components/${editorVideoId}`,
     {
@@ -2153,6 +2158,8 @@ test("bounded-embed-family-renders-canonically-and-rejects-hostile-writes", asyn
     },
   );
   expect(editorMapUpdate.status()).toBe(422);
+  // The editor workspace tree (shared base rows plus the two components
+  // above) is byte-unchanged by the rejected updates.
   const editorTreeAfterRejections = await page.request.get(`${editorCompositionPath}/`);
   expect(editorTreeAfterRejections.status()).toBe(200);
   const editorTreeRecords = (await editorTreeAfterRejections.json()) as Array<{
@@ -2160,7 +2167,7 @@ test("bounded-embed-family-renders-canonically-and-rejects-hostile-writes", asyn
     row_version: number;
     props: Record<string, unknown>;
   }>;
-  expect(editorTreeRecords).toHaveLength(2);
+  expect(editorTreeRecords).toEqual(editorTreeSnapshot);
   const editorVideoReadback = editorTreeRecords.find(
     (record) => record.id === editorVideoId,
   );
