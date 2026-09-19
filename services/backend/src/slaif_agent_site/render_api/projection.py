@@ -104,6 +104,25 @@ ALLOWED_SLOTS = {
     item.type: frozenset(item.allowed_slots) for item in COMPONENT_BY_TYPE.values()
 }
 MAX_CHILDREN = {item.type: item.max_children for item in COMPONENT_BY_TYPE.values()}
+COLLECTION_BINDING_TYPES = frozenset(
+    {
+        "CollectionList",
+        "CollectionGrid",
+        "CollectionDetail",
+        "CollectionSearch",
+        "CollectionFilter",
+        "RelatedItems",
+    }
+)
+# Bounded client-filtering components: per-component default limits, capped by
+# the view pagination limit, bound the pre-fetched items delivered to the
+# renderer; the renderer performs no I/O beyond this bounded payload.
+BOUND_BINDING_DEFAULT_LIMITS = {
+    "CollectionSearch": 50,
+    "CollectionFilter": 50,
+    "RelatedItems": 8,
+}
+FILTER_FIELD_DESCRIPTOR_LIMIT = 32
 
 
 class ProjectionError(RuntimeError):
@@ -287,6 +306,7 @@ class RenderPageProjection(BaseModel):
     locales: tuple[ProjectionLocale, ...] = ()
     navigation: tuple[ProjectionNavigation, ...] = ()
     bindings: dict[str, tuple[dict[str, Any], ...]] = Field(default_factory=dict)
+    binding_meta: dict[str, dict[str, Any]] = Field(default_factory=dict)
     regions: tuple[ProjectionRegion, ...] = ()
     ancestors: tuple[ProjectionAncestor, ...] = ()
     default_locale: str
@@ -634,14 +654,14 @@ async def _collection_bindings(
     selected_locale: str,
     default_locale: str,
     route_parameter: str | None,
-) -> dict[str, tuple[dict[str, Any], ...]]:
+) -> tuple[
+    dict[str, tuple[dict[str, Any], ...]],
+    dict[str, dict[str, Any]],
+]:
     bindings: dict[str, tuple[dict[str, Any], ...]] = {}
+    binding_meta: dict[str, dict[str, Any]] = {}
     for node in _flatten(nodes):
-        if node.component_type not in {
-            "CollectionList",
-            "CollectionGrid",
-            "CollectionDetail",
-        }:
+        if node.component_type not in COLLECTION_BINDING_TYPES:
             continue
         raw_view_id = node.props.get("viewId", node.props.get("view_id"))
         try:
@@ -717,13 +737,25 @@ async def _collection_bindings(
             if requested_status not in statuses:
                 raise ProjectionError("collection_status")
             statuses = [requested_status]
-        requested_limit = node.props.get("limit", pagination_spec.get("limit", 24))
+        default_limit = pagination_spec.get("limit", 24)
+        requested_limit = node.props.get(
+            "limit",
+            BOUND_BINDING_DEFAULT_LIMITS.get(node.component_type, default_limit),
+        )
         if (
             isinstance(requested_limit, bool)
             or not isinstance(requested_limit, int)
             or not 1 <= requested_limit <= MAX_PAGE_SIZE
         ):
             raise ProjectionError("collection_limit")
+        if node.component_type in BOUND_BINDING_DEFAULT_LIMITS:
+            pagination_limit = pagination_spec.get("limit")
+            if (
+                isinstance(pagination_limit, int)
+                and not isinstance(pagination_limit, bool)
+                and 1 <= pagination_limit <= MAX_PAGE_SIZE
+            ):
+                requested_limit = min(requested_limit, pagination_limit)
         offset = pagination_spec.get("offset", 0)
         candidate_count = await connection.fetchval(
             "SELECT count(*) FROM content.content_item "
@@ -768,6 +800,12 @@ async def _collection_bindings(
                 and str(row[3]) != route_parameter
             ):
                 continue
+            if (
+                node.component_type == "RelatedItems"
+                and route_parameter is not None
+                and str(row[3]) == route_parameter
+            ):
+                continue
             items.append(
                 {
                     "id": row[0],
@@ -780,6 +818,8 @@ async def _collection_bindings(
                     "values": values,
                 }
             )
+        if node.component_type == "RelatedItems" and route_parameter is None:
+            items = []
         try:
             sort_collection_items(items, sort_spec)
         except (TypeError, ValueError):
@@ -790,11 +830,12 @@ async def _collection_bindings(
             and len(items) != 1
         ):
             raise ProjectionError("not_found")
-        page = (
-            items[:1]
-            if node.component_type == "CollectionDetail" and route_parameter is not None
-            else items[offset : offset + requested_limit]
-        )
+        if node.component_type == "CollectionDetail" and route_parameter is not None:
+            page = items[:1]
+        elif node.component_type in BOUND_BINDING_DEFAULT_LIMITS:
+            page = items[:requested_limit]
+        else:
+            page = items[offset : offset + requested_limit]
         translation_by_item: dict[UUID, dict[str, dict[str, Any]]] = defaultdict(dict)
         if page:
             translation_rows = await connection.fetch(
@@ -847,7 +888,14 @@ async def _collection_bindings(
                     projected_values[field] = item["values"][field]
             projected_items.append({**item, "values": projected_values})
         bindings[str(node.id)] = tuple(projected_items)
-    return bindings
+        if node.component_type in ("CollectionSearch", "CollectionFilter"):
+            binding_meta[str(node.id)] = {
+                "filter_fields": [
+                    {"key": field.key, "primitive": field.field_type}
+                    for field in field_defs[:FILTER_FIELD_DESCRIPTOR_LIMIT]
+                ]
+            }
+    return bindings, binding_meta
 
 
 def _dynamic_route_parameter(page_route: str, matched_route: str) -> str | None:
@@ -1563,7 +1611,7 @@ class RenderProjectionService:
         )
         if page.route_template == "{slug}" and len(detail_nodes) != 1:
             raise ProjectionError("not_found")
-        bindings = await _collection_bindings(
+        bindings, binding_meta = await _collection_bindings(
             connection,
             nodes=roots,
             site_id=context.site_id,
@@ -1641,6 +1689,7 @@ class RenderProjectionService:
             locales=projected_locales,
             navigation=navigation,
             bindings=bindings,
+            binding_meta=binding_meta,
             regions=regions,
             ancestors=ancestors,
             default_locale=default_locale,

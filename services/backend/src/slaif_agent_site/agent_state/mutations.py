@@ -30,6 +30,11 @@ from slaif_agent_site.agent_state.locks import (
     acquire_workspace_lifecycle_lock,
     prelocked_cow_session,
 )
+from slaif_agent_site.content_model.component_facets import (
+    FacetValidationError,
+    field_primitive_map,
+    validate_collection_filter_facets,
+)
 from slaif_agent_site.content_model.composition_models import (
     AgentCreateCompositionNodeRequest,
     AgentMoveCompositionNodeRequest,
@@ -255,6 +260,12 @@ AGENT_COMPONENT_MOVE_SQL = (
 )
 AGENT_COMPONENT_DELETE_SQL = (
     "SELECT * FROM content.slaif_agent_component_delete($1,$2,$3)"
+)
+AGENT_FACET_VIEW_GET_SQL = (
+    "SELECT * FROM content.slaif_agent_collection_view_get($1,$2)"
+)
+AGENT_FACET_FIELD_LIST_SQL = (
+    "SELECT * FROM content.slaif_agent_field_definition_list($1,$2)"
 )
 AGENT_RELATION_CREATE_SQL = (
     "SELECT * FROM content.slaif_agent_item_relation_create($1,$2,$3,$4,$5,$6)"
@@ -1292,6 +1303,9 @@ class AgentCowContentModelService(ContentModelService):
         request: AgentCreateCompositionNodeRequest,
     ) -> CompositionNodeRecord:
         parent_id = UUID(request.parent_id) if request.parent_id else None
+        await self._validate_collection_filter_facets(
+            site_id, request.component_type, request.props
+        )
         row = await self._fetchrow(
             AGENT_COMPONENT_CREATE_SQL,
             site_id,
@@ -1330,6 +1344,9 @@ class AgentCowContentModelService(ContentModelService):
             raise ContentModelServiceError(
                 ContentModelServiceReason.VALIDATION, code=str(error)
             ) from None
+        await self._validate_collection_filter_facets(
+            site_id, current.component_type, props
+        )
         row = await self._fetchrow(
             AGENT_COMPONENT_UPDATE_SQL,
             site_id,
@@ -1370,6 +1387,55 @@ class AgentCowContentModelService(ContentModelService):
         if row is None:
             raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
         return cast(CompositionNodeRecord, _cmp(row))
+
+    async def _validate_collection_filter_facets(
+        self,
+        site_id: UUID,
+        component_type: str,
+        props: dict[str, Any],
+    ) -> None:
+        """Fail-closed facet vocabulary validation for CollectionFilter writes.
+
+        Resolves the site-scoped collection view and the view's content-type
+        fields, then rejects any facet whose fieldKey is absent or whose
+        operator is outside the field's per-primitive query vocabulary.  A
+        view that cannot be resolved on this site is a bounded validation
+        failure; malformed prop shapes are rejected by the catalog guard.
+        """
+        if component_type != "CollectionFilter":
+            return
+        raw_view_id = props.get("viewId")
+        try:
+            view_id = UUID(str(raw_view_id))
+        except (TypeError, ValueError):
+            raise ContentModelServiceError(
+                ContentModelServiceReason.VALIDATION, code="collection_filter_view"
+            ) from None
+        try:
+            view_row = await self._fetchrow(AGENT_FACET_VIEW_GET_SQL, site_id, view_id)
+        except ContentModelServiceError as error:
+            if error.reason is ContentModelServiceReason.NOT_FOUND:
+                raise ContentModelServiceError(
+                    ContentModelServiceReason.VALIDATION,
+                    code="collection_filter_view",
+                ) from None
+            raise
+        if view_row is None:
+            raise ContentModelServiceError(
+                ContentModelServiceReason.VALIDATION,
+                code="collection_filter_view",
+            )
+        field_rows = await self._fetch(
+            AGENT_FACET_FIELD_LIST_SQL, site_id, view_row["type_id"]
+        )
+        try:
+            validate_collection_filter_facets(
+                props.get("facets"), field_primitive_map(field_rows)
+            )
+        except FacetValidationError as error:
+            raise ContentModelServiceError(
+                ContentModelServiceReason.VALIDATION, code=error.code
+            ) from None
 
 
 async def _cow_fetchrow(cow: CowSession, sql: str, *arguments: object) -> Any:

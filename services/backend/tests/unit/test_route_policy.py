@@ -162,7 +162,7 @@ def test_agent_page_patch_conditional_route_scope_is_machine_auditable() -> None
         and policy.path_template == "/api/agent/v1/components/{component_id}"
     )
     assert component.required_scopes == ()
-    assert len(component.conditional_scopes) == 37
+    assert len(component.conditional_scopes) == 56
     assert any(
         condition.when_fields == ("props.variant",)
         and condition.component_types == ("Button",)

@@ -69,8 +69,9 @@ authority/evidence defects; the 078-w, 078-x, and 078-y continuations repaired
 those defects and closed the remaining proof gaps without reimplementing the
 passing style data plane. The increment was accepted and merged at
 `26cafc1c0c91de5eee8406e8d477c50ea0208058` on 2026-09-10. Objective-078
-product increment 078/5 is opened at `078-5-a`
-(`oap/078-5-a-global-regions-header-footer`, PR pending) from verified remote
+product increment 078/5 is accepted and merged in PR #85 at
+`2746c9f08c00fd84dff59bfd1536ce7319e16ff9` on 2026-09-19
+(`oap/078-5-a-global-regions-header-footer`) from verified remote
 `main` under the 2026-09-14 ID-namespace amendment; numeric Objective 078
 remains PARTIAL with catalog scope remaining for a later bounded increment.
 The 078/4 increment deliberately excluded global regions, header/footer
@@ -271,7 +272,7 @@ remain queued. See the
 | Completed human RBAC HTTP boundary | Immutable role/permission catalogs, site membership list/get/create/update/deactivate, strict session/CSRF policy, optimistic concurrency, and complete Control/Editor route declarations. |
 | Responsive site and membership administration | Permission-driven site/profile/domain workflows plus existing-user UUID membership cards, built-in roles, bounded ceilings, separate publication overrides, complete override replacement, version refresh, and semantic deactivation. |
 | Objective-077 source revision | Capability-bound Agent pages, locales, navigation, redirects, and bounded dynamic collection Render semantics with human Editor parity, shared Render/NGINX/browser evidence, route integrity, concurrency, and recovery proof, accepted and merged in PR #74 on 2026-09-08 at `ae3a4a6`; later review/publication remains separate. |
-| Objective-078/4 page-style data plane (merged) | Bounded `page-style/v1` Agent data plane, strict page resource/version authority, exact reset overlap, machine-readable write-scope metadata, migration downgrade safety, deterministic accounting/race/restart proof, and real NGINX/browser plus human Editor/Puck evidence, accepted and merged in PR #81 on 2026-09-10 at `26cafc1c0c91de5eee8406e8d477c50ea0208058`; global regions/catalog remain deferred at increment `078-5-a`. |
+| Objective-078/4 page-style data plane (merged) | Bounded `page-style/v1` Agent data plane, strict page resource/version authority, exact reset overlap, machine-readable write-scope metadata, migration downgrade safety, deterministic accounting/race/restart proof, and real NGINX/browser plus human Editor/Puck evidence, accepted and merged in PR #81 on 2026-09-10 at `26cafc1c0c91de5eee8406e8d477c50ea0208058`; global regions were delivered by increment 078/5, accepted and merged in PR #85 at `2746c9f08c00fd84dff59bfd1536ce7319e16ff9` on 2026-09-19, and the catalog increment 078/7 is opened at `078-7-a` (PR #87); GitHub is authoritative for live acceptance and merge state. |
 | Planned product work | Add review snapshots, freeze/accept/discard/promotion, approved-source and responsive-sweep orchestration, reconstruction, public media finalization, and remaining hardening. |
 
 See [Architecture Section 50](ARCHITECTURE.md#50-implementation-phases) for

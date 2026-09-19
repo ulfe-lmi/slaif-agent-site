@@ -6289,6 +6289,56 @@
               "supported": true
             },
             {
+              "component_type": "CallToAction",
+              "property": "heading",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "CallToAction",
+              "property": "href",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "CallToAction",
+              "property": "label",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "CallToAction",
+              "property": "text",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "CallToAction",
+              "property": "variant",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
               "component_type": "CollectionList",
               "property": "limit",
               "responsive": false,
@@ -6332,6 +6382,96 @@
             },
             {
               "component_type": "CollectionDetail",
+              "property": "viewId",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "CollectionSearch",
+              "property": "limit",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "CollectionSearch",
+              "property": "placeholder",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "CollectionSearch",
+              "property": "viewId",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "CollectionFilter",
+              "property": "facets",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "CollectionFilter",
+              "property": "limit",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "CollectionFilter",
+              "property": "viewId",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "RelatedItems",
+              "property": "heading",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "RelatedItems",
+              "property": "limit",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "RelatedItems",
               "property": "viewId",
               "responsive": false,
               "responsive_required_scopes": [],
@@ -6393,6 +6533,56 @@
             {
               "component_type": "FAQ",
               "property": "items",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "ContactBlock",
+              "property": "address",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "ContactBlock",
+              "property": "email",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "ContactBlock",
+              "property": "hours",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "ContactBlock",
+              "property": "organization",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "ContactBlock",
+              "property": "phone",
               "responsive": false,
               "responsive_required_scopes": [],
               "scalar_required_scopes": [
@@ -6706,6 +6896,56 @@
             "supported": true
           },
           {
+            "component_type": "CallToAction",
+            "property": "heading",
+            "responsive": false,
+            "responsive_required_scopes": [],
+            "scalar_required_scopes": [
+              "component-content-props:write"
+            ],
+            "supported": true
+          },
+          {
+            "component_type": "CallToAction",
+            "property": "href",
+            "responsive": false,
+            "responsive_required_scopes": [],
+            "scalar_required_scopes": [
+              "component-content-props:write"
+            ],
+            "supported": true
+          },
+          {
+            "component_type": "CallToAction",
+            "property": "label",
+            "responsive": false,
+            "responsive_required_scopes": [],
+            "scalar_required_scopes": [
+              "component-content-props:write"
+            ],
+            "supported": true
+          },
+          {
+            "component_type": "CallToAction",
+            "property": "text",
+            "responsive": false,
+            "responsive_required_scopes": [],
+            "scalar_required_scopes": [
+              "component-content-props:write"
+            ],
+            "supported": true
+          },
+          {
+            "component_type": "CallToAction",
+            "property": "variant",
+            "responsive": false,
+            "responsive_required_scopes": [],
+            "scalar_required_scopes": [
+              "component-content-props:write"
+            ],
+            "supported": true
+          },
+          {
             "component_type": "CollectionList",
             "property": "limit",
             "responsive": false,
@@ -6749,6 +6989,96 @@
           },
           {
             "component_type": "CollectionDetail",
+            "property": "viewId",
+            "responsive": false,
+            "responsive_required_scopes": [],
+            "scalar_required_scopes": [
+              "component-content-props:write"
+            ],
+            "supported": true
+          },
+          {
+            "component_type": "CollectionSearch",
+            "property": "limit",
+            "responsive": false,
+            "responsive_required_scopes": [],
+            "scalar_required_scopes": [
+              "component-content-props:write"
+            ],
+            "supported": true
+          },
+          {
+            "component_type": "CollectionSearch",
+            "property": "placeholder",
+            "responsive": false,
+            "responsive_required_scopes": [],
+            "scalar_required_scopes": [
+              "component-content-props:write"
+            ],
+            "supported": true
+          },
+          {
+            "component_type": "CollectionSearch",
+            "property": "viewId",
+            "responsive": false,
+            "responsive_required_scopes": [],
+            "scalar_required_scopes": [
+              "component-content-props:write"
+            ],
+            "supported": true
+          },
+          {
+            "component_type": "CollectionFilter",
+            "property": "facets",
+            "responsive": false,
+            "responsive_required_scopes": [],
+            "scalar_required_scopes": [
+              "component-content-props:write"
+            ],
+            "supported": true
+          },
+          {
+            "component_type": "CollectionFilter",
+            "property": "limit",
+            "responsive": false,
+            "responsive_required_scopes": [],
+            "scalar_required_scopes": [
+              "component-content-props:write"
+            ],
+            "supported": true
+          },
+          {
+            "component_type": "CollectionFilter",
+            "property": "viewId",
+            "responsive": false,
+            "responsive_required_scopes": [],
+            "scalar_required_scopes": [
+              "component-content-props:write"
+            ],
+            "supported": true
+          },
+          {
+            "component_type": "RelatedItems",
+            "property": "heading",
+            "responsive": false,
+            "responsive_required_scopes": [],
+            "scalar_required_scopes": [
+              "component-content-props:write"
+            ],
+            "supported": true
+          },
+          {
+            "component_type": "RelatedItems",
+            "property": "limit",
+            "responsive": false,
+            "responsive_required_scopes": [],
+            "scalar_required_scopes": [
+              "component-content-props:write"
+            ],
+            "supported": true
+          },
+          {
+            "component_type": "RelatedItems",
             "property": "viewId",
             "responsive": false,
             "responsive_required_scopes": [],
@@ -6810,6 +7140,56 @@
           {
             "component_type": "FAQ",
             "property": "items",
+            "responsive": false,
+            "responsive_required_scopes": [],
+            "scalar_required_scopes": [
+              "component-content-props:write"
+            ],
+            "supported": true
+          },
+          {
+            "component_type": "ContactBlock",
+            "property": "address",
+            "responsive": false,
+            "responsive_required_scopes": [],
+            "scalar_required_scopes": [
+              "component-content-props:write"
+            ],
+            "supported": true
+          },
+          {
+            "component_type": "ContactBlock",
+            "property": "email",
+            "responsive": false,
+            "responsive_required_scopes": [],
+            "scalar_required_scopes": [
+              "component-content-props:write"
+            ],
+            "supported": true
+          },
+          {
+            "component_type": "ContactBlock",
+            "property": "hours",
+            "responsive": false,
+            "responsive_required_scopes": [],
+            "scalar_required_scopes": [
+              "component-content-props:write"
+            ],
+            "supported": true
+          },
+          {
+            "component_type": "ContactBlock",
+            "property": "organization",
+            "responsive": false,
+            "responsive_required_scopes": [],
+            "scalar_required_scopes": [
+              "component-content-props:write"
+            ],
+            "supported": true
+          },
+          {
+            "component_type": "ContactBlock",
+            "property": "phone",
             "responsive": false,
             "responsive_required_scopes": [],
             "scalar_required_scopes": [
@@ -7133,6 +7513,66 @@
           },
           {
             "component_types": [
+              "CallToAction"
+            ],
+            "condition": "changed",
+            "required_scopes": [
+              "component-content-props:write"
+            ],
+            "when_fields": [
+              "props.heading"
+            ]
+          },
+          {
+            "component_types": [
+              "CallToAction"
+            ],
+            "condition": "changed",
+            "required_scopes": [
+              "component-content-props:write"
+            ],
+            "when_fields": [
+              "props.href"
+            ]
+          },
+          {
+            "component_types": [
+              "CallToAction"
+            ],
+            "condition": "changed",
+            "required_scopes": [
+              "component-content-props:write"
+            ],
+            "when_fields": [
+              "props.label"
+            ]
+          },
+          {
+            "component_types": [
+              "CallToAction"
+            ],
+            "condition": "changed",
+            "required_scopes": [
+              "component-content-props:write"
+            ],
+            "when_fields": [
+              "props.text"
+            ]
+          },
+          {
+            "component_types": [
+              "CallToAction"
+            ],
+            "condition": "changed",
+            "required_scopes": [
+              "component-content-props:write"
+            ],
+            "when_fields": [
+              "props.variant"
+            ]
+          },
+          {
+            "component_types": [
               "CollectionList"
             ],
             "condition": "changed",
@@ -7182,6 +7622,114 @@
           {
             "component_types": [
               "CollectionDetail"
+            ],
+            "condition": "changed",
+            "required_scopes": [
+              "component-content-props:write"
+            ],
+            "when_fields": [
+              "props.viewId"
+            ]
+          },
+          {
+            "component_types": [
+              "CollectionSearch"
+            ],
+            "condition": "changed",
+            "required_scopes": [
+              "component-content-props:write"
+            ],
+            "when_fields": [
+              "props.limit"
+            ]
+          },
+          {
+            "component_types": [
+              "CollectionSearch"
+            ],
+            "condition": "changed",
+            "required_scopes": [
+              "component-content-props:write"
+            ],
+            "when_fields": [
+              "props.placeholder"
+            ]
+          },
+          {
+            "component_types": [
+              "CollectionSearch"
+            ],
+            "condition": "changed",
+            "required_scopes": [
+              "component-content-props:write"
+            ],
+            "when_fields": [
+              "props.viewId"
+            ]
+          },
+          {
+            "component_types": [
+              "CollectionFilter"
+            ],
+            "condition": "changed",
+            "required_scopes": [
+              "component-content-props:write"
+            ],
+            "when_fields": [
+              "props.facets"
+            ]
+          },
+          {
+            "component_types": [
+              "CollectionFilter"
+            ],
+            "condition": "changed",
+            "required_scopes": [
+              "component-content-props:write"
+            ],
+            "when_fields": [
+              "props.limit"
+            ]
+          },
+          {
+            "component_types": [
+              "CollectionFilter"
+            ],
+            "condition": "changed",
+            "required_scopes": [
+              "component-content-props:write"
+            ],
+            "when_fields": [
+              "props.viewId"
+            ]
+          },
+          {
+            "component_types": [
+              "RelatedItems"
+            ],
+            "condition": "changed",
+            "required_scopes": [
+              "component-content-props:write"
+            ],
+            "when_fields": [
+              "props.heading"
+            ]
+          },
+          {
+            "component_types": [
+              "RelatedItems"
+            ],
+            "condition": "changed",
+            "required_scopes": [
+              "component-content-props:write"
+            ],
+            "when_fields": [
+              "props.limit"
+            ]
+          },
+          {
+            "component_types": [
+              "RelatedItems"
             ],
             "condition": "changed",
             "required_scopes": [
@@ -7261,6 +7809,66 @@
             ],
             "when_fields": [
               "props.items"
+            ]
+          },
+          {
+            "component_types": [
+              "ContactBlock"
+            ],
+            "condition": "changed",
+            "required_scopes": [
+              "component-content-props:write"
+            ],
+            "when_fields": [
+              "props.address"
+            ]
+          },
+          {
+            "component_types": [
+              "ContactBlock"
+            ],
+            "condition": "changed",
+            "required_scopes": [
+              "component-content-props:write"
+            ],
+            "when_fields": [
+              "props.email"
+            ]
+          },
+          {
+            "component_types": [
+              "ContactBlock"
+            ],
+            "condition": "changed",
+            "required_scopes": [
+              "component-content-props:write"
+            ],
+            "when_fields": [
+              "props.hours"
+            ]
+          },
+          {
+            "component_types": [
+              "ContactBlock"
+            ],
+            "condition": "changed",
+            "required_scopes": [
+              "component-content-props:write"
+            ],
+            "when_fields": [
+              "props.organization"
+            ]
+          },
+          {
+            "component_types": [
+              "ContactBlock"
+            ],
+            "condition": "changed",
+            "required_scopes": [
+              "component-content-props:write"
+            ],
+            "when_fields": [
+              "props.phone"
             ]
           }
         ],
@@ -15705,6 +16313,56 @@
               "supported": true
             },
             {
+              "component_type": "CallToAction",
+              "property": "heading",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "CallToAction",
+              "property": "href",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "CallToAction",
+              "property": "label",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "CallToAction",
+              "property": "text",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "CallToAction",
+              "property": "variant",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
               "component_type": "CollectionList",
               "property": "limit",
               "responsive": false,
@@ -15748,6 +16406,96 @@
             },
             {
               "component_type": "CollectionDetail",
+              "property": "viewId",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "CollectionSearch",
+              "property": "limit",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "CollectionSearch",
+              "property": "placeholder",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "CollectionSearch",
+              "property": "viewId",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "CollectionFilter",
+              "property": "facets",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "CollectionFilter",
+              "property": "limit",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "CollectionFilter",
+              "property": "viewId",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "RelatedItems",
+              "property": "heading",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "RelatedItems",
+              "property": "limit",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "RelatedItems",
               "property": "viewId",
               "responsive": false,
               "responsive_required_scopes": [],
@@ -15809,6 +16557,56 @@
             {
               "component_type": "FAQ",
               "property": "items",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "ContactBlock",
+              "property": "address",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "ContactBlock",
+              "property": "email",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "ContactBlock",
+              "property": "hours",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "ContactBlock",
+              "property": "organization",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "ContactBlock",
+              "property": "phone",
               "responsive": false,
               "responsive_required_scopes": [],
               "scalar_required_scopes": [

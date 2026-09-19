@@ -5,8 +5,18 @@ import { renderProjection } from "../renderer/components";
 export function PageProjectionShell({
   projection,
   basePath,
-}: Readonly<{ projection: PageProjection; basePath?: string }>) {
-  return renderProjection(projection, basePath);
+  clientState = true,
+}: Readonly<{
+  projection: PageProjection;
+  basePath?: string;
+  /**
+   * RSC surfaces deliver a client bundle and hydrate the one documented
+   * bounded client-state pattern; the flight-free workspace preview route
+   * delivers a pure server document and renders the static variants.
+   */
+  clientState?: boolean;
+}>) {
+  return renderProjection(projection, basePath, clientState);
 }
 
 export function SiteContextShell({ context }: Readonly<{ context: SiteContext }>) {

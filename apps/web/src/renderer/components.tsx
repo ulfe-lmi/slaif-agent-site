@@ -14,6 +14,18 @@ import type {
   ProjectionRegion,
 } from "../sites/render";
 import { RENDERER_STYLESHEET } from "./styles";
+import { CollectionFilter, CollectionSearch } from "./collection-filter-components";
+import {
+  itemTitle,
+  matchesAllFacets,
+  matchesSearch,
+  parseCollectionFacets,
+  type FilterField,
+} from "./bounded-collection-filter";
+
+interface BindingMeta {
+  readonly filter_fields: readonly FilterField[];
+}
 
 interface RenderProps {
   readonly definition: ComponentDefinition;
@@ -21,6 +33,7 @@ interface RenderProps {
   readonly children?: ReactNode;
   readonly locale: string;
   readonly data?: readonly Record<string, unknown>[];
+  readonly meta?: BindingMeta;
 }
 
 const CLASS_VALUES = new Set([
@@ -274,6 +287,63 @@ function Quote({ props }: RenderProps) {
     </blockquote>
   );
 }
+function CallToAction({ props }: RenderProps) {
+  const variant = classValue(props.variant, "primary");
+  const body = text(props.text);
+  return (
+    <section className={`renderer-call-to-action renderer-call-to-action--${variant}`}>
+      <h2>{text(props.heading)}</h2>
+      {body ? <p>{body}</p> : null}
+      <a
+        className={`renderer-button renderer-button--${variant}`}
+        href={safeHref(props.href)}
+      >
+        {text(props.label)}
+      </a>
+    </section>
+  );
+}
+function ContactBlock({ props }: RenderProps) {
+  const address = text(props.address);
+  const phone = text(props.phone);
+  const email = text(props.email);
+  const hours = text(props.hours);
+  return (
+    <section className="renderer-contact">
+      <h2>{text(props.organization)}</h2>
+      {address ? <p className="renderer-contact-address">{address}</p> : null}
+      {phone ? <p className="renderer-contact-phone">{phone}</p> : null}
+      {email ? <p className="renderer-contact-email">{email}</p> : null}
+      {hours ? <p className="renderer-contact-hours">{hours}</p> : null}
+    </section>
+  );
+}
+function RelatedItems({ props, data }: RenderProps) {
+  const items: readonly Record<string, unknown>[] = Array.isArray(data) ? data : [];
+  if (items.length === 0) return null;
+  const heading = text(props.heading);
+  return (
+    <section className="renderer-related">
+      {heading ? <h2>{heading}</h2> : null}
+      <ul className="renderer-collection-list">
+        {items.map((item, index) => {
+          const values =
+            typeof item.values === "object" && item.values !== null
+              ? (item.values as Record<string, unknown>)
+              : {};
+          return (
+            <li key={text(item.id) || index}>
+              <article>
+                <h2>{text(values.title ?? item.slug)}</h2>
+                <p>{text(values.summary ?? values.description)}</p>
+              </article>
+            </li>
+          );
+        })}
+      </ul>
+    </section>
+  );
+}
 function Hero({ props, children }: RenderProps) {
   return (
     <section className="renderer-hero">
@@ -427,6 +497,97 @@ function FAQ({ props }: RenderProps) {
   );
 }
 
+/**
+ * Server-safe static variants of the bounded client-filter components.
+ *
+ * The trusted renderer is shared by RSC surfaces (public canonical, Puck
+ * editor canvas), which render the interactive `"use client"`
+ * implementations, and by flight-free SSR surfaces (workspace preview
+ * route), which deliver a pure server-rendered document with no client
+ * bundle and therefore cannot mount client state. The static variants
+ * render the exact initial interactive state — empty search query,
+ * initial facet values — with identical bounded markup and the same pure
+ * fixed-operator logic, so every surface renders one consistent contract;
+ * interactivity is simply absent where no client bundle is delivered.
+ */
+function StaticResultsList({
+  items,
+}: Readonly<{ items: readonly Record<string, unknown>[] }>) {
+  return (
+    <ul className="renderer-collection-list">
+      {items.map((item, index) => {
+        const values =
+          typeof item.values === "object" && item.values !== null
+            ? (item.values as Record<string, unknown>)
+            : {};
+        return (
+          <li key={text(item.id) || index}>
+            <article>
+              <h2>{itemTitle(item)}</h2>
+              <p>{text(values.summary ?? values.description)}</p>
+            </article>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+function CollectionSearchStatic({ props, data, meta }: RenderProps) {
+  const items: readonly Record<string, unknown>[] = Array.isArray(data) ? data : [];
+  const filterFields = meta?.filter_fields ?? [];
+  const visible = items.filter((item) => matchesSearch(item, filterFields, ""));
+  return (
+    <div className="renderer-collection-search">
+      <label className="renderer-collection-search-field">
+        <span>{text(props.placeholder) || "Search"}</span>
+        <input
+          className="renderer-collection-search-input"
+          type="search"
+          maxLength={256}
+        />
+      </label>
+      {visible.length === 0 ? (
+        <p className="renderer-collection-search-empty">No results</p>
+      ) : (
+        <StaticResultsList items={visible} />
+      )}
+    </div>
+  );
+}
+function CollectionFilterStatic({ props, data, meta }: RenderProps) {
+  const facets = parseCollectionFacets(props);
+  const items: readonly Record<string, unknown>[] = Array.isArray(data) ? data : [];
+  const filterFields = meta?.filter_fields ?? [];
+  const visible = items.filter((item) => matchesAllFacets(item, filterFields, facets));
+  return (
+    <div className="renderer-collection-filter">
+      {facets.length > 0 ? (
+        <div className="renderer-collection-filter-facets">
+          {facets.map((facet, index) => (
+            <label
+              key={`${facet.fieldKey}-${facet.operator}-${index}`}
+              className="renderer-collection-filter-facet"
+            >
+              <span>{`${facet.fieldKey} ${facet.operator}`}</span>
+              <input
+                className="renderer-collection-filter-input"
+                type="text"
+                value={facet.value}
+                maxLength={4096}
+              />
+            </label>
+          ))}
+        </div>
+      ) : null}
+      {visible.length === 0 ? (
+        <p className="renderer-collection-filter-empty">No results</p>
+      ) : (
+        <StaticResultsList items={visible} />
+      )}
+    </div>
+  );
+}
+
 const RENDERERS: Record<string, (props: RenderProps) => ReactElement> = {
   Section,
   Container,
@@ -439,6 +600,8 @@ const RENDERERS: Record<string, (props: RenderProps) => ReactElement> = {
   Image,
   Button,
   Quote,
+  CallToAction,
+  ContactBlock,
   Hero,
   Statistics,
   Timeline,
@@ -450,6 +613,9 @@ const RENDERERS: Record<string, (props: RenderProps) => ReactElement> = {
   CollectionList: (props) => <Collection {...props} mode="list" />,
   CollectionGrid: (props) => <Collection {...props} mode="grid" />,
   CollectionDetail: (props) => <Collection {...props} mode="detail" />,
+  CollectionSearch: (props) => <CollectionSearchStatic {...props} />,
+  CollectionFilter: (props) => <CollectionFilterStatic {...props} />,
+  RelatedItems: (props) => <RelatedItems {...props} />,
 };
 
 const FALLBACK_DEFINITION: ComponentDefinition = {
@@ -463,19 +629,39 @@ const FALLBACK_DEFINITION: ComponentDefinition = {
   authorityClass: "content",
 };
 
+/**
+ * The one documented bounded client-state pattern (local state only, no
+ * I/O, no persistence, no URL mutation). These wrappers render the real
+ * client-component elements on RSC surfaces; flight-free SSR surfaces
+ * use the static variants from RENDERERS instead.
+ */
+const INTERACTIVE_RENDERERS: Record<string, (props: RenderProps) => ReactElement> = {
+  CollectionSearch: (props) => <CollectionSearch {...props} />,
+  CollectionFilter: (props) => <CollectionFilter {...props} />,
+};
+
 export function renderComponent(
   node: { componentType: string; props: Record<string, unknown>; children?: ReactNode },
   locale: string,
   data?: readonly Record<string, unknown>[],
+  meta?: BindingMeta,
+  clientState = true,
 ): ReactElement {
-  const renderer = RENDERERS[node.componentType];
-  if (!renderer) throw new Error("unknown trusted component");
-  return renderer({
+  // Render registry entries as real React elements (never direct function
+  // calls): direct calls bypass React's client-component boundary
+  // enforcement and would break the bounded client-state components.
+  const Renderer =
+    clientState && INTERACTIVE_RENDERERS[node.componentType] !== undefined
+      ? INTERACTIVE_RENDERERS[node.componentType]
+      : RENDERERS[node.componentType];
+  if (!Renderer) throw new Error("unknown trusted component");
+  return createElement(Renderer, {
     definition: FALLBACK_DEFINITION,
     props: node.props,
     children: node.children,
     locale,
     ...(data === undefined ? {} : { data }),
+    ...(meta === undefined ? {} : { meta }),
   });
 }
 
@@ -483,14 +669,20 @@ function renderNode(
   node: ProjectionNode,
   locale: string,
   bindings: PageProjection["bindings"],
+  bindingMeta: PageProjection["binding_meta"],
+  clientState = true,
 ): ReactElement {
-  const children = node.children.map((child) => renderNode(child, locale, bindings));
+  const children = node.children.map((child) =>
+    renderNode(child, locale, bindings, bindingMeta, clientState),
+  );
   return (
     <div data-component={node.component_type}>
       {renderComponent(
         { componentType: node.component_type, props: node.props, children },
         locale,
         bindings[node.id],
+        bindingMeta[node.id],
+        clientState,
       )}
     </div>
   );
@@ -661,6 +853,7 @@ function SiteRegionShell({
 export function renderProjection(
   projection: PageProjection,
   basePath?: string,
+  clientState = true,
 ): ReactElement {
   const base = basePath ?? `/s/${projection.site.key}`;
   const header = projection.regions.find((region) => region.region_key === "header");
@@ -688,7 +881,13 @@ export function renderProjection(
           ) : null}
           <h1 id="page-title">{projection.page.title}</h1>
           {projection.composition.nodes.map((node) =>
-            renderNode(node, projection.locale, projection.bindings),
+            renderNode(
+              node,
+              projection.locale,
+              projection.bindings,
+              projection.binding_meta,
+              clientState,
+            ),
           )}
         </main>
         {footer ? (

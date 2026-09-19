@@ -21,9 +21,10 @@ continuation (`fe31c9f`).
 The 078-i theme implementation is preserved in history and reused deliberately
 here. PR #81 closed the 078/4 page-style increment, including the 078-y
 proof-closure continuation (`26cafc1`).
-The Objective 078 global-region/header-footer increment is opened at
-`078-5-a` (PR pending, strategy owns acceptance and merge); remaining
-Objective 078 catalog work belongs to a later separate bounded increment.
+The Objective 078 global-region/header-footer increment is accepted and
+merged in PR #85 at `2746c9f08c00fd84dff59bfd1536ce7319e16ff9` on 2026-09-19;
+remaining Objective 078 catalog work belongs to a later separate bounded
+increment.
 Later numbered objectives own media, MCP, exact-workspace Puck, review,
 publication, reconstruction and operations; they are not unfinished PR #77
 scope.
@@ -109,16 +110,23 @@ evidence. Its result is included in the accepted and merged 078/1 revision.
 ## Active and remaining sequence
 
 `oap/active` names the last activated round until the next activation.
-078/1, 078/2, 078/3, and 078/4 are all accepted and merged; the next
-Objective-078 product increment starts at `078-5-a`. Acceptance and
-containment in `main` are determined by OAP and GitHub state, not this
-document. All later order files remain inert until strategy selects and
-signals them.
+078/1, 078/2, 078/3, 078/4, 078/5, and 078/6 are all accepted and
+merged (verified merge SHAs per `oap/INCREMENTS.md`: PR #77 at
+`3cae3d6cef2a92e7068856d21bc9a47b8190c22e`, PR #79 at
+`a9d3e6800d5e8b5fd5c9cd9e0be5010184058c6b`, PR #80 at
+`fe31c9f30a7797d0916ad7f8fb56344bc61526f3`, PR #81 at
+`26cafc1c0c91de5eee8406e8d477c50ea0208058`, PR #85 at
+`2746c9f08c00fd84dff59bfd1536ce7319e16ff9`, PR #86 at
+`0faebd98cc0d9b14d4e00b7da165f08b815e7df6`); increment 078/7 is opened
+at `078-7-a` (PR #87). Acceptance and containment in `main` are
+determined by OAP and GitHub state, not this document; GitHub remains
+authoritative for live acceptance and merge state. All later order
+files remain inert until strategy selects and signals them.
 
 | Order | Contractual scope | Current status |
 |---|---|---|
 | 077 | Agent page, navigation, redirect, and bounded dynamic collection Render semantics | COMPLETE — E2E PROVEN and accepted/merged in PR #74 on 2026-09-08 at `ae3a4a6` |
-| 078 | Agent composition and design semantics; bounded component, site-theme, and page-style data planes | PARTIAL — 078/1 is accepted and merged in PR #77 at `3cae3d6`; 078/2 is accepted and merged in PR #79 at `a9d3e68`; 078/3 is accepted and merged in PR #80 at `fe31c9f`; 078/4 is accepted and merged in PR #81 at `26cafc1`; global-region/catalog scope remains deferred, starting at `078-5-a` |
+| 078 | Agent composition and design semantics; bounded component, site-theme, and page-style data planes | PARTIAL — 078/1 is accepted and merged in PR #77 at `3cae3d6`; 078/2 is accepted and merged in PR #79 at `a9d3e68`; 078/3 is accepted and merged in PR #80 at `fe31c9f`; 078/4 is accepted and merged in PR #81 at `26cafc1`; 078/5 is accepted and merged in PR #85 at `2746c9f08c00fd84dff59bfd1536ce7319e16ff9`; 078/6 is accepted and merged in PR #86 at `0faebd98cc0d9b14d4e00b7da165f08b815e7df6`; increment 078/7 is opened at `078-7-a` (PR #87) |
 | 079 | Agent media semantics and references | PARTIAL |
 | 080 | Real MCP semantic parity | SCAFFOLD ONLY |
 | 081 | Human Puck editing in the exact Agent workspace | PARTIAL |

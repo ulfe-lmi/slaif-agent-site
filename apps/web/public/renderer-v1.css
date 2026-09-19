@@ -1182,3 +1182,120 @@ body:has(.renderer-surface) {
     grid-template-columns: 1fr;
   }
 }
+
+/* 078/7 catalog content and collection components */
+
+.renderer-call-to-action {
+  display: block;
+  margin: 1.5rem 0;
+  padding: 1.5rem;
+  border-radius: 0.5rem;
+}
+
+.renderer-call-to-action--primary {
+  background: var(--renderer-accent-background, #0f766e);
+  color: var(--renderer-content-foreground, #f8fafc);
+}
+
+.renderer-call-to-action--secondary,
+.renderer-call-to-action--ghost {
+  border: 1px solid var(--renderer-border, #cbd5e1);
+  color: var(--renderer-content-foreground, #0f172a);
+}
+
+.renderer-call-to-action .renderer-button {
+  display: inline-block;
+  margin-top: 1rem;
+}
+
+.renderer-contact {
+  display: block;
+  margin: 1.5rem 0;
+  padding: 1rem 1.5rem;
+  border: 1px solid var(--renderer-border, #cbd5e1);
+  border-radius: 0.5rem;
+  color: var(--renderer-content-foreground, #0f172a);
+}
+
+.renderer-contact p {
+  margin: 0.25rem 0;
+}
+
+.renderer-collection-search {
+  display: block;
+  margin: 1.5rem 0;
+}
+
+.renderer-collection-search-field {
+  display: block;
+}
+
+.renderer-collection-search-field span {
+  display: block;
+  margin-bottom: 0.25rem;
+  font-size: 0.9rem;
+  color: var(--renderer-muted-foreground, #475569);
+}
+
+.renderer-collection-search-input,
+.renderer-collection-filter-input {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 30rem;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--renderer-border, #cbd5e1);
+  border-radius: 0.375rem;
+  font: inherit;
+  color: var(--renderer-content-foreground, #0f172a);
+  background: var(--renderer-background, #ffffff);
+}
+
+.renderer-collection-search-input:focus-visible,
+.renderer-collection-filter-input:focus-visible {
+  outline: 2px solid var(--renderer-link-foreground, #0369a1);
+  outline-offset: 1px;
+}
+
+.renderer-collection-search-empty,
+.renderer-collection-filter-empty {
+  color: var(--renderer-muted-foreground, #475569);
+}
+
+.renderer-collection-list {
+  display: grid;
+  gap: 0.75rem;
+  margin: 1rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.renderer-collection-list article {
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--renderer-border, #cbd5e1);
+  border-radius: 0.375rem;
+}
+
+.renderer-collection-filter {
+  display: block;
+  margin: 1.5rem 0;
+}
+
+.renderer-collection-filter-facets {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.renderer-collection-filter-facet {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.renderer-collection-filter-facet span {
+  font-size: 0.9rem;
+  color: var(--renderer-muted-foreground, #475569);
+}
+
+.renderer-related {
+  display: block;
+  margin: 1.5rem 0;
+}

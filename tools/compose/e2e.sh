@@ -232,6 +232,13 @@ fi
 
 if ! SLAIF_E2E_SECRET_FILE="$SECRET_FILE" \
   SLAIF_E2E_OUTPUT_DIR="$OUTPUT_DIR" \
+  pnpm exec playwright test --no-deps --project=preview-filtering
+then
+  fail browser preview-filtering-contract
+fi
+
+if ! SLAIF_E2E_SECRET_FILE="$SECRET_FILE" \
+  SLAIF_E2E_OUTPUT_DIR="$OUTPUT_DIR" \
   pnpm exec playwright test --no-deps \
     --project=desktop-chromium --project=desktop-firefox --project=desktop-webkit \
     --project=tablet --project=mobile-chromium --project=mobile-webkit
@@ -246,4 +253,4 @@ if ! SLAIF_E2E_SECRET_FILE="$SECRET_FILE" \
 then
   fail browser agent-session-desktop-phone-contract
 fi
-echo "compose-e2e: OK projects=11 setup=1 governance=1 preview=1 stable-devices=6 agent-sessions=2 artifacts=disabled"
+echo "compose-e2e: OK projects=12 setup=1 governance=1 preview=1 preview-filtering=1 stable-devices=6 agent-sessions=2 artifacts=disabled"
