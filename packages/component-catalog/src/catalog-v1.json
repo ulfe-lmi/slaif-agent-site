@@ -440,7 +440,7 @@
       "authority_class": "content",
       "props": {
         "bbox": {"type": "object", "required": true, "schema": {"type": "object", "additional_properties": false, "properties": {"west": {"type": "number", "required": true, "minimum": -180, "maximum": 180}, "south": {"type": "number", "required": true, "minimum": -85.05112877, "maximum": 85.05112877}, "east": {"type": "number", "required": true, "minimum": -180, "maximum": 180}, "north": {"type": "number", "required": true, "minimum": -85.05112877, "maximum": 85.05112877}}, "required": ["west", "south", "east", "north"]}, "authority": "content"},
-        "layer": {"type": "enum", "required": false, "enum_values": ["mapnik", "cycle", "transport"], "authority": "content"},
+        "layer": {"type": "enum", "required": false, "enum_values": ["mapnik", "cyclemap", "transportmap"], "authority": "content"},
         "title": {"type": "string", "required": true, "max_length": 120, "localized": true, "authority": "content"}
       }
     },

@@ -39,7 +39,7 @@ VIDEO_PROVIDER_PATHS: dict[str, str] = {
 
 MAP_PROVIDER_HOST = "www.openstreetmap.org"
 MAP_PROVIDER_PATH = "/export/embed.html"
-MAP_LAYERS: tuple[str, ...] = ("mapnik", "cycle", "transport")
+MAP_LAYERS: tuple[str, ...] = ("mapnik", "cyclemap", "transportmap")
 DEFAULT_MAP_LAYER = "mapnik"
 
 BBOX_LONGITUDE_LIMIT = 180.0

@@ -1774,10 +1774,10 @@ test("bounded-embed-family-renders-canonically-and-rejects-hostile-writes", asyn
   const videoIframe =
     '<iframe class="sl-embed sl-embed--video" src="https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ" title="E2E product talk" loading="lazy" referrerPolicy="no-referrer"></iframe>';
   const mapIframe =
-    '<iframe class="sl-embed sl-embed--map" src="https://www.openstreetmap.org/export/embed.html?bbox=-12.5,55,-12.4,55.1&amp;layer=cycle" title="E2E campus map" loading="lazy" referrerPolicy="no-referrer"></iframe>';
+    '<iframe class="sl-embed sl-embed--map" src="https://www.openstreetmap.org/export/embed.html?bbox=-12.5,55,-12.4,55.1&amp;layer=cyclemap" title="E2E campus map" loading="lazy" referrerPolicy="no-referrer"></iframe>';
   const videoSrc = "https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ";
   const mapSrc =
-    "https://www.openstreetmap.org/export/embed.html?bbox=-12.5,55,-12.4,55.1&layer=cycle";
+    "https://www.openstreetmap.org/export/embed.html?bbox=-12.5,55,-12.4,55.1&layer=cyclemap";
 
   // Hermetic provider fixture: the edge CSP allowlists exactly these three
   // hosts, and the evidence is the emitted markup, never live provider state.
@@ -1900,7 +1900,7 @@ test("bounded-embed-family-renders-canonically-and-rejects-hostile-writes", asyn
       slot_key: "default",
       props: {
         bbox: { west: -12.5, south: 55, east: -12.4, north: 55.1 },
-        layer: "cycle",
+        layer: "cyclemap",
         title: "E2E campus map",
       },
     },
@@ -2112,7 +2112,7 @@ test("bounded-embed-family-renders-canonically-and-rejects-hostile-writes", asyn
         slot_key: "default",
         props: {
           bbox: { west: -12.5, south: 55, east: -12.4, north: 55.1 },
-          layer: "cycle",
+          layer: "cyclemap",
           title: "E2E campus map",
         },
       },

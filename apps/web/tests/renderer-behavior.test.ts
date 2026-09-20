@@ -555,7 +555,7 @@ describe("trusted catalog renderer behavior", () => {
           componentType: "MapBlock",
           props: {
             bbox: { west: -12.5, south: 55, east: -12.4, north: 55.1 },
-            layer: "cycle",
+            layer: "cyclemap",
             title: "Bike loop",
           },
         },
@@ -564,7 +564,7 @@ describe("trusted catalog renderer behavior", () => {
     );
     expect(mapCycle).toBe(
       '<iframe class="sl-embed sl-embed--map" ' +
-        'src="https://www.openstreetmap.org/export/embed.html?bbox=-12.5,55,-12.4,55.1&amp;layer=cycle" ' +
+        'src="https://www.openstreetmap.org/export/embed.html?bbox=-12.5,55,-12.4,55.1&amp;layer=cyclemap" ' +
         'title="Bike loop" loading="lazy" referrerPolicy="no-referrer"></iframe>',
     );
     for (const markup of [youtube, vimeo, mapDefault, mapCycle]) {
