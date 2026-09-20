@@ -20,14 +20,16 @@
  * key is supplied by the OSM embed bundle itself and stays inside the
  * provider's own requests.
  *
- * Per-layer screenshots and the observed upstream request list are
- * written under the test output directory as
- * `live-osm-provider/live-osm-<layer>.png` and
- * `live-osm-provider/evidence.json`.
+ * Per-layer screenshots and the observed upstream request list
+ * (`evidence.json`) are written to the Playwright test-results
+ * artifacts directory for the test (`testInfo.outputDir`), whose
+ * location is governed by the `outputDir` of the Playwright config
+ * (or `SLAIF_E2E_OUTPUT_DIR` in local execution).
  */
 
 import { expect, test } from "@playwright/test";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "node:fs";
+import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { login, secrets } from "./support";
 
@@ -80,15 +82,14 @@ function layerUpstreamCondition(layer: Layer): (entry: Upstream) => boolean {
 
 test("live OSM embed: layer-specific upstreams, legacy cycle falls back to mapnik", async ({
   page,
-}) => {
+}, testInfo) => {
   test.setTimeout(240_000);
   const credential = secrets();
   const tag = crypto.randomUUID();
-  const outDir = path.join(
-    process.env.SLAIF_E2E_OUTPUT_DIR ?? "/tmp/slaif-playwright-output",
-    "live-osm-provider",
-  );
-  mkdirSync(outDir, { recursive: true });
+  // Artifacts go to the Playwright test-results artifacts directory
+  // (framework-managed; location governed by the config outputDir).
+  const outDir = testInfo.outputDir;
+  await mkdir(outDir, { recursive: true });
 
   const upstream: Upstream[] = [];
   page.on("response", (response) => {
@@ -230,7 +231,7 @@ test("live OSM embed: layer-specific upstreams, legacy cycle falls back to mapni
         { timeout: 90_000, message: `layer-specific upstream for ${layer}` },
       )
       .toBe(true);
-    await page.screenshot({ path: path.join(outDir, `live-osm-${layer}.png`) });
+    await page.screenshot({ path: testInfo.outputPath(`live-osm-${layer}.png`) });
   }
 
   // Provider-level negative control: the legacy identifier `cycle`
@@ -258,7 +259,7 @@ test("live OSM embed: layer-specific upstreams, legacy cycle falls back to mapni
     "legacy cycle must not reach the Thunder Forest upstream",
   ).toEqual([]);
   await page.screenshot({
-    path: path.join(outDir, "live-osm-legacy-cycle-fallback.png"),
+    path: testInfo.outputPath("live-osm-legacy-cycle-fallback.png"),
   });
 
   const slim = (entries: Upstream[]) =>
