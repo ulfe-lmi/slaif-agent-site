@@ -33,7 +33,7 @@ def test_policy_version_and_allowlist_surface() -> None:
         "youtube-nocookie": YOUTUBE_HOST,
         "vimeo": VIMEO_HOST,
     }
-    assert MAP_LAYERS == ("mapnik", "cycle", "transport")
+    assert MAP_LAYERS == ("mapnik", "cyclemap", "transportmap")
     assert TITLE_MAX_LENGTH == 120
 
 
@@ -64,11 +64,11 @@ def test_canonical_map_embed_urls_are_byte_pinned() -> None:
     assert canonical_map_embed(base, layer="mapnik") == (
         f"https://{OSM_HOST}/export/embed.html?bbox=-12.5,55,-12.4,55.1"
     )
-    assert canonical_map_embed(base, layer="cycle") == (
-        f"https://{OSM_HOST}/export/embed.html?bbox=-12.5,55,-12.4,55.1&layer=cycle"
+    assert canonical_map_embed(base, layer="cyclemap") == (
+        f"https://{OSM_HOST}/export/embed.html?bbox=-12.5,55,-12.4,55.1&layer=cyclemap"
     )
-    assert canonical_map_embed(base, layer="transport") == (
-        f"https://{OSM_HOST}/export/embed.html?bbox=-12.5,55,-12.4,55.1&layer=transport"
+    assert canonical_map_embed(base, layer="transportmap") == (
+        f"https://{OSM_HOST}/export/embed.html?bbox=-12.5,55,-12.4,55.1&layer=transportmap"
     )
     # Integer-valued coordinates serialize as integers; tiny values keep
     # fixed-point (no exponent notation).
@@ -83,8 +83,8 @@ def test_canonical_map_embed_urls_are_byte_pinned() -> None:
     # No autoplay, marketing, or tracking parameters are ever emitted.
     for url in (
         canonical_map_embed(base),
-        canonical_map_embed(base, layer="cycle"),
-        canonical_map_embed(base, layer="transport"),
+        canonical_map_embed(base, layer="cyclemap"),
+        canonical_map_embed(base, layer="transportmap"),
     ):
         assert url.startswith("https://")
         assert "autoplay" not in url
@@ -115,10 +115,10 @@ def test_valid_map_embed_props_pass() -> None:
     bbox = {"west": -12.5, "south": 55, "east": -12.4, "north": 55.1}
     assert validate_map_embed_props({"bbox": bbox, "title": "Map"}) == (True, None)
     assert validate_map_embed_props(
-        {"bbox": bbox, "layer": "cycle", "title": "Map"}
+        {"bbox": bbox, "layer": "cyclemap", "title": "Map"}
     ) == (True, None)
     assert validate_map_embed_props(
-        {"bbox": bbox, "layer": "transport", "title": "M"}
+        {"bbox": bbox, "layer": "transportmap", "title": "M"}
     ) == (True, None)
     # Boundary coordinates are inclusive; integer values are accepted.
     boundary = {
@@ -327,6 +327,11 @@ def _bbox(**overrides: object) -> dict[str, object]:
             {"bbox": _bbox(), "layer": "https://evil.example", "title": "T"},
             ERROR_LAYER_UNKNOWN,
         ),
+        # Legacy provider identifiers are rejected fail-closed: the live OSM
+        # embed endpoint silently falls back to mapnik for them, so the
+        # product contract must not emit them (078/9 contract repair).
+        ({"bbox": _bbox(), "layer": "cycle", "title": "T"}, ERROR_LAYER_UNKNOWN),
+        ({"bbox": _bbox(), "layer": "transport", "title": "T"}, ERROR_LAYER_UNKNOWN),
         ({"bbox": _bbox()}, ERROR_TITLE_MISSING),
         ({"bbox": _bbox(), "title": ""}, ERROR_TITLE_MISSING),
         (

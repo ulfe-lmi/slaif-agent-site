@@ -160,7 +160,7 @@ function aspectRatioClass(value: unknown): string {
 // emitted, and any non-canonical prop set renders the bounded placeholder
 // instead of an iframe (fail-closed).
 const EMBED_TITLE_MAX_LENGTH = 120;
-const EMBED_MAP_LAYERS = new Set(["mapnik", "cycle", "transport"]);
+const EMBED_MAP_LAYERS = new Set(["mapnik", "cyclemap", "transportmap"]);
 const EMBED_MAP_DEFAULT_LAYER = "mapnik";
 
 function formatEmbedCoordinate(value: number): string {
