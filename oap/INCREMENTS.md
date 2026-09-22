@@ -2,10 +2,10 @@
 
 Current state is recorded against verified remote GitHub state; GitHub is
 authoritative for live acceptance and merge state. Objective 078 is
-`PARTIAL`; strategy owns acceptance and merge. Increments 078/1 through 078/4
-are accepted and merged; increment 078/5 is accepted and merged in PR #85 at
-`2746c9f08c00fd84dff59bfd1536ce7319e16ff9` on 2026-09-19 under the 2026-09-14
-increment-qualified round-ID amendment.
+`PARTIAL`; strategy owns acceptance and merge. Increments 078/1 through 078/9
+are accepted and merged (verified merge facts in the table below); the
+078/079 seam is acknowledged — the three remaining catalog types and real
+Image rendering are 079-bound by dependency audit.
 The table is the authoritative ledger of verified merge facts (SHA and
 merge date) referenced from current-state documents.
 
@@ -21,7 +21,8 @@ merge date) referenced from current-state documents.
 | 078/7 | `oap/078-7-a-catalog-content-collection-components`: catalog content and collection components (CallToAction, ContactBlock, CollectionSearch, CollectionFilter, RelatedItems) | Accepted and merged in PR #87 at `d9a7555662a976483b9716e41863de8ecd00decf` on 2026-09-19; 078/7 is closed |
 | 078/8 | `oap/078-8-a-bounded-embed-family`: bounded embed family (VideoEmbed, MapBlock) | Accepted and merged in PR #88 at `ddd1559f021762316f5a64989a307355acb4aab2` on 2026-09-19; 078/8 is closed |
 | 078-i | `567973e` implementation plus `127d7f1` report: bounded site-theme tokens | Preserved immutable history; removed from PR #77 by 078-j and deferred for deliberate reuse |
-| Next | 078/9: MapBlock OSM layer contract repair | Opened at `078-9-a` from verified remote main `ddd1559f021762316f5a64989a307355acb4aab2`; PR pending; strategy owns acceptance and merge. No further ordinary 078 product increments are planned. The 078-bound catalog types (Gallery, LogoGrid, DocumentList, real Image) are 079 increments per the human directive of 2026-09-20. Numeric 078 remains PARTIAL until they are implemented and proven; reclassification to COMPLETE occurs only after independent verification of the resulting evidence. |
+| 078/9 | 078/9: MapBlock OSM layer contract repair | Accepted and merged in PR #89 at `d8b1d360add9d583fa2cc64c451dd5d6faad8730` on 2026-09-20; 078/9 is closed |
+| Next | 079/1: media publication core | Opened at `079-a` from verified remote main `d8b1d360add9d583fa2cc64c451dd5d6faad8730`; PR pending; strategy owns acceptance and merge. No further ordinary 078 product increments are planned. Objective 078 is closed at the 078/079 seam (all non-media 078 contracts accepted and merged, including the 078/9 layer-contract repair); the 078-bound catalog types (Gallery, LogoGrid, DocumentList) and real Image rendering proceed under Objective 079 (079/1, 079/2, 079/3); numeric 078 remains PARTIAL until 079/3 lands and is independently verified; strategy selects the next bounded increment per [`governance/2026-09-14-increment-qualified-round-ids.md`](governance/2026-09-14-increment-qualified-round-ids.md) |
 
 PR #77 merged into `main` at
 `3cae3d6cef2a92e7068856d21bc9a47b8190c22e`. The 078-j closure keeps the

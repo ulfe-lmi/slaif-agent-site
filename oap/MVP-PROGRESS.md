@@ -121,7 +121,7 @@ and merged (verified merge SHAs per `oap/INCREMENTS.md`: PR #77 at
 `2746c9f08c00fd84dff59bfd1536ce7319e16ff9`, PR #86 at
 `0faebd98cc0d9b14d4e00b7da165f08b815e7df6`, PR #87 at
 `d9a7555662a976483b9716e41863de8ecd00decf`); increment 078/8 is accepted and merged in PR #88 at `ddd1559f021762316f5a64989a307355acb4aab2` on
-2026-09-19. Acceptance and containment in `main` are
+2026-09-19; increment 078/9 is accepted and merged in PR #89 at `d8b1d360add9d583fa2cc64c451dd5d6faad8730` on 2026-09-20; increment 079/1 is opened at `079-a` (PR #92). Acceptance and containment in `main` are
 determined by OAP and GitHub state, not this document; GitHub remains
 authoritative for live acceptance and merge state. All later order
 files remain inert until strategy selects and signals them.
@@ -129,8 +129,8 @@ files remain inert until strategy selects and signals them.
 | Order | Contractual scope | Current status |
 |---|---|---|
 | 077 | Agent page, navigation, redirect, and bounded dynamic collection Render semantics | COMPLETE — E2E PROVEN and accepted/merged in PR #74 on 2026-09-08 at `ae3a4a6` |
-| 078 | Agent composition and design semantics; bounded component, site-theme, and page-style data planes | PARTIAL — 078/1 is accepted and merged in PR #77 at `3cae3d6`; 078/2 is accepted and merged in PR #79 at `a9d3e68`; 078/3 is accepted and merged in PR #80 at `fe31c9f`; 078/4 is accepted and merged in PR #81 at `26cafc1`; 078/5 is accepted and merged in PR #85 at `2746c9f08c00fd84dff59bfd1536ce7319e16ff9`; 078/6 is accepted and merged in PR #86 at `0faebd98cc0d9b14d4e00b7da165f08b815e7df6`; 078/7 is accepted and merged in PR #87 at `d9a7555662a976483b9716e41863de8ecd00decf`; increment 078/8 is accepted and merged in PR #88 at `ddd1559f021762316f5a64989a307355acb4aab2` on 2026-09-19; the 078-bound catalog remainder (Gallery, LogoGrid, DocumentList, real Image) is 079-bound per the human directive of 2026-09-20, so numeric 078 remains PARTIAL until it is implemented and proven |
-| 079 | Agent media semantics and references | PARTIAL |
+| 078 | Agent composition and design semantics; bounded component, site-theme, and page-style data planes | PARTIAL — 078/1 is accepted and merged in PR #77 at `3cae3d6`; 078/2 is accepted and merged in PR #79 at `a9d3e68`; 078/3 is accepted and merged in PR #80 at `fe31c9f`; 078/4 is accepted and merged in PR #81 at `26cafc1`; 078/5 is accepted and merged in PR #85 at `2746c9f08c00fd84dff59bfd1536ce7319e16ff9`; 078/6 is accepted and merged in PR #86 at `0faebd98cc0d9b14d4e00b7da165f08b815e7df6`; 078/7 is accepted and merged in PR #87 at `d9a7555662a976483b9716e41863de8ecd00decf`; increment 078/8 is accepted and merged in PR #88 at `ddd1559f021762316f5a64989a307355acb4aab2` on 2026-09-19 and increment 078/9 is accepted and merged in PR #89 at `d8b1d360add9d583fa2cc64c451dd5d6faad8730` on 2026-09-20; the 078-bound catalog remainder (Gallery, LogoGrid, DocumentList, real Image) is 079-bound per the human directive of 2026-09-20, so numeric 078 remains PARTIAL until it is implemented and proven |
+| 079 | Agent media semantics and references | PARTIAL — 079/1 is opened at `079-a` (PR #92) |
 | 080 | Real MCP semantic parity | SCAFFOLD ONLY |
 | 081 | Human Puck editing in the exact Agent workspace | PARTIAL |
 | 082 | Immutable freeze and review snapshot | NOT IMPLEMENTED |
