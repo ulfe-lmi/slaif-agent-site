@@ -457,7 +457,7 @@ docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif -v ON_ERROR_STOP=1
     '12000000-0000-4000-8000-000000000002|demo|VIEWER|ACTIVE|1')"
 docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif -v ON_ERROR_STOP=1 -Atc \
   "SET ROLE slaif_owner;
-   SELECT count(*) = 3
+   SELECT count(*) = 4
      AND count(*) FILTER (WHERE
        identity_kind = 'OIDC' AND status = 'ACTIVE'
        AND local_username IS NULL AND local_username_normalized IS NULL
@@ -485,9 +485,23 @@ docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif -v ON_ERROR_STOP=1
          WHERE administrator.user_account_id = account.id
        )
      ) = 1
+     AND count(*) FILTER (WHERE
+       identity_kind = 'LOCAL' AND status = 'ACTIVE'
+       AND id = '12000000-0000-4000-8000-000000000309'::uuid
+       AND local_username = 'oap079a.denied'
+       AND local_username_normalized = 'oap079a.denied'
+       AND password_hash IS NOT NULL
+       AND display_name = 'OAP 079 denied fixture'
+       AND email IS NULL
+       AND oidc_issuer IS NULL AND oidc_subject IS NULL
+       AND NOT EXISTS (
+         SELECT 1 FROM control.platform_administrator administrator
+         WHERE administrator.user_account_id = account.id
+       )
+     ) = 1
      AND (SELECT count(*) FROM control.platform_administrator) = 1
    FROM control.user_account account;" | grep -q '^t$'
-echo "governance-e2e: OK visible=create-profile-domains-membership-archive negatives=verified devices=6"
+echo "governance-e2e: OK visible=create-profile-domains-membership-archive negatives=verified devices=6 users=4"
 for path in \
   /health/live \
   /health/ready \
