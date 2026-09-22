@@ -370,6 +370,7 @@ media_public_status=$(curl --silent --show-error --output "$MEDIA_PUBLIC_FILE" \
 test "$media_public_status" = 200
 cmp "$ROOT/docs/screenshots/01-landing-page.png" "$MEDIA_PUBLIC_FILE"
 curl -sD - -o /dev/null "http://localhost:8080$media_public_path" \
+  | tr -d '\r' \
   | grep -q '^cache-control: public, max-age=31536000, immutable$'
 echo "media-e2e: OK edge=nginx upload=validated-private-read=byte-identical finalization=public-read=byte-identical immutable-cache=verified"
 docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif -Atc \
