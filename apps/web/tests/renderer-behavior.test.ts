@@ -789,3 +789,105 @@ describe("trusted catalog renderer behavior", () => {
     expect(staticFilter).not.toContain("renderer-collection-filter-empty");
   });
 });
+
+describe("real Image renderer (079/1 media publication core)", () => {
+  const MEDIA_ID = "11111111-1111-4111-8111-111111111111";
+  const SITE_ID = "11111111-2222-4333-8444-555555555555";
+  const DIGEST = "aabb" + "1234567890abcdef".repeat(3) + "fedcba098765";
+  const PUBLIC_URL = `/media/public/sha256/aa/bb/${DIGEST}`;
+  const PREVIEW_URL = `/media/v1/sites/${SITE_ID}/assets/${MEDIA_ID}/content`;
+  const imageNode = {
+    componentType: "Image",
+    props: { mediaId: MEDIA_ID, alt: "Mountain lake" },
+  };
+
+  it("emits the exact resolved <img> markup for a public digest descriptor", () => {
+    const markup = renderToStaticMarkup(
+      renderComponent(imageNode, "en", undefined, undefined, true, {
+        url: PUBLIC_URL,
+        mime_type: "image/png",
+        size_bytes: 1234,
+      }),
+    );
+    expect(markup).toBe(
+      `<div aria-label="Mountain lake" class="renderer-image-placeholder renderer-image-placeholder--auto" role="img"><img class="sl-image" src="${PUBLIC_URL}" alt="Mountain lake" loading="lazy" referrerPolicy="no-referrer"/></div>`,
+    );
+  });
+
+  it("emits the exact resolved <img> markup for the authorized preview URL form", () => {
+    const markup = renderToStaticMarkup(
+      renderComponent(imageNode, "en", undefined, undefined, true, {
+        url: PREVIEW_URL,
+        mime_type: "image/jpeg",
+        size_bytes: 5678,
+      }),
+    );
+    expect(markup).toBe(
+      `<div aria-label="Mountain lake" class="renderer-image-placeholder renderer-image-placeholder--auto" role="img"><img class="sl-image" src="${PREVIEW_URL}" alt="Mountain lake" loading="lazy" referrerPolicy="no-referrer"/></div>`,
+    );
+  });
+
+  it("keeps preview and public markup identical except the src form", () => {
+    const preview = renderToStaticMarkup(
+      renderComponent(imageNode, "en", undefined, undefined, true, {
+        url: PREVIEW_URL,
+        mime_type: "image/png",
+        size_bytes: 1,
+      }),
+    );
+    const canonical = renderToStaticMarkup(
+      renderComponent(imageNode, "en", undefined, undefined, true, {
+        url: PUBLIC_URL,
+        mime_type: "image/png",
+        size_bytes: 1,
+      }),
+    );
+    expect(preview.replace(PREVIEW_URL, PUBLIC_URL)).toBe(canonical);
+  });
+
+  it("renders the fail-closed placeholder and never an <img> for missing, null, foreign-URL, or MIME-mismatched descriptors", () => {
+    const placeholder = renderToStaticMarkup(renderComponent(imageNode, "en"));
+    expect(placeholder).toBe(
+      `<div aria-label="Mountain lake" class="renderer-image-placeholder renderer-image-placeholder--auto" role="img"></div>`,
+    );
+    const variants = [
+      renderToStaticMarkup(
+        renderComponent(imageNode, "en", undefined, undefined, true, null),
+      ),
+      renderToStaticMarkup(
+        renderComponent(imageNode, "en", undefined, undefined, true, {
+          url: "https://evil.example/img.png",
+          mime_type: "image/png",
+          size_bytes: 1,
+        }),
+      ),
+      renderToStaticMarkup(
+        renderComponent(imageNode, "en", undefined, undefined, true, {
+          url: PUBLIC_URL,
+          mime_type: "image/svg+xml",
+          size_bytes: 1,
+        }),
+      ),
+    ];
+    for (const variant of variants) {
+      expect(variant).toBe(placeholder);
+      expect(variant).not.toContain("<img");
+    }
+  });
+
+  it("never emits inline styles, event handlers, or javascript: URLs in Image markup", () => {
+    const resolved = renderToStaticMarkup(
+      renderComponent(imageNode, "en", undefined, undefined, true, {
+        url: PUBLIC_URL,
+        mime_type: "image/png",
+        size_bytes: 1,
+      }),
+    );
+    const placeholder = renderToStaticMarkup(renderComponent(imageNode, "en"));
+    for (const markup of [resolved, placeholder]) {
+      expect(markup).not.toMatch(/style=/);
+      expect(markup).not.toMatch(/\son[a-z]+=/i);
+      expect(markup).not.toMatch(/javascript:/i);
+    }
+  });
+});

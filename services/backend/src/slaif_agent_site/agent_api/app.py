@@ -42,6 +42,7 @@ from ..control_api.route_policy import (
 from ..errors import ErrorEnvelope
 from ..health import ProbeResult, ReadinessProbe
 from ..logging import configure_json_logging
+from ..media_service.store import MediaStore
 from .agent_http import router as agent_router
 from .browser_http import router as browser_router
 from .browser_service import AgentBrowserRunService
@@ -201,6 +202,43 @@ def build_public_agent_openapi_document(app: FastAPI) -> dict[str, object]:
                 if policy.mutation_class is RouteMutationClass.MUTATION
                 else "not-applicable"
             )
+            if (method.upper(), path) == ("POST", "/api/agent/v1/media/assets"):
+                # Bounded streaming multipart upload: the trusted store
+                # parser (not FastAPI body binding) reads the request, so the
+                # exact multipart contract is declared here.
+                operation["requestBody"] = {
+                    "required": True,
+                    "content": {
+                        "multipart/form-data": {
+                            "schema": {
+                                "type": "object",
+                                "required": ["file"],
+                                "properties": {
+                                    "file": {
+                                        "type": "string",
+                                        "format": "binary",
+                                        "description": (
+                                            "Image bytes (PNG or JPEG, at most "
+                                            "104857600 bytes)."
+                                        ),
+                                    },
+                                    "alt_text": {
+                                        "type": "string",
+                                        "maxLength": 512,
+                                        "description": "Optional alternative text.",
+                                    },
+                                    "metadata": {
+                                        "type": "string",
+                                        "description": (
+                                            "Optional bounded JSON object "
+                                            "serialized as a string."
+                                        ),
+                                    },
+                                },
+                            }
+                        }
+                    },
+                }
             if path == "/api/agent/v1/openapi.json":
                 operation["security"] = []
             else:
@@ -325,6 +363,16 @@ def public_agent_openapi_bytes(app: FastAPI) -> bytes:
     ).encode("utf-8")
 
 
+async def _media_store_readiness(store: MediaStore | None) -> ProbeResult:
+    if store is None:
+        return ProbeResult.unavailable("storage_unavailable")
+    return (
+        ProbeResult.ready()
+        if await store.readiness()
+        else ProbeResult.unavailable("storage_unavailable")
+    )
+
+
 def create_app(
     *,
     settings: ServiceSettings | None = None,
@@ -379,6 +427,10 @@ def create_app(
         settings=selected_database_settings.dispatcher_settings,
     )
 
+    media_store: MediaStore | None = None
+    if selected_database_settings.media_root is not None:
+        media_store = MediaStore(selected_database_settings.media_root)
+
     @asynccontextmanager
     async def database_lifespan(_app: FastAPI) -> AsyncIterator[None]:
         await selected_database.start()
@@ -394,6 +446,16 @@ def create_app(
         settings=settings,
         readiness_probes=(
             ReadinessProbe("database", selected_database.readiness),
+            *(
+                (
+                    ReadinessProbe(
+                        "media-store",
+                        lambda: _media_store_readiness(media_store),
+                    ),
+                )
+                if media_store is not None
+                else ()
+            ),
             *(
                 (ReadinessProbe("browser-signing-key", browser_signing_readiness),)
                 if not test_mode or browser_signer is not None
@@ -417,6 +479,7 @@ def create_app(
         ),
         lifespan_factory=database_lifespan,
     )
+    app.state.media_store = media_store
     app.state.database = selected_database
     app.state.browser_run_service = AgentBrowserRunService(
         selected_database, worker_client=selected_worker_client

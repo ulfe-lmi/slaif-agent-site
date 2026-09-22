@@ -645,20 +645,44 @@ test("puck-editor-round-trip-through-human-editor-api", async ({ page }) => {
       await target.scrollIntoViewIfNeeded();
       await expect(source).toBeVisible();
       await expect(target).toBeVisible();
-      const bounds = targetPosition === "bottom" ? await target.boundingBox() : null;
-      const topBounds = targetPosition === "top" ? await target.boundingBox() : null;
-      const targetBounds = bounds ?? topBounds;
-      await source.dragTo(
-        target,
-        targetBounds
+      const sourceBounds = await source.boundingBox();
+      const targetBounds = await target.boundingBox();
+      if (!sourceBounds || !targetBounds) throw new Error("drag-bounds-unavailable");
+      const offset =
+        targetPosition === "bottom"
           ? {
-              targetPosition: {
-                x: Math.min(16, Math.max(1, targetBounds.width - 1)),
-                y: bounds ? Math.max(1, bounds.height - 8) : 8,
-              },
+              x: Math.min(16, Math.max(1, targetBounds.width - 1)),
+              y: Math.max(1, targetBounds.height - 8),
             }
-          : undefined,
-      );
+          : targetPosition === "top"
+            ? {
+                x: Math.min(16, Math.max(1, targetBounds.width - 1)),
+                y: 8,
+              }
+            : {
+                x: targetBounds.width / 2,
+                y: targetBounds.height / 2,
+              };
+      const start = {
+        x: sourceBounds.x + sourceBounds.width / 2,
+        y: sourceBounds.y + sourceBounds.height / 2,
+      };
+      const end = { x: targetBounds.x + offset.x, y: targetBounds.y + offset.y };
+      // Deterministic pointer mechanics: bounded interpolated steps with
+      // small bounded waits keep pointerdown, the activation move, the drop
+      // tracking, and pointerup in separate frames so the Puck drag surface
+      // activates and the drop target is tracked on slow runners.
+      await page.mouse.move(start.x, start.y, { steps: 4 });
+      await page.mouse.down();
+      await page.mouse.move(start.x + 8, start.y + 8, { steps: 2 });
+      await page.waitForTimeout(80);
+      await page.mouse.move((start.x + end.x) / 2, (start.y + end.y) / 2, {
+        steps: 6,
+      });
+      await page.waitForTimeout(80);
+      await page.mouse.move(end.x, end.y, { steps: 8 });
+      await page.waitForTimeout(120);
+      await page.mouse.up();
       await page.waitForTimeout(300);
       if (await ready()) return;
     }

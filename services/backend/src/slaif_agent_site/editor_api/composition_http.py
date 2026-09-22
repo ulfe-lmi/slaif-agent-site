@@ -69,6 +69,10 @@ async def _page_and_node(
     except ContentModelServiceError as exc:
         if exc.reason is ContentModelServiceReason.NOT_FOUND:
             raise ResourceNotFoundError() from None
+        if exc.reason is ContentModelServiceReason.VALIDATION:
+            if exc.code is not None:
+                raise DomainValidationError(details={"prop_error": exc.code}) from None
+            raise DomainValidationError() from None
         raise ServiceUnavailableError() from None
     found = next((node for node in nodes if node.id == node_id), None)
     if node_id is not None and found is None:
@@ -185,6 +189,10 @@ async def add_component(
     except ContentModelServiceError as exc:
         if exc.reason is ContentModelServiceReason.CONFLICT:
             raise ResourceConflictError() from None
+        if exc.reason is ContentModelServiceReason.VALIDATION:
+            if exc.code is not None:
+                raise DomainValidationError(details={"prop_error": exc.code}) from None
+            raise DomainValidationError() from None
         raise ServiceUnavailableError() from None
 
 

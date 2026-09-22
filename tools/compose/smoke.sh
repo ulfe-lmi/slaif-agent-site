@@ -62,6 +62,8 @@ ARTIFACT_BODY_FILE=
 FOREIGN_CAPABILITY_CONFIG_FILE=
 FOREIGN_CAPABILITY_META_FILE=
 PRE_OUTAGE_BODY_FILE=
+MEDIA_FINALIZE_FILE=
+MEDIA_PUBLIC_FILE=
 BROWSER_ARTIFACT_BASELINE=
 
 retrieve_public_artifacts() {
@@ -150,6 +152,8 @@ cleanup() {
   test -z "$MEDIA_SITES_FILE" || rm -f "$MEDIA_SITES_FILE"
   test -z "$MEDIA_UPLOAD_FILE" || rm -f "$MEDIA_UPLOAD_FILE"
   test -z "$MEDIA_CONTENT_FILE" || rm -f "$MEDIA_CONTENT_FILE"
+  test -z "$MEDIA_FINALIZE_FILE" || rm -f "$MEDIA_FINALIZE_FILE"
+  test -z "$MEDIA_PUBLIC_FILE" || rm -f "$MEDIA_PUBLIC_FILE"
   test -z "$EDGE_LIMIT_BODY_FILE" || rm -f "$EDGE_LIMIT_BODY_FILE"
   test -z "$PUBLIC_AGENT_RESTART_OUTPUT_FILE" || rm -f "$PUBLIC_AGENT_RESTART_OUTPUT_FILE"
   test -z "$PUBLIC_AGENT_ACCEPTANCE_OUTPUT_FILE" || rm -f "$PUBLIC_AGENT_ACCEPTANCE_OUTPUT_FILE"
@@ -180,6 +184,8 @@ MEDIA_LOGIN_FILE=$(mktemp)
 MEDIA_SITES_FILE=$(mktemp)
 MEDIA_UPLOAD_FILE=$(mktemp)
 MEDIA_CONTENT_FILE=$(mktemp)
+MEDIA_FINALIZE_FILE=$(mktemp)
+MEDIA_PUBLIC_FILE=$(mktemp)
 EDGE_LIMIT_BODY_FILE=$(mktemp)
 PUBLIC_AGENT_RESTART_OUTPUT_FILE=$(mktemp)
 PUBLIC_AGENT_ACCEPTANCE_OUTPUT_FILE=$(mktemp)
@@ -304,7 +310,69 @@ curl --fail --show-error --silent --cookie "$MEDIA_COOKIE_FILE" \
   --output "$MEDIA_CONTENT_FILE" \
   "http://localhost:8080/media/v1/sites/$media_site_id/assets/$media_id/content"
 cmp "$ROOT/docs/screenshots/01-landing-page.png" "$MEDIA_CONTENT_FILE"
-echo "media-e2e: OK edge=nginx upload=validated-private-read=byte-identical"
+media_workspace_id=$(docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif -Atc \
+  "SELECT w.id FROM control.workspace w
+   JOIN control.user_account a ON a.id = w.created_by
+   WHERE w.site_id='$media_site_id'::uuid
+     AND a.local_username_normalized='compose.admin'
+     AND w.actor_type='HUMAN' AND w.status='ACTIVE'
+     AND w.expires_at > CURRENT_TIMESTAMP
+   ORDER BY w.created_at DESC LIMIT 1")
+test -n "$media_workspace_id"
+media_page_id=$(docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif -Atc \
+  "SELECT id FROM content.page_base
+   WHERE site_id='$media_site_id'::uuid AND slug='home' AND locale='en'")
+test -n "$media_page_id"
+docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif \
+  -v ON_ERROR_STOP=1 -c \
+  "BEGIN;
+   SET LOCAL app.session_id = '$media_workspace_id';
+   SET LOCAL app.operation_id = '12000000-0000-4000-8000-000000000401';
+   INSERT INTO content.page_composition_base
+     (id,site_id,page_id,component_type,schema_version,parent_id,slot_key,order_key,props)
+   VALUES
+     ('12000000-0000-4000-8000-000000000400'::uuid,'$media_site_id'::uuid,
+      '$media_page_id'::uuid,'Image','1',NULL,'default',10,
+      '{\"mediaId\":\"$media_id\",\"alt\":\"Compose media fixture\"}'::jsonb);
+   COMMIT;" >/dev/null
+docker exec "${PROJECT}-media-service-1" python -c "
+import asyncio, json
+from uuid import UUID
+from slaif_agent_site.media_service.config import MediaSettings
+from slaif_agent_site.media_service.database import MediaDatabase
+from slaif_agent_site.media_service.finalize import (
+    MediaFinalizationRepository,
+    finalize_media_for_promotion,
+)
+from slaif_agent_site.media_service.store import MediaStore
+
+async def main():
+    settings = MediaSettings.load()
+    database = MediaDatabase(settings)
+    await database.start()
+    try:
+        manifest = await finalize_media_for_promotion(
+            UUID('$media_site_id'),
+            UUID('$media_workspace_id'),
+            [UUID('$media_id')],
+            store=MediaStore(settings.media_root),
+            repository=MediaFinalizationRepository(database),
+        )
+        print(json.dumps({'manifest': manifest.to_list()}))
+    finally:
+        await database.stop()
+
+asyncio.run(main())
+" >"$MEDIA_FINALIZE_FILE"
+media_public_path=$(python -c 'import json,sys; m=json.load(open(sys.argv[1]))["manifest"][0]; d=m["digest"]; print("/media/public/sha256/" + d[:2] + "/" + d[2:4] + "/" + d)' "$MEDIA_FINALIZE_FILE")
+media_public_status=$(curl --silent --show-error --output "$MEDIA_PUBLIC_FILE" \
+  --write-out '%{http_code}' "http://localhost:8080$media_public_path")
+test "$media_public_status" = 200
+cmp "$ROOT/docs/screenshots/01-landing-page.png" "$MEDIA_PUBLIC_FILE"
+curl -sD - -o /dev/null "http://localhost:8080$media_public_path" \
+  | tr -d '\r' \
+  | grep -q '^cache-control: public, max-age=31536000, immutable$'
+echo "media-e2e: OK edge=nginx upload=validated-private-read=byte-identical finalization=public-read=byte-identical immutable-cache=verified"
 docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif -Atc \
   "SET ROLE slaif_owner;
    SELECT count(*) = 8
@@ -389,7 +457,7 @@ docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif -v ON_ERROR_STOP=1
     '12000000-0000-4000-8000-000000000002|demo|VIEWER|ACTIVE|1')"
 docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif -v ON_ERROR_STOP=1 -Atc \
   "SET ROLE slaif_owner;
-   SELECT count(*) = 3
+   SELECT count(*) = 4
      AND count(*) FILTER (WHERE
        identity_kind = 'OIDC' AND status = 'ACTIVE'
        AND local_username IS NULL AND local_username_normalized IS NULL
@@ -417,9 +485,23 @@ docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif -v ON_ERROR_STOP=1
          WHERE administrator.user_account_id = account.id
        )
      ) = 1
+     AND count(*) FILTER (WHERE
+       identity_kind = 'LOCAL' AND status = 'ACTIVE'
+       AND id = '12000000-0000-4000-8000-000000000309'::uuid
+       AND local_username = 'oap079a.denied'
+       AND local_username_normalized = 'oap079a.denied'
+       AND password_hash IS NOT NULL
+       AND display_name = 'OAP 079 denied fixture'
+       AND email IS NULL
+       AND oidc_issuer IS NULL AND oidc_subject IS NULL
+       AND NOT EXISTS (
+         SELECT 1 FROM control.platform_administrator administrator
+         WHERE administrator.user_account_id = account.id
+       )
+     ) = 1
      AND (SELECT count(*) FROM control.platform_administrator) = 1
    FROM control.user_account account;" | grep -q '^t$'
-echo "governance-e2e: OK visible=create-profile-domains-membership-archive negatives=verified devices=6"
+echo "governance-e2e: OK visible=create-profile-domains-membership-archive negatives=verified devices=6 users=4"
 for path in \
   /health/live \
   /health/ready \

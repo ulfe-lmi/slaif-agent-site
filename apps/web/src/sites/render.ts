@@ -19,6 +19,12 @@ export type SiteContext = Readonly<{
   matched_path_prefix: string;
 }>;
 
+export type ProjectionMedia = Readonly<{
+  url: string;
+  mime_type: string;
+  size_bytes: number;
+}>;
+
 export type ProjectionNode = Readonly<{
   id: string;
   component_type: string;
@@ -27,6 +33,7 @@ export type ProjectionNode = Readonly<{
   slot_key: string;
   order_key: number;
   props: Record<string, unknown>;
+  media?: ProjectionMedia | null;
   children: readonly ProjectionNode[];
 }>;
 

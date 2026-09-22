@@ -225,6 +225,54 @@ class EdgeContractTests(unittest.TestCase):
             self.assertIn("style-src-attr 'unsafe-inline'", editor_policy)
             self.assertNotIn("unsafe-eval", editor_policy)
 
+    def test_public_media_digest_route_is_exact_and_private_namespaces_unrouteable(
+        self,
+    ) -> None:
+        nginx = (ROOT / "infra/nginx/nginx.conf").read_text(encoding="utf-8")
+        apache = (ROOT / "infra/apache/slaif-agent-site.conf").read_text(
+            encoding="utf-8"
+        )
+        public_location = (
+            "        location /media/public/ {\n"
+            "            proxy_pass http://slaif_media_service/v1/public/;\n"
+            "        }\n"
+        )
+        self.assertIn(public_location, nginx)
+        self.assertIn(
+            "        location /media/ {\n            client_max_body_size 105119744;\n"
+            "            proxy_pass http://slaif_media_service/;\n        }",
+            nginx,
+        )
+        self.assertLess(nginx.index(public_location), nginx.index("location /media/ {"))
+        self.assertEqual(nginx.count("client_max_body_size 105119744;"), 1)
+        self.assertEqual(nginx.count("proxy_pass http://slaif_media_service"), 2)
+        self.assertIn(
+            "    ProxyPass        /media/public/ "
+            "http://media-service:8000/v1/public/ "
+            "connectiontimeout=5 timeout=60 flushpackets=on",
+            apache,
+        )
+        self.assertIn(
+            "    ProxyPassReverse /media/public/ http://media-service:8000/v1/public/",
+            apache,
+        )
+        self.assertIn(
+            "    ProxyPass        /media/ http://media-service:8000/ "
+            "connectiontimeout=5 timeout=60 flushpackets=on",
+            apache,
+        )
+        self.assertLess(
+            apache.index("ProxyPass        /media/public/"),
+            apache.index("ProxyPass        /media/ http://media-service:8000/"),
+        )
+        # The staging and browser-artifact namespaces are private object
+        # directories, never edge-routable: no adapter line may expose them.
+        for content in (nginx, apache):
+            self.assertNotIn(".staging", content)
+            self.assertNotIn("staging", content)
+            self.assertNotIn("artifact", content)
+            self.assertNotIn("sha256/", content)
+
     def test_one_edge_owned_request_id_replaces_upstream_and_caller_values(
         self,
     ) -> None:

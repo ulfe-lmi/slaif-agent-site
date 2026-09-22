@@ -90,6 +90,7 @@ AGENT_COMPOSITION_LIST_SQL = "SELECT * FROM content.slaif_agent_component_list($
 AGENT_COMPONENT_GET_SQL = "SELECT * FROM content.slaif_agent_component_get($1,$2)"
 AGENT_COMPONENT_CATALOG_SQL = "SELECT control.slaif_component_catalog()"
 AGENT_MEDIA_LIST_SQL = "SELECT * FROM content.slaif_agent_media_list($1)"
+AGENT_MEDIA_GET_SQL = "SELECT * FROM content.slaif_agent_media_get($1,$2)"
 AGENT_LOCALE_LIST_SQL = "SELECT * FROM content.slaif_agent_locale_list($1)"
 AGENT_LOCALE_GET_SQL = "SELECT * FROM content.slaif_agent_locale_get($1,$2)"
 AGENT_NAVIGATION_LIST_SQL = "SELECT * FROM content.slaif_agent_navigation_list($1)"
@@ -323,6 +324,12 @@ class AgentSemanticReadService:
     async def list_media(self, site_id: UUID) -> tuple[MediaAssetRecord, ...]:
         rows = await self._fetch(AGENT_MEDIA_LIST_SQL, site_id)
         return tuple(_md(row) for row in rows)
+
+    async def get_media(self, site_id: UUID, media_id: UUID) -> MediaAssetRecord:
+        row = await self._fetchrow(AGENT_MEDIA_GET_SQL, site_id, media_id)
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.NOT_FOUND)
+        return cast(MediaAssetRecord, _md(row))
 
     async def list_locales(self, site_id: UUID) -> tuple[LocaleRecord, ...]:
         rows = await self._fetch(AGENT_LOCALE_LIST_SQL, site_id)

@@ -72,6 +72,7 @@ class MediaStore:
         self.root = root
         self.max_upload_bytes = max_upload_bytes
         self.staging_root = root / ".staging"
+        self.public_root = root / "public"
         self._fsync = fsync
         self.lock_timeout_seconds = lock_timeout_seconds
 
@@ -411,6 +412,215 @@ class MediaStore:
                 os.close(objects)
             if staging >= 0:
                 os.close(staging)
+            if root >= 0:
+                os.close(root)
+
+    def _open_public_object_directory(
+        self, root: int, digest: str, *, create: bool
+    ) -> int:
+        public = self._open_child_directory(root, "public", create=create)
+        try:
+            return self._open_object_directory(public, digest, create=create)
+        finally:
+            os.close(public)
+
+    def _verify_public_object(
+        self,
+        directory: int,
+        name: str,
+        expected_digest: str,
+        size_bytes: int,
+    ) -> None:
+        try:
+            info = os.stat(name, dir_fd=directory, follow_symlinks=False)
+        except OSError:
+            raise MediaStoreError("storage_corrupt") from None
+        if (
+            not stat.S_ISREG(info.st_mode)
+            or info.st_nlink != 1
+            or stat.S_IMODE(info.st_mode) != _OBJECT_MODE
+            or info.st_size != size_bytes
+        ):
+            raise MediaStoreError("storage_corrupt")
+        descriptor = -1
+        try:
+            descriptor = os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=directory)
+            if self._digest_descriptor(descriptor) != expected_digest:
+                raise MediaStoreError("storage_corrupt")
+        except MediaStoreError:
+            raise
+        except OSError:
+            raise MediaStoreError("storage_corrupt") from None
+        finally:
+            if descriptor >= 0:
+                os.close(descriptor)
+
+    def publish_public(self, storage_key: str, digest: str, size_bytes: int) -> str:
+        """Idempotently publish one verified private object to the public namespace.
+
+        The store invariant requires ``st_nlink == 1`` on every media object, so
+        a verified copy is always used for a fresh destination: hard-linking the
+        private object would raise its link count and make every subsequent
+        private ``open_verified`` fail. The only hard-link-compatible case is the
+        idempotent one, where the destination already is the intended object and
+        is re-verified byte-for-byte. The destination digest is verified before
+        and after the atomic rename; a failure leaves at most one unreferenced
+        public object (a temp name never addressed as a digest), never a
+        partial digest-named object, and never touches ``.staging`` or
+        browser-artifact directories.
+        """
+        self._validate_digest(digest)
+        if size_bytes < 1:
+            raise MediaStoreError("storage_corrupt")
+        if storage_key != f"sha256/{digest[:2]}/{digest[2:4]}/{digest}":
+            raise MediaStoreError("storage_corrupt")
+        public_key = f"public/sha256/{digest[:2]}/{digest[2:4]}/{digest}"
+        root = -1
+        private = -1
+        public = -1
+        source_descriptor = -1
+        temp_descriptor = -1
+        temp_name: str | None = None
+        lock_acquired = False
+        try:
+            root = self._open_root(create=False)
+            private = self._open_object_directory(root, digest, create=False)
+            source_descriptor = os.open(
+                digest, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=private
+            )
+            source_info = os.fstat(source_descriptor)
+            if (
+                not stat.S_ISREG(source_info.st_mode)
+                or source_info.st_nlink != 1
+                or stat.S_IMODE(source_info.st_mode) != _OBJECT_MODE
+                or source_info.st_size != size_bytes
+            ):
+                raise MediaStoreError("storage_corrupt")
+            os.lseek(source_descriptor, 0, os.SEEK_SET)
+            if self._digest_descriptor(source_descriptor) != digest:
+                raise MediaStoreError("storage_corrupt")
+            os.lseek(source_descriptor, 0, os.SEEK_SET)
+            public = self._open_public_object_directory(root, digest, create=True)
+            self._acquire_directory_lock(public)
+            lock_acquired = True
+            try:
+                try:
+                    os.stat(digest, dir_fd=public, follow_symlinks=False)
+                except FileNotFoundError:
+                    temp_created = False
+                    for _ in range(8):
+                        temp_name = f"tmp-{os.urandom(16).hex()}"
+                        try:
+                            temp_descriptor = os.open(
+                                temp_name,
+                                os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                                _OBJECT_MODE,
+                                dir_fd=public,
+                            )
+                            temp_created = True
+                            break
+                        except FileExistsError:
+                            continue
+                    if not temp_created:
+                        raise MediaStoreError("storage_unavailable") from None
+                    try:
+                        while True:
+                            chunk = os.read(source_descriptor, 1024 * 1024)
+                            if not chunk:
+                                break
+                            os.write(temp_descriptor, chunk)
+                        self._sync(temp_descriptor)
+                    finally:
+                        if temp_descriptor >= 0:
+                            os.close(temp_descriptor)
+                        temp_descriptor = -1
+                    current_temp = temp_name
+                    if current_temp is None:
+                        raise MediaStoreError("storage_unavailable") from None
+                    self._verify_public_object(public, current_temp, digest, size_bytes)
+                    os.rename(
+                        current_temp,
+                        digest,
+                        src_dir_fd=public,
+                        dst_dir_fd=public,
+                    )
+                    temp_name = None
+                    self._verify_public_object(public, digest, digest, size_bytes)
+                    self._sync(public)
+                else:
+                    self._verify_public_object(public, digest, digest, size_bytes)
+                return public_key
+            finally:
+                if lock_acquired:
+                    self._release_directory_lock(public)
+        except MediaStoreError:
+            self._remove_public_temp(public, temp_name)
+            raise
+        except OSError:
+            self._remove_public_temp(public, temp_name)
+            raise MediaStoreError("storage_unavailable") from None
+        finally:
+            if temp_descriptor >= 0:
+                os.close(temp_descriptor)
+            if source_descriptor >= 0:
+                os.close(source_descriptor)
+            if public >= 0:
+                os.close(public)
+            if private >= 0:
+                os.close(private)
+            if root >= 0:
+                os.close(root)
+
+    @staticmethod
+    def _remove_public_temp(directory: int, temp_name: str | None) -> None:
+        if directory < 0 or temp_name is None:
+            return
+        try:
+            os.unlink(temp_name, dir_fd=directory)
+        except FileNotFoundError:
+            pass
+        except OSError:
+            pass
+
+    def open_public_verified(self, digest: str, size_bytes: int) -> tuple[int, int]:
+        """Digest-verified read of a public object by exact digest path form."""
+        self._validate_digest(digest)
+        if size_bytes < 1:
+            raise MediaStoreError("storage_corrupt")
+        root = -1
+        public = -1
+        descriptor = -1
+        try:
+            root = self._open_root(create=False)
+            public = self._open_public_object_directory(root, digest, create=False)
+            descriptor = os.open(
+                digest,
+                os.O_RDONLY | os.O_NOFOLLOW,
+                dir_fd=public,
+            )
+            info = os.fstat(descriptor)
+            if (
+                not stat.S_ISREG(info.st_mode)
+                or info.st_nlink != 1
+                or stat.S_IMODE(info.st_mode) != _OBJECT_MODE
+                or info.st_size != size_bytes
+            ):
+                raise MediaStoreError("storage_corrupt")
+            if self._digest_descriptor(descriptor) != digest:
+                raise MediaStoreError("storage_corrupt")
+            os.lseek(descriptor, 0, os.SEEK_SET)
+            result = descriptor, info.st_size
+            descriptor = -1
+            return result
+        except MediaStoreError:
+            raise
+        except OSError:
+            raise MediaStoreError("media_missing") from None
+        finally:
+            if descriptor >= 0:
+                os.close(descriptor)
+            if public >= 0:
+                os.close(public)
             if root >= 0:
                 os.close(root)
 

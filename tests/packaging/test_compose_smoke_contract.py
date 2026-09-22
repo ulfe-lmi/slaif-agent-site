@@ -93,7 +93,9 @@ class ComposeSmokeContractTests(unittest.TestCase):
         self.assertIn("identity_kind = 'LOCAL'", source)
         self.assertIn("password_hash IS NULL", source)
         self.assertIn("password_hash IS NOT NULL", source)
-        self.assertIn("SELECT count(*) = 3", source)
+        self.assertIn("SELECT count(*) = 4", source)
+        self.assertIn("AND id = '12000000-0000-4000-8000-000000000309'::uuid", source)
+        self.assertIn("AND local_username = 'oap079a.denied'", source)
         self.assertIn(
             "(SELECT count(*) FROM control.platform_administrator) = 1", source
         )

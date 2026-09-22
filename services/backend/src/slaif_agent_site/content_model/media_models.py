@@ -49,3 +49,5 @@ class MediaAssetRecord(BaseModel):
     metadata: dict[str, Any]
     created_at: datetime
     updated_at: datetime
+    public_status: str
+    published_at: datetime | None

@@ -54,6 +54,7 @@ from slaif_agent_site.content_model.item_models import (
     CreateContentItemRequest,
     DeleteContentItemRequest,
 )
+from slaif_agent_site.content_model.media_models import MediaAssetRecord
 from slaif_agent_site.content_model.models import (
     ContentTypeRecord,
     CreateContentTypeRequest,
@@ -99,6 +100,7 @@ from slaif_agent_site.content_model.service import (
     _cv,
     _fd,
     _locale,
+    _md,
     _nav_item,
     _pg,
     _redirect,
@@ -306,6 +308,10 @@ AGENT_REGION_LIST_SQL = "SELECT * FROM content.slaif_agent_region_list($1)"
 AGENT_REGION_UPDATE_SQL = (
     "SELECT * FROM content.slaif_agent_region_update($1,$2,$3,$4,$5)"
 )
+AGENT_MEDIA_REGISTER_SQL = (
+    "SELECT * FROM content.slaif_agent_media_register("
+    "$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)"
+)
 
 _IDEMPOTENCY_KEY = re.compile(r"^[A-Za-z0-9._~-]{1,128}$")
 
@@ -388,6 +394,7 @@ AGENT_SEMANTIC_CONTRACTS = {
     "THEME_UPDATED": ("theme", "PATCH", 200, "mutation"),
     "PAGE_STYLE_UPDATED": ("page_style", "PATCH", 200, "mutation"),
     "GLOBAL_REGION_UPDATED": ("global_region", "PATCH", 200, "mutation"),
+    "MEDIA_UPLOADED": ("media_asset", "POST", 201, "upload"),
 }
 AGENT_SEMANTIC_ACTIONS = frozenset(AGENT_SEMANTIC_CONTRACTS)
 
@@ -1480,6 +1487,38 @@ class AgentCowContentModelService(ContentModelService):
         else:
             ok, error_key = validate_map_embed_props(merged)
         return None if ok else error_key
+
+    async def create_media_asset(
+        self,
+        *,
+        site_id: UUID,
+        uploaded_by: UUID,
+        filename: str,
+        mime_type: str,
+        size_bytes: int,
+        content_hash: str,
+        storage_key: str,
+        alt_text: str,
+        metadata: dict[str, Any],
+    ) -> MediaAssetRecord:
+        cow = cast(CowSession, self._cow_session)
+        row = await self._fetchrow(
+            AGENT_MEDIA_REGISTER_SQL,
+            site_id,
+            uploaded_by,
+            filename,
+            mime_type,
+            size_bytes,
+            content_hash,
+            storage_key,
+            alt_text,
+            json.dumps(metadata, sort_keys=True),
+            cow.session_id,
+            cow.operation_id,
+        )
+        if row is None:
+            raise ContentModelServiceError(ContentModelServiceReason.CONFLICT)
+        return cast(MediaAssetRecord, _md(row))
 
 
 async def _cow_fetchrow(cow: CowSession, sql: str, *arguments: object) -> Any:

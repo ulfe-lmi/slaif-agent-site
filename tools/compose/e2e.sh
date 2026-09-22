@@ -253,4 +253,13 @@ if ! SLAIF_E2E_SECRET_FILE="$SECRET_FILE" \
 then
   fail browser agent-session-desktop-phone-contract
 fi
-echo "compose-e2e: OK projects=12 setup=1 governance=1 preview=1 preview-filtering=1 stable-devices=6 agent-sessions=2 artifacts=disabled"
+
+if ! SLAIF_E2E_SECRET_FILE="$SECRET_FILE" \
+  SLAIF_E2E_COMPOSE_PROJECT="$PROJECT" \
+  SLAIF_E2E_PREVIEW_WORKSPACE_ID="$workspace_id" \
+  SLAIF_E2E_OUTPUT_DIR="$OUTPUT_DIR" \
+  pnpm exec playwright test --no-deps --project=media-publication
+then
+  fail browser media-publication-contract
+fi
+echo "compose-e2e: OK projects=13 setup=1 governance=1 preview=1 preview-filtering=1 stable-devices=6 agent-sessions=2 media-publication=1 artifacts=disabled"

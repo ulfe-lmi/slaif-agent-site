@@ -88,5 +88,11 @@ export default defineConfig({
       testMatch: /agent-sessions\.spec\.ts/,
       use: { ...devices["Pixel 5"] },
     },
+    {
+      name: "media-publication",
+      dependencies: ["setup"],
+      testMatch: /media-publication\.spec\.ts/,
+      use: { ...devices["Desktop Chrome"] },
+    },
   ],
 });

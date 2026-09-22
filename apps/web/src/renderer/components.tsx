@@ -10,6 +10,7 @@ import type { ThemeRecord } from "@slaif-agent-site/composition-schema";
 import type {
   PageProjection,
   ProjectionAncestor,
+  ProjectionMedia,
   ProjectionNode,
   ProjectionRegion,
 } from "../sites/render";
@@ -34,6 +35,7 @@ interface RenderProps {
   readonly locale: string;
   readonly data?: readonly Record<string, unknown>[];
   readonly meta?: BindingMeta;
+  readonly media?: ProjectionMedia | null;
 }
 
 const CLASS_VALUES = new Set([
@@ -316,16 +318,34 @@ function RichText({ props }: RenderProps) {
   );
 }
 
-function Image({ props }: RenderProps) {
+function Image({ props, media }: RenderProps) {
   const mediaId = text(props.mediaId);
   if (!mediaId || !/^[0-9a-f-]{36}$/i.test(mediaId))
     throw new Error("invalid media reference");
+  const alt = text(props.alt);
+  const wrapper = {
+    "aria-label": alt,
+    className: `renderer-image-placeholder ${designClasses(props.aspectRatio, "renderer-image-placeholder", "auto", aspectRatioClass)}`,
+    role: "img" as const,
+  };
+  const resolved =
+    media !== null &&
+    media !== undefined &&
+    media.url.startsWith("/media/") &&
+    (media.mime_type === "image/png" || media.mime_type === "image/jpeg")
+      ? media
+      : null;
+  if (resolved === null) return <div {...wrapper} />;
   return (
-    <div
-      aria-label={text(props.alt)}
-      className={`renderer-image-placeholder ${designClasses(props.aspectRatio, "renderer-image-placeholder", "auto", aspectRatioClass)}`}
-      role="img"
-    />
+    <div {...wrapper}>
+      <img
+        className="sl-image"
+        src={resolved.url}
+        alt={alt}
+        loading="lazy"
+        referrerPolicy="no-referrer"
+      />
+    </div>
   );
 }
 function VideoEmbed({ props }: RenderProps) {
@@ -751,6 +771,7 @@ export function renderComponent(
   data?: readonly Record<string, unknown>[],
   meta?: BindingMeta,
   clientState = true,
+  media?: ProjectionMedia | null,
 ): ReactElement {
   // Render registry entries as real React elements (never direct function
   // calls): direct calls bypass React's client-component boundary
@@ -767,6 +788,7 @@ export function renderComponent(
     locale,
     ...(data === undefined ? {} : { data }),
     ...(meta === undefined ? {} : { meta }),
+    ...(media === undefined ? {} : { media }),
   });
 }
 
@@ -788,6 +810,7 @@ function renderNode(
         bindings[node.id],
         bindingMeta[node.id],
         clientState,
+        node.media ?? null,
       )}
     </div>
   );
