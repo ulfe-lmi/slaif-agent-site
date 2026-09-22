@@ -127,6 +127,7 @@ EXPECTED_MOUNTS = {
         ("agent-secret", "/run/slaif-agent", True),
         ("browser-signing-secret", "/run/slaif-browser-signing", True),
         ("browser-worker-secret", "/run/slaif-browser-worker", True),
+        ("media-data", "/var/lib/slaif/media", False),
     },
     "browser-worker": {
         ("browser-worker-secret", "/run/slaif-browser-worker", True),

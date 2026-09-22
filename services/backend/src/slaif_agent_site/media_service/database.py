@@ -6,6 +6,7 @@ import asyncio
 import json
 from contextlib import suppress
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -29,6 +30,7 @@ MEDIA_REGISTER_SQL = (
     "$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)"
 )
 MEDIA_GET_SQL = "SELECT * FROM content.slaif_media_asset_get($1,$2,$3,$4,$5,$6)"
+MEDIA_PUBLIC_GET_SQL = "SELECT * FROM content.slaif_media_public_get($1)"
 MEDIA_IDEMPOTENCY_BEGIN_SQL = (
     "SELECT * FROM control.slaif_media_idempotency_begin($1,$2,$3,$4,$5,$6,$7,$8)"
 )
@@ -61,6 +63,18 @@ class MediaRecord:
     metadata: dict[str, Any]
     created_at: Any
     updated_at: Any
+    public_status: str
+    published_at: datetime | None
+
+
+@dataclass(frozen=True, slots=True)
+class PublicMediaRecord:
+    """Public namespace row: content-addressed, site-independent."""
+
+    content_hash: str
+    mime_type: str
+    size_bytes: int
+    public_status: str
 
 
 class MediaIdempotencyMismatchError(RuntimeError):
@@ -302,10 +316,31 @@ class MediaDatabase:
             )
             return None if row is None else _record(row)
 
+    async def get_public(self, *, content_hash: str) -> PublicMediaRecord | None:
+        """Content-addressed public lookup used by the public digest route."""
+        try:
+            async with self.cow_pool().acquire(
+                timeout=self.settings.acquire_timeout_seconds
+            ) as connection:
+                row = await connection.fetchrow(MEDIA_PUBLIC_GET_SQL, content_hash)
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            raise RuntimeError("media public lookup unavailable") from error
+        if row is None:
+            return None
+        return PublicMediaRecord(
+            content_hash=row[0],
+            mime_type=row[1],
+            size_bytes=row[2],
+            public_status=row[3],
+        )
+
 
 def _record(row: Any) -> MediaRecord:
     import json
 
+    published = row[13]
     return MediaRecord(
         id=row[0],
         site_id=row[1],
@@ -319,12 +354,13 @@ def _record(row: Any) -> MediaRecord:
         metadata=json.loads(row[9]) if isinstance(row[9], str) else row[9],
         created_at=row[10],
         updated_at=row[11],
+        public_status=row[12],
+        published_at=published,
     )
 
 
 def _record_from_dict(value: dict[str, Any]) -> MediaRecord:
-    from datetime import datetime
-
+    published = value.get("published_at")
     return MediaRecord(
         id=UUID(value["id"]),
         site_id=UUID(value["site_id"]),
@@ -338,6 +374,10 @@ def _record_from_dict(value: dict[str, Any]) -> MediaRecord:
         metadata=value["metadata"],
         created_at=datetime.fromisoformat(value["created_at"]),
         updated_at=datetime.fromisoformat(value["updated_at"]),
+        public_status=value["public_status"],
+        published_at=(
+            datetime.fromisoformat(published) if published is not None else None
+        ),
     )
 
 
@@ -355,6 +395,10 @@ def record_to_dict(record: MediaRecord) -> dict[str, Any]:
         "metadata": record.metadata,
         "created_at": record.created_at.isoformat(),
         "updated_at": record.updated_at.isoformat(),
+        "public_status": record.public_status,
+        "published_at": (
+            record.published_at.isoformat() if record.published_at is not None else None
+        ),
     }
 
 
@@ -363,5 +407,6 @@ __all__ = [
     "MediaDatabase",
     "MediaIdempotencyMismatchError",
     "MediaRecord",
+    "PublicMediaRecord",
     "record_to_dict",
 ]

@@ -167,6 +167,14 @@ class RenderPreviewRequest(RenderPageRequest):
         return normalize_preview_route(value) if value is not None else None
 
 
+class ProjectionMedia(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    url: str
+    mime_type: str
+    size_bytes: int
+
+
 class ProjectionNode(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -177,6 +185,7 @@ class ProjectionNode(BaseModel):
     slot_key: str
     order_key: int
     props: dict[str, Any]
+    media: ProjectionMedia | None = None
     children: tuple[ProjectionNode, ...] = ()
 
 
@@ -657,6 +666,28 @@ def _flatten(nodes: tuple[ProjectionNode, ...]) -> tuple[ProjectionNode, ...]:
 
     for node in nodes:
         visit(node)
+    return tuple(result)
+
+
+MEDIA_MIME_CLASSES = frozenset({"image/png", "image/jpeg"})
+RENDER_MEDIA_RESOLVE_SQL = "SELECT * FROM content.slaif_render_media_resolve($1,$2)"
+
+
+def _attach_media(
+    nodes: tuple[ProjectionNode, ...],
+    descriptors: dict[UUID, ProjectionMedia],
+) -> tuple[ProjectionNode, ...]:
+    result: list[ProjectionNode] = []
+    for node in nodes:
+        attached = _attach_media(node.children, descriptors)
+        result.append(
+            node.model_copy(
+                update={
+                    "children": attached,
+                    "media": descriptors.get(node.id),
+                }
+            )
+        )
     return tuple(result)
 
 
@@ -1549,6 +1580,50 @@ class RenderProjectionService:
             )
         return tuple(ancestors)
 
+    async def _media_descriptors(
+        self,
+        connection: Any,
+        *,
+        nodes: tuple[ProjectionNode, ...],
+        site_id: UUID,
+        render_mode: str,
+    ) -> dict[UUID, ProjectionMedia]:
+        descriptors: dict[UUID, ProjectionMedia] = {}
+        for node in _flatten(nodes):
+            if node.component_type != "Image":
+                continue
+            raw = node.props.get("mediaId")
+            if not isinstance(raw, str):
+                continue
+            try:
+                media_id = UUID(raw)
+            except ValueError:
+                continue
+            row = await connection.fetchrow(RENDER_MEDIA_RESOLVE_SQL, site_id, media_id)
+            if row is None:
+                continue
+            mime_type = str(row[0])
+            size_bytes = int(row[1])
+            content_hash = str(row[2])
+            public_status = str(row[3])
+            if mime_type not in MEDIA_MIME_CLASSES:
+                continue
+            if render_mode == "preview":
+                url = f"/media/v1/sites/{site_id}/assets/{media_id}/content"
+            else:
+                if public_status != "public":
+                    continue
+                url = (
+                    f"/media/public/sha256/{content_hash[:2]}/"
+                    f"{content_hash[2:4]}/{content_hash}"
+                )
+            descriptors[node.id] = ProjectionMedia(
+                url=url,
+                mime_type=mime_type,
+                size_bytes=size_bytes,
+            )
+        return descriptors
+
     async def _query(
         self,
         connection: Any,
@@ -1619,6 +1694,14 @@ class RenderProjectionService:
             )
         )
         roots = _node_tree(node_rows, page_id=page.id, site_id=context.site_id)
+        media_descriptors = await self._media_descriptors(
+            connection,
+            nodes=roots,
+            site_id=context.site_id,
+            render_mode=render_mode,
+        )
+        if media_descriptors:
+            roots = _attach_media(roots, media_descriptors)
         detail_nodes = tuple(
             node
             for node in _flatten(roots)

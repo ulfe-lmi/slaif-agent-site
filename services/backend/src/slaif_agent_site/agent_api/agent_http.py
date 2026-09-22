@@ -9,10 +9,16 @@ or alter infrastructure.
 
 from __future__ import annotations
 
+import asyncio
+import hashlib
+import json
+import os
+from collections.abc import AsyncIterator
 from typing import Annotated, Any, cast
 from uuid import UUID
 
 from fastapi import APIRouter, Header, Request
+from starlette.responses import StreamingResponse
 
 from slaif_agent_site.agent_api.models import (
     AgentComponentCatalogResponse,
@@ -140,11 +146,17 @@ from slaif_agent_site.errors import (
     IdempotencyKeyRequiredError,
     IdempotencyMismatchError,
     QuotaExceededError,
+    RequestTooLargeError,
     ResourceConflictError,
     ResourceNotFoundError,
     ServiceUnavailableError,
     TypeDependenciesError,
 )
+from slaif_agent_site.media_service.multipart import (
+    MultipartUploadError,
+    parse_upload,
+)
+from slaif_agent_site.media_service.store import MediaStore, MediaStoreError
 
 router = APIRouter(prefix="/api/agent/v1")
 IdempotencyHeader = Annotated[str | None, Header(alias="Idempotency-Key")]
@@ -175,6 +187,28 @@ def _enforce_resource_constraint(
 def _constraint(context: Any, key: str, default: Any = None) -> Any:
     values = context.resource_constraints
     return values.get(key, default) if isinstance(values, dict) else default
+
+
+def _media_store(request: Request) -> MediaStore:
+    store = getattr(request.app.state, "media_store", None)
+    if store is None:
+        raise ServiceUnavailableError()
+    return cast(MediaStore, store)
+
+
+def _upload_digest(request: Request, key: str, parsed: Any) -> str:
+    payload = {
+        "method": "POST",
+        "path": "/api/agent/v1/media/assets",
+        "key": key,
+        "digest": parsed.staged.digest,
+        "filename": parsed.filename,
+        "mime_type": parsed.staged.mime_type,
+        "size_bytes": parsed.staged.size_bytes,
+        "alt_text": parsed.alt_text,
+        "metadata": parsed.metadata,
+    }
+    return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
 
 
 async def _authenticate(request: Request) -> Any:
@@ -604,6 +638,131 @@ async def list_media(request: Request) -> list[MediaAssetRecord]:
         request, context, lambda service: service.list_media(context.site_id)
     )
     return [record.model_dump(mode="json") for record in records]
+
+
+@router.post("/media/assets", status_code=201)
+async def create_media_asset(
+    request: Request,
+    idempotency_key: IdempotencyHeader = None,
+) -> AgentMutationResponse:
+    """Upload one immutable media asset under the capability (media:upload)."""
+    context = await _authenticate(request)
+    _require_scope(context, "media:upload")
+    try:
+        key = validate_idempotency_key(idempotency_key)
+    except MissingIdempotencyKeyError:
+        raise IdempotencyKeyRequiredError() from None
+    except InvalidIdempotencyKeyError:
+        raise IdempotencyKeyInvalidError() from None
+    store = _media_store(request)
+    parsed = None
+    published = False
+    try:
+        parsed = await parse_upload(request, store)
+        storage_key = store.publish(parsed.staged)
+        published = True
+        return await execute_agent_mutation(
+            database=request.app.state.database,
+            context=context,
+            key=key,
+            digest=_upload_digest(request, key, parsed),
+            mutate=lambda service: service.create_media_asset(
+                site_id=context.site_id,
+                uploaded_by=context.delegator_id,
+                filename=parsed.filename,
+                mime_type=parsed.staged.mime_type,
+                size_bytes=parsed.staged.size_bytes,
+                content_hash=parsed.staged.digest,
+                storage_key=storage_key,
+                alt_text=parsed.alt_text,
+                metadata=parsed.metadata,
+            ),
+            resource_type="media_asset",
+            status_code=201,
+            quota_kind="upload",
+            action="MEDIA_UPLOADED",
+            method="POST",
+        )
+    except MultipartUploadError as error:
+        if error.args[0] == "upload_too_large":
+            raise RequestTooLargeError() from None
+        raise DomainValidationError() from None
+    except MediaStoreError as error:
+        if error.args[0] in {"unsupported_media", "media_signature_mismatch"}:
+            raise DomainValidationError() from None
+        raise ServiceUnavailableError() from None
+    except DurableIdempotencyMismatchError:
+        raise IdempotencyMismatchError() from None
+    except AgentMutationConflictError:
+        raise ResourceConflictError() from None
+    except AgentQuotaExceededError:
+        raise QuotaExceededError() from None
+    except AgentMutationUnavailableError:
+        raise ServiceUnavailableError() from None
+    except ContentModelServiceError as exc:
+        if exc.reason is ContentModelServiceReason.NOT_FOUND:
+            raise ResourceNotFoundError() from None
+        if exc.reason is ContentModelServiceReason.CONFLICT:
+            raise ResourceConflictError() from None
+        if exc.reason is ContentModelServiceReason.AUTHORIZATION:
+            raise AuthorizationError() from None
+        if exc.reason is ContentModelServiceReason.QUOTA:
+            raise QuotaExceededError() from None
+        if exc.reason is ContentModelServiceReason.VALIDATION:
+            raise DomainValidationError() from None
+        raise ServiceUnavailableError() from None
+    finally:
+        if parsed is not None and not published:
+            store.discard_staged(parsed.staged)
+
+
+@router.get("/media/assets/{media_id}/content")
+async def get_media_asset_content(
+    media_id: UUID,
+    request: Request,
+) -> StreamingResponse:
+    """Stream one site-owned asset with digest verification (media:read)."""
+    context = await _authenticate(request)
+    _require_scope(context, "media:read")
+    record = await _execute_read(
+        request, context, lambda service: service.get_media(context.site_id, media_id)
+    )
+    store = _media_store(request)
+    try:
+        descriptor, size = await asyncio.to_thread(
+            store.open_verified,
+            record.storage_key,
+            record.content_hash,
+            record.size_bytes,
+        )
+    except MediaStoreError as error:
+        if error.args[0] in {"media_missing", "storage_corrupt"}:
+            raise ResourceNotFoundError() from None
+        raise ServiceUnavailableError() from None
+    except Exception:
+        raise ServiceUnavailableError() from None
+
+    async def body() -> AsyncIterator[bytes]:
+        try:
+            while True:
+                chunk = await asyncio.to_thread(os.read, descriptor, 1024 * 1024)
+                if not chunk:
+                    break
+                yield chunk
+        finally:
+            os.close(descriptor)
+
+    return StreamingResponse(
+        body(),
+        media_type=record.mime_type,
+        headers={
+            "Content-Length": str(size),
+            "ETag": f'"{record.content_hash}"',
+            "Content-Disposition": "inline",
+            "Cache-Control": "private, no-store",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
 
 
 @router.patch("/theme", response_model=AgentThemeMutationResponse)

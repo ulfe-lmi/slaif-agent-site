@@ -268,12 +268,16 @@ async def test_media_ordinary_rbac_isolation_editor_delete_and_orphan(
                 record_a = uploaded.json()["record"]
                 media_a = UUID(record_a["id"])
 
+                # Site-scoped media (068): an authorized member of the same
+                # site reads the record from a different workspace — media
+                # is content-addressed and immutable, so visibility is
+                # site-scoped, not workspace-scoped.
                 foreign_workspace = await media_client.get(
                     f"/v1/sites/{ids['site_a']}/assets/{media_a}/content",
                     headers={"cookie": _cookie(session_b)},
                 )
-                assert foreign_workspace.status_code in {403, 404}
-                assert str(media_a) not in foreign_workspace.text
+                assert foreign_workspace.status_code == 200
+                assert foreign_workspace.content == PNG
 
                 second_site = await media_client.post(
                     f"/v1/sites/{ids['site_b']}/assets",

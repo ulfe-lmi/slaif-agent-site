@@ -197,6 +197,15 @@ MEDIA_CONTENT_FUNCTIONS = {
         "p_site_id uuid, p_media_id uuid, p_human_user_id uuid, "
         "p_session_id uuid, p_permission text, p_workspace_id uuid",
     ): "uuid, uuid, uuid, uuid, text, uuid",
+    ("slaif_media_public_get", "p_hash text"): "text",
+    (
+        "slaif_media_public_fetch",
+        "p_site_id uuid, p_media_id uuid",
+    ): "uuid, uuid",
+    (
+        "slaif_media_public_mark",
+        "p_site_id uuid, p_media_id uuid, p_workspace_id uuid, p_operation_id uuid",
+    ): "uuid, uuid, uuid, uuid",
 }
 AGENT_CONTENT_FUNCTIONS = {
     (
@@ -510,6 +519,14 @@ AGENT_CONTENT_FUNCTIONS = {
         "slaif_agent_navigation_item_delete",
         "p_site_id uuid, p_item_id uuid, p_expected integer",
     ): "uuid, uuid, integer",
+    (
+        "slaif_agent_media_register",
+        "p_site_id uuid, p_uploaded_by uuid, p_filename text, "
+        "p_mime_type text, p_size bigint, p_hash text, "
+        "p_storage_key text, p_alt_text text, p_metadata jsonb, "
+        "p_workspace_id uuid, p_operation_id uuid",
+    ): "uuid, uuid, text, text, bigint, text, text, text, jsonb, uuid, uuid",
+    ("slaif_agent_media_get", "p_site_id uuid, p_media_id uuid"): "uuid, uuid",
 }
 HUMAN_EDITOR_FUNCTIONS = {
     (
@@ -583,6 +600,10 @@ RENDER_CONTENT_FUNCTIONS = {
         "slaif_render_navigation_items",
         "p_site_id uuid, p_locale text, p_statuses text[]",
     ): "uuid, text, text[]",
+    (
+        "slaif_render_media_resolve",
+        "p_site_id uuid, p_media_id uuid",
+    ): "uuid, uuid",
 }
 CONTROL_FUNCTIONS = {
     (CONTROL_READINESS_FUNCTION, ""): "",

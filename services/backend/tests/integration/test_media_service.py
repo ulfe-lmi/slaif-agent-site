@@ -412,13 +412,19 @@ async def test_media_upload_store_read_dedupe_and_canonical_fallback(
                     database.settings.resolved_owner_dsn(),
                     expected_database=database.name,
                 ) as owner:
+                    # Site-scoped base-write media record (068 media
+                    # publication core): the upload lands in
+                    # media_asset_base directly — media is
+                    # content-addressed and immutable, so the COW overlay
+                    # stays empty and the record is visible to every
+                    # authorized session of the site.
                     assert (
                         await owner.fetchval(
                             "SELECT count(*) FROM content.media_asset_base "
                             "WHERE id = $1",
                             media_id,
                         )
-                        == 0
+                        == 1
                     )
                     assert (
                         await owner.fetchval(

@@ -122,6 +122,65 @@ async def upload_asset(site_id: UUID, request: Request) -> JSONResponse:
             _store(request).discard_staged(parsed.staged)
 
 
+_PUBLIC_DIGEST = re.compile(r"^[0-9a-f]{64}$")
+
+
+@router.get("/public/sha256/{prefix1}/{prefix2}/{digest}")
+async def get_public_digest(
+    prefix1: str, prefix2: str, digest: str, request: Request
+) -> StreamingResponse:
+    """Unauthenticated content-addressed public read (immutable bytes).
+
+    The URL carries only the exact public object form; no media id, site
+    id, or cookie is accepted.  A digest that is not public or absent is a
+    404, never a 403.
+    """
+    if (
+        _PUBLIC_DIGEST.fullmatch(digest) is None
+        or len(prefix1) != 2
+        or len(prefix2) != 2
+        or prefix1 != digest[:2]
+        or prefix2 != digest[2:4]
+    ):
+        raise ResourceNotFoundError()
+    try:
+        record = await _database(request).get_public(content_hash=digest)
+        if record is None:
+            raise ResourceNotFoundError()
+        descriptor, size = await __import__("asyncio").to_thread(
+            _store(request).open_public_verified, digest, record.size_bytes
+        )
+    except ResourceNotFoundError:
+        raise
+    except MediaStoreError as error:
+        if error.args[0] == "media_missing":
+            raise ResourceNotFoundError() from None
+        raise ServiceUnavailableError() from None
+    except Exception:
+        raise ServiceUnavailableError() from None
+
+    async def body() -> AsyncIterator[bytes]:
+        try:
+            while True:
+                chunk = await __import__("asyncio").to_thread(
+                    os.read, descriptor, 1024 * 1024
+                )
+                if not chunk:
+                    break
+                yield chunk
+        finally:
+            os.close(descriptor)
+
+    return StreamingResponse(
+        body(),
+        media_type=record.mime_type,
+        headers={
+            "Content-Length": str(size),
+            "Cache-Control": "public, max-age=31536000, immutable",
+        },
+    )
+
+
 @router.get("/sites/{site_id}/assets/{media_id}/content")
 async def get_asset_content(
     site_id: UUID, media_id: UUID, request: Request

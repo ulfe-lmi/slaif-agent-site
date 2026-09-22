@@ -144,6 +144,7 @@ def _semantic_database_error_code(error: asyncpg.PostgresError) -> str | None:
         "COMPONENT_DEPENDENCIES",
         "COMPONENT_ANCHORS_INVALID",
         "COMPONENT_ANCHOR_INVALID",
+        "COMPONENT_BINDING_INVALID",
     }:
         return message
     return None
@@ -1879,4 +1880,6 @@ def _md(row: Any) -> Any:
         metadata=json.loads(row[9]) if isinstance(row[9], str) else row[9],
         created_at=row[10],
         updated_at=row[11],
+        public_status=row[12],
+        published_at=row[13],
     )

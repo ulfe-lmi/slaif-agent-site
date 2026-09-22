@@ -199,6 +199,7 @@ async def test_each_app_has_only_typed_health_routes(
         expected_routes |= {
             "/v1/sites/{site_id}/assets",
             "/v1/sites/{site_id}/assets/{media_id}/content",
+            "/v1/public/sha256/{prefix1}/{prefix2}/{digest}",
         }
     if process is ProcessKind.MCP_ADAPTER:
         expected_routes |= {
@@ -248,6 +249,8 @@ async def test_each_app_has_only_typed_health_routes(
             "/api/agent/v1/components/{component_id}",
             "/api/agent/v1/components/{component_id}/move",
             "/api/agent/v1/media/",
+            "/api/agent/v1/media/assets",
+            "/api/agent/v1/media/assets/{media_id}/content",
             "/api/agent/v1/preview-runs",
             "/api/agent/v1/preview-runs/{run_id}",
             "/api/agent/v1/preview-runs/{run_id}/artifacts",

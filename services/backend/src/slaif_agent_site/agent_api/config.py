@@ -76,6 +76,7 @@ class AgentDatabaseSettings(BaseSettings):
     mode: AgentDatabaseMode = AgentDatabaseMode.DEVELOPMENT
     dsn: SecretStr | None = None
     dsn_file: Path | None = AGENT_DSN_FILE
+    media_root: Path | None = None
     browser_signing_key_file: Path = AGENT_BROWSER_SIGNING_KEY_FILE
     browser_worker_service_credential_file: Path = (
         AGENT_BROWSER_WORKER_SERVICE_CREDENTIAL_FILE
@@ -108,6 +109,7 @@ class AgentDatabaseSettings(BaseSettings):
         "dsn_file",
         "browser_signing_key_file",
         "browser_worker_service_credential_file",
+        "media_root",
     )
     @classmethod
     def absolute_file(cls, value: Path | None) -> Path | None:
