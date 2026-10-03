@@ -48,6 +48,38 @@ class FailureDiagnosticsTests(unittest.TestCase):
             self.assertFalse((destination / "index.json").exists())
             self.assertFalse((destination / "SUMMARY.txt").exists())
 
+    def test_retains_rootfs_file_manifests_from_both_builds(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            temporary_root = root / "temporary"
+            evidence = root / "evidence"
+            second = temporary_root / "second"
+            second.mkdir(parents=True)
+            (evidence / "manifests").mkdir(parents=True)
+            (evidence / "manifests/backend.files.json").write_text(
+                '{"entries":[],"image":"backend",'
+                '"prefixes":["opt/slaif/"],"schema_version":1}\n',
+                encoding="utf-8",
+            )
+            (second / "backend.files.json").write_text(
+                '{"entries":[],"image":"backend",'
+                '"prefixes":["opt/slaif/"],"schema_version":1}\n',
+                encoding="utf-8",
+            )
+            (second / "backend.image.json").write_text(
+                '{"image_id":"sha256:0"}\n', encoding="utf-8"
+            )
+
+            destination = retain_failure_diagnostics(temporary_root, evidence, 1)
+            validate_failure_diagnostics(destination)
+            status = json.loads((destination / "STATUS.json").read_text())
+
+            self.assertTrue((destination / "backend.files.json").exists())
+            self.assertTrue((destination / "second-backend.files.json").exists())
+            self.assertIn("backend.files.json", status["diagnostic_files"])
+            self.assertIn("second-backend.files.json", status["diagnostic_files"])
+            self.assertFalse((destination / "backend.image.json").exists())
+
 
 if __name__ == "__main__":
     unittest.main()
