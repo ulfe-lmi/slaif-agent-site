@@ -64,6 +64,8 @@ class OciContractTests(unittest.TestCase):
 
     def test_backend_runtime_uses_only_frozen_production_environment(self) -> None:
         content = (ROOT / "services/backend/Dockerfile").read_text(encoding="utf-8")
+        builder = content.split(" AS runtime", maxsplit=1)[0]
+        self.assertIn("compileall -q -f /build/.venv/lib", builder)
         self.assertIn("uv sync --frozen --no-default-groups --no-editable", content)
         runtime = content.split(" AS runtime", maxsplit=1)[1]
         self.assertIn("USER 10001:10001", runtime)

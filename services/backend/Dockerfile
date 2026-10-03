@@ -19,6 +19,7 @@ RUN uv sync --frozen --no-default-groups --no-editable \
     && [ -f "$1/uv_cache.json" ] \
     && rm -- "$1/uv_cache.json" \
     && sed -i '\|slaif_agent_site-.*\.dist-info/uv_cache\.json,|d' "$1/RECORD"
+RUN /build/.venv/bin/python -m compileall -q -f /build/.venv/lib
 
 # Keep the readable version beside the immutable top-level multi-architecture digest.
 FROM python:3.12.12-alpine3.23@sha256:2d91681153dd4b8cdb52d4fd34a17b9edbafa4dd3086143cfd4b6c3a84c1acb0 AS runtime
