@@ -77,9 +77,9 @@ class OciContractTests(unittest.TestCase):
             "697c180dbf244d3ce4a8f4cbc0156cde840af055c1bf8b76aebe422a4822086f",
             content,
         )
-        self.assertIn("libcrypto3=3.5.8-r0", content)
+        self.assertIn("libcrypto3=3.5.9-r0", content)
         self.assertIn("libcurl=8.22.0-r0", content)
-        self.assertIn("libssl3=3.5.8-r0", content)
+        self.assertIn("libssl3=3.5.9-r0", content)
         self.assertIn("https://dl-cdn.alpinelinux.org/alpine/v3.23/main", content)
         self.assertNotIn("apk upgrade", content)
         self.assertNotIn("postgresql-", content)
