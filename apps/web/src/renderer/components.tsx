@@ -36,6 +36,7 @@ interface RenderProps {
   readonly data?: readonly Record<string, unknown>[];
   readonly meta?: BindingMeta;
   readonly media?: ProjectionMedia | null;
+  readonly mediaItems?: readonly (ProjectionMedia | null)[] | null;
 }
 
 const CLASS_VALUES = new Set([
@@ -348,6 +349,110 @@ function Image({ props, media }: RenderProps) {
     </div>
   );
 }
+// 079/2 media-reference list components: the projection resolves every item
+// mediaId to a bounded descriptor (or the fail-closed absence); the trusted
+// renderer rebuilds markup exclusively from the resolved descriptors and
+// structured props.  No JS, no event handlers, no inline styles.
+const GALLERY_COLUMNS = new Set(["2", "3", "4"]);
+const LOGOGRID_ASPECT = "1-1";
+
+function resolvedListMedia(
+  descriptor: ProjectionMedia | null | undefined,
+): ProjectionMedia | null {
+  return descriptor !== null &&
+    descriptor !== undefined &&
+    descriptor.url.startsWith("/media/") &&
+    (descriptor.mime_type === "image/png" || descriptor.mime_type === "image/jpeg")
+    ? descriptor
+    : null;
+}
+
+function Gallery({ props, mediaItems }: RenderProps) {
+  const columns =
+    typeof props.columns === "string" && GALLERY_COLUMNS.has(props.columns)
+      ? props.columns
+      : "3";
+  const title = text(props.title);
+  const items = Array.isArray(props.items) ? props.items : [];
+  return (
+    <section className={`sl-gallery sl-gallery--${columns} cols`}>
+      {title ? <h3>{title}</h3> : null}
+      <ul className="sl-gallery__items">
+        {items.map((item, index) => {
+          const record =
+            typeof item === "object" && item !== null
+              ? (item as Record<string, unknown>)
+              : {};
+          const alt = text(record.alt);
+          const aspect = designClasses(
+            record.aspectRatio,
+            "renderer-image-placeholder",
+            "auto",
+            aspectRatioClass,
+          );
+          const media = resolvedListMedia(mediaItems?.[index] ?? null);
+          return (
+            <li
+              key={index}
+              aria-label={alt}
+              className={`renderer-image-placeholder ${aspect}`}
+              role="img"
+            >
+              {media !== null ? (
+                <img
+                  className="sl-image"
+                  src={media.url}
+                  alt={alt}
+                  loading="lazy"
+                  referrerPolicy="no-referrer"
+                />
+              ) : null}
+            </li>
+          );
+        })}
+      </ul>
+    </section>
+  );
+}
+
+function LogoGrid({ props, mediaItems }: RenderProps) {
+  const title = text(props.title);
+  const items = Array.isArray(props.items) ? props.items : [];
+  return (
+    <section className="sl-logogrid">
+      {title ? <h3>{title}</h3> : null}
+      <ul className="sl-logogrid__items">
+        {items.map((item, index) => {
+          const record =
+            typeof item === "object" && item !== null
+              ? (item as Record<string, unknown>)
+              : {};
+          const name = text(record.name);
+          const media = resolvedListMedia(mediaItems?.[index] ?? null);
+          return (
+            <li
+              key={index}
+              aria-label={name}
+              className={`renderer-image-placeholder renderer-image-placeholder--${LOGOGRID_ASPECT}`}
+              role="img"
+            >
+              {media !== null ? (
+                <img
+                  className="sl-logogrid__logo"
+                  src={media.url}
+                  alt={name}
+                  loading="lazy"
+                  referrerPolicy="no-referrer"
+                />
+              ) : null}
+            </li>
+          );
+        })}
+      </ul>
+    </section>
+  );
+}
+
 function VideoEmbed({ props }: RenderProps) {
   const src = canonicalVideoEmbedUrl(props.provider, props.video_id);
   const title = embedTitle(props.title);
@@ -721,6 +826,8 @@ const RENDERERS: Record<string, (props: RenderProps) => ReactElement> = {
   Heading,
   RichText,
   Image,
+  Gallery,
+  LogoGrid,
   Button,
   Quote,
   CallToAction,
@@ -772,6 +879,7 @@ export function renderComponent(
   meta?: BindingMeta,
   clientState = true,
   media?: ProjectionMedia | null,
+  mediaItems?: readonly (ProjectionMedia | null)[] | null,
 ): ReactElement {
   // Render registry entries as real React elements (never direct function
   // calls): direct calls bypass React's client-component boundary
@@ -789,11 +897,19 @@ export function renderComponent(
     ...(data === undefined ? {} : { data }),
     ...(meta === undefined ? {} : { meta }),
     ...(media === undefined ? {} : { media }),
+    ...(mediaItems === undefined ? {} : { mediaItems }),
   });
 }
 
+// The projection JSON may carry list-valued media descriptors for Gallery and
+// LogoGrid nodes; the wire shape is an optional sibling of ProjectionNode so
+// the shared projection contract stays untouched.
+type MediaItemsNode = ProjectionNode & {
+  readonly media_items?: readonly (ProjectionMedia | null)[] | null;
+};
+
 function renderNode(
-  node: ProjectionNode,
+  node: MediaItemsNode,
   locale: string,
   bindings: PageProjection["bindings"],
   bindingMeta: PageProjection["binding_meta"],
@@ -811,6 +927,7 @@ function renderNode(
         bindingMeta[node.id],
         clientState,
         node.media ?? null,
+        node.media_items ?? null,
       )}
     </div>
   );

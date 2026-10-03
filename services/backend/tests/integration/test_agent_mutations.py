@@ -5324,12 +5324,14 @@ async def test_agent_component_catalog_and_semantic_crud_are_cow_bound(
                 "Breadcrumbs",
                 "LanguageSwitcher",
                 "CallToAction",
+                "Gallery",
                 "ContactBlock",
                 "CollectionSearch",
                 "CollectionFilter",
                 "RelatedItems",
                 "VideoEmbed",
                 "MapBlock",
+                "LogoGrid",
             }
             assert all(
                 item["authority_class"] in {"content", "structure", "global"}

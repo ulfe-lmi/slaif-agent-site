@@ -79,7 +79,7 @@ describe("puck adapter", () => {
 
   it("generates config for all trusted catalog components", () => {
     const config = generatePuckConfig();
-    expect(Object.keys(config)).toHaveLength(29);
+    expect(Object.keys(config)).toHaveLength(31);
     expect(Object.keys(config)).toContain("Heading");
     expect(Object.keys(config)).toContain("Section");
   });

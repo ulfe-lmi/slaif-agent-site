@@ -124,23 +124,23 @@
     "registry": "https://dl-cdn.alpinelinux.org/alpine/v3.23",
     "images": {
       "backend": {
-        "install": ["libcrypto3=3.5.8-r0", "libssl3=3.5.8-r0"],
+        "install": ["libcrypto3=3.5.9-r0", "libssl3=3.5.9-r0"],
         "remove": []
       },
       "nginx": {
-        "install": ["libcrypto3=3.5.8-r0", "libssl3=3.5.8-r0"],
+        "install": ["libcrypto3=3.5.9-r0", "libssl3=3.5.9-r0"],
         "remove": ["curl"]
       },
       "postgres": {
         "install": [
-          "libcrypto3=3.5.8-r0",
+          "libcrypto3=3.5.9-r0",
           "libcurl=8.22.0-r0",
-          "libssl3=3.5.8-r0"
+          "libssl3=3.5.9-r0"
         ],
         "remove": []
       },
       "web": {
-        "install": ["libcrypto3=3.5.8-r0", "libssl3=3.5.8-r0"],
+        "install": ["libcrypto3=3.5.9-r0", "libssl3=3.5.9-r0"],
         "remove": ["npm"]
       }
     }
@@ -153,7 +153,7 @@
           "apache2-data=2.4.58-1ubuntu8.15",
           "apache2-utils=2.4.58-1ubuntu8.15",
           "apache2=2.4.58-1ubuntu8.15",
-          "openssl=3.0.13-0ubuntu3.15"
+          "openssl=3.0.13-0ubuntu3.16"
         ],
         "remove": []
       }

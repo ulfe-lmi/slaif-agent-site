@@ -18,7 +18,7 @@ RUN apt-get update \
       'apache2-bin=2.4.58-1ubuntu8.15' \
       'apache2-data=2.4.58-1ubuntu8.15' \
       'apache2-utils=2.4.58-1ubuntu8.15' \
-      'openssl=3.0.13-0ubuntu3.15' \
+      'openssl=3.0.13-0ubuntu3.16' \
     && a2dissite 000-default \
     && a2enmod deflate headers proxy proxy_http unique_id \
     && rm -rf /var/lib/apt/lists/* /var/cache/apt/*

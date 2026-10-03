@@ -6387,6 +6387,36 @@
               "supported": true
             },
             {
+              "component_type": "Gallery",
+              "property": "columns",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Gallery",
+              "property": "items",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Gallery",
+              "property": "title",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
               "component_type": "CollectionList",
               "property": "limit",
               "responsive": false,
@@ -6660,6 +6690,26 @@
             },
             {
               "component_type": "MapBlock",
+              "property": "title",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "LogoGrid",
+              "property": "items",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "LogoGrid",
               "property": "title",
               "responsive": false,
               "responsive_required_scopes": [],
@@ -7054,6 +7104,36 @@
             "supported": true
           },
           {
+            "component_type": "Gallery",
+            "property": "columns",
+            "responsive": false,
+            "responsive_required_scopes": [],
+            "scalar_required_scopes": [
+              "component-content-props:write"
+            ],
+            "supported": true
+          },
+          {
+            "component_type": "Gallery",
+            "property": "items",
+            "responsive": false,
+            "responsive_required_scopes": [],
+            "scalar_required_scopes": [
+              "component-content-props:write"
+            ],
+            "supported": true
+          },
+          {
+            "component_type": "Gallery",
+            "property": "title",
+            "responsive": false,
+            "responsive_required_scopes": [],
+            "scalar_required_scopes": [
+              "component-content-props:write"
+            ],
+            "supported": true
+          },
+          {
             "component_type": "CollectionList",
             "property": "limit",
             "responsive": false,
@@ -7327,6 +7407,26 @@
           },
           {
             "component_type": "MapBlock",
+            "property": "title",
+            "responsive": false,
+            "responsive_required_scopes": [],
+            "scalar_required_scopes": [
+              "component-content-props:write"
+            ],
+            "supported": true
+          },
+          {
+            "component_type": "LogoGrid",
+            "property": "items",
+            "responsive": false,
+            "responsive_required_scopes": [],
+            "scalar_required_scopes": [
+              "component-content-props:write"
+            ],
+            "supported": true
+          },
+          {
+            "component_type": "LogoGrid",
             "property": "title",
             "responsive": false,
             "responsive_required_scopes": [],
@@ -7747,6 +7847,42 @@
           },
           {
             "component_types": [
+              "Gallery"
+            ],
+            "condition": "changed",
+            "required_scopes": [
+              "component-content-props:write"
+            ],
+            "when_fields": [
+              "props.columns"
+            ]
+          },
+          {
+            "component_types": [
+              "Gallery"
+            ],
+            "condition": "changed",
+            "required_scopes": [
+              "component-content-props:write"
+            ],
+            "when_fields": [
+              "props.items"
+            ]
+          },
+          {
+            "component_types": [
+              "Gallery"
+            ],
+            "condition": "changed",
+            "required_scopes": [
+              "component-content-props:write"
+            ],
+            "when_fields": [
+              "props.title"
+            ]
+          },
+          {
+            "component_types": [
               "CollectionList"
             ],
             "condition": "changed",
@@ -8072,6 +8208,30 @@
           {
             "component_types": [
               "MapBlock"
+            ],
+            "condition": "changed",
+            "required_scopes": [
+              "component-content-props:write"
+            ],
+            "when_fields": [
+              "props.title"
+            ]
+          },
+          {
+            "component_types": [
+              "LogoGrid"
+            ],
+            "condition": "changed",
+            "required_scopes": [
+              "component-content-props:write"
+            ],
+            "when_fields": [
+              "props.items"
+            ]
+          },
+          {
+            "component_types": [
+              "LogoGrid"
             ],
             "condition": "changed",
             "required_scopes": [
@@ -16896,6 +17056,36 @@
               "supported": true
             },
             {
+              "component_type": "Gallery",
+              "property": "columns",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Gallery",
+              "property": "items",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "Gallery",
+              "property": "title",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
               "component_type": "CollectionList",
               "property": "limit",
               "responsive": false,
@@ -17169,6 +17359,26 @@
             },
             {
               "component_type": "MapBlock",
+              "property": "title",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "LogoGrid",
+              "property": "items",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "LogoGrid",
               "property": "title",
               "responsive": false,
               "responsive_required_scopes": [],

@@ -76,10 +76,26 @@ def retain_failure_diagnostics(
     candidates.extend(
         sorted(path for path in scan_sboms.glob("*.syft.json") if path.is_file())
     )
+    first_manifests = evidence_root / "manifests"
+    if first_manifests.is_dir():
+        candidates.extend(
+            sorted(
+                path for path in first_manifests.glob("*.files.json") if path.is_file()
+            )
+        )
+    second_manifests = temporary_root / "second"
+    if second_manifests.is_dir():
+        candidates.extend(
+            sorted(
+                path for path in second_manifests.glob("*.files.json") if path.is_file()
+            )
+        )
     for source in candidates:
         name = source.name
         if source.parent == scan_sboms:
             name = f"normalized-{name}"
+        elif source.parent == second_manifests:
+            name = f"second-{name}"
         data_size = source.stat().st_size
         if data_size > MAX_FILE_BYTES:
             omitted.append({"file": name, "reason": "file-size-limit"})

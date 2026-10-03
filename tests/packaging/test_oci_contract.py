@@ -64,6 +64,8 @@ class OciContractTests(unittest.TestCase):
 
     def test_backend_runtime_uses_only_frozen_production_environment(self) -> None:
         content = (ROOT / "services/backend/Dockerfile").read_text(encoding="utf-8")
+        builder = content.split(" AS runtime", maxsplit=1)[0]
+        self.assertIn("compileall -q -f /build/.venv/lib", builder)
         self.assertIn("uv sync --frozen --no-default-groups --no-editable", content)
         runtime = content.split(" AS runtime", maxsplit=1)[1]
         self.assertIn("USER 10001:10001", runtime)
@@ -77,9 +79,9 @@ class OciContractTests(unittest.TestCase):
             "697c180dbf244d3ce4a8f4cbc0156cde840af055c1bf8b76aebe422a4822086f",
             content,
         )
-        self.assertIn("libcrypto3=3.5.8-r0", content)
+        self.assertIn("libcrypto3=3.5.9-r0", content)
         self.assertIn("libcurl=8.22.0-r0", content)
-        self.assertIn("libssl3=3.5.8-r0", content)
+        self.assertIn("libssl3=3.5.9-r0", content)
         self.assertIn("https://dl-cdn.alpinelinux.org/alpine/v3.23/main", content)
         self.assertNotIn("apk upgrade", content)
         self.assertNotIn("postgresql-", content)
@@ -96,7 +98,7 @@ class OciContractTests(unittest.TestCase):
             "apache2-bin=2.4.58-1ubuntu8.15",
             "apache2-data=2.4.58-1ubuntu8.15",
             "apache2-utils=2.4.58-1ubuntu8.15",
-            "openssl=3.0.13-0ubuntu3.15",
+            "openssl=3.0.13-0ubuntu3.16",
         ):
             self.assertIn(f"'{package}'", content)
         self.assertIn("apachectl -t", content)
