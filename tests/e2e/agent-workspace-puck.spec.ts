@@ -248,9 +248,7 @@ test("agent-workspace-puck-exact-workspace-convergence", async ({ page }) => {
 
   await pageLink.click();
   await expect(
-    page
-      .getByRole("heading", { name: "Page composition", exact: true })
-      .first(),
+    page.getByRole("heading", { name: "Page composition", exact: true }).first(),
   ).toBeVisible();
   const banner = page.locator(".agent-workspace-banner");
   await expect(banner).toBeVisible();
@@ -538,10 +536,7 @@ test("agent-workspace-puck-fail-closed-negatives", async ({ page }) => {
   // Nonmember: fixture one has no demo-site membership; the site layer
   // denies before any workspace resolution.
   const nonmemberCookie = seedHumanSession(project, credential.fixtureUserOne);
-  const nonmemberReference = await probeDenial(
-    nonmemberCookie,
-    agentWorkspaceId,
-  );
+  const nonmemberReference = await probeDenial(nonmemberCookie, agentWorkspaceId);
   expect(await probeDenial(nonmemberCookie, crypto.randomUUID())).toEqual(
     nonmemberReference,
   );
@@ -552,10 +547,7 @@ test("agent-workspace-puck-fail-closed-negatives", async ({ page }) => {
   // Unauthorized member: fixture two is a demo-site VIEWER without the
   // workspace delegation; same uniform fail-closed denial across values.
   const unauthorizedCookie = seedHumanSession(project, credential.fixtureUserTwo);
-  const unauthorizedReference = await probeDenial(
-    unauthorizedCookie,
-    agentWorkspaceId,
-  );
+  const unauthorizedReference = await probeDenial(unauthorizedCookie, agentWorkspaceId);
   expect(await probeDenial(unauthorizedCookie, crypto.randomUUID())).toEqual(
     unauthorizedReference,
   );
