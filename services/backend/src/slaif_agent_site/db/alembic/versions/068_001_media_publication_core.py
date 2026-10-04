@@ -317,7 +317,7 @@ def _media_asset_register_sql(*, columns: str) -> str:
                 p_permission, operation_uuid
             );
             IF p_uploaded_by IS DISTINCT FROM p_human_user_id
-               OR p_mime_type NOT IN ('image/png', 'image/jpeg')
+               OR p_mime_type NOT IN ('image/png', 'image/jpeg', 'application/pdf')
                OR p_size < 1 OR p_hash !~ '^[0-9a-f]{{64}}$'
                OR p_storage_key <> 'sha256/' || substr(p_hash, 1, 2) || '/' || substr(p_hash, 3, 2) || '/' || p_hash
                OR length(p_filename) NOT BETWEEN 1 AND 255
@@ -384,7 +384,7 @@ def _agent_media_register_sql() -> str:
                 RAISE EXCEPTION 'AGENT_MEDIA_CONTEXT_INVALID' USING ERRCODE = '22023';
             END IF;
             IF p_uploaded_by IS NULL
-               OR p_mime_type NOT IN ('image/png', 'image/jpeg')
+               OR p_mime_type NOT IN ('image/png', 'image/jpeg', 'application/pdf')
                OR p_size < 1 OR p_hash !~ '^[0-9a-f]{{64}}$'
                OR p_storage_key <> 'sha256/' || substr(p_hash, 1, 2) || '/' || substr(p_hash, 3, 2) || '/' || p_hash
                OR length(p_filename) NOT BETWEEN 1 AND 255
@@ -485,7 +485,13 @@ def _media_public_mark_sql() -> str:
             IF NOT EXISTS (
                 SELECT 1 FROM content.page_composition AS c
                 WHERE c.site_id = p_site_id
-                  AND c.props ->> 'mediaId' = p_media_id::text
+                  AND (
+                      c.props ->> 'mediaId' = p_media_id::text
+                      OR EXISTS (
+                          SELECT 1 FROM jsonb_array_elements(c.props -> 'items') AS item
+                          WHERE item ->> 'mediaId' = p_media_id::text
+                      )
+                  )
             ) THEN
                 RAISE EXCEPTION 'MEDIA_NOT_WORKSPACE_REFERENCED' USING ERRCODE = 'P0003';
             END IF;

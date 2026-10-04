@@ -1,10 +1,11 @@
-"""Projection media-descriptor resolution for list-valued media props (079/2)."""
+"""Projection media-descriptor resolution for media lists (079/2) and docs (079/3)."""
 
 import asyncio
 import uuid as uuid_module
 
 import pytest
 from slaif_agent_site.render_api.projection import (
+    DOCUMENT_MIME_CLASSES,
     ProjectionMedia,
     ProjectionNode,
     RenderProjectionService,
@@ -25,6 +26,8 @@ PNG_PRIVATE = ("image/png", 1234, DIGEST, "private")
 JPEG_PUBLIC = ("image/jpeg", 5678, DIGEST, "public")
 SVG_PUBLIC = ("image/svg+xml", 9, DIGEST, "public")
 TEXT_PUBLIC = ("text/plain", 9, DIGEST, "public")
+PDF_PUBLIC = ("application/pdf", 4321, DIGEST, "public")
+PDF_PRIVATE = ("application/pdf", 4321, DIGEST, "private")
 
 
 def _node(
@@ -268,3 +271,160 @@ def test_descriptor_urls_never_leak_media_id_in_public_mode(
         assert str(M_A) not in descriptor.url
     else:
         assert str(M_A) in descriptor.url
+
+
+# ------------------------------------------------------------------ 079/3
+# DocumentList document-class descriptor resolution.
+M_D = uuid_module.UUID("11111111-1111-4111-8111-111111111114")
+
+
+def test_document_descriptor_resolves_only_the_document_mime_class() -> None:
+    preview = _media_descriptor(
+        render_mode="preview",
+        site_id=SITE,
+        media_id=M_A,
+        row=PDF_PRIVATE,
+        mime_classes=DOCUMENT_MIME_CLASSES,
+    )
+    assert preview == ProjectionMedia(
+        url=PREVIEW_URL, mime_type="application/pdf", size_bytes=4321
+    )
+    public = _media_descriptor(
+        render_mode="public",
+        site_id=SITE,
+        media_id=M_A,
+        row=PDF_PUBLIC,
+        mime_classes=DOCUMENT_MIME_CLASSES,
+    )
+    assert public == ProjectionMedia(
+        url=PUBLIC_URL, mime_type="application/pdf", size_bytes=4321
+    )
+    # non-public document rows fail closed under the canonical render mode
+    assert (
+        _media_descriptor(
+            render_mode="public",
+            site_id=SITE,
+            media_id=M_A,
+            row=PDF_PRIVATE,
+            mime_classes=DOCUMENT_MIME_CLASSES,
+        )
+        is None
+    )
+    # image-class rows are never document descriptors ...
+    assert (
+        _media_descriptor(
+            render_mode="preview",
+            site_id=SITE,
+            media_id=M_A,
+            row=PNG_PUBLIC,
+            mime_classes=DOCUMENT_MIME_CLASSES,
+        )
+        is None
+    )
+    # ... and document-class rows are never image descriptors
+    assert (
+        _media_descriptor(
+            render_mode="preview", site_id=SITE, media_id=M_A, row=PDF_PUBLIC
+        )
+        is None
+    )
+
+
+def _doclist_node(node_id: str, items: list[dict[str, object]]) -> ProjectionNode:
+    return _node(node_id, "DocumentList", {"title": "Documents", "items": items})
+
+
+def test_documentlist_list_descriptors_mixed_resolved_and_fail_closed() -> None:
+    doclist = _doclist_node(
+        "33333333-0000-4000-8000-000000000010",
+        [
+            {"mediaId": str(M_A), "label": "a"},
+            {"mediaId": str(M_B), "label": "b"},
+            {"mediaId": str(M_C), "label": "missing"},
+            {"label": "no reference"},
+        ],
+    )
+    descriptors, list_descriptors = _descriptors(
+        (doclist,),
+        {M_A: PDF_PUBLIC, M_B: PNG_PUBLIC},  # M_B is an image row; M_C absent
+        "preview",
+    )
+    assert descriptors == {}
+    media_items = list_descriptors[doclist.id]
+    assert len(media_items) == 4
+    assert media_items[0] == ProjectionMedia(
+        url=f"/media/v1/sites/{SITE}/assets/{M_A}/content",
+        mime_type="application/pdf",
+        size_bytes=4321,
+    )
+    assert media_items[1] is None  # image-class row: not the document class
+    assert media_items[2] is None  # unresolved reference
+    assert media_items[3] is None  # malformed item
+
+
+def test_documentlist_public_mode_marks_non_public_items_fail_closed() -> None:
+    doclist = _doclist_node(
+        "33333333-0000-4000-8000-000000000011",
+        [
+            {"mediaId": str(M_A), "label": "a"},
+            {"mediaId": str(M_B), "label": "b"},
+        ],
+    )
+    _, list_descriptors = _descriptors(
+        (doclist,),
+        {M_A: PDF_PUBLIC, M_B: PDF_PRIVATE},
+        "public",
+    )
+    media_items = list_descriptors[doclist.id]
+    assert media_items[0] == ProjectionMedia(
+        url=PUBLIC_URL, mime_type="application/pdf", size_bytes=4321
+    )
+    assert media_items[1] is None
+
+
+def test_documentlist_descriptor_urls_follow_the_079_url_forms() -> None:
+    doclist = _doclist_node(
+        "33333333-0000-4000-8000-000000000012",
+        [{"mediaId": str(M_A), "label": "a"}],
+    )
+    for render_mode, expected_url in (
+        ("preview", f"/media/v1/sites/{SITE}/assets/{M_A}/content"),
+        ("public", PUBLIC_URL),
+    ):
+        _, list_descriptors = _descriptors((doclist,), {M_A: PDF_PUBLIC}, render_mode)
+        (descriptor,) = list_descriptors[doclist.id]
+        assert descriptor is not None
+        assert descriptor.url == expected_url
+        if render_mode == "public":
+            assert str(M_A) not in descriptor.url
+
+
+def test_documentlist_non_list_items_are_untouched() -> None:
+    doclist = _node(
+        "33333333-0000-4000-8000-000000000013",
+        "DocumentList",
+        {"items": "not-a-list"},
+    )
+    descriptors, list_descriptors = _descriptors(
+        (doclist,), {M_A: PDF_PUBLIC}, "preview"
+    )
+    assert descriptors == {}
+    assert list_descriptors == {}
+
+
+def test_image_list_components_never_resolve_document_rows() -> None:
+    gallery = _node(
+        "33333333-0000-4000-8000-000000000014",
+        "Gallery",
+        {"items": [{"mediaId": str(M_A), "alt": "pdf in a gallery"}]},
+    )
+    image = _node(
+        "33333333-0000-4000-8000-000000000015",
+        "Image",
+        {"mediaId": str(M_A), "alt": "pdf as image"},
+    )
+    descriptors, list_descriptors = _descriptors(
+        (gallery, image), {M_A: PDF_PUBLIC}, "preview"
+    )
+    assert list_descriptors[gallery.id] == (None,)
+    assert descriptors == {}

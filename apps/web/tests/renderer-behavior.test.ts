@@ -1101,3 +1101,172 @@ describe("Gallery and LogoGrid renderers (079/2 media-reference lists)", () => {
     }
   });
 });
+
+describe("DocumentList renderer (079/3 document class)", () => {
+  const MEDIA_A = "11111111-1111-4111-8111-111111111111";
+  const MEDIA_B = "11111111-1111-4111-8111-111111111112";
+  const MEDIA_C = "11111111-1111-4111-8111-111111111113";
+  const SITE_ID = "11111111-2222-4333-8444-555555555555";
+  const DIGEST = "aabb" + "111122223333444455556666777788889999aabbccddeeff00";
+  const PUBLIC_URL = `/media/public/sha256/aa/bb/${DIGEST}`;
+  const PREVIEW_URL = `/media/v1/sites/${SITE_ID}/assets/${MEDIA_A}/content`;
+  const PREVIEW_URL_B = `/media/v1/sites/${SITE_ID}/assets/${MEDIA_B}/content`;
+  const docDescriptor = (url: string) => ({
+    url,
+    mime_type: "application/pdf",
+    size_bytes: 1,
+  });
+
+  const doclistNode = {
+    componentType: "DocumentList",
+    props: {
+      title: "Documents",
+      items: [
+        { mediaId: MEDIA_A, label: "Quarterly report" },
+        { mediaId: MEDIA_B, label: "Data sheet" },
+        { mediaId: MEDIA_C, label: "Missing archive" },
+      ],
+    },
+  };
+
+  const doclistItems = [docDescriptor(PREVIEW_URL), docDescriptor(PREVIEW_URL_B), null];
+
+  it("emits the exact DocumentList markup with title and mixed items", () => {
+    const markup = renderToStaticMarkup(
+      renderComponent(
+        doclistNode,
+        "en",
+        undefined,
+        undefined,
+        true,
+        undefined,
+        doclistItems,
+      ),
+    );
+    expect(markup).toBe(
+      `<section class="sl-doclist"><h3>Documents</h3><ul class="sl-doclist__items"><li><a class="sl-doclist__link" href="${PREVIEW_URL}"><span class="sl-doclist__label">Quarterly report</span></a></li><li><a class="sl-doclist__link" href="${PREVIEW_URL_B}"><span class="sl-doclist__label">Data sheet</span></a></li><li><div class="renderer-image-placeholder" role="img" aria-label="Missing archive"></div></li></ul></section>`,
+    );
+  });
+
+  it("omits the heading without a title", () => {
+    const markup = renderToStaticMarkup(
+      renderComponent(
+        {
+          ...doclistNode,
+          props: { items: [{ mediaId: MEDIA_A, label: "Quarterly report" }] },
+        },
+        "en",
+        undefined,
+        undefined,
+        true,
+        undefined,
+        [docDescriptor(PREVIEW_URL)],
+      ),
+    );
+    expect(markup).toBe(
+      `<section class="sl-doclist"><ul class="sl-doclist__items"><li><a class="sl-doclist__link" href="${PREVIEW_URL}"><span class="sl-doclist__label">Quarterly report</span></a></li></ul></section>`,
+    );
+  });
+
+  it("renders the 079/1 placeholder pattern for null descriptors and non-PDF descriptors", () => {
+    const singleItem = {
+      title: "Documents",
+      items: [{ mediaId: MEDIA_A, label: "A" }],
+    };
+    const nullVariant = renderToStaticMarkup(
+      renderComponent(
+        { ...doclistNode, props: singleItem },
+        "en",
+        undefined,
+        undefined,
+        true,
+        undefined,
+        [null],
+      ),
+    );
+    expect(nullVariant).toBe(
+      `<section class="sl-doclist"><h3>Documents</h3><ul class="sl-doclist__items"><li><div class="renderer-image-placeholder" role="img" aria-label="A"></div></li></ul></section>`,
+    );
+    const mismatchVariant = renderToStaticMarkup(
+      renderComponent(
+        { ...doclistNode, props: singleItem },
+        "en",
+        undefined,
+        undefined,
+        true,
+        undefined,
+        [{ url: PREVIEW_URL, mime_type: "image/png", size_bytes: 1 }],
+      ),
+    );
+    expect(mismatchVariant).toBe(nullVariant);
+    const foreignVariant = renderToStaticMarkup(
+      renderComponent(
+        { ...doclistNode, props: singleItem },
+        "en",
+        undefined,
+        undefined,
+        true,
+        undefined,
+        [
+          {
+            url: "https://evil.example/a.pdf",
+            mime_type: "application/pdf",
+            size_bytes: 1,
+          },
+        ],
+      ),
+    );
+    expect(foreignVariant).toBe(nullVariant);
+  });
+
+  it("keeps preview and public markup identical except the href form", () => {
+    const singleItem = { items: [{ mediaId: MEDIA_A, label: "A" }] };
+    const preview = renderToStaticMarkup(
+      renderComponent(
+        { ...doclistNode, props: singleItem },
+        "en",
+        undefined,
+        undefined,
+        true,
+        undefined,
+        [docDescriptor(PREVIEW_URL)],
+      ),
+    );
+    const publicMarkup = renderToStaticMarkup(
+      renderComponent(
+        { ...doclistNode, props: singleItem },
+        "en",
+        undefined,
+        undefined,
+        true,
+        undefined,
+        [docDescriptor(PUBLIC_URL)],
+      ),
+    );
+    expect(preview.replace(PREVIEW_URL, PUBLIC_URL)).toBe(publicMarkup);
+  });
+
+  it("never emits inline styles, event handlers, javascript: URLs, sandbox, or target", () => {
+    const markups = [
+      renderToStaticMarkup(
+        renderComponent(
+          doclistNode,
+          "en",
+          undefined,
+          undefined,
+          true,
+          undefined,
+          doclistItems,
+        ),
+      ),
+      renderToStaticMarkup(renderComponent(doclistNode, "en")),
+    ];
+    for (const markup of markups) {
+      expect(markup).not.toMatch(/style=/);
+      expect(markup).not.toMatch(/\son[a-z]+=/i);
+      expect(markup).not.toMatch(/javascript:/i);
+      expect(markup).not.toMatch(/\ssandbox=/);
+      expect(markup).not.toMatch(/\starget=/);
+    }
+  });
+});

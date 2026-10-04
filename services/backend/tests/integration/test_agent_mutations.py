@@ -5332,6 +5332,7 @@ async def test_agent_component_catalog_and_semantic_crud_are_cow_bound(
                 "VideoEmbed",
                 "MapBlock",
                 "LogoGrid",
+                "DocumentList",
             }
             assert all(
                 item["authority_class"] in {"content", "structure", "global"}

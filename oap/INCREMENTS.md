@@ -23,7 +23,8 @@ merge date) referenced from current-state documents.
 | 078-i | `567973e` implementation plus `127d7f1` report: bounded site-theme tokens | Preserved immutable history; removed from PR #77 by 078-j and deferred for deliberate reuse |
 | 078/9 | 078/9: MapBlock OSM layer contract repair | Accepted and merged in PR #89 at `d8b1d360add9d583fa2cc64c451dd5d6faad8730` on 2026-09-20; 078/9 is closed |
 | 079/1 | 079/1: media publication core | Accepted and merged in PR #92 at `577509e7bc990d85a10af5954bee3c6f7c888a4f` on 2026-09-22; 079/1 is closed |
-| 079/2 | 079/2: Gallery + LogoGrid (media-reference list components) | Opened at `079-2-a` from verified remote main `577509e7bc990d85a10af5954bee3c6f7c888a4f`; PR pending; strategy owns acceptance and merge |
+| 079/2 | 079/2: Gallery + LogoGrid (media-reference list components) | Accepted and merged in PR #93 at `c149c39e66978c9ee53a7d92300a64e4297cfa56` on 2026-10-04; 079/2 is closed |
+| 079/3 | 079/3: DocumentList + document class (bounded PDF policy) | Opened at `079-3-a` from verified remote main `c149c39e66978c9ee53a7d92300a64e4297cfa56`; PR pending; strategy owns acceptance and merge |
 | Next | Remaining 079 scope after 079/2 | 079/3 (DocumentList and document serving) closes the last 078-bound catalog type (32/32); numeric 078 remains PARTIAL until 079/3 lands and is independently verified; strategy selects the next bounded increment per [`governance/2026-09-14-increment-qualified-round-ids.md`](governance/2026-09-14-increment-qualified-round-ids.md) |
 
 PR #77 merged into `main` at

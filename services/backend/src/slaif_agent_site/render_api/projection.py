@@ -671,6 +671,7 @@ def _flatten(nodes: tuple[ProjectionNode, ...]) -> tuple[ProjectionNode, ...]:
 
 
 MEDIA_MIME_CLASSES = frozenset({"image/png", "image/jpeg"})
+DOCUMENT_MIME_CLASSES = frozenset({"application/pdf"})
 RENDER_MEDIA_RESOLVE_SQL = "SELECT * FROM content.slaif_render_media_resolve($1,$2)"
 
 
@@ -680,12 +681,16 @@ def _media_descriptor(
     site_id: UUID,
     media_id: UUID,
     row: Any,
+    mime_classes: frozenset[str] = MEDIA_MIME_CLASSES,
 ) -> ProjectionMedia | None:
-    """Pure resolved-row to descriptor classification (079/1 + 079/2 lists).
+    """Pure resolved-row to descriptor classification (079/1 + 079/2 lists +
+    079/3 document class).
 
-    Fail-closed: a missing row, a non-image MIME row, or a non-public row
-    under the canonical render mode yields ``None`` so the trusted renderer
-    shows the bounded placeholder instead of an ``<img>``.
+    Fail-closed: a missing row, a row outside the component's MIME class
+    (image class for Image/Gallery/LogoGrid, document class for
+    DocumentList), or a non-public row under the canonical render mode
+    yields ``None`` so the trusted renderer shows the bounded placeholder
+    instead of an ``<img>`` or a document link.
     """
     if row is None:
         return None
@@ -693,7 +698,7 @@ def _media_descriptor(
     size_bytes = int(row[1])
     content_hash = str(row[2])
     public_status = str(row[3])
-    if mime_type not in MEDIA_MIME_CLASSES:
+    if mime_type not in mime_classes:
         return None
     if render_mode == "preview":
         url = f"/media/v1/sites/{site_id}/assets/{media_id}/content"
@@ -1675,6 +1680,36 @@ class RenderProjectionService:
                             site_id=site_id,
                             media_id=media_id,
                             row=row,
+                        )
+                    )
+                list_descriptors[node.id] = tuple(item_descriptors)
+            elif node.component_type == "DocumentList":
+                items = node.props.get("items")
+                if not isinstance(items, list):
+                    continue
+                item_descriptors = []
+                for item in items:
+                    raw_media_id = (
+                        item.get("mediaId") if isinstance(item, dict) else None
+                    )
+                    if not isinstance(raw_media_id, str):
+                        item_descriptors.append(None)
+                        continue
+                    try:
+                        media_id = UUID(raw_media_id)
+                    except ValueError:
+                        item_descriptors.append(None)
+                        continue
+                    row = await connection.fetchrow(
+                        RENDER_MEDIA_RESOLVE_SQL, site_id, media_id
+                    )
+                    item_descriptors.append(
+                        _media_descriptor(
+                            render_mode=render_mode,
+                            site_id=site_id,
+                            media_id=media_id,
+                            row=row,
+                            mime_classes=DOCUMENT_MIME_CLASSES,
                         )
                     )
                 list_descriptors[node.id] = tuple(item_descriptors)

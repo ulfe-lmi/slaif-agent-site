@@ -17,6 +17,7 @@ from slaif_agent_site.content_model.component_facets import (
     MediaReferenceError,
     field_primitive_map,
     validate_collection_filter_facets,
+    validate_document_reference_items,
     validate_media_reference_items,
 )
 from slaif_agent_site.content_model.composition_models import (
@@ -151,15 +152,17 @@ async def _validate_media_reference_props(
     component_type: str,
     props: dict[str, Any],
 ) -> None:
-    """Fail-closed media-reference list validation for the human Puck path.
+    """Fail-closed media/document-reference list validation for the human
+    Puck path.
 
     The Editor update endpoint replaces props wholesale, so the supplied
     props are exactly the post-write state.  Each well-formed ``mediaId`` is
     resolved through the id lookup plus an explicit site comparison; a
-    reference that does not resolve within the site, or resolves to a
-    non-image MIME row, is a bounded rejection with the exact 079/2 error
-    key.  The catalog guard still re-verifies prop shape downstream
-    (defense in depth).
+    reference that does not resolve within the site, or resolves to a row
+    outside the component's MIME class (image class for Gallery/LogoGrid,
+    document class for DocumentList), is a bounded rejection with the exact
+    079/2 / 079/3 error key.  The catalog guard still re-verifies prop shape
+    downstream (defense in depth).
     """
     items = props.get("items")
     if not isinstance(items, list):
@@ -188,6 +191,9 @@ async def _validate_media_reference_props(
             facts[media_id] = (record.site_id, record.mime_type)
     try:
         validate_media_reference_items(
+            component_type, items, site_id=site_id, facts=facts
+        )
+        validate_document_reference_items(
             component_type, items, site_id=site_id, facts=facts
         )
     except MediaReferenceError as error:
@@ -307,6 +313,10 @@ async def update_component(
     except ContentModelServiceError as exc:
         if exc.reason is ContentModelServiceReason.NOT_FOUND:
             raise ResourceNotFoundError() from None
+        if exc.reason is ContentModelServiceReason.VALIDATION:
+            if exc.code is not None:
+                raise DomainValidationError(details={"prop_error": exc.code}) from None
+            raise DomainValidationError() from None
         raise ServiceUnavailableError() from None
 
 

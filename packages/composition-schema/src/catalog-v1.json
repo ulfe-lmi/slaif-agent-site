@@ -514,6 +514,40 @@
       }
     },
 
+    {
+      "type": "DocumentList",
+      "category": "institutional",
+      "schema_version": "1",
+      "allowed_slots": [],
+      "max_children": 0,
+      "binding_kind": "media_asset",
+      "authority_class": "content",
+      "props": {
+        "title": {"type": "string", "required": false, "max_length": 120, "localized": true, "authority": "content"},
+        "items": {
+          "type": "array",
+          "required": true,
+          "min_items": 1,
+          "max_items": 12,
+          "authority": "content",
+          "schema": {
+            "type": "array",
+            "min_items": 1,
+            "max_items": 12,
+            "items": {
+              "type": "object",
+              "required": ["mediaId", "label"],
+              "additional_properties": false,
+              "properties": {
+                "mediaId": {"type": "reference", "required": true, "format": "uuid"},
+                "label": {"type": "string", "required": true, "max_length": 120}
+              }
+            }
+          }
+        }
+      }
+    },
+
     {"type": "Header", "category": "global", "schema_version": "1", "allowed_slots": ["nav"], "max_children": 12, "binding_kind": "none", "authority_class": "global", "props": {}},
     {"type": "Footer", "category": "global", "schema_version": "1", "allowed_slots": ["links"], "max_children": 16, "binding_kind": "none", "authority_class": "global", "props": {}},
     {"type": "Breadcrumbs", "category": "global", "schema_version": "1", "allowed_slots": [], "max_children": 0, "binding_kind": "none", "authority_class": "global", "props": {}},

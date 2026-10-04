@@ -194,6 +194,7 @@ NEW_PACKAGE_FILES = {
     "slaif_agent_site/media_service/finalize.py",
     "slaif_agent_site/media_service/media_http.py",
     "slaif_agent_site/media_service/multipart.py",
+    "slaif_agent_site/media_service/pdf_policy.py",
     "slaif_agent_site/media_service/store.py",
     "slaif_agent_site/render_api/__init__.py",
     "slaif_agent_site/render_api/__main__.py",

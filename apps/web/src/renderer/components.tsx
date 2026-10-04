@@ -453,6 +453,57 @@ function LogoGrid({ props, mediaItems }: RenderProps) {
   );
 }
 
+// 079/3 document-class component: the projection resolves every item
+// mediaId to a bounded document descriptor (or the fail-closed absence);
+// the trusted renderer rebuilds markup exclusively from the resolved
+// descriptors and structured props.  No JS, no event handlers, no inline
+// styles, no target/sandbox attributes (same-origin document URLs).
+function resolvedDocumentMedia(
+  descriptor: ProjectionMedia | null | undefined,
+): ProjectionMedia | null {
+  return descriptor !== null &&
+    descriptor !== undefined &&
+    descriptor.url.startsWith("/media/") &&
+    descriptor.mime_type === "application/pdf"
+    ? descriptor
+    : null;
+}
+
+function DocumentList({ props, mediaItems }: RenderProps) {
+  const title = text(props.title);
+  const items = Array.isArray(props.items) ? props.items : [];
+  return (
+    <section className="sl-doclist">
+      {title ? <h3>{title}</h3> : null}
+      <ul className="sl-doclist__items">
+        {items.map((item, index) => {
+          const record =
+            typeof item === "object" && item !== null
+              ? (item as Record<string, unknown>)
+              : {};
+          const label = text(record.label);
+          const media = resolvedDocumentMedia(mediaItems?.[index] ?? null);
+          return media !== null ? (
+            <li key={index}>
+              <a className="sl-doclist__link" href={media.url}>
+                <span className="sl-doclist__label">{label}</span>
+              </a>
+            </li>
+          ) : (
+            <li key={index}>
+              <div
+                className="renderer-image-placeholder"
+                role="img"
+                aria-label={label}
+              />
+            </li>
+          );
+        })}
+      </ul>
+    </section>
+  );
+}
+
 function VideoEmbed({ props }: RenderProps) {
   const src = canonicalVideoEmbedUrl(props.provider, props.video_id);
   const title = embedTitle(props.title);
@@ -828,6 +879,7 @@ const RENDERERS: Record<string, (props: RenderProps) => ReactElement> = {
   Image,
   Gallery,
   LogoGrid,
+  DocumentList,
   Button,
   Quote,
   CallToAction,

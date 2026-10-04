@@ -436,7 +436,7 @@ services:
     ports:
       - "127.0.0.1:8080:8080"
     tmpfs:
-      - /tmp:uid=101,gid=101,mode=700,nosuid,nodev,noexec,size=16m
+      - /tmp:uid=101,gid=101,mode=700,nosuid,nodev,noexec,size=256m
     networks: [edge]
     depends_on:
       agent-api:
