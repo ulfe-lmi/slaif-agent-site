@@ -78,8 +78,6 @@ function seedHumanSession(
   crypto.getRandomValues(csrfSecret);
   const sessionId = crypto.randomUUID();
   const publicHex = randomHex(16);
-  const hex = (value: Uint8Array) =>
-    Array.from(value, (item) => item.toString(16).padStart(2, "0")).join("");
   psql(
     project,
     `SELECT control.slaif_create_human_session(
