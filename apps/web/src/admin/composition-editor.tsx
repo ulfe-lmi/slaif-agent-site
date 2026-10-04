@@ -41,6 +41,7 @@ import {
   moveCompositionNode,
   updateTheme,
   updateCompositionNode,
+  setEditorWorkspace,
   type CurrentAuthority,
   type PageStyleRecord,
 } from "./api";
@@ -758,9 +759,13 @@ function GlobalRegionControls({
 export function CompositionEditor({
   siteId,
   pageId,
+  workspaceId,
+  workspaceTitle,
 }: {
   siteId: string;
   pageId: string;
+  workspaceId?: string | null;
+  workspaceTitle?: string | null;
 }) {
   const [authority, setAuthority] = useState<CurrentAuthority | null>(null);
   const [nodes, setNodes] = useState<NormalizedCompositionNode[] | null>(null);
@@ -795,6 +800,11 @@ export function CompositionEditor({
     setData(converted);
     setPuckRenderKey((key) => key + 1);
   }
+
+  useEffect(() => {
+    setEditorWorkspace(workspaceId ?? null);
+    return () => setEditorWorkspace(null);
+  }, [workspaceId]);
 
   useEffect(() => {
     void refresh().catch((reason: unknown) => setError(editorMessage(reason)));
@@ -837,6 +847,16 @@ export function CompositionEditor({
 
   return (
     <section className="composition-editor" aria-labelledby="composition-editor-title">
+      {workspaceId && (
+        <div className="agent-workspace-banner" role="note">
+          <span className="agent-workspace-banner__marker">Agent workspace</span>{" "}
+          <strong>{workspaceTitle ?? workspaceId}</strong>
+          <p>
+            You are editing the exact Agent workspace. Saving stores the
+            workspace/draft; it never publishes.
+          </p>
+        </div>
+      )}
       <div className="composition-editor__intro">
         <div>
           <p className="eyebrow">Trusted visual editor</p>

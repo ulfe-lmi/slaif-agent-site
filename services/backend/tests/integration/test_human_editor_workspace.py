@@ -748,3 +748,94 @@ async def test_human_editor_envelope_uses_real_control_and_editor_roles(
         for pool in control_pools:
             await pool.close()
         await owner_pool.close()
+
+
+async def test_human_editor_workspace_assert_denies_agent_workspace(
+    agent_site_database: AgentSiteDatabase,
+) -> None:
+    """Legacy 028 human assert must fail-closed deny an AGENT workspace."""
+    database = agent_site_database
+    await upgrade(database.settings)
+    await reconcile(database.settings)
+    owner_pool = await database.role_pool("slaif_owner")
+    editor_pool = await database.role_pool("slaif_editor_runtime")
+    site_id = uuid.uuid4()
+    owner_id = uuid.uuid4()
+    owner_session = uuid.uuid4()
+    try:
+        async with owner_pool.acquire() as owner:
+            await owner.execute(
+                "INSERT INTO control.user_account "
+                "(id, identity_kind, oidc_issuer, oidc_subject, display_name) "
+                "VALUES ($1, 'OIDC', 'https://editor.test', $2, 'Agent Owner')",
+                owner_id,
+                str(owner_id),
+            )
+            await owner.execute(
+                "INSERT INTO control.site "
+                "(id, site_key, display_name, default_locale, "
+                "component_catalog_version) "
+                "VALUES ($1, $2, 'Legacy Denial Site', 'en', 'catalog-v1')",
+                site_id,
+                f"legacy-agent-denial-{uuid.uuid4().hex[:12]}",
+            )
+            await owner.execute(
+                "INSERT INTO control.site_membership "
+                "(site_id, user_account_id, role_key, delegation_ceiling) "
+                "VALUES ($1, $2, 'SITE_OWNER', 4)",
+                site_id,
+                owner_id,
+            )
+            session = await owner.fetchrow(
+                "SELECT * FROM control.slaif_create_human_session("
+                "$1,$2,$3,$4,$5,$6,$7,$8)",
+                owner_session,
+                f"sas2_{uuid.uuid4().hex}",
+                b"h" * 32,
+                b"c" * 32,
+                owner_id,
+                3600,
+                7200,
+                3600,
+            )
+            assert session is not None
+            agent_workspace = cast(
+                uuid.UUID,
+                await owner.fetchval(
+                    "SELECT id FROM control.slaif_human_agent_workspace_create("
+                    "$1,$2,$3,$4,'L2_SITE_EDITOR',ARRAY['page:create']::text[],"
+                    "'{}'::jsonb,ARRAY[]::text[],4,2,1,1,1,1)",
+                    site_id,
+                    owner_id,
+                    "Agent workspace for legacy denial",
+                    "Legacy-path isolation pin.",
+                ),
+            )
+
+        with pytest.raises(asyncpg.PostgresError) as excinfo:
+            async with _cow(
+                editor_pool,
+                workspace_id=agent_workspace,
+                operation_id=uuid.uuid4(),
+            ) as cow:
+                await _assert_workspace(
+                    cow,
+                    workspace_id=agent_workspace,
+                    human_user_id=owner_id,
+                    site_id=site_id,
+                    human_session_id=owner_session,
+                )
+        assert excinfo.value.sqlstate == "P0002"
+        assert "HUMAN_EDITOR_WORKSPACE_NOT_ACTIVE" in excinfo.value.message
+
+        async with owner_pool.acquire() as owner:
+            assert not await owner.fetchval(
+                "SELECT EXISTS (SELECT 1 FROM control.human_editor_idempotency "
+                "WHERE workspace_id = $1) "
+                "OR EXISTS (SELECT 1 FROM audit.human_editor_mutation "
+                "WHERE workspace_id = $1)",
+                agent_workspace,
+            )
+    finally:
+        await editor_pool.close()
+        await owner_pool.close()

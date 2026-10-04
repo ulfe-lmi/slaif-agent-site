@@ -15,6 +15,7 @@ from slaif_agent_site.errors import (
     IdempotencyKeyInvalidError,
     IdempotencyKeyRequiredError,
     IdempotencyMismatchError,
+    MalformedRequestError,
     ResourceNotFoundError,
     ServiceUnavailableError,
 )
@@ -119,11 +120,22 @@ async def authorize_site_request(
             EditorIdempotencyMismatchError,
             EditorIdempotencyReplayError,
         )
-        from slaif_agent_site.editor_api.mutations import request_mutation_digest
+        from slaif_agent_site.editor_api.mutations import (
+            request_mutation_digest,
+            validate_editor_workspace_header,
+        )
 
         try:
             idempotency_key: str | None = None
             request_digest: str | None = None
+            workspace_id: UUID | None = None
+            try:
+                workspace_id = validate_editor_workspace_header(
+                    request.headers.get("X-Editor-Workspace")
+                )
+            except ValueError:
+                raise MalformedRequestError() from None
+            agent_workspace = workspace_id is not None
             if state_changing:
                 try:
                     idempotency_key, request_digest = await request_mutation_digest(
@@ -133,9 +145,11 @@ async def authorize_site_request(
                     if str(error) == "missing":
                         raise IdempotencyKeyRequiredError() from None
                     raise IdempotencyKeyInvalidError() from None
-            workspace_id = await database.resolve_human_editor_workspace(
-                site_id, session.user_account_id
-            )
+            if not agent_workspace:
+                workspace_id = await database.resolve_human_editor_workspace(
+                    site_id, session.user_account_id
+                )
+            assert workspace_id is not None
             request_context = editor_database.request_content_service(
                 workspace_id=workspace_id,
                 human_user_id=session.user_account_id,
@@ -145,11 +159,14 @@ async def authorize_site_request(
                 state_changing=state_changing,
                 idempotency_key=idempotency_key,
                 request_digest=request_digest,
+                agent_workspace=agent_workspace,
             )
             context = await request_context.__aenter__()
         except IdempotencyKeyRequiredError:
             raise
         except IdempotencyKeyInvalidError:
+            raise
+        except MalformedRequestError:
             raise
         except EditorIdempotencyMismatchError:
             raise IdempotencyMismatchError() from None
