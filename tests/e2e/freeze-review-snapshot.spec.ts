@@ -232,20 +232,25 @@ async function waitForReview(
   const deadline = Date.now() + 240_000;
   let freezingSamples = 0;
   for (;;) {
-    const status = await workspaceStatus(page, siteId, workspaceId);
-    if (status === "FREEZING") {
-      freezingSamples += 1;
-      // While the workspace is observably FREEZING, no snapshot may exist.
-      expect(
-        Number(
-          psql(
-            project,
-            `SELECT count(*) FROM control.review_snapshot
-              WHERE workspace_id = '${workspaceId}'`,
-          ),
+    // The snapshot row and the FREEZING -> REVIEW transition commit in
+    // one transaction, so no consistent read can ever observe a snapshot
+    // row while the workspace status is still FREEZING. This single
+    // statement enforces that invariant atomically (two separate reads
+    // could legally straddle the commit and observe a transient skew).
+    expect(
+      Number(
+        psql(
+          project,
+          `SELECT count(*) FROM control.review_snapshot
+            WHERE workspace_id = '${workspaceId}'
+              AND EXISTS (SELECT 1 FROM control.workspace w
+                          WHERE w.id = '${workspaceId}'::uuid
+                            AND w.status = 'FREEZING')`,
         ),
-      ).toBe(0);
-    }
+      ),
+    ).toBe(0);
+    const status = await workspaceStatus(page, siteId, workspaceId);
+    if (status === "FREEZING") freezingSamples += 1;
     if (status === "REVIEW") return { freezingSamples };
     expect(["ACTIVE", "FREEZING"]).toContain(status);
     if (Date.now() > deadline) throw new Error(`timeout at status ${status}`);
