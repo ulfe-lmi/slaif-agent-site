@@ -426,7 +426,8 @@ docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif -Atc \
    WHERE (audit.action LIKE 'POST /api/editor/v1/sites/%'
       OR audit.action LIKE 'PATCH /api/editor/v1/sites/%/theme'
       OR audit.action LIKE 'PATCH /api/editor/v1/sites/%/pages/%/style')
-     AND workspace.site_id = (SELECT id FROM control.site WHERE site_key = 'demo');" | grep -q '^t$'
+     AND workspace.site_id = (SELECT id FROM control.site WHERE site_key = 'demo')
+     AND workspace.actor_type = 'HUMAN';" | grep -q '^t$'
 docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif -Atc \
   "SET ROLE slaif_owner;
    SELECT count(*) = 9
@@ -437,7 +438,8 @@ docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif -Atc \
                    AND completed_at IS NOT NULL)
    FROM control.human_editor_idempotency idempotency
    JOIN control.workspace workspace ON workspace.id = idempotency.workspace_id
-   WHERE workspace.site_id = (SELECT id FROM control.site WHERE site_key = 'demo');" | grep -q '^t$'
+   WHERE workspace.site_id = (SELECT id FROM control.site WHERE site_key = 'demo')
+     AND workspace.actor_type = 'HUMAN';" | grep -q '^t$'
 echo "human-editor-envelope: OK workspace=HUMAN active audit=idempotent sequence=page-create,theme-update,page-style-update,page-style-update,component-add,component-add,component-move,component-add count=9"
 docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif -v ON_ERROR_STOP=1 -Atc \
   "SET ROLE slaif_owner;

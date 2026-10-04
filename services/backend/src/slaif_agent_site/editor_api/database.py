@@ -38,6 +38,17 @@ IDEMPOTENCY_COMPLETE_SQL = (
     "SELECT control.slaif_human_editor_idempotency_complete("
     "$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)"
 )
+AGENT_WORKSPACE_ASSERT_SQL = (
+    "SELECT control.slaif_human_agent_workspace_editor_assert($1,$2,$3,$4,$5,$6)"
+)
+AGENT_IDEMPOTENCY_BEGIN_SQL = (
+    "SELECT * FROM control.slaif_human_agent_editor_idempotency_begin("
+    "$1,$2,$3,$4,$5,$6,$7,$8)"
+)
+AGENT_IDEMPOTENCY_COMPLETE_SQL = (
+    "SELECT control.slaif_human_agent_editor_idempotency_complete("
+    "$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)"
+)
 _STRUCTURAL_PERMISSIONS = frozenset(
     {
         "page:create",
@@ -80,6 +91,7 @@ class EditorRequestContext:
     operation_id: UUID
     idempotency_key: str | None
     request_digest: str | None
+    agent_workspace: bool
 
 
 class EditorDatabase:
@@ -196,6 +208,7 @@ class EditorDatabase:
         state_changing: bool,
         idempotency_key: str | None,
         request_digest: str | None,
+        agent_workspace: bool = False,
     ) -> Any:
         if self._pool is None:
             raise RuntimeError("editor database unavailable")
@@ -215,7 +228,7 @@ class EditorDatabase:
             )
         ) as cow:
             await cow.native.fetchrow(
-                WORKSPACE_ASSERT_SQL,
+                AGENT_WORKSPACE_ASSERT_SQL if agent_workspace else WORKSPACE_ASSERT_SQL,
                 workspace_id,
                 human_user_id,
                 site_id,
@@ -227,7 +240,9 @@ class EditorDatabase:
                 if idempotency_key is None or request_digest is None:
                     raise RuntimeError("editor mutation envelope missing")
                 row = await cow.native.fetchrow(
-                    IDEMPOTENCY_BEGIN_SQL,
+                    AGENT_IDEMPOTENCY_BEGIN_SQL
+                    if agent_workspace
+                    else IDEMPOTENCY_BEGIN_SQL,
                     workspace_id,
                     human_user_id,
                     site_id,
@@ -262,6 +277,7 @@ class EditorDatabase:
                 operation_id=operation_id,
                 idempotency_key=idempotency_key,
                 request_digest=request_digest,
+                agent_workspace=agent_workspace,
             )
 
     async def complete_request(
@@ -277,7 +293,9 @@ class EditorDatabase:
         if context.idempotency_key is None or context.request_digest is None:
             return
         await context.cow.native.fetchrow(
-            IDEMPOTENCY_COMPLETE_SQL,
+            AGENT_IDEMPOTENCY_COMPLETE_SQL
+            if context.agent_workspace
+            else IDEMPOTENCY_COMPLETE_SQL,
             context.workspace_id,
             context.human_user_id,
             context.site_id,

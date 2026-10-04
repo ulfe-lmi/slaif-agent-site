@@ -119,7 +119,7 @@ class ComposeSmokeContractTests(unittest.TestCase):
         config = (ROOT / "playwright.config.ts").read_text(encoding="utf-8")
         self.assertEqual(config.count('name: "governance"'), 1)
         self.assertIn('dependencies: ["setup"]', config)
-        self.assertEqual(config.count('dependencies: ["governance"]'), 8)
+        self.assertEqual(config.count('dependencies: ["governance"]'), 10)
         for project in (
             "desktop-chromium",
             "desktop-firefox",
@@ -129,7 +129,12 @@ class ComposeSmokeContractTests(unittest.TestCase):
             "mobile-webkit",
         ):
             self.assertIn(f'name: "{project}"', config)
-        for project in ("agent-desktop-chromium", "agent-mobile-chromium"):
+        for project in (
+            "agent-desktop-chromium",
+            "agent-mobile-chromium",
+            "agent-workspace-puck-desktop",
+            "agent-workspace-puck-tablet",
+        ):
             self.assertIn(f'name: "{project}"', config)
         governance = (ROOT / "tests/e2e/governance.spec.ts").read_text(encoding="utf-8")
         for marker in (

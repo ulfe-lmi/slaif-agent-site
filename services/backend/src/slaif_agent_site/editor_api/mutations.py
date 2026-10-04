@@ -72,6 +72,15 @@ def resource_type(request: Request) -> str:
     return "editor." + (parts[index + 1] if len(parts) > index + 1 else "resource")
 
 
+def validate_editor_workspace_header(raw: str | None) -> UUID | None:
+    """Parse the optional X-Editor-Workspace selection before any DB access."""
+    if raw is None:
+        return None
+    if not UUID_PATTERN.fullmatch(raw):
+        raise ValueError("invalid")
+    return UUID(raw)
+
+
 def request_service(request: Request) -> ContentModelService:
     service = getattr(request.state, "content_model_service", None)
     if not isinstance(service, ContentModelService):
@@ -81,6 +90,7 @@ def request_service(request: Request) -> ContentModelService:
 
 __all__ = [
     "IDEMPOTENCY_KEY_PATTERN",
+    "validate_editor_workspace_header",
     "request_mutation_digest",
     "response_payload",
     "response_resource_id",

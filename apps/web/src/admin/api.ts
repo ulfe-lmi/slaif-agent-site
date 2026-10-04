@@ -302,13 +302,62 @@ async function request(path: string, init: RequestInit = {}): Promise<Response> 
   });
 }
 
+let editorWorkspaceId: string | null = null;
+
+export function setEditorWorkspace(workspaceId: string | null): void {
+  editorWorkspaceId = workspaceId;
+}
+
+export function getEditorWorkspace(): string | null {
+  return editorWorkspaceId;
+}
+
 async function editorRequest(path: string, init: RequestInit = {}): Promise<Response> {
+  const workspaceHeaders = editorWorkspaceId
+    ? { "X-Editor-Workspace": editorWorkspaceId }
+    : {};
   return fetch(`${EDITOR}${path}`, {
     ...init,
     credentials: "same-origin",
     cache: "no-store",
-    headers: { Accept: "application/json", ...init.headers },
+    headers: {
+      Accept: "application/json",
+      ...workspaceHeaders,
+      ...init.headers,
+    },
   });
+}
+
+export type EditorPageRecord = {
+  id: string;
+  site_id: string;
+  slug: string;
+  title: string;
+  status: string;
+  locale: string;
+  row_version: number;
+};
+
+function editorPageRecord(value: unknown): EditorPageRecord {
+  const item = object(value);
+  if (
+    !isUuidValue(item.id) ||
+    !isUuidValue(item.site_id) ||
+    typeof item.slug !== "string" ||
+    typeof item.title !== "string" ||
+    typeof item.status !== "string" ||
+    typeof item.locale !== "string" ||
+    typeof item.row_version !== "number" ||
+    !Number.isInteger(item.row_version)
+  )
+    throw new Error("invalid-response");
+  return item as unknown as EditorPageRecord;
+}
+
+export async function listEditorPages(siteId: string): Promise<EditorPageRecord[]> {
+  const value = await editorJson(`/sites/${encodeURIComponent(siteId)}/pages/`);
+  if (!Array.isArray(value)) throw new Error("invalid-response");
+  return value.map(editorPageRecord);
 }
 async function json(path: string, init: RequestInit = {}): Promise<unknown> {
   const response = await request(path, init);

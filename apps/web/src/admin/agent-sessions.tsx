@@ -180,6 +180,14 @@ export function AgentSessions({ siteId }: { siteId: string }) {
                 <strong>{workspace.title}</strong> · {workspace.delegation_preset} ·{" "}
                 {workspace.status} · expires{" "}
                 {new Date(workspace.expires_at).toLocaleString()}
+                {workspace.status === "ACTIVE" && (
+                  <a
+                    className="agent-workspace-open"
+                    href={`/admin/sites/${siteId}/workspaces/${workspace.workspace_id}/edit`}
+                  >
+                    Open in Puck
+                  </a>
+                )}
                 <ul>
                   {(capabilities[workspace.workspace_id] ?? []).map((capability) => (
                     <li key={capability.capability_id}>

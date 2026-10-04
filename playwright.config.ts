@@ -94,5 +94,17 @@ export default defineConfig({
       testMatch: /media-publication\.spec\.ts/,
       use: { ...devices["Desktop Chrome"] },
     },
+    {
+      name: "agent-workspace-puck-desktop",
+      dependencies: ["governance"],
+      testMatch: /agent-workspace-puck\.spec\.ts/,
+      use: { ...devices["Desktop Chrome"] },
+    },
+    {
+      name: "agent-workspace-puck-tablet",
+      dependencies: ["governance"],
+      testMatch: /agent-workspace-puck\.spec\.ts/,
+      use: { ...devices["iPad (gen 7)"] },
+    },
   ],
 });
