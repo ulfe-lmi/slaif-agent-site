@@ -404,8 +404,8 @@ class EvidenceTests(unittest.TestCase):
             {
                 "artifact": {
                     "name": "chrome",
-                    "purl": "pkg:generic/chrome@153.0.8010.52",
-                    "version": "153.0.8010.52",
+                    "purl": "pkg:generic/chrome@154.0.8037.92",
+                    "version": "154.0.8037.92",
                 },
                 "vulnerability": {
                     "id": "CVE-2026-79999",
