@@ -1,7 +1,7 @@
 # Contract-First MVP Audit
 
 **Audit date:** 2026-09-14 (current-truth reconciliation for 078-z)
-**Authoritative audited source revision:** Verified merged `main` `26cafc1c0c91de5eee8406e8d477c50ea0208058` as of the 078-z current-truth reconciliation (2026-09-14), containing the accepted Objective 078/1, 078/2, 078/3, and 078/4 source revisions merged at `3cae3d6cef2a92e7068856d21bc9a47b8190c22e`, `a9d3e6800d5e8b5fd5c9cd9e0be5010184058c6b`, `fe31c9f30a7797d0916ad7f8fb56344bc61526f3`, and `26cafc1c0c91de5eee8406e8d477c50ea0208058` respectively; GitHub state is authoritative for live acceptance and merge state
+**Authoritative audited source revision:** Verified merged `main` `550c42c387bcddf12356ba2db299ef5bf99dd818` as of the 081 current-truth reconciliation (2026-10-04), with the 078-z (2026-09-14) baseline retained as historical; GitHub state is authoritative for live acceptance and merge state
 **Normative contract:** `ARCHITECTURE.md`, Revision 2.1, read in full  
 **Verdict:** **CONTRACTUAL MVP NOT COMPLETE**
 
@@ -37,9 +37,9 @@ capability. Percentages and file presence are not acceptance evidence.
 | §§15.4, 21.7–22.5, 24.6–24.7, 26–27, 30.6 | Bounded Agent component catalog/composition/design data plane with shared preview and browser evidence | External agent + human preview / REST/OpenAPI → Render/Web → browser worker | Accepted Objective 078/1 on merged [PR #77](https://github.com/ulfe-lmi/slaif-agent-site/pull/77), including the 078-o Next.js 16.3.3 security qualification, remains the source for component/local-design behavior. The 078/2 bounded site-theme closure was accepted and merged in [PR #79](https://github.com/ulfe-lmi/slaif-agent-site/pull/79) at `a9d3e68`; PR #80 accepted and merged the 078/3 browser scan-coverage maintenance at `fe31c9f`; 078/4 closed the 078-v/078-w/078-x page-style proof gaps over existing theme tokens and was accepted and merged in PR #81 at `26cafc1`. Global-region, exact-workspace Puck, review, and publication remain outside these slices. | PARTIAL | Preserve the merged 078/1, 078/2, 078/3, and 078/4 evidence; the global-region/header-footer increment is accepted and merged in PR #85 at `2746c9f08c00fd84dff59bfd1536ce7319e16ff9` on 2026-09-19, and remaining catalog scope stays a separate increment |
 | §§24.1, 51.1 | Versioned deterministic Agent OpenAPI describes the real public semantic contract | External agent / OpenAPI | Merged Objective 076 / [PR #72](https://github.com/ulfe-lmi/slaif-agent-site/pull/72) provides the canonical generated Agent OpenAPI through the public path, with bidirectional production-handler/route-policy/schema drift checks and required mutation metadata | COMPLETE — E2E PROVEN | Preserve 076 OpenAPI evidence; MCP parity remains Objective 080 and is not implied by OpenAPI completion |
 | §25, §51.1 | Curated MCP model/content/composition/design and browser tools delegate to Agent API | External agent / real MCP | Custom `/mcp/v1/tools` lists five reads; `/call` accepts caller-chosen method/path, references absent production configuration and uses a test-only HTTP dependency; no real call test or write-tool proof | SCAFFOLD ONLY | 080; real MCP client tools/list and tools/call E2E through NGINX, with no DB/internal bypass |
-| §§14.3, 22.4, 42.4, 52.6 | Human Puck edits the same normalized composition and exact Agent workspace under server policy | Human Web/Puck → Editor API | Objective 068 proves real Puck editing, but its resolver selects/creates a separate HUMAN workspace rather than the Agent workspace later reviewed | PARTIAL | 081 exact-workspace proof; 084/088 reuse it for human adjustment |
+| §§14.3, 22.4, 42.4, 52.6 | Human Puck edits the same normalized composition and exact Agent workspace under server policy | Human Web/Puck → Editor API | Objective 068 proves real Puck editing, but its resolver selects/creates a separate HUMAN workspace rather than the Agent workspace later reviewed | PARTIAL | 081/1 in flight at `081-a` (PR #96); 084/088 reuse it for human adjustment |
 | §§14.4, 15.5, 52.6 | Shared trusted canonical and active-workspace renderer | Visitor/human preview / Web+Render | Objective 071 proves canonical and active COW preview with shared renderer, strict authorization and noindex/no-store | IMPLEMENTED — E2E PENDING | Review-snapshot render mode is absent and belongs to 082 |
-| §§15.7, 30, 52.7–52.8 | Immutable media bytes, private staging, public finalization, replaceable store | Agent/human Media service and review worker | Objective 070 proves immutable human upload/CAS safety; promotion finalization is absent; 079/1 is accepted and merged in PR #92 at `577509e7bc990d85a10af5954bee3c6f7c888a4f` on 2026-09-22 (catalog 29 with real Image; Agent upload/reference semantics, public/preview media core E2E-proven); 079/2 is accepted and merged in PR #93 at `c149c39e66978c9ee53a7d92300a64e4297cfa56` on 2026-10-04 (catalog 31 with Gallery + LogoGrid); 079/3 is opened at `079-3-a` (PR #95): document class (bounded PDF policy + DocumentList, catalog 32 at PR head; E2E evidence in PR, acceptance strategy-owned) | PARTIAL | 079/3: DocumentList + document serving (in flight at `079-3-a`, PR #95); 083: promotion-time finalization call, anonymous public reads gated on the accepted revision, rollback, public-namespace retention/GC |
+| §§15.7, 30, 52.7–52.8 | Immutable media bytes, private staging, public finalization, replaceable store | Agent/human Media service and review worker | Objective 070 proves immutable human upload/CAS safety; promotion finalization is absent; 079/1 is accepted and merged in PR #92 at `577509e7bc990d85a10af5954bee3c6f7c888a4f` on 2026-09-22 (catalog 29 with real Image; Agent upload/reference semantics, public/preview media core E2E-proven); 079/2 is accepted and merged in PR #93 at `c149c39e66978c9ee53a7d92300a64e4297cfa56` on 2026-10-04 (catalog 31 with Gallery + LogoGrid); 079/3 is accepted and merged in PR #95 at `550c42c387bcddf12356ba2db299ef5bf99dd818` on 2026-10-04 (document class: bounded PDF policy + DocumentList, catalog 32/32; E2E-proven, strategy-verified) | PARTIAL | 083: promotion-time finalization call, anonymous public reads gated on the accepted revision, rollback, public-namespace retention/GC |
 | §§15.8, 28.1, 30.6, 52.7 | Real confined preview browser runs and private immutable artifacts | External agent / Agent preview routes | Objective 072 proves real Chromium, capability-bound durable runs, six artifacts, retrieval, restart/outage/revoke/foreign negatives, and canonical independence | COMPLETE — E2E PROVEN | Preserve; do not restart or replace 072 |
 | §§23, 24.8, 25.2, 42.4, 51.1 | Approved-origin source inspection and quota-controlled responsive sweep | Level-4 agent / curated REST+MCP | No source tools or source-run production path; preview contract runs one route/target and has no product responsive-sweep orchestration | NOT IMPLEMENTED | 087; DNS/redirect/egress negatives plus real multi-target observation |
 | §§26–27, 42.3, 52.8 | Every Agent mutation is durably idempotent and semantically audited in the COW transaction | External agent / semantic services | Merged Objective 076 / [PR #72](https://github.com/ulfe-lmi/slaif-agent-site/pull/72) completes the model/type/field/item/translation/relation/collection-view mutation families with exact idempotency, semantic audit, COW, quota, and concurrency evidence; the broader 077–079 page/composition/design/media mutation surface remains partial | PARTIAL | 077–079 extend the invariant; Objective 091 audits complete route coverage |
@@ -102,11 +102,11 @@ breadth stays a separate increment; 078-i theme history is preserved and was
 reused within the bounded 078/2 continuation.
 078 Agent composition/design semantics
   -> 079 Agent media semantics
-          -> 080 real curated MCP semantic parity
-              -> 081 human edits exact Agent workspace in Puck
-                  -> 082 immutable freeze/review snapshot
-                      -> 083 real accept/discard/promotion/media publication
-                          -> 084 conflict-safe lifecycle proof
+          -> 081 human edits exact Agent workspace in Puck
+              -> 082 immutable freeze/review snapshot
+                  -> 083 real accept/discard/promotion/media publication
+                      -> 084 conflict-safe lifecycle proof
+                          -> 080 real curated MCP semantic parity
                               -> 085 dynamic News vertical
                                   -> 086 destructive Agent isolation
           -> 087 approved-source tools and responsive sweep
@@ -115,6 +115,10 @@ reused within the bounded 078/2 continuation.
                       -> 090 backup/restore operational proof
                           -> 091 final hostile MVP truth gate
 ```
+
+Sequencing annotations: 080 MCP parity resequenced after 084 (no 081–084
+dependency on 080; human decision D5, 2026-09-20); 082/083 pre-split
+directions are strategy-approved, contents not advance-accepted.
 
 Objectives 084–087 have independent implementation portions but must not run
 before every prerequisite their acceptance proof consumes is merged. One

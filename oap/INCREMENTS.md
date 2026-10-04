@@ -1,11 +1,15 @@
 # Semantic Increment Ledger
 
 Current state is recorded against verified remote GitHub state; GitHub is
-authoritative for live acceptance and merge state. Objective 078 is
-`PARTIAL`; strategy owns acceptance and merge. Increments 078/1 through 078/9
-are accepted and merged (verified merge facts in the table below); the
-078/079 seam is acknowledged — the three remaining catalog types and real
-Image rendering are 079-bound by dependency audit.
+authoritative for live acceptance and merge state. Strategy owns acceptance
+and merge. Increments 078/1 through 078/9 are accepted and merged (verified
+merge facts in the table below); the 078/079 seam is closed — the
+079-bound catalog types (including real Image rendering) were closed by
+increments 079/1 through 079/3 (component catalog 32/32). Numeric Objective
+078 is COMPLETE (reclassified 2026-10-04 by post-merge strategy bookkeeping
+after independent evidence verification per human D1); numeric Objective 079
+is COMPLETE (scoped; the 083-bound public-namespace retention/GC is
+explicitly excluded).
 The table is the authoritative ledger of verified merge facts (SHA and
 merge date) referenced from current-state documents.
 
@@ -24,8 +28,8 @@ merge date) referenced from current-state documents.
 | 078/9 | 078/9: MapBlock OSM layer contract repair | Accepted and merged in PR #89 at `d8b1d360add9d583fa2cc64c451dd5d6faad8730` on 2026-09-20; 078/9 is closed |
 | 079/1 | 079/1: media publication core | Accepted and merged in PR #92 at `577509e7bc990d85a10af5954bee3c6f7c888a4f` on 2026-09-22; 079/1 is closed |
 | 079/2 | 079/2: Gallery + LogoGrid (media-reference list components) | Accepted and merged in PR #93 at `c149c39e66978c9ee53a7d92300a64e4297cfa56` on 2026-10-04; 079/2 is closed |
-| 079/3 | 079/3: DocumentList + document class (bounded PDF policy) | Opened at `079-3-a` from verified remote main `c149c39e66978c9ee53a7d92300a64e4297cfa56`; PR pending; strategy owns acceptance and merge |
-| Next | Remaining 079 scope after 079/2 | 079/3 (DocumentList and document serving) closes the last 078-bound catalog type (32/32); numeric 078 remains PARTIAL until 079/3 lands and is independently verified; strategy selects the next bounded increment per [`governance/2026-09-14-increment-qualified-round-ids.md`](governance/2026-09-14-increment-qualified-round-ids.md) |
+| 079/3 | 079/3: DocumentList + document class (bounded PDF policy) | Accepted and merged in PR #95 at `550c42c387bcddf12356ba2db299ef5bf99dd818` on 2026-10-04; 079/3 is closed |
+| Next | Remaining 079 scope after 079/3 | 079/3 is closed; numeric 078 is COMPLETE and numeric 079 is COMPLETE (scoped) per the header; the next bounded increment is 081 (human Puck editing in the exact Agent workspace), opened at `081-a` (PR #96); strategy selects the next bounded increment per [`governance/2026-09-14-increment-qualified-round-ids.md`](governance/2026-09-14-increment-qualified-round-ids.md) |
 
 PR #77 merged into `main` at
 `3cae3d6cef2a92e7068856d21bc9a47b8190c22e`. The 078-j closure keeps the
