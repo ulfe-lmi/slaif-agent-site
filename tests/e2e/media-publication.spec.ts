@@ -477,6 +477,579 @@ asyncio.run(main())
     await anonymousPageContext.close();
   }
 
+  // -------------------------------------------- Gallery + LogoGrid (079/2)
+  // Seed a well-formed in-site non-image asset: a reference that resolves
+  // within the parity site but fails the image MIME class, so both write
+  // paths must reject it with the exact item-not-image key.  Base-row
+  // fixture seeding, consistent with this spec's psql fixture pattern.
+  const NON_IMAGE_MEDIA_ID = "12000000-0000-4000-8000-000000000401";
+  const nonImageDigest = sha256Hex(Buffer.from("oap-079-2-hostile-note"));
+  psql(
+    project,
+    `INSERT INTO content.media_asset_base
+       (id, site_id, filename, mime_type, size_bytes, content_hash,
+        storage_key, alt_text, metadata, public_status)
+     VALUES ('${NON_IMAGE_MEDIA_ID}'::uuid, '${parity.site_id}'::uuid,
+             'hostile-note.txt', 'text/plain', 42, '${nonImageDigest}',
+             'sha256/${nonImageDigest.slice(0, 2)}/${nonImageDigest.slice(2, 4)}/${nonImageDigest}',
+             '', '{}'::jsonb, 'private');`,
+  );
+
+  // Editor (human) composition: one Gallery and one LogoGrid of the real
+  // uploaded media (agent upload + human fixture upload, both parity site).
+  const galleryCreate = await page.request.post(compositionPath, {
+    headers: editorHeaders(`oap-0792-gallery-${tag}`),
+    data: {
+      component_type: "Gallery",
+      slot_key: "default",
+      order_key: 22,
+      props: {
+        title: "E2E gallery proof",
+        columns: "3",
+        items: [
+          { mediaId: agentMediaId, alt: "E2E gallery agent item" },
+          { mediaId: humanMediaId, alt: "E2E gallery human item" },
+        ],
+      },
+    },
+  });
+  expect(galleryCreate.status()).toBe(201);
+  const galleryCreateBody = (await galleryCreate.json()) as {
+    id?: unknown;
+    row_version?: unknown;
+  };
+  expect(galleryCreateBody.row_version).toBe(1);
+  expect(typeof galleryCreateBody.id).toBe("string");
+  const galleryComponentId = galleryCreateBody.id as string;
+  const logoGridCreate = await page.request.post(compositionPath, {
+    headers: editorHeaders(`oap-0792-logogrid-${tag}`),
+    data: {
+      component_type: "LogoGrid",
+      slot_key: "default",
+      order_key: 23,
+      props: {
+        title: "E2E logo grid proof",
+        items: [
+          { mediaId: agentMediaId, name: "E2E agent logo" },
+          { mediaId: humanMediaId, name: "E2E human logo" },
+        ],
+      },
+    },
+  });
+  expect(logoGridCreate.status()).toBe(201);
+  const logoGridCreateBody = (await logoGridCreate.json()) as {
+    id?: unknown;
+    row_version?: unknown;
+  };
+  expect(logoGridCreateBody.row_version).toBe(1);
+  expect(typeof logoGridCreateBody.id).toBe("string");
+  const logoGridComponentId = logoGridCreateBody.id as string;
+
+  // Preview render of the list components at desktop and tablet.
+  const previewReload = await page.goto(`/preview/${previewWorkspaceId}/s/parity/`);
+  expect(previewReload?.status()).toBe(200);
+  const gallerySection = page.locator("section.sl-gallery");
+  await expect(gallerySection).toBeVisible();
+  const galleryAgentImage = page
+    .locator('section.sl-gallery img.sl-image[src^="/media/v1/sites/"]')
+    .first();
+  await expect(galleryAgentImage).toBeVisible();
+  expect(await galleryAgentImage.getAttribute("src")).toBe(
+    `/media/v1/sites/${parity.site_id}/assets/${agentMediaId}/content`,
+  );
+  const galleryHumanImage = page
+    .locator('section.sl-gallery img.sl-image[src^="/media/v1/sites/"]')
+    .nth(1);
+  expect(await galleryHumanImage.getAttribute("src")).toBe(
+    `/media/v1/sites/${parity.site_id}/assets/${humanMediaId}/content`,
+  );
+  const logoGridSection = page.locator("section.sl-logogrid");
+  await expect(logoGridSection).toBeVisible();
+  const logoGridAgentImage = page
+    .locator('section.sl-logogrid img.sl-logogrid__logo[src^="/media/v1/sites/"]')
+    .first();
+  await expect(logoGridAgentImage).toBeVisible();
+  expect(await logoGridAgentImage.getAttribute("src")).toBe(
+    `/media/v1/sites/${parity.site_id}/assets/${agentMediaId}/content`,
+  );
+  await page.setViewportSize({ width: 768, height: 1024 });
+  await expect(gallerySection).toBeVisible();
+  await expect(galleryAgentImage).toBeVisible();
+  await expect(logoGridSection).toBeVisible();
+  await expect(logoGridAgentImage).toBeVisible();
+  await page.setViewportSize({ width: 1280, height: 720 });
+
+  // Fixture-level publication of the list components into the base
+  // composition (same fixture pattern as the 079/1 Image move above).
+  // The 079/1 fixture moved the two Image nodes into base with explicit
+  // out-of-band order keys (20, 21), leaving gaps in the top-level group;
+  // the agent composition path (slaif_agent_component_tree_validate)
+  // requires contiguous canonical order keys before any agent write, so
+  // this move transaction normalizes the group to contiguous keys while
+  // preserving relative order.
+  psql(
+    project,
+    `BEGIN;
+      INSERT INTO content.page_composition_base
+        (id, site_id, page_id, component_type, schema_version, parent_id,
+         slot_key, order_key, props)
+      SELECT c.id, c.site_id, c.page_id, c.component_type, c.schema_version,
+             c.parent_id, c.slot_key, c.order_key, c.props
+      FROM content.page_composition_changes c
+      WHERE c.session_id = '${previewWorkspaceId}'::uuid
+        AND c.component_type IN ('Gallery','LogoGrid') AND NOT c._cow_deleted;
+      DELETE FROM content.page_composition_changes
+      WHERE session_id = '${previewWorkspaceId}'::uuid
+        AND component_type IN ('Gallery','LogoGrid');
+      UPDATE content.page_composition_base c
+      SET order_key = n.order_key
+      FROM (
+        SELECT id, row_number() OVER (ORDER BY order_key, id) - 1 AS order_key
+        FROM content.page_composition_base
+        WHERE site_id = '${parity.site_id}'::uuid
+          AND page_id = '${homePage!.id}'::uuid
+          AND parent_id IS NULL
+          AND slot_key = 'default'
+      ) n
+      WHERE c.id = n.id AND c.order_key <> n.order_key;
+      COMMIT;`,
+  );
+
+  // Canonical render + preview/public parity for the list components.
+  const listParityContext = await browser.newContext();
+  try {
+    const listCanonicalPage = await listParityContext.newPage();
+    const listCanonicalResponse = await listCanonicalPage.goto("/s/parity/");
+    expect(listCanonicalResponse?.status()).toBe(200);
+    const canonicalGalleryImage = listCanonicalPage
+      .locator('section.sl-gallery img.sl-image[src^="/media/public/sha256/"]')
+      .first();
+    await expect(canonicalGalleryImage).toBeVisible();
+    expect(await canonicalGalleryImage.getAttribute("src")).toBe(
+      `/media/public/sha256/${tinyDigest.slice(0, 2)}/${tinyDigest.slice(2, 4)}/${tinyDigest}`,
+    );
+    const canonicalLogoImage = listCanonicalPage
+      .locator(
+        'section.sl-logogrid img.sl-logogrid__logo[src^="/media/public/sha256/"]',
+      )
+      .first();
+    await expect(canonicalLogoImage).toBeVisible();
+    expect(await canonicalLogoImage.getAttribute("src")).toBe(
+      `/media/public/sha256/${tinyDigest.slice(0, 2)}/${tinyDigest.slice(2, 4)}/${tinyDigest}`,
+    );
+    const listCanonicalHtml = await listCanonicalPage.content();
+    const listPreviewHtml = await page.content();
+    const sectionMarkup = (html: string, section: string): string => {
+      const match = html.match(
+        new RegExp(`<section class="${section}[^"]*">[\\s\\S]*?</section>`),
+      );
+      if (!match) throw new Error(`section markup missing: ${section}`);
+      return match[0];
+    };
+    const previewToPublic = (markup: string): string =>
+      markup
+        .replaceAll(
+          `/media/v1/sites/${parity.site_id}/assets/${agentMediaId}/content`,
+          `/media/public/sha256/${tinyDigest.slice(0, 2)}/${tinyDigest.slice(2, 4)}/${tinyDigest}`,
+        )
+        .replaceAll(
+          `/media/v1/sites/${parity.site_id}/assets/${humanMediaId}/content`,
+          `/media/public/sha256/${fixtureDigest.slice(0, 2)}/${fixtureDigest.slice(2, 4)}/${fixtureDigest}`,
+        );
+    expect(previewToPublic(sectionMarkup(listPreviewHtml, "sl-gallery"))).toBe(
+      sectionMarkup(listCanonicalHtml, "sl-gallery"),
+    );
+    expect(previewToPublic(sectionMarkup(listPreviewHtml, "sl-logogrid"))).toBe(
+      sectionMarkup(listCanonicalHtml, "sl-logogrid"),
+    );
+  } finally {
+    await listParityContext.close();
+  }
+
+  // ------------------------------------------ agent hostile suite (079/2)
+  // L2_SITE_EDITOR is the least-privilege preset adding
+  // component-structure:create to L1's component-content-props:write; the
+  // L1 capability above cannot create components by design.
+  const hostileWorkspaceResponse = await page.request.post(
+    `/api/control/v1/sites/${parity.site_id}/workspaces/`,
+    {
+      headers: editorHeaders(`oap-0792-hostile-workspace-${tag}`),
+      data: {
+        title: `OAP 079-2 media-reference hostile proof ${tag}`,
+        task_description: "Bounded Agent media-reference hostile proof",
+        delegation_preset: "L2_SITE_EDITOR",
+        duration_hours: 1,
+        request_quota: 200,
+        mutation_quota: 50,
+        delete_quota: 0,
+        upload_quota: 0,
+        browser_quota: 0,
+        resource_constraints: {},
+      },
+    },
+  );
+  expect(hostileWorkspaceResponse.status()).toBe(201);
+  const hostileWorkspaceBody = (await hostileWorkspaceResponse.json()) as {
+    workspace_id?: unknown;
+  };
+  const hostileWorkspaceId = requiredString(
+    hostileWorkspaceBody.workspace_id,
+    "hostile workspace id",
+  );
+  const hostileCapabilityResponse = await page.request.post(
+    `/api/control/v1/sites/${parity.site_id}/workspaces/${hostileWorkspaceId}/capabilities/`,
+    { headers: editorHeaders(`oap-0792-hostile-capability-${tag}`) },
+  );
+  expect(hostileCapabilityResponse.status()).toBe(201);
+  const hostileCapability = (await hostileCapabilityResponse.json()) as {
+    capability_id?: unknown;
+    token?: unknown;
+  };
+  const hostileAgentToken = requiredString(
+    hostileCapability.token,
+    "hostile capability token",
+  );
+  expect(hostileAgentToken).toMatch(/^sas2_/);
+  const hostileAgentHeaders = {
+    Authorization: `Bearer ${hostileAgentToken}`,
+  } as const;
+
+  const agentGalleryCreate = await page.request.post(
+    `/api/agent/v1/pages/${homePage!.id}/components`,
+    {
+      headers: {
+        ...hostileAgentHeaders,
+        "Idempotency-Key": `oap-0792-agent-gallery-${tag}`,
+      },
+      data: {
+        component_type: "Gallery",
+        slot_key: "default",
+        props: {
+          title: "Agent gallery proof",
+          columns: "3",
+          items: [
+            { mediaId: agentMediaId, alt: "agent gallery item" },
+            { mediaId: humanMediaId, alt: "human gallery item" },
+          ],
+        },
+      },
+    },
+  );
+  expect(agentGalleryCreate.status()).toBe(201);
+  const agentGalleryCreateBody = (await agentGalleryCreate.json()) as {
+    record?: { id?: unknown; row_version?: unknown };
+  };
+  expect(agentGalleryCreateBody.record?.row_version).toBe(1);
+  expect(typeof agentGalleryCreateBody.record?.id).toBe("string");
+  const agentGalleryId = agentGalleryCreateBody.record?.id as string;
+  const agentLogoGridCreate = await page.request.post(
+    `/api/agent/v1/pages/${homePage!.id}/components`,
+    {
+      headers: {
+        ...hostileAgentHeaders,
+        "Idempotency-Key": `oap-0792-agent-logogrid-${tag}`,
+      },
+      data: {
+        component_type: "LogoGrid",
+        slot_key: "default",
+        props: {
+          items: [
+            { mediaId: agentMediaId, name: "agent logo" },
+            { mediaId: humanMediaId, name: "human logo" },
+          ],
+        },
+      },
+    },
+  );
+  expect(agentLogoGridCreate.status()).toBe(201);
+  const agentLogoGridCreateBody = (await agentLogoGridCreate.json()) as {
+    record?: { id?: unknown; row_version?: unknown };
+  };
+  expect(agentLogoGridCreateBody.record?.row_version).toBe(1);
+  const agentLogoGridId = agentLogoGridCreateBody.record?.id as string;
+
+  const agentListBefore = await page.request.get(
+    `/api/agent/v1/pages/${homePage!.id}/components`,
+    { headers: hostileAgentHeaders },
+  );
+  expect(agentListBefore.status()).toBe(200);
+  const agentListBeforeBody = (await agentListBefore.json()) as Array<{
+    id: string;
+    row_version: number;
+  }>;
+  const rowVersionOf = (
+    body: Array<{ id: string; row_version: number }>,
+    id: string,
+  ): number => {
+    const record = body.find((node) => node.id === id);
+    if (!record) throw new Error(`component missing from agent list: ${id}`);
+    return record.row_version;
+  };
+  expect(rowVersionOf(agentListBeforeBody, agentGalleryId)).toBe(1);
+  expect(rowVersionOf(agentListBeforeBody, agentLogoGridId)).toBe(1);
+
+  const hostileGalleryItems = (count: number) =>
+    Array.from({ length: count }, (_, index) => ({
+      mediaId: agentMediaId,
+      alt: `hostile item ${index}`,
+    }));
+  const hostileLogoGridItems = (count: number) =>
+    Array.from({ length: count }, (_, index) => ({
+      mediaId: agentMediaId,
+      name: `hostile logo ${index}`,
+    }));
+  const unknownMediaId = crypto.randomUUID();
+  const agentPatchCase = async (
+    componentId: string,
+    key: string,
+    props: Record<string, unknown>,
+    expectedKey: string,
+  ): Promise<void> => {
+    const response = await page.request.patch(
+      `/api/agent/v1/components/${componentId}`,
+      {
+        headers: {
+          ...hostileAgentHeaders,
+          "Idempotency-Key": `oap-0792-agent-${key}-${tag}`,
+        },
+        data: { props, expected_row_version: 1 },
+      },
+    );
+    expect(response.status()).toBe(422);
+    const body = (await response.json()) as {
+      error: { code: string; details?: { prop_error?: string } };
+    };
+    expect(body.error.code).toBe("DOMAIN_VALIDATION_FAILED");
+    expect(body.error.details?.prop_error).toBe(expectedKey);
+  };
+  await agentPatchCase(
+    agentGalleryId,
+    "out-of-range-max",
+    { items: hostileGalleryItems(13) },
+    "gallery.items-out-of-range",
+  );
+  await agentPatchCase(
+    agentGalleryId,
+    "out-of-range-empty",
+    { items: [] },
+    "gallery.items-out-of-range",
+  );
+  await agentPatchCase(
+    agentGalleryId,
+    "missing",
+    { items: [{ alt: "no reference" }] },
+    "gallery.item-missing",
+  );
+  await agentPatchCase(
+    agentGalleryId,
+    "missing-not-a-uuid",
+    { items: [{ mediaId: "not-a-uuid", alt: "bad reference" }] },
+    "gallery.item-missing",
+  );
+  await agentPatchCase(
+    agentGalleryId,
+    "foreign-demo",
+    { items: [{ mediaId: demoMediaId, alt: "foreign reference" }] },
+    "gallery.item-foreign-site",
+  );
+  await agentPatchCase(
+    agentGalleryId,
+    "foreign-unknown",
+    { items: [{ mediaId: unknownMediaId, alt: "unknown reference" }] },
+    "gallery.item-foreign-site",
+  );
+  await agentPatchCase(
+    agentGalleryId,
+    "not-image",
+    { items: [{ mediaId: NON_IMAGE_MEDIA_ID, alt: "not an image" }] },
+    "gallery.item-not-image",
+  );
+  await agentPatchCase(
+    agentLogoGridId,
+    "out-of-range-max",
+    { items: hostileLogoGridItems(25) },
+    "logogrid.items-out-of-range",
+  );
+  await agentPatchCase(
+    agentLogoGridId,
+    "out-of-range-min",
+    { items: [{ mediaId: agentMediaId, name: "only one" }] },
+    "logogrid.items-out-of-range",
+  );
+  await agentPatchCase(
+    agentLogoGridId,
+    "missing",
+    {
+      items: [{ mediaId: agentMediaId, name: "valid logo" }, { name: "no reference" }],
+    },
+    "logogrid.item-missing",
+  );
+  await agentPatchCase(
+    agentLogoGridId,
+    "foreign",
+    {
+      items: [
+        { mediaId: agentMediaId, name: "valid logo" },
+        { mediaId: demoMediaId, name: "foreign logo" },
+      ],
+    },
+    "logogrid.item-foreign-site",
+  );
+  await agentPatchCase(
+    agentLogoGridId,
+    "not-image",
+    {
+      items: [
+        { mediaId: agentMediaId, name: "valid logo" },
+        { mediaId: NON_IMAGE_MEDIA_ID, name: "not an image" },
+      ],
+    },
+    "logogrid.item-not-image",
+  );
+
+  // Tree and row versions unchanged after every rejection.
+  const agentListAfter = await page.request.get(
+    `/api/agent/v1/pages/${homePage!.id}/components`,
+    { headers: hostileAgentHeaders },
+  );
+  expect(agentListAfter.status()).toBe(200);
+  const agentListAfterBody = (await agentListAfter.json()) as Array<{
+    id: string;
+    row_version: number;
+  }>;
+  expect(agentListAfterBody).toHaveLength(agentListBeforeBody.length);
+  expect(rowVersionOf(agentListAfterBody, agentGalleryId)).toBe(1);
+  expect(rowVersionOf(agentListAfterBody, agentLogoGridId)).toBe(1);
+
+  // Editor path rejects the same hostile media references with the exact
+  // keys (POST shape bounds + PATCH wholesale-props validation).
+  const editorPostCase = async (
+    key: string,
+    componentType: string,
+    orderKey: number,
+    props: Record<string, unknown>,
+    expectedKey: string,
+  ): Promise<void> => {
+    const response = await page.request.post(compositionPath, {
+      headers: editorHeaders(`oap-0792-editor-post-${key}-${tag}`),
+      data: {
+        component_type: componentType,
+        slot_key: "default",
+        order_key: orderKey,
+        props,
+      },
+    });
+    expect(response.status()).toBe(422);
+    const body = (await response.json()) as {
+      error: { code: string; details?: { prop_error?: string } };
+    };
+    expect(body.error.code).toBe("DOMAIN_VALIDATION_FAILED");
+    expect(body.error.details?.prop_error).toBe(expectedKey);
+  };
+  const editorPatchCase = async (
+    nodeId: string,
+    key: string,
+    props: Record<string, unknown>,
+    expectedKey: string,
+  ): Promise<void> => {
+    const response = await page.request.patch(
+      `/api/editor/v1/sites/${parity.site_id}/pages/${homePage!.id}/composition/components/${nodeId}`,
+      { headers: editorHeaders(`oap-0792-editor-${key}-${tag}`), data: { props } },
+    );
+    expect(response.status()).toBe(422);
+    const body = (await response.json()) as {
+      error: { code: string; details?: { prop_error?: string } };
+    };
+    expect(body.error.code).toBe("DOMAIN_VALIDATION_FAILED");
+    expect(body.error.details?.prop_error).toBe(expectedKey);
+  };
+  await editorPostCase(
+    "gallery-out-of-range",
+    "Gallery",
+    24,
+    { title: "hostile gallery", items: hostileGalleryItems(13) },
+    "gallery.items-out-of-range",
+  );
+  await editorPostCase(
+    "logogrid-out-of-range",
+    "LogoGrid",
+    25,
+    { items: hostileLogoGridItems(1) },
+    "logogrid.items-out-of-range",
+  );
+  await editorPatchCase(
+    galleryComponentId,
+    "gallery-out-of-range-empty",
+    { items: [] },
+    "gallery.items-out-of-range",
+  );
+  await editorPatchCase(
+    galleryComponentId,
+    "gallery-missing",
+    { items: [{ alt: "no reference" }] },
+    "gallery.item-missing",
+  );
+  await editorPatchCase(
+    galleryComponentId,
+    "gallery-missing-not-a-uuid",
+    { items: [{ mediaId: "not-a-uuid", alt: "bad reference" }] },
+    "gallery.item-missing",
+  );
+  await editorPatchCase(
+    galleryComponentId,
+    "gallery-foreign-demo",
+    { items: [{ mediaId: demoMediaId, alt: "foreign reference" }] },
+    "gallery.item-foreign-site",
+  );
+  await editorPatchCase(
+    galleryComponentId,
+    "gallery-foreign-unknown",
+    { items: [{ mediaId: unknownMediaId, alt: "unknown reference" }] },
+    "gallery.item-foreign-site",
+  );
+  await editorPatchCase(
+    galleryComponentId,
+    "gallery-not-image",
+    { items: [{ mediaId: NON_IMAGE_MEDIA_ID, alt: "not an image" }] },
+    "gallery.item-not-image",
+  );
+  await editorPatchCase(
+    logoGridComponentId,
+    "logogrid-out-of-range-max",
+    { items: hostileLogoGridItems(25) },
+    "logogrid.items-out-of-range",
+  );
+  await editorPatchCase(
+    logoGridComponentId,
+    "logogrid-missing",
+    {
+      items: [{ mediaId: agentMediaId, name: "valid logo" }, { name: "no reference" }],
+    },
+    "logogrid.item-missing",
+  );
+  await editorPatchCase(
+    logoGridComponentId,
+    "logogrid-foreign",
+    {
+      items: [
+        { mediaId: agentMediaId, name: "valid logo" },
+        { mediaId: demoMediaId, name: "foreign logo" },
+      ],
+    },
+    "logogrid.item-foreign-site",
+  );
+  await editorPatchCase(
+    logoGridComponentId,
+    "logogrid-not-image",
+    {
+      items: [
+        { mediaId: agentMediaId, name: "valid logo" },
+        { mediaId: NON_IMAGE_MEDIA_ID, name: "not an image" },
+      ],
+    },
+    "logogrid.item-not-image",
+  );
+
   // ---------------------------------------------------------------- hostile suite
   // 1. Cross-site private byte read: 404, never 403, never bytes. The
   // 404 carries the standard bounded error envelope (never empty), and

@@ -891,3 +891,213 @@ describe("real Image renderer (079/1 media publication core)", () => {
     }
   });
 });
+
+describe("Gallery and LogoGrid renderers (079/2 media-reference lists)", () => {
+  const MEDIA_A = "11111111-1111-4111-8111-111111111111";
+  const MEDIA_B = "11111111-1111-4111-8111-111111111112";
+  const MEDIA_C = "11111111-1111-4111-8111-111111111113";
+  const SITE_ID = "11111111-2222-4333-8444-555555555555";
+  const DIGEST = "aabb" + "111122223333444455556666777788889999aabbccddeeff00";
+  const PUBLIC_URL = `/media/public/sha256/aa/bb/${DIGEST}`;
+  const PREVIEW_URL = `/media/v1/sites/${SITE_ID}/assets/${MEDIA_A}/content`;
+  const PREVIEW_URL_B = `/media/v1/sites/${SITE_ID}/assets/${MEDIA_B}/content`;
+  const descriptor = (url: string) => ({
+    url,
+    mime_type: "image/png",
+    size_bytes: 1,
+  });
+
+  const galleryItems = [descriptor(PREVIEW_URL), descriptor(PREVIEW_URL_B), null];
+
+  const galleryNode = {
+    componentType: "Gallery",
+    props: {
+      title: "Team",
+      columns: "3",
+      items: [
+        { mediaId: MEDIA_A, alt: "One", aspectRatio: "16:9" },
+        { mediaId: MEDIA_B, alt: "Two" },
+        { mediaId: MEDIA_C, alt: "Missing" },
+      ],
+    },
+  };
+
+  const logoGridNode = {
+    componentType: "LogoGrid",
+    props: {
+      title: "Clients",
+      items: [
+        { mediaId: MEDIA_A, name: "Acme" },
+        { mediaId: MEDIA_C, name: "Unknown" },
+      ],
+    },
+  };
+
+  it("emits the exact Gallery markup for 3 columns with title and mixed items", () => {
+    const markup = renderToStaticMarkup(
+      renderComponent(
+        galleryNode,
+        "en",
+        undefined,
+        undefined,
+        true,
+        undefined,
+        galleryItems,
+      ),
+    );
+    expect(markup).toBe(
+      `<section class="sl-gallery sl-gallery--3 cols"><h3>Team</h3><ul class="sl-gallery__items"><li aria-label="One" class="renderer-image-placeholder renderer-image-placeholder--16-9" role="img"><img class="sl-image" src="${PREVIEW_URL}" alt="One" loading="lazy" referrerPolicy="no-referrer"/></li><li aria-label="Two" class="renderer-image-placeholder renderer-image-placeholder--auto" role="img"><img class="sl-image" src="${PREVIEW_URL_B}" alt="Two" loading="lazy" referrerPolicy="no-referrer"/></li><li aria-label="Missing" class="renderer-image-placeholder renderer-image-placeholder--auto" role="img"></li></ul></section>`,
+    );
+  });
+
+  it("emits the exact Gallery markup for the 2 and 4 column tokens", () => {
+    const two = renderToStaticMarkup(
+      renderComponent(
+        { ...galleryNode, props: { ...galleryNode.props, columns: "2" } },
+        "en",
+        undefined,
+        undefined,
+        true,
+        undefined,
+        galleryItems,
+      ),
+    );
+    const four = renderToStaticMarkup(
+      renderComponent(
+        { ...galleryNode, props: { ...galleryNode.props, columns: "4" } },
+        "en",
+        undefined,
+        undefined,
+        true,
+        undefined,
+        galleryItems,
+      ),
+    );
+    expect(two).toContain(`class="sl-gallery sl-gallery--2 cols"`);
+    expect(four).toContain(`class="sl-gallery sl-gallery--4 cols"`);
+    expect(two).toBe(four.replace("sl-gallery--4", "sl-gallery--2"));
+  });
+
+  it("omits the heading without a title and defaults columns to 3", () => {
+    const markup = renderToStaticMarkup(
+      renderComponent(
+        { ...galleryNode, props: { items: galleryNode.props.items } },
+        "en",
+        undefined,
+        undefined,
+        true,
+        undefined,
+        galleryItems,
+      ),
+    );
+    expect(markup).toContain(`class="sl-gallery sl-gallery--3 cols"`);
+    expect(markup).not.toContain("<h3>");
+  });
+
+  it("emits the exact LogoGrid markup with resolved and fail-closed items", () => {
+    const markup = renderToStaticMarkup(
+      renderComponent(logoGridNode, "en", undefined, undefined, true, undefined, [
+        descriptor(PREVIEW_URL),
+        null,
+      ]),
+    );
+    expect(markup).toBe(
+      `<section class="sl-logogrid"><h3>Clients</h3><ul class="sl-logogrid__items"><li aria-label="Acme" class="renderer-image-placeholder renderer-image-placeholder--1-1" role="img"><img class="sl-logogrid__logo" src="${PREVIEW_URL}" alt="Acme" loading="lazy" referrerPolicy="no-referrer"/></li><li aria-label="Unknown" class="renderer-image-placeholder renderer-image-placeholder--1-1" role="img"></li></ul></section>`,
+    );
+  });
+
+  it("keeps preview and public markup identical except the src form", () => {
+    const previewGallery = renderToStaticMarkup(
+      renderComponent(
+        {
+          ...galleryNode,
+          props: {
+            ...galleryNode.props,
+            title: "Team",
+            items: [{ mediaId: MEDIA_A, alt: "One" }],
+          },
+        },
+        "en",
+        undefined,
+        undefined,
+        true,
+        undefined,
+        [descriptor(PREVIEW_URL)],
+      ),
+    );
+    const publicGallery = renderToStaticMarkup(
+      renderComponent(
+        {
+          ...galleryNode,
+          props: {
+            ...galleryNode.props,
+            title: "Team",
+            items: [{ mediaId: MEDIA_A, alt: "One" }],
+          },
+        },
+        "en",
+        undefined,
+        undefined,
+        true,
+        undefined,
+        [descriptor(PUBLIC_URL)],
+      ),
+    );
+    expect(previewGallery.replace(PREVIEW_URL, PUBLIC_URL)).toBe(publicGallery);
+
+    const previewLogo = renderToStaticMarkup(
+      renderComponent(
+        { ...logoGridNode, props: { items: [{ mediaId: MEDIA_A, name: "Acme" }] } },
+        "en",
+        undefined,
+        undefined,
+        true,
+        undefined,
+        [descriptor(PREVIEW_URL)],
+      ),
+    );
+    const publicLogo = renderToStaticMarkup(
+      renderComponent(
+        { ...logoGridNode, props: { items: [{ mediaId: MEDIA_A, name: "Acme" }] } },
+        "en",
+        undefined,
+        undefined,
+        true,
+        undefined,
+        [descriptor(PUBLIC_URL)],
+      ),
+    );
+    expect(previewLogo.replace(PREVIEW_URL, PUBLIC_URL)).toBe(publicLogo);
+  });
+
+  it("never emits inline styles, event handlers, javascript: URLs, sandbox, or target", () => {
+    const markups = [
+      renderToStaticMarkup(
+        renderComponent(
+          galleryNode,
+          "en",
+          undefined,
+          undefined,
+          true,
+          undefined,
+          galleryItems,
+        ),
+      ),
+      renderToStaticMarkup(renderComponent(galleryNode, "en")),
+      renderToStaticMarkup(
+        renderComponent(logoGridNode, "en", undefined, undefined, true, undefined, [
+          descriptor(PREVIEW_URL),
+          null,
+        ]),
+      ),
+      renderToStaticMarkup(renderComponent(logoGridNode, "en")),
+    ];
+    for (const markup of markups) {
+      expect(markup).not.toMatch(/style=/);
+      expect(markup).not.toMatch(/\son[a-z]+=/i);
+      expect(markup).not.toMatch(/javascript:/i);
+      expect(markup).not.toMatch(/\ssandbox=/);
+      expect(markup).not.toMatch(/\starget=/);
+    }
+  });
+});

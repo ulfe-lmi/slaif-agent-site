@@ -109,7 +109,7 @@ design rather than weaken this baseline.
 | Editor HTTP service | Backend | `10001:10001` | edge/database plus isolated Control/Editor secrets | no media volume |
 | Media HTTP service | Backend | `10001:10001` | edge/database plus isolated Media secret | private `media-data` only; initialized `0700` for UID 10001 |
 | Three Python workers | Backend | `10001:10001` | database | media volume on media-GC only |
-| `browser-worker` | Playwright 1.62.1 / Chrome for Testing 153.0.8010.52 (CfT revision 1681091) | `10001:10001` | browser only | read-only worker credential; writable private browser artifacts |
+| `browser-worker` | Playwright 1.62.1 / Chrome for Testing 154.0.8037.92 (CfT revision 1689415) | `10001:10001` | browser only | read-only worker credential; writable private browser artifacts |
 | `web` | Next.js | `10001:10001` | edge, application, browser | read-only `render-auth-secret` credential |
 | `nginx` | NGINX Open Source | `101:101` | edge only | none |
 
@@ -158,7 +158,7 @@ values:
 
 | Package | License | npm integrity |
 | --- | --- | --- |
-| `next@16.3.3` | MIT | `sha512-tuRTx1nQ/yVw83cwJBo9F+njGUgMn3UHQycreWHB8XsStvvAh1AthbI8/4IpKnFaF58F+iSiHejYOlMQ/eq83g==` |
+| `next@16.3.8` | MIT | `sha512-U7QEZaTini6wKrb8A8hqLLqYQyCetegKjCpJOyxk642vWoMoU1x5PyZCJFvgYgiptA8xc5j/9xYlZFO7w9Sjmw==` |
 | `react@19.2.8` | MIT | `sha512-PWaYA1L/q9u2u7xYQi+Y3L3Yfnie7XyLeaJICV1MGD6LprsBxcAqGjYyr0eY3p+QdsA+x/Irkt4Qif8D63+Sbw==` |
 | `react-dom@19.2.8` | MIT | `sha512-rVprimfGBG3DR+Tq0IQG2DT5PxKth1WIGDmj5yPmlzr4YBe7uyE+Du4oVqTDXZSHGGGXRtTJEGSSePyQCMBglQ==` |
 | `@types/react@19.2.18` | MIT | `sha512-AnzbBERsrLKtk2XSfTbYRLjQPdy116Sty4q+T+Bp3IC4l6jNBvreVPAHmpq9qhXQM7CXZPjLVmGMw9sy+hxQ3w==` |
@@ -171,9 +171,9 @@ optional dependency is denied by pnpm policy, and the status surface sets
 unoptimized local images, so its LGPL libvips bundle is neither locked nor
 installed in product images. `@playwright/test==1.62.1` is an Apache-2.0
 test runner. The product worker declares exact Apache-2.0
-`playwright-core==1.62.1` and bakes only Chrome for Testing `153.0.8010.52`
-(CfT revision `1681091`). The exact amd64 archive SHA-256 is
-`e66f66d4802a46d4a022667e668aa950e277cadbfbed4b3777915b47413a0ef9`.
+`playwright-core==1.62.1` and bakes only Chrome for Testing `154.0.8037.92`
+(CfT revision `1689415`). The exact amd64 archive SHA-256 is
+`ff43322f335e436b2f4dcdfeeec5db032299e335a7e8c1c618b326e100ce8732`.
 Firefox, WebKit, the headless-shell duplicate, npm, and Corepack are removed
 from the runtime image. The product worker is currently qualified only on
 `linux/amd64`; an arm64 browser payload is not claimed.

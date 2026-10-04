@@ -51,6 +51,7 @@ from slaif_agent_site.content_model.component_catalog import (
     COMPONENT_CATALOG_VERSION,
     COMPOSITION_SCHEMA_VERSION,
 )
+from slaif_agent_site.content_model.component_facets import MEDIA_REFERENCE_ERROR_KEYS
 from slaif_agent_site.content_model.composition_models import (
     AgentCreateCompositionNodeRequest,
     AgentMoveCompositionNodeRequest,
@@ -875,9 +876,12 @@ async def _execute_mutation(
                 raise ResourceConflictError() from None
             if exc.code == "REDIRECT_ROUTE_PREFIX_DENIED":
                 raise AuthorizationError() from None
-            if exc.code is not None and exc.code.startswith("embed."):
-                # Bounded embed-policy rejection: the exact R1 error key is a
-                # bounded constant, safe to surface without echoing input.
+            if exc.code is not None and (
+                exc.code.startswith("embed.") or exc.code in MEDIA_REFERENCE_ERROR_KEYS
+            ):
+                # Bounded embed-policy / media-reference rejection: the exact
+                # error key is a bounded constant, safe to surface without
+                # echoing input.
                 raise DomainValidationError(details={"prop_error": exc.code}) from None
             raise DomainValidationError() from None
         if exc.reason is ContentModelServiceReason.AUTHORIZATION:

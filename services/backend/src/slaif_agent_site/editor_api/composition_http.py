@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 from uuid import UUID
 
@@ -13,8 +14,10 @@ from slaif_agent_site.content_model.bounded_embed import (
 )
 from slaif_agent_site.content_model.component_facets import (
     FacetValidationError,
+    MediaReferenceError,
     field_primitive_map,
     validate_collection_filter_facets,
+    validate_media_reference_items,
 )
 from slaif_agent_site.content_model.composition_models import (
     CompositionNodeRecord,
@@ -142,6 +145,55 @@ async def _validate_embed_props(component_type: str, props: dict[str, Any]) -> N
         raise DomainValidationError() from None
 
 
+async def _validate_media_reference_props(
+    request: Request,
+    site_id: UUID,
+    component_type: str,
+    props: dict[str, Any],
+) -> None:
+    """Fail-closed media-reference list validation for the human Puck path.
+
+    The Editor update endpoint replaces props wholesale, so the supplied
+    props are exactly the post-write state.  Each well-formed ``mediaId`` is
+    resolved through the id lookup plus an explicit site comparison; a
+    reference that does not resolve within the site, or resolves to a
+    non-image MIME row, is a bounded rejection with the exact 079/2 error
+    key.  The catalog guard still re-verifies prop shape downstream
+    (defense in depth).
+    """
+    items = props.get("items")
+    if not isinstance(items, list):
+        return  # the catalog guard rejects malformed shapes
+    facts: dict[UUID, tuple[UUID, str] | None] = {}
+    for item in items:
+        if not isinstance(item, Mapping):
+            continue
+        raw_media_id = item.get("mediaId")
+        if not isinstance(raw_media_id, str):
+            continue
+        try:
+            media_id = UUID(raw_media_id)
+        except (TypeError, ValueError):
+            continue
+        if media_id in facts:
+            continue
+        try:
+            record = await _service(request).get_media(media_id)
+        except ContentModelServiceError as error:
+            if error.reason is ContentModelServiceReason.NOT_FOUND:
+                facts[media_id] = None
+            else:
+                raise ServiceUnavailableError() from None
+        else:
+            facts[media_id] = (record.site_id, record.mime_type)
+    try:
+        validate_media_reference_items(
+            component_type, items, site_id=site_id, facts=facts
+        )
+    except MediaReferenceError as error:
+        raise DomainValidationError(details={"prop_error": error.code}) from None
+
+
 async def _auth(
     request: Request, site_id: UUID, *, permission: str, state_changing: bool
 ) -> SiteRequestAuthority:
@@ -173,6 +225,9 @@ async def add_component(
         raise DomainValidationError() from None
     _require_component_scopes(authority, required)
     await _validate_collection_filter_facets(
+        request, site_id, body.component_type, body.props
+    )
+    await _validate_media_reference_props(
         request, site_id, body.component_type, body.props
     )
     await _validate_embed_props(body.component_type, body.props)
@@ -236,6 +291,9 @@ async def update_component(
     _require_component_scopes(authority, required)
     if body.props is not None:
         await _validate_collection_filter_facets(
+            request, site_id, current.component_type, body.props
+        )
+        await _validate_media_reference_props(
             request, site_id, current.component_type, body.props
         )
         await _validate_embed_props(current.component_type, body.props)

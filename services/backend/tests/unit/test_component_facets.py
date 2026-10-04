@@ -1,12 +1,18 @@
 """Fail-closed CollectionFilter facet vocabulary contracts."""
 
 from types import SimpleNamespace
+from uuid import UUID
 
 import pytest
 from slaif_agent_site.content_model.component_facets import (
+    MEDIA_MIME_CLASSES,
+    MEDIA_REFERENCE_COMPONENTS,
+    MEDIA_REFERENCE_ERROR_KEYS,
     FacetValidationError,
+    MediaReferenceError,
     field_primitive_map,
     validate_collection_filter_facets,
+    validate_media_reference_items,
 )
 
 FIELDS = {
@@ -160,3 +166,218 @@ def test_field_primitive_map_accepts_record_and_object_rows() -> None:
         "dup": "ignored",
         "kind": "enum",
     }
+
+
+# ---------------------------------------------------------------- 079/2
+# Gallery/LogoGrid media-reference list semantics (pure, resolved facts).
+SITE = UUID("11111111-2222-4333-8444-555555555555")
+FOREIGN_SITE = UUID("22222222-3333-4444-8555-666666666666")
+M_A = UUID("11111111-1111-4111-8111-111111111111")
+M_B = UUID("11111111-1111-4111-8111-111111111112")
+M_C = UUID("11111111-1111-4111-8111-111111111113")
+M_TEXT = UUID("11111111-1111-4111-8111-111111111114")
+
+
+def _facts(*rows: tuple[UUID, UUID, str] | None) -> dict[UUID, tuple[UUID, str] | None]:
+    facts: dict[UUID, tuple[UUID, str] | None] = {}
+    for row in rows:
+        if row is None:
+            continue
+        media_id, site_id, mime = row
+        facts[media_id] = (site_id, mime)
+    return facts
+
+
+def _gallery_items(*media_ids: object) -> list[dict[str, object]]:
+    items: list[dict[str, object]] = []
+    for index, media_id in enumerate(media_ids):
+        item: dict[str, object] = {"alt": f"alt-{index}"}
+        if media_id is not Ellipsis:
+            item["mediaId"] = str(media_id)
+        items.append(item)
+    return items
+
+
+def _logogrid_items(*media_ids: object) -> list[dict[str, object]]:
+    items: list[dict[str, object]] = []
+    for index, media_id in enumerate(media_ids):
+        item: dict[str, object] = {"name": f"name-{index}"}
+        if media_id is not Ellipsis:
+            item["mediaId"] = str(media_id)
+        items.append(item)
+    return items
+
+
+def test_valid_gallery_items_pass() -> None:
+    facts = _facts(
+        (M_A, SITE, "image/png"),
+        (M_B, SITE, "image/jpeg"),
+    )
+    validate_media_reference_items(
+        "Gallery", _gallery_items(M_A, M_B), site_id=SITE, facts=facts
+    )
+
+
+def test_valid_logogrid_items_pass() -> None:
+    facts = _facts(
+        (M_A, SITE, "image/png"),
+        (M_B, SITE, "image/jpeg"),
+    )
+    validate_media_reference_items(
+        "LogoGrid", _logogrid_items(M_A, M_B), site_id=SITE, facts=facts
+    )
+
+
+def test_duplicate_items_are_allowed() -> None:
+    facts = _facts((M_A, SITE, "image/png"))
+    validate_media_reference_items(
+        "Gallery", _gallery_items(M_A, M_A), site_id=SITE, facts=facts
+    )
+    validate_media_reference_items(
+        "LogoGrid", _logogrid_items(M_A, M_A, M_A), site_id=SITE, facts=facts
+    )
+
+
+def test_bounds_edges_pass() -> None:
+    facts = _facts(
+        (M_A, SITE, "image/png"),
+        (M_B, SITE, "image/jpeg"),
+        (M_C, SITE, "image/png"),
+    )
+    one = [M_A] * 1
+    twelve = [M_A, M_B, M_C] * 4
+    assert len(one) == MEDIA_REFERENCE_COMPONENTS["Gallery"][1]
+    assert len(twelve) == MEDIA_REFERENCE_COMPONENTS["Gallery"][2]
+    validate_media_reference_items(
+        "Gallery", _gallery_items(*one), site_id=SITE, facts=facts
+    )
+    validate_media_reference_items(
+        "Gallery", _gallery_items(*twelve), site_id=SITE, facts=facts
+    )
+    two = [M_A, M_B]
+    twenty_four = [M_A, M_B, M_C] * 8
+    assert len(two) == MEDIA_REFERENCE_COMPONENTS["LogoGrid"][1]
+    assert len(twenty_four) == MEDIA_REFERENCE_COMPONENTS["LogoGrid"][2]
+    validate_media_reference_items(
+        "LogoGrid", _logogrid_items(*two), site_id=SITE, facts=facts
+    )
+    validate_media_reference_items(
+        "LogoGrid", _logogrid_items(*twenty_four), site_id=SITE, facts=facts
+    )
+
+
+@pytest.mark.parametrize(
+    ("component_type", "items", "code"),
+    [
+        ("Gallery", [], "gallery.items-out-of-range"),
+        ("Gallery", [M_A] * 13, "gallery.items-out-of-range"),
+        ("LogoGrid", [M_A], "logogrid.items-out-of-range"),
+        ("LogoGrid", [M_A] * 25, "logogrid.items-out-of-range"),
+    ],
+)
+def test_list_bounds_are_rejected_with_the_exact_key(
+    component_type: str, items: list[object], code: str
+) -> None:
+    facts = _facts((M_A, SITE, "image/png"))
+    builder = _gallery_items if component_type == "Gallery" else _logogrid_items
+    with pytest.raises(MediaReferenceError) as exc:
+        validate_media_reference_items(
+            component_type, builder(*items), site_id=SITE, facts=facts
+        )
+    assert exc.value.code == code
+
+
+@pytest.mark.parametrize(
+    ("component_type", "items", "facts", "code"),
+    [
+        ("Gallery", _gallery_items(Ellipsis), _facts(), "gallery.item-missing"),
+        (
+            "Gallery",
+            _gallery_items("not-a-uuid"),
+            _facts(),
+            "gallery.item-missing",
+        ),
+        (
+            "Gallery",
+            _gallery_items(7),
+            _facts(),
+            "gallery.item-missing",
+        ),
+        (
+            "Gallery",
+            _gallery_items(M_A, M_B),
+            _facts((M_B, SITE, "image/png")),  # M_A never resolved
+            "gallery.item-foreign-site",
+        ),
+        (
+            "Gallery",
+            _gallery_items(M_A),
+            _facts((M_A, FOREIGN_SITE, "image/png")),
+            "gallery.item-foreign-site",
+        ),
+        (
+            "Gallery",
+            _gallery_items(M_TEXT),
+            _facts((M_TEXT, SITE, "text/plain")),
+            "gallery.item-not-image",
+        ),
+        (
+            "LogoGrid",
+            _logogrid_items(Ellipsis, M_A),
+            _facts((M_A, SITE, "image/png")),
+            "logogrid.item-missing",
+        ),
+        (
+            "LogoGrid",
+            _logogrid_items(M_A, M_B),
+            _facts((M_A, SITE, "image/png"), (M_B, FOREIGN_SITE, "image/jpeg")),
+            "logogrid.item-foreign-site",
+        ),
+        (
+            "LogoGrid",
+            _logogrid_items(M_A, M_TEXT),
+            _facts(
+                (M_A, SITE, "image/png"),
+                (M_TEXT, SITE, "image/svg+xml"),
+            ),
+            "logogrid.item-not-image",
+        ),
+    ],
+)
+def test_media_reference_failures_use_the_exact_bounded_key(
+    component_type: str,
+    items: list[dict[str, object]],
+    facts: dict[UUID, tuple[UUID, str] | None],
+    code: str,
+) -> None:
+    with pytest.raises(MediaReferenceError) as exc:
+        validate_media_reference_items(component_type, items, site_id=SITE, facts=facts)
+    assert exc.value.code == code
+
+
+def test_malformed_shapes_and_unknown_types_pass_through() -> None:
+    facts = _facts((M_A, SITE, "image/png"))
+    validate_media_reference_items("Image", {"mediaId": M_A}, site_id=SITE, facts=facts)
+    validate_media_reference_items("Gallery", "not-a-list", site_id=SITE, facts=facts)
+    # Non-dict items are shape skips (the catalog guard owns shapes); a dict
+    # item without a well-formed mediaId is the semantic item-missing case.
+    validate_media_reference_items(
+        "Gallery",
+        ["junk", 7, M_A, None],
+        site_id=SITE,
+        facts=facts,
+    )
+
+
+def test_error_key_vocabulary_is_exactly_the_ordered_set() -> None:
+    assert MEDIA_REFERENCE_ERROR_KEYS == {
+        "gallery.item-missing",
+        "gallery.item-foreign-site",
+        "gallery.item-not-image",
+        "gallery.items-out-of-range",
+        "logogrid.item-missing",
+        "logogrid.item-foreign-site",
+        "logogrid.item-not-image",
+        "logogrid.items-out-of-range",
+    }
+    assert MEDIA_MIME_CLASSES == {"image/png", "image/jpeg"}

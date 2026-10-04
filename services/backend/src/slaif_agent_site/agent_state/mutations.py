@@ -11,7 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, cast
 from uuid import UUID, uuid4
@@ -35,9 +35,12 @@ from slaif_agent_site.content_model.bounded_embed import (
     validate_video_embed_props,
 )
 from slaif_agent_site.content_model.component_facets import (
+    MEDIA_REFERENCE_COMPONENTS,
     FacetValidationError,
+    MediaReferenceError,
     field_primitive_map,
     validate_collection_filter_facets,
+    validate_media_reference_items,
 )
 from slaif_agent_site.content_model.composition_models import (
     AgentCreateCompositionNodeRequest,
@@ -273,6 +276,7 @@ AGENT_FACET_VIEW_GET_SQL = (
 AGENT_FACET_FIELD_LIST_SQL = (
     "SELECT * FROM content.slaif_agent_field_definition_list($1,$2)"
 )
+AGENT_MEDIA_GET_SQL = "SELECT * FROM content.slaif_agent_media_get($1,$2)"
 AGENT_RELATION_CREATE_SQL = (
     "SELECT * FROM content.slaif_agent_item_relation_create($1,$2,$3,$4,$5,$6)"
 )
@@ -1317,6 +1321,9 @@ class AgentCowContentModelService(ContentModelService):
         await self._validate_collection_filter_facets(
             site_id, request.component_type, request.props
         )
+        await self._validate_media_reference_props(
+            site_id, request.component_type, request.props
+        )
         embed_error = self._embed_prop_error(request.component_type, {}, request.props)
         if embed_error is not None:
             raise ContentModelServiceError(
@@ -1352,6 +1359,9 @@ class AgentCowContentModelService(ContentModelService):
         request: AgentUpdateCompositionNodeRequest,
     ) -> CompositionNodeRecord:
         current = await self.get_component_for_site(site_id, component_id)
+        await self._validate_media_reference_props(
+            site_id, current.component_type, request.props, base=current.props
+        )
         embed_error = self._embed_prop_error(
             current.component_type, current.props, request.props
         )
@@ -1456,6 +1466,62 @@ class AgentCowContentModelService(ContentModelService):
                 props.get("facets"), field_primitive_map(field_rows)
             )
         except FacetValidationError as error:
+            raise ContentModelServiceError(
+                ContentModelServiceReason.VALIDATION, code=error.code
+            ) from None
+
+    async def _validate_media_reference_props(
+        self,
+        site_id: UUID,
+        component_type: str,
+        patch_props: dict[str, Any],
+        *,
+        base: dict[str, Any] | None = None,
+    ) -> None:
+        """Fail-closed media-reference list validation for Gallery/LogoGrid.
+
+        Validates the post-write state: the base props (update) or the
+        supplied props (create) with the patch merged (non-null entries
+        override, null entries remove, mirroring
+        ``validate_agent_component_props``).  Each well-formed ``mediaId`` is
+        resolved through the site-scoped ``slaif_agent_media_get``; a
+        reference that does not resolve within the site, or resolves to a
+        non-image MIME row, is a bounded validation failure with the exact
+        079/2 error key.  The catalog guard still re-verifies prop shape on
+        the same state downstream (defense in depth).
+        """
+        if component_type not in MEDIA_REFERENCE_COMPONENTS:
+            return
+        merged = dict(base) if base is not None else {}
+        for key, value in patch_props.items():
+            if value is None:
+                merged.pop(key, None)
+            else:
+                merged[key] = value
+        items = merged.get("items")
+        if not isinstance(items, list):
+            return  # the catalog guard rejects malformed shapes
+        facts: dict[UUID, tuple[UUID, str] | None] = {}
+        for item in items:
+            if not isinstance(item, Mapping):
+                continue
+            raw_media_id = item.get("mediaId")
+            if not isinstance(raw_media_id, str):
+                continue
+            try:
+                media_id = UUID(raw_media_id)
+            except (TypeError, ValueError):
+                continue
+            if media_id not in facts:
+                row = await self._fetchrow(AGENT_MEDIA_GET_SQL, site_id, media_id)
+                facts[media_id] = (
+                    (row["site_id"], str(row["mime_type"])) if row is not None else None
+                )
+        try:
+            validate_media_reference_items(
+                component_type, items, site_id=site_id, facts=facts
+            )
+        except MediaReferenceError as error:
             raise ContentModelServiceError(
                 ContentModelServiceReason.VALIDATION, code=error.code
             ) from None

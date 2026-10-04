@@ -234,6 +234,63 @@
       },
       "qualification_date": "2026-09-19",
       "history_note": "The 078-6-a refresh pins CfT 153.0.8010.52 (same revision 1681091) and clears all six Critical CVE-2026-917xx findings (fixed in 153.0.8010.47 per the pinned Grype advisory data) with pinned Grype 0.117.0 on the fresh v6.1.9 database built 2026-09-18T06:30:15Z. Local measured pipeline run; final remote revalidation is the Supply-chain evidence required check on the exact report-only head per order 078-6-a acceptance criterion 4. No exception added and no gate weakened."
+    },
+    {
+      "candidate": "candidate-7 CfT: 154.0.8037.92 measured scan coverage",
+      "official_metadata": {
+        "last_known_good_url": "https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions-with-downloads.json",
+        "exact_version_url": "https://googlechromelabs.github.io/chrome-for-testing/known-good-versions-with-downloads.json",
+        "timestamp": "2026-10-03T01:32:42.960Z",
+        "channel": "Stable",
+        "version": "154.0.8037.92",
+        "revision": "1689415",
+        "platform": "linux64",
+        "archive_url": "https://storage.googleapis.com/chrome-for-testing-public/154.0.8037.92/linux64/chrome-linux64.zip"
+      },
+      "archive_sha256": "ff43322f335e436b2f4dcdfeeec5db032299e335a7e8c1c618b326e100ce8732",
+      "runtime": {
+        "image": "browser-worker",
+        "image_digest": "sha256:7efa9ad744f0942c2c502c5b5a151de03304c73625f9feac02e170f34d0b10e6",
+        "base_image": "mcr.microsoft.com/playwright:v1.62.1-noble@sha256:dcc5531e97840b9b5e794f2814476b21571c5124a3fca2267d73041f56e7580e",
+        "executable": "/ms-playwright/chromium-1689415/chrome-linux64/chrome",
+        "executable_version": "Google Chrome for Testing 154.0.8037.92",
+        "executable_sha256": "439f367a9a24dde467dca9c4e4c2feedd3266899c5a8e3eb17b68b05d4da9f5f"
+      },
+      "scanner": {
+        "name": "grype",
+        "version": "0.117.0",
+        "database_schema": "v6.1.10",
+        "database_built": "2026-10-03T06:31:58Z",
+        "database_checksum": "sha256:397565327faac36f757903f87e31ac403a251bed21c0f0ec5b87f912c5143ab6",
+        "syft_name": "syft",
+        "syft_version": "1.51.0"
+      },
+      "sbom": {
+        "format": "SPDX-2.3",
+        "browser_worker_sbom_sha256": "537f4b48504dbdf1c89fbf16af3703679bedf6f0d84fbedf4facb020c6cd0d88",
+        "browser_worker_scan_sbom_sha256": "e3e53d1418a64c283bfd0820242b5b59ff8c4bfc95375fc05cb77d8272415b0f",
+        "chrome_purl": "pkg:generic/chrome@154.0.8037.92",
+        "playwright_purl": "pkg:npm/playwright-core@1.62.1",
+        "identity_source": "supplemental-measured-runtime"
+      },
+      "scan_result": {
+        "result": "PASS",
+        "evidence_runner": "tools/supply_chain/run.sh",
+        "image_count": 6,
+        "critical": 0,
+        "unexcepted_critical": 0,
+        "high_review_findings": 53,
+        "browser_worker_matches": 1587,
+        "browser_worker_high": 4,
+        "browser_worker_medium": 1467,
+        "browser_worker_low": 102,
+        "browser_worker_negligible": 14,
+        "exception_count": 0,
+        "browser_worker_scan_sha256": "f355c934fcfa001affc5e29a0c39ee60c4573915133c3459fb114264e750baf2",
+        "checksum_validation": "PASS"
+      },
+      "qualification_date": "2026-10-04",
+      "history_note": "The 079-2-h refresh pins CfT 154.0.8037.92 (revision 1689415) and clears all 24 Critical CVE-2026-952xx/CVE-2026-1023xx findings first published on/around 2026-09-30 (fixed in 154.0.8037.57/154.0.8037.92 per the pinned Grype advisory data), with pinned Grype 0.117.0 on the fresh v6.1.10 database built 2026-10-03T06:31:58Z. Local measured pipeline run 2026-10-04; final remote revalidation is the Supply-chain evidence required check on the exact report-only head per order 079-2-h acceptance criterion 6. No exception added and no gate weakened."
     }
   ],
   "entries": [
