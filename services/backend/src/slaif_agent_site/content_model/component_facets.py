@@ -9,6 +9,9 @@ composition write path (Agent and human Puck).  This module adds the
   query vocabulary (``query_dsl._OPS``).
 - Gallery/LogoGrid media-reference lists: every item ``mediaId`` must
   resolve to an image-class media row of the writing site (079/2).
+- DocumentList document-reference lists: every item ``mediaId`` must
+  resolve to a document-class (``application/pdf``) media row of the
+  writing site (079/3).
 
 View, field, and media resolution is site-scoped by the caller; anything
 that cannot be resolved on this site is rejected before the composition
@@ -184,7 +187,70 @@ def validate_media_reference_items(
             raise MediaReferenceError(f"{prefix}.item-not-image")
 
 
+# Bounded document-reference list components (079/3): error-key prefix and
+# the catalog list bounds the pure check mirrors.
+DOCUMENT_REFERENCE_COMPONENTS: dict[str, tuple[str, int, int]] = {
+    "DocumentList": ("doclist", 1, 12),
+}
+
+# The bounded document-class MIME the immutable store accepts (079/3).
+DOCUMENT_MIME_CLASSES = frozenset({"application/pdf"})
+
+# The complete bounded document-class error-key vocabulary surfaced as 422
+# ``prop_error`` (079/3 R3).
+DOCUMENT_REFERENCE_ERROR_KEYS = frozenset(
+    f"{prefix}.{suffix}"
+    for prefix, _, _ in DOCUMENT_REFERENCE_COMPONENTS.values()
+    for suffix in (
+        "item-missing",
+        "item-foreign-site",
+        "item-not-pdf",
+        "items-out-of-range",
+    )
+)
+
+
+def validate_document_reference_items(
+    component_type: str,
+    items: Any,
+    *,
+    site_id: UUID,
+    facts: Mapping[UUID, tuple[UUID, str] | None],
+) -> None:
+    """Reject document-reference list items outside the site's document class.
+
+    Same fail-closed resolution contract as
+    :func:`validate_media_reference_items`, bounded to the document class
+    (079/3 R3): a well-formed ``mediaId`` must resolve to a row of the
+    writing site whose ``mime_type`` is ``application/pdf``.  Duplicate
+    items are allowed (catalog shape is the only constraint on repeats);
+    label bounds are catalog prop-shape and enforced by the guard.
+    """
+    spec = DOCUMENT_REFERENCE_COMPONENTS.get(component_type)
+    if spec is None:
+        return
+    prefix, min_items, max_items = spec
+    if not isinstance(items, (list, tuple)):
+        return
+    if not min_items <= len(items) <= max_items:
+        raise MediaReferenceError(f"{prefix}.items-out-of-range")
+    for item in items:
+        if not isinstance(item, Mapping):
+            continue
+        media_id = _as_uuid(item.get("mediaId"))
+        if media_id is None:
+            raise MediaReferenceError(f"{prefix}.item-missing")
+        fact = facts.get(media_id)
+        if fact is None or fact[0] != site_id:
+            raise MediaReferenceError(f"{prefix}.item-foreign-site")
+        if fact[1] not in DOCUMENT_MIME_CLASSES:
+            raise MediaReferenceError(f"{prefix}.item-not-pdf")
+
+
 __all__ = [
+    "DOCUMENT_MIME_CLASSES",
+    "DOCUMENT_REFERENCE_COMPONENTS",
+    "DOCUMENT_REFERENCE_ERROR_KEYS",
     "FacetValidationError",
     "IN_LIST_ENTRY_MAX_LENGTH",
     "IN_LIST_MAX_ENTRIES",
@@ -195,5 +261,6 @@ __all__ = [
     "MediaReferenceError",
     "field_primitive_map",
     "validate_collection_filter_facets",
+    "validate_document_reference_items",
     "validate_media_reference_items",
 ]

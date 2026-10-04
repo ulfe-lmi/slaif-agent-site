@@ -6717,6 +6717,26 @@
                 "component-content-props:write"
               ],
               "supported": true
+            },
+            {
+              "component_type": "DocumentList",
+              "property": "items",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "DocumentList",
+              "property": "title",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
             }
           ]
         },
@@ -7427,6 +7447,26 @@
           },
           {
             "component_type": "LogoGrid",
+            "property": "title",
+            "responsive": false,
+            "responsive_required_scopes": [],
+            "scalar_required_scopes": [
+              "component-content-props:write"
+            ],
+            "supported": true
+          },
+          {
+            "component_type": "DocumentList",
+            "property": "items",
+            "responsive": false,
+            "responsive_required_scopes": [],
+            "scalar_required_scopes": [
+              "component-content-props:write"
+            ],
+            "supported": true
+          },
+          {
+            "component_type": "DocumentList",
             "property": "title",
             "responsive": false,
             "responsive_required_scopes": [],
@@ -8232,6 +8272,30 @@
           {
             "component_types": [
               "LogoGrid"
+            ],
+            "condition": "changed",
+            "required_scopes": [
+              "component-content-props:write"
+            ],
+            "when_fields": [
+              "props.title"
+            ]
+          },
+          {
+            "component_types": [
+              "DocumentList"
+            ],
+            "condition": "changed",
+            "required_scopes": [
+              "component-content-props:write"
+            ],
+            "when_fields": [
+              "props.items"
+            ]
+          },
+          {
+            "component_types": [
+              "DocumentList"
             ],
             "condition": "changed",
             "required_scopes": [
@@ -17379,6 +17443,26 @@
             },
             {
               "component_type": "LogoGrid",
+              "property": "title",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "DocumentList",
+              "property": "items",
+              "responsive": false,
+              "responsive_required_scopes": [],
+              "scalar_required_scopes": [
+                "component-content-props:write"
+              ],
+              "supported": true
+            },
+            {
+              "component_type": "DocumentList",
               "property": "title",
               "responsive": false,
               "responsive_required_scopes": [],

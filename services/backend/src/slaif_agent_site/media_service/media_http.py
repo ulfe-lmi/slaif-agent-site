@@ -104,7 +104,13 @@ async def upload_asset(site_id: UUID, request: Request) -> JSONResponse:
             raise RequestTooLargeError() from None
         raise DomainValidationError() from None
     except MediaStoreError as error:
-        if error.args[0] in {"unsupported_media", "media_signature_mismatch"}:
+        if error.args[0] in {
+            "unsupported_media",
+            "media_signature_mismatch",
+            "media-pdf-too-large",
+            "media-pdf-structure-invalid",
+            "media-pdf-too-many-pages",
+        }:
             raise DomainValidationError() from None
         raise ServiceUnavailableError() from None
     except MediaIdempotencyMismatchError:

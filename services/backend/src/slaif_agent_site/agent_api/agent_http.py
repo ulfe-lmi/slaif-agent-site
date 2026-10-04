@@ -51,7 +51,10 @@ from slaif_agent_site.content_model.component_catalog import (
     COMPONENT_CATALOG_VERSION,
     COMPOSITION_SCHEMA_VERSION,
 )
-from slaif_agent_site.content_model.component_facets import MEDIA_REFERENCE_ERROR_KEYS
+from slaif_agent_site.content_model.component_facets import (
+    DOCUMENT_REFERENCE_ERROR_KEYS,
+    MEDIA_REFERENCE_ERROR_KEYS,
+)
 from slaif_agent_site.content_model.composition_models import (
     AgentCreateCompositionNodeRequest,
     AgentMoveCompositionNodeRequest,
@@ -689,7 +692,13 @@ async def create_media_asset(
             raise RequestTooLargeError() from None
         raise DomainValidationError() from None
     except MediaStoreError as error:
-        if error.args[0] in {"unsupported_media", "media_signature_mismatch"}:
+        if error.args[0] in {
+            "unsupported_media",
+            "media_signature_mismatch",
+            "media-pdf-too-large",
+            "media-pdf-structure-invalid",
+            "media-pdf-too-many-pages",
+        }:
             raise DomainValidationError() from None
         raise ServiceUnavailableError() from None
     except DurableIdempotencyMismatchError:
@@ -877,7 +886,9 @@ async def _execute_mutation(
             if exc.code == "REDIRECT_ROUTE_PREFIX_DENIED":
                 raise AuthorizationError() from None
             if exc.code is not None and (
-                exc.code.startswith("embed.") or exc.code in MEDIA_REFERENCE_ERROR_KEYS
+                exc.code.startswith("embed.")
+                or exc.code in MEDIA_REFERENCE_ERROR_KEYS
+                or exc.code in DOCUMENT_REFERENCE_ERROR_KEYS
             ):
                 # Bounded embed-policy / media-reference rejection: the exact
                 # error key is a bounded constant, safe to surface without

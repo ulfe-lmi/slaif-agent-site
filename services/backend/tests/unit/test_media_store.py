@@ -6,9 +6,11 @@ import hashlib
 import os
 import threading
 import time
+import zlib
 from pathlib import Path
 
 import pytest
+from slaif_agent_site.media_service.pdf_policy import PDF_MAX_BYTES
 from slaif_agent_site.media_service.store import (
     MediaStore,
     MediaStoreError,
@@ -19,13 +21,49 @@ from slaif_agent_site.media_service.store import (
 PNG = b"\x89PNG\r\n\x1a\nfixture"
 
 
+def make_pdf(pages: int, compress: bool = False) -> bytes:
+    """Deterministic minimal PDF fixture with exactly ``pages`` page objects."""
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        (
+            b"<< /Type /Pages /Kids ["
+            + b" ".join(f"{i} 0 R".encode() for i in range(3, 3 + pages))
+            + b"] /Count "
+            + str(pages).encode()
+            + b" >>"
+        ),
+    ]
+    for _ in range(pages):
+        if compress:
+            stream = zlib.compress(
+                b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>"
+            )
+            objects.append(
+                b"<< /Filter /FlateDecode /Length "
+                + str(len(stream)).encode()
+                + b" >> stream\n"
+                + stream
+                + b"\nendstream"
+            )
+        else:
+            objects.append(b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>")
+    out = bytearray(b"%PDF-1.4\n")
+    for number, body in enumerate(objects, start=1):
+        out += f"{number} 0 obj\n".encode() + body + b"\nendobj\n"
+    out += b"%%EOF"
+    return bytes(out)
+
+
 def test_sniffer_requires_actual_supported_signature() -> None:
     assert sniff_mime(PNG, "image/png") == "image/png"
     assert sniff_mime(b"\xff\xd8\xfffixture", "image/jpeg") == "image/jpeg"
-    with pytest.raises(MediaStoreError):
+    assert sniff_mime(b"%PDF-1.4", "application/pdf") == "application/pdf"
+    with pytest.raises(MediaStoreError, match="media_signature_mismatch"):
         sniff_mime(PNG, "image/jpeg")
-    with pytest.raises(MediaStoreError):
+    with pytest.raises(MediaStoreError, match="unsupported_media"):
         sniff_mime(b"<svg>", "image/svg+xml")
+    with pytest.raises(MediaStoreError, match="media_signature_mismatch"):
+        sniff_mime(b"PK\x03\x04", "application/pdf")
 
 
 def test_store_publishes_digest_only_private_object_and_reuses_it(
@@ -305,3 +343,151 @@ def test_staging_writer_rejects_replaced_path_without_following(
     with pytest.raises(MediaStoreError):
         store.publish(staged)
     assert not store.object_path(f"sha256/{digest[:2]}/{digest[2:4]}/{digest}").exists()
+
+
+# --------------------------------------------------------------------- 079/3
+# Bounded document-class (PDF) policy at the shared store enforcement point:
+# every rejection happens before any staging publish and discards the stage.
+
+
+def test_store_accepts_one_page_pdf(tmp_path: Path) -> None:
+    store = MediaStore(tmp_path / "media")
+    document = make_pdf(1)
+    staging = store.create_staging_path()
+    staging.write_bytes(document)
+    digest = hashlib.sha256(document).hexdigest()
+    key = store.publish(StagedMedia(staging, digest, len(document), "application/pdf"))
+    assert key == f"sha256/{digest[:2]}/{digest[2:4]}/{digest}"
+    assert store.object_path(key).read_bytes() == document
+    assert not staging.exists()
+
+
+def test_store_accepts_exactly_200_page_pdf(tmp_path: Path) -> None:
+    store = MediaStore(tmp_path / "media")
+    document = make_pdf(200)
+    staging = store.create_staging_path()
+    staging.write_bytes(document)
+    digest = hashlib.sha256(document).hexdigest()
+    key = store.publish(StagedMedia(staging, digest, len(document), "application/pdf"))
+    assert key.startswith("sha256/")
+    assert not staging.exists()
+
+
+def test_store_accepts_flate_compressed_page_objects(tmp_path: Path) -> None:
+    store = MediaStore(tmp_path / "media")
+    document = make_pdf(4, compress=True)
+    staging = store.create_staging_path()
+    staging.write_bytes(document)
+    digest = hashlib.sha256(document).hexdigest()
+    key = store.publish(StagedMedia(staging, digest, len(document), "application/pdf"))
+    assert key.startswith("sha256/")
+    assert not staging.exists()
+
+
+def test_store_publishes_pdf_from_an_unflushed_staging_writer(tmp_path: Path) -> None:
+    # The HTTP upload path (parse_upload) hands publish() the still-buffered
+    # staging writer; the bounded PDF policy must observe the complete bytes
+    # and publish normally (regression for the 079-3-a E2E 503).
+    store = MediaStore(tmp_path / "media")
+    document = make_pdf(2)
+    staged_file = store.create_staging_writer()
+    staged_file.stream.write(document)
+    # Deliberately NOT flushed: publish must flush before policy enforcement.
+    digest = hashlib.sha256(document).hexdigest()
+    staged = StagedMedia(
+        staged_file.path,
+        digest,
+        len(document),
+        "application/pdf",
+        stream=staged_file.stream,
+    )
+    key = store.publish(staged)
+    assert key.startswith("sha256/")
+    assert not staged_file.path.exists()
+    assert (store.root / key).read_bytes() == document
+
+
+def test_store_rejects_pdf_from_an_unflushed_staging_writer(tmp_path: Path) -> None:
+    store = MediaStore(tmp_path / "media")
+    document = make_pdf(201)
+    staged_file = store.create_staging_writer()
+    staged_file.stream.write(document)
+    digest = hashlib.sha256(document).hexdigest()
+    staged = StagedMedia(
+        staged_file.path,
+        digest,
+        len(document),
+        "application/pdf",
+        stream=staged_file.stream,
+    )
+    with pytest.raises(MediaStoreError, match="media-pdf-too-many-pages"):
+        store.publish(staged)
+    assert not staged_file.path.exists()
+    assert not (store.root / "sha256").exists()
+
+
+def test_store_rejects_201_page_pdf_before_publish(tmp_path: Path) -> None:
+    store = MediaStore(tmp_path / "media")
+    document = make_pdf(201)
+    staging = store.create_staging_path()
+    staging.write_bytes(document)
+    digest = hashlib.sha256(document).hexdigest()
+    with pytest.raises(MediaStoreError, match="media-pdf-too-many-pages"):
+        store.publish(StagedMedia(staging, digest, len(document), "application/pdf"))
+    assert not staging.exists()
+    assert not (store.root / "sha256").exists()
+
+
+def test_store_rejects_pdf_above_20_mib_before_publish(tmp_path: Path) -> None:
+    store = MediaStore(tmp_path / "media")
+    document = make_pdf(1) + b"0" * 1024  # under the generic 100 MiB limit
+    oversized = len(document) + PDF_MAX_BYTES
+    staging = store.create_staging_path()
+    staging.write_bytes(document)
+    digest = hashlib.sha256(document).hexdigest()
+    with pytest.raises(MediaStoreError, match="media-pdf-too-large"):
+        store.publish(StagedMedia(staging, digest, oversized, "application/pdf"))
+    assert not staging.exists()
+    assert not (store.root / "sha256").exists()
+
+
+def test_store_rejects_undetermined_pdf_structure(tmp_path: Path) -> None:
+    store = MediaStore(tmp_path / "media")
+    document = b"%PDF-1.4\nno page objects\n%%EOF"
+    staging = store.create_staging_path()
+    staging.write_bytes(document)
+    digest = hashlib.sha256(document).hexdigest()
+    with pytest.raises(MediaStoreError, match="media-pdf-structure-invalid"):
+        store.publish(StagedMedia(staging, digest, len(document), "application/pdf"))
+    assert not staging.exists()
+    assert not (store.root / "sha256").exists()
+
+
+def test_store_rejects_pdf_decompression_bomb(tmp_path: Path) -> None:
+    store = MediaStore(tmp_path / "media")
+    bomb_stream = zlib.compress(b" " * (50 * 1024 * 1024 + 1))
+    document = (
+        b"%PDF-1.4\n1 0 obj\n<< /Filter /FlateDecode /Length "
+        + str(len(bomb_stream)).encode()
+        + b" >> stream\n"
+        + bomb_stream
+        + b"\nendstream\n%%EOF"
+    )
+    staging = store.create_staging_path()
+    staging.write_bytes(document)
+    digest = hashlib.sha256(document).hexdigest()
+    with pytest.raises(MediaStoreError, match="media-pdf-structure-invalid"):
+        store.publish(StagedMedia(staging, digest, len(document), "application/pdf"))
+    assert not staging.exists()
+    assert not (store.root / "sha256").exists()
+
+
+def test_pdf_bounds_are_independent_of_generic_upload_limit(tmp_path: Path) -> None:
+    store = MediaStore(tmp_path / "media", max_upload_bytes=PDF_MAX_BYTES + 1)
+    document = make_pdf(1)
+    staging = store.create_staging_path()
+    staging.write_bytes(document)
+    digest = hashlib.sha256(document).hexdigest()
+    key = store.publish(StagedMedia(staging, digest, len(document), "application/pdf"))
+    assert key.startswith("sha256/")
+    assert not staging.exists()

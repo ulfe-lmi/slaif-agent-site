@@ -5,6 +5,9 @@ from uuid import UUID
 
 import pytest
 from slaif_agent_site.content_model.component_facets import (
+    DOCUMENT_MIME_CLASSES,
+    DOCUMENT_REFERENCE_COMPONENTS,
+    DOCUMENT_REFERENCE_ERROR_KEYS,
     MEDIA_MIME_CLASSES,
     MEDIA_REFERENCE_COMPONENTS,
     MEDIA_REFERENCE_ERROR_KEYS,
@@ -12,6 +15,7 @@ from slaif_agent_site.content_model.component_facets import (
     MediaReferenceError,
     field_primitive_map,
     validate_collection_filter_facets,
+    validate_document_reference_items,
     validate_media_reference_items,
 )
 
@@ -381,3 +385,153 @@ def test_error_key_vocabulary_is_exactly_the_ordered_set() -> None:
         "logogrid.items-out-of-range",
     }
     assert MEDIA_MIME_CLASSES == {"image/png", "image/jpeg"}
+
+
+# ---------------------------------------------------------------- 079/3
+# DocumentList document-reference list semantics (pure, resolved facts).
+M_PDF = UUID("11111111-1111-4111-8111-111111111115")
+M_PDF_B = UUID("11111111-1111-4111-8111-111111111116")
+
+
+def _doclist_items(*media_ids: object) -> list[dict[str, object]]:
+    items: list[dict[str, object]] = []
+    for index, media_id in enumerate(media_ids):
+        item: dict[str, object] = {"label": f"label-{index}"}
+        if media_id is not Ellipsis:
+            item["mediaId"] = str(media_id)
+        items.append(item)
+    return items
+
+
+def test_valid_documentlist_items_pass() -> None:
+    facts = _facts((M_PDF, SITE, "application/pdf"))
+    validate_document_reference_items(
+        "DocumentList", _doclist_items(M_PDF), site_id=SITE, facts=facts
+    )
+    facts = _facts(
+        (M_PDF, SITE, "application/pdf"),
+        (M_PDF_B, SITE, "application/pdf"),
+    )
+    validate_document_reference_items(
+        "DocumentList", _doclist_items(M_PDF, M_PDF_B), site_id=SITE, facts=facts
+    )
+
+
+def test_documentlist_duplicate_items_are_allowed() -> None:
+    facts = _facts((M_PDF, SITE, "application/pdf"))
+    validate_document_reference_items(
+        "DocumentList", _doclist_items(M_PDF, M_PDF), site_id=SITE, facts=facts
+    )
+
+
+def test_documentlist_bounds_edges_pass() -> None:
+    facts = _facts(
+        (M_PDF, SITE, "application/pdf"),
+        (M_PDF_B, SITE, "application/pdf"),
+    )
+    one = [M_PDF] * 1
+    twelve = [M_PDF, M_PDF_B] * 6
+    assert len(one) == DOCUMENT_REFERENCE_COMPONENTS["DocumentList"][1]
+    assert len(twelve) == DOCUMENT_REFERENCE_COMPONENTS["DocumentList"][2]
+    validate_document_reference_items(
+        "DocumentList", _doclist_items(*one), site_id=SITE, facts=facts
+    )
+    validate_document_reference_items(
+        "DocumentList", _doclist_items(*twelve), site_id=SITE, facts=facts
+    )
+
+
+@pytest.mark.parametrize(
+    ("items", "facts", "code"),
+    [
+        ([], _facts(), "doclist.items-out-of-range"),
+        (
+            [M_PDF] * 13,
+            _facts((M_PDF, SITE, "application/pdf")),
+            "doclist.items-out-of-range",
+        ),
+        ([Ellipsis], _facts(), "doclist.item-missing"),
+        (["not-a-uuid"], _facts(), "doclist.item-missing"),
+        ([7], _facts(), "doclist.item-missing"),
+        (
+            [M_PDF, M_PDF_B],
+            _facts((M_PDF_B, SITE, "application/pdf")),  # M_PDF never resolved
+            "doclist.item-foreign-site",
+        ),
+        (
+            [M_PDF],
+            _facts((M_PDF, FOREIGN_SITE, "application/pdf")),
+            "doclist.item-foreign-site",
+        ),
+        (
+            [M_PDF],
+            _facts((M_PDF, SITE, "image/png")),
+            "doclist.item-not-pdf",
+        ),
+        (
+            [M_PDF],
+            _facts((M_PDF, SITE, "image/jpeg")),
+            "doclist.item-not-pdf",
+        ),
+        (
+            [M_TEXT],
+            _facts((M_TEXT, SITE, "text/plain")),
+            "doclist.item-not-pdf",
+        ),
+    ],
+)
+def test_documentlist_failures_use_the_exact_bounded_key(
+    items: list[object],
+    facts: dict[UUID, tuple[UUID, str] | None],
+    code: str,
+) -> None:
+    with pytest.raises(MediaReferenceError) as exc:
+        validate_document_reference_items(
+            "DocumentList", _doclist_items(*items), site_id=SITE, facts=facts
+        )
+    assert exc.value.code == code
+
+
+def test_documentlist_malformed_shapes_and_unknown_types_pass_through() -> None:
+    facts = _facts((M_PDF, SITE, "application/pdf"))
+    validate_document_reference_items(
+        "Image", {"mediaId": M_PDF}, site_id=SITE, facts=facts
+    )
+    validate_document_reference_items(
+        "DocumentList", "not-a-list", site_id=SITE, facts=facts
+    )
+    validate_document_reference_items(
+        "DocumentList",
+        ["junk", 7, M_PDF, None],
+        site_id=SITE,
+        facts=facts,
+    )
+
+
+def test_document_reference_vocabulary_is_exactly_the_ordered_set() -> None:
+    assert DOCUMENT_REFERENCE_ERROR_KEYS == {
+        "doclist.item-missing",
+        "doclist.item-foreign-site",
+        "doclist.item-not-pdf",
+        "doclist.items-out-of-range",
+    }
+    assert DOCUMENT_MIME_CLASSES == {"application/pdf"}
+    # The image-class vocabulary is unchanged by 079/3.
+    assert not (DOCUMENT_REFERENCE_ERROR_KEYS & MEDIA_REFERENCE_ERROR_KEYS)
+
+
+def test_image_class_components_reject_pdf_references_r3_regression() -> None:
+    # 079/3 R3 REQUIRED regression negatives: once PDFs are uploadable, the
+    # image-class list components must still reject PDF references with
+    # their exact existing image-class keys.
+    facts = _facts((M_PDF, SITE, "application/pdf"))
+    with pytest.raises(MediaReferenceError) as gallery_exc:
+        validate_media_reference_items(
+            "Gallery", _gallery_items(M_PDF), site_id=SITE, facts=facts
+        )
+    assert gallery_exc.value.code == "gallery.item-not-image"
+    with pytest.raises(MediaReferenceError) as logogrid_exc:
+        validate_media_reference_items(
+            "LogoGrid", _logogrid_items(M_PDF, M_PDF), site_id=SITE, facts=facts
+        )
+    assert logogrid_exc.value.code == "logogrid.item-not-image"

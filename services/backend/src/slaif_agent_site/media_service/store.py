@@ -14,6 +14,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import BinaryIO
 
+from .pdf_policy import PDF_MAX_BYTES, PDF_SIGNATURE, enforce_pdf_upload
+
 
 class MediaStoreError(RuntimeError):
     """Stable media-store failure without filesystem details."""
@@ -36,7 +38,7 @@ class StagingFile:
 
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 JPEG_SIGNATURE = b"\xff\xd8\xff"
-SUPPORTED_MIME = frozenset({"image/png", "image/jpeg"})
+SUPPORTED_MIME = frozenset({"image/png", "image/jpeg", "application/pdf"})
 _PRIVATE_MODE = 0o700
 _OBJECT_MODE = 0o600
 _OPEN_DIRECTORY = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
@@ -48,6 +50,8 @@ def sniff_mime(prefix: bytes, declared: str) -> str:
     if declared == "image/png" and prefix.startswith(PNG_SIGNATURE):
         return declared
     if declared == "image/jpeg" and prefix.startswith(JPEG_SIGNATURE):
+        return declared
+    if declared == "application/pdf" and prefix.startswith(PDF_SIGNATURE):
         return declared
     raise MediaStoreError("media_signature_mismatch")
 
@@ -308,6 +312,50 @@ class MediaStore:
             if root >= 0:
                 os.close(root)
 
+    def _enforce_pdf_policy(self, staged: StagedMedia) -> None:
+        """Bounded document-class policy at the shared upload enforcement point.
+
+        Runs for declared ``application/pdf`` uploads after the size,
+        signature, and MIME checks pass and before any staging publish, so
+        no partial artifact is ever created: size above the PDF bound is
+        ``media-pdf-too-large``, an undetermined page count is
+        ``media-pdf-structure-invalid`` (fail-closed), and a page count
+        above the bound is ``media-pdf-too-many-pages`` (079/3 R1).
+        """
+        if staged.size_bytes > PDF_MAX_BYTES:
+            raise MediaStoreError("media-pdf-too-large")
+        root = -1
+        staging = -1
+        descriptor = -1
+        data = bytearray()
+        try:
+            root = self._open_root(create=False)
+            staging = self._open_staging_directory(root)
+            descriptor = os.open(
+                staged.staging_path.name,
+                os.O_RDONLY | os.O_NOFOLLOW,
+                dir_fd=staging,
+            )
+            while len(data) <= staged.size_bytes:
+                chunk = os.read(descriptor, 1024 * 1024)
+                if not chunk:
+                    break
+                data.extend(chunk)
+        except (OSError, MediaStoreError):
+            raise MediaStoreError("storage_unavailable") from None
+        finally:
+            if descriptor >= 0:
+                os.close(descriptor)
+            if staging >= 0:
+                os.close(staging)
+            if root >= 0:
+                os.close(root)
+        if len(data) != staged.size_bytes:
+            raise MediaStoreError("storage_corrupt")
+        error_key = enforce_pdf_upload(bytes(data), staged.size_bytes)
+        if error_key is not None:
+            raise MediaStoreError(error_key)
+
     def publish(self, staged: StagedMedia) -> str:
         digest = staged.digest
         self._validate_digest(digest)
@@ -322,6 +370,14 @@ class MediaStore:
         stage_stream = staged.stream
         lock_acquired = False
         try:
+            if staged.mime_type == "application/pdf":
+                # The HTTP upload path hands over the still-buffered staging
+                # writer (parse_upload does not flush before publish), so the
+                # policy must observe the complete on-disk bytes: flush first,
+                # then enforce before any staging publish.
+                if stage_stream is not None:
+                    stage_stream.flush()
+                self._enforce_pdf_policy(staged)
             root = self._open_root(create=False)
             staging = self._open_staging_directory(root)
             objects = self._open_object_directory(root, digest, create=True)

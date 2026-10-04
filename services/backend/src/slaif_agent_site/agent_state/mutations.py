@@ -35,11 +35,13 @@ from slaif_agent_site.content_model.bounded_embed import (
     validate_video_embed_props,
 )
 from slaif_agent_site.content_model.component_facets import (
+    DOCUMENT_REFERENCE_COMPONENTS,
     MEDIA_REFERENCE_COMPONENTS,
     FacetValidationError,
     MediaReferenceError,
     field_primitive_map,
     validate_collection_filter_facets,
+    validate_document_reference_items,
     validate_media_reference_items,
 )
 from slaif_agent_site.content_model.composition_models import (
@@ -1478,7 +1480,7 @@ class AgentCowContentModelService(ContentModelService):
         *,
         base: dict[str, Any] | None = None,
     ) -> None:
-        """Fail-closed media-reference list validation for Gallery/LogoGrid.
+        """Fail-closed media/document-reference list validation.
 
         Validates the post-write state: the base props (update) or the
         supplied props (create) with the patch merged (non-null entries
@@ -1486,11 +1488,16 @@ class AgentCowContentModelService(ContentModelService):
         ``validate_agent_component_props``).  Each well-formed ``mediaId`` is
         resolved through the site-scoped ``slaif_agent_media_get``; a
         reference that does not resolve within the site, or resolves to a
-        non-image MIME row, is a bounded validation failure with the exact
-        079/2 error key.  The catalog guard still re-verifies prop shape on
-        the same state downstream (defense in depth).
+        row outside the component's MIME class (image class for
+        Gallery/LogoGrid, document class for DocumentList), is a bounded
+        validation failure with the exact 079/2 / 079/3 error key.  The
+        catalog guard still re-verifies prop shape on the same state
+        downstream (defense in depth).
         """
-        if component_type not in MEDIA_REFERENCE_COMPONENTS:
+        if (
+            component_type not in MEDIA_REFERENCE_COMPONENTS
+            and component_type not in DOCUMENT_REFERENCE_COMPONENTS
+        ):
             return
         merged = dict(base) if base is not None else {}
         for key, value in patch_props.items():
@@ -1519,6 +1526,9 @@ class AgentCowContentModelService(ContentModelService):
                 )
         try:
             validate_media_reference_items(
+                component_type, items, site_id=site_id, facts=facts
+            )
+            validate_document_reference_items(
                 component_type, items, site_id=site_id, facts=facts
             )
         except MediaReferenceError as error:

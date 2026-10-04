@@ -928,7 +928,7 @@ asyncio.run(main())
     componentType: string,
     orderKey: number,
     props: Record<string, unknown>,
-    expectedKey: string,
+    expectedKey: string | null,
   ): Promise<void> => {
     const response = await page.request.post(compositionPath, {
       headers: editorHeaders(`oap-0792-editor-post-${key}-${tag}`),
@@ -944,13 +944,19 @@ asyncio.run(main())
       error: { code: string; details?: { prop_error?: string } };
     };
     expect(body.error.code).toBe("DOMAIN_VALIDATION_FAILED");
-    expect(body.error.details?.prop_error).toBe(expectedKey);
+    if (expectedKey === null) {
+      // Same guard-level shape-bound surface as the Agent path (bare
+      // domain-validation 422, no prop_error, no input echo).
+      expect(body.error.details).toBeNull();
+    } else {
+      expect(body.error.details?.prop_error).toBe(expectedKey);
+    }
   };
   const editorPatchCase = async (
     nodeId: string,
     key: string,
     props: Record<string, unknown>,
-    expectedKey: string,
+    expectedKey: string | null,
   ): Promise<void> => {
     const response = await page.request.patch(
       `/api/editor/v1/sites/${parity.site_id}/pages/${homePage!.id}/composition/components/${nodeId}`,
@@ -961,7 +967,13 @@ asyncio.run(main())
       error: { code: string; details?: { prop_error?: string } };
     };
     expect(body.error.code).toBe("DOMAIN_VALIDATION_FAILED");
-    expect(body.error.details?.prop_error).toBe(expectedKey);
+    if (expectedKey === null) {
+      // Same guard-level shape-bound surface as the Agent path (bare
+      // domain-validation 422, no prop_error, no input echo).
+      expect(body.error.details).toBeNull();
+    } else {
+      expect(body.error.details?.prop_error).toBe(expectedKey);
+    }
   };
   await editorPostCase(
     "gallery-out-of-range",
@@ -1049,6 +1061,675 @@ asyncio.run(main())
     },
     "logogrid.item-not-image",
   );
+
+  // -------------------------------------------------- DocumentList + PDF (079/3)
+  // Node-side bounded PDF fixture builder: one /Type /Pages node plus N raw
+  // /Type /Page objects (the /Type /Pages token never matches the
+  // word-boundary page count).  `seed` varies page content so distinct
+  // fixtures carry distinct digests.
+  const makePdf = (pages: number, seed: string): Buffer => {
+    const kids = Array.from({ length: pages }, (_, i) => `${3 + i} 0 R`).join(" ");
+    const parts: string[] = [];
+    parts.push("%PDF-1.4\n");
+    parts.push("1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n");
+    parts.push(`2 0 obj\n<< /Type /Pages /Kids [${kids}] /Count ${pages} >>\nendobj\n`);
+    for (let i = 0; i < pages; i++) {
+      parts.push(
+        `${3 + i} 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents (${seed}-${i}) >>\nendobj\n`,
+      );
+    }
+    parts.push(`trailer\n<< /Root 1 0 R /Size ${pages + 3} >>\n%%EOF\n`);
+    return Buffer.from(parts.join(""), "latin1");
+  };
+  const pdfHumanBytes = makePdf(2, "oap-079-3-human");
+  const pdfHumanDigest = sha256Hex(pdfHumanBytes);
+  const pdfAgentBytes = makePdf(2, "oap-079-3-agent");
+  const pdfAgentDigest = sha256Hex(pdfAgentBytes);
+  const pdf201Bytes = makePdf(201, "oap-079-3-pages");
+  const pdfOversizedBytes = Buffer.concat([
+    makePdf(2, "oap-079-3-oversized"),
+    Buffer.alloc(21 * 1024 * 1024, 0),
+  ]);
+  const pdfUndeterminedBytes = Buffer.from(
+    "%PDF-1.4\n1 0 obj\n<< /Info (no page objects) >>\nendobj\ntrailer\n<< /Size 2 >>\n%%EOF\n",
+    "latin1",
+  );
+
+  // Human edge route: the real 2-page PDF is accepted ...
+  const pdfHumanUpload = await page.request.post(
+    `/media/v1/sites/${parity.site_id}/assets`,
+    {
+      headers: {
+        "X-CSRF-Token": csrf!,
+        "Idempotency-Key": `oap-0793-human-pdf-${tag}`,
+      },
+      multipart: uploadForm(pdfHumanBytes, "e2e-human.pdf", "application/pdf"),
+    },
+  );
+  expect(pdfHumanUpload.status()).toBe(201);
+  const pdfHumanUploadBody = (await pdfHumanUpload.json()) as {
+    record?: Record<string, unknown>;
+  };
+  const pdfHumanMediaId = requiredString(
+    pdfHumanUploadBody.record?.id,
+    "pdf human media id",
+  );
+  expect(pdfHumanUploadBody.record?.content_hash).toBe(pdfHumanDigest);
+  // ... and every R1 rejection is a bounded 422 on the same route (the one
+  // shared store enforcement point; exact store keys are pinned in the
+  // unit matrix, the HTTP surface is bounded by design).
+  const humanPdfReject = async (
+    key: string,
+    file: Buffer,
+    filename: string,
+  ): Promise<void> => {
+    const response = await page.request.post(
+      `/media/v1/sites/${parity.site_id}/assets`,
+      {
+        headers: {
+          "X-CSRF-Token": csrf!,
+          "Idempotency-Key": `oap-0793-human-${key}-${tag}`,
+        },
+        multipart: uploadForm(file, filename, "application/pdf"),
+      },
+    );
+    expect(response.status()).toBe(422);
+    const body = (await response.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("DOMAIN_VALIDATION_FAILED");
+  };
+  await humanPdfReject("signature", TINY_PNG, "forged.pdf");
+  await humanPdfReject("too-large", pdfOversizedBytes, "oversized.pdf");
+  await humanPdfReject("too-many-pages", pdf201Bytes, "201-pages.pdf");
+  await humanPdfReject("undetermined", pdfUndeterminedBytes, "undetermined.pdf");
+  pdfOversizedBytes.fill(0);
+  // No partial artifacts: none of the rejected documents was stored.
+  const pdfRejectNoRecord = psql(
+    project,
+    `SELECT count(*) FROM content.media_asset
+      WHERE site_id = '${parity.site_id}'::uuid
+        AND mime_type = 'application/pdf'
+        AND content_hash IN ('${sha256Hex(pdf201Bytes)}', '${sha256Hex(pdfUndeterminedBytes)}');`,
+  );
+  expect(pdfRejectNoRecord).toBe("0");
+
+  // Agent path: a fresh L2 workspace with one upload slot (the 079/1 L1
+  // workspace already spent its upload quota).  The 1 MiB /api/agent/ edge
+  // body bound keeps the oversized case on the human route; the
+  // small-payload rejections exercise the same store policy on the Agent
+  // route.
+  const docWorkspaceResponse = await page.request.post(
+    `/api/control/v1/sites/${parity.site_id}/workspaces/`,
+    {
+      headers: editorHeaders(`oap-0793-doc-workspace-${tag}`),
+      data: {
+        title: `OAP 079-3 document class ${tag}`,
+        task_description: "Bounded Agent document-class proof",
+        delegation_preset: "L2_SITE_EDITOR",
+        duration_hours: 1,
+        request_quota: 200,
+        mutation_quota: 50,
+        delete_quota: 0,
+        upload_quota: 1,
+        browser_quota: 0,
+        resource_constraints: {},
+      },
+    },
+  );
+  expect(docWorkspaceResponse.status()).toBe(201);
+  const docWorkspaceBody = (await docWorkspaceResponse.json()) as {
+    workspace_id?: unknown;
+  };
+  const docWorkspaceId = requiredString(
+    docWorkspaceBody.workspace_id,
+    "doc workspace id",
+  );
+  const docCapabilityResponse = await page.request.post(
+    `/api/control/v1/sites/${parity.site_id}/workspaces/${docWorkspaceId}/capabilities/`,
+    { headers: editorHeaders(`oap-0793-doc-capability-${tag}`) },
+  );
+  expect(docCapabilityResponse.status()).toBe(201);
+  const docCapability = (await docCapabilityResponse.json()) as { token?: unknown };
+  const docAgentHeaders = {
+    Authorization: `Bearer ${requiredString(docCapability.token, "doc capability token")}`,
+  } as const;
+  const pdfAgentUpload = await page.request.post("/api/agent/v1/media/assets", {
+    headers: {
+      ...docAgentHeaders,
+      "Idempotency-Key": `oap-0793-agent-pdf-${tag}`,
+    },
+    multipart: uploadForm(pdfAgentBytes, "e2e-agent.pdf", "application/pdf"),
+  });
+  expect(pdfAgentUpload.status()).toBe(201);
+  const pdfAgentUploadBody = (await pdfAgentUpload.json()) as {
+    record?: Record<string, unknown>;
+  };
+  const pdfAgentMediaId = requiredString(
+    pdfAgentUploadBody.record?.id,
+    "pdf agent media id",
+  );
+  expect(pdfAgentUploadBody.record?.content_hash).toBe(pdfAgentDigest);
+  const agentPdfReject = async (
+    key: string,
+    file: Buffer,
+    filename: string,
+  ): Promise<void> => {
+    const response = await page.request.post("/api/agent/v1/media/assets", {
+      headers: {
+        ...docAgentHeaders,
+        "Idempotency-Key": `oap-0793-agent-${key}-${tag}`,
+      },
+      multipart: uploadForm(file, filename, "application/pdf"),
+    });
+    expect(response.status()).toBe(422);
+    const body = (await response.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("DOMAIN_VALIDATION_FAILED");
+  };
+  await agentPdfReject("too-many-pages", pdf201Bytes, "201-pages.pdf");
+  await agentPdfReject("undetermined", pdfUndeterminedBytes, "undetermined.pdf");
+
+  // Editor (human) composition: a DocumentList of the two real PDFs.
+  const doclistCreate = await page.request.post(compositionPath, {
+    headers: editorHeaders(`oap-0793-editor-doclist-${tag}`),
+    data: {
+      component_type: "DocumentList",
+      slot_key: "default",
+      order_key: 26,
+      props: {
+        title: "E2E document proof",
+        items: [
+          { mediaId: pdfAgentMediaId, label: "E2E agent PDF" },
+          { mediaId: pdfHumanMediaId, label: "E2E human PDF" },
+        ],
+      },
+    },
+  });
+  expect(doclistCreate.status()).toBe(201);
+  const doclistCreateBody = (await doclistCreate.json()) as {
+    id?: unknown;
+    row_version?: unknown;
+  };
+  expect(doclistCreateBody.row_version).toBe(1);
+  expect(typeof doclistCreateBody.id).toBe("string");
+  const editorDoclistId = doclistCreateBody.id as string;
+  // Agent composition for the hostile suite (hostile L2 workspace owns this
+  // node, mirroring the 079/2 agent Gallery/LogoGrid pattern).
+  const agentDoclistCreate = await page.request.post(
+    `/api/agent/v1/pages/${homePage!.id}/components`,
+    {
+      headers: {
+        ...hostileAgentHeaders,
+        "Idempotency-Key": `oap-0793-agent-doclist-${tag}`,
+      },
+      data: {
+        component_type: "DocumentList",
+        slot_key: "default",
+        props: {
+          title: "Agent document proof",
+          items: [
+            { mediaId: pdfAgentMediaId, label: "agent pdf" },
+            { mediaId: pdfHumanMediaId, label: "human pdf" },
+          ],
+        },
+      },
+    },
+  );
+  expect(agentDoclistCreate.status()).toBe(201);
+  const agentDoclistCreateBody = (await agentDoclistCreate.json()) as {
+    record?: { id?: unknown; row_version?: unknown };
+  };
+  expect(agentDoclistCreateBody.record?.row_version).toBe(1);
+  expect(typeof agentDoclistCreateBody.record?.id).toBe("string");
+  const agentDoclistId = agentDoclistCreateBody.record?.id as string;
+
+  // Preview render of the DocumentList at desktop, tablet, and phone.
+  const doclistPreview = await page.goto(`/preview/${previewWorkspaceId}/s/parity/`);
+  expect(doclistPreview?.status()).toBe(200);
+  const doclistSection = page.locator("section.sl-doclist");
+  await expect(doclistSection).toBeVisible();
+  const doclistAgentLink = page
+    .locator('section.sl-doclist a.sl-doclist__link[href^="/media/v1/sites/"]')
+    .first();
+  await expect(doclistAgentLink).toBeVisible();
+  expect(await doclistAgentLink.getAttribute("href")).toBe(
+    `/media/v1/sites/${parity.site_id}/assets/${pdfAgentMediaId}/content`,
+  );
+  const doclistHumanLink = page
+    .locator('section.sl-doclist a.sl-doclist__link[href^="/media/v1/sites/"]')
+    .nth(1);
+  expect(await doclistHumanLink.getAttribute("href")).toBe(
+    `/media/v1/sites/${parity.site_id}/assets/${pdfHumanMediaId}/content`,
+  );
+  await page.setViewportSize({ width: 768, height: 1024 });
+  await expect(doclistSection).toBeVisible();
+  await expect(doclistAgentLink).toBeVisible();
+  await expect(doclistHumanLink).toBeVisible();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(doclistSection).toBeVisible();
+  await expect(doclistAgentLink).toBeVisible();
+  await expect(doclistHumanLink).toBeVisible();
+  await page.setViewportSize({ width: 1280, height: 720 });
+  const doclistPreviewHtml = await page.content();
+
+  // Direct finalization of the document-class assets (the exact 083
+  // boundary call 079/1 made, for this round's media ids).
+  const pdfFinalizationScript = `
+import asyncio, json
+from uuid import UUID
+from slaif_agent_site.media_service.config import MediaSettings
+from slaif_agent_site.media_service.database import MediaDatabase
+from slaif_agent_site.media_service.finalize import (
+    MediaFinalizationRepository,
+    finalize_media_for_promotion,
+)
+from slaif_agent_site.media_service.store import MediaStore
+
+async def main():
+    settings = MediaSettings.load()
+    database = MediaDatabase(settings)
+    await database.start()
+    try:
+        manifest = await finalize_media_for_promotion(
+            UUID(${JSON.stringify(parity.site_id)}),
+            UUID(${JSON.stringify(previewWorkspaceId)}),
+            [UUID(${JSON.stringify(pdfAgentMediaId)}), UUID(${JSON.stringify(pdfHumanMediaId)})],
+            store=MediaStore(settings.media_root),
+            repository=MediaFinalizationRepository(database),
+        )
+        print(json.dumps({"manifest": manifest.to_list()}))
+    finally:
+        await database.stop()
+
+asyncio.run(main())
+`;
+  const pdfFinalizationOutput = docker(project, [
+    "exec",
+    `${project}-media-service-1`,
+    "python",
+    "-c",
+    pdfFinalizationScript,
+  ]);
+  const pdfManifest = (
+    JSON.parse(pdfFinalizationOutput.trim()) as {
+      manifest: Array<{ media_id: string; digest: string; public_key: string }>;
+    }
+  ).manifest;
+  const pdfDigestOf: Record<string, string> = {
+    [pdfAgentMediaId]: pdfAgentDigest,
+    [pdfHumanMediaId]: pdfHumanDigest,
+  };
+  expect(pdfManifest).toEqual(
+    [pdfAgentMediaId, pdfHumanMediaId].sort().map((mediaId) => {
+      const digest = pdfDigestOf[mediaId];
+      if (digest === undefined) throw new Error(`unknown media id: ${mediaId}`);
+      return {
+        media_id: mediaId,
+        digest,
+        public_key: `public/sha256/${digest.slice(0, 2)}/${digest.slice(2, 4)}/${digest}`,
+      };
+    }),
+  );
+
+  // Unauthenticated public digest reads: byte-identical PDF bytes with the
+  // record's exact Content-Type and the immutable cache headers.
+  const pdfAnonymous = await browser.newContext();
+  try {
+    for (const [mediaId, bytes] of [
+      [pdfAgentMediaId, pdfAgentBytes],
+      [pdfHumanMediaId, pdfHumanBytes],
+    ] as const) {
+      const digest = pdfDigestOf[mediaId];
+      if (digest === undefined) throw new Error(`unknown media id: ${mediaId}`);
+      const publicFetch = await pdfAnonymous.request.get(
+        `/media/public/sha256/${digest.slice(0, 2)}/${digest.slice(2, 4)}/${digest}`,
+      );
+      expect(publicFetch.status()).toBe(200);
+      const publicHeaders = publicFetch.headers();
+      expect(publicHeaders["content-type"]).toBe("application/pdf");
+      expect(publicHeaders["cache-control"]).toBe(
+        "public, max-age=31536000, immutable",
+      );
+      expect(publicHeaders["x-content-type-options"]).toBe("nosniff");
+      expect(publicHeaders["content-length"]).toBe(String(bytes.length));
+      expect((await publicFetch.body()).equals(bytes)).toBe(true);
+    }
+  } finally {
+    await pdfAnonymous.close();
+  }
+
+  // Fixture-level publication of the DocumentList into the base
+  // composition (same fixture pattern as the 079/1 / 079/2 moves, with the
+  // same contiguous order-key normalization).
+  psql(
+    project,
+    `BEGIN;
+      INSERT INTO content.page_composition_base
+        (id, site_id, page_id, component_type, schema_version, parent_id,
+         slot_key, order_key, props)
+      SELECT c.id, c.site_id, c.page_id, c.component_type, c.schema_version,
+             c.parent_id, c.slot_key, c.order_key, c.props
+      FROM content.page_composition_changes c
+      WHERE c.session_id = '${previewWorkspaceId}'::uuid
+        AND c.component_type = 'DocumentList' AND NOT c._cow_deleted;
+      DELETE FROM content.page_composition_changes
+      WHERE session_id = '${previewWorkspaceId}'::uuid
+        AND component_type = 'DocumentList';
+      UPDATE content.page_composition_base c
+      SET order_key = n.order_key
+      FROM (
+        SELECT id, row_number() OVER (ORDER BY order_key, id) - 1 AS order_key
+        FROM content.page_composition_base
+        WHERE site_id = '${parity.site_id}'::uuid
+          AND page_id = '${homePage!.id}'::uuid
+          AND parent_id IS NULL
+          AND slot_key = 'default'
+      ) n
+      WHERE c.id = n.id AND c.order_key <> n.order_key;
+      COMMIT;`,
+  );
+
+  // Canonical render + preview/public parity for the DocumentList (the
+  // preview DOM was captured before the fixture move, exactly as the
+  // 079/1 / 079/2 parity checks did).
+  const doclistCanonicalContext = await browser.newContext();
+  try {
+    const doclistCanonicalPage = await doclistCanonicalContext.newPage();
+    const doclistCanonicalResponse = await doclistCanonicalPage.goto("/s/parity/");
+    expect(doclistCanonicalResponse?.status()).toBe(200);
+    const canonicalPdfLink = doclistCanonicalPage
+      .locator('section.sl-doclist a.sl-doclist__link[href^="/media/public/sha256/"]')
+      .first();
+    await expect(canonicalPdfLink).toBeVisible();
+    expect(await canonicalPdfLink.getAttribute("href")).toBe(
+      `/media/public/sha256/${pdfAgentDigest.slice(0, 2)}/${pdfAgentDigest.slice(2, 4)}/${pdfAgentDigest}`,
+    );
+    const doclistCanonicalHtml = await doclistCanonicalPage.content();
+    const doclistSectionMarkup = (html: string): string => {
+      const match = html.match(
+        new RegExp(`<section class="sl-doclist[^"]*">[\\s\\S]*?</section>`),
+      );
+      if (!match) throw new Error("sl-doclist section markup missing");
+      return match[0];
+    };
+    const pdfPreviewToPublic = (markup: string): string =>
+      markup
+        .replaceAll(
+          `/media/v1/sites/${parity.site_id}/assets/${pdfAgentMediaId}/content`,
+          `/media/public/sha256/${pdfAgentDigest.slice(0, 2)}/${pdfAgentDigest.slice(2, 4)}/${pdfAgentDigest}`,
+        )
+        .replaceAll(
+          `/media/v1/sites/${parity.site_id}/assets/${pdfHumanMediaId}/content`,
+          `/media/public/sha256/${pdfHumanDigest.slice(0, 2)}/${pdfHumanDigest.slice(2, 4)}/${pdfHumanDigest}`,
+        );
+    expect(pdfPreviewToPublic(doclistSectionMarkup(doclistPreviewHtml))).toBe(
+      doclistSectionMarkup(doclistCanonicalHtml),
+    );
+  } finally {
+    await doclistCanonicalContext.close();
+  }
+
+  // Hostile Agent PATCH suite against the agent DocumentList: eleven
+  // cases, ten of them from the exact R3 error-key list.
+  const doclistHostileItems = (count: number) =>
+    Array.from({ length: count }, (_, index) => ({
+      mediaId: pdfAgentMediaId,
+      label: `hostile pdf ${index}`,
+    }));
+  const agentDoclistBefore = await page.request.get(
+    `/api/agent/v1/pages/${homePage!.id}/components`,
+    { headers: hostileAgentHeaders },
+  );
+  expect(agentDoclistBefore.status()).toBe(200);
+  const agentDoclistBeforeBody = (await agentDoclistBefore.json()) as Array<{
+    id: string;
+    row_version: number;
+  }>;
+  const agentDoclistPatchCase = async (
+    key: string,
+    props: Record<string, unknown>,
+    expectedKey: string | null,
+  ): Promise<void> => {
+    const response = await page.request.patch(
+      `/api/agent/v1/components/${agentDoclistId}`,
+      {
+        headers: {
+          ...hostileAgentHeaders,
+          "Idempotency-Key": `oap-0793-agent-${key}-${tag}`,
+        },
+        data: { props, expected_row_version: 1 },
+      },
+    );
+    expect(response.status()).toBe(422);
+    const body = (await response.json()) as {
+      error: { code: string; details?: { prop_error?: string } };
+    };
+    expect(body.error.code).toBe("DOMAIN_VALIDATION_FAILED");
+    if (expectedKey === null) {
+      // Catalog shape bounds (label 1..120) are guard-level rejections:
+      // the bounded prop_error vocabulary deliberately excludes generic
+      // shape-bound keys (079/2 Gallery/LogoGrid parity), so the exact
+      // surface is the bare domain-validation 422 with no details and no
+      // user-input echo.
+      expect(body.error.details).toBeNull();
+    } else {
+      expect(body.error.details?.prop_error).toBe(expectedKey);
+    }
+  };
+  await agentDoclistPatchCase(
+    "doclist-out-of-range-max",
+    { items: doclistHostileItems(13) },
+    "doclist.items-out-of-range",
+  );
+  await agentDoclistPatchCase(
+    "doclist-out-of-range-empty",
+    { items: [] },
+    "doclist.items-out-of-range",
+  );
+  await agentDoclistPatchCase(
+    "doclist-missing",
+    { items: [{ label: "no reference" }] },
+    "doclist.item-missing",
+  );
+  await agentDoclistPatchCase(
+    "doclist-missing-not-a-uuid",
+    { items: [{ mediaId: "not-a-uuid", label: "bad reference" }] },
+    "doclist.item-missing",
+  );
+  await agentDoclistPatchCase(
+    "doclist-foreign-unknown",
+    { items: [{ mediaId: unknownMediaId, label: "unknown reference" }] },
+    "doclist.item-foreign-site",
+  );
+  await agentDoclistPatchCase(
+    "doclist-foreign-demo",
+    { items: [{ mediaId: demoMediaId, label: "foreign png" }] },
+    "doclist.item-foreign-site",
+  );
+  await agentDoclistPatchCase(
+    "doclist-not-pdf-png-human",
+    { items: [{ mediaId: humanMediaId, label: "human png" }] },
+    "doclist.item-not-pdf",
+  );
+  await agentDoclistPatchCase(
+    "doclist-not-pdf-png-agent",
+    { items: [{ mediaId: agentMediaId, label: "agent png" }] },
+    "doclist.item-not-pdf",
+  );
+  await agentDoclistPatchCase(
+    "doclist-not-pdf-text",
+    { items: [{ mediaId: NON_IMAGE_MEDIA_ID, label: "note" }] },
+    "doclist.item-not-pdf",
+  );
+  await agentDoclistPatchCase(
+    "doclist-not-pdf-mixed",
+    {
+      items: [
+        { mediaId: pdfAgentMediaId, label: "valid pdf" },
+        { mediaId: humanMediaId, label: "png" },
+      ],
+    },
+    "doclist.item-not-pdf",
+  );
+  await agentDoclistPatchCase(
+    "doclist-label-bound",
+    { items: [{ mediaId: pdfAgentMediaId, label: "x".repeat(121) }] },
+    null,
+  );
+  // Tree and row versions unchanged after every rejection.
+  const agentDoclistAfter = await page.request.get(
+    `/api/agent/v1/pages/${homePage!.id}/components`,
+    { headers: hostileAgentHeaders },
+  );
+  expect(agentDoclistAfter.status()).toBe(200);
+  const agentDoclistAfterBody = (await agentDoclistAfter.json()) as Array<{
+    id: string;
+    row_version: number;
+  }>;
+  expect(agentDoclistAfterBody).toHaveLength(agentDoclistBeforeBody.length);
+  expect(rowVersionOf(agentDoclistAfterBody, agentDoclistId)).toBe(1);
+  expect(rowVersionOf(agentDoclistAfterBody, agentGalleryId)).toBe(1);
+  expect(rowVersionOf(agentDoclistAfterBody, agentLogoGridId)).toBe(1);
+
+  // Editor path rejects the same hostile document references with the
+  // exact keys, plus the catalog label bound (shape guard).
+  await editorPostCase(
+    "doclist-out-of-range",
+    "DocumentList",
+    27,
+    { title: "hostile documents", items: doclistHostileItems(13) },
+    "doclist.items-out-of-range",
+  );
+  await editorPostCase(
+    "doclist-empty",
+    "DocumentList",
+    27,
+    { items: [] },
+    "doclist.items-out-of-range",
+  );
+  await editorPostCase(
+    "doclist-missing",
+    "DocumentList",
+    27,
+    { items: [{ label: "no reference" }] },
+    "doclist.item-missing",
+  );
+  await editorPostCase(
+    "doclist-not-pdf",
+    "DocumentList",
+    27,
+    { items: [{ mediaId: humanMediaId, label: "png" }] },
+    "doclist.item-not-pdf",
+  );
+  await editorPatchCase(
+    editorDoclistId,
+    "doclist-foreign",
+    { items: [{ mediaId: demoMediaId, label: "foreign png" }] },
+    "doclist.item-foreign-site",
+  );
+  await editorPatchCase(
+    editorDoclistId,
+    "doclist-not-pdf-mixed",
+    {
+      items: [
+        { mediaId: pdfAgentMediaId, label: "valid pdf" },
+        { mediaId: agentMediaId, label: "png" },
+      ],
+    },
+    "doclist.item-not-pdf",
+  );
+  await editorPatchCase(
+    editorDoclistId,
+    "doclist-label-bound",
+    { items: [{ mediaId: pdfAgentMediaId, label: "x".repeat(121) }] },
+    null,
+  );
+
+  // R3 REQUIRED image-class regression negatives at composition: now that
+  // PDFs are uploadable, the image-class components reject PDF references
+  // with their exact existing keys (079/1 Image key:
+  // COMPONENT_BINDING_INVALID on the Editor surface).
+  await editorPostCase(
+    "gallery-pdf-item",
+    "Gallery",
+    28,
+    {
+      title: "hostile gallery pdf",
+      items: [{ mediaId: pdfHumanMediaId, alt: "pdf item" }],
+    },
+    "gallery.item-not-image",
+  );
+  await editorPostCase(
+    "logogrid-pdf-item",
+    "LogoGrid",
+    28,
+    {
+      items: [
+        { mediaId: pdfHumanMediaId, name: "pdf one" },
+        { mediaId: pdfAgentMediaId, name: "pdf two" },
+      ],
+    },
+    "logogrid.item-not-image",
+  );
+  await editorPostCase(
+    "image-pdf-binding",
+    "Image",
+    28,
+    { mediaId: pdfHumanMediaId, alt: "pdf as image" },
+    "COMPONENT_BINDING_INVALID",
+  );
+  await agentPatchCase(
+    agentGalleryId,
+    "gallery-pdf-item",
+    { items: [{ mediaId: pdfHumanMediaId, alt: "pdf item" }] },
+    "gallery.item-not-image",
+  );
+  await agentPatchCase(
+    agentLogoGridId,
+    "logogrid-pdf-item",
+    {
+      items: [
+        { mediaId: pdfHumanMediaId, name: "pdf one" },
+        { mediaId: pdfAgentMediaId, name: "pdf two" },
+      ],
+    },
+    "logogrid.item-not-image",
+  );
+  const agentImagePdfCreate = await page.request.post(
+    `/api/agent/v1/pages/${homePage!.id}/components`,
+    {
+      headers: {
+        ...hostileAgentHeaders,
+        "Idempotency-Key": `oap-0793-agent-image-pdf-${tag}`,
+      },
+      data: {
+        component_type: "Image",
+        slot_key: "default",
+        props: { mediaId: pdfHumanMediaId, alt: "pdf as image" },
+      },
+    },
+  );
+  expect(agentImagePdfCreate.status()).toBe(422);
+  const agentImagePdfBody = (await agentImagePdfCreate.json()) as {
+    error: { code: string; details?: { prop_error?: string } };
+  };
+  expect(agentImagePdfBody.error.code).toBe("DOMAIN_VALIDATION_FAILED");
+  // The Agent surface bounds the exact DB-level binding key to the
+  // enumerated prop_error vocabulary (pre-079/3 behavior, unchanged); the
+  // exact key is proven on the Editor surface above and in the validator
+  // contract.
+  expect(agentImagePdfBody.error.details?.prop_error).toBeUndefined();
+  // The image-class nodes stayed at row version 1 through the rejections.
+  const agentImageClassAfter = await page.request.get(
+    `/api/agent/v1/pages/${homePage!.id}/components`,
+    { headers: hostileAgentHeaders },
+  );
+  expect(agentImageClassAfter.status()).toBe(200);
+  const agentImageClassAfterBody = (await agentImageClassAfter.json()) as Array<{
+    id: string;
+    row_version: number;
+  }>;
+  expect(agentImageClassAfterBody).toHaveLength(agentDoclistBeforeBody.length);
+  expect(rowVersionOf(agentImageClassAfterBody, agentGalleryId)).toBe(1);
+  expect(rowVersionOf(agentImageClassAfterBody, agentLogoGridId)).toBe(1);
 
   // ---------------------------------------------------------------- hostile suite
   // 1. Cross-site private byte read: 404, never 403, never bytes. The
