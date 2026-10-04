@@ -969,6 +969,18 @@ async def test_browser_leases_artifacts_terminal_state_and_exact_privileges(
                         "control.browser_artifact",
                         "audit.browser_event",
                     ):
+                        if (
+                            role == "slaif_review_worker"
+                            and relation == "control.browser_run"
+                        ):
+                            # 082/1 R1/R5: the durable review worker holds
+                            # SELECT on control.browser_run to drain and
+                            # cancel outstanding runs during freeze; the
+                            # other browser relations remain denied. Raw
+                            # SELECT is table-level; site confinement is
+                            # enforced by the frozen worker functions.
+                            await connection.fetch(f"SELECT * FROM {relation}")
+                            continue
                         with pytest.raises(asyncpg.InsufficientPrivilegeError):
                             await connection.fetch(f"SELECT * FROM {relation}")
             finally:

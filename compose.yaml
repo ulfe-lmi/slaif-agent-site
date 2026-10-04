@@ -100,6 +100,8 @@ services:
       - /run/slaif-browser-worker
       - --editor-directory
       - /run/slaif-editor
+      - --review-worker-directory
+      - /run/slaif-review-worker
       - --media-directory
       - /run/slaif-media
       - --media-root
@@ -119,6 +121,7 @@ services:
       - browser-worker-secret:/run/slaif-browser-worker
       - browser-artifacts:/var/lib/slaif/browser-artifacts
       - editor-secret:/run/slaif-editor
+      - review-worker-secret:/run/slaif-review-worker
       - media-secret:/run/slaif-media
       - media-data:/var/lib/slaif/media
 
@@ -324,6 +327,18 @@ services:
   review-worker:
     <<: *worker-service
     command: ["python", "-m", "slaif_agent_site.review_worker"]
+    environment:
+      SLAIF_LOG_FORMAT: json
+      SLAIF_LOG_LEVEL: INFO
+      SLAIF_MODE: development
+      SLAIF_PUBLIC_URL: http://localhost:8080
+      SLAIF_REVIEW_WORKER_DSN_FILE: /run/slaif-review-worker/review-worker-dsn
+      SLAIF_REVIEW_WORKER_EXPECTED_DATABASE: slaif
+      SLAIF_REVIEW_WORKER_EXPECTED_LOGIN: slaif_review_worker_login
+      SLAIF_REVIEW_WORKER_EXPECTED_PRIVILEGE_ROLE: slaif_review_worker
+      SLAIF_REVIEW_WORKER_MODE: development
+    volumes:
+      - review-worker-secret:/run/slaif-review-worker:ro
     networks: [database]
 
   scheduler:
@@ -485,3 +500,4 @@ volumes:
   render-secret: {}
   render-preview-secret: {}
   render-auth-secret: {}
+  review-worker-secret: {}

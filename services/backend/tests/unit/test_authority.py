@@ -57,9 +57,12 @@ def test_descriptors_are_immutable_non_secret_metadata() -> None:
 
 def test_setup_reviewer_and_agent_facing_authority_never_combine() -> None:
     setup = [item for item in AUTHORITY_BY_PROCESS.values() if item.setup_owner]
+    # 082/1: the durable job worker carries its own narrow authority class
+    # and credential; no process claims the human reviewer authority yet
+    # (the read-only review surface lands in 082/2).
     reviewers = [item for item in AUTHORITY_BY_PROCESS.values() if item.reviewer]
     assert [item.process for item in setup] == [ProcessKind.BOOTSTRAP]
-    assert [item.process for item in reviewers] == [ProcessKind.REVIEW_WORKER]
+    assert [item.process for item in reviewers] == []
     assert all(not item.agent_facing for item in setup + reviewers)
 
     agent = authority_for(ProcessKind.AGENT_API)
@@ -105,7 +108,7 @@ def test_exact_database_role_mapping_and_database_free_mcp() -> None:
         "slaif_agent_runtime",
         "slaif_public_reader",
         "slaif_preview_reader",
-        "slaif_reviewer",
+        "slaif_review_worker",
         "slaif_scheduler",
         "slaif_media",
         "slaif_gc",
@@ -126,6 +129,7 @@ def test_database_role_manifest_is_exact_password_free_and_immutable() -> None:
         "slaif_public_reader",
         "slaif_preview_reader",
         "slaif_reviewer",
+        "slaif_review_worker",
         "slaif_scheduler",
         "slaif_media",
         "slaif_gc",

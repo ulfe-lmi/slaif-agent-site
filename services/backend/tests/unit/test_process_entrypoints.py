@@ -207,21 +207,36 @@ def test_worker_check_does_not_call_injected_runner() -> None:
     assert called is False
 
 
-def test_long_running_worker_packages_have_no_uvicorn_or_database_use() -> None:
+def test_long_running_worker_packages_have_no_uvicorn_and_only_worker_uses_db() -> None:
     source_root = REPOSITORY_ROOT / "services/backend/src/slaif_agent_site"
-    paths = [source_root / "worker.py"]
-    for process in (
+    worker_processes = (
         ProcessKind.REVIEW_WORKER,
         ProcessKind.SCHEDULER,
         ProcessKind.MEDIA_GC,
-    ):
+    )
+    paths = [source_root / "worker.py"]
+    for process in worker_processes:
         package = source_root / MODULE_BY_PROCESS[process]
         paths.extend(sorted(package.glob("*.py")))
         assert not (package / "app.py").exists()
-    source = "\n".join(path.read_text(encoding="utf-8") for path in paths)
-    assert "uvicorn" not in source.casefold()
-    assert "asyncpg" not in source.casefold()
-    assert "database_url" not in source.casefold()
+    # No long-running worker is an HTTP listener.
+    combined = "\n".join(path.read_text(encoding="utf-8") for path in paths)
+    assert "uvicorn" not in combined.casefold()
+    # 082/1: the review worker is the only long-running process holding a
+    # narrow database credential (durable review jobs). The shared runner
+    # and the scheduler/media-GC workers remain database-free loops.
+    db_free_paths = [source_root / "worker.py"]
+    for process in worker_processes:
+        if process is ProcessKind.REVIEW_WORKER:
+            continue
+        db_free_paths.extend(
+            sorted((source_root / MODULE_BY_PROCESS[process]).glob("*.py"))
+        )
+    db_free_source = "\n".join(
+        path.read_text(encoding="utf-8") for path in db_free_paths
+    )
+    assert "asyncpg" not in db_free_source.casefold()
+    assert "database_url" not in db_free_source.casefold()
 
 
 def test_long_running_processes_do_not_import_bootstrap_or_owner_connections() -> None:

@@ -31,6 +31,7 @@ RENDER_TOKEN_FILE = "render-token"
 BROWSER_SIGNING_KEY_FILE = "signing-key"
 BROWSER_WORKER_TOKEN_FILE = "worker-token"
 EDITOR_DSN_FILE = "editor-dsn"
+REVIEW_WORKER_DSN_FILE = "review-worker-dsn"
 MEDIA_DSN_FILE = "media-dsn"
 MEDIA_ROOT_MODE = 0o700
 MEDIA_ROOT_UID = APPLICATION_UID
@@ -45,6 +46,7 @@ LOGINS = (
     ("public", "slaif_public_login"),
     ("preview", "slaif_preview_login"),
     ("reviewer", "slaif_reviewer_login"),
+    ("review-worker", "slaif_review_worker_login"),
     ("scheduler", "slaif_scheduler_login"),
     ("media", "slaif_media_login"),
     ("gc", "slaif_gc_login"),
@@ -136,6 +138,7 @@ def initialize(
     browser_signing_directory: Path | None = None,
     browser_worker_directory: Path | None = None,
     editor_directory: Path | None = None,
+    review_worker_directory: Path | None = None,
     media_directory: Path | None = None,
     media_root: Path | None = None,
     browser_artifact_root: Path | None = None,
@@ -165,6 +168,13 @@ def initialize(
         raise SecretInitializationError("Browser worker directory must be absolute")
     if editor_directory is not None and not editor_directory.is_absolute():
         raise SecretInitializationError("Editor secret directory must be absolute")
+    if (
+        review_worker_directory is not None
+        and not review_worker_directory.is_absolute()
+    ):
+        raise SecretInitializationError(
+            "Review worker secret directory must be absolute"
+        )
     if media_directory is not None and not media_directory.is_absolute():
         raise SecretInitializationError("Media secret directory must be absolute")
     if media_root is not None and not media_root.is_absolute():
@@ -335,6 +345,59 @@ def initialize(
             os.fsync(editor_fd)
         finally:
             os.close(editor_fd)
+        isolated_files += 1
+
+    if review_worker_directory is not None:
+        review_worker_file = review_worker_directory / REVIEW_WORKER_DSN_FILE
+        expected_review_worker_dsn = dsn_files["service-review-worker-dsn"]
+        initialize_review_worker_file = not review_worker_file.exists()
+        if initialize_review_worker_file:
+            if validate_only:
+                raise SecretInitializationError(
+                    "Review worker secret directory is unavailable"
+                )
+            if review_worker_directory.exists() and any(
+                review_worker_directory.iterdir()
+            ):
+                raise SecretInitializationError(
+                    "Review worker secret directory policy mismatch"
+                )
+            _prepare_directory(
+                review_worker_directory,
+                mode=CONTROL_DIRECTORY_MODE,
+                uid=DIRECTORY_UID,
+                gid=DIRECTORY_UID,
+            )
+            _write_once(
+                review_worker_file,
+                expected_review_worker_dsn,
+                uid=APPLICATION_UID,
+            )
+        _prepare_directory(
+            review_worker_directory,
+            mode=CONTROL_DIRECTORY_MODE,
+            uid=CONTROL_DIRECTORY_UID,
+            gid=CONTROL_DIRECTORY_GID,
+        )
+        if {path.name for path in review_worker_directory.iterdir()} != {
+            REVIEW_WORKER_DSN_FILE
+        }:
+            raise SecretInitializationError(
+                "Review worker secret directory policy mismatch"
+            )
+        actual_review_worker_dsn = _read_secret(review_worker_file, uid=APPLICATION_UID)
+        if not secrets.compare_digest(
+            actual_review_worker_dsn, expected_review_worker_dsn
+        ):
+            raise SecretInitializationError("isolated Review worker locator mismatch")
+        review_worker_fd = os.open(
+            review_worker_directory,
+            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+        )
+        try:
+            os.fsync(review_worker_fd)
+        finally:
+            os.close(review_worker_fd)
         isolated_files += 1
 
     if render_directory is not None:
@@ -667,6 +730,11 @@ def main() -> int:
         default=Path("/run/slaif-editor"),
     )
     parser.add_argument(
+        "--review-worker-directory",
+        type=Path,
+        default=Path("/run/slaif-review-worker"),
+    )
+    parser.add_argument(
         "--media-directory",
         type=Path,
         default=Path("/run/slaif-media"),
@@ -686,6 +754,7 @@ def main() -> int:
             browser_signing_directory=arguments.browser_signing_directory,
             browser_worker_directory=arguments.browser_worker_directory,
             editor_directory=arguments.editor_directory,
+            review_worker_directory=arguments.review_worker_directory,
             media_directory=arguments.media_directory,
             media_root=arguments.media_root,
             browser_artifact_root=arguments.browser_artifact_root,

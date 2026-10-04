@@ -20,6 +20,7 @@ def test_local_login_manifest_is_exact_and_one_to_one() -> None:
         ("slaif_public_login", "slaif_public_reader", "public"),
         ("slaif_preview_login", "slaif_preview_reader", "preview"),
         ("slaif_reviewer_login", "slaif_reviewer", "reviewer"),
+        ("slaif_review_worker_login", "slaif_review_worker", "review-worker"),
         ("slaif_scheduler_login", "slaif_scheduler", "scheduler"),
         ("slaif_media_login", "slaif_media", "media"),
         ("slaif_gc_login", "slaif_gc", "gc"),

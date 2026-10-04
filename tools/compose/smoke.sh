@@ -594,18 +594,18 @@ docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif -Atc \
   | grep -Eq '^(EMPTY_SAFE|HARDENED) safe=true$'
 docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif -Atc \
   "SELECT count(*) FROM pg_auth_members m JOIN pg_roles member ON member.oid=m.member WHERE member.rolname LIKE 'slaif_%_login'" \
-  | grep -q '^10$'
+  | grep -q '^11$'
 docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif -Atc \
   "SELECT NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname LIKE 'slaif_%_login' AND (NOT rolcanlogin OR rolsuper OR rolcreatedb OR rolcreaterole OR NOT rolinherit OR rolreplication OR rolbypassrls))" \
   | grep -q '^t$'
 docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif -Atc \
-  "SELECT count(*) = 10 AND bool_and(rolconnlimit = 10 AND rolvaliduntil = 'infinity'::timestamptz AND rolconfig IS NULL) FROM pg_roles WHERE rolname LIKE 'slaif_%_login'" \
+  "SELECT count(*) = 11 AND bool_and(rolconnlimit = 10 AND rolvaliduntil = 'infinity'::timestamptz AND rolconfig IS NULL) FROM pg_roles WHERE rolname LIKE 'slaif_%_login'" \
   | grep -q '^t$'
 docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif -Atc \
   "SELECT NOT EXISTS (SELECT 1 FROM pg_database d CROSS JOIN LATERAL aclexplode(d.datacl) acl WHERE d.datname = 'slaif' AND acl.grantee = 0 AND acl.privilege_type IN ('CONNECT', 'TEMPORARY'))" \
   | grep -q '^t$'
 docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif -Atc \
-  "SELECT count(*) = 10 AND bool_and(has_database_privilege(rolname, 'slaif', 'CONNECT') AND NOT has_database_privilege(rolname, 'slaif', 'TEMPORARY') AND has_database_privilege(rolname, 'slaif', 'CREATE') = (rolname = 'slaif_owner')) FROM pg_roles WHERE rolname IN ('slaif_owner', 'slaif_control', 'slaif_editor_runtime', 'slaif_agent_runtime', 'slaif_public_reader', 'slaif_preview_reader', 'slaif_reviewer', 'slaif_scheduler', 'slaif_media', 'slaif_gc')" \
+  "SELECT count(*) = 11 AND bool_and(has_database_privilege(rolname, 'slaif', 'CONNECT') AND NOT has_database_privilege(rolname, 'slaif', 'TEMPORARY') AND has_database_privilege(rolname, 'slaif', 'CREATE') = (rolname = 'slaif_owner')) FROM pg_roles WHERE rolname IN ('slaif_owner', 'slaif_control', 'slaif_editor_runtime', 'slaif_agent_runtime', 'slaif_public_reader', 'slaif_preview_reader', 'slaif_reviewer', 'slaif_review_worker', 'slaif_scheduler', 'slaif_media', 'slaif_gc')" \
   | grep -q '^t$'
 docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif -Atc \
   "SELECT NOT EXISTS (SELECT 1 FROM pg_default_acl defaults CROSS JOIN LATERAL aclexplode(defaults.defaclacl) acl JOIN pg_roles grantee ON grantee.oid = acl.grantee WHERE grantee.rolname LIKE 'slaif_%_login')" \
@@ -630,11 +630,11 @@ then
 fi
 docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif -v ON_ERROR_STOP=1 -c \
   "DROP ROLE slaif_smoke_unrelated" >/dev/null
-echo "database-login-policy: OK public-connect=denied exact-roles=10 direct-default-owner-drift=none unrelated-connect=denied"
+echo "database-login-policy: OK public-connect=denied exact-roles=11 direct-default-owner-drift=none unrelated-connect=denied"
 docker run --rm --network none --read-only --cap-drop ALL --cap-add DAC_READ_SEARCH \
   --user 0:0 --volume "${PROJECT}_local-secrets:/secrets:ro" \
   --entrypoint python slaif-agent-site-backend:local -c \
-  "import os,pathlib,stat; root=pathlib.Path('/secrets'); root_info=root.stat(); assert stat.S_IMODE(root_info.st_mode)==0o710 and root_info.st_uid==0 and root_info.st_gid==10002; files=list(root.iterdir()); assert len(files)==23; assert all(stat.S_IMODE(p.stat().st_mode)==0o400 for p in files); assert (root/'postgres-password').stat().st_uid==999; assert (root/'.initialized-v1').stat().st_uid==0; assert all(p.stat().st_uid==10001 for p in files if p.name not in {'postgres-password','.initialized-v1'}); values=[p.read_bytes() for p in files if p.name=='postgres-password' or p.name.startswith('login-')]; assert len(values)==len(set(values))==11; print('secret-file-policy: OK')"
+  "import os,pathlib,stat; root=pathlib.Path('/secrets'); root_info=root.stat(); assert stat.S_IMODE(root_info.st_mode)==0o710 and root_info.st_uid==0 and root_info.st_gid==10002; files=list(root.iterdir()); assert len(files)==25; assert all(stat.S_IMODE(p.stat().st_mode)==0o400 for p in files); assert (root/'postgres-password').stat().st_uid==999; assert (root/'.initialized-v1').stat().st_uid==0; assert all(p.stat().st_uid==10001 for p in files if p.name not in {'postgres-password','.initialized-v1'}); values=[p.read_bytes() for p in files if p.name=='postgres-password' or p.name.startswith('login-')]; assert len(values)==len(set(values))==12; print('secret-file-policy: OK')"
 if docker run --rm --network none --read-only --cap-drop ALL \
   --user 10003:10003 --volume "${PROJECT}_local-secrets:/secrets:ro" \
   --entrypoint python slaif-agent-site-backend:local -c \

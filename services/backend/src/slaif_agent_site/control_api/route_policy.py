@@ -438,6 +438,12 @@ ROUTE_POLICIES: Final[tuple[RoutePolicy, ...]] = (
             ),
             (
                 "POST",
+                "/api/control/v1/sites/{site_id}/workspaces/{workspace_id}/freeze/",
+                _M,
+                "workspace:freeze",
+            ),
+            (
+                "POST",
                 "/api/control/v1/sites/{site_id}/workspaces/{workspace_id}/capabilities/",
                 _M,
                 "capability:create",

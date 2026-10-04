@@ -45,6 +45,8 @@ ALLOWED_CLEAN_RELATIONS = {
     ("control", "browser_run"),
     ("control", "browser_idempotency"),
     ("control", "browser_artifact"),
+    ("control", "review_job"),
+    ("control", "review_snapshot"),
     ("audit", "browser_event"),
     ("audit", "human_agent_session"),
 }
@@ -582,6 +584,32 @@ HUMAN_EDITOR_FUNCTIONS = {
         "text, text, uuid"
     ),
 }
+REVIEW_WORKER_FUNCTIONS = {
+    (
+        "slaif_review_job_claim",
+        "p_claimant text",
+    ): "text",
+    (
+        "slaif_review_job_heartbeat",
+        "p_job_id uuid",
+    ): "uuid",
+    (
+        "slaif_review_job_terminal",
+        "p_job_id uuid, p_status text, p_error text",
+    ): "uuid, text, text",
+    (
+        "slaif_review_snapshot_complete",
+        "p_workspace_id uuid, p_row jsonb",
+    ): "uuid, jsonb",
+    (
+        "slaif_review_workspace_state",
+        "p_workspace_id uuid",
+    ): "uuid",
+    (
+        "slaif_review_browser_runs_cancel",
+        "p_workspace_id uuid",
+    ): "uuid",
+}
 PUBLIC_RESOLVER_FUNCTIONS = {
     ("slaif_site_resolve", "p_hostname text, p_path text"): "text, text",
     ("slaif_site_resolve_local", "p_site_key text"): "text",
@@ -774,6 +802,18 @@ CONTROL_FUNCTIONS = {
         "p_workspace_id uuid, p_site_id uuid, p_user_id uuid, p_public_id text, "
         "p_secret_digest text, p_idempotency_key text, p_request_digest text",
     ): "uuid, uuid, uuid, text, text, text, text",
+    (
+        "slaif_workspace_freeze",
+        "p_workspace_id uuid",
+    ): "uuid",
+    (
+        "slaif_review_live_freeze_job",
+        "p_workspace_id uuid",
+    ): "uuid",
+    (
+        "slaif_human_agent_workspace_freeze",
+        "p_workspace_id uuid, p_site_id uuid, p_user_id uuid",
+    ): "uuid, uuid, uuid",
 }
 
 
@@ -1065,6 +1105,7 @@ async def apply_product_privileges(
             f'GRANT USAGE ON SCHEMA "control" TO {quote_identifier(role)}'
         )
     await connection.execute('GRANT USAGE ON SCHEMA "control" TO "slaif_media"')
+    await connection.execute('GRANT USAGE ON SCHEMA "control" TO "slaif_review_worker"')
     await connection.execute('GRANT USAGE ON SCHEMA "content" TO "slaif_media"')
     for relation in CAPABILITY_READ_RELATIONS:
         for role in CAPABILITY_READ_ROLES:
@@ -1072,6 +1113,17 @@ async def apply_product_privileges(
                 f'GRANT SELECT ON "control".{quote_identifier(relation)} '
                 f"TO {quote_identifier(role)}"
             )
+    for relation in ("workspace", "site", "capability", "browser_run"):
+        await connection.execute(
+            f'GRANT SELECT ON "control".{quote_identifier(relation)} '
+            'TO "slaif_review_worker"'
+        )
+    await connection.execute(
+        'GRANT SELECT, INSERT, UPDATE ON "control".review_job TO "slaif_review_worker"'
+    )
+    await connection.execute(
+        'GRANT SELECT, INSERT ON "control".review_snapshot TO "slaif_review_worker"'
+    )
     for (name, _identity), signature in CONTROL_FUNCTIONS.items():
         await connection.execute(
             "GRANT EXECUTE ON FUNCTION "
@@ -1120,6 +1172,12 @@ async def apply_product_privileges(
             "GRANT EXECUTE ON FUNCTION "
             f'"control".{quote_identifier(name)}({signature}) '
             f"TO {quote_identifier(role)}"
+        )
+    for (name, _identity), signature in REVIEW_WORKER_FUNCTIONS.items():
+        await connection.execute(
+            "GRANT EXECUTE ON FUNCTION "
+            f'"control".{quote_identifier(name)}({signature}) '
+            'TO "slaif_review_worker"'
         )
     await connection.execute('GRANT USAGE ON SCHEMA "control" TO "slaif_public_reader"')
     for (name, _identity), signature in PUBLIC_RESOLVER_FUNCTIONS.items():
@@ -1259,6 +1317,7 @@ async def _schema_violations(
                     "slaif_preview_reader",
                     "slaif_editor_runtime",
                     "slaif_media",
+                    "slaif_review_worker",
                 }
             ) or (
                 readiness_state is ReadinessState.HARDENED
@@ -1337,6 +1396,27 @@ async def _relation_violations(
                 and role in CAPABILITY_READ_ROLES
             ):
                 expected = (True, False, False, False, False)
+            if (
+                schema == "control"
+                and kind in {"r", "p"}
+                and role == "slaif_review_worker"
+                and name in ("workspace", "site", "capability", "browser_run")
+            ):
+                expected = (True, False, False, False, False)
+            if (
+                schema == "control"
+                and kind in {"r", "p"}
+                and name == "review_job"
+                and role == "slaif_review_worker"
+            ):
+                expected = (True, True, True, False, False)
+            if (
+                schema == "control"
+                and kind in {"r", "p"}
+                and name == "review_snapshot"
+                and role == "slaif_review_worker"
+            ):
+                expected = (True, True, False, False, False)
             if (
                 readiness_state is ReadinessState.HARDENED
                 and schema == "content"
@@ -1441,6 +1521,9 @@ async def _function_violations(
         is_human_editor_function = (
             schema == "control" and control_identity in HUMAN_EDITOR_FUNCTIONS
         )
+        is_review_worker_function = (
+            schema == "control" and control_identity in REVIEW_WORKER_FUNCTIONS
+        )
         if schema == FOUNDATION_SCHEMA:
             foundation_functions += 1
         elif is_control_function:
@@ -1456,6 +1539,10 @@ async def _function_violations(
         ):
             violations.append(f"function/{schema}.{name}/unsafe-security-definer")
         elif is_human_editor_function and (
+            not security_definer or "search_path=pg_catalog" not in config
+        ):
+            violations.append(f"function/{schema}.{name}/unsafe-security-definer")
+        elif is_review_worker_function and (
             not security_definer or "search_path=pg_catalog" not in config
         ):
             violations.append(f"function/{schema}.{name}/unsafe-security-definer")
@@ -1545,6 +1632,7 @@ async def _function_violations(
                     and is_content_model_function
                     and role in {"slaif_editor_runtime", "slaif_control"}
                 )
+                or (is_review_worker_function and role == "slaif_review_worker")
             )
             if can_execute and not allowed:
                 violations.append(f"function/{schema}.{name}/{role}/execute")
@@ -1568,6 +1656,12 @@ async def _function_violations(
                     if name == "slaif_human_editor_workspace_resolve"
                     else "slaif_editor_runtime"
                 )
+                and not can_execute
+            ):
+                violations.append(f"function/{schema}.{name}/{role}/missing-execute")
+            if (
+                is_review_worker_function
+                and role == "slaif_review_worker"
                 and not can_execute
             ):
                 violations.append(f"function/{schema}.{name}/{role}/missing-execute")
@@ -1643,6 +1737,7 @@ __all__ = [
     "MEDIA_CONTENT_FUNCTIONS",
     "MEDIA_CONTROL_FUNCTIONS",
     "PrivilegeValidation",
+    "REVIEW_WORKER_FUNCTIONS",
     "apply_product_privileges",
     "content_inventory_fingerprint",
     "content_object_inventory",

@@ -1,1 +1,1 @@
-"""Non-listening review-worker skeleton."""
+"""Durable review worker: real freeze, drain, and immutable snapshot."""

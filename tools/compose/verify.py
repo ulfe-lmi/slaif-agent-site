@@ -99,6 +99,8 @@ EXPECTED_COMMANDS = {
         "/run/slaif-browser-worker",
         "--editor-directory",
         "/run/slaif-editor",
+        "--review-worker-directory",
+        "/run/slaif-review-worker",
         "--media-directory",
         "/run/slaif-media",
         "--media-root",
@@ -145,6 +147,7 @@ EXPECTED_MOUNTS = {
         ("browser-signing-secret", "/run/slaif-browser-signing", True),
     },
     "media-gc": {("media-data", "/var/lib/slaif/media", False)},
+    "review-worker": {("review-worker-secret", "/run/slaif-review-worker", True)},
     "media-service": {
         ("media-data", "/var/lib/slaif/media", False),
         ("media-secret", "/run/slaif-media", True),
@@ -166,6 +169,7 @@ EXPECTED_MOUNTS = {
         ("browser-signing-secret", "/run/slaif-browser-signing", False),
         ("browser-worker-secret", "/run/slaif-browser-worker", False),
         ("browser-artifacts", "/var/lib/slaif/browser-artifacts", False),
+        ("review-worker-secret", "/run/slaif-review-worker", False),
     },
     "web": {("render-auth-secret", "/run/slaif-render-auth", True)},
 }
@@ -197,6 +201,10 @@ BROWSER_WORKER_SECRET_MOUNT_SERVICES = {
 }
 BROWSER_ARTIFACT_MOUNT_SERVICES = {"browser-worker", "secrets-init"}
 MEDIA_SECRET_MOUNT_SERVICES = {"media-service", "secrets-init"}
+REVIEW_WORKER_SECRET_MOUNT_SERVICES = {
+    "review-worker",
+    "secrets-init",
+}
 LONG_RUNNING_APPLICATIONS = REQUIRED_SERVICES - {
     "bootstrap",
     "postgres",
@@ -259,6 +267,7 @@ def validate_config(config: dict[str, Any]) -> None:
             "render-secret",
             "render-preview-secret",
             "render-auth-secret",
+            "review-worker-secret",
         },
         "volume inventory mismatch",
     )
@@ -403,6 +412,13 @@ def validate_config(config: dict[str, Any]) -> None:
             has_media_secret == (name in MEDIA_SECRET_MOUNT_SERVICES),
             f"{name}: Media secret mount policy mismatch",
         )
+        has_review_worker_secret = any(
+            mount.get("source") == "review-worker-secret" for mount in mounts
+        )
+        _fail(
+            has_review_worker_secret == (name in REVIEW_WORKER_SECRET_MOUNT_SERVICES),
+            f"{name}: review-worker secret mount policy mismatch",
+        )
         environment = service.get("environment", {})
         if name in LONG_RUNNING_APPLICATIONS:
             safe_environment = {
@@ -447,6 +463,17 @@ def validate_config(config: dict[str, Any]) -> None:
                         and name == "render-api"
                     )
                     or (key == "SLAIF_MEDIA_DSN_FILE" and name == "media-service")
+                    or (
+                        key
+                        in {
+                            "SLAIF_REVIEW_WORKER_DSN_FILE",
+                            "SLAIF_REVIEW_WORKER_EXPECTED_DATABASE",
+                            "SLAIF_REVIEW_WORKER_EXPECTED_LOGIN",
+                            "SLAIF_REVIEW_WORKER_EXPECTED_PRIVILEGE_ROLE",
+                            "SLAIF_REVIEW_WORKER_MODE",
+                        }
+                        and name == "review-worker"
+                    )
                 )
             }
             serialized = json.dumps(
@@ -614,6 +641,31 @@ def validate_config(config: dict[str, Any]) -> None:
                     "SLAIF_RENDER_MODE": "development",
                 },
                 "render-api: database configuration mismatch",
+            )
+        if name == "review-worker":
+            _fail(
+                {
+                    key: environment.get(key)
+                    for key in (
+                        "SLAIF_REVIEW_WORKER_DSN_FILE",
+                        "SLAIF_REVIEW_WORKER_EXPECTED_DATABASE",
+                        "SLAIF_REVIEW_WORKER_EXPECTED_LOGIN",
+                        "SLAIF_REVIEW_WORKER_EXPECTED_PRIVILEGE_ROLE",
+                        "SLAIF_REVIEW_WORKER_MODE",
+                    )
+                }
+                == {
+                    "SLAIF_REVIEW_WORKER_DSN_FILE": (
+                        "/run/slaif-review-worker/review-worker-dsn"
+                    ),
+                    "SLAIF_REVIEW_WORKER_EXPECTED_DATABASE": "slaif",
+                    "SLAIF_REVIEW_WORKER_EXPECTED_LOGIN": "slaif_review_worker_login",
+                    "SLAIF_REVIEW_WORKER_EXPECTED_PRIVILEGE_ROLE": (
+                        "slaif_review_worker"
+                    ),
+                    "SLAIF_REVIEW_WORKER_MODE": "development",
+                },
+                "review-worker: database configuration mismatch",
             )
         if name in LONG_RUNNING_BACKENDS:
             _fail(
