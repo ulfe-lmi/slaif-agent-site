@@ -5,11 +5,12 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import secrets
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
 from enum import StrEnum
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 from uuid import UUID, uuid4
 
 import asyncpg
@@ -84,6 +85,9 @@ HUMAN_AGENT_WORKSPACE_GET_SQL = (
 )
 HUMAN_AGENT_WORKSPACE_FREEZE_SQL = (
     "SELECT * FROM control.slaif_human_agent_workspace_freeze($1,$2,$3)"
+)
+HUMAN_AGENT_WORKSPACE_REVIEW_READ_SQL = (
+    "SELECT * FROM control.slaif_review_read_model($1,$2,$3)"
 )
 HUMAN_AGENT_WORKSPACE_LIST_SQL = (
     "SELECT * FROM control.slaif_human_agent_workspace_list($1,$2)"
@@ -560,6 +564,20 @@ class ControlDatabase:
 
     async def human_agent_workspace_list(self, *arguments: Any) -> list[Any]:
         return await self._human_agent_call(HUMAN_AGENT_WORKSPACE_LIST_SQL, *arguments)
+
+    async def human_agent_workspace_review_read(
+        self, *arguments: Any
+    ) -> dict[str, Any] | None:
+        """One deterministic read-only review document (082/2 R1)."""
+        rows = await self._human_agent_call(
+            HUMAN_AGENT_WORKSPACE_REVIEW_READ_SQL, *arguments
+        )
+        if not rows:
+            return None
+        document = rows[0][0]
+        if isinstance(document, (str, bytes)):
+            return cast("dict[str, Any]", json.loads(document))
+        return cast("dict[str, Any]", document)
 
     async def human_agent_workspace_create_idempotent(self, *arguments: Any) -> Any:
         rows = await self._human_agent_call(

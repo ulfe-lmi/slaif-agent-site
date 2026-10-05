@@ -257,6 +257,8 @@ input:focus-visible,
   width: min(100%, 78rem);
   margin: 0 auto;
   padding: 1.5rem;
+  /* Grid item: allow shrinking below content min-width (review tables). */
+  min-width: 0;
 }
 .admin-main h1 {
   max-width: none;
@@ -766,4 +768,30 @@ input:focus-visible,
   display: inline-block;
   min-height: 44px;
   line-height: 1.4;
+}
+
+/* --------------------------------------------- 082/2 review surface (R3) */
+/* Read-only review document chrome: the data tables must stay inside the
+   responsive admin grid at every viewport, and long non-wrappable tokens
+   (digests, UUIDs, operation ids) wrap instead of forcing horizontal
+   scroll. */
+.review-surface {
+  /* Read-only data surface: long non-wrappable tokens (digests, UUIDs,
+     compact JSON previews, timestamps) wrap anywhere instead of forcing
+     horizontal scroll at any viewport. */
+  overflow-wrap: anywhere;
+}
+.review-table {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+}
+.review-table th,
+.review-table td {
+  padding: 0.375rem 0.5rem;
+  text-align: left;
+  vertical-align: top;
+}
+.review-validation-report {
+  white-space: pre-wrap;
 }

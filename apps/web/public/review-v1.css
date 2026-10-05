@@ -1,0 +1,38 @@
+/*
+ * Review-surface stylesheet (082/2).
+ *
+ * The /review/ document is flight-free: no client bundle and no Tailwind
+ * pipeline. The renderer chrome comes from /renderer-v1.css (linked by the
+ * projection shell); the review banner is the only review-specific chrome
+ * and is styled here. The 64-character digest must wrap on narrow
+ * viewports so the document never scrolls horizontally.
+ */
+.review-banner {
+  border-bottom: 1px solid #d4d4d8;
+  margin: 0 0 1rem;
+  padding: 0.75rem 1rem;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+}
+.review-banner__title {
+  margin: 0 0 0.5rem;
+  font-weight: 600;
+}
+.review-banner__facts div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.5rem;
+}
+.review-banner__facts dt {
+  font-weight: 600;
+}
+.review-banner__facts dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.review-banner__drift {
+  margin: 0.5rem 0 0;
+}
+.review-banner__drift--warn {
+  color: #b91c1c;
+}

@@ -154,6 +154,14 @@ AGENT_CONTROL_FUNCTIONS = {
         "slaif_agent_quota_consume",
         "p_capability_id uuid, p_workspace_id uuid, p_kind text",
     ): "uuid, uuid, text",
+    (
+        "slaif_human_session_review_artifact_list",
+        "p_public_id text, p_secret_digest bytea, p_run_id uuid",
+    ): "text, bytea, uuid",
+    (
+        "slaif_human_session_review_artifact_retrieve",
+        "p_public_id text, p_secret_digest bytea, p_run_id uuid, p_artifact_id uuid",
+    ): "text, bytea, uuid, uuid",
 }
 MEDIA_CONTROL_FUNCTIONS = {
     (
@@ -813,6 +821,10 @@ CONTROL_FUNCTIONS = {
     (
         "slaif_human_agent_workspace_freeze",
         "p_workspace_id uuid, p_site_id uuid, p_user_id uuid",
+    ): "uuid, uuid, uuid",
+    (
+        "slaif_review_read_model",
+        "p_workspace_id uuid, p_site_id uuid, p_user_account_id uuid",
     ): "uuid, uuid, uuid",
 }
 

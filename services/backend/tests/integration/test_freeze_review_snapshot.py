@@ -74,7 +74,7 @@ async def _worker_pool(database: AgentSiteDatabase) -> asyncpg.Pool[Any]:
 
 
 async def _seed(database: AgentSiteDatabase) -> dict[str, UUID]:
-    """Upgrade to 070_001 and seed one site with renderable content."""
+    """Upgrade to head and seed one site with renderable content."""
 
     await upgrade(database.settings)
     await reconcile(database.settings)

@@ -11,9 +11,11 @@ after independent evidence verification per human D1); numeric Objective 079
 is COMPLETE (scoped; the 083-bound public-namespace retention/GC is
 explicitly excluded). Increment 081/1 (human Puck editing in the exact
 Agent workspace) is accepted and merged in PR #96 at
-`c48849f149417fccf5cc0a152bc3ca39aaaf49ba` on 2026-10-04; the next
-bounded increment 082/1 (immutable freeze and review snapshot) is in
-flight at `082-a` (PR #97); `oap/active` names the last activated round
+`c48849f149417fccf5cc0a152bc3ca39aaaf49ba` on 2026-10-04; increment
+082/1 (immutable freeze and review snapshot) is accepted and merged in
+PR #97 at `e689076cda0a882ad13f7b641ebdf8efdacba773` on 2026-10-05;
+the next bounded increment 082/2 (human review surface, read-only) is
+in flight at `082-2-a`; `oap/active` names the last activated round
 until the next activation.
 The table is the authoritative ledger of verified merge facts (SHA and
 merge date) referenced from current-state documents.
@@ -35,7 +37,8 @@ merge date) referenced from current-state documents.
 | 079/2 | 079/2: Gallery + LogoGrid (media-reference list components) | Accepted and merged in PR #93 at `c149c39e66978c9ee53a7d92300a64e4297cfa56` on 2026-10-04; 079/2 is closed |
 | 079/3 | 079/3: DocumentList + document class (bounded PDF policy) | Accepted and merged in PR #95 at `550c42c387bcddf12356ba2db299ef5bf99dd818` on 2026-10-04; 079/3 is closed |
 | 081/1 | 081/1: human Puck editing in the exact Agent workspace | Accepted and merged in PR #96 at `c48849f149417fccf5cc0a152bc3ca39aaaf49ba` on 2026-10-04; 081/1 is closed |
-| Next | 082 after 081/1 | 081/1 is closed per the row above; the next bounded increment 082/1 (immutable freeze and review snapshot) is in flight at `082-a` (PR #97); strategy owns acceptance and merge and selects the next bounded increment per [`governance/2026-09-14-increment-qualified-round-ids.md`](governance/2026-09-14-increment-qualified-round-ids.md) |
+| 082/1 | 082/1: immutable freeze and review snapshot | Accepted and merged in PR #97 at `e689076cda0a882ad13f7b641ebdf8efdacba773` on 2026-10-05; 082/1 is closed |
+| Next | 082 after 082/1 | 082/1 is closed per the row above; the next bounded increment 082/2 (human review surface, read-only) is in flight at `082-2-a`; strategy owns acceptance and merge and selects the next bounded increment per [`governance/2026-09-14-increment-qualified-round-ids.md`](governance/2026-09-14-increment-qualified-round-ids.md) |
 
 PR #77 merged into `main` at
 `3cae3d6cef2a92e7068856d21bc9a47b8190c22e`. The 078-j closure keeps the

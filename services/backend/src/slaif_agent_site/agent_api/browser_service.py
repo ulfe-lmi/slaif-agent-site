@@ -33,6 +33,7 @@ from ..browser_worker_client import (
     BrowserWorkerClient,
     BrowserWorkerClientError,
 )
+from ..identity.sessions import digest_secret
 from .models import AgentCapabilityContext
 
 BEGIN_SQL = """
@@ -46,6 +47,12 @@ ARTIFACT_LIST_SQL = (
 )
 ARTIFACT_RETRIEVE_SQL = (
     "SELECT * FROM control.slaif_agent_browser_artifact_retrieve($1,$2,$3,$4,$5,$6)"
+)
+HUMAN_ARTIFACT_LIST_SQL = (
+    "SELECT * FROM control.slaif_human_session_review_artifact_list($1,$2,$3)"
+)
+HUMAN_ARTIFACT_RETRIEVE_SQL = (
+    "SELECT * FROM control.slaif_human_session_review_artifact_retrieve($1,$2,$3,$4)"
 )
 SCREENSHOT_RESERVATION_BYTES = 5 * 1024 * 1024
 SUMMARY_RESERVATION_BYTES = 256 * 1024
@@ -331,6 +338,10 @@ class AgentBrowserRunService:
             raise BrowserRunServiceError(BrowserRunServiceReason.UNAVAILABLE) from None
         if row is None:
             raise BrowserRunServiceError(BrowserRunServiceReason.NOT_FOUND)
+        return await self._retrieve_from_row(row)
+
+    async def _retrieve_from_row(self, row: Any) -> BrowserArtifactRetrieval:
+        """Fetch one worker-bound artifact row and verify its content."""
         if self._worker_client is None:
             raise BrowserRunServiceError(BrowserRunServiceReason.UNAVAILABLE)
         try:
@@ -372,6 +383,61 @@ class AgentBrowserRunService:
             sha256=metadata.sha256,
             size_bytes=metadata.size_bytes,
         )
+
+    async def human_session_artifacts(
+        self, *, public_id: str, secret: bytes, run_id: UUID
+    ) -> tuple[PrivateBrowserArtifactMetadata, ...]:
+        """Artifact list through the trusted human-session gate (082/2).
+
+        The function applies the full session, membership, and frozen
+        run gates; zero rows are a uniform NOT_FOUND (no oracle).  No
+        agent capability or quota is involved on this path.
+        """
+        try:
+            async with self._pool().acquire(
+                timeout=self._acquire_timeout
+            ) as connection:
+                rows = await connection.fetch(
+                    HUMAN_ARTIFACT_LIST_SQL,
+                    public_id,
+                    digest_secret(secret),
+                    run_id,
+                )
+        except asyncio.CancelledError:
+            raise
+        except (asyncpg.PostgresError, OSError, TimeoutError):
+            raise BrowserRunServiceError(BrowserRunServiceReason.UNAVAILABLE) from None
+        if not rows:
+            raise BrowserRunServiceError(BrowserRunServiceReason.NOT_FOUND)
+        return tuple(_artifact(row) for row in rows)
+
+    async def human_session_retrieve_artifact(
+        self,
+        *,
+        public_id: str,
+        secret: bytes,
+        run_id: UUID,
+        artifact_id: UUID,
+    ) -> BrowserArtifactRetrieval:
+        """Retrieve one private artifact through the human-session gate."""
+        try:
+            async with self._pool().acquire(
+                timeout=self._acquire_timeout
+            ) as connection:
+                row = await connection.fetchrow(
+                    HUMAN_ARTIFACT_RETRIEVE_SQL,
+                    public_id,
+                    digest_secret(secret),
+                    run_id,
+                    artifact_id,
+                )
+        except asyncio.CancelledError:
+            raise
+        except (asyncpg.PostgresError, OSError, TimeoutError):
+            raise BrowserRunServiceError(BrowserRunServiceReason.UNAVAILABLE) from None
+        if row is None:
+            raise BrowserRunServiceError(BrowserRunServiceReason.NOT_FOUND)
+        return await self._retrieve_from_row(row)
 
 
 __all__ = [
