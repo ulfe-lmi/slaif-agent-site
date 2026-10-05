@@ -302,7 +302,9 @@ media_csrf=$(awk '$6 == "slaif_csrf" { print $7 }' "$MEDIA_COOKIE_FILE")
 test -n "$media_csrf"
 curl --fail --show-error --silent --cookie "$MEDIA_COOKIE_FILE" \
   --output "$MEDIA_SITES_FILE" http://localhost:8080/api/control/v1/me/sites
-media_site_id=$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))[0]["site_id"])' "$MEDIA_SITES_FILE")
+# Explicit demo key: run-unique fixture sites (the 083/1 accept-proof
+# sites) sort before "demo" in /me/sites for platform administrators.
+media_site_id=$(python -c 'import json,sys; sites=json.load(open(sys.argv[1])); print(next(s["site_id"] for s in sites if s["site_key"]=="demo"))' "$MEDIA_SITES_FILE")
 media_upload_status=$(curl --silent --show-error --cookie "$MEDIA_COOKIE_FILE" \
   -H "X-CSRF-Token: $media_csrf" -H 'Idempotency-Key: compose-media-upload' \
   --form 'alt_text=Compose fixture image' \

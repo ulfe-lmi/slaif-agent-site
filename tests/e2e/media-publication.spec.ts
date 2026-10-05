@@ -107,7 +107,9 @@ test("media-publication-core-human-agent-preview-finalize-public-hostile", async
     site_key: string;
   }>;
   const parity = sites.find((site) => site.site_key === "parity");
-  const demo = sites.find((site) => site.site_key !== "parity");
+  // Explicit key: this roster also hosts run-unique fixture sites (the
+  // 083/1 accept-lifecycle proof), which sort before "demo" in /me/sites.
+  const demo = sites.find((site) => site.site_key === "demo");
   if (!parity || !demo) throw new Error("parity or demo site missing");
 
   // ------------------------------------------------------- human uploads

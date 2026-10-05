@@ -53,16 +53,56 @@ function uploadForm(
   return form;
 }
 
-async function demoSiteId(page: Page): Promise<string> {
-  const response = await page.request.get("/api/control/v1/me/sites");
-  expect(response.status()).toBe(200);
-  const sites = (await response.json()) as Array<{
-    site_id: string;
-    site_key: string;
-  }>;
-  const demo = sites.find((site) => site.site_key === "demo");
-  if (!demo) throw new Error("demo site missing");
-  return demo.site_id;
+function randomHex(byteCount: number): string {
+  return Array.from(crypto.getRandomValues(new Uint8Array(byteCount)))
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+/**
+ * Seed a dedicated run-unique site with a single published `home` page.
+ *
+ * The proof must not mutate the canonical demo home: the later public agent
+ * theme browser stage derives a fresh workspace from it and requires the
+ * bootstrap composition to stay inside the browser-worker URL policy. It
+ * must not run page DML in the COW session either: the foundation's
+ * dependency-closure walk mishandles composite foreign keys while a session
+ * carries page changes. A pre-seeded home keeps this session
+ * composition-only and isolates it from the demo and parity fixtures.
+ */
+function seedDedicatedSite(project: string): {
+  siteId: string;
+  siteKey: string;
+} {
+  const siteKey = `acceptproof-${randomHex(4)}`;
+  const siteId = crypto.randomUUID();
+  const localeId = crypto.randomUUID();
+  const pageId = crypto.randomUUID();
+  const adminId = psql(
+    project,
+    "SELECT id FROM control.user_account WHERE local_username_normalized = 'compose.admin'",
+  );
+  expect(adminId).toMatch(/^[0-9a-f-]{36}$/);
+  psql(
+    project,
+    `BEGIN;
+     INSERT INTO control.site
+       (id, site_key, display_name, default_locale, component_catalog_version, status)
+     VALUES ('${siteId}'::uuid, '${siteKey}', '083 Accept Proof', 'en',
+             'catalog-v1', 'ACTIVE');
+     INSERT INTO control.site_membership
+       (site_id, user_account_id, role_key, delegation_ceiling)
+     VALUES ('${siteId}'::uuid, '${adminId}'::uuid, 'SITE_OWNER', 4);
+     INSERT INTO content.site_locale_base
+       (id, site_id, tag, enabled, is_default, position, metadata)
+     VALUES ('${localeId}'::uuid, '${siteId}'::uuid, 'en', true, true, 0, '{}'::jsonb);
+     INSERT INTO content.page_base
+       (id, site_id, slug, title, status, locale, parent_id, route_template)
+     VALUES ('${pageId}'::uuid, '${siteId}'::uuid, 'home', '083 Accept Proof',
+             'PUBLISHED', 'en', NULL, NULL);
+     COMMIT;`,
+  );
+  return { siteId, siteKey };
 }
 
 async function adminCsrf(page: Page): Promise<string> {
@@ -198,13 +238,16 @@ async function waitForReview(
 
 async function seedContent(
   page: Page,
-  siteId: string,
+  project: string,
 ): Promise<{
+  siteId: string;
+  siteKey: string;
   workspaceId: string;
   token: string;
   mediaId: string;
   heading: string;
 }> {
+  const { siteId, siteKey } = seedDedicatedSite(project);
   const workspaceId = await createAgentWorkspace(
     page,
     siteId,
@@ -252,7 +295,7 @@ async function seedContent(
     props: { text: heading, level: 3 },
   });
   expect(headingStatus).toBe(201);
-  return { workspaceId, token, mediaId, heading };
+  return { siteId, siteKey, workspaceId, token, mediaId, heading };
 }
 
 async function acceptBody(
@@ -310,8 +353,10 @@ test.describe("accept lifecycle (083/1)", () => {
     const project = composeProject();
     const stopObserving = observe(page);
     await login(page, secrets());
-    const siteId = await demoSiteId(page);
-    const { workspaceId, mediaId, heading } = await seedContent(page, siteId);
+    const { siteId, siteKey, workspaceId, mediaId, heading } = await seedContent(
+      page,
+      project,
+    );
     const tinyDigest = sha256Hex(TINY_PNG);
     const beforeRevision = Number(
       psql(
@@ -474,9 +519,10 @@ test.describe("accept lifecycle (083/1)", () => {
              AND c.props ->> 'text' = '${heading}'`,
       ),
     ).toBe("1");
-    // Public canonical home of the demo site: localhost-only /s/<site_key>
-    // convention (render site resolver); the root path is the app landing.
-    const publicSite = await page.request.get("/s/demo");
+    // Public canonical home of the dedicated site: localhost-only
+    // /s/<site_key> convention (render site resolver); the home page is
+    // the site root.
+    const publicSite = await page.request.get(`/s/${siteKey}`);
     expect(publicSite.status()).toBe(200);
     expect(await publicSite.text()).toContain(heading);
 
@@ -519,8 +565,7 @@ test.describe("accept lifecycle (083/1)", () => {
     const project = composeProject();
     const stopObserving = observe(page, [/\/accept\/$/]);
     await login(page, secrets());
-    const siteId = await demoSiteId(page);
-    const { workspaceId, token } = await seedContent(page, siteId);
+    const { siteId, workspaceId, token } = await seedContent(page, project);
     const freeze = await freezeWorkspace(page, siteId, workspaceId);
     expect(freeze.status).toBe(202);
     await waitForReview(page, project, siteId, workspaceId);

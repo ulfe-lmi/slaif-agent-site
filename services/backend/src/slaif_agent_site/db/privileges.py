@@ -1318,11 +1318,13 @@ async def _role_violations(connection: asyncpg.Connection[Any]) -> list[str]:
         list(ROLE_NAMES),
     )
     # Exact privilege-role membership contract: no privilege role may be
-    # a member of any role, except the owner's ADMIN-option membership in
-    # the reviewer role (a provisioning invariant that lets migrations
-    # running as slaif_owner manage reviewer membership; the 072_001
-    # upgrade adds the review-worker edge, its downgrade removes it, so
-    # owner-only edges are valid between upgrade and downgrade).
+    # a member of any role, except the two provisioning-invariant edges
+    # re-established by role provisioning (both also granted by the
+    # 072_001 upgrade, whose downgrade removes the worker edge, so
+    # owner-only edges are valid between downgrade and re-provision):
+    # the owner's ADMIN-option membership in the reviewer role (lets
+    # migrations running as slaif_owner manage reviewer membership) and
+    # the review worker's reviewer membership (sole reviewer process).
     expected_edges = {
         ("slaif_reviewer", "slaif_owner", True),
         ("slaif_reviewer", "slaif_review_worker", False),

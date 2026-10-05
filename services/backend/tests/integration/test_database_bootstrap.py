@@ -869,10 +869,16 @@ async def test_role_manifest_attributes_membership_and_identity_separation(
         " ORDER BY granted.rolname, member.rolname",
         list(ROLE_NAMES),
     )
-    # Pre-migration, the ONLY privilege-role edge is the owner's
-    # ADMIN-option membership in the reviewer role (provisioning
-    # invariant); 072_001 additionally adds the review-worker edge.
-    assert product_edges == [("slaif_reviewer", "slaif_owner")]
+    # Provisioning invariants, re-established after the privilege-role
+    # REVOKE loop: the owner's ADMIN-option membership in the reviewer
+    # role (lets migrations running as slaif_owner manage reviewer
+    # membership) and the review worker's reviewer membership (the
+    # worker is the sole reviewer process). 072_001 grants the
+    # worker edge idempotently; its downgrade removes it.
+    assert product_edges == [
+        ("slaif_reviewer", "slaif_owner"),
+        ("slaif_reviewer", "slaif_review_worker"),
+    ]
     login_memberships = await database.administrator.fetchval(
         "SELECT count(*) FROM pg_catalog.pg_auth_members membership "
         "JOIN pg_catalog.pg_roles granted ON granted.oid = membership.roleid "

@@ -47,6 +47,7 @@ RUNTIME_ROLES: Final[tuple[str, str]] = (
     "slaif_agent_runtime",
 )
 REVIEWER_ROLES: Final[tuple[str]] = ("slaif_reviewer",)
+REVIEW_WORKER_ROLE: Final[str] = "slaif_review_worker"
 DATABASE_LOGINS: Final[tuple[DatabaseLogin, ...]] = (
     DatabaseLogin("slaif_bootstrap_login", "slaif_owner", "bootstrap"),
     DatabaseLogin("slaif_control_login", "slaif_control", "control"),
@@ -140,18 +141,28 @@ async def provision_database_roles(
             f"REVOKE {quote_identifier(granted)} FROM "
             f"{quote_identifier(member)} CASCADE"
         )
-    # The owner must hold the ADMIN option on the reviewer role so that
-    # migrations running as slaif_owner can manage reviewer membership
-    # (072_001 grants the review worker the reviewer role). This edge is
-    # the ONLY privilege-role membership that is not a login edge; it is
-    # granted after the privilege-role REVOKE loop above (the later
-    # login REVOKE loops only touch LOGIN_NAMES), so re-provisioning is
-    # idempotent. The owner is a setup-only role, never a product
-    # process credential.
+    # Non-login privilege-role memberships are provisioning invariants
+    # re-established AFTER the privilege-role REVOKE loop above (the
+    # later login REVOKE loops only touch LOGIN_NAMES), so
+    # re-provisioning is idempotent and converges:
+    # 1) The owner must hold the ADMIN option on the reviewer role so
+    #    that migrations running as slaif_owner can manage reviewer
+    #    membership. The owner is a setup-only role, never a product
+    #    process credential.
+    # 2) The review worker is the sole reviewer process: its reviewer
+    #    membership is granted by the 072_001 migration (and removed by
+    #    that downgrade); provisioning converges on it here so a
+    #    bootstrap re-run never leaves the worker without the
+    #    inherited reviewer privileges its product grants assume.
     await connection.execute(
         "GRANT "
         f"{quote_identifier(REVIEWER_ROLES[0])} TO {quote_identifier(OWNER_ROLE)} "
         "WITH ADMIN OPTION"
+    )
+    await connection.execute(
+        "GRANT "
+        f"{quote_identifier(REVIEWER_ROLES[0])} TO "
+        f"{quote_identifier(REVIEW_WORKER_ROLE)}"
     )
 
     database = quote_identifier(expected_database)
