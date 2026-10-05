@@ -14,5 +14,16 @@ of 2026-09-20 (D2). The preplanned 079-a content is superseded by the 079
 order that strategy publishes when `079-a` is activated; the file retained
 here is historical preparation only and carries no operative effect.
 
-The other inert preplanned orders (`080-a` through `091-a`) remain in
-`oap/orders/` and stay inert until strategy selects and signals them.
+## `082-a-immutable-freeze-review-snapshot.md`
+
+Moved by strategy on 2026-10-04 immediately before the `082-a` activation,
+same supersession marker as the 079-a entry. The preplanned 082-a content is
+superseded by the activated order
+`oap/orders/082-a-freeze-immutable-review-snapshot.md`, which re-verifies
+every preplan premise against the verified post-081 main and carries the
+full requirement/acceptance/budget text; the file retained here is
+historical preparation only and carries no operative effect.
+
+The other inert preplanned orders (`080-a` through `091-a`, except the
+superseded entries above) remain in `oap/orders/` and stay inert until
+strategy selects and signals them.

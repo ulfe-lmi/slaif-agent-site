@@ -82,6 +82,9 @@ HUMAN_AGENT_WORKSPACE_CREATE_SQL = "SELECT * FROM control.slaif_human_agent_work
 HUMAN_AGENT_WORKSPACE_GET_SQL = (
     "SELECT * FROM control.slaif_human_agent_workspace_get($1,$2,$3)"
 )
+HUMAN_AGENT_WORKSPACE_FREEZE_SQL = (
+    "SELECT * FROM control.slaif_human_agent_workspace_freeze($1,$2,$3)"
+)
 HUMAN_AGENT_WORKSPACE_LIST_SQL = (
     "SELECT * FROM control.slaif_human_agent_workspace_list($1,$2)"
 )
@@ -547,6 +550,12 @@ class ControlDatabase:
 
     async def human_agent_workspace_get(self, *arguments: Any) -> Any:
         rows = await self._human_agent_call(HUMAN_AGENT_WORKSPACE_GET_SQL, *arguments)
+        return rows[0] if rows else None
+
+    async def human_agent_workspace_freeze(self, *arguments: Any) -> Any:
+        rows = await self._human_agent_call(
+            HUMAN_AGENT_WORKSPACE_FREEZE_SQL, *arguments
+        )
         return rows[0] if rows else None
 
     async def human_agent_workspace_list(self, *arguments: Any) -> list[Any]:

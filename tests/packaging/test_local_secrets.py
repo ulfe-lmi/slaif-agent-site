@@ -48,8 +48,8 @@ class LocalSecretTests(unittest.TestCase):
                 for name, value in initial.items()
                 if name == "postgres-password" or name.startswith("login-")
             ]
-            self.assertEqual(len(passwords), 11)
-            self.assertEqual(len(set(passwords)), 11)
+            self.assertEqual(len(passwords), 12)
+            self.assertEqual(len(set(passwords)), 12)
             info = directory.stat()
             self.assertEqual(stat.S_IMODE(info.st_mode), 0o710)
             self.assertEqual(info.st_uid, os.getuid())
@@ -72,7 +72,7 @@ class LocalSecretTests(unittest.TestCase):
             count = INITIALIZER.initialize(
                 directory, control_directory=control_directory
             )
-            self.assertEqual(count, 24)
+            self.assertEqual(count, 26)
             control_file = control_directory / "control-dsn"
             first = control_file.read_bytes()
             self.assertEqual(first, (directory / "service-control-dsn").read_bytes())
@@ -126,7 +126,7 @@ class LocalSecretTests(unittest.TestCase):
             render_directory = Path(parent) / "render"
             render_directory.mkdir()
             count = INITIALIZER.initialize(directory, render_directory=render_directory)
-            self.assertEqual(count, 24)
+            self.assertEqual(count, 26)
             render_file = render_directory / "render-dsn"
             self.assertEqual(
                 render_file.read_bytes(),
@@ -162,7 +162,7 @@ class LocalSecretTests(unittest.TestCase):
             agent_directory = Path(parent) / "agent"
             agent_directory.mkdir()
             count = INITIALIZER.initialize(directory, agent_directory=agent_directory)
-            self.assertEqual(count, 24)
+            self.assertEqual(count, 26)
             agent_file = agent_directory / "agent-dsn"
             first = agent_file.read_bytes()
             self.assertEqual(first, (directory / "service-agent-dsn").read_bytes())
@@ -192,7 +192,7 @@ class LocalSecretTests(unittest.TestCase):
             count = INITIALIZER.initialize(
                 directory, browser_signing_directory=signing_directory
             )
-            self.assertEqual(count, 24)
+            self.assertEqual(count, 26)
             signing_file = signing_directory / "signing-key"
             first = signing_file.read_bytes()
             self.assertRegex(
@@ -234,7 +234,7 @@ class LocalSecretTests(unittest.TestCase):
             editor_directory = Path(parent) / "editor"
             editor_directory.mkdir()
             count = INITIALIZER.initialize(directory, editor_directory=editor_directory)
-            self.assertEqual(count, 24)
+            self.assertEqual(count, 26)
             editor_file = editor_directory / "editor-dsn"
             first = editor_file.read_bytes()
             self.assertEqual(first, (directory / "service-editor-dsn").read_bytes())
@@ -267,7 +267,7 @@ class LocalSecretTests(unittest.TestCase):
                 browser_worker_directory=worker_directory,
                 browser_artifact_root=artifact_root,
             )
-            self.assertEqual(count, 24)
+            self.assertEqual(count, 26)
             token_file = worker_directory / "worker-token"
             first = token_file.read_bytes()
             self.assertRegex(
@@ -320,7 +320,7 @@ class LocalSecretTests(unittest.TestCase):
                 media_directory=media_directory,
                 media_root=media_root,
             )
-            self.assertEqual(count, 24)
+            self.assertEqual(count, 26)
             media_file = media_directory / "media-dsn"
             first = media_file.read_bytes()
             self.assertEqual(first, (directory / "service-media-dsn").read_bytes())

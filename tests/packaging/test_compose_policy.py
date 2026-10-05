@@ -168,6 +168,20 @@ def _configuration() -> dict[str, object]:
                     "SLAIF_MEDIA_ROOT": "/var/lib/slaif/media",
                 }
             )
+        if name == "review-worker":
+            service["environment"].update(
+                {
+                    "SLAIF_REVIEW_WORKER_DSN_FILE": (
+                        "/run/slaif-review-worker/review-worker-dsn"
+                    ),
+                    "SLAIF_REVIEW_WORKER_EXPECTED_DATABASE": "slaif",
+                    "SLAIF_REVIEW_WORKER_EXPECTED_LOGIN": "slaif_review_worker_login",
+                    "SLAIF_REVIEW_WORKER_EXPECTED_PRIVILEGE_ROLE": (
+                        "slaif_review_worker"
+                    ),
+                    "SLAIF_REVIEW_WORKER_MODE": "development",
+                }
+            )
         if name == "bootstrap":
             service["environment"]["SLAIF_BOOTSTRAP_DEMO_SEED"] = "true"
         if name in VERIFY.EXPECTED_CAP_ADD:
@@ -212,6 +226,7 @@ def _configuration() -> dict[str, object]:
                 "render-secret",
                 "render-preview-secret",
                 "render-auth-secret",
+                "review-worker-secret",
             )
         },
     }

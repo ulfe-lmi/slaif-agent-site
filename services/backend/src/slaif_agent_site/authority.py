@@ -39,6 +39,7 @@ class AuthorityClass(StrEnum):
     INTERNAL_HTTP_CLIENT = "internal-http-client"
     MEDIA = "media"
     REVIEWER = "reviewer"
+    REVIEW_WORKER = "review-worker"
     SCHEDULER = "scheduler"
     MEDIA_GC = "media-gc"
     SETUP_OWNER = "setup-owner"
@@ -54,6 +55,7 @@ class DatabaseAuthority(StrEnum):
     PREVIEW_READER = "slaif_preview_reader"
     MEDIA_METADATA = "slaif_media"
     REVIEWER = "slaif_reviewer"
+    REVIEW_WORKER = "slaif_review_worker"
     SCHEDULER = "slaif_scheduler"
     MEDIA_GC = "slaif_gc"
     SETUP_OWNER = "slaif_owner"
@@ -156,8 +158,8 @@ AUTHORITY_BY_PROCESS: Final[Mapping[ProcessKind, AuthorityDescriptor]] = (
             ),
             ProcessKind.REVIEW_WORKER: AuthorityDescriptor(
                 ProcessKind.REVIEW_WORKER,
-                AuthorityClass.REVIEWER,
-                (DatabaseAuthority.REVIEWER,),
+                AuthorityClass.REVIEW_WORKER,
+                (DatabaseAuthority.REVIEW_WORKER,),
                 ListenerExposure.NONE,
                 LifecycleKind.WORKER,
             ),

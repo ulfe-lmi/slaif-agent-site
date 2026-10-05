@@ -106,5 +106,11 @@ export default defineConfig({
       testMatch: /agent-workspace-puck\.spec\.ts/,
       use: { ...devices["iPad (gen 7)"] },
     },
+    {
+      name: "freeze-review-snapshot",
+      dependencies: ["governance"],
+      testMatch: /freeze-review-snapshot\.spec\.ts/,
+      use: { ...devices["Desktop Chrome"] },
+    },
   ],
 });

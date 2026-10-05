@@ -358,6 +358,13 @@ async def test_exact_function_grants_and_relation_denial_matrix(
             async with pool.acquire() as connection:
                 with pytest.raises(asyncpg.InsufficientPrivilegeError):
                     await connection.fetch("SELECT * FROM control.slaif_site_list()")
+                if role == "slaif_review_worker":
+                    # 082/1 R1: the durable review worker holds SELECT on
+                    # control.site for the snapshot materializer; every
+                    # other long-lived role remains relation-denied.
+                    rows = await connection.fetch("SELECT * FROM control.site")
+                    assert rows == []
+                    continue
                 with pytest.raises(asyncpg.InsufficientPrivilegeError):
                     await connection.fetch("SELECT * FROM control.site")
     finally:

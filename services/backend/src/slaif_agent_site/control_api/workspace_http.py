@@ -213,6 +213,36 @@ async def get_workspace(
     return _record(row)
 
 
+@router.post("/{workspace_id}/freeze/", status_code=202)
+async def freeze_workspace(
+    site_id: UUID, workspace_id: UUID, request: Request
+) -> dict[str, Any]:
+    """Freeze one workspace: capability revocation + durable snapshot job."""
+    database = _database(request)
+    authority = await authorize_site_request(
+        request,
+        database,
+        request.app.state.settings,
+        site_id,
+        "workspace:freeze",
+        state_changing=True,
+    )
+    try:
+        row = await database.human_agent_workspace_freeze(
+            workspace_id, site_id, authority.session.user_account_id
+        )
+    except Exception as exc:
+        message = str(exc)
+        if "WORKSPACE_NOT_FOUND" in message:
+            raise ResourceNotFoundError() from None
+        if "WORKSPACE_NOT_ACTIVE" in message:
+            raise ResourceConflictError() from None
+        raise ServiceUnavailableError() from None
+    if row is None:
+        raise ResourceNotFoundError()
+    return {"job_id": str(row["job_id"]), "status": row["status"]}
+
+
 def install_control_workspace_routes(app: Any, database: Any, settings: Any) -> None:
     app.include_router(router)
 
