@@ -112,5 +112,11 @@ export default defineConfig({
       testMatch: /freeze-review-snapshot\.spec\.ts/,
       use: { ...devices["Desktop Chrome"] },
     },
+    {
+      name: "review-surface",
+      dependencies: ["governance"],
+      testMatch: /review-surface\.spec\.ts/,
+      use: { ...devices["Desktop Chrome"] },
+    },
   ],
 });

@@ -8,7 +8,7 @@ import hashlib
 import json
 import re
 from datetime import UTC, datetime
-from typing import Any, Never
+from typing import Any, Never, cast
 from uuid import UUID
 
 from fastapi import APIRouter, Header, Request, Response
@@ -211,6 +211,28 @@ async def get_workspace(
     if row is None:
         raise ResourceNotFoundError()
     return _record(row)
+
+
+@router.get("/{workspace_id}/review/")
+async def get_workspace_review(
+    site_id: UUID, workspace_id: UUID, request: Request
+) -> dict[str, Any]:
+    """One deterministic read-only review document for a frozen workspace."""
+    database = _database(request)
+    authority = await _authorize_workspace_read(request, database, site_id)
+    try:
+        document = await database.human_agent_workspace_review_read(
+            workspace_id, site_id, authority.session.user_account_id
+        )
+    except Exception as exc:
+        # The read model fails closed with one stable internal class;
+        # every gate failure is the same uniform 404 (no oracle).
+        if "REVIEW_READ_UNAVAILABLE" in str(exc):
+            raise ResourceNotFoundError() from None
+        raise ServiceUnavailableError() from None
+    if document is None:
+        raise ResourceNotFoundError()
+    return cast("dict[str, Any]", document)
 
 
 @router.post("/{workspace_id}/freeze/", status_code=202)
