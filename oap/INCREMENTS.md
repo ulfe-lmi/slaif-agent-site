@@ -9,7 +9,12 @@ increments 079/1 through 079/3 (component catalog 32/32). Numeric Objective
 078 is COMPLETE (reclassified 2026-10-04 by post-merge strategy bookkeeping
 after independent evidence verification per human D1); numeric Objective 079
 is COMPLETE (scoped; the 083-bound public-namespace retention/GC is
-explicitly excluded).
+explicitly excluded). Increment 081/1 (human Puck editing in the exact
+Agent workspace) is accepted and merged in PR #96 at
+`c48849f149417fccf5cc0a152bc3ca39aaaf49ba` on 2026-10-04; the next
+bounded increment 082/1 (immutable freeze and review snapshot) is in
+flight at `082-a` (PR #97); `oap/active` names the last activated round
+until the next activation.
 The table is the authoritative ledger of verified merge facts (SHA and
 merge date) referenced from current-state documents.
 
@@ -29,7 +34,8 @@ merge date) referenced from current-state documents.
 | 079/1 | 079/1: media publication core | Accepted and merged in PR #92 at `577509e7bc990d85a10af5954bee3c6f7c888a4f` on 2026-09-22; 079/1 is closed |
 | 079/2 | 079/2: Gallery + LogoGrid (media-reference list components) | Accepted and merged in PR #93 at `c149c39e66978c9ee53a7d92300a64e4297cfa56` on 2026-10-04; 079/2 is closed |
 | 079/3 | 079/3: DocumentList + document class (bounded PDF policy) | Accepted and merged in PR #95 at `550c42c387bcddf12356ba2db299ef5bf99dd818` on 2026-10-04; 079/3 is closed |
-| Next | Remaining 079 scope after 079/3 | 079/3 is closed; numeric 078 is COMPLETE and numeric 079 is COMPLETE (scoped) per the header; the next bounded increment is 081 (human Puck editing in the exact Agent workspace), opened at `081-a` (PR #96); strategy selects the next bounded increment per [`governance/2026-09-14-increment-qualified-round-ids.md`](governance/2026-09-14-increment-qualified-round-ids.md) |
+| 081/1 | 081/1: human Puck editing in the exact Agent workspace | Accepted and merged in PR #96 at `c48849f149417fccf5cc0a152bc3ca39aaaf49ba` on 2026-10-04; 081/1 is closed |
+| Next | 082 after 081/1 | 081/1 is closed per the row above; the next bounded increment 082/1 (immutable freeze and review snapshot) is in flight at `082-a` (PR #97); strategy owns acceptance and merge and selects the next bounded increment per [`governance/2026-09-14-increment-qualified-round-ids.md`](governance/2026-09-14-increment-qualified-round-ids.md) |
 
 PR #77 merged into `main` at
 `3cae3d6cef2a92e7068856d21bc9a47b8190c22e`. The 078-j closure keeps the
