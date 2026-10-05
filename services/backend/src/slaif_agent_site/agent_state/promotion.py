@@ -1,8 +1,10 @@
-"""Workspace promotion using the COW foundation reviewer.
+"""Workspace reviewer surface using the COW foundation.
 
 Architecture reference: ARCHITECTURE-for-agents.md §8 (workspace lifecycle,
-freeze, review, promotion). Full acceptance commits all COW operations
-atomically with conflict_policy="error" — no overwrite is ever exposed.
+freeze, review, promotion). The real human accept promotion path lives in
+``review_worker.accept_job`` (083/1); ``promote_workspace`` was retired in
+that increment (the accept job is the only promotion path).  Discard and
+conflict inspection remain for the discard increment.
 """
 
 from __future__ import annotations
@@ -13,8 +15,6 @@ from uuid import UUID
 import asyncpg
 
 from slaif_agent_site.agent_state.foundation import (
-    CowConflictError,
-    PromotionResult,
     asyncpg_cow_reviewer,
 )
 
@@ -29,29 +29,6 @@ class PromotionError(Exception):
 
 class _Pool(Protocol):
     def acquire(self, *, timeout: float) -> Any: ...
-
-
-async def promote_workspace(
-    pool: _Pool,
-    session_id: UUID,
-    schema: str = "content",
-    *,
-    acquire_timeout: float = 10.0,
-) -> PromotionResult:
-    """Promote a COW session's changes to canonical.
-
-    Uses the foundation's ``asyncpg_cow_reviewer`` to atomically commit
-    all pending operations. Raises :class:`PromotionError` on conflicts.
-    """
-    try:
-        async with pool.acquire(timeout=acquire_timeout) as connection:
-            async with asyncpg_cow_reviewer(connection) as reviewer:
-                result = await reviewer.commit_session(session_id, schema=schema)
-                return result
-    except CowConflictError as exc:
-        raise PromotionError(f"COW conflict during promotion: {exc}") from exc
-    except asyncpg.PostgresError as exc:
-        raise PromotionError(f"database error during promotion: {exc}") from exc
 
 
 async def discard_workspace(

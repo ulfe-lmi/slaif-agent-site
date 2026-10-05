@@ -248,6 +248,12 @@ do
 done
 test "$mode_count" = 9
 echo "compose-mode-policy: OK long-running-backends=9 mode=development"
+# 083/1: the review worker carries the media finalization boundary
+# (mounted media secret + data volume). Mode/ownership only; no content
+# is printed.
+docker exec "${PROJECT}-review-worker-1" sh -c \
+  'test -f /run/slaif-media/media-dsn; test "$(stat -c "%a %u" /run/slaif-media/media-dsn)" = "400 10001"; test -d /var/lib/slaif/media; test "$(stat -c "%a %u" /var/lib/slaif/media)" = "700 10001"'
+echo "review-worker-media-boundary: OK dsn=0400:uid10001 root=0700:uid10001"
 docker inspect "${PROJECT}-browser-worker-1" | python -c \
   'import json,sys; value=json.load(sys.stdin)[0]; host=value["HostConfig"]; config=value["Config"]; assert config["User"]=="10001:10001" and host["ReadonlyRootfs"] is True; assert host["CapDrop"]==["ALL"] and host["CapAdd"]==["CAP_SYS_CHROOT"]; assert host["PidsLimit"]==256 and host["Memory"]==805306368 and host["ShmSize"]==134217728 and host["NanoCpus"]==1000000000; assert "no-new-privileges:true" in host["SecurityOpt"] and any(item.startswith("seccomp=") for item in host["SecurityOpt"]); assert host["NetworkMode"].endswith("_browser"); print("browser-worker-runtime-policy: OK uid=10001 readonly=yes caps=SYS_CHROOT limits=exact network=browser")'
 docker exec "${PROJECT}-browser-worker-1" sh -c \

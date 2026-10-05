@@ -735,6 +735,26 @@ export async function getAgentWorkspace(siteId: string, workspaceId: string) {
     { method: "GET" },
   )) as AgentWorkspace;
 }
+export type AcceptWorkspaceResult = {
+  job_id: string;
+  status: string;
+};
+export async function acceptWorkspace(
+  siteId: string,
+  workspaceId: string,
+  body: {
+    snapshot_id: string;
+    digest: string;
+    acknowledge_summary: true;
+  },
+): Promise<AcceptWorkspaceResult> {
+  return (await json(
+    `/sites/${encodeURIComponent(siteId)}/workspaces/${encodeURIComponent(
+      workspaceId,
+    )}/accept/`,
+    mutation("POST", body),
+  )) as AcceptWorkspaceResult;
+}
 export async function createAgentCapability(siteId: string, workspaceId: string) {
   return (await json(
     `/sites/${encodeURIComponent(siteId)}/workspaces/${encodeURIComponent(workspaceId)}/capabilities/`,

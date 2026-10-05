@@ -140,6 +140,19 @@ async def provision_database_roles(
             f"REVOKE {quote_identifier(granted)} FROM "
             f"{quote_identifier(member)} CASCADE"
         )
+    # The owner must hold the ADMIN option on the reviewer role so that
+    # migrations running as slaif_owner can manage reviewer membership
+    # (072_001 grants the review worker the reviewer role). This edge is
+    # the ONLY privilege-role membership that is not a login edge; it is
+    # granted after the privilege-role REVOKE loop above (the later
+    # login REVOKE loops only touch LOGIN_NAMES), so re-provisioning is
+    # idempotent. The owner is a setup-only role, never a product
+    # process credential.
+    await connection.execute(
+        "GRANT "
+        f"{quote_identifier(REVIEWER_ROLES[0])} TO {quote_identifier(OWNER_ROLE)} "
+        "WITH ADMIN OPTION"
+    )
 
     database = quote_identifier(expected_database)
     await connection.execute(f"REVOKE ALL ON DATABASE {database} FROM PUBLIC")

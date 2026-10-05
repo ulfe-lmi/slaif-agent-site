@@ -118,5 +118,11 @@ export default defineConfig({
       testMatch: /review-surface\.spec\.ts/,
       use: { ...devices["Desktop Chrome"] },
     },
+    {
+      name: "accept-lifecycle",
+      dependencies: ["governance"],
+      testMatch: /accept-lifecycle\.spec\.ts/,
+      use: { ...devices["Desktop Chrome"] },
+    },
   ],
 });

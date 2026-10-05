@@ -1,65 +1,54 @@
-"""Tests for COW promotion service."""
+"""Promotion surface retirement pin (083/1) + real-path conflict mapping.
+
+``agent_state.promotion.promote_workspace`` was retired in 083/1: the real
+human accept worker job (``review_worker.accept_job``) is the only
+promotion path.  This module pins the removal (import surface + test
+inventory) and carries the retired unit-test coverage forward to the real
+path: the structured-conflict -> stable-code mapping the accept job uses.
+"""
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import uuid4
-
-import pytest
-from slaif_agent_site.agent_state.foundation import CowConflictError
-from slaif_agent_site.agent_state.promotion import (
-    PromotionError,
-    promote_workspace,
-)
+from slaif_agent_site.agent_state import promotion
+from slaif_agent_site.review_worker.accept_job import _conflict_code
 
 
-class TestPromoteWorkspace:
-    @pytest.mark.anyio
-    async def test_successful_promotion(self) -> None:
-        mock_result = MagicMock()
-        mock_result.conflict_policy = "error"
-        mock_result.no_op = False
+class TestPromotionRetirement:
+    def test_promote_workspace_removed_from_import_surface(self) -> None:
+        assert not hasattr(promotion, "promote_workspace")
+        assert "promote_workspace" not in vars(promotion)
 
-        mock_pool = MagicMock()
-        mock_conn = AsyncMock()
-        mock_pool.acquire.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
-        mock_pool.acquire.return_value.__aexit__ = AsyncMock(return_value=None)
+    def test_discard_surface_untouched_for_083_2(self) -> None:
+        assert callable(promotion.discard_workspace)
+        assert callable(promotion.get_conflicts)
+        assert isinstance(promotion.PromotionError, type)
 
-        session_id = uuid4()
 
-        with patch(
-            "slaif_agent_site.agent_state.promotion.asyncpg_cow_reviewer"
-        ) as mock_reviewer_cls:
-            mock_reviewer = AsyncMock()
-            mock_reviewer.commit_session.return_value = mock_result
-            mock_reviewer_cls.return_value.__aenter__ = AsyncMock(
-                return_value=mock_reviewer
+class TestRealPathConflictMapping:
+    """The retired conflict-raises coverage now pins the accept job."""
+
+    def test_structured_kind_maps_to_stable_code(self) -> None:
+        for kind in (
+            "BASE_ROW_CHANGED",
+            "BASE_ROW_DELETED",
+            "BASE_ROW_CREATED",
+            "BASE_SCHEMA_CHANGED",
+        ):
+            assert (
+                _conflict_code(
+                    [
+                        {
+                            "table_name": "page",
+                            "primary_key": {"id": "x"},
+                            "conflict_kind": kind,
+                            "operation_id": "op",
+                            "order": 1,
+                        }
+                    ]
+                )
+                == kind
             )
-            mock_reviewer_cls.return_value.__aexit__ = AsyncMock(return_value=None)
 
-            result = await promote_workspace(mock_pool, session_id)
-            assert result.conflict_policy == "error"
-
-    @pytest.mark.anyio
-    async def test_conflict_raises_promotion_error(self) -> None:
-        mock_pool = MagicMock()
-        mock_conn = AsyncMock()
-        mock_pool.acquire.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
-        mock_pool.acquire.return_value.__aexit__ = AsyncMock(return_value=None)
-
-        session_id = uuid4()
-
-        with patch(
-            "slaif_agent_site.agent_state.promotion.asyncpg_cow_reviewer"
-        ) as mock_reviewer_cls:
-            mock_reviewer = AsyncMock()
-            mock_reviewer.commit_session.side_effect = CowConflictError(
-                "conflict", "content"
-            )
-            mock_reviewer_cls.return_value.__aenter__ = AsyncMock(
-                return_value=mock_reviewer
-            )
-            mock_reviewer_cls.return_value.__aexit__ = AsyncMock(return_value=None)
-
-            with pytest.raises(PromotionError, match="COW conflict"):
-                await promote_workspace(mock_pool, session_id)
+    def test_empty_or_malformed_falls_back_to_base_row_changed(self) -> None:
+        assert _conflict_code(()) == "BASE_ROW_CHANGED"
+        assert _conflict_code([{"conflict_kind": "NOPE"}]) == "BASE_ROW_CHANGED"

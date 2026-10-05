@@ -86,6 +86,9 @@ HUMAN_AGENT_WORKSPACE_GET_SQL = (
 HUMAN_AGENT_WORKSPACE_FREEZE_SQL = (
     "SELECT * FROM control.slaif_human_agent_workspace_freeze($1,$2,$3)"
 )
+HUMAN_AGENT_WORKSPACE_ACCEPT_SQL = (
+    "SELECT * FROM control.slaif_human_agent_workspace_accept($1,$2,$3,$4,$5)"
+)
 HUMAN_AGENT_WORKSPACE_REVIEW_READ_SQL = (
     "SELECT * FROM control.slaif_review_read_model($1,$2,$3)"
 )
@@ -559,6 +562,12 @@ class ControlDatabase:
     async def human_agent_workspace_freeze(self, *arguments: Any) -> Any:
         rows = await self._human_agent_call(
             HUMAN_AGENT_WORKSPACE_FREEZE_SQL, *arguments
+        )
+        return rows[0] if rows else None
+
+    async def human_agent_workspace_accept(self, *arguments: Any) -> Any:
+        rows = await self._human_agent_call(
+            HUMAN_AGENT_WORKSPACE_ACCEPT_SQL, *arguments
         )
         return rows[0] if rows else None
 

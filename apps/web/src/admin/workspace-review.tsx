@@ -1,12 +1,15 @@
 import type { ReactNode } from "react";
 import type { ReviewDocument } from "../sites/review-projection";
 import { Card, StatusBadge, StatusPanel } from "../components/ui/primitives";
+import { AcceptAction } from "./accept-action";
 
 /**
- * 082/2 read-only human review surface (R3). Every value is rendered from
- * the trusted read-model document; there are no accept/discard controls
- * (083/1) and no Puck launch. The top-N bound keeps the resource-diff
- * rendering finite while the exact counts stay visible.
+ * 082/2 human review surface + 083/1 real accept action. Every value is
+ * rendered from the trusted read-model document; the only action control
+ * is the accept control (present only for REVIEW + COMPLETE snapshot + no
+ * drift) — no discard, no Puck launch, no publish shortcut. The top-N
+ * bound keeps the resource-diff rendering finite while the exact counts
+ * stay visible.
  */
 
 const DIFF_TOP_N = 10;
@@ -152,7 +155,7 @@ function DriftBanner({ document }: { document: ReviewDocument }) {
     <StatusPanel>
       Canonical drifted after freeze (base {drift.base_site_revision}, current{" "}
       {drift.current_site_revision}) — acceptance is blocked until re-freeze (enforced
-      at 083/1); the frozen review remains visible.
+      server-side); the frozen review remains visible.
     </StatusPanel>
   );
 }
@@ -467,6 +470,7 @@ export function WorkspaceReviewView({
       </div>
       <SnapshotIdentity document={document} />
       <DriftBanner document={document} />
+      <AcceptAction siteId={siteId} workspaceId={workspaceId} document={document} />
       <Section id="review-timeline" title="Semantic timeline">
         <TimelineSection document={document} />
       </Section>

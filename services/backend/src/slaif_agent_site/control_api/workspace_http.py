@@ -12,12 +12,14 @@ from typing import Any, Never, cast
 from uuid import UUID
 
 from fastapi import APIRouter, Header, Request, Response
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from slaif_agent_site.agent_state.workspace_models import (
     CreateWorkspaceRequest,
     DelegationPreset,
 )
 from slaif_agent_site.errors import (
+    AuthenticationError,
     AuthorizationError,
     DomainValidationError,
     ResourceConflictError,
@@ -258,6 +260,66 @@ async def freeze_workspace(
         if "WORKSPACE_NOT_FOUND" in message:
             raise ResourceNotFoundError() from None
         if "WORKSPACE_NOT_ACTIVE" in message:
+            raise ResourceConflictError() from None
+        raise ServiceUnavailableError() from None
+    if row is None:
+        raise ResourceNotFoundError()
+    return {"job_id": str(row["job_id"]), "status": row["status"]}
+
+
+class AcceptWorkspaceRequest(BaseModel):
+    """Strict accept body (R2.3): the exact three fields, nothing else."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    snapshot_id: UUID
+    digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    acknowledge_summary: bool
+
+    @field_validator("acknowledge_summary", mode="before")
+    @classmethod
+    def acknowledge_must_be_boolean_true(cls, value: Any) -> Any:
+        # JSON ``1`` must not coerce to a boolean acknowledgement.
+        if value is not True:
+            raise ValueError("acknowledge_summary must be the boolean true")
+        return value
+
+
+@router.post("/{workspace_id}/accept/", status_code=202)
+async def accept_workspace(
+    site_id: UUID,
+    workspace_id: UUID,
+    request: Request,
+    body: AcceptWorkspaceRequest,
+) -> dict[str, Any]:
+    """Real human accept: dual-permission gate + idempotent ACCEPT job."""
+    database = _database(request)
+    authority = await authorize_site_request(
+        request,
+        database,
+        request.app.state.settings,
+        site_id,
+        "workspace:accept",
+        state_changing=True,
+    )
+    if not (
+        authority.platform_administrator
+        or "site:publish" in authority.effective_permissions
+    ):
+        raise ResourceNotFoundError()
+    if not authority.session.recent_auth:
+        raise AuthenticationError()
+    try:
+        row = await database.human_agent_workspace_accept(
+            workspace_id,
+            site_id,
+            body.snapshot_id,
+            body.digest,
+            authority.session.user_account_id,
+        )
+    except Exception as exc:
+        message = str(exc)
+        if "WORKSPACE_NOT_IN_REVIEW" in message:
             raise ResourceConflictError() from None
         raise ServiceUnavailableError() from None
     if row is None:

@@ -147,7 +147,11 @@ EXPECTED_MOUNTS = {
         ("browser-signing-secret", "/run/slaif-browser-signing", True),
     },
     "media-gc": {("media-data", "/var/lib/slaif/media", False)},
-    "review-worker": {("review-worker-secret", "/run/slaif-review-worker", True)},
+    "review-worker": {
+        ("review-worker-secret", "/run/slaif-review-worker", True),
+        ("media-secret", "/run/slaif-media", True),
+        ("media-data", "/var/lib/slaif/media", False),
+    },
     "media-service": {
         ("media-data", "/var/lib/slaif/media", False),
         ("media-secret", "/run/slaif-media", True),
@@ -200,7 +204,7 @@ BROWSER_WORKER_SECRET_MOUNT_SERVICES = {
     "secrets-init",
 }
 BROWSER_ARTIFACT_MOUNT_SERVICES = {"browser-worker", "secrets-init"}
-MEDIA_SECRET_MOUNT_SERVICES = {"media-service", "secrets-init"}
+MEDIA_SECRET_MOUNT_SERVICES = {"media-service", "review-worker", "secrets-init"}
 REVIEW_WORKER_SECRET_MOUNT_SERVICES = {
     "review-worker",
     "secrets-init",
@@ -462,7 +466,21 @@ def validate_config(config: dict[str, Any]) -> None:
                         key == "SLAIF_RENDER_BROWSER_SIGNING_KEY_FILE"
                         and name == "render-api"
                     )
-                    or (key == "SLAIF_MEDIA_DSN_FILE" and name == "media-service")
+                    or (
+                        key == "SLAIF_MEDIA_DSN_FILE"
+                        and name in {"media-service", "review-worker"}
+                    )
+                    or (
+                        key
+                        in {
+                            "SLAIF_MEDIA_EXPECTED_DATABASE",
+                            "SLAIF_MEDIA_EXPECTED_LOGIN",
+                            "SLAIF_MEDIA_EXPECTED_PRIVILEGE_ROLE",
+                            "SLAIF_MEDIA_MODE",
+                            "SLAIF_MEDIA_ROOT",
+                        }
+                        and name == "review-worker"
+                    )
                     or (
                         key
                         in {
@@ -515,7 +533,7 @@ def validate_config(config: dict[str, Any]) -> None:
                 not any(
                     key.startswith("SLAIF_MEDIA_")
                     for key in environment
-                    if name != "media-service"
+                    if name not in {"media-service", "review-worker"}
                 ),
                 f"{name}: foreign Media setting present",
             )

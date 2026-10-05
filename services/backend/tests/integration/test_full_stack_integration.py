@@ -88,11 +88,12 @@ class TestFullStackWiring:
         assert constant_time_digest_compare(recomputed, digest)
 
     def test_promotion_service_interface(self) -> None:
-        from slaif_agent_site.agent_state.promotion import (
-            promote_workspace,
-        )
+        from slaif_agent_site.agent_state import promotion
 
-        assert callable(promote_workspace)
+        # 083/1 retired promote_workspace (accept job is the only path).
+        assert not hasattr(promotion, "promote_workspace")
+        assert callable(promotion.discard_workspace)
+        assert callable(promotion.get_conflicts)
 
     def test_audit_chain_integrity(self) -> None:
         from slaif_agent_site.agent_state.audit import AuditEvent

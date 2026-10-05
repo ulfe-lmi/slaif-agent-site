@@ -9,6 +9,7 @@ from typing import Any
 
 import asyncpg
 
+from .accept_job import shutdown_media_boundary
 from .config import ReviewWorkerConfigurationError, ReviewWorkerSettings
 from .freeze_job import JobResult, run_job
 
@@ -93,8 +94,9 @@ async def _worker_loop(
         try:
             async with pool.acquire() as connection:
                 job_row = await connection.fetchrow(
-                    "SELECT * FROM control.slaif_review_job_claim($1)",
+                    "SELECT * FROM control.slaif_review_job_claim($1, $2)",
                     claimant,
+                    ["FREEZE", "ACCEPT"],
                 )
             job = dict(job_row) if job_row is not None else None
         except (asyncpg.PostgresError, TimeoutError, OSError):
@@ -173,6 +175,7 @@ async def run_review_worker(
     try:
         await _worker_loop(pool, settings, stop)
     finally:
+        await shutdown_media_boundary()
         await pool.close()
         LOGGER.info("review worker stopped")
 

@@ -337,8 +337,18 @@ services:
       SLAIF_REVIEW_WORKER_EXPECTED_LOGIN: slaif_review_worker_login
       SLAIF_REVIEW_WORKER_EXPECTED_PRIVILEGE_ROLE: slaif_review_worker
       SLAIF_REVIEW_WORKER_MODE: development
+      # Media finalization boundary for ACCEPT jobs (083/1): the mounted
+      # media secret + data volume; freeze jobs never touch media.
+      SLAIF_MEDIA_MODE: development
+      SLAIF_MEDIA_DSN_FILE: /run/slaif-media/media-dsn
+      SLAIF_MEDIA_EXPECTED_DATABASE: slaif
+      SLAIF_MEDIA_EXPECTED_LOGIN: slaif_media_login
+      SLAIF_MEDIA_EXPECTED_PRIVILEGE_ROLE: slaif_media
+      SLAIF_MEDIA_ROOT: /var/lib/slaif/media
     volumes:
       - review-worker-secret:/run/slaif-review-worker:ro
+      - media-secret:/run/slaif-media:ro
+      - media-data:/var/lib/slaif/media
     networks: [database]
 
   scheduler:

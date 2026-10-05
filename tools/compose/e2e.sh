@@ -280,10 +280,18 @@ fi
 
 if ! SLAIF_E2E_SECRET_FILE="$SECRET_FILE" \
   SLAIF_E2E_COMPOSE_PROJECT="$PROJECT" \
+  SLAIF_E2E_OUTPUT_DIR="$OUTPUT_DIR" \
+  pnpm exec playwright test --no-deps --project=accept-lifecycle
+then
+  fail browser accept-lifecycle-contract
+fi
+
+if ! SLAIF_E2E_SECRET_FILE="$SECRET_FILE" \
+  SLAIF_E2E_COMPOSE_PROJECT="$PROJECT" \
   SLAIF_E2E_PREVIEW_WORKSPACE_ID="$workspace_id" \
   SLAIF_E2E_OUTPUT_DIR="$OUTPUT_DIR" \
   pnpm exec playwright test --no-deps --project=media-publication
 then
   fail browser media-publication-contract
 fi
-echo "compose-e2e: OK projects=17 setup=1 governance=1 preview=1 preview-filtering=1 stable-devices=6 agent-sessions=2 agent-workspace-puck=2 freeze-review-snapshot=1 review-surface=1 media-publication=1 artifacts=disabled"
+echo "compose-e2e: OK projects=18 setup=1 governance=1 preview=1 preview-filtering=1 stable-devices=6 agent-sessions=2 agent-workspace-puck=2 freeze-review-snapshot=1 review-surface=1 accept-lifecycle=1 media-publication=1 artifacts=disabled"

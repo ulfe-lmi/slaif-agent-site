@@ -697,7 +697,7 @@ async def test_clean_migration_current_repeat_downgrade_and_rebuild(
     database = agent_site_database
     await upgrade(database.settings)
     first = await status(database.settings)
-    assert first.revision == "071_001"
+    assert first.revision == "072_001"
     _assert_pending(first, deployed=False)
 
     async with owner_connection(
@@ -840,7 +840,7 @@ async def test_clean_migration_current_repeat_downgrade_and_rebuild(
 
     await upgrade(database.settings)
     rebuilt = await status(database.settings)
-    assert rebuilt.revision == "071_001"
+    assert rebuilt.revision == "072_001"
     _assert_pending(rebuilt, deployed=False)
     rebuilt_empty = await reconcile(database.settings)
     _assert_empty_safe(rebuilt_empty)
@@ -865,10 +865,14 @@ async def test_role_manifest_attributes_membership_and_identity_separation(
         "FROM pg_catalog.pg_auth_members membership "
         "JOIN pg_catalog.pg_roles granted ON granted.oid = membership.roleid "
         "JOIN pg_catalog.pg_roles member ON member.oid = membership.member "
-        "WHERE granted.rolname = ANY($1::text[]) AND member.rolname = ANY($1::text[])",
+        "WHERE granted.rolname = ANY($1::text[]) AND member.rolname = ANY($1::text[])"
+        " ORDER BY granted.rolname, member.rolname",
         list(ROLE_NAMES),
     )
-    assert product_edges == []
+    # Pre-migration, the ONLY privilege-role edge is the owner's
+    # ADMIN-option membership in the reviewer role (provisioning
+    # invariant); 072_001 additionally adds the review-worker edge.
+    assert product_edges == [("slaif_reviewer", "slaif_owner")]
     login_memberships = await database.administrator.fetchval(
         "SELECT count(*) FROM pg_catalog.pg_auth_members membership "
         "JOIN pg_catalog.pg_roles granted ON granted.oid = membership.roleid "
@@ -1195,20 +1199,20 @@ async def test_cli_secret_file_empty_bootstrap_current_and_validate(
     assert upgraded.stdout == "upgrade: OK\n"
     current = invoke("current")
     assert current.returncode == 0
-    assert current.stdout == ("current: revision=071_001 state=PENDING safe=false\n")
+    assert current.stdout == ("current: revision=072_001 state=PENDING safe=false\n")
     bootstrapped = invoke("bootstrap")
     assert bootstrapped.returncode == 0
     assert bootstrapped.stdout == (
-        "bootstrap: OK revision=071_001 state=HARDENED safe=true\n"
+        "bootstrap: OK revision=072_001 state=HARDENED safe=true\n"
     )
     validated = invoke("validate")
     assert validated.returncode == 0
     assert validated.stdout == (
-        "validate: OK revision=071_001 state=HARDENED safe=true\n"
+        "validate: OK revision=072_001 state=HARDENED safe=true\n"
     )
     ready = invoke("current")
     assert ready.returncode == 0
-    assert ready.stdout == ("current: revision=071_001 state=HARDENED safe=true\n")
+    assert ready.stdout == ("current: revision=072_001 state=HARDENED safe=true\n")
     output = "".join(
         process.stdout + process.stderr
         for process in (upgraded, current, bootstrapped, validated, ready)
