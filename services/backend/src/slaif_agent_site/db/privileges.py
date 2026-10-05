@@ -21,6 +21,25 @@ from .roles import (
 
 PRODUCT_SCHEMAS = ("control", "content", "audit")
 READ_ROLES = ("slaif_public_reader", "slaif_preview_reader")
+# The foundation's controlled reviewer function surface (agent-cow-
+# postgresql 0.2.0 hardening set): the exact agentcow EXECUTEs the
+# reviewer role receives. Every function is SECURITY DEFINER owned by
+# the setup owner, so no table grants accompany the surface.
+FOUNDATION_REVIEWER_FUNCTIONS = (
+    ("get_cow_dirty_tables", "text, uuid"),
+    ("get_cow_primary_key_columns", "text, text"),
+    ("get_cow_session_operations", "text, uuid"),
+    ("get_cow_dependencies", "text, uuid"),
+    ("_cow_fk_edges", "text, text[]"),
+    ("get_cow_conflicts", "text, text, text[], uuid, uuid[], boolean"),
+    ("commit_cow", "text, text, text[], uuid, uuid[], text"),
+    ("commit_cow_upsert", "text, text, text[], uuid, uuid[], text"),
+    ("commit_cow_delete", "text, text, text[], uuid, uuid[], text"),
+    ("commit_cow_cleanup", "text, text, uuid, uuid[]"),
+    ("discard_cow", "text, text, uuid, uuid[]"),
+    ("_cow_lock_session", "text, uuid"),
+    ("_cow_operation_tables", "text, uuid, uuid[]"),
+)
 NO_CONTENT_ROLES = (
     "slaif_control",
     "slaif_scheduler",
@@ -595,8 +614,8 @@ HUMAN_EDITOR_FUNCTIONS = {
 REVIEW_WORKER_FUNCTIONS = {
     (
         "slaif_review_job_claim",
-        "p_claimant text",
-    ): "text",
+        "p_claimant text, p_kinds text[]",
+    ): "text, text[]",
     (
         "slaif_review_job_heartbeat",
         "p_job_id uuid",
@@ -826,6 +845,15 @@ CONTROL_FUNCTIONS = {
         "slaif_review_read_model",
         "p_workspace_id uuid, p_site_id uuid, p_user_account_id uuid",
     ): "uuid, uuid, uuid",
+    (
+        "slaif_workspace_accept",
+        "p_workspace_id uuid, p_actor_user_account_id uuid",
+    ): "uuid, uuid",
+    (
+        "slaif_human_agent_workspace_accept",
+        "p_workspace_id uuid, p_site_id uuid, p_snapshot_id uuid, "
+        "p_digest text, p_user_id uuid",
+    ): "uuid, uuid, uuid, text, uuid",
 }
 
 
@@ -1098,6 +1126,21 @@ async def apply_product_privileges(
                 f'GRANT USAGE ON SCHEMA "content" TO {quote_identifier(role)}'
             )
 
+        # The worker's foundation reviewer surface (072_001): the same
+        # agentcow USAGE + controlled function EXECUTEs the hardening
+        # grants to the reviewer role, re-applied on every reconcile so
+        # the worker login's promotion path keeps working after a
+        # re-harden cycle.
+        await connection.execute(
+            'GRANT USAGE ON SCHEMA agentcow TO "slaif_review_worker"'
+        )
+        for function, arguments in FOUNDATION_REVIEWER_FUNCTIONS:
+            await connection.execute(
+                f"GRANT EXECUTE ON FUNCTION "
+                f"agentcow.{quote_identifier(function)}({arguments})"
+                ' TO "slaif_review_worker"'
+            )
+
         views = await connection.fetch(
             "SELECT class_.relname::text FROM pg_catalog.pg_class class_ "
             "JOIN pg_catalog.pg_namespace namespace_ "
@@ -1130,12 +1173,27 @@ async def apply_product_privileges(
             f'GRANT SELECT ON "control".{quote_identifier(relation)} '
             'TO "slaif_review_worker"'
         )
+    for relation in ("workspace", "site"):
+        await connection.execute(
+            f'GRANT UPDATE ON "control".{quote_identifier(relation)} '
+            'TO "slaif_review_worker"'
+        )
     await connection.execute(
         'GRANT SELECT, INSERT, UPDATE ON "control".review_job TO "slaif_review_worker"'
     )
     await connection.execute(
         'GRANT SELECT, INSERT ON "control".review_snapshot TO "slaif_review_worker"'
     )
+    await connection.execute(
+        'GRANT INSERT, SELECT ON "control".cache_outbox TO "slaif_review_worker"'
+    )
+    await connection.execute(
+        'GRANT USAGE ON SEQUENCE "control".cache_outbox_id_seq TO "slaif_review_worker"'
+    )
+    await connection.execute(
+        'GRANT INSERT ON "audit".promotion TO "slaif_review_worker"'
+    )
+    await connection.execute('GRANT SELECT ON "audit".promotion TO "slaif_reviewer"')
     for (name, _identity), signature in CONTROL_FUNCTIONS.items():
         await connection.execute(
             "GRANT EXECUTE ON FUNCTION "
@@ -1250,7 +1308,8 @@ async def _role_violations(connection: asyncpg.Connection[Any]) -> list[str]:
             violations.append(f"role/{role}/unsafe-attributes:{enabled}")
 
     edges = await connection.fetch(
-        "SELECT granted.rolname::text, member.rolname::text "
+        "SELECT granted.rolname::text, member.rolname::text, "
+        "membership.admin_option "
         "FROM pg_catalog.pg_auth_members membership "
         "JOIN pg_catalog.pg_roles granted ON granted.oid = membership.roleid "
         "JOIN pg_catalog.pg_roles member ON member.oid = membership.member "
@@ -1258,9 +1317,34 @@ async def _role_violations(connection: asyncpg.Connection[Any]) -> list[str]:
         "ORDER BY granted.rolname, member.rolname",
         list(ROLE_NAMES),
     )
-    for granted, member in edges:
-        violations.append(f"membership/{member}/can-set-role:{granted}")
+    # Exact privilege-role membership contract: no privilege role may be
+    # a member of any role, except the two provisioning-invariant edges
+    # re-established by role provisioning (both also granted by the
+    # 072_001 upgrade, whose downgrade removes the worker edge, so
+    # owner-only edges are valid between downgrade and re-provision):
+    # the owner's ADMIN-option membership in the reviewer role (lets
+    # migrations running as slaif_owner manage reviewer membership) and
+    # the review worker's reviewer membership (sole reviewer process).
+    expected_edges = {
+        ("slaif_reviewer", "slaif_owner", True),
+        ("slaif_reviewer", "slaif_review_worker", False),
+    }
+    actual_edges = {(granted, member, bool(admin)) for granted, member, admin in edges}
+    for granted, member, admin in edges:
+        if (granted, member, bool(admin)) not in expected_edges:
+            violations.append(f"membership/{member}/can-set-role:{granted}")
+    if ("slaif_reviewer", "slaif_owner", True) not in actual_edges:
+        violations.append("membership/slaif_owner/missing-reviewer-admin")
 
+    direct_edges = await connection.fetch(
+        "SELECT member.rolname::text, granted.rolname::text "
+        "FROM pg_catalog.pg_auth_members membership "
+        "JOIN pg_catalog.pg_roles member ON member.oid = membership.member "
+        "JOIN pg_catalog.pg_roles granted ON granted.oid = membership.roleid "
+        "WHERE granted.rolname = ANY($1::text[]) "
+        "ORDER BY member.rolname, granted.rolname",
+        list(ROLE_NAMES),
+    )
     combined = await connection.fetch(
         "SELECT principal.rolname::text, "
         "array_agg(target.rolname::text ORDER BY target.rolname) "
@@ -1274,9 +1358,32 @@ async def _role_violations(connection: asyncpg.Connection[Any]) -> list[str]:
         list(ROLE_NAMES),
     )
     for principal, authorities in combined:
-        violations.append(
-            f"membership/{principal}/combined-roles:{','.join(authorities)}"
+        # The 072_001 reviewer delegation makes the owner and the review
+        # worker (and the logins that SET ROLE into them) members of TWO
+        # product roles: their own plus slaif_reviewer, reached only
+        # transitively. That exact shape is the allowed exception; any
+        # other multi-membership principal is a violation.
+        base = {
+            granted
+            for member, granted in direct_edges
+            if member == principal and granted != "slaif_reviewer"
+        }
+        if principal in ROLE_NAMES:
+            base.add(principal)
+        family = base in (
+            {OWNER_ROLE},
+            {"slaif_review_worker"},
         )
+        if family and any(
+            granted == "slaif_reviewer"
+            for member, granted in direct_edges
+            if member == principal
+        ):
+            family = principal in (OWNER_ROLE, "slaif_review_worker")
+        if not family:
+            violations.append(
+                f"membership/{principal}/combined-roles:{','.join(authorities)}"
+            )
     return violations
 
 
@@ -1320,26 +1427,39 @@ async def _schema_violations(
             if can_create:
                 violations.append(f"schema/{schema}/{role}/create")
             expected_usage = (
-                schema == "control"
-                and role
-                in {
-                    *CAPABILITY_READ_ROLES,
-                    "slaif_agent_runtime",
-                    "slaif_public_reader",
-                    "slaif_preview_reader",
-                    "slaif_editor_runtime",
-                    "slaif_media",
-                    "slaif_review_worker",
-                }
-            ) or (
-                readiness_state is ReadinessState.HARDENED
-                and (
-                    (
-                        schema == "content"
-                        and role
-                        in (*RUNTIME_ROLES, *REVIEWER_ROLES, *READ_ROLES, "slaif_media")
+                (
+                    schema == "control"
+                    and role
+                    in {
+                        *CAPABILITY_READ_ROLES,
+                        "slaif_agent_runtime",
+                        "slaif_public_reader",
+                        "slaif_preview_reader",
+                        "slaif_editor_runtime",
+                        "slaif_media",
+                        "slaif_review_worker",
+                    }
+                )
+                or (schema == "audit" and role == "slaif_review_worker")
+                or (
+                    readiness_state is ReadinessState.HARDENED
+                    and (
+                        (
+                            schema == "content"
+                            and role
+                            in (
+                                *RUNTIME_ROLES,
+                                *REVIEWER_ROLES,
+                                *READ_ROLES,
+                                "slaif_media",
+                                "slaif_review_worker",
+                            )
+                        )
+                        or (
+                            schema == FOUNDATION_SCHEMA
+                            and role in (*REVIEWER_ROLES, "slaif_review_worker")
+                        )
                     )
-                    or (schema == FOUNDATION_SCHEMA and role in REVIEWER_ROLES)
                 )
             )
             if bool(can_use) != expected_usage:
@@ -1412,7 +1532,37 @@ async def _relation_violations(
                 schema == "control"
                 and kind in {"r", "p"}
                 and role == "slaif_review_worker"
-                and name in ("workspace", "site", "capability", "browser_run")
+                and name in ("capability", "browser_run")
+            ):
+                expected = (True, False, False, False, False)
+            if (
+                schema == "control"
+                and kind in {"r", "p"}
+                and role == "slaif_review_worker"
+                and name in ("workspace", "site")
+            ):
+                expected = (True, False, True, False, False)
+            if (
+                schema == "control"
+                and kind in {"r", "p"}
+                and name == "cache_outbox"
+                and role == "slaif_review_worker"
+            ):
+                expected = (True, True, False, False, False)
+            if (
+                schema == "audit"
+                and kind in {"r", "p"}
+                and name == "promotion"
+                and role == "slaif_review_worker"
+            ):
+                # Direct INSERT plus the reviewer's SELECT, reached through
+                # the 072_001 reviewer delegation.
+                expected = (True, True, False, False, False)
+            if (
+                schema == "audit"
+                and kind in {"r", "p"}
+                and name == "promotion"
+                and role in REVIEWER_ROLES
             ):
                 expected = (True, False, False, False, False)
             if (
@@ -1436,7 +1586,7 @@ async def _relation_violations(
             ):
                 if role in RUNTIME_ROLES:
                     expected = (True, True, True, True, False)
-                elif role in (*REVIEWER_ROLES, *READ_ROLES):
+                elif role in (*REVIEWER_ROLES, *READ_ROLES, "slaif_review_worker"):
                     expected = (True, False, False, False, False)
             if privileges != expected:
                 violations.append(
@@ -1472,7 +1622,20 @@ async def _relation_violations(
                         oid,
                     )
                 )
-                if any(sequence_privileges):
+                # The worker's cache-outbox INSERT uses the BIGSERIAL
+                # default and therefore holds exactly USAGE (surfacing
+                # as SELECT + UPDATE + USAGE) on that one sequence
+                # (072_001); every other non-owner sequence surface is
+                # an overgrant.
+                # PG16 reports a sequence USAGE grant as has_sequence_
+                # privilege (SELECT=F, UPDATE=F, USAGE=T) only.
+                allowed_sequence = (
+                    schema == "control"
+                    and name == "cache_outbox_id_seq"
+                    and role == "slaif_review_worker"
+                    and sequence_privileges == (False, False, True)
+                )
+                if any(sequence_privileges) and not allowed_sequence:
                     violations.append(
                         f"relation/{schema}.{name}/{role}/effective-sequence:"
                         + ",".join(
@@ -1637,7 +1800,7 @@ async def _function_violations(
                 or (
                     readiness_state is ReadinessState.HARDENED
                     and schema == FOUNDATION_SCHEMA
-                    and role in REVIEWER_ROLES
+                    and role in (*REVIEWER_ROLES, "slaif_review_worker")
                 )
                 or (
                     readiness_state is ReadinessState.HARDENED

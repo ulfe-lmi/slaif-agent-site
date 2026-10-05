@@ -14,9 +14,12 @@ Agent workspace) is accepted and merged in PR #96 at
 `c48849f149417fccf5cc0a152bc3ca39aaaf49ba` on 2026-10-04; increment
 082/1 (immutable freeze and review snapshot) is accepted and merged in
 PR #97 at `e689076cda0a882ad13f7b641ebdf8efdacba773` on 2026-10-05;
-the next bounded increment 082/2 (human review surface, read-only) is
-in flight at `082-2-a`; `oap/active` names the last activated round
-until the next activation.
+increment 082/2 (human review surface, read-only) is accepted and merged
+in PR #98 at `f754e075364b56571307a41abc4b9dcf3f6f6af0` on 2026-10-05;
+the next bounded increment 083/1 (real human accept) is in flight at
+`083-a` (branch `oap/083-a-real-accept`, base
+`f754e075364b56571307a41abc4b9dcf3f6f6af0`); `oap/active` names the last
+activated round until the next activation.
 The table is the authoritative ledger of verified merge facts (SHA and
 merge date) referenced from current-state documents.
 
@@ -38,7 +41,8 @@ merge date) referenced from current-state documents.
 | 079/3 | 079/3: DocumentList + document class (bounded PDF policy) | Accepted and merged in PR #95 at `550c42c387bcddf12356ba2db299ef5bf99dd818` on 2026-10-04; 079/3 is closed |
 | 081/1 | 081/1: human Puck editing in the exact Agent workspace | Accepted and merged in PR #96 at `c48849f149417fccf5cc0a152bc3ca39aaaf49ba` on 2026-10-04; 081/1 is closed |
 | 082/1 | 082/1: immutable freeze and review snapshot | Accepted and merged in PR #97 at `e689076cda0a882ad13f7b641ebdf8efdacba773` on 2026-10-05; 082/1 is closed |
-| Next | 082 after 082/1 | 082/1 is closed per the row above; the next bounded increment 082/2 (human review surface, read-only) is in flight at `082-2-a`; strategy owns acceptance and merge and selects the next bounded increment per [`governance/2026-09-14-increment-qualified-round-ids.md`](governance/2026-09-14-increment-qualified-round-ids.md) |
+| 082/2 | 082/2: human review surface (read-only) | Accepted and merged in PR #98 at `f754e075364b56571307a41abc4b9dcf3f6f6af0` on 2026-10-05; 082/2 is closed |
+| Next | 083 after 082/2 | 082/2 is closed per the row above; the next bounded increment 083/1 (real human accept) is in flight at `083-a` (branch `oap/083-a-real-accept`, base `f754e075364b56571307a41abc4b9dcf3f6f6af0`); the superseded inert pre-plan order `oap/orders/083-a-real-accept-discard-promotion.md` (whole-objective 083 draft) is deleted in this PR, superseded by the approved 083/1-083/3 pre-split, with its content preserved in git history; strategy owns acceptance and merge and selects the next bounded increment per [`governance/2026-09-14-increment-qualified-round-ids.md`](governance/2026-09-14-increment-qualified-round-ids.md) |
 
 PR #77 merged into `main` at
 `3cae3d6cef2a92e7068856d21bc9a47b8190c22e`. The 078-j closure keeps the

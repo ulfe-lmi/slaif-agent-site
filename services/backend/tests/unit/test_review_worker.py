@@ -457,10 +457,38 @@ async def test_run_job_dispatches_freeze_only() -> None:
     assert result == JobResult("SUCCEEDED")
     assert len(calls) == 1
 
-    result = await run_job(pool, settings, {"id": str(job_id), "job_kind": "ACCEPT"})
-    assert result == JobResult("FAILED", "JOB_KIND_UNSUPPORTED")
-    assert pool.store.terminals
-    assert pool.store.terminals[-1][1:] == ("FAILED", "JOB_KIND_UNSUPPORTED")
+    from slaif_agent_site.review_worker import accept_job as accept_job_module
+
+    async def fake_accept_job(
+        pool_: Any,
+        settings_: ReviewWorkerSettings,
+        job_: dict[str, Any],
+        media: Any = None,
+    ) -> JobResult:
+        calls.append(job_)
+        assert media is not None
+        return JobResult("SUCCEEDED")
+
+    with patch.object(accept_job_module, "run_accept_job", fake_accept_job):
+        result = await run_job(
+            pool,
+            settings,
+            {
+                "id": str(job_id),
+                "job_kind": "ACCEPT",
+                "workspace_id": str(workspace_id),
+            },
+        )
+    assert result == JobResult("SUCCEEDED")
+    assert len(calls) == 2
+    assert calls[1]["job_kind"] == "ACCEPT"
+
+    # DISCARD is not implemented in this increment (083/2): unsupported.
+    for kind in ("DISCARD", "OTHER"):
+        result = await run_job(pool, settings, {"id": str(job_id), "job_kind": kind})
+        assert result == JobResult("FAILED", "JOB_KIND_UNSUPPORTED")
+        assert pool.store.terminals
+        assert pool.store.terminals[-1][1:] == ("FAILED", "JOB_KIND_UNSUPPORTED")
 
 
 # ---------------------------------------------------------------------

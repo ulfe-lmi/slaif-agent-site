@@ -946,7 +946,7 @@ async def test_browser_leases_artifacts_terminal_state_and_exact_privileges(
             for function in (
                 "control.slaif_setup_status()",
                 "control.slaif_workspace_get(NULL::uuid)",
-                "control.slaif_workspace_accept(NULL::uuid)",
+                "control.slaif_workspace_accept(NULL::uuid, NULL::uuid)",
             ):
                 with pytest.raises(asyncpg.InsufficientPrivilegeError):
                     await agent.fetchval(f"SELECT {function}")

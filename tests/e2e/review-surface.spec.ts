@@ -733,8 +733,9 @@ test("review-surface-review-render-and-summary", async ({ page }) => {
     metadata.getByRole("heading", { name: "Agent, session, and browser metadata" }),
   ).toBeVisible();
 
-  // Actions: rendered-site entry point + back link; NO accept/discard,
-  // NO Puck launch from the review surface.
+  // Actions: rendered-site entry point + back link. 083/1: the accept
+  // control IS present (REVIEW + COMPLETE + no drift); NO discard, NO
+  // publish, NO Puck launch from the review surface.
   await expect(page.getByRole("link", { name: "View rendered site" })).toHaveAttribute(
     "href",
     `/review/${workspaceId}/`,
@@ -743,9 +744,8 @@ test("review-surface-review-render-and-summary", async ({ page }) => {
     "href",
     `/admin/sites/${siteId}/workspaces/${workspaceId}/edit`,
   );
-  expect(
-    await page.getByRole("button", { name: /accept|discard|publish/i }).count(),
-  ).toBe(0);
+  expect(await page.getByRole("button", { name: /accept/i }).count()).toBe(1);
+  expect(await page.getByRole("button", { name: /discard|publish/i }).count()).toBe(0);
   expect(await page.getByRole("link", { name: /edit in puck/i }).count()).toBe(0);
   expect(await page.locator("a[href*='puck']").count()).toBe(0);
 

@@ -468,6 +468,20 @@ ROUTE_POLICIES: Final[tuple[RoutePolicy, ...]] = (
             ),
         )
     ),
+    # Real human accept: one policy line encoding the dual-permission
+    # requirement (workspace:accept AND site:publish), 083/1.
+    _policy(
+        _CONTROL,
+        "POST",
+        "/api/control/v1/sites/{site_id}/workspaces/{workspace_id}/accept/",
+        _M,
+        True,
+        True,
+        _SITE,
+        RoutePolicyKind.SITE_PERMISSION,
+        "workspace:accept",
+        "site:publish",
+    ),
     *(
         _policy(
             _CONTROL,

@@ -238,7 +238,9 @@ async def test_concurrent_claim_and_stale_recovery(
         try:
             return list(
                 await connection.fetch(
-                    "SELECT * FROM control.slaif_review_job_claim($1)", claimant
+                    "SELECT * FROM control.slaif_review_job_claim($1, $2)",
+                    claimant,
+                    ["FREEZE", "ACCEPT"],
                 )
             )
         finally:
@@ -335,8 +337,9 @@ async def test_freeze_lifecycle_worker_snapshot(
     try:
         rows = await _worker_call(
             database,
-            "SELECT * FROM control.slaif_review_job_claim($1)",
+            "SELECT * FROM control.slaif_review_job_claim($1, $2)",
             "integration-worker-1",
+            ["FREEZE", "ACCEPT"],
         )
         assert len(rows) == 1
         job = dict(rows[0])
@@ -480,8 +483,9 @@ async def test_forced_validation_failure_leaves_freezing(
     try:
         rows = await _worker_call(
             database,
-            "SELECT * FROM control.slaif_review_job_claim($1)",
+            "SELECT * FROM control.slaif_review_job_claim($1, $2)",
             "integration-worker-2",
+            ["FREEZE", "ACCEPT"],
         )
         assert len(rows) == 1
         result = await run_freeze_job(pool, _worker_settings(database), dict(rows[0]))
@@ -543,8 +547,9 @@ async def test_forced_validation_failure_leaves_freezing(
     try:
         rows = await _worker_call(
             database,
-            "SELECT * FROM control.slaif_review_job_claim($1)",
+            "SELECT * FROM control.slaif_review_job_claim($1, $2)",
             "integration-worker-3",
+            ["FREEZE", "ACCEPT"],
         )
         assert len(rows) == 1
         assert str(rows[0]["id"]) == str(new_job_id)
@@ -839,8 +844,9 @@ async def test_freeze_endpoint_http_authorization_csrf_and_state_matrix(
         try:
             rows = await _worker_call(
                 database,
-                "SELECT * FROM control.slaif_review_job_claim($1)",
+                "SELECT * FROM control.slaif_review_job_claim($1, $2)",
                 "freeze-http-worker",
+                ["FREEZE", "ACCEPT"],
             )
             assert len(rows) == 1
             result = await run_freeze_job(

@@ -166,7 +166,7 @@ async def _read_model(
 
 
 async def _seed(database: AgentSiteDatabase) -> dict[str, UUID]:
-    """Upgrade to 071_001 and seed one site with renderable COW content."""
+    """Upgrade to 072_001 and seed one site with renderable COW content."""
 
     await upgrade(database.settings)
     await reconcile(database.settings)
@@ -401,8 +401,9 @@ async def _freeze_complete(
     )
     try:
         claimed = await pool.fetch(
-            "SELECT * FROM control.slaif_review_job_claim($1)",
+            "SELECT * FROM control.slaif_review_job_claim($1, $2)",
             "review-int-worker",
+            ["FREEZE", "ACCEPT"],
         )
         assert len(claimed) == 1
         result = await run_freeze_job(

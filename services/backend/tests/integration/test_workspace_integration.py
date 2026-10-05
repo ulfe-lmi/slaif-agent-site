@@ -44,9 +44,12 @@ class TestWorkspaceContentIntegration:
         assert len(digest) == 64
 
     def test_promotion_module_exists(self) -> None:
-        from slaif_agent_site.agent_state.promotion import promote_workspace
+        from slaif_agent_site.agent_state import promotion
 
-        assert callable(promote_workspace)
+        # 083/1 retired promote_workspace (accept job is the only path).
+        assert not hasattr(promotion, "promote_workspace")
+        assert callable(promotion.discard_workspace)
+        assert callable(promotion.get_conflicts)
 
     def test_audit_module_exists(self) -> None:
         from slaif_agent_site.agent_state.audit import AuditEvent
