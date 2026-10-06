@@ -46,9 +46,11 @@ class TestWorkspaceContentIntegration:
     def test_promotion_module_exists(self) -> None:
         from slaif_agent_site.agent_state import promotion
 
-        # 083/1 retired promote_workspace (accept job is the only path).
+        # 083/1 retired promote_workspace (accept job is the only path);
+        # 083/2 retired discard_workspace (the DISCARD job is the only
+        # discard path); get_conflicts stays for 084.
         assert not hasattr(promotion, "promote_workspace")
-        assert callable(promotion.discard_workspace)
+        assert not hasattr(promotion, "discard_workspace")
         assert callable(promotion.get_conflicts)
 
     def test_audit_module_exists(self) -> None:

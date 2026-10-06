@@ -285,6 +285,57 @@ class AcceptWorkspaceRequest(BaseModel):
         return value
 
 
+class DiscardWorkspaceRequest(BaseModel):
+    """Strict discard body (R2.3): the exact one field, nothing else."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    acknowledge_discard: bool
+
+    @field_validator("acknowledge_discard", mode="before")
+    @classmethod
+    def acknowledge_discard_must_be_boolean_true(cls, value: Any) -> Any:
+        # JSON ``1`` must not coerce to a boolean acknowledgement.
+        if value is not True:
+            raise ValueError("acknowledge_discard must be the boolean true")
+        return value
+
+
+@router.post("/{workspace_id}/discard/", status_code=202)
+async def discard_workspace(
+    site_id: UUID,
+    workspace_id: UUID,
+    request: Request,
+    body: DiscardWorkspaceRequest,
+) -> dict[str, Any]:
+    """Real human discard: single-permission gate + idempotent DISCARD job."""
+    database = _database(request)
+    authority = await authorize_site_request(
+        request,
+        database,
+        request.app.state.settings,
+        site_id,
+        "workspace:discard",
+        state_changing=True,
+    )
+    if not authority.session.recent_auth:
+        raise AuthenticationError()
+    try:
+        row = await database.human_agent_workspace_discard(
+            workspace_id,
+            site_id,
+            authority.session.user_account_id,
+        )
+    except Exception as exc:
+        message = str(exc)
+        if "WORKSPACE_NOT_DISCARDABLE" in message:
+            raise ResourceConflictError() from None
+        raise ServiceUnavailableError() from None
+    if row is None:
+        raise ResourceNotFoundError()
+    return {"job_id": str(row["job_id"]), "status": row["status"]}
+
+
 @router.post("/{workspace_id}/accept/", status_code=202)
 async def accept_workspace(
     site_id: UUID,

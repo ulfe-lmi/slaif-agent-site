@@ -2,14 +2,17 @@ import type { ReactNode } from "react";
 import type { ReviewDocument } from "../sites/review-projection";
 import { Card, StatusBadge, StatusPanel } from "../components/ui/primitives";
 import { AcceptAction } from "./accept-action";
+import { DiscardAction } from "./discard-action";
 
 /**
- * 082/2 human review surface + 083/1 real accept action. Every value is
- * rendered from the trusted read-model document; the only action control
- * is the accept control (present only for REVIEW + COMPLETE snapshot + no
- * drift) — no discard, no Puck launch, no publish shortcut. The top-N
- * bound keeps the resource-diff rendering finite while the exact counts
- * stay visible.
+ * 082/2 human review surface + 083/1 real accept action + 083/2 real
+ * discard action. Every value is rendered from the trusted read-model
+ * document; the only action controls are the accept control (present
+ * only for REVIEW + COMPLETE snapshot + no drift) and the discard
+ * control (present only for REVIEW/CONFLICTED + COMPLETE snapshot, no
+ * drift gate) — no Puck launch, no publish shortcut. The top-N bound
+ * keeps the resource-diff rendering finite while the exact counts stay
+ * visible.
  */
 
 const DIFF_TOP_N = 10;
@@ -471,6 +474,7 @@ export function WorkspaceReviewView({
       <SnapshotIdentity document={document} />
       <DriftBanner document={document} />
       <AcceptAction siteId={siteId} workspaceId={workspaceId} document={document} />
+      <DiscardAction siteId={siteId} workspaceId={workspaceId} document={document} />
       <Section id="review-timeline" title="Semantic timeline">
         <TimelineSection document={document} />
       </Section>

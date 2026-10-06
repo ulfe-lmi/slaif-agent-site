@@ -159,6 +159,7 @@ async def test_each_app_has_only_typed_health_routes(
             "/api/control/v1/sites/{site_id}/workspaces/{workspace_id}/capabilities/{capability_id}/revoke",
             "/api/control/v1/sites/{site_id}/workspaces/{workspace_id}/freeze/",
             "/api/control/v1/sites/{site_id}/workspaces/{workspace_id}/accept/",
+            "/api/control/v1/sites/{site_id}/workspaces/{workspace_id}/discard/",
             "/api/control/v1/sites/{site_id}/workspaces/{workspace_id}/review/",
         }
     if process is ProcessKind.EDITOR_API:

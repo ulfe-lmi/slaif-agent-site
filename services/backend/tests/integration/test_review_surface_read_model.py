@@ -166,7 +166,7 @@ async def _read_model(
 
 
 async def _seed(database: AgentSiteDatabase) -> dict[str, UUID]:
-    """Upgrade to 072_001 and seed one site with renderable COW content."""
+    """Upgrade to 073_001 and seed one site with renderable COW content."""
 
     await upgrade(database.settings)
     await reconcile(database.settings)

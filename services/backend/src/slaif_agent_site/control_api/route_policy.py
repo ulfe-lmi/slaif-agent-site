@@ -482,6 +482,20 @@ ROUTE_POLICIES: Final[tuple[RoutePolicy, ...]] = (
         "workspace:accept",
         "site:publish",
     ),
+    # Real human discard: one policy line for the workspace:discard
+    # gate (L4 high-delete action; recent auth enforced in the handler),
+    # 083/2.
+    _policy(
+        _CONTROL,
+        "POST",
+        "/api/control/v1/sites/{site_id}/workspaces/{workspace_id}/discard/",
+        _M,
+        True,
+        True,
+        _SITE,
+        RoutePolicyKind.SITE_PERMISSION,
+        "workspace:discard",
+    ),
     *(
         _policy(
             _CONTROL,
