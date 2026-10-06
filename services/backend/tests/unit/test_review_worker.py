@@ -398,6 +398,9 @@ class _FakeConnection:
         raise AssertionError(f"unexpected fetchval: {sql}")
 
     async def fetch(self, sql: str, *args: Any) -> list[Any]:
+        if "slaif_cache_outbox_claim" in sql:
+            self._store.outbox_claims.append(args)
+            return []
         raise AssertionError(f"unexpected fetch: {sql}")
 
     async def execute(self, sql: str, *args: Any) -> None:
@@ -408,6 +411,7 @@ class FakePoolStore:
     def __init__(self) -> None:
         self.claims_queue: list[Any] = []
         self.claims: list[tuple[Any, ...]] = []
+        self.outbox_claims: list[tuple[Any, ...]] = []
         self.heartbeats: list[tuple[Any, ...]] = []
         self.terminals: list[tuple[Any, ...]] = []
         self.claim_error: Exception | None = None

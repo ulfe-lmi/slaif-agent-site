@@ -617,6 +617,14 @@ REVIEW_WORKER_FUNCTIONS = {
         "p_claimant text, p_kinds text[]",
     ): "text, text[]",
     (
+        "slaif_cache_outbox_claim",
+        "p_limit integer",
+    ): "integer",
+    (
+        "slaif_cache_outbox_consume",
+        "p_id bigint, p_error text",
+    ): "bigint, text",
+    (
         "slaif_review_job_heartbeat",
         "p_job_id uuid",
     ): "uuid",
@@ -1193,7 +1201,7 @@ async def apply_product_privileges(
         'GRANT SELECT, INSERT ON "control".review_snapshot TO "slaif_review_worker"'
     )
     await connection.execute(
-        'GRANT INSERT, SELECT ON "control".cache_outbox TO "slaif_review_worker"'
+        'GRANT INSERT, SELECT, UPDATE ON "control".cache_outbox TO "slaif_review_worker"'
     )
     await connection.execute(
         'GRANT USAGE ON SEQUENCE "control".cache_outbox_id_seq TO "slaif_review_worker"'
@@ -1556,7 +1564,9 @@ async def _relation_violations(
                 and name == "cache_outbox"
                 and role == "slaif_review_worker"
             ):
-                expected = (True, True, False, False, False)
+                # The 083/3 outbox consumer: the worker also consumes the
+                # rows it claims (UPDATE; the only new table grant).
+                expected = (True, True, True, False, False)
             if (
                 schema == "audit"
                 and kind in {"r", "p"}
