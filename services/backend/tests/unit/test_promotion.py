@@ -18,8 +18,12 @@ class TestPromotionRetirement:
         assert not hasattr(promotion, "promote_workspace")
         assert "promote_workspace" not in vars(promotion)
 
-    def test_discard_surface_untouched_for_083_2(self) -> None:
-        assert callable(promotion.discard_workspace)
+    def test_discard_surface_retired_in_083_2(self) -> None:
+        # 083/2 retired discard_workspace (the DISCARD job is the only
+        # discard path); the real-path coverage lives in the discard
+        # integration suite.  get_conflicts stays for 084.
+        assert not hasattr(promotion, "discard_workspace")
+        assert "discard_workspace" not in vars(promotion)
         assert callable(promotion.get_conflicts)
         assert isinstance(promotion.PromotionError, type)
 

@@ -1718,7 +1718,10 @@ async def test_promote_workspace_retired(
 
     assert not hasattr(promotion_module, "promote_workspace")
     assert "promote_workspace" not in vars(promotion_module)
-    assert callable(promotion_module.discard_workspace)
+    # 083/2: discard_workspace retired (the DISCARD job is the only
+    # discard path); get_conflicts stays for 084.
+    assert not hasattr(promotion_module, "discard_workspace")
+    assert "discard_workspace" not in vars(promotion_module)
     assert callable(promotion_module.get_conflicts)
 
     # Test inventory pin: the unit suite pins the removal.

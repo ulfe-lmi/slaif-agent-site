@@ -755,6 +755,24 @@ export async function acceptWorkspace(
     mutation("POST", body),
   )) as AcceptWorkspaceResult;
 }
+export type DiscardWorkspaceResult = {
+  job_id: string;
+  status: string;
+};
+export async function discardWorkspace(
+  siteId: string,
+  workspaceId: string,
+  body: {
+    acknowledge_discard: true;
+  },
+): Promise<DiscardWorkspaceResult> {
+  return (await json(
+    `/sites/${encodeURIComponent(siteId)}/workspaces/${encodeURIComponent(
+      workspaceId,
+    )}/discard/`,
+    mutation("POST", body),
+  )) as DiscardWorkspaceResult;
+}
 export async function createAgentCapability(siteId: string, workspaceId: string) {
   return (await json(
     `/sites/${encodeURIComponent(siteId)}/workspaces/${encodeURIComponent(workspaceId)}/capabilities/`,

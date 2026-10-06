@@ -374,8 +374,11 @@ test.describe("accept lifecycle (083/1)", () => {
     await page.goto(reviewUrl);
     const acceptButton = page.getByRole("button", { name: /accept/i });
     await expect(acceptButton).toBeVisible();
+    // 083/2: the discard control is present for REVIEW + COMPLETE (the
+    // drift remedy); there is still no publish shortcut on the review
+    // surface, so exactly one button matches /discard|publish/i.
     expect(await page.getByRole("button", { name: /discard|publish/i }).count()).toBe(
-      0,
+      1,
     );
 
     // Confirmation requires the acknowledgement (default unchecked).

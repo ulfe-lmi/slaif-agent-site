@@ -124,5 +124,11 @@ export default defineConfig({
       testMatch: /accept-lifecycle\.spec\.ts/,
       use: { ...devices["Desktop Chrome"] },
     },
+    {
+      name: "discard-lifecycle",
+      dependencies: ["governance"],
+      testMatch: /discard-lifecycle\.spec\.ts/,
+      use: { ...devices["Desktop Chrome"] },
+    },
   ],
 });

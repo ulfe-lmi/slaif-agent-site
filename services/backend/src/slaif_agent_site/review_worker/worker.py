@@ -96,7 +96,7 @@ async def _worker_loop(
                 job_row = await connection.fetchrow(
                     "SELECT * FROM control.slaif_review_job_claim($1, $2)",
                     claimant,
-                    ["FREEZE", "ACCEPT"],
+                    ["FREEZE", "ACCEPT", "DISCARD"],
                 )
             job = dict(job_row) if job_row is not None else None
         except (asyncpg.PostgresError, TimeoutError, OSError):

@@ -854,6 +854,14 @@ CONTROL_FUNCTIONS = {
         "p_workspace_id uuid, p_site_id uuid, p_snapshot_id uuid, "
         "p_digest text, p_user_id uuid",
     ): "uuid, uuid, uuid, text, uuid",
+    (
+        "slaif_workspace_discard",
+        "p_workspace_id uuid, p_actor_user_account_id uuid",
+    ): "uuid, uuid",
+    (
+        "slaif_human_agent_workspace_discard",
+        "p_workspace_id uuid, p_site_id uuid, p_user_id uuid",
+    ): "uuid, uuid, uuid",
 }
 
 

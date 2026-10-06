@@ -430,7 +430,7 @@ class FakePool:
 
 
 @pytest.mark.asyncio
-async def test_run_job_dispatches_freeze_only() -> None:
+async def test_run_job_dispatches_by_kind() -> None:
     pool = FakePool()
     settings = _test_settings()
     job_id = uuid.uuid4()
@@ -483,12 +483,34 @@ async def test_run_job_dispatches_freeze_only() -> None:
     assert len(calls) == 2
     assert calls[1]["job_kind"] == "ACCEPT"
 
-    # DISCARD is not implemented in this increment (083/2): unsupported.
-    for kind in ("DISCARD", "OTHER"):
-        result = await run_job(pool, settings, {"id": str(job_id), "job_kind": kind})
-        assert result == JobResult("FAILED", "JOB_KIND_UNSUPPORTED")
-        assert pool.store.terminals
-        assert pool.store.terminals[-1][1:] == ("FAILED", "JOB_KIND_UNSUPPORTED")
+    from slaif_agent_site.review_worker import discard_job as discard_job_module
+
+    async def fake_discard_job(
+        pool_: Any, settings_: ReviewWorkerSettings, job_: dict[str, Any]
+    ) -> JobResult:
+        calls.append(job_)
+        return JobResult("SUCCEEDED")
+
+    with patch.object(discard_job_module, "run_discard_job", fake_discard_job):
+        result = await run_job(
+            pool,
+            settings,
+            {
+                "id": str(job_id),
+                "job_kind": "DISCARD",
+                "workspace_id": str(workspace_id),
+            },
+        )
+    assert result == JobResult("SUCCEEDED")
+    assert len(calls) == 3
+    assert calls[2]["job_kind"] == "DISCARD"
+
+    # 083/2: FREEZE/ACCEPT/DISCARD all dispatch; any other kind stays
+    # terminal FAILED with the stable unsupported code.
+    result = await run_job(pool, settings, {"id": str(job_id), "job_kind": "OTHER"})
+    assert result == JobResult("FAILED", "JOB_KIND_UNSUPPORTED")
+    assert pool.store.terminals
+    assert pool.store.terminals[-1][1:] == ("FAILED", "JOB_KIND_UNSUPPORTED")
 
 
 # ---------------------------------------------------------------------

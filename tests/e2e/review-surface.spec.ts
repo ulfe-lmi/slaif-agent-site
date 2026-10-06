@@ -733,9 +733,10 @@ test("review-surface-review-render-and-summary", async ({ page }) => {
     metadata.getByRole("heading", { name: "Agent, session, and browser metadata" }),
   ).toBeVisible();
 
-  // Actions: rendered-site entry point + back link. 083/1: the accept
-  // control IS present (REVIEW + COMPLETE + no drift); NO discard, NO
-  // publish, NO Puck launch from the review surface.
+  // Actions: rendered-site entry point + back link. 083/2: the accept
+  // control IS present (REVIEW + COMPLETE + no drift) and so is the
+  // discard control (REVIEW + COMPLETE); NO publish, NO Puck launch
+  // from the review surface.
   await expect(page.getByRole("link", { name: "View rendered site" })).toHaveAttribute(
     "href",
     `/review/${workspaceId}/`,
@@ -745,7 +746,10 @@ test("review-surface-review-render-and-summary", async ({ page }) => {
     `/admin/sites/${siteId}/workspaces/${workspaceId}/edit`,
   );
   expect(await page.getByRole("button", { name: /accept/i }).count()).toBe(1);
-  expect(await page.getByRole("button", { name: /discard|publish/i }).count()).toBe(0);
+  expect(await page.getByRole("button", { name: "Discard pending work" }).count()).toBe(
+    1,
+  );
+  expect(await page.getByRole("button", { name: /publish/i }).count()).toBe(0);
   expect(await page.getByRole("link", { name: /edit in puck/i }).count()).toBe(0);
   expect(await page.locator("a[href*='puck']").count()).toBe(0);
 
@@ -862,6 +866,67 @@ test("review-surface-review-render-and-summary", async ({ page }) => {
   const secondHash = sha256Hex(await secondRender.body());
   expect(firstHash).toBe(secondHash);
   expect(firstHash).toMatch(/^[0-9a-f]{64}$/);
+
+  // ------------------------------ 083/2 per-state review action pins
+  // The workspace is REVIEW + COMPLETE here. Each state is psql-forced
+  // (test authority, at the END of the test so no earlier phase is
+  // disturbed) and the admin review surface is reloaded; the COMPLETE
+  // snapshot row persists, so the read model still serves the document
+  // with the forced status.
+  const actionReviewUrl = `/admin/sites/${siteId}/workspaces/${workspaceId}/review`;
+  const setWorkspaceStatus = (status: string): void => {
+    psql(
+      project,
+      `UPDATE control.workspace SET status = '${status}'
+        WHERE id = '${workspaceId}'::uuid`,
+    );
+  };
+  const actionCounts = async (): Promise<{
+    accept: number;
+    discard: number;
+    publish: number;
+  }> => ({
+    accept: await page.getByRole("button", { name: /accept/i }).count(),
+    discard: await page.getByRole("button", { name: "Discard pending work" }).count(),
+    publish: await page.getByRole("button", { name: /publish/i }).count(),
+  });
+  const CONFLICT_TEXT =
+    "Promotion conflict: the canonical content changed while the promotion was in flight. This workspace cannot be re-frozen in place (freeze is available only from ACTIVE). Available remedies: discard this workspace's pending work, or create a fresh workspace and re-apply the changes.";
+
+  // CONFLICTED: the conflict remedy control is present; accept is
+  // terminal (the corrected 083/1 CONFLICTED text, rendered by BOTH the
+  // accept terminal panel and the discard banner).
+  setWorkspaceStatus("CONFLICTED");
+  await page.goto(actionReviewUrl);
+  expect(await actionCounts()).toEqual({ accept: 0, discard: 1, publish: 0 });
+  expect(await page.getByText(CONFLICT_TEXT, { exact: true }).count()).toBe(2);
+
+  // ACTIVE: pre-freeze state — neither control exists.
+  setWorkspaceStatus("ACTIVE");
+  await page.goto(actionReviewUrl);
+  expect(await actionCounts()).toEqual({ accept: 0, discard: 0, publish: 0 });
+
+  // ACCEPTED: accept terminal text, no controls.
+  setWorkspaceStatus("ACCEPTED");
+  await page.goto(actionReviewUrl);
+  expect(await actionCounts()).toEqual({ accept: 0, discard: 0, publish: 0 });
+  await expect(
+    page.getByText(
+      "Accepted — the canonical content now matches the frozen snapshot.",
+      { exact: true },
+    ),
+  ).toBeVisible();
+
+  // DISCARDED: discard terminal text, no controls.
+  setWorkspaceStatus("DISCARDED");
+  await page.goto(actionReviewUrl);
+  expect(await actionCounts()).toEqual({ accept: 0, discard: 0, publish: 0 });
+  await expect(
+    page.getByText(
+      "Discarded — the pending workspace work has been removed. The canonical site content is unchanged.",
+      { exact: true },
+    ),
+  ).toBeVisible();
 
   expect(failures(), "unexpected browser failure category").toEqual([]);
 });

@@ -260,7 +260,7 @@ async def run_freeze_job(
 async def run_job(
     pool: Any, settings: ReviewWorkerSettings, job: dict[str, Any]
 ) -> JobResult:
-    """Dispatch one claimed job by kind (this increment: FREEZE + ACCEPT)."""
+    """Dispatch one claimed job by kind (FREEZE + ACCEPT + DISCARD)."""
 
     kind = str(job.get("job_kind"))
     if kind == "FREEZE":
@@ -269,6 +269,10 @@ async def run_job(
         from .accept_job import run_accept_job, shared_media_boundary
 
         return await run_accept_job(pool, settings, job, shared_media_boundary())
+    if kind == "DISCARD":
+        from .discard_job import run_discard_job
+
+        return await run_discard_job(pool, settings, job)
     job_id = UUID(str(job["id"]))
     code = "JOB_KIND_UNSUPPORTED"
     await _mark_terminal(pool, job_id, "FAILED", code)

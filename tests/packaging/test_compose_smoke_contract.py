@@ -119,7 +119,7 @@ class ComposeSmokeContractTests(unittest.TestCase):
         config = (ROOT / "playwright.config.ts").read_text(encoding="utf-8")
         self.assertEqual(config.count('name: "governance"'), 1)
         self.assertIn('dependencies: ["setup"]', config)
-        self.assertEqual(config.count('dependencies: ["governance"]'), 13)
+        self.assertEqual(config.count('dependencies: ["governance"]'), 14)
         for project in (
             "desktop-chromium",
             "desktop-firefox",
@@ -137,6 +137,7 @@ class ComposeSmokeContractTests(unittest.TestCase):
             "freeze-review-snapshot",
             "review-surface",
             "accept-lifecycle",
+            "discard-lifecycle",
         ):
             self.assertIn(f'name: "{project}"', config)
         governance = (ROOT / "tests/e2e/governance.spec.ts").read_text(encoding="utf-8")

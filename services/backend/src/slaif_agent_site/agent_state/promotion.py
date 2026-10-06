@@ -3,8 +3,11 @@
 Architecture reference: ARCHITECTURE-for-agents.md §8 (workspace lifecycle,
 freeze, review, promotion). The real human accept promotion path lives in
 ``review_worker.accept_job`` (083/1); ``promote_workspace`` was retired in
-that increment (the accept job is the only promotion path).  Discard and
-conflict inspection remain for the discard increment.
+that increment (the accept job is the only promotion path).  The real
+human discard path lives in ``review_worker.discard_job`` (083/2);
+``discard_workspace`` was retired in that increment (the DISCARD job is
+the only discard path).  Conflict inspection (``get_conflicts``) remains
+for the 084 conflict-resolution increment.
 """
 
 from __future__ import annotations
@@ -29,22 +32,6 @@ class PromotionError(Exception):
 
 class _Pool(Protocol):
     def acquire(self, *, timeout: float) -> Any: ...
-
-
-async def discard_workspace(
-    pool: _Pool,
-    session_id: UUID,
-    schema: str = "content",
-    *,
-    acquire_timeout: float = 10.0,
-) -> Any:
-    """Discard a COW session's changes without promoting."""
-    try:
-        async with pool.acquire(timeout=acquire_timeout) as connection:
-            async with asyncpg_cow_reviewer(connection) as reviewer:
-                return await reviewer.discard_session(session_id, schema=schema)
-    except asyncpg.PostgresError as exc:
-        raise PromotionError(f"database error during discard: {exc}") from exc
 
 
 async def get_conflicts(
