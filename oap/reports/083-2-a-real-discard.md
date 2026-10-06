@@ -241,7 +241,7 @@ planned.
 - `tests/e2e/discard-lifecycle.spec.ts` (new, 600/0; 573/0 at D,
   +30/-3 in F for the two pin fixes below): dedicated
   run-unique site (`discardproof-<8hex>`), L2_SITE_EDITOR workspace
-  + capability, content (media + components) AND real page DML
+  - capability, content (media + components) AND real page DML
   (`PATCH /api/agent/v1/pages/{id}` title change — the ADJ-4 case,
   safe here because discard never calls `dependencies()`).
   Positive: freeze -> REVIEW -> discard with typed confirmation ->
@@ -410,9 +410,9 @@ planned.
   flipped to the 083/1 merged facts (one reviewer transaction,
   audit, one outbox event, CONFLICTED terminal, sole reviewer
   authority, E2E-proven) with 083/2 in flight.
-- Adversarial grep (no `in flight at \`083-a\``; no "this PR is
-  open"/"pending strategic merge" phrasing; `in flight at
-  \`083-2-a\`` present exactly where the durable form requires):
+- Adversarial grep (no "in flight at \`083-a\`"; no "this PR is
+  open"/"pending strategic merge" phrasing; "in flight at
+  \`083-2-a\`" present exactly where the durable form requires):
   returned nothing stale in the four surfaces.
 
 ## Files changed
@@ -556,7 +556,7 @@ grant matrix matches the 083/1 pins (incl. outbox seq USAGE and
 the 073_001 source (docstrings/comments stripped) contains no
 `slaif_review_worker` and no `agentcow`.
 
-### Criterion 3 (enqueue: exact payload, non-discardable set,
+### Criterion 3 (enqueue: exact payload, non-discardable set
 idempotency before the gate, revoke pinned)
 
 `test_discard_enqueue_matrix` PASSED: REVIEW and CONFLICTED origins
@@ -632,7 +632,7 @@ workspace returns to its `origin_status` — proven from BOTH
 REVIEW and CONFLICTED origins; after the grant is restored the
 same fixture discards to `DISCARDED`.
 
-### Criterion 9 (R4: discard control per state, DOM; confirmation;
+### Criterion 9 (R4: discard control per state, DOM; confirmation
 CONFLICTED text; terminal rendering; accept unchanged)
 
 - Integration/UI: `discard-action.tsx` renders the control only for
@@ -863,7 +863,7 @@ CI history (honest — every run, every failure, every re-run):
     content+media workspace freezes, accepts end to end, publishes
     once ... detail=Error: Expected: 0 | Received: 1` — the 083/1
     zero-control pin (`/discard|publish/i` button count 0 at REVIEW
-    + COMPLETE) stale because 083/2 renders the discard control in
+    - COMPLETE) stale because 083/2 renders the discard control in
     that state. Every E2E project before it (including the updated
     review-surface pins) PASSED; the `discard-lifecycle` stage runs
     after `accept-lifecycle` and had not yet executed.
@@ -929,7 +929,7 @@ CI history (honest — every run, every failure, every re-run):
   implementation head, no FAILURE/CANCELLED/PENDING.
 - All required green at drafting: yes (F head `dce0cae`: 20/20
   terminal SUCCESS, no FAILURE/CANCELLED/PENDING — CI run 37406852047
-  + CodeQL run 37406852031, both above).
+  - CodeQL run 37406852031, both above).
 - Report-only commit (SELF) may trigger fresh checks at the report
   head; strategy independently waits/verifies SELF per the protocol.
 - Report publication: the report-only commit S is the remote PR head;
