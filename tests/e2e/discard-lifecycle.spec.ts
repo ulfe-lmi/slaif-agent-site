@@ -39,6 +39,21 @@ function sha256Hex(value: Uint8Array | string): string {
   return createHash("sha256").update(value).digest("hex");
 }
 
+/**
+ * The edge (infra/nginx/nginx.conf) sets a per-request CSP nonce from
+ * NGINX's `$request_id` and forwards the policy upstream; the web app
+ * embeds that nonce in the rendered HTML in both the script/link
+ * `nonce="..."` attribute form and the escaped RSC flight-payload form
+ * (`\"nonce\":\"...\"`). A canonical byte-identity comparison across two
+ * requests must therefore normalize the 32-hex-char nonce to a fixed
+ * placeholder first; every other byte is still pinned exactly.
+ */
+function normalizeCspNonce(html: string): string {
+  return html
+    .replace(/nonce="[0-9a-f]{32}"/g, 'nonce="<nonce>"')
+    .replace(/\\"nonce\\":\\"[0-9a-f]{32}\\"/g, '\\"nonce\\":\\"<nonce>\\"');
+}
+
 function uploadForm(
   file: Buffer,
   filename: string,
@@ -368,7 +383,7 @@ test.describe("discard lifecycle (083/2)", () => {
     // Canonical home render before the discard (public, canonical only).
     const publicBeforeResponse = await page.request.get(`/s/${siteKey}`);
     expect(publicBeforeResponse.status()).toBe(200);
-    const publicBefore = await publicBeforeResponse.text();
+    const publicBefore = normalizeCspNonce(await publicBeforeResponse.text());
 
     const freeze = await freezeWorkspace(page, siteId, workspaceId);
     expect(freeze.status).toBe(202);
@@ -497,10 +512,11 @@ test.describe("discard lifecycle (083/2)", () => {
           WHERE site_id = '${siteId}'::uuid AND public_status = 'public'`,
       ),
     ).toBe("0");
-    // The public render is byte-identical to the pre-discard bytes.
+    // The public render is byte-identical to the pre-discard bytes
+    // (modulo the per-request edge CSP nonce; see normalizeCspNonce).
     const publicAfterResponse = await page.request.get(`/s/${siteKey}`);
     expect(publicAfterResponse.status()).toBe(200);
-    expect(await publicAfterResponse.text()).toBe(publicBefore);
+    expect(normalizeCspNonce(await publicAfterResponse.text())).toBe(publicBefore);
 
     // Duplicate discard after the terminal state: the stable 409 class
     // (pinned once).
@@ -510,9 +526,20 @@ test.describe("discard lifecycle (083/2)", () => {
     expect(duplicate.status).toBe(409);
 
     // The terminal state renders the status panel, not the control.
+    // Control presence is a function of the read model (the established
+    // 083/1 accept pattern: the in-session dialog lifetime ends with the
+    // document re-fetch, and per-state control counts are pinned in the
+    // review-surface contract), so re-fetch the review page first.
+    await page.goto(reviewUrl);
     expect(
       await page.getByRole("button", { name: "Discard pending work" }).count(),
     ).toBe(0);
+    await expect(
+      page.getByText(
+        "Discarded — the pending workspace work has been removed. The canonical site content is unchanged.",
+        { exact: true },
+      ),
+    ).toBeVisible();
 
     expect(stopObserving()).toEqual([]);
   });
