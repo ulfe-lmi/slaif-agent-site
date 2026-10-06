@@ -28,6 +28,11 @@ REVIEW_WORKER_DRAIN_LOCK_TIMEOUT_SECONDS = 30.0
 REVIEW_WORKER_EVIDENCE_DEADLINE_SECONDS = 120.0
 REVIEW_WORKER_HEARTBEAT_INTERVAL_SECONDS = 20.0
 REVIEW_WORKER_EVIDENCE_POLL_SECONDS = 2.0
+REVIEW_WORKER_OUTBOX_POLL_INTERVAL_SECONDS = 5.0
+REVIEW_WORKER_OUTBOX_BATCH_SIZE = 8
+# Documentation constant: the durable attempt budget. It must equal
+# the SQL-side named constant in migration 074_001 (pinned by test).
+REVIEW_WORKER_OUTBOX_MAX_ATTEMPTS = 25
 _ERROR = "Invalid SLAIF review-worker configuration."
 
 
@@ -76,6 +81,10 @@ class ReviewWorkerSettings(BaseSettings):
     evidence_poll_seconds: float = Field(
         default=REVIEW_WORKER_EVIDENCE_POLL_SECONDS, ge=0.5, le=30
     )
+    outbox_poll_interval_seconds: float = Field(
+        default=REVIEW_WORKER_OUTBOX_POLL_INTERVAL_SECONDS, ge=0.1, le=60
+    )
+    outbox_batch_size: int = Field(default=REVIEW_WORKER_OUTBOX_BATCH_SIZE, ge=1, le=64)
     application_name: str = REVIEW_WORKER_APPLICATION_NAME
 
     @field_validator("dsn_file")
@@ -216,6 +225,9 @@ __all__ = [
     "REVIEW_WORKER_DSN_FILE",
     "REVIEW_WORKER_EVIDENCE_DEADLINE_SECONDS",
     "REVIEW_WORKER_EVIDENCE_POLL_SECONDS",
+    "REVIEW_WORKER_OUTBOX_BATCH_SIZE",
+    "REVIEW_WORKER_OUTBOX_MAX_ATTEMPTS",
+    "REVIEW_WORKER_OUTBOX_POLL_INTERVAL_SECONDS",
     "REVIEW_WORKER_HEARTBEAT_INTERVAL_SECONDS",
     "REVIEW_WORKER_LOGIN",
     "REVIEW_WORKER_POLL_INTERVAL_SECONDS",

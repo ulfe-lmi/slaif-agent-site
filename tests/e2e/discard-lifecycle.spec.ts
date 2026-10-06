@@ -11,6 +11,14 @@ const TINY_PNG = Buffer.from(
   "base64",
 );
 
+// A second valid 1x1 PNG (different bytes -> different content digest):
+// workspace B's media must be a distinct content-addressed object.
+const TINY_PNG_B = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1Pe" +
+    "AAAADElEQVR42mOo0DgBAAKEAWnXK+NbAAAAAElFTkSuQmCC",
+  "base64",
+);
+
 function composeProject(): string {
   const project = process.env.SLAIF_E2E_COMPOSE_PROJECT;
   if (!project) throw new Error("missing SLAIF_E2E_COMPOSE_PROJECT");
@@ -540,6 +548,308 @@ test.describe("discard lifecycle (083/2)", () => {
         { exact: true },
       ),
     ).toBeVisible();
+
+    expect(stopObserving()).toEqual([]);
+  });
+
+  test("post-accept discard preserves the published canonical (083/3)", async ({
+    page,
+  }) => {
+    test.setTimeout(600_000);
+    const project = composeProject();
+    const stopObserving = observe(page);
+    await login(page, secrets());
+    const { siteId, siteKey } = seedDedicatedSite(project);
+    const beforeRevision = Number(
+      psql(
+        project,
+        "SELECT canonical_revision FROM control.site WHERE id = " + `'${siteId}'::uuid`,
+      ),
+    );
+
+    // ---- Workspace A: unique heading + small unique image, accepted.
+    const workspaceA = await createAgentWorkspace(
+      page,
+      siteId,
+      "083/3 post-accept A",
+      "L2_SITE_EDITOR",
+    );
+    const tokenA = await createCapability(page, siteId, workspaceA);
+    const digestA = sha256Hex(TINY_PNG);
+    const uploadA = await page.request.post("/api/agent/v1/media/assets", {
+      headers: {
+        Authorization: `Bearer ${tokenA}`,
+        "Idempotency-Key": crypto.randomUUID(),
+      },
+      multipart: uploadForm(TINY_PNG, "post-accept-a.png", "image/png", {
+        alt_text: "083/3 post-accept media A",
+      }),
+    });
+    expect(uploadA.status()).toBe(201);
+    const uploadBodyA = (await uploadA.json()) as {
+      record?: { id?: string; content_hash?: string };
+    };
+    const mediaA = uploadBodyA.record?.id ?? "";
+    expect(mediaA).toMatch(/^[0-9a-f-]{36}$/);
+    expect(uploadBodyA.record?.content_hash).toBe(digestA);
+    const pagesA = await page.request.get("/api/agent/v1/pages", {
+      headers: { Authorization: `Bearer ${tokenA}` },
+    });
+    expect(pagesA.status()).toBe(200);
+    const listA = (await pagesA.json()) as Array<{ id: string; slug: string }>;
+    const homeA = listA.find((item) => item.slug === "home");
+    if (!homeA) throw new Error("home page missing");
+    const headingA = `083/3 post-accept A ${crypto.randomUUID().slice(0, 8)}`;
+    const imageStatusA = await agentComponentWrite(page, homeA.id, tokenA, {
+      component_type: "Image",
+      slot_key: "default",
+      props: { mediaId: mediaA, alt: "083/3 post-accept media A" },
+    });
+    expect(imageStatusA).toBe(201);
+    const headingStatusA = await agentComponentWrite(page, homeA.id, tokenA, {
+      component_type: "Heading",
+      slot_key: "default",
+      props: { text: headingA, level: 3 },
+    });
+    expect(headingStatusA).toBe(201);
+
+    const freezeA = await freezeWorkspace(page, siteId, workspaceA);
+    expect(freezeA.status).toBe(202);
+    await waitForReview(page, project, siteId, workspaceA);
+
+    // Accept A through the review surface (the worker publishes).
+    const reviewUrlA = `/admin/sites/${siteId}/workspaces/${workspaceA}/review`;
+    await page.goto(reviewUrlA);
+    const acceptButton = page.getByRole("button", { name: /accept/i });
+    await expect(acceptButton).toBeVisible();
+    await acceptButton.click();
+    const dialogA = page.getByRole("dialog");
+    await expect(dialogA).toBeVisible();
+    const confirmAccept = dialogA.getByRole("button", { name: "Accept", exact: true });
+    await expect(confirmAccept).toBeDisabled();
+    await dialogA.getByRole("checkbox").check();
+    await expect(confirmAccept).toBeEnabled();
+    const acceptResponsePromise = page.waitForResponse(
+      (response) =>
+        response.url().includes(`/workspaces/${workspaceA}/accept/`) &&
+        response.request().method() === "POST",
+    );
+    await confirmAccept.click();
+    const acceptResponse = await acceptResponsePromise;
+    expect(acceptResponse.status()).toBe(202);
+    await expect(
+      page.getByText(
+        "Accepted — the canonical content now matches the frozen snapshot.",
+      ),
+    ).toBeVisible({
+      timeout: 300_000,
+    });
+
+    // Published state verified: the public HTML carries A's heading, A's
+    // media re-hashes, and A's single outbox row is consumed.
+    const publicAfterAcceptResponse = await page.request.get(`/s/${siteKey}`);
+    expect(publicAfterAcceptResponse.status()).toBe(200);
+    const publicAfterAccept = normalizeCspNonce(await publicAfterAcceptResponse.text());
+    expect(publicAfterAccept).toContain(headingA);
+    const mediaAFetch = await page.request.get(
+      `/media/public/sha256/${digestA.slice(0, 2)}/${digestA.slice(2, 4)}/${digestA}`,
+    );
+    expect(mediaAFetch.status()).toBe(200);
+    const bodyA = await mediaAFetch.body();
+    expect(sha256Hex(bodyA)).toBe(digestA);
+    expect(mediaAFetch.headers()["cache-control"]).toBe(
+      "public, max-age=31536000, immutable",
+    );
+    const outboxDeadlineA = Date.now() + 30_000;
+    let outboxStateA: string;
+    for (;;) {
+      outboxStateA = psql(
+        project,
+        `SELECT count(*)::text || '|' ||
+            max(attempt_count)::text || '|' ||
+            CASE WHEN max(last_error) IS NULL THEN 'null' ELSE max(last_error) END
+             FROM control.cache_outbox
+            WHERE workspace_id = '${workspaceA}'::uuid
+              AND consumed_at IS NOT NULL`,
+      );
+      if (outboxStateA.startsWith("1|")) break;
+      if (Date.now() > outboxDeadlineA) {
+        throw new Error(`workspace A outbox not consumed: ${outboxStateA}`);
+      }
+      await page.waitForTimeout(1_000);
+    }
+    const [consumedA, attemptsA, lastErrorA] = outboxStateA.split("|");
+    expect(consumedA).toBe("1");
+    expect(Number(attemptsA)).toBeGreaterThanOrEqual(1);
+    expect(lastErrorA).toBe("null");
+
+    // ---- Workspace B (same site): different heading + different image.
+    const workspaceB = await createAgentWorkspace(
+      page,
+      siteId,
+      "083/3 post-accept B",
+      "L2_SITE_EDITOR",
+    );
+    const tokenB = await createCapability(page, siteId, workspaceB);
+    const digestB = sha256Hex(TINY_PNG_B);
+    expect(digestB).not.toBe(digestA);
+    const uploadB = await page.request.post("/api/agent/v1/media/assets", {
+      headers: {
+        Authorization: `Bearer ${tokenB}`,
+        "Idempotency-Key": crypto.randomUUID(),
+      },
+      multipart: uploadForm(TINY_PNG_B, "post-accept-b.png", "image/png", {
+        alt_text: "083/3 post-accept media B",
+      }),
+    });
+    expect(uploadB.status()).toBe(201);
+    const uploadBodyB = (await uploadB.json()) as {
+      record?: { id?: string; content_hash?: string };
+    };
+    const mediaB = uploadBodyB.record?.id ?? "";
+    expect(mediaB).toMatch(/^[0-9a-f-]{36}$/);
+    expect(uploadBodyB.record?.content_hash).toBe(digestB);
+    const pagesB = await page.request.get("/api/agent/v1/pages", {
+      headers: { Authorization: `Bearer ${tokenB}` },
+    });
+    expect(pagesB.status()).toBe(200);
+    const listB = (await pagesB.json()) as Array<{ id: string; slug: string }>;
+    const homeB = listB.find((item) => item.slug === "home");
+    if (!homeB) throw new Error("home page missing");
+    const headingB = `083/3 post-accept B ${crypto.randomUUID().slice(0, 8)}`;
+    const imageStatusB = await agentComponentWrite(page, homeB.id, tokenB, {
+      component_type: "Image",
+      slot_key: "default",
+      props: { mediaId: mediaB, alt: "083/3 post-accept media B" },
+    });
+    expect(imageStatusB).toBe(201);
+    const headingStatusB = await agentComponentWrite(page, homeB.id, tokenB, {
+      component_type: "Heading",
+      slot_key: "default",
+      props: { text: headingB, level: 3 },
+    });
+    expect(headingStatusB).toBe(201);
+
+    // Freeze B, then discard B with the typed (acknowledgement)
+    // confirmation — the established discard pattern.
+    const freezeB = await freezeWorkspace(page, siteId, workspaceB);
+    expect(freezeB.status).toBe(202);
+    await waitForReview(page, project, siteId, workspaceB);
+    const reviewUrlB = `/admin/sites/${siteId}/workspaces/${workspaceB}/review`;
+    await page.goto(reviewUrlB);
+    const discardButton = page.getByRole("button", { name: "Discard pending work" });
+    await expect(discardButton).toBeVisible();
+    await discardButton.click();
+    const dialogB = page.getByRole("dialog");
+    await expect(dialogB).toBeVisible();
+    const confirmDiscard = dialogB.getByRole("button", {
+      name: "Discard",
+      exact: true,
+    });
+    await expect(confirmDiscard).toBeDisabled();
+    await dialogB.getByRole("checkbox").check();
+    await expect(confirmDiscard).toBeEnabled();
+    const discardResponsePromise = page.waitForResponse(
+      (response) =>
+        response.url().includes(`/workspaces/${workspaceB}/discard/`) &&
+        response.request().method() === "POST",
+    );
+    await confirmDiscard.click();
+    const discardResponse = await discardResponsePromise;
+    expect(discardResponse.status()).toBe(202);
+    const discardJson = (await discardResponse.json()) as {
+      job_id: string;
+      status: string;
+    };
+    expect(discardJson.job_id).toMatch(/^[0-9a-f-]{36}$/);
+    await expect(
+      page.getByText(
+        "Discarded — the pending workspace work has been removed. The canonical site content is unchanged.",
+      ),
+    ).toBeVisible({
+      timeout: 300_000,
+    });
+
+    // Durable effects: B is terminal DISCARDED, its job SUCCEEDED, its
+    // capability revoked, and it emitted NO outbox row (A's single row
+    // is the site's entire outbox).
+    expect(
+      psql(
+        project,
+        `SELECT status || '|' ||
+            CASE WHEN discarded_at IS NOT NULL THEN 't' ELSE 'f' END
+           FROM control.workspace WHERE id = '${workspaceB}'::uuid`,
+      ),
+    ).toBe("DISCARDED|t");
+    expect(
+      psql(
+        project,
+        `SELECT status || '|' ||
+            CASE WHEN error IS NULL THEN 't' ELSE 'f' END
+           FROM control.review_job WHERE id = '${discardJson.job_id}'::uuid`,
+      ),
+    ).toBe("SUCCEEDED|t");
+    expect(
+      psql(
+        project,
+        `SELECT count(*) FROM control.capability
+          WHERE workspace_id = '${workspaceB}'::uuid AND revoked_at IS NOT NULL`,
+      ),
+    ).toBe("1");
+    expect(
+      psql(
+        project,
+        `SELECT (SELECT count(*) FROM control.cache_outbox
+                 WHERE workspace_id = '${workspaceB}'::uuid) || '|' ||
+                (SELECT count(*) FROM control.cache_outbox
+                 WHERE site_id = '${siteId}'::uuid)`,
+      ),
+    ).toBe("0|1");
+    // The canonical revision is exactly the accept's increment, and the
+    // audit carries exactly A's one promotion (none from B).
+    expect(
+      psql(
+        project,
+        "SELECT canonical_revision FROM control.site WHERE id = " + `'${siteId}'::uuid`,
+      ),
+    ).toBe(String(beforeRevision + 1));
+    expect(
+      psql(
+        project,
+        `SELECT (SELECT count(*) FROM audit.promotion
+                 WHERE site_id = '${siteId}'::uuid) || '|' ||
+                (SELECT count(*) FROM audit.promotion
+                 WHERE workspace_id = '${workspaceB}'::uuid)`,
+      ),
+    ).toBe("1|0");
+
+    // Public surface: byte-identical to the post-accept bytes, A present,
+    // B absent; A's media still byte-identical + immutable.
+    const publicAfterDiscardResponse = await page.request.get(`/s/${siteKey}`);
+    expect(publicAfterDiscardResponse.status()).toBe(200);
+    const publicAfterDiscard = normalizeCspNonce(
+      await publicAfterDiscardResponse.text(),
+    );
+    expect(publicAfterDiscard).toBe(publicAfterAccept);
+    expect(publicAfterDiscard).toContain(headingA);
+    expect(publicAfterDiscard).not.toContain(headingB);
+    const mediaAFetchAfter = await page.request.get(
+      `/media/public/sha256/${digestA.slice(0, 2)}/${digestA.slice(2, 4)}/${digestA}`,
+    );
+    expect(mediaAFetchAfter.status()).toBe(200);
+    expect(sha256Hex(await mediaAFetchAfter.body())).toBe(digestA);
+    expect(mediaAFetchAfter.headers()["cache-control"]).toBe(
+      "public, max-age=31536000, immutable",
+    );
+    // B's media was never finalized: private, no published_at.
+    expect(
+      psql(
+        project,
+        `SELECT public_status::text || '|' ||
+            CASE WHEN published_at IS NULL THEN 't' ELSE 'f' END
+           FROM content.media_asset_base WHERE id = '${mediaB}'::uuid`,
+      ),
+    ).toBe("private|t");
 
     expect(stopObserving()).toEqual([]);
   });

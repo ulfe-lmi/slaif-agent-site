@@ -511,6 +511,39 @@ test.describe("accept lifecycle (083/1)", () => {
       },
     ]);
 
+    // 083/3: the durable outbox consumer (review worker, no listener)
+    // closes the row. Bounded psql poll (<= 30 s at 1 s) until the
+    // workspace's single outbox row is consumed.
+    const outboxDeadline = Date.now() + 30_000;
+    let outboxState: string;
+    for (;;) {
+      outboxState = psql(
+        project,
+        `SELECT count(*)::text || '|' ||
+            max(attempt_count)::text || '|' ||
+            CASE WHEN max(last_error) IS NULL THEN 'null' ELSE max(last_error) END
+             FROM control.cache_outbox
+            WHERE workspace_id = '${workspaceId}'::uuid
+              AND consumed_at IS NOT NULL`,
+      );
+      if (outboxState.startsWith("1|")) break;
+      if (Date.now() > outboxDeadline) {
+        throw new Error(`outbox row not consumed in budget: ${outboxState}`);
+      }
+      await page.waitForTimeout(1_000);
+    }
+    const [consumedCount, outboxAttempts, outboxLastError] = outboxState.split("|");
+    expect(consumedCount).toBe("1");
+    expect(Number(outboxAttempts)).toBeGreaterThanOrEqual(1);
+    expect(outboxLastError).toBe("null");
+    expect(
+      psql(
+        project,
+        `SELECT count(*)::text FROM control.cache_outbox
+          WHERE workspace_id = '${workspaceId}'::uuid`,
+      ),
+    ).toBe("1");
+
     // Canonical content now equals the frozen snapshot content.
     expect(
       psql(
@@ -527,7 +560,23 @@ test.describe("accept lifecycle (083/1)", () => {
     // the site root.
     const publicSite = await page.request.get(`/s/${siteKey}`);
     expect(publicSite.status()).toBe(200);
-    expect(await publicSite.text()).toContain(heading);
+    const publicHtml = await publicSite.text();
+    expect(publicHtml).toContain(heading);
+    // 083/3: the public HTML is never edge-cached (byte-exact). The
+    // web app serves the canonical page through a force-dynamic
+    // App-Router page, so the edge carries Next.js's own no-cache
+    // default — strictly stronger than the internal render route's
+    // `private, no-store` — and the edge has no proxy_cache by
+    // design; this exact value pins the preserved behavior.
+    expect(publicSite.headers()["cache-control"]).toBe(
+      "private, no-cache, no-store, max-age=0, must-revalidate",
+    );
+    // 083/3: the canonical render emits the content-addressed public
+    // <img> for the accepted media (the pre-accept negative — no public
+    // <img> before acceptance — remains pinned by the 079/1/082 specs).
+    const publicSrc = `/media/public/sha256/${tinyDigest.slice(0, 2)}/${tinyDigest.slice(2, 4)}/${tinyDigest}`;
+    expect(publicHtml).toContain('class="sl-image"');
+    expect(publicHtml).toContain(`src="${publicSrc}"`);
 
     // Public media bytes re-hash to the frozen digest; published_at set.
     const publicFetch = await page.request.get(
@@ -537,6 +586,10 @@ test.describe("accept lifecycle (083/1)", () => {
       )}/${tinyDigest}`,
     );
     expect(publicFetch.status()).toBe(200);
+    // 083/3: the public media bytes cache long and immutable (byte-exact).
+    expect(publicFetch.headers()["cache-control"]).toBe(
+      "public, max-age=31536000, immutable",
+    );
     const body = await publicFetch.body();
     expect(sha256Hex(body)).toBe(tinyDigest);
     expect(
