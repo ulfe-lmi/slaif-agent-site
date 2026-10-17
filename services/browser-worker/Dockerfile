@@ -12,13 +12,13 @@ COPY services/browser-worker ./services/browser-worker
 RUN test "$TARGETARCH" = amd64 \
     && curl --fail --location --retry 3 \
       --output /tmp/chrome-for-testing.zip \
-      https://storage.googleapis.com/chrome-for-testing-public/154.0.8037.92/linux64/chrome-linux64.zip \
-    && echo 'ff43322f335e436b2f4dcdfeeec5db032299e335a7e8c1c618b326e100ce8732  /tmp/chrome-for-testing.zip' \
+      https://storage.googleapis.com/chrome-for-testing-public/155.0.8059.84/linux64/chrome-linux64.zip \
+    && echo 'cf0f049892dea22e6a6db26d47ed0d7776b7158edcbec4634086633df8bafcbc  /tmp/chrome-for-testing.zip' \
       | sha256sum --check --strict \
     && node services/browser-worker/extract-zip.mjs \
       /tmp/chrome-for-testing.zip /chrome-for-testing \
     && test "$(/chrome-for-testing/chrome-linux64/chrome --version)" \
-      = 'Google Chrome for Testing 154.0.8037.92 ' \
+      = 'Google Chrome for Testing 155.0.8059.84 ' \
     && rm /tmp/chrome-for-testing.zip \
     && pnpm install --frozen-lockfile --filter @slaif-agent-site/browser-worker... \
     && pnpm --filter @slaif-agent-site/browser-tool-contracts build \
@@ -30,7 +30,7 @@ RUN test "$TARGETARCH" = amd64 \
 
 # Node.js 24.18.1 and compatible Chromium libraries come from the exact
 # Playwright image. The builder replaces its vulnerable browser payload with
-# SHA-256-verified Chrome for Testing 154.0.8037.92 (CfT revision 1689415).
+# SHA-256-verified Chrome for Testing 155.0.8059.84 (CfT revision 1697595).
 # No install or download runs after build.
 FROM mcr.microsoft.com/playwright:v1.62.1-noble@sha256:dcc5531e97840b9b5e794f2814476b21571c5124a3fca2267d73041f56e7580e AS runtime
 ARG SOURCE_DATE_EPOCH=1704067200
@@ -46,8 +46,8 @@ LABEL org.opencontainers.image.title="SLAIF Agent-Site browser worker" \
       org.opencontainers.image.created="${SLAIF_IMAGE_CREATED}"
 ENV BROWSER_WORKER_HOST=0.0.0.0 \
     BROWSER_WORKER_PORT=3100 \
-    BROWSER_WORKER_CHROMIUM_EXECUTABLE=/ms-playwright/chromium-1689415/chrome-linux64/chrome \
-    BROWSER_WORKER_EXPECTED_CHROMIUM_VERSION=154.0.8037.92 \
+    BROWSER_WORKER_CHROMIUM_EXECUTABLE=/ms-playwright/chromium-1697595/chrome-linux64/chrome \
+    BROWSER_WORKER_EXPECTED_CHROMIUM_VERSION=155.0.8059.84 \
     HOME=/tmp \
     NODE_ENV=production \
     PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
@@ -58,7 +58,7 @@ RUN rm -rf /ms-playwright/* /usr/lib/node_modules/npm \
     && groupadd --gid 10001 slaif \
     && useradd --uid 10001 --gid 10001 --no-create-home --home-dir /nonexistent \
       --shell /usr/sbin/nologin slaif
-COPY --from=builder --chown=10001:10001 /chrome-for-testing/chrome-linux64 /ms-playwright/chromium-1689415/chrome-linux64
+COPY --from=builder --chown=10001:10001 /chrome-for-testing/chrome-linux64 /ms-playwright/chromium-1697595/chrome-linux64
 COPY --from=builder --chown=10001:10001 /output ./
 USER 10001:10001
 EXPOSE 3100
