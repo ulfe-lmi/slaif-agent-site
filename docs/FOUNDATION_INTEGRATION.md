@@ -95,6 +95,37 @@ the site, workspace/session UUID, and operation UUID. External agents must
 never provide database credentials, reach `CowSession.native`, submit raw SQL,
 or choose context that server code passes through unchecked.
 
+### Review revision and first-touch baseline
+
+A workspace records two different revision facts, and the review lifecycle
+keeps them distinct:
+
+- **Creation-time revision** — when a workspace is created, the current
+  canonical site revision is recorded as the workspace's
+  `base_site_revision`. It is provenance only; later site activity never
+  overwrites it.
+- **Review-time revision** — when the workspace is frozen, the trusted
+  materializer locks the canonical site row in the same transaction that
+  materializes the immutable snapshot (the workspace-then-site lock order
+  the acceptance path shares, so a concurrent same-site publication
+  serializes with the freeze) and the snapshot's `base_site_revision` is the
+  revision captured in that locked read. A workspace created at revision A
+  and frozen after an unrelated publication at revision B is reviewed
+  against B, with coherent B-plus-overlay content and a byte-valid digest.
+
+The first-touch COW baseline is the workspace's own conflict-detection
+foundation, and freezing does not rebase or refresh it: touched rows keep
+being compared against the original baseline, and a concurrent change to a
+touched row still reports `BASE_ROW_CHANGED` at promotion. If another
+workspace publishes after a freeze, the old snapshot remains unchanged and
+viewable, and its acceptance is refused by the preflight gate with the
+stable `SITE_REVISION_CHANGED` — the trusted stored revision is checked
+against the locked current revision before digest re-validation, so the
+stale-review reason is never obscured by re-materialized content. Increment
+083/4 (migration `075_001`) delivers the freeze-time lock and preflight
+ordering; the remaining complete-snapshot/render/operation/conflict closure
+is tracked in `oap/MVP-CONTRACT-AUDIT.md`.
+
 ## Qualification gate
 
 The reproducible local gate is:
