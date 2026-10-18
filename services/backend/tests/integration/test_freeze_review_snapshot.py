@@ -1392,7 +1392,10 @@ async def _wait_for_blocked_waiter(
     def _matches(blockers: list[int]) -> bool:
         if expected_blockers is not None:
             return set(blockers) == expected_blockers
-        return bool(blockers_match(blockers))
+        # The XOR assert above guarantees exactly one of the two is set;
+        # mypy cannot retain that narrowing inside the closure.
+        assert blockers_match is not None
+        return blockers_match(blockers)
 
     while True:
         last = []
