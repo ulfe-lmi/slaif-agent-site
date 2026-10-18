@@ -312,7 +312,7 @@ async def test_074_001_round_trip_proves_073_001_state(
     async with owner_connection(dsn, expected_database=database.name) as owner:
         assert (
             await owner.fetchval("SELECT version_num FROM control.alembic_version")
-            == "074_001"
+            == "075_001"
         )
         columns, functions, table_grants, function_grants = await _cache_outbox_surface(
             owner
@@ -379,7 +379,7 @@ async def test_074_001_round_trip_proves_073_001_state(
     async with owner_connection(dsn, expected_database=database.name) as owner:
         assert (
             await owner.fetchval("SELECT version_num FROM control.alembic_version")
-            == "074_001"
+            == "075_001"
         )
         restored = await _cache_outbox_surface(owner)
     assert restored == upgraded
@@ -416,7 +416,7 @@ async def test_grant_surface_delta_vs_083_1_baseline(
     async with owner_connection(dsn, expected_database=database.name) as owner:
         assert (
             await owner.fetchval("SELECT version_num FROM control.alembic_version")
-            == "074_001"
+            == "075_001"
         )
         current = await _grant_surface_snapshot(owner)
 

@@ -726,7 +726,7 @@ async def test_discard_migration_round_trip(
     async with owner_connection(dsn, expected_database=database.name) as owner:
         assert (
             await owner.fetchval("SELECT version_num FROM control.alembic_version")
-            == "074_001"
+            == "075_001"
         )
         # Both new/rebuilt functions: SECURITY DEFINER, search_path pinned,
         # owned by slaif_owner.
@@ -749,7 +749,7 @@ async def test_discard_migration_round_trip(
             assert "search_path=pg_catalog" in list(row["proconfig"])
             assert row["owner"] == "slaif_owner"
 
-    # Downgrade to 072_001 (steps through 074_001, then 073_001).
+    # Downgrade to 072_001 (steps through 075_001, then 074_001, then 073_001).
     await run_migration(
         dsn, expected_database=database.name, operation="downgrade", revision="072_001"
     )
@@ -821,7 +821,7 @@ async def test_discard_migration_round_trip(
     async with owner_connection(dsn, expected_database=database.name) as owner:
         assert (
             await owner.fetchval("SELECT version_num FROM control.alembic_version")
-            == "074_001"
+            == "075_001"
         )
         assert (
             await owner.fetchval(

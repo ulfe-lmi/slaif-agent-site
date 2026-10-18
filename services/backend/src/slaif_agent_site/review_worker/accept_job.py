@@ -9,11 +9,15 @@ The accept job is the only promotion path in the product.  Its sequence:
 3. a locked verification transaction: the established exclusive product
    lock (the workspace lifecycle key 280, the same usage the freeze
    worker already uses), the ``PROMOTING`` re-check, the site
-   ``canonical_revision`` drift gate under ``FOR UPDATE``, and the
-   re-materialization + digest/versions re-validation through the exact
-   082/1 snapshot path (the materializer sets a transaction-local COW
-   context GUC, so it runs in this separate transaction, never inside
-   the reviewer transaction);
+   ``canonical_revision`` drift gate under ``FOR UPDATE``, the stored
+   snapshot/site/workspace binding check, and the trusted stored
+   ``base_site_revision`` checked against that locked current revision
+   BEFORE the re-materialization + digest/versions re-validation
+   through the exact 082/1 snapshot path (a post-freeze publication
+   therefore fails as ``SITE_REVISION_CHANGED`` drift, never obscured
+   by a re-materialized digest mismatch; the materializer sets a
+   transaction-local COW context GUC, so it runs in this separate
+   transaction, never inside the reviewer transaction);
 4. media finalization FIRST (before the commit) through the lazily
    built media boundary (``store_unavailable``/
    ``repository_unavailable`` are retryable; an unresolvable media
@@ -222,7 +226,14 @@ async def _verify_snapshot(
     claimant: str,
     lock_timeout_seconds: float,
 ) -> dict[str, Any]:
-    """Locked re-materialization + digest/versions re-validation (step 3).
+    """Locked preflight + re-materialization re-validation (step 3).
+
+    Under the workspace-then-site lock order the freeze worker uses:
+    stored binding check, trusted stored ``base_site_revision`` vs the
+    locked current canonical revision (``SITE_REVISION_CHANGED`` drift
+    before any replay), then the re-materialization + digest/versions
+    re-validation. The final revision gate after re-validation remains
+    as defense in depth.
 
     Returns the verified snapshot facts for the promotion transaction.
     Raises ``AcceptJobError`` (drift/validation/state) or propagates a
@@ -253,15 +264,50 @@ async def _verify_snapshot(
                     site_id,
                 )
                 stored = await connection.fetchrow(
-                    "SELECT digest, versions, normalized_state, "
-                    "media_references FROM control.review_snapshot "
-                    "WHERE id = $1",
+                    "SELECT workspace_id, site_id, digest, versions, "
+                    "normalized_state, media_references "
+                    "FROM control.review_snapshot WHERE id = $1",
                     snapshot_id,
                 )
                 if stored is None:
                     raise AcceptJobError(
                         "SNAPSHOT_VALIDATION_FAILED", kind="validation"
                     )
+                # 083/4 preflight (before replay normalization/digest):
+                # the stored snapshot must be bound to this exact
+                # workspace + site, and its trusted stored revision must
+                # equal the locked current canonical revision. A
+                # post-freeze publication is drift, reported as the
+                # stable SITE_REVISION_CHANGED, never obscured by a
+                # re-materialized digest mismatch.
+                if str(stored["workspace_id"]) != str(workspace_id) or str(
+                    stored["site_id"]
+                ) != str(site_id):
+                    raise AcceptJobError(
+                        "SNAPSHOT_VALIDATION_FAILED", kind="validation"
+                    )
+                preflight_normalized = stored["normalized_state"]
+                if isinstance(preflight_normalized, (bytes, bytearray)):
+                    preflight_normalized = preflight_normalized.decode("utf-8")
+                if isinstance(preflight_normalized, str):
+                    try:
+                        preflight_normalized = json.loads(preflight_normalized)
+                    except ValueError:
+                        raise AcceptJobError(
+                            "SNAPSHOT_VALIDATION_FAILED", kind="validation"
+                        ) from None
+                if not isinstance(preflight_normalized, dict):
+                    raise AcceptJobError(
+                        "SNAPSHOT_VALIDATION_FAILED", kind="validation"
+                    )
+                try:
+                    preflight_revision = int(preflight_normalized["base_site_revision"])
+                except (KeyError, TypeError, ValueError):
+                    raise AcceptJobError(
+                        "SNAPSHOT_VALIDATION_FAILED", kind="validation"
+                    ) from None
+                if int(base_site_revision) != preflight_revision:
+                    raise AcceptJobError("SITE_REVISION_CHANGED", kind="drift")
                 doc = await connection.fetchval(
                     "SELECT control.slaif_review_workspace_state($1)",
                     workspace_id,
