@@ -617,3 +617,347 @@ test("freeze-review-snapshot-fail-closed-negatives", async ({ page }) => {
   ).toBe("1");
   expect(failures(), "unexpected browser failure category").toEqual([]);
 });
+
+// ---------------------------------------------------------------------
+// 083/4 A (public E2E half): freeze-time canonical revision coherence.
+//
+// W1 is created/edited at A (canonical revision 0); a different
+// authorized workspace W2 publishes an unrelated change to B through
+// the real human freeze + accept path; W1 then freezes. The frozen
+// document retains B as its review base with the visible B-plus-W
+// content and a byte-valid digest, W1's creation-time provenance stays
+// A, the reviewed/current revisions agree in the review read model,
+// and the public site (through the NGINX origin) shows B's published
+// content while W1's overlay is still private.
+// ---------------------------------------------------------------------
+
+/**
+ * Seed a dedicated run-unique site (privileged fixture seed only; the
+ * proof itself uses public actors) with one published home page and a
+ * Section + Heading base composition.
+ */
+function seedCoherenceSite(project: string): { siteId: string; siteKey: string } {
+  const siteKey = `freezecoherence-${randomHex(4)}`;
+  const siteId = crypto.randomUUID();
+  const localeId = crypto.randomUUID();
+  const pageId = crypto.randomUUID();
+  const sectionId = crypto.randomUUID();
+  const headingId = crypto.randomUUID();
+  const adminId = psql(
+    project,
+    "SELECT id FROM control.user_account WHERE local_username_normalized = 'compose.admin'",
+  );
+  expect(adminId).toMatch(/^[0-9a-f-]{36}$/);
+  psql(
+    project,
+    `BEGIN;
+     INSERT INTO control.site
+       (id, site_key, display_name, default_locale, component_catalog_version, status)
+     VALUES ('${siteId}'::uuid, '${siteKey}', '083/4 Freeze Coherence', 'en',
+             'catalog-v1', 'ACTIVE');
+     INSERT INTO control.site_membership
+       (site_id, user_account_id, role_key, delegation_ceiling)
+     VALUES ('${siteId}'::uuid, '${adminId}'::uuid, 'SITE_OWNER', 4);
+     INSERT INTO content.site_locale_base
+       (id, site_id, tag, enabled, is_default, position, metadata)
+     VALUES ('${localeId}'::uuid, '${siteId}'::uuid, 'en', true, true, 0, '{}'::jsonb);
+     INSERT INTO content.page_base
+       (id, site_id, slug, title, status, locale, parent_id, route_template)
+     VALUES ('${pageId}'::uuid, '${siteId}'::uuid, 'home', '083/4 Freeze Coherence',
+             'PUBLISHED', 'en', NULL, NULL);
+     INSERT INTO content.page_composition_base
+       (id, site_id, page_id, component_type, schema_version, parent_id,
+        slot_key, order_key, props)
+     VALUES
+       ('${sectionId}'::uuid, '${siteId}'::uuid, '${pageId}'::uuid,
+        'Section', '1', NULL, 'default', 0, '{}'::jsonb),
+       ('${headingId}'::uuid, '${siteId}'::uuid, '${pageId}'::uuid,
+        'Heading', '1', '${sectionId}'::uuid, 'default', 0,
+        '{"level":1,"text":"Freeze coherence"}'::jsonb);
+     COMMIT;`,
+  );
+  return { siteId, siteKey };
+}
+
+function siteRevision(project: string, siteId: string): number {
+  return Number(
+    psql(project, `SELECT canonical_revision FROM control.site WHERE id = '${siteId}'`),
+  );
+}
+
+async function writeHeading(
+  page: Page,
+  pageId: string,
+  token: string,
+  text: string,
+): Promise<void> {
+  const response = await page.request.post(`/api/agent/v1/pages/${pageId}/components`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Idempotency-Key": crypto.randomUUID(),
+    },
+    data: {
+      component_type: "Heading",
+      slot_key: "default",
+      props: { text, level: 2 },
+    },
+  });
+  expect(response.status()).toBe(201);
+}
+
+async function humanWriteHeading(
+  page: Page,
+  siteId: string,
+  workspaceId: string,
+  pageId: string,
+  text: string,
+): Promise<void> {
+  const csrf = await adminCsrf(page);
+  const response = await page.request.post(
+    `/api/editor/v1/sites/${siteId}/pages/${pageId}/composition/components`,
+    {
+      headers: {
+        "X-CSRF-Token": csrf,
+        "X-Editor-Workspace": workspaceId,
+        "Idempotency-Key": crypto.randomUUID(),
+      },
+      data: {
+        component_type: "Heading",
+        slot_key: "default",
+        order_key: 1,
+        props: { text, level: 2 },
+      },
+    },
+  );
+  expect(response.status()).toBe(201);
+}
+
+async function reviewSnapshot(
+  page: Page,
+  siteId: string,
+  workspaceId: string,
+): Promise<{
+  id: string;
+  digest: string;
+  baseSiteRevision: number;
+  driftEqual: boolean;
+  driftCurrent: number;
+}> {
+  const response = await page.request.get(
+    `/api/control/v1/sites/${siteId}/workspaces/${workspaceId}/review/`,
+  );
+  expect(response.status()).toBe(200);
+  const body = (await response.json()) as {
+    snapshot: {
+      id: string;
+      digest: string;
+      base_site_revision: number;
+    };
+    drift: { current_site_revision: number; equal: boolean };
+  };
+  return {
+    id: body.snapshot.id,
+    digest: body.snapshot.digest,
+    baseSiteRevision: body.snapshot.base_site_revision,
+    driftEqual: body.drift.equal,
+    driftCurrent: body.drift.current_site_revision,
+  };
+}
+
+async function acceptWorkspace(
+  page: Page,
+  siteId: string,
+  workspaceId: string,
+): Promise<void> {
+  const review = await reviewSnapshot(page, siteId, workspaceId);
+  const csrf = await adminCsrf(page);
+  const response = await page.request.post(
+    `/api/control/v1/sites/${siteId}/workspaces/${workspaceId}/accept/`,
+    {
+      headers: {
+        "X-CSRF-Token": csrf,
+        "Idempotency-Key": crypto.randomUUID(),
+      },
+      data: {
+        snapshot_id: review.id,
+        digest: review.digest,
+        acknowledge_summary: true,
+      },
+    },
+  );
+  expect(response.status()).toBe(202);
+  // ACCEPTED commits in the same reviewer transaction as the canonical
+  // revision increment, so the status poll is the completion proof.
+  const deadline = Date.now() + 240_000;
+  for (;;) {
+    const status = await workspaceStatus(page, siteId, workspaceId);
+    if (status === "ACCEPTED") return;
+    if (
+      status === "CONFLICTED" ||
+      status === "REVIEW" ||
+      status === "DISCARDED" ||
+      status === "ACTIVE"
+    ) {
+      throw new Error(`accept left workspace at ${status}`);
+    }
+    if (Date.now() > deadline) throw new Error(`timeout at status ${status}`);
+    await page.waitForTimeout(500);
+  }
+}
+
+test("freeze-review-snapshot-two-workspace-revision-coherence", async ({ page }) => {
+  test.setTimeout(600_000);
+  const credential = secrets();
+  const project = composeProject();
+  const failures = observe(page);
+
+  await login(page, credential);
+  await expectAdminUsable(page);
+  const { siteId, siteKey } = seedCoherenceSite(project);
+  expect(siteRevision(project, siteId)).toBe(0);
+
+  // ------------------------------------------- W1: created/edited at A
+  // The W1 edit is the ordered HUMAN editorial proof: an authenticated
+  // admin session writes through the Editor API with the workspace
+  // binding (069 authorization) - no test-only actor, no hidden
+  // canonical mutation.
+  const adminId = psql(
+    project,
+    "SELECT id FROM control.user_account WHERE local_username_normalized = 'compose.admin'",
+  );
+  expect(adminId).toMatch(/^[0-9a-f-]{36}$/i);
+  const ws1 = await createAgentWorkspace(page, siteId, `083/4 W1 ${randomHex(4)}`);
+  const token1 = await createCapability(page, siteId, ws1);
+  const homeId1 = await homePageId(page, token1);
+  await humanWriteHeading(page, siteId, ws1, homeId1, "083/4 W1 marker");
+  // The human write is a real COW change bound to W1's session, visible
+  // to the same authenticated human through the Editor API.
+  const humanRead = await page.request.get(
+    `/api/editor/v1/sites/${siteId}/pages/${homeId1}/composition/`,
+    { headers: { "X-Editor-Workspace": ws1 } },
+  );
+  expect(humanRead.status()).toBe(200);
+  const humanNodes = (await humanRead.json()) as Array<{
+    component_type: string;
+    props: Record<string, unknown>;
+  }>;
+  expect(
+    humanNodes.some(
+      (node) =>
+        node.component_type === "Heading" &&
+        (node.props as { text?: string }).text === "083/4 W1 marker",
+    ),
+  ).toBe(true);
+  // The 069 authorization surface records the human mutation.
+  expect(
+    psql(
+      project,
+      `SELECT bool_and(human_user_id = '${adminId}' AND site_id = '${siteId}')
+         AND count(*) >= 1
+       FROM audit.human_editor_mutation
+       WHERE workspace_id = '${ws1}'`,
+    ),
+  ).toBe("t");
+  expect(
+    Number(
+      psql(
+        project,
+        `SELECT base_site_revision FROM control.workspace
+          WHERE id = '${ws1}'`,
+      ),
+    ),
+  ).toBe(0);
+
+  // --------------------------------- W2 publishes an unrelated change B
+  const ws2 = await createAgentWorkspace(page, siteId, `083/4 W2 ${randomHex(4)}`);
+  const token2 = await createCapability(page, siteId, ws2);
+  const homeId2 = await homePageId(page, token2);
+  await writeHeading(page, homeId2, token2, "083/4 W2 marker");
+  const frozen2 = await freezeWorkspace(page, siteId, ws2);
+  expect(frozen2.status).toBe(202);
+  await waitForReview(page, project, siteId, ws2);
+  await acceptWorkspace(page, siteId, ws2);
+  expect(siteRevision(project, siteId)).toBe(1);
+
+  // ------------------------------- W1 freezes after B: review base is B
+  const frozen1 = await freezeWorkspace(page, siteId, ws1);
+  expect(frozen1.status).toBe(202);
+  await waitForReview(page, project, siteId, ws1);
+
+  const snapshotBase = psql(
+    project,
+    `SELECT payload ->> 'base_site_revision'
+      FROM control.review_snapshot WHERE workspace_id = '${ws1}'`,
+  );
+  expect(snapshotBase).toBe("1");
+  const digestValid = psql(
+    project,
+    `SELECT digest = encode(sha256(convert_to(
+       control.slaif_canonical_jsonb_text(payload), 'UTF8')), 'hex')
+      FROM control.review_snapshot WHERE workspace_id = '${ws1}'`,
+  );
+  expect(digestValid).toBe("t");
+  const w1InPayload = psql(
+    project,
+    `SELECT jsonb_path_exists(payload,
+       '$.pages[*].nodes[*].** ? (@.component_type == "Heading"
+         && @.props.text == "083/4 W1 marker")')
+      FROM control.review_snapshot WHERE workspace_id = '${ws1}'`,
+  );
+  const w2InPayload = psql(
+    project,
+    `SELECT jsonb_path_exists(payload,
+       '$.pages[*].nodes[*].** ? (@.component_type == "Heading"
+         && @.props.text == "083/4 W2 marker")')
+      FROM control.review_snapshot WHERE workspace_id = '${ws1}'`,
+  );
+  expect(w1InPayload).toBe("t");
+  expect(w2InPayload).toBe("t");
+  // W1's creation-time provenance is preserved (still A).
+  expect(
+    Number(
+      psql(
+        project,
+        `SELECT base_site_revision FROM control.workspace
+          WHERE id = '${ws1}'`,
+      ),
+    ),
+  ).toBe(0);
+
+  // Reviewed/current revisions agree before another publication.
+  const review1 = await reviewSnapshot(page, siteId, ws1);
+  expect(review1.baseSiteRevision).toBe(1);
+  expect(review1.driftCurrent).toBe(1);
+  expect(review1.driftEqual).toBe(true);
+
+  // The real authenticated /review/<workspace>/ route renders the
+  // coherent frozen content: base B's published heading plus W1's
+  // human-edited overlay (stored-payload facts above complement this
+  // rendered proof).
+  await page.goto(`/review/${ws1}/`);
+  const reviewBanner = page.locator(".review-banner");
+  await expect(reviewBanner).toHaveAttribute("data-review-digest", review1.digest);
+  await expect(reviewBanner).toHaveAttribute("data-review-equal", "true");
+  await expect(page.locator("main.renderer-surface")).toHaveAttribute(
+    "data-render-mode",
+    "preview",
+  );
+  await expect(
+    page.getByRole("heading", { name: "Freeze coherence", exact: true }),
+  ).toBeVisible();
+  await expect(page.getByText("083/4 W2 marker", { exact: true })).toBeVisible();
+  await expect(page.getByText("083/4 W1 marker", { exact: true })).toBeVisible();
+
+  // Public origin through NGINX: B's published content is public, W1's
+  // overlay is still private.
+  const publicSite = await page.request.get(`/s/${siteKey}`);
+  expect(publicSite.status()).toBe(200);
+  const publicHtml = await publicSite.text();
+  expect(publicHtml).toContain("083/4 W2 marker");
+  expect(publicHtml).not.toContain("083/4 W1 marker");
+  expect(publicSite.headers()["cache-control"]).toBe(
+    "private, no-cache, no-store, max-age=0, must-revalidate",
+  );
+
+  expect(failures(), "unexpected browser failure category").toEqual([]);
+});

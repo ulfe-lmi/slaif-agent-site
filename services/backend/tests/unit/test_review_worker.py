@@ -635,3 +635,207 @@ async def test_worker_loop_heartbeats_a_long_job() -> None:
         await asyncio.wait_for(task, timeout=10)
     assert pool.store.heartbeats
     assert all(args[0] == str(job_id) for args in pool.store.heartbeats)
+
+
+# ---------------------------------------------------------------------
+# 083/4: acceptance preflight revision/lock safeguards (unit).
+# These fail when the trusted stored-revision check is removed or
+# reordered behind the re-materialization.
+# ---------------------------------------------------------------------
+
+
+class _VerifySnapshotPool:
+    """A fake worker pool that drives the locked preflight exactly once.
+
+    ``materialize_must_not_run`` makes the trusted materializer raise if
+    called, so any reordering that re-materializes before the trusted
+    stored-revision check fails the test.  ``calls`` records the
+    statement order (workspace lock, site lock, stored read,
+    materializer) for the ordering assertions.
+    """
+
+    def __init__(
+        self,
+        *,
+        current_revision: int,
+        stored_row: dict[str, Any],
+        materializer_doc: dict[str, Any] | None,
+        materialize_must_not_run: bool,
+    ) -> None:
+        self.current_revision = current_revision
+        self.stored_row = stored_row
+        self.materializer_doc = materializer_doc
+        self.materialize_must_not_run = materialize_must_not_run
+        self.calls: list[str] = []
+        self.materializer_calls = 0
+
+    def acquire(self) -> Any:
+        outer = self
+
+        class _Connection:
+            def transaction(self) -> Any:
+                @asynccontextmanager
+                async def _txn() -> Any:
+                    yield None
+
+                return _txn()
+
+            async def execute(self, sql: str, *args: Any) -> None:
+                if "lock_timeout" in sql or "pg_advisory_xact_lock" in sql:
+                    outer.calls.append("lock")
+                    return
+                raise AssertionError(f"unexpected execute: {sql}")
+
+            async def fetchval(self, sql: str, *args: Any) -> Any:
+                if "canonical_revision FROM control.site" in sql:
+                    outer.calls.append("site-lock")
+                    return outer.current_revision
+                if "FROM control.workspace" in sql and "FOR UPDATE" in sql:
+                    outer.calls.append("workspace-lock")
+                    return "PROMOTING"
+                if "slaif_review_workspace_state" in sql:
+                    outer.calls.append("materializer")
+                    outer.materializer_calls += 1
+                    if outer.materialize_must_not_run:
+                        raise AssertionError(
+                            "materializer ran before the stored-revision check"
+                        )
+                    assert outer.materializer_doc is not None
+                    return json.dumps(outer.materializer_doc)
+                raise AssertionError(f"unexpected fetchval: {sql}")
+
+            async def fetchrow(self, sql: str, *args: Any) -> Any:
+                if "FROM control.review_snapshot" in sql:
+                    outer.calls.append("stored-read")
+                    return outer.stored_row
+                raise AssertionError(f"unexpected fetchrow: {sql}")
+
+        @asynccontextmanager
+        async def _acquired() -> Any:
+            yield _Connection()
+
+        return _acquired()
+
+
+def _stored_row_from_doc(
+    doc: dict[str, Any], *, workspace_id: uuid.UUID, site_id: uuid.UUID
+) -> dict[str, Any]:
+    row_doc = build_snapshot_document(doc, created_by="unit-test")
+    return {
+        "workspace_id": workspace_id,
+        "site_id": site_id,
+        "digest": row_doc["digest"],
+        "versions": row_doc["versions"],
+        "normalized_state": row_doc["normalized_state"],
+        "media_references": [],
+    }
+
+
+def _coherence_doc(
+    *, workspace_id: uuid.UUID, site_id: uuid.UUID, base: int
+) -> dict[str, Any]:
+    doc = _valid_doc()
+    doc["workspace_id"] = str(workspace_id)
+    doc["site_id"] = str(site_id)
+    doc["base_site_revision"] = base
+    for page in doc["pages"]:
+        page["site_id"] = str(site_id)
+        for node in page["nodes"]:
+            node["site_id"] = str(site_id)
+    return doc
+
+
+@pytest.mark.asyncio
+async def test_verify_snapshot_drift_reported_before_rematerialization() -> None:
+    from slaif_agent_site.review_worker import accept_job as accept_job_module
+
+    workspace_id = uuid.uuid4()
+    site_id = uuid.uuid4()
+    current = 5
+    doc = _coherence_doc(workspace_id=workspace_id, site_id=site_id, base=current - 2)
+    stored = _stored_row_from_doc(doc, workspace_id=workspace_id, site_id=site_id)
+    pool = _VerifySnapshotPool(
+        current_revision=current,
+        stored_row=stored,
+        materializer_doc=doc,
+        materialize_must_not_run=True,
+    )
+    with pytest.raises(accept_job_module.AcceptJobError) as excinfo:
+        await accept_job_module._verify_snapshot(
+            pool,
+            workspace_id=workspace_id,
+            site_id=site_id,
+            snapshot_id=uuid.uuid4(),
+            claimant="unit-test",
+            lock_timeout_seconds=1.0,
+        )
+    # The post-freeze publication is drift, not a digest error, and the
+    # re-materialization never ran.
+    assert excinfo.value.code == "SITE_REVISION_CHANGED"
+    assert excinfo.value.kind == "drift"
+    assert pool.materializer_calls == 0
+    assert "materializer" not in pool.calls
+    assert "site-lock" in pool.calls and "stored-read" in pool.calls
+    assert pool.calls.index("site-lock") < pool.calls.index("stored-read")
+
+
+@pytest.mark.asyncio
+async def test_verify_snapshot_matching_revision_rematerializes() -> None:
+    from slaif_agent_site.review_worker import accept_job as accept_job_module
+
+    workspace_id = uuid.uuid4()
+    site_id = uuid.uuid4()
+    current = 5
+    doc = _coherence_doc(workspace_id=workspace_id, site_id=site_id, base=current)
+    stored = _stored_row_from_doc(doc, workspace_id=workspace_id, site_id=site_id)
+    pool = _VerifySnapshotPool(
+        current_revision=current,
+        stored_row=stored,
+        materializer_doc=doc,
+        materialize_must_not_run=False,
+    )
+    facts = await accept_job_module._verify_snapshot(
+        pool,
+        workspace_id=workspace_id,
+        site_id=site_id,
+        snapshot_id=uuid.uuid4(),
+        claimant="unit-test",
+        lock_timeout_seconds=1.0,
+    )
+    assert facts["base_site_revision"] == current
+    assert facts["digest"] == stored["digest"]
+    assert facts["media_ids"] == []
+    assert pool.materializer_calls == 1
+    # The locked current-revision read precedes the re-materialization.
+    assert pool.calls.index("site-lock") < pool.calls.index("materializer")
+
+
+@pytest.mark.asyncio
+async def test_verify_snapshot_binding_mismatch_is_validation() -> None:
+    from slaif_agent_site.review_worker import accept_job as accept_job_module
+
+    workspace_id = uuid.uuid4()
+    other_workspace_id = uuid.uuid4()
+    site_id = uuid.uuid4()
+    current = 5
+    doc = _coherence_doc(workspace_id=workspace_id, site_id=site_id, base=current)
+    # The stored snapshot is bound to a DIFFERENT workspace.
+    stored = _stored_row_from_doc(doc, workspace_id=other_workspace_id, site_id=site_id)
+    pool = _VerifySnapshotPool(
+        current_revision=current,
+        stored_row=stored,
+        materializer_doc=doc,
+        materialize_must_not_run=True,
+    )
+    with pytest.raises(accept_job_module.AcceptJobError) as excinfo:
+        await accept_job_module._verify_snapshot(
+            pool,
+            workspace_id=workspace_id,
+            site_id=site_id,
+            snapshot_id=uuid.uuid4(),
+            claimant="unit-test",
+            lock_timeout_seconds=1.0,
+        )
+    assert excinfo.value.code == "SNAPSHOT_VALIDATION_FAILED"
+    assert excinfo.value.kind == "validation"
+    assert pool.materializer_calls == 0
