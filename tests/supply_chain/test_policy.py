@@ -195,7 +195,7 @@ class SupplyChainPolicyTests(unittest.TestCase):
     ) -> None:
         matrix = load_json(ROOT / "supply-chain/browser-worker-critical-matrix.json")
         qualifications = matrix["qualification_history"]
-        self.assertEqual(len(qualifications), 5)
+        self.assertEqual(len(qualifications), 6)
         qualification = qualifications[0]
         self.assertEqual(qualification["candidate"], "candidate-3 CfT: 152.0.7977.82")
         metadata = qualification["official_metadata"]
@@ -231,64 +231,64 @@ class SupplyChainPolicyTests(unittest.TestCase):
         previous = qualifications[-2]
         self.assertEqual(
             previous["candidate"],
-            "candidate-6 CfT: 153.0.8010.52 measured scan coverage",
+            "candidate-7 CfT: 154.0.8037.92 measured scan coverage",
         )
-        self.assertEqual(previous["official_metadata"]["revision"], "1681091")
-        self.assertEqual(previous["official_metadata"]["version"], "153.0.8010.52")
+        self.assertEqual(previous["official_metadata"]["revision"], "1689415")
+        self.assertEqual(previous["official_metadata"]["version"], "154.0.8037.92")
         self.assertEqual(
             previous["archive_sha256"],
-            "e66f66d4802a46d4a022667e668aa950e277cadbfbed4b3777915b47413a0ef9",
+            "ff43322f335e436b2f4dcdfeeec5db032299e335a7e8c1c618b326e100ce8732",
         )
         self.assertEqual(
             previous["runtime"]["executable"],
-            "/ms-playwright/chromium-1681091/chrome-linux64/chrome",
+            "/ms-playwright/chromium-1689415/chrome-linux64/chrome",
         )
         self.assertEqual(
             previous["runtime"]["image_digest"],
-            "sha256:4177c64fae4cb7d61e114e6e5c797fa239cc0f394e9d6f3f1d4dfeef9a6bf5b2",
+            "sha256:7efa9ad744f0942c2c502c5b5a151de03304c73625f9feac02e170f34d0b10e6",
         )
         self.assertEqual(previous["scan_result"]["exception_count"], 0)
-        self.assertEqual(previous["scan_result"]["browser_worker_matches"], 1486)
+        self.assertEqual(previous["scan_result"]["browser_worker_matches"], 1587)
         self.assertEqual(previous["scan_result"]["result"], "PASS")
         self.assertEqual(previous["scan_result"]["unexcepted_critical"], 0)
 
         current = qualifications[-1]
         self.assertEqual(
             current["candidate"],
-            "candidate-7 CfT: 154.0.8037.92 measured scan coverage",
+            "candidate-8 CfT: 155.0.8059.84 measured scan coverage",
         )
         self.assertEqual(
-            current["official_metadata"]["timestamp"], "2026-10-03T01:32:42.960Z"
+            current["official_metadata"]["timestamp"], "2026-10-17T09:18:35.172Z"
         )
-        self.assertEqual(current["official_metadata"]["revision"], "1689415")
-        self.assertEqual(current["official_metadata"]["version"], "154.0.8037.92")
+        self.assertEqual(current["official_metadata"]["revision"], "1697595")
+        self.assertEqual(current["official_metadata"]["version"], "155.0.8059.84")
         self.assertEqual(
             current["archive_sha256"],
-            "ff43322f335e436b2f4dcdfeeec5db032299e335a7e8c1c618b326e100ce8732",
+            "cf0f049892dea22e6a6db26d47ed0d7776b7158edcbec4634086633df8bafcbc",
         )
         self.assertEqual(
             current["runtime"]["executable"],
-            "/ms-playwright/chromium-1689415/chrome-linux64/chrome",
+            "/ms-playwright/chromium-1697595/chrome-linux64/chrome",
         )
         self.assertEqual(
             current["runtime"]["image_digest"],
-            "sha256:7efa9ad744f0942c2c502c5b5a151de03304c73625f9feac02e170f34d0b10e6",
+            "sha256:3d66c69ff3bc28b86f5781f4bb5a1af6d90c92b7d94766614cddc2834a903007",
         )
         self.assertEqual(
             current["runtime"]["executable_sha256"],
-            "439f367a9a24dde467dca9c4e4c2feedd3266899c5a8e3eb17b68b05d4da9f5f",
+            "b866a2964538c825538c454de4867973b926650da57ec12dc3328807d768247b",
         )
         self.assertEqual(current["scanner"]["database_schema"], "v6.1.10")
-        self.assertEqual(current["scanner"]["database_built"], "2026-10-03T06:31:58Z")
+        self.assertEqual(current["scanner"]["database_built"], "2026-10-17T06:27:09Z")
         self.assertEqual(
             current["scanner"]["database_checksum"],
-            "sha256:397565327faac36f757903f87e31ac403a251bed21c0f0ec5b87f912c5143ab6",
+            "sha256:4c2b8b0cd02313f74a50c81c457796660c4997565cc2ff211e09cc1880205c10",
         )
         self.assertEqual(
-            current["sbom"]["chrome_purl"], "pkg:generic/chrome@154.0.8037.92"
+            current["sbom"]["chrome_purl"], "pkg:generic/chrome@155.0.8059.84"
         )
         self.assertEqual(current["scan_result"]["result"], "PASS")
-        self.assertEqual(current["scan_result"]["browser_worker_matches"], 1587)
+        self.assertEqual(current["scan_result"]["browser_worker_matches"], 1719)
         self.assertEqual(current["scan_result"]["unexcepted_critical"], 0)
         self.assertEqual(current["scan_result"]["exception_count"], 0)
 

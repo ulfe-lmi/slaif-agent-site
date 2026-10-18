@@ -14,10 +14,10 @@ LABEL org.opencontainers.image.title="SLAIF Agent-Site Apache edge" \
 ENV SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH}
 RUN apt-get update \
     && apt-get install --no-install-recommends --yes \
-      'apache2=2.4.58-1ubuntu8.15' \
-      'apache2-bin=2.4.58-1ubuntu8.15' \
-      'apache2-data=2.4.58-1ubuntu8.15' \
-      'apache2-utils=2.4.58-1ubuntu8.15' \
+      'apache2=2.4.58-1ubuntu8.17' \
+      'apache2-bin=2.4.58-1ubuntu8.17' \
+      'apache2-data=2.4.58-1ubuntu8.17' \
+      'apache2-utils=2.4.58-1ubuntu8.17' \
       'openssl=3.0.13-0ubuntu3.16' \
     && a2dissite 000-default \
     && a2enmod deflate headers proxy proxy_http unique_id \

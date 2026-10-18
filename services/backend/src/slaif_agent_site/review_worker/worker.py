@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 import uuid
 from typing import Any
 
@@ -12,6 +13,7 @@ import asyncpg
 from .accept_job import shutdown_media_boundary
 from .config import ReviewWorkerConfigurationError, ReviewWorkerSettings
 from .freeze_job import JobResult, run_job
+from .outbox_consumer import consume_outbox_round, outbox_round_due
 
 LOGGER = logging.getLogger(__name__)
 
@@ -89,8 +91,9 @@ async def _worker_loop(
         "review worker started",
         extra={"event_fields": {"claimant": claimant}},
     )
+    last_outbox_run: float | None = None
     while not stop.is_set():
-        job: dict[str, Any] | None
+        job: dict[str, Any] | None = None
         try:
             async with pool.acquire() as connection:
                 job_row = await connection.fetchrow(
@@ -104,49 +107,61 @@ async def _worker_loop(
                 "review job claim unavailable",
                 extra={"event_fields": {"claimant": claimant}},
             )
-            await _wait_for_stop(stop, settings.poll_interval_seconds)
-            continue
         if job is None:
             await _wait_for_stop(stop, settings.poll_interval_seconds)
-            continue
-        LOGGER.info(
-            "review job claimed",
-            extra={
-                "event_fields": {
-                    "job_id": str(job["id"]),
-                    "workspace_id": str(job["workspace_id"]),
-                    "job_kind": str(job["job_kind"]),
-                    "attempt": int(job["attempt_count"]),
-                }
-            },
-        )
-        heartbeat = asyncio.create_task(_heartbeat_loop(pool, job, settings, stop))
-        try:
-            result: JobResult
+        else:
+            LOGGER.info(
+                "review job claimed",
+                extra={
+                    "event_fields": {
+                        "job_id": str(job["id"]),
+                        "workspace_id": str(job["workspace_id"]),
+                        "job_kind": str(job["job_kind"]),
+                        "attempt": int(job["attempt_count"]),
+                    }
+                },
+            )
+            heartbeat = asyncio.create_task(_heartbeat_loop(pool, job, settings, stop))
             try:
-                result = await run_job(pool, settings, job)
-            except Exception:
-                LOGGER.exception(
-                    "review job crashed without a terminal record",
-                    extra={"event_fields": {"job_id": str(job["id"])}},
+                result: JobResult
+                try:
+                    result = await run_job(pool, settings, job)
+                except Exception:
+                    LOGGER.exception(
+                        "review job crashed without a terminal record",
+                        extra={"event_fields": {"job_id": str(job["id"])}},
+                    )
+                    result = JobResult("ROLLED_BACK")
+            finally:
+                heartbeat.cancel()
+                try:
+                    await heartbeat
+                except asyncio.CancelledError:
+                    pass
+            LOGGER.info(
+                "review job finished",
+                extra={
+                    "event_fields": {
+                        "job_id": str(job["id"]),
+                        "status": result.status,
+                        "error": result.error,
+                    }
+                },
+            )
+        # Durable cache-outbox round (083/3): last-run gated, first
+        # run on worker start, after each job-claim cycle.
+        if outbox_round_due(
+            last_outbox_run,
+            time.monotonic(),
+            settings.outbox_poll_interval_seconds,
+        ):
+            processed = await consume_outbox_round(pool, settings)
+            if processed:
+                LOGGER.info(
+                    "outbox rows processed",
+                    extra={"event_fields": {"processed": processed}},
                 )
-                result = JobResult("ROLLED_BACK")
-        finally:
-            heartbeat.cancel()
-            try:
-                await heartbeat
-            except asyncio.CancelledError:
-                pass
-        LOGGER.info(
-            "review job finished",
-            extra={
-                "event_fields": {
-                    "job_id": str(job["id"]),
-                    "status": result.status,
-                    "error": result.error,
-                }
-            },
-        )
+            last_outbox_run = time.monotonic()
 
 
 async def run_review_worker(

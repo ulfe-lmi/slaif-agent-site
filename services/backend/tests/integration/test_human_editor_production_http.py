@@ -1402,9 +1402,10 @@ async def test_editor_agent_structural_races_share_workspace_site_lock(
                         },
                     ),
                 )
-                assert sorted(
-                    (agent_restore.status_code, agent_restore_redirect.status_code)
-                ) in ([200, 409], [409, 201]), (
+                assert (
+                    agent_restore.status_code,
+                    agent_restore_redirect.status_code,
+                ) in ((200, 409), (409, 201)), (
                     agent_restore.text,
                     agent_restore_redirect.text,
                 )
@@ -1578,12 +1579,10 @@ async def test_editor_agent_structural_races_share_workspace_site_lock(
                         },
                     ),
                 )
-                assert sorted(
-                    (
-                        agent_redirect_delete.status_code,
-                        editor_dependent_create.status_code,
-                    )
-                ) in ([200, 409], [200, 422], [409, 201]), (
+                assert (
+                    agent_redirect_delete.status_code,
+                    editor_dependent_create.status_code,
+                ) in ((200, 409), (200, 422), (409, 201)), (
                     agent_redirect_delete.text,
                     editor_dependent_create.text,
                 )

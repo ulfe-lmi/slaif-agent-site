@@ -726,7 +726,7 @@ async def test_discard_migration_round_trip(
     async with owner_connection(dsn, expected_database=database.name) as owner:
         assert (
             await owner.fetchval("SELECT version_num FROM control.alembic_version")
-            == "073_001"
+            == "074_001"
         )
         # Both new/rebuilt functions: SECURITY DEFINER, search_path pinned,
         # owned by slaif_owner.
@@ -749,7 +749,7 @@ async def test_discard_migration_round_trip(
             assert "search_path=pg_catalog" in list(row["proconfig"])
             assert row["owner"] == "slaif_owner"
 
-    # Single-step downgrade to 072_001.
+    # Downgrade to 072_001 (steps through 074_001, then 073_001).
     await run_migration(
         dsn, expected_database=database.name, operation="downgrade", revision="072_001"
     )
@@ -821,7 +821,7 @@ async def test_discard_migration_round_trip(
     async with owner_connection(dsn, expected_database=database.name) as owner:
         assert (
             await owner.fetchval("SELECT version_num FROM control.alembic_version")
-            == "073_001"
+            == "074_001"
         )
         assert (
             await owner.fetchval(
@@ -834,10 +834,11 @@ async def test_discard_migration_round_trip(
 
 
 @pytest.mark.asyncio
-async def test_worker_grant_surface_unchanged(
+async def test_worker_grant_surface_exact(
     agent_site_database: AgentSiteDatabase,
 ) -> None:
-    """R1.5/R7.1: the worker grant surface is exactly the 083/1 pins."""
+    """R1.5/R7.1: the worker grant surface (083/1 pins + the 083/3
+    outbox consumer grants)."""
 
     database = agent_site_database
     await upgrade(database.settings)
@@ -880,12 +881,12 @@ async def test_worker_grant_surface_unchanged(
             is True
         )
 
-        # The exact control-table grants (083/1 pin): (SELECT, UPDATE) on
-        # workspace and site, (SELECT) on capability and browser_run,
-        # (SELECT, INSERT, UPDATE) on review_job, (SELECT, INSERT) on
-        # review_snapshot, (SELECT, INSERT) on cache_outbox, the outbox
-        # sequence, and INSERT on audit.promotion (+ SELECT through the
-        # reviewer delegation).
+        # The exact control-table grants (083/1 pins + the 083/3 outbox
+        # UPDATE): (SELECT, UPDATE) on workspace and site, (SELECT) on
+        # capability and browser_run, (SELECT, INSERT, UPDATE) on
+        # review_job, (SELECT, INSERT) on review_snapshot, (SELECT,
+        # INSERT, UPDATE) on cache_outbox, the outbox sequence, and INSERT
+        # on audit.promotion (+ SELECT through the reviewer delegation).
         expectations = {
             ("control", "workspace"): (True, True),
             ("control", "site"): (True, True),
@@ -893,7 +894,7 @@ async def test_worker_grant_surface_unchanged(
             ("control", "browser_run"): (True, False),
             ("control", "review_job"): (True, True),
             ("control", "review_snapshot"): (True, False),
-            ("control", "cache_outbox"): (True, False),
+            ("control", "cache_outbox"): (True, True),
         }
         for (schema, table), (select_expected, update_expected) in expectations.items():
             select = await owner.fetchval(
@@ -958,6 +959,32 @@ async def test_worker_grant_surface_unchanged(
             )
             for role in _LONG_LIVED_ROLES:
                 if role == "slaif_control":
+                    continue
+                assert (
+                    await owner.fetchval(
+                        "SELECT has_function_privilege($1, $2, 'EXECUTE')",
+                        role,
+                        signature,
+                    )
+                    is False
+                )
+
+        # The 083/3 outbox consumer functions: EXECUTE for
+        # slaif_review_worker ONLY.
+        for signature in (
+            "control.slaif_cache_outbox_claim(integer)",
+            "control.slaif_cache_outbox_consume(bigint, text)",
+        ):
+            assert (
+                await owner.fetchval(
+                    "SELECT has_function_privilege('slaif_review_worker', $1,"
+                    " 'EXECUTE')",
+                    signature,
+                )
+                is True
+            )
+            for role in _LONG_LIVED_ROLES:
+                if role == "slaif_review_worker":
                     continue
                 assert (
                     await owner.fetchval(
