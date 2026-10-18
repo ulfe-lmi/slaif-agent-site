@@ -9,6 +9,16 @@ remains FREEZING, no snapshot row exists, no REVIEW state is reachable).
 A job that dies mid-transaction without a terminal row stays CLAIMED and
 is recovered by the claim function's stale-claim recovery under the
 attempt budget.
+
+Lock ordering (083/4): advisory xact lock (key 280, this workspace) ->
+workspace row ``FOR UPDATE`` -> canonical site row ``FOR UPDATE`` (taken
+inside the trusted materializer, only after the browser-run drain, so no
+site lock is held while waiting on unrelated browser evidence). The
+acceptance verification path uses the same workspace-then-site order, so
+same-site freeze/accept pairs serialize on the site row instead of
+deadlocking; foundation COW session locks are always acquired after all
+three. Every row-lock wait is bounded by the transaction
+``lock_timeout``; rollback releases every lock of the transaction.
 """
 
 from __future__ import annotations
