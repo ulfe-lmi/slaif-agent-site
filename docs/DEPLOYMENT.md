@@ -139,7 +139,7 @@ The reviewed OCI inputs are:
 
 | Repository and readable version | Immutable top-level digest | License | Platforms reviewed |
 | --- | --- | --- | --- |
-| `python:3.12.12-alpine3.23` | `sha256:2d91681153dd4b8cdb52d4fd34a17b9edbafa4dd3086143cfd4b6c3a84c1acb0` | PSF | official multi-platform index |
+| `python:3.12.15-alpine3.23` | `sha256:1fd55c2f838c4f76262f9eeed899ff9168ea96ac383c61667d6f204325e1f169` | PSF | official multi-platform index |
 | `ghcr.io/astral-sh/uv:0.12.5` | `sha256:e85be844203885286c60ffad8a858d48afb6c5a5c237ca0e67f12e74b8f174b1` | Apache-2.0 or MIT | amd64, arm64 |
 | `node:24.14.1-alpine3.23` | `sha256:8510330d3eb72c804231a834b1a8ebb55cb3796c3e4431297a24d246b8add4d5` | MIT | official multi-platform index |
 | `mcr.microsoft.com/playwright:v1.62.1-noble` | `sha256:dcc5531e97840b9b5e794f2814476b21571c5124a3fca2267d73041f56e7580e` | Apache-2.0 application package plus inventoried Ubuntu/runtime aggregation | amd64, arm64 |

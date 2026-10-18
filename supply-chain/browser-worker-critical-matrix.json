@@ -291,6 +291,63 @@
       },
       "qualification_date": "2026-10-04",
       "history_note": "The 079-2-h refresh pins CfT 154.0.8037.92 (revision 1689415) and clears all 24 Critical CVE-2026-952xx/CVE-2026-1023xx findings first published on/around 2026-09-30 (fixed in 154.0.8037.57/154.0.8037.92 per the pinned Grype advisory data), with pinned Grype 0.117.0 on the fresh v6.1.10 database built 2026-10-03T06:31:58Z. Local measured pipeline run 2026-10-04; final remote revalidation is the Supply-chain evidence required check on the exact report-only head per order 079-2-h acceptance criterion 6. No exception added and no gate weakened."
+    },
+    {
+      "candidate": "candidate-8 CfT: 155.0.8059.84 measured scan coverage",
+      "official_metadata": {
+        "last_known_good_url": "https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions-with-downloads.json",
+        "exact_version_url": "https://googlechromelabs.github.io/chrome-for-testing/known-good-versions-with-downloads.json",
+        "timestamp": "2026-10-17T09:18:35.172Z",
+        "channel": "Stable",
+        "version": "155.0.8059.84",
+        "revision": "1697595",
+        "platform": "linux64",
+        "archive_url": "https://storage.googleapis.com/chrome-for-testing-public/155.0.8059.84/linux64/chrome-linux64.zip"
+      },
+      "archive_sha256": "cf0f049892dea22e6a6db26d47ed0d7776b7158edcbec4634086633df8bafcbc",
+      "runtime": {
+        "image": "browser-worker",
+        "image_digest": "sha256:3d66c69ff3bc28b86f5781f4bb5a1af6d90c92b7d94766614cddc2834a903007",
+        "base_image": "mcr.microsoft.com/playwright:v1.62.1-noble@sha256:dcc5531e97840b9b5e794f2814476b21571c5124a3fca2267d73041f56e7580e",
+        "executable": "/ms-playwright/chromium-1697595/chrome-linux64/chrome",
+        "executable_version": "Google Chrome for Testing 155.0.8059.84",
+        "executable_sha256": "b866a2964538c825538c454de4867973b926650da57ec12dc3328807d768247b"
+      },
+      "scanner": {
+        "name": "grype",
+        "version": "0.117.0",
+        "database_schema": "v6.1.10",
+        "database_built": "2026-10-17T06:27:09Z",
+        "database_checksum": "sha256:4c2b8b0cd02313f74a50c81c457796660c4997565cc2ff211e09cc1880205c10",
+        "syft_name": "syft",
+        "syft_version": "1.51.0"
+      },
+      "sbom": {
+        "format": "SPDX-2.3",
+        "browser_worker_sbom_sha256": "2aab416c3c912f90256259eecccb4e5860ea0d8c1a1c2a0c42fba0d373e5f87c",
+        "browser_worker_scan_sbom_sha256": "541657dd75deb352f140c6b5f83d59ce849b500d2a9c77347b22f0ace361954a",
+        "chrome_purl": "pkg:generic/chrome@155.0.8059.84",
+        "playwright_purl": "pkg:npm/playwright-core@1.62.1",
+        "identity_source": "supplemental-measured-runtime"
+      },
+      "scan_result": {
+        "result": "PASS",
+        "evidence_runner": "tools/supply_chain/run.sh",
+        "image_count": 6,
+        "critical": 0,
+        "unexcepted_critical": 0,
+        "high_review_findings": 43,
+        "browser_worker_matches": 1719,
+        "browser_worker_high": 4,
+        "browser_worker_medium": 1594,
+        "browser_worker_low": 107,
+        "browser_worker_negligible": 14,
+        "exception_count": 0,
+        "browser_worker_scan_sha256": "484f08285d970781ac55c3b6c95136b276d7902313885529e64f4f2344180d0e",
+        "checksum_validation": "PASS"
+      },
+      "qualification_date": "2026-10-18",
+      "history_note": "The 083-3-d security closure refreshes the backend interpreter pin to python:3.12.15-alpine3.23 (multi-platform index sha256:1fd55c2f838c4f76262f9eeed899ff9168ea96ac383c61667d6f204325e1f169); the rebuilt backend image contains zero CVE-2026-19445 matches against the Python 3.12.15 interpreter (official PSF release). The browser remains CfT 155.0.8059.84 (revision 1697595, archive sha256 cf0f049892dea22e6a6db26d47ed0d7776b7158edcbec4634086633df8bafcbc) and CVE-2026-103628 is absent from all six refreshed scans. CVE-2026-19445 is not globally absent: four Medium-severity distribution matches remain in the browser-worker image (Ubuntu noble python3.12 3.12.3-1ubuntu0.15 packages python3.12, python3.12-minimal, libpython3.12-stdlib, libpython3.12-minimal) and are disclosed here; they do not trigger the Critical-only policy. Local measured six-image pipeline 2026-10-18 (start 00:36:56Z, exit 0): all six images zero unexcepted Critical, High review findings 43, exceptions 0, Grype 0.117.0 and Syft 1.51.0 on the fresh v6.1.10 database built 2026-10-17T06:27:09Z (checksum sha256:4c2b8b0cd02313f74a50c81c457796660c4997565cc2ff211e09cc1880205c10). No exception added and no gate weakened."
     }
   ],
   "entries": [
