@@ -9,6 +9,7 @@ import { renderServiceHeaders } from "./service-auth";
 const RENDER_CONTEXT_URL = "http://render-api:8000/internal/render/v1/site-context";
 const RENDER_PAGE_URL = "http://render-api:8000/internal/render/v1/page";
 const RENDER_PREVIEW_URL = "http://render-api:8000/internal/render/v1/preview";
+const RENDER_REVIEW_URL = "http://render-api:8000/internal/render/v1/review";
 
 export type SiteContext = Readonly<{
   site_id: string;
@@ -271,6 +272,27 @@ export function resolvePreviewPage(
       ...(credentials.browserRoute ? { browser_route: credentials.browserRoute } : {}),
     },
     credentials,
+  );
+}
+
+/**
+ * Faithful frozen review read (COMPLETE review-snapshot/v2 only).
+ * The trusted render service is the single authority (live session
+ * check, v2 supported-format gate, membership binding); the human
+ * session token rides the x-slaif-human-session header only and never
+ * enters the URL or body. Every refusal is a uniform 404, which
+ * surfaces as ``null`` here (no oracle).
+ */
+export function resolveFrozenReviewPage(
+  authority: string,
+  path: string,
+  snapshotId: string,
+  credentials: Readonly<{ humanSessionToken: string }>,
+): Promise<RenderProjection | null> {
+  return resolveProjection(
+    RENDER_REVIEW_URL,
+    { authority, path, snapshot_id: snapshotId },
+    { humanSessionToken: credentials.humanSessionToken },
   );
 }
 

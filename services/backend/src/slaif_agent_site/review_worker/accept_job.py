@@ -33,7 +33,10 @@ The accept job is the only promotion path in the product.  Its sequence:
 
 Terminal failure classes (all with the job terminal FAILED and the
 workspace returned to a human-actionable state): drift -> ``REVIEW`` +
-``SITE_REVISION_CHANGED``; validation -> ``REVIEW`` +
+``SITE_REVISION_CHANGED`` (checked before re-materialization, so drift
+always outranks compatibility); unsupported stored version facts ->
+``REVIEW`` + ``SNAPSHOT_COMPATIBILITY_REFUSED`` (stable compatibility
+refusal, never retryable); validation -> ``REVIEW`` +
 ``SNAPSHOT_VALIDATION_FAILED``; conflict -> ``CONFLICTED`` + the
 structured ``BASE_ROW_*``/``BASE_SCHEMA_CHANGED`` code; crash (no
 terminal) -> the job stays ``CLAIMED`` and the claim function's
@@ -53,6 +56,7 @@ from uuid import UUID
 import asyncpg
 
 from ..agent_state.foundation import CowConflictError, asyncpg_cow_reviewer
+from ..content_model.canonical import parse_snapshot_text
 from ..media_service.config import (
     MediaDatabaseConfigurationError,
     MediaSettings,
@@ -78,6 +82,30 @@ _RETRYABLE_FINALIZATION_REASONS = frozenset(
 _CONFLICT_KINDS = frozenset(
     {"BASE_ROW_CHANGED", "BASE_ROW_DELETED", "BASE_ROW_CREATED", "BASE_SCHEMA_CHANGED"}
 )
+
+# Recognized stable semantic failures of the trusted re-
+# materialization (076).  Given the locked data they are
+# deterministic, so a retry can never heal them: the job goes
+# terminal FAILED (workspace REVIEW) with the mapped stable code
+# BEFORE any replay, media finalization or canonical effect.
+# Anything not recognized here stays a true transient (lock,
+# timeout, connection) and remains retryable ROLLED_BACK.
+_STABLE_MATERIALIZER_FAILURES = {
+    "REVIEW_WORKSPACE_VERSION_UNKNOWN": "SNAPSHOT_COMPATIBILITY_REFUSED",
+    "SNAPSHOT_WORKSPACE_VERSIONS_UNSUPPORTED": "SNAPSHOT_COMPATIBILITY_REFUSED",
+    "SNAPSHOT_WORKSPACE_VERSIONS_MISMATCH": "SNAPSHOT_COMPATIBILITY_REFUSED",
+    "SNAPSHOT_VALIDATION_FAILED": "SNAPSHOT_VALIDATION_FAILED",
+    "REVIEW_SNAPSHOT_OVER_BUDGET": "SNAPSHOT_VALIDATION_FAILED",
+    "REVIEW_MEDIA_REF_UNRESOLVED": "SNAPSHOT_VALIDATION_FAILED",
+    "REVIEW_STRING_COST_INVALID_UTF8": "SNAPSHOT_VALIDATION_FAILED",
+    "SNAPSHOT_MEDIA_REFERENCES_MISMATCH": "SNAPSHOT_VALIDATION_FAILED",
+    "SNAPSHOT_ROW_INVALID": "SNAPSHOT_VALIDATION_FAILED",
+    "SNAPSHOT_DIGEST_MISMATCH": "SNAPSHOT_VALIDATION_FAILED",
+    "SNAPSHOT_STATE_PAYLOAD_DIVERGED": "SNAPSHOT_VALIDATION_FAILED",
+    "SNAPSHOT_SITE_MISMATCH": "SNAPSHOT_VALIDATION_FAILED",
+    "SNAPSHOT_PAYLOAD_INVALID": "SNAPSHOT_VALIDATION_FAILED",
+    "SNAPSHOT_BROWSER_EVIDENCE_UNRESOLVED": "SNAPSHOT_VALIDATION_FAILED",
+}
 
 
 class AcceptJobError(Exception):
@@ -313,29 +341,59 @@ async def _verify_snapshot(
                     workspace_id,
                 )
     except (asyncpg.PostgresError, TimeoutError, OSError) as error:
-        message = str(error)
+        message = getattr(error, "message", None) or str(error)
         if "REVIEW_WORKSPACE_NOT_FOUND" in message:
             raise AcceptJobError("STATE_DRIFT", kind="state") from None
         if "REVIEW_SITE_NOT_ACTIVE" in message:
             raise AcceptJobError("STATE_DRIFT", kind="state") from None
+        # Stable semantic refusal (version compatibility or
+        # validation/budget): the locked data will not change on
+        # retry.  Drift precedence is structural: the locked
+        # base_site_revision gate above runs before the
+        # re-materialization that raises these.
+        stable_code = _STABLE_MATERIALIZER_FAILURES.get(message.strip())
+        if stable_code is None:
+            stable_code = next(
+                (
+                    code
+                    for marker, code in _STABLE_MATERIALIZER_FAILURES.items()
+                    if marker in message
+                ),
+                None,
+            )
+        if stable_code is not None:
+            raise AcceptJobError(stable_code, kind="validation") from None
         raise
     # asyncpg 0.31.0 returns jsonb as str: decode the materialized doc
     # here so the replay normalization below sees the media dict (the
-    # same str behavior the other jsonb reads guard against).
-    if isinstance(doc, (bytes, bytearray)):
-        doc = json.loads(doc.decode("utf-8"))
-    elif isinstance(doc, str):
+    # same str behavior the other jsonb reads guard against).  The
+    # shared exact decoder keeps every raw fractional digit/scale so
+    # the shared builder re-materializes the exact capture (a plain
+    # json.loads would collapse e.g. 1.50 -> 1.5 and break the
+    # digest comparison).
+    if isinstance(doc, (bytes, bytearray, str)):
         try:
-            doc = json.loads(doc)
+            doc_text = (
+                doc.decode("utf-8") if isinstance(doc, (bytes, bytearray)) else doc
+            )
+            doc = parse_snapshot_text(doc_text)
         except ValueError:
             raise AcceptJobError(
                 "SNAPSHOT_VALIDATION_FAILED", kind="validation"
             ) from None
     media_references = stored["media_references"]
-    if isinstance(media_references, (bytes, bytearray)):
-        media_references = json.loads(media_references.decode("utf-8"))
-    elif isinstance(media_references, str):
-        media_references = json.loads(media_references)
+    if isinstance(media_references, (bytes, bytearray, str)):
+        try:
+            media_text = (
+                media_references.decode("utf-8")
+                if isinstance(media_references, (bytes, bytearray))
+                else media_references
+            )
+            media_references = parse_snapshot_text(media_text)
+        except ValueError:
+            raise AcceptJobError(
+                "SNAPSHOT_VALIDATION_FAILED", kind="validation"
+            ) from None
     # Crash-replay idempotency (R3.10): media finalization (step 4,
     # before the commit) marks the snapshot's referenced media public
     # directly on the canonical base. A job re-claimed after a crash
@@ -360,6 +418,39 @@ async def _verify_snapshot(
                 and descriptor.get("public_status") == "public"
             ):
                 descriptor["public_status"] = "private"
+    # The 076 v2 capture additionally retains the full media inventory
+    # (metadata only, no bytes) carrying public_status/published_at/
+    # updated_at.  Finalization mutates exactly those fields on the
+    # referenced rows, so the crash-replay inverse restores the exact
+    # freeze-time values (from the stored capture) for the flipped set
+    # only; every other media row change still fails the digest
+    # comparison below.
+    if (
+        isinstance(doc, dict)
+        and isinstance(doc.get("media_inventory"), list)
+        and isinstance(preflight_normalized, dict)
+    ):
+        frozen_inventory: dict[str, Any] = {}
+        stored_inventory = preflight_normalized.get("media_inventory")
+        if isinstance(stored_inventory, list):
+            for stored_entry in stored_inventory:
+                if isinstance(stored_entry, dict) and isinstance(
+                    stored_entry.get("id"), str
+                ):
+                    frozen_inventory[str(stored_entry["id"])] = stored_entry
+        for inventory_entry in doc["media_inventory"]:
+            if not isinstance(inventory_entry, dict):
+                continue
+            inventory_id = str(inventory_entry.get("id"))
+            if (
+                frozen_status_by_id.get(inventory_id) == "private"
+                and inventory_entry.get("public_status") == "public"
+                and inventory_id in frozen_inventory
+            ):
+                stored_entry = frozen_inventory[inventory_id]
+                inventory_entry["public_status"] = stored_entry.get("public_status")
+                inventory_entry["published_at"] = stored_entry.get("published_at")
+                inventory_entry["updated_at"] = stored_entry.get("updated_at")
     try:
         fresh = snapshot_module.build_snapshot_document(doc, created_by=claimant)
     except snapshot_module.SnapshotBuildError as error:

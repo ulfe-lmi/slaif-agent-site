@@ -209,6 +209,20 @@ MEDIA_CONTROL_FUNCTIONS = {
         "uuid, uuid, uuid, uuid, text, text, text, uuid, integer, jsonb, "
         "text, text, uuid"
     ),
+    (
+        "slaif_review_media_authorize",
+        "p_public_id text, p_secret_digest bytea, p_snapshot_id uuid, p_media_id uuid",
+    ): "text, bytea, uuid, uuid",
+    (
+        "slaif_media_preview_read",
+        "p_public_id text, p_secret_digest bytea, p_site_id uuid, "
+        "p_workspace_id uuid, p_media_id uuid, p_idle_seconds integer, "
+        "p_touch_interval_seconds integer, p_recent_auth_seconds integer",
+    ): "text, bytea, uuid, uuid, uuid, integer, integer, integer",
+    (
+        "slaif_media_bound_preview_read",
+        "p_credential_digest text, p_media_id uuid",
+    ): "text, uuid",
 }
 MEDIA_CONTENT_FUNCTIONS = {
     (
@@ -669,7 +683,50 @@ PREVIEW_RENDER_FUNCTIONS = {
         "p_artifact_bytes bigint, p_duration_seconds integer, "
         "p_nonce_digest text, p_consume boolean",
     ): "uuid, uuid, uuid, uuid, text, text, text[], bigint, integer, text, boolean",
+    (
+        "slaif_review_snapshot_frozen_state",
+        "p_snapshot_id uuid",
+    ): "uuid",
+    (
+        "slaif_review_projection_authorize",
+        "p_public_id text, p_secret_digest bytea, p_snapshot_id uuid",
+    ): "text, bytea, uuid",
+    (
+        "slaif_browser_preview_binding_register",
+        # pg_get_function_identity_arguments prints the canonical type
+        # name (ruleutils/format_type: TIMESTAMPTZOID -> "timestamp
+        # with time zone"); the GRANT signature below may use the alias.
+        "p_run_id uuid, p_credential_digest text, "
+        "p_expires_at timestamp with time zone",
+    ): "uuid, text, timestamptz",
 }
+# 083/5-a: the 076_001 faithful frozen-review read surface.  The six
+# objects above are REQUIRED exactly when the database head is at or
+# after the introducing revision 076_001: a coherent 075-phase
+# downgrade legitimately lacks them, while a current head missing any
+# of them must never validate as ready.  The grant maps carry the same
+# identities, so a single source of truth for signatures.
+FROZEN_REVIEW_READ_HEAD = 76
+FROZEN_REVIEW_READ_FUNCTIONS = (
+    ("control", "slaif_review_snapshot_frozen_state", "uuid"),
+    (
+        "control",
+        "slaif_review_projection_authorize",
+        "text, bytea, uuid",
+    ),
+    (
+        "control",
+        "slaif_browser_preview_binding_register",
+        "uuid, text, timestamptz",
+    ),
+    ("control", "slaif_review_media_authorize", "text, bytea, uuid, uuid"),
+    (
+        "control",
+        "slaif_media_preview_read",
+        "text, bytea, uuid, uuid, uuid, integer, integer, integer",
+    ),
+    ("control", "slaif_media_bound_preview_read", "text, uuid"),
+)
 RENDER_METADATA_FUNCTIONS = {
     ("slaif_site_render_catalog", "p_site_id uuid"): "uuid",
 }
@@ -1222,12 +1279,40 @@ async def apply_product_privileges(
             f'"control".{quote_identifier(name)}({signature}) '
             'TO "slaif_agent_runtime"'
         )
-    for (name, _identity), signature in MEDIA_CONTROL_FUNCTIONS.items():
+
+    async def _grant_control_if_present(name: str, signature: str, role: str) -> None:
+        # 083/5-a phase handling: the 076_001 read-surface entries
+        # exist only from that head forward, so the grant is
+        # existence-guarded (same pattern as the content maps) and a
+        # historical 075-phase database is not an error.  The
+        # verifier, not the grant, enforces the current-head
+        # requirement.
+        exists = await connection.fetchval(
+            "SELECT to_regprocedure($1)",
+            f"control.{quote_identifier(name)}({signature})",
+        )
+        if exists is None:
+            return
         await connection.execute(
             "GRANT EXECUTE ON FUNCTION "
             f'"control".{quote_identifier(name)}({signature}) '
-            'TO "slaif_media"'
+            f"TO {quote_identifier(role)}"
         )
+
+    frozen_read_names = frozenset(
+        name for _schema, name, _signature in FROZEN_REVIEW_READ_FUNCTIONS
+    )
+    for (name, _identity), signature in MEDIA_CONTROL_FUNCTIONS.items():
+        if name in frozen_read_names:
+            await _grant_control_if_present(name, signature, "slaif_media")
+        else:
+            # Older required functions keep the strict grant: a missing
+            # object is an error, never a silently skipped grant.
+            await connection.execute(
+                "GRANT EXECUTE ON FUNCTION "
+                f'"control".{quote_identifier(name)}({signature}) '
+                'TO "slaif_media"'
+            )
     for (name, _identity), signature in AGENT_CONTENT_FUNCTIONS.items():
         exists = await connection.fetchval(
             "SELECT to_regprocedure($1)", f"content.{name}({signature})"
@@ -1276,11 +1361,16 @@ async def apply_product_privileges(
         'GRANT USAGE ON SCHEMA "control" TO "slaif_preview_reader"'
     )
     for (name, _identity), signature in PREVIEW_RENDER_FUNCTIONS.items():
-        await connection.execute(
-            "GRANT EXECUTE ON FUNCTION "
-            f'"control".{quote_identifier(name)}({signature}) '
-            'TO "slaif_preview_reader"'
-        )
+        if name in frozen_read_names:
+            await _grant_control_if_present(name, signature, "slaif_preview_reader")
+        else:
+            # Older required functions keep the strict grant: a missing
+            # object is an error, never a silently skipped grant.
+            await connection.execute(
+                "GRANT EXECUTE ON FUNCTION "
+                f'"control".{quote_identifier(name)}({signature}) '
+                'TO "slaif_preview_reader"'
+            )
     for (name, _identity), signature in RENDER_METADATA_FUNCTIONS.items():
         await connection.execute(
             "GRANT EXECUTE ON FUNCTION "
@@ -1739,6 +1829,12 @@ async def _function_violations(
             not security_definer or "search_path=pg_catalog" not in config
         ):
             violations.append(f"function/{schema}.{name}/unsafe-security-definer")
+        elif (
+            schema == "control"
+            and (name, arguments) in PREVIEW_RENDER_FUNCTIONS
+            and (not security_definer or "search_path=pg_catalog" not in config)
+        ):
+            violations.append(f"function/{schema}.{name}/unsafe-security-definer")
         elif readiness_state is ReadinessState.EMPTY_SAFE:
             violations.append(f"function/{schema}.{name}/unexpected-clean-object")
         if owner != OWNER_ROLE:
@@ -1885,6 +1981,30 @@ async def _function_violations(
         and reviewer_exec == 0
     ):
         violations.append("function/agentcow/slaif_reviewer/missing-controlled-surface")
+    # 083/5-a: the 076_001 read-surface existence requirement.  At or
+    # after the introducing head every required object must exist; a
+    # historical 075-phase head is explicitly exempt, and an absent
+    # head marker fails closed rather than silently becoming ready.
+    try:
+        version = await connection.fetchval(
+            "SELECT version_num::text FROM control.alembic_version"
+        )
+    except asyncpg.PostgresError:
+        version = None
+    head_number: int | None = None
+    if version is not None:
+        try:
+            head_number = int(str(version).split("_", 1)[0])
+        except ValueError:
+            head_number = None
+    if head_number is None or head_number >= FROZEN_REVIEW_READ_HEAD:
+        for schema, name, signature in FROZEN_REVIEW_READ_FUNCTIONS:
+            exists = await connection.fetchval(
+                "SELECT to_regprocedure($1)",
+                f"{schema}.{quote_identifier(name)}({signature})",
+            )
+            if exists is None:
+                violations.append(f"function/{schema}.{name}/missing-required-object")
     return violations
 
 

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { constants } from "node:fs";
 import { open } from "node:fs/promises";
 
@@ -9,12 +10,13 @@ import {
   type BrowserWorkerResult,
   type BrowserWorkerSubmitRequest,
 } from "@slaif-agent-site/browser-tool-contracts";
-import { chromium, type Browser } from "playwright-core";
+import { chromium, type Browser, type Page } from "playwright-core";
 
 import { BrowserArtifactStore } from "./artifact-store.js";
 import { collectEvidence, observeEvidenceEvents } from "./evidence.js";
 import { contextOptionsForTarget } from "./targets.js";
 import {
+  boundMediaUrl,
   CONFINEMENT_SELF_CHECK_URLS,
   installRequestConfinement,
   previewDocumentUrl,
@@ -38,6 +40,244 @@ export class BrowserExecutionError extends Error {
 
 function terminalError(code: string): BrowserRunError {
   return Object.freeze({ code, message: "browser attempt failed" });
+}
+
+// Bounded document-media resource read: only document media the rendered
+// preview actually references (exact bound asset anchors), fetched as
+// same-origin requests through the same confinement handler.  Anchor
+// traversal is bounded (no full NodeList materialization), each body is
+// streamed with a hard byte ceiling that cancels the read before an
+// oversized allocation, and the summary reports exactly how much of the
+// referenced set was inspected so completion is never presented as full
+// byte verification when a bound was hit.  Bytes are digested in the
+// worker process and never stored as artifacts.
+const boundDocumentMediaLimits = Object.freeze({
+  maxAnchorsSeen: 64,
+  maxDocuments: 8,
+  maxBytesPerDocument: 262_144,
+  maxNodesVisited: 20_000,
+  maxChildrenPerLevel: 1024,
+});
+
+const boundDocumentMediaIdPattern =
+  /^\/media\/v1\/browser-preview\/assets\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/content$/u;
+
+interface BoundDocumentMediaRead {
+  readonly mediaId: string;
+  readonly sha256: string;
+  readonly sizeBytes: number;
+  readonly contentType: string;
+}
+
+interface BoundDocumentMediaFailure {
+  readonly mediaId: string;
+  readonly status: string;
+}
+
+interface BoundDocumentMediaResult {
+  readonly anchorsSeen: number;
+  readonly nodesVisited: number;
+  readonly walkLimitReached: boolean;
+  readonly candidates: number;
+  readonly omittedOverLimit: number;
+  readonly reads: readonly BoundDocumentMediaRead[];
+  readonly failures: readonly BoundDocumentMediaFailure[];
+}
+
+async function readBoundDocumentMedia(
+  page: Page,
+  document: URL,
+): Promise<BoundDocumentMediaResult> {
+  // True bounded DOM walk: explicit visited-node budget and per-level
+  // child bound, indexed child access (no NodeList/array materialization
+  // and no selector collection of every anchor).  When a bound is hit
+  // the scan reports walkLimitReached; the referenced set may then be
+  // incomplete and the summary says so.
+  const scan = await page.evaluate(
+    (limits: { anchorLimit: number; nodeLimit: number; childLimit: number }) => {
+      const hrefs: string[] = [];
+      let visited = 0;
+      let limitReached = false;
+      const visit = (element: Element): void => {
+        if (limitReached) return;
+        if (visited >= limits.nodeLimit) {
+          limitReached = true;
+          return;
+        }
+        visited += 1;
+        if (element.tagName === "A") {
+          const href = element.getAttribute("href");
+          if (href !== null) {
+            if (hrefs.length < limits.anchorLimit) {
+              hrefs.push(href);
+            } else {
+              // First omitted anchor: the bounded set is
+              // incomplete; stop the walk and report it.
+              limitReached = true;
+              return;
+            }
+          }
+        }
+        const childCount = Math.min(element.children.length, limits.childLimit);
+        for (let i = 0; i < childCount; i += 1) {
+          visit(element.children.item(i) as Element);
+          if (limitReached) return;
+        }
+        if (element.children.length > childCount) limitReached = true;
+      };
+      visit(window.document.documentElement);
+      return { hrefs, visited, limitReached };
+    },
+    {
+      anchorLimit: boundDocumentMediaLimits.maxAnchorsSeen,
+      nodeLimit: boundDocumentMediaLimits.maxNodesVisited,
+      childLimit: boundDocumentMediaLimits.maxChildrenPerLevel,
+    },
+  );
+  const candidates: string[] = [];
+  for (const href of scan.hrefs) {
+    let value: URL;
+    try {
+      value = new URL(href, document.href);
+    } catch {
+      continue;
+    }
+    if (value.search !== "" || value.hash !== "") continue;
+    const match = boundDocumentMediaIdPattern.exec(value.pathname);
+    // The shared policy helper is the single trusted bound-URL
+    // constructor: the anchor must reproduce exactly what
+    // boundMediaUrl derives for its media id (same origin, exact
+    // path shape), so no rendered input can widen the subresource.
+    if (match === null || match[1] === undefined) continue;
+    const bound = boundMediaUrl(document, match[1]);
+    if (bound === null || bound.href !== value.href) continue;
+    if (!candidates.includes(value.href)) candidates.push(value.href);
+  }
+  const omittedOverLimit = Math.max(
+    0,
+    candidates.length - boundDocumentMediaLimits.maxDocuments,
+  );
+  const targets = candidates
+    .slice(0, boundDocumentMediaLimits.maxDocuments)
+    .map((url) => ({
+      url,
+      maxBytes: boundDocumentMediaLimits.maxBytesPerDocument,
+    }));
+  const empty: BoundDocumentMediaResult = {
+    anchorsSeen: scan.hrefs.length,
+    nodesVisited: scan.visited,
+    walkLimitReached: scan.limitReached,
+    candidates: candidates.length,
+    omittedOverLimit,
+    reads: Object.freeze([]),
+    failures: Object.freeze([]),
+  };
+  if (targets.length === 0) return empty;
+  const results = await page.evaluate(
+    async (targets: readonly { url: string; maxBytes: number }[]) => {
+      const out: {
+        url: string;
+        ok: boolean;
+        status: string;
+        bytes?: Uint8Array;
+        contentType?: string;
+      }[] = [];
+      for (const target of targets) {
+        try {
+          const response = await fetch(target.url, { method: "GET" });
+          if (!response.ok) {
+            out.push({
+              url: target.url,
+              ok: false,
+              status: String(response.status),
+            });
+            continue;
+          }
+          const reader = response.body?.getReader();
+          if (reader === undefined) {
+            out.push({ url: target.url, ok: false, status: "unstreamable" });
+            continue;
+          }
+          let received = 0;
+          let oversize = false;
+          const chunks: Uint8Array[] = [];
+          for (;;) {
+            const chunk = await reader.read();
+            if (chunk.done) break;
+            received += chunk.value.byteLength;
+            if (received > target.maxBytes) {
+              oversize = true;
+              // Cancel before the oversized allocation grows further.
+              try {
+                await reader.cancel();
+              } catch {
+                // bounded cancel: the read is already refused
+              }
+              break;
+            }
+            chunks.push(chunk.value);
+          }
+          if (oversize) {
+            out.push({ url: target.url, ok: false, status: "oversize" });
+            continue;
+          }
+          if (received === 0) {
+            out.push({ url: target.url, ok: false, status: "empty" });
+            continue;
+          }
+          const bytes = new Uint8Array(received);
+          let offset = 0;
+          for (const piece of chunks) {
+            bytes.set(piece, offset);
+            offset += piece.byteLength;
+          }
+          out.push({
+            url: target.url,
+            ok: true,
+            status: "ok",
+            bytes,
+            contentType: response.headers.get("content-type") ?? "",
+          });
+        } catch {
+          out.push({ url: target.url, ok: false, status: "failed" });
+        }
+      }
+      return out;
+    },
+    targets,
+  );
+  const reads: BoundDocumentMediaRead[] = [];
+  const failures: BoundDocumentMediaFailure[] = [];
+  for (const result of results) {
+    let url: URL;
+    try {
+      url = new URL(result.url, document.href);
+    } catch {
+      continue;
+    }
+    const match = boundDocumentMediaIdPattern.exec(url.pathname);
+    const mediaId = match?.[1] ?? "";
+    const bytes = result.bytes;
+    if (!result.ok || mediaId === "" || bytes === undefined) {
+      if (mediaId !== "") failures.push({ mediaId, status: result.status });
+      continue;
+    }
+    reads.push({
+      mediaId,
+      sha256: createHash("sha256").update(Buffer.from(bytes)).digest("hex"),
+      sizeBytes: bytes.byteLength,
+      contentType: result.contentType ?? "",
+    });
+  }
+  return Object.freeze({
+    anchorsSeen: empty.anchorsSeen,
+    nodesVisited: empty.nodesVisited,
+    walkLimitReached: empty.walkLimitReached,
+    candidates: empty.candidates,
+    omittedOverLimit,
+    reads: Object.freeze(reads),
+    failures: Object.freeze(failures),
+  });
 }
 
 async function launchSandboxed(
@@ -212,6 +452,8 @@ export class BrowserAttemptExecutor {
           .locator('main[data-render-mode="preview"]')
           .waitFor({ state: "visible" });
         await page.waitForFunction(() => document.readyState === "complete");
+        failureCode = "BROWSER_DOCUMENT_MEDIA_FAILED";
+        const documentMedia = await readBoundDocumentMedia(page, expectedDocument);
         failureCode = "BROWSER_EVIDENCE_FAILED";
         const content = await collectEvidence(page, request, observation.events);
         const published = [];
@@ -223,6 +465,15 @@ export class BrowserAttemptExecutor {
         summary = Object.freeze({
           artifactCount: artifacts.length,
           blockedRequestCount: observation.events.blockedRequests,
+          documentMedia: {
+            anchorsSeen: documentMedia.anchorsSeen,
+            nodesVisited: documentMedia.nodesVisited,
+            walkLimitReached: documentMedia.walkLimitReached,
+            candidates: documentMedia.candidates,
+            omittedOverLimit: documentMedia.omittedOverLimit,
+            reads: documentMedia.reads,
+            failures: documentMedia.failures,
+          },
           evidenceCount: request.evidence.length,
         });
         state = "COMPLETED";

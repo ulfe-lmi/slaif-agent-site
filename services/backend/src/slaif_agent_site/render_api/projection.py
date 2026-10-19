@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import time
 from collections import defaultdict
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Annotated, Any, Literal, Protocol, cast
 from uuid import UUID
@@ -26,6 +28,7 @@ from slaif_agent_site.content_model.bounded_embed import (
     validate_map_embed_props,
     validate_video_embed_props,
 )
+from slaif_agent_site.content_model.canonical import parse_snapshot_text
 from slaif_agent_site.content_model.component_catalog import (
     COMPONENT_BY_TYPE,
     MAX_COMPONENT_DEPTH,
@@ -52,8 +55,17 @@ from slaif_agent_site.content_model.site_data_validators import (
 from slaif_agent_site.content_model.theme import ThemeRecord, theme_record_from_row
 from slaif_agent_site.content_model.validators import validate_values
 from slaif_agent_site.identity.sessions import digest_secret, parse_session_token
+from slaif_agent_site.render_api import frozen_source as fs
+from slaif_agent_site.render_api.frozen_source import (
+    RenderPageFact,
+    navigation_resolved_items,
+    new_route_memo,
+    page_ancestor_chain,
+    resolve_page_route,
+)
 from slaif_agent_site.sites.models import SiteContext
 from slaif_agent_site.sites.normalization import (
+    normalize_authority,
     normalize_locale,
     normalize_request_path,
     path_is_reserved,
@@ -165,6 +177,17 @@ class RenderPreviewRequest(RenderPageRequest):
     @classmethod
     def browser_route_is_normalized(cls, value: str | None) -> str | None:
         return normalize_preview_route(value) if value is not None else None
+
+
+class RenderReviewRequest(RenderPageRequest):
+    """Faithful frozen review read: one COMPLETE review-snapshot/v2.
+
+    The human session rides the x-slaif-human-session header exactly
+    as preview does; the snapshot id identifies the immutable input.
+    """
+
+    snapshot_id: UUID
+    session_token: SecretStr | None = Field(default=None, exclude=True, repr=False)
 
 
 class ProjectionMedia(BaseModel):
@@ -450,6 +473,29 @@ def _bounded_object(value: Any, *, reason: str) -> dict[str, Any]:
     return parsed
 
 
+def _frozen_local_match_prefix(request: RenderPageRequest) -> str | None:
+    """The frozen review path's request validation (no addressing).
+
+    The internal review route receives the SITE-LOCAL route (``/``,
+    ``/draft``, ...) plus the request authority as plain client
+    strings.  The frozen surface carries no domain mappings and the
+    076 authorize function has already bound the site/workspace, so
+    the authority is never used for identity (R5); both inputs are
+    strictly validated - a malformed authority/path or a reserved
+    top-level segment is a uniform refusal, never guessed and never
+    a live lookup.  The empty prefix tells :func:`_route_parts` to
+    use the path verbatim as the local route.
+    """
+    try:
+        normalize_authority(request.authority)
+        normalized = normalize_request_path(request.path)
+    except Exception:
+        raise ProjectionError("not_found") from None
+    if path_is_reserved(normalized):
+        raise ProjectionError("not_found") from None
+    return None
+
+
 def _route_parts(
     context: SiteContext, path: str, requested_locale: str | None, locales: list[Any]
 ) -> tuple[str, str]:
@@ -649,6 +695,29 @@ def _page(row: Any) -> ProjectionPage:
     )
 
 
+def _page_from_fact(fact: RenderPageFact, effective_route: str) -> ProjectionPage:
+    """Build the page projection from a shared-port winner fact.
+
+    The row tuple carries the exact 056 columns the legacy row path
+    consumed; ``_page``/``_page_route`` remain the single
+    construction/validation point (the service's own route-shape
+    invariant is re-checked, never bypassed).
+    """
+    row = (
+        fact.id,
+        fact.site_id,
+        fact.slug,
+        fact.title,
+        fact.status,
+        fact.locale,
+        fact.parent_id,
+        fact.route_template,
+        effective_route,
+        fact.row_version,
+    )
+    return _page(row)
+
+
 def _label_map(value: Any) -> dict[str, Any]:
     labels = _bounded_object(value, reason="navigation_labels")
     for key, label in labels.items():
@@ -672,7 +741,6 @@ def _flatten(nodes: tuple[ProjectionNode, ...]) -> tuple[ProjectionNode, ...]:
 
 MEDIA_MIME_CLASSES = frozenset({"image/png", "image/jpeg"})
 DOCUMENT_MIME_CLASSES = frozenset({"application/pdf"})
-RENDER_MEDIA_RESOLVE_SQL = "SELECT * FROM content.slaif_render_media_resolve($1,$2)"
 
 
 def _media_descriptor(
@@ -682,15 +750,34 @@ def _media_descriptor(
     media_id: UUID,
     row: Any,
     mime_classes: frozenset[str] = MEDIA_MIME_CLASSES,
+    snapshot_id: UUID | None = None,
+    preview_workspace_id: UUID | None = None,
+    preview_bound: bool = False,
 ) -> ProjectionMedia | None:
     """Pure resolved-row to descriptor classification (079/1 + 079/2 lists +
-    079/3 document class).
+    079/3 document class, 083/5 frozen review URL).
 
     Fail-closed: a missing row, a row outside the component's MIME class
     (image class for Image/Gallery/LogoGrid, document class for
     DocumentList), or a non-public row under the canonical render mode
     yields ``None`` so the trusted renderer shows the bounded placeholder
     instead of an ``<img>`` or a document link.
+
+    The frozen review mode uses the snapshot-authorized byte URL for
+    BOTH stored publication statuses: the 076 gate binds the human
+    session to the snapshot and its stored frozen media map, and the
+    anonymous public digest URL is deliberately NOT an option there
+    because public byte reads depend on current canonical references
+    that are not frozen input.
+
+    The preview mode emits ONLY the byte URL that the trusted preview
+    context can actually authorize: the human preview carries the
+    authorize-verified workspace id (workspace-scoped 054 preview
+    chain) and the confined bound run carries the run-bound token URL
+    (the 076 binding gate derives site/workspace from the stored run
+    facts).  A preview context without a trusted workspace/binding
+    fails closed to the placeholder instead of a site-wide URL, and
+    no cookie, agent capability or token ever enters the URL.
     """
     if row is None:
         return None
@@ -700,8 +787,20 @@ def _media_descriptor(
     public_status = str(row[3])
     if mime_type not in mime_classes:
         return None
-    if render_mode == "preview":
-        url = f"/media/v1/sites/{site_id}/assets/{media_id}/content"
+    if render_mode == "review":
+        if snapshot_id is None:
+            return None
+        url = f"/media/v1/review/{snapshot_id}/assets/{media_id}/content"
+    elif render_mode == "preview":
+        if preview_bound:
+            url = f"/media/v1/browser-preview/assets/{media_id}/content"
+        elif preview_workspace_id is not None:
+            url = (
+                f"/media/v1/sites/{site_id}/workspaces/{preview_workspace_id}"
+                f"/preview/assets/{media_id}/content"
+            )
+        else:
+            return None
     else:
         if public_status != "public":
             return None
@@ -733,7 +832,7 @@ def _attach_media(
 
 
 async def _collection_bindings(
-    connection: Any,
+    surface: fs.RenderReadSurface,
     *,
     nodes: tuple[ProjectionNode, ...],
     site_id: UUID,
@@ -755,12 +854,10 @@ async def _collection_bindings(
             view_id = UUID(str(raw_view_id))
         except (TypeError, ValueError):
             raise ProjectionError("invalid_collection_view") from None
-        view = await connection.fetchrow(
-            "SELECT id, site_id, type_id, key, filter_spec, sort_spec, "
-            "projection_spec, pagination_spec, definition_version "
-            "FROM content.collection_view WHERE id = $1 LIMIT 1",
-            view_id,
-        )
+        try:
+            view = await surface.fetch_collection_view(view_id=view_id)
+        except fs.SurfaceReadError as exc:
+            raise ProjectionError("collection_scope") from exc
         if view is None or view[1] != site_id:
             raise ProjectionError("collection_scope")
         filter_spec = _json_value(view[4])
@@ -772,23 +869,20 @@ async def _collection_bindings(
             for value in (filter_spec, sort_spec, pagination_spec)
         ):
             raise ProjectionError("unsupported_collection_query")
-        type_row = await connection.fetchrow(
-            "SELECT site_id, status, definition_version "
-            "FROM content.content_type WHERE id = $1 LIMIT 1",
-            view[2],
-        )
+        try:
+            type_row = await surface.fetch_content_type(type_id=view[2])
+        except fs.SurfaceReadError as exc:
+            raise ProjectionError("collection_scope") from exc
         if type_row is None or type_row[0] != site_id:
             raise ProjectionError("collection_scope")
         if type_row[1] != "ACTIVE":
             raise ProjectionError("collection_scope")
         if type_row[2] != view[8]:
             raise ProjectionError("stale_collection_definition")
-        field_rows = await connection.fetch(
-            "SELECT key, field_type, localized, validation, cardinality, required "
-            "FROM content.field_definition WHERE type_id = $1 "
-            'ORDER BY key COLLATE "C"',
-            view[2],
-        )
+        try:
+            field_rows = list(await surface.fetch_field_definitions(type_id=view[2]))
+        except fs.SurfaceReadError as exc:
+            raise ProjectionError("unsupported_collection_query") from exc
         field_defs = [
             SimpleNamespace(
                 key=row[0],
@@ -844,24 +938,24 @@ async def _collection_bindings(
             ):
                 requested_limit = min(requested_limit, pagination_limit)
         offset = pagination_spec.get("offset", 0)
-        candidate_count = await connection.fetchval(
-            "SELECT count(*) FROM content.content_item "
-            "WHERE site_id = $1 AND type_id = $2 AND status = ANY($3::text[])",
-            site_id,
-            view[2],
-            statuses,
-        )
+        try:
+            candidate_count = await surface.count_content_items(
+                site_id=site_id,
+                type_id=view[2],
+                statuses=statuses,
+            )
+        except fs.SurfaceReadError as exc:
+            raise ProjectionError("query_cost") from exc
         if not isinstance(candidate_count, int) or candidate_count > MAX_CANDIDATES:
             raise ProjectionError("query_cost")
-        rows = await connection.fetch(
-            "SELECT id, site_id, type_id, slug, status, values, "
-            "type_definition_version "
-            "FROM content.content_item WHERE site_id = $1 AND type_id = $2 "
-            "AND status = ANY($3::text[]) ORDER BY id",
-            site_id,
-            view[2],
-            statuses,
-        )
+        try:
+            rows = list(
+                await surface.fetch_content_items(
+                    site_id=site_id, type_id=view[2], statuses=statuses
+                )
+            )
+        except fs.SurfaceReadError as exc:
+            raise ProjectionError("query_cost") from exc
         if len(rows) > MAX_CANDIDATES:
             raise ProjectionError("query_cost")
         items: list[dict[str, Any]] = []
@@ -925,15 +1019,14 @@ async def _collection_bindings(
             page = items[offset : offset + requested_limit]
         translation_by_item: dict[UUID, dict[str, dict[str, Any]]] = defaultdict(dict)
         if page:
-            translation_rows = await connection.fetch(
-                "SELECT item_id, locale, localized_values "
-                "FROM content.content_item_translation "
-                "WHERE site_id=$1 AND item_id=ANY($2::uuid[]) "
-                "AND locale=ANY($3::text[])",
-                site_id,
-                [item["id"] for item in page],
-                list(dict.fromkeys((selected_locale, default_locale))),
-            )
+            try:
+                translation_rows = await surface.fetch_content_item_translations(
+                    site_id=site_id,
+                    item_ids=[item["id"] for item in page],
+                    locales=list(dict.fromkeys((selected_locale, default_locale))),
+                )
+            except fs.SurfaceReadError as exc:
+                raise ProjectionError("malformed_translation") from exc
             for translation in translation_rows:
                 item_id = translation[0]
                 locale = str(translation[1])
@@ -1042,16 +1135,12 @@ class RenderProjectionService:
             raise ProjectionError("unavailable") from None
 
     async def _locales(
-        self, connection: Any, *, site_id: UUID
+        self, surface: fs.RenderReadSurface, *, site_id: UUID
     ) -> tuple[list[Any], tuple[ProjectionLocale, ...], str]:
-        rows = list(
-            await connection.fetch(
-                'SELECT id,site_id,tag,enabled,is_default,"position",metadata '
-                "FROM content.site_locale WHERE site_id=$1 "
-                'ORDER BY "position",tag COLLATE "C"',
-                site_id,
-            )
-        )
+        try:
+            rows = list(await surface.fetch_locales(site_id=site_id))
+        except fs.SurfaceReadError as exc:
+            raise ProjectionError("locale_state") from exc
         if not rows or len(rows) > MAX_LOCALES:
             raise ProjectionError("locale_state")
         seen: set[str] = set()
@@ -1112,16 +1201,18 @@ class RenderProjectionService:
             return f"/{target_locale}"
         return f"/{target_locale}{rest}"
 
-    async def _locale_switcher(
+    def _locale_switcher(
         self,
-        connection: Any,
         *,
+        facts: dict[UUID, RenderPageFact],
+        memo: fs._RouteMemo,
         site_id: UUID,
         locales: tuple[ProjectionLocale, ...],
         current_locale: str,
         default_locale: str,
         current_route: str,
         statuses: list[str],
+        enabled_tags: frozenset[str],
     ) -> tuple[ProjectionLocale, ...]:
         resolved: list[ProjectionLocale] = []
         for locale in locales:
@@ -1131,79 +1222,93 @@ class RenderProjectionService:
             target = self._locale_target_route(
                 current_route, current_locale, default_locale, locale.tag
             )
-            try:
-                # The resolver validates and matches routes case-insensitively
-                # on lowercased input, mirroring normalize_request_path; the
-                # stored tag case of the resolved page is what switcher_href
-                # reports.
-                row = await self._resolve_page(
-                    connection,
-                    site_id=site_id,
-                    route=target.lower(),
-                    locale=locale.tag,
-                    statuses=statuses,
-                )
-            except ProjectionError:
+            # The resolver validates and matches routes case-insensitively
+            # on lowercased input, mirroring normalize_request_path; the
+            # stored tag case of the resolved page is what switcher_href
+            # reports.  A zero-row result keeps the locale as-is; an
+            # ambiguity keeps the legacy outcome and propagates as
+            # unavailable (the SQL raised inside the fetch).
+            fact = self._resolve_page_fact(
+                facts=facts,
+                memo=memo,
+                site_id=site_id,
+                route=target.lower(),
+                locale=locale.tag,
+                statuses=statuses,
+                default_locale=default_locale,
+                enabled_tags=enabled_tags,
+            )
+            if fact is None:
                 resolved.append(locale)
                 continue
             resolved.append(
-                locale.model_copy(update={"switcher_href": _page(row).effective_route})
+                locale.model_copy(update={"switcher_href": memo.route(fact.id)})
             )
         return tuple(resolved)
 
-    async def _resolve_page(
-        self,
-        connection: Any,
+    @staticmethod
+    def _resolve_page_fact(
         *,
+        facts: dict[UUID, RenderPageFact],
+        memo: fs._RouteMemo,
         site_id: UUID,
         route: str,
         locale: str,
         statuses: list[str],
-    ) -> Any:
-        rows = list(
-            await connection.fetch(
-                "SELECT * FROM content.slaif_render_page_resolve($1,$2,$3,$4)",
-                site_id,
-                route,
-                locale,
-                statuses,
+        default_locale: str,
+        enabled_tags: frozenset[str],
+    ) -> RenderPageFact | None:
+        """Shared 056 winner selection (the port both paths execute).
+
+        ``None`` is the SQL's zero-row result (not_found at the
+        service level); RENDER_ROUTE_AMBIGUOUS / RENDER_ROUTE_INVALID
+        keep the legacy outcome - the SQL raised inside the fetch and
+        the service mapped that PostgresError to unavailable.
+        """
+        try:
+            fact = resolve_page_route(
+                facts,
+                site_id=site_id,
+                route=route,
+                locale=locale,
+                statuses=statuses,
+                default_locale=default_locale,
+                enabled_tags=enabled_tags,
+                route_memo=memo,
             )
-        )
-        if len(rows) != 1:
+        except fs.SurfaceReadError as exc:
+            raise ProjectionError("unavailable") from exc
+        if fact is not None and (
+            fact.site_id != site_id or fact.locale.casefold() != locale.casefold()
+        ):
             raise ProjectionError("not_found")
-        row = rows[0]
-        if row[1] != site_id or str(row[5]).casefold() != locale.casefold():
-            raise ProjectionError("not_found")
-        return row
+        return fact
 
     async def _redirects(
         self,
-        connection: Any,
+        surface: fs.RenderReadSurface,
         *,
+        facts: dict[UUID, RenderPageFact],
+        memo: fs._RouteMemo,
         site_id: UUID,
         route: str,
         locale: str,
         default_locale: str,
         statuses: list[str],
+        enabled_tags: frozenset[str],
     ) -> ProjectionRedirect | None:
-        rows = list(
-            await connection.fetch(
-                "SELECT id,site_id,source_route,target,status_code,locale "
-                "FROM content.redirect WHERE site_id=$1 "
-                'ORDER BY source_route COLLATE "C",locale NULLS FIRST',
-                site_id,
-            )
-        )
-        if len(rows) > MAX_REDIRECTS:
-            raise ProjectionError("redirect_state")
+        try:
+            rows = list(await surface.fetch_redirects(site_id=site_id))
+        except fs.SurfaceReadError as exc:
+            raise ProjectionError("redirect_state") from exc
         redirects: dict[tuple[str, str | None], ProjectionRedirect] = {}
-        enabled = {
-            str(row[0]).casefold()
-            for row in await connection.fetch(
-                "SELECT tag FROM content.site_locale WHERE site_id=$1 AND enabled",
-                site_id,
-            )
-        }
+        try:
+            enabled = {
+                tag.casefold()
+                for (tag,) in await surface.fetch_enabled_locale_tags(site_id=site_id)
+            }
+        except fs.SurfaceReadError as exc:
+            raise ProjectionError("locale_state") from exc
         for row in rows:
             if row[1] != site_id:
                 raise ProjectionError("redirect_scope")
@@ -1245,18 +1350,21 @@ class RenderProjectionService:
             redirects[key] = redirect
 
         for redirect in redirects.values():
-            try:
-                await self._resolve_page(
-                    connection,
-                    site_id=site_id,
-                    route=redirect.source,
-                    locale=redirect.locale or default_locale,
-                    statuses=statuses,
-                )
-            except ProjectionError as error:
-                if error.reason != "not_found":
-                    raise ProjectionError("redirect_state") from None
-            else:
+            # a zero-row source is the valid case; a found source page
+            # makes the redirect ambiguous; an ambiguous/invalid route
+            # propagates as unavailable, exactly as the legacy SQL
+            # exception inside the fetch did
+            source_fact = self._resolve_page_fact(
+                facts=facts,
+                memo=memo,
+                site_id=site_id,
+                route=redirect.source,
+                locale=redirect.locale or default_locale,
+                statuses=statuses,
+                default_locale=default_locale,
+                enabled_tags=enabled_tags,
+            )
+            if source_fact is not None:
                 raise ProjectionError("redirect_ambiguous")
 
         async def validate_chain(redirect: ProjectionRedirect) -> None:
@@ -1278,16 +1386,18 @@ class RenderProjectionService:
                         return
                     cursor = next_redirect.target
                     continue
-                try:
-                    await self._resolve_page(
-                        connection,
-                        site_id=site_id,
-                        route=cursor,
-                        locale=chain_locale,
-                        statuses=statuses,
-                    )
-                except ProjectionError:
-                    raise ProjectionError("redirect_dangling") from None
+                cursor_fact = self._resolve_page_fact(
+                    facts=facts,
+                    memo=memo,
+                    site_id=site_id,
+                    route=cursor,
+                    locale=chain_locale,
+                    statuses=statuses,
+                    default_locale=default_locale,
+                    enabled_tags=enabled_tags,
+                )
+                if cursor_fact is None:
+                    raise ProjectionError("redirect_dangling")
                 return
             raise ProjectionError("redirect_chain")
 
@@ -1298,29 +1408,25 @@ class RenderProjectionService:
 
     async def _navigation(
         self,
-        connection: Any,
+        surface: fs.RenderReadSurface,
         *,
+        facts: dict[UUID, RenderPageFact],
+        memo: fs._RouteMemo,
         site_id: UUID,
         selected_locale: str,
         default_locale: str,
         statuses: list[str],
+        enabled_tags: frozenset[str],
     ) -> tuple[ProjectionNavigation, ...]:
-        nav_rows = list(
-            await connection.fetch(
-                "SELECT id,site_id,key,label,labels,settings FROM content.navigation "
-                'WHERE site_id=$1 ORDER BY key COLLATE "C"',
-                site_id,
-            )
-        )
+        try:
+            nav_rows = list(await surface.fetch_navigation_definitions(site_id=site_id))
+        except fs.SurfaceReadError as exc:
+            raise ProjectionError("navigation_too_large") from exc
         if len(nav_rows) > MAX_NAVIGATIONS:
             raise ProjectionError("navigation_too_large")
-        enabled_tags = {
-            str(row[0]).casefold()
-            for row in await connection.fetch(
-                "SELECT tag FROM content.site_locale WHERE site_id=$1 AND enabled",
-                site_id,
-            )
-        }
+        # the item-locale check stays casefolded service-side; the
+        # exact-case tags drive the shared 059 predicate
+        enabled_tags_casefold = {tag.casefold() for tag in enabled_tags}
         nav_by_id: dict[UUID, dict[str, Any]] = {}
         for row in nav_rows:
             if row[1] != site_id or row[0] in nav_by_id:
@@ -1342,40 +1448,53 @@ class RenderProjectionService:
                 "settings": settings,
             }
 
-        item_rows = list(
-            await connection.fetch(
-                "SELECT * FROM content.slaif_render_navigation_items($1,$2,$3)",
-                site_id,
-                selected_locale,
-                statuses,
+        # 059 port over the raw retained items (the shared helper both
+        # paths execute): per-item target validation happens here, in
+        # item order, before the locale-visibility filtering below.
+        try:
+            raw_items = await surface.fetch_navigation_items(site_id=site_id)
+            item_rows = navigation_resolved_items(
+                facts,
+                enabled_tags,
+                raw_items,
+                site_id=site_id,
+                locale=selected_locale,
+                default_locale=default_locale,
+                statuses=statuses,
+                route_memo=memo,
             )
-        )
+        except fs.SurfaceReadError as exc:
+            if exc.reason == "navigation_too_large":
+                raise ProjectionError("navigation_too_large") from exc
+            # a target failure raised inside the SQL port; the legacy
+            # service mapped that PostgresError to unavailable
+            raise ProjectionError("unavailable") from exc
         if len(item_rows) > MAX_NAVIGATION_ITEMS:
             raise ProjectionError("navigation_too_large")
         all_items: dict[UUID, dict[str, Any]] = {}
         sibling_positions: dict[tuple[UUID, UUID | None], set[int]] = defaultdict(set)
         children: defaultdict[UUID | None, list[dict[str, Any]]] = defaultdict(list)
-        for row in item_rows:
+        for item_row in item_rows:
             if (
-                row[1] != site_id
-                or row[2] not in nav_by_id
-                or row[0] in all_items
-                or row[3] == row[0]
+                item_row[1] != site_id
+                or item_row[2] not in nav_by_id
+                or item_row[0] in all_items
+                or item_row[3] == item_row[0]
             ):
                 raise ProjectionError("navigation_scope")
-            item_locale = row[8]
+            item_locale = item_row[8]
             if item_locale is not None and (
-                str(item_locale).casefold() not in enabled_tags
+                str(item_locale).casefold() not in enabled_tags_casefold
             ):
                 raise ProjectionError("navigation_locale")
-            position = int(row[9])
-            sibling_key = (row[2], row[3])
+            position = int(item_row[9])
+            sibling_key = (item_row[2], item_row[3])
             if position in sibling_positions[sibling_key]:
                 raise ProjectionError("navigation_position")
             sibling_positions[sibling_key].add(position)
-            labels = _label_map(row[7])
-            target_kind = str(row[5])
-            target_value = str(row[10])
+            labels = _label_map(item_row[7])
+            target_kind = str(item_row[5])
+            target_value = str(item_row[10])
             try:
                 if target_kind == "EXTERNAL":
                     target_value = validate_external_url(target_value)
@@ -1393,11 +1512,11 @@ class RenderProjectionService:
             except (TypeError, ValueError, ProjectionError):
                 raise ProjectionError("navigation_target") from None
             item = {
-                "id": row[0],
-                "site_id": row[1],
-                "navigation_id": row[2],
-                "parent_id": row[3],
-                "page_id": row[4],
+                "id": item_row[0],
+                "site_id": item_row[1],
+                "navigation_id": item_row[2],
+                "parent_id": item_row[3],
+                "page_id": item_row[4],
                 "locale": item_locale,
                 "position": position,
                 "labels": labels,
@@ -1405,16 +1524,23 @@ class RenderProjectionService:
                     kind=target_kind, value=target_value
                 ),
             }
-            all_items[row[0]] = item
-            children[row[3]].append(item)
+            all_items[item_row[0]] = item
+            children[item_row[3]].append(item)
 
-        for (navigation_id, parent_id), positions in sibling_positions.items():
-            if positions != set(range(len(positions))):
-                raise ProjectionError("navigation_position")
+        # Deterministic precedence in corrupted states: every parent
+        # binding is validated before any sibling contiguity.  The
+        # original 059 FOR loop iterated the unordered physical row
+        # set, so this corrupted-state precedence followed row order;
+        # the port keeps the fail-closed codes and makes the order
+        # stable.
+        for navigation_id, parent_id in sibling_positions:
             if parent_id is not None:
                 parent = all_items.get(parent_id)
                 if parent is None or parent["navigation_id"] != navigation_id:
                     raise ProjectionError("navigation_parent")
+        for positions in sibling_positions.values():
+            if positions != set(range(len(positions))):
+                raise ProjectionError("navigation_position")
 
         visiting: set[UUID] = set()
         visited: set[UUID] = set()
@@ -1478,12 +1604,16 @@ class RenderProjectionService:
 
     async def _regions(
         self,
-        connection: Any,
+        surface: fs.RenderReadSurface,
         *,
+        facts: dict[UUID, RenderPageFact],
+        memo: fs._RouteMemo,
         site_id: UUID,
-        rows: Any,
     ) -> tuple[ProjectionRegion, ...]:
-        rows = list(rows)
+        try:
+            rows = list(await surface.fetch_regions(site_id=site_id))
+        except fs.SurfaceReadError as exc:
+            raise ProjectionError("region_state") from exc
         if len(rows) > 2:
             raise ProjectionError("region_state")
         seen: set[str] = set()
@@ -1547,11 +1677,12 @@ class RenderProjectionService:
                     raise ProjectionError("region_state")
                 if kind == "page":
                     try:
-                        href = await connection.fetchval(
-                            "SELECT content.slaif_agent_page_effective_route($1)",
-                            value,
-                        )
-                    except asyncpg.PostgresError:
+                        page_id = UUID(value)
+                    except ValueError:
+                        raise ProjectionError("region_state") from None
+                    try:
+                        href = memo.route(page_id)
+                    except fs.SurfaceReadError:
                         raise ProjectionError("region_state") from None
                     if not isinstance(href, str) or not href.startswith("/"):
                         raise ProjectionError("region_state")
@@ -1575,8 +1706,17 @@ class RenderProjectionService:
             regions.append(
                 ProjectionRegion(
                     id=region_id,
-                    region_key=region_key,
-                    variant=variant,
+                    # validated above against _REGION_VARIANTS
+                    region_key=cast(Literal["header", "footer"], region_key),
+                    variant=cast(
+                        Literal[
+                            "institutional",
+                            "minimal",
+                            "multi-column",
+                            "single-column",
+                        ],
+                        variant,
+                    ),
                     entries=tuple(entries),
                     note=note,
                     row_version=row_version,
@@ -1587,10 +1727,32 @@ class RenderProjectionService:
     @staticmethod
     def _ancestors(
         *,
+        facts: dict[UUID, RenderPageFact],
+        memo: fs._RouteMemo,
         site_id: UUID,
-        rows: Any,
+        page_id: UUID,
     ) -> tuple[ProjectionAncestor, ...]:
-        rows = list(rows)
+        # 067 port: the retained chain (root-to-parent, position 1 at
+        # the root side), each row's effective route through the
+        # shared memo; a derivation failure keeps the legacy outcome
+        # (the SQL raised inside the fetch -> unavailable).
+        chain = page_ancestor_chain(facts, site_id=site_id, page_id=page_id)
+        rows = []
+        for position, ancestor in chain:
+            try:
+                ancestor_route = memo.route(ancestor.id)
+            except fs.SurfaceReadError:
+                raise ProjectionError("unavailable") from None
+            rows.append(
+                (
+                    position,
+                    ancestor.id,
+                    ancestor.site_id,
+                    ancestor.title,
+                    ancestor.locale,
+                    ancestor_route,
+                )
+            )
         if len(rows) > 64:
             raise ProjectionError("region_state")
         ancestors: list[ProjectionAncestor] = []
@@ -1623,11 +1785,14 @@ class RenderProjectionService:
 
     async def _media_descriptors(
         self,
-        connection: Any,
+        surface: fs.RenderReadSurface,
         *,
         nodes: tuple[ProjectionNode, ...],
         site_id: UUID,
         render_mode: str,
+        snapshot_id: UUID | None = None,
+        preview_workspace_id: UUID | None = None,
+        preview_bound: bool = False,
     ) -> tuple[
         dict[UUID, ProjectionMedia],
         dict[UUID, tuple[ProjectionMedia | None, ...]],
@@ -1643,14 +1808,20 @@ class RenderProjectionService:
                     media_id = UUID(raw)
                 except ValueError:
                     continue
-                row = await connection.fetchrow(
-                    RENDER_MEDIA_RESOLVE_SQL, site_id, media_id
-                )
+                try:
+                    row = await surface.resolve_media(
+                        site_id=site_id, media_id=media_id
+                    )
+                except fs.SurfaceReadError as exc:
+                    raise ProjectionError("not_found") from exc
                 descriptor = _media_descriptor(
                     render_mode=render_mode,
                     site_id=site_id,
                     media_id=media_id,
                     row=row,
+                    snapshot_id=snapshot_id,
+                    preview_workspace_id=preview_workspace_id,
+                    preview_bound=preview_bound,
                 )
                 if descriptor is not None:
                     descriptors[node.id] = descriptor
@@ -1671,15 +1842,21 @@ class RenderProjectionService:
                     except ValueError:
                         item_descriptors.append(None)
                         continue
-                    row = await connection.fetchrow(
-                        RENDER_MEDIA_RESOLVE_SQL, site_id, media_id
-                    )
+                    try:
+                        row = await surface.resolve_media(
+                            site_id=site_id, media_id=media_id
+                        )
+                    except fs.SurfaceReadError as exc:
+                        raise ProjectionError("not_found") from exc
                     item_descriptors.append(
                         _media_descriptor(
                             render_mode=render_mode,
                             site_id=site_id,
                             media_id=media_id,
                             row=row,
+                            snapshot_id=snapshot_id,
+                            preview_workspace_id=preview_workspace_id,
+                            preview_bound=preview_bound,
                         )
                     )
                 list_descriptors[node.id] = tuple(item_descriptors)
@@ -1700,9 +1877,12 @@ class RenderProjectionService:
                     except ValueError:
                         item_descriptors.append(None)
                         continue
-                    row = await connection.fetchrow(
-                        RENDER_MEDIA_RESOLVE_SQL, site_id, media_id
-                    )
+                    try:
+                        row = await surface.resolve_media(
+                            site_id=site_id, media_id=media_id
+                        )
+                    except fs.SurfaceReadError as exc:
+                        raise ProjectionError("not_found") from exc
                     item_descriptors.append(
                         _media_descriptor(
                             render_mode=render_mode,
@@ -1710,6 +1890,9 @@ class RenderProjectionService:
                             media_id=media_id,
                             row=row,
                             mime_classes=DOCUMENT_MIME_CLASSES,
+                            snapshot_id=snapshot_id,
+                            preview_workspace_id=preview_workspace_id,
+                            preview_bound=preview_bound,
                         )
                     )
                 list_descriptors[node.id] = tuple(item_descriptors)
@@ -1717,24 +1900,51 @@ class RenderProjectionService:
 
     async def _query(
         self,
-        connection: Any,
+        surface: fs.RenderReadSurface,
         *,
         context: SiteContext,
         request: RenderPageRequest,
         render_mode: str,
+        snapshot_id: UUID | None = None,
+        preview_workspace_id: UUID | None = None,
+        preview_bound: bool = False,
     ) -> RenderRouteProjection:
         locales, projected_locales, default_locale = await self._locales(
-            connection, site_id=context.site_id
+            surface, site_id=context.site_id
         )
         route, locale = _route_parts(context, request.path, request.locale, locales)
-        statuses = ["PUBLISHED", "DRAFT"] if render_mode == "preview" else ["PUBLISHED"]
+        # canonical: published only.  preview AND frozen review keep the
+        # active-preview candidate policy (published + draft): review
+        # resolves the captured workspace exactly as the active preview
+        # did, with the frozen surface supplying the stored rows.
+        statuses = (
+            ["PUBLISHED"] if render_mode == "canonical" else ["PUBLISHED", "DRAFT"]
+        )
+        # ONE per-request shared route memo over the complete retained
+        # page facts: every route resolution, navigation item, region
+        # href and ancestor row in this request derives each page's
+        # effective route at most once (R8 total-work bound).  The
+        # frozen review path builds the identical memo over its
+        # captured facts.
+        try:
+            page_rows = await surface.fetch_pages(site_id=context.site_id)
+        except fs.SurfaceReadError as exc:
+            raise ProjectionError("unavailable") from exc
+        facts = {row.id: row for row in page_rows}
+        enabled_tags = frozenset(str(row[2]) for row in locales if row[3])
+        memo = new_route_memo(
+            facts, default_locale=default_locale, enabled_tags=enabled_tags
+        )
         redirect = await self._redirects(
-            connection,
+            surface,
+            facts=facts,
+            memo=memo,
             site_id=context.site_id,
             route=route,
             locale=locale,
             default_locale=default_locale,
             statuses=statuses,
+            enabled_tags=enabled_tags,
         )
         if redirect is not None:
             redirect = _redirect_location(
@@ -1756,40 +1966,48 @@ class RenderProjectionService:
                 locales=projected_locales,
                 redirect=redirect,
             )
-        row = await self._resolve_page(
-            connection,
+        fact = self._resolve_page_fact(
+            facts=facts,
+            memo=memo,
             site_id=context.site_id,
             route=route,
             locale=locale,
             statuses=statuses,
+            default_locale=default_locale,
+            enabled_tags=enabled_tags,
         )
-        page = _page(row)
+        if fact is None:
+            raise ProjectionError("not_found")
+        page = _page_from_fact(fact, memo.route(fact.id))
         route_parameter = _dynamic_route_parameter(page.effective_route, route)
-        projected_locales = await self._locale_switcher(
-            connection,
+        projected_locales = self._locale_switcher(
+            facts=facts,
+            memo=memo,
             site_id=context.site_id,
             locales=projected_locales,
             current_locale=locale,
             default_locale=default_locale,
             current_route=page.effective_route,
             statuses=statuses,
+            enabled_tags=enabled_tags,
         )
-        node_rows = list(
-            await connection.fetch(
-                "SELECT id, site_id, page_id, component_type, schema_version, "
-                "parent_id, slot_key, order_key, props, created_at, updated_at "
-                "FROM content.page_composition WHERE site_id = $1 AND page_id = $2 "
-                "ORDER BY parent_id NULLS FIRST, slot_key, order_key, id",
-                context.site_id,
-                page.id,
+        try:
+            node_rows = list(
+                await surface.fetch_composition(
+                    site_id=context.site_id, page_id=page.id
+                )
             )
-        )
+        except fs.SurfaceReadError as exc:
+            raise ProjectionError("composition_too_large") from exc
         roots = _node_tree(node_rows, page_id=page.id, site_id=context.site_id)
         media_descriptors, list_descriptors = await self._media_descriptors(
-            connection,
+            surface,
             nodes=roots,
             site_id=context.site_id,
             render_mode=render_mode,
+            snapshot_id=snapshot_id,
+            preview_workspace_id=preview_workspace_id,
+            preview_bound=preview_bound,
         )
         if media_descriptors or list_descriptors:
             roots = _attach_media(roots, media_descriptors, list_descriptors)
@@ -1801,7 +2019,7 @@ class RenderProjectionService:
         if page.route_template == "{slug}" and len(detail_nodes) != 1:
             raise ProjectionError("not_found")
         bindings, binding_meta = await _collection_bindings(
-            connection,
+            surface,
             nodes=roots,
             site_id=context.site_id,
             render_mode=render_mode,
@@ -1810,20 +2028,25 @@ class RenderProjectionService:
             route_parameter=route_parameter,
         )
         navigation = await self._navigation(
-            connection,
+            surface,
+            facts=facts,
+            memo=memo,
             site_id=context.site_id,
             selected_locale=locale,
             default_locale=default_locale,
             statuses=statuses,
+            enabled_tags=enabled_tags,
         )
-        theme_row = await connection.fetchrow(
-            "SELECT * FROM content.slaif_theme_project($1)", context.site_id
-        )
+        try:
+            theme_row = await surface.fetch_theme(site_id=context.site_id)
+            page_style_row = await surface.fetch_page_style(page_id=page.id)
+            catalog_version = await surface.fetch_catalog_version(
+                site_id=context.site_id
+            )
+        except fs.SurfaceReadError as exc:
+            raise ProjectionError("not_found") from exc
         if theme_row is None:
             raise ProjectionError("not_found")
-        page_style_row = await connection.fetchrow(
-            "SELECT * FROM content.slaif_page_style_project($1)", page.id
-        )
         if page_style_row is None:
             raise ProjectionError("not_found")
         page_style_value = _json_value(page_style_row[6])
@@ -1833,26 +2056,19 @@ class RenderProjectionService:
             page_style = ThemeRecord.model_validate(page_style_value)
         except (TypeError, ValueError):
             raise ProjectionError("page_style_state") from None
-        catalog_row = await connection.fetchrow(
-            "SELECT control.slaif_site_render_catalog($1)", context.site_id
-        )
-        catalog_version = catalog_row[0] if catalog_row is not None else None
         if catalog_version != "catalog-v1":
             raise ProjectionError("catalog_mismatch")
         regions = await self._regions(
-            connection,
+            surface,
+            facts=facts,
+            memo=memo,
             site_id=context.site_id,
-            rows=await connection.fetch(
-                "SELECT * FROM content.slaif_region_list($1)", context.site_id
-            ),
         )
         ancestors = self._ancestors(
+            facts=facts,
+            memo=memo,
             site_id=context.site_id,
-            rows=await connection.fetch(
-                "SELECT * FROM content.slaif_page_ancestor_chain($1,$2)",
-                context.site_id,
-                page.id,
-            ),
+            page_id=page.id,
         )
         return RenderPageProjection(
             render_mode=render_mode,
@@ -1894,7 +2110,7 @@ class RenderProjectionService:
                 ):
                     context = await self._context_on_connection(connection, request)
                     projection = await self._query(
-                        connection,
+                        fs.DatabaseRenderSurface(connection),
                         context=context,
                         request=request,
                         render_mode="canonical",
@@ -1919,6 +2135,116 @@ class RenderProjectionService:
             _browser_stage("context", "ok")
             return await self._browser_preview(request, context=context)
         return await self._human_preview(request)
+
+    async def review(self, request: RenderReviewRequest) -> RenderRouteProjection:
+        """Faithful frozen review read (R5: frozen input only).
+
+        The 076 authorize function is the single authority: live
+        session ACTIVE/unrevoked/expiry/recency checks, the v2
+        supported-format gate and the admin-or-membership binding all
+        run in SQL over the trusted control tables.  The snapshot row
+        then feeds the shared projection over the frozen surface -
+        the exact same common helper both paths execute - with a
+        context sealed from the CAPTURED site facts and the locked
+        freeze revision.  Every refusal (unknown session, revoked,
+        expired, non-v2, non-COMPLETE, foreign site/workspace,
+        malformed document) fails closed to one uniform 404;
+        infrastructure faults map to unavailable.
+        """
+        if request.session_token is None:
+            raise ProjectionError("not_found")
+        try:
+            public_id, secret = parse_session_token(
+                request.session_token.get_secret_value()
+            )
+        except Exception:
+            raise ProjectionError("not_found") from None
+        try:
+            # The 076 grants give this read to slaif_preview_reader only;
+            # the public reader pool must stay unable to run it.
+            async with self._database.preview_pool().acquire(
+                timeout=self._database.acquire_timeout
+            ) as connection:
+                # repeatable-read WITHOUT readonly: the 076 authorize
+                # function takes FOR SHARE on the real user_session row,
+                # which a read-only transaction refuses (PostgreSQL
+                # executor permission check), and the lock is part of
+                # the intended authorization.
+                async with connection.transaction(isolation="repeatable_read"):
+                    authorized = await connection.fetchrow(
+                        "SELECT * FROM control.slaif_review_projection_authorize("
+                        "$1,$2,$3)",
+                        public_id,
+                        digest_secret(secret),
+                        request.snapshot_id,
+                    )
+                    if (
+                        authorized is None
+                        or authorized[0] is None
+                        or authorized[1] is None
+                    ):
+                        raise ProjectionError("not_found")
+                    workspace_id = authorized[0]
+                    site_id = authorized[1]
+                    row = await connection.fetchval(
+                        "SELECT control.slaif_review_snapshot_frozen_state($1)",
+                        request.snapshot_id,
+                    )
+                    # The pool installs identity checks, not JSON
+                    # codecs: the standard driver returns the jsonb as
+                    # text, so it is decoded through the qualified
+                    # exact-number path (parse_float=Decimal) that
+                    # preserves every retained digit/scale.  Plain
+                    # float decoding or a global codec must not enter
+                    # this boundary.
+                    if row is None:
+                        raise ProjectionError("not_found")
+                    if isinstance(row, (bytes, bytearray)):
+                        try:
+                            row_text = row.decode()
+                        except UnicodeDecodeError:
+                            raise ProjectionError("not_found") from None
+                    elif isinstance(row, str):
+                        row_text = row
+                    else:
+                        raise ProjectionError("not_found")
+                    try:
+                        row = parse_snapshot_text(row_text)
+                    except ValueError:
+                        raise ProjectionError("not_found") from None
+                    if not isinstance(row, dict):
+                        raise ProjectionError("not_found")
+                    surface = fs.FrozenRenderSurface(
+                        row,
+                        expected_snapshot_id=request.snapshot_id,
+                        expected_site_id=site_id,
+                        expected_workspace_id=workspace_id,
+                    )
+                    context = SiteContext._from_frozen(
+                        site_id=site_id,
+                        site_key=surface.site_key,
+                        status=surface.site_status,
+                        base_site_revision=surface.base_site_revision,
+                        default_locale=surface.default_locale,
+                        matched_path_prefix=_frozen_local_match_prefix(request),
+                    )
+                    return await self._query(
+                        surface,
+                        context=context,
+                        request=request,
+                        render_mode="review",
+                        snapshot_id=request.snapshot_id,
+                    )
+        except ProjectionError:
+            raise
+        except asyncio.CancelledError:
+            raise
+        except (asyncpg.PostgresError, OSError, TimeoutError):
+            raise ProjectionError("unavailable") from None
+        except (fs.SurfaceReadError, ValueError):
+            # admission refusals and unsealed captured facts are
+            # uniform 404s, never a fallback render
+            raise ProjectionError("not_found") from None
 
     async def _human_preview(
         self, request: RenderPreviewRequest
@@ -1981,10 +2307,11 @@ class RenderProjectionService:
                 if snapshot_context.site_id != context.site_id:
                     raise ProjectionError("not_found")
                 return await self._query(
-                    cow.native,
+                    fs.DatabaseRenderSurface(cow.native),
                     context=snapshot_context,
                     request=request,
                     render_mode="preview",
+                    preview_workspace_id=trusted_workspace_id,
                 )
         except ProjectionError:
             raise
@@ -2023,21 +2350,46 @@ class RenderProjectionService:
             async with pool.acquire(
                 timeout=self._database.acquire_timeout
             ) as connection:
-                authorized = await connection.fetchrow(
-                    "SELECT * FROM control.slaif_render_browser_preview_authorize("
-                    "$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)",
-                    claims.capability_id,
-                    claims.site_id,
-                    claims.workspace_id,
-                    claims.run_id,
-                    claims.route,
-                    claims.target.value,
-                    [item.value for item in claims.evidence],
-                    claims.artifact_bytes_limit,
-                    claims.duration_seconds,
-                    claims.nonce_digest,
-                    True,
-                )
+                # 083/5 trusted run binding: the 036 consume and the
+                # binding registrar run in ONE explicit transaction
+                # on one connection.  The registrar records the full
+                # credential sha256 digest, the verifier-checked
+                # expiry and the current attempt as immutable run
+                # facts (EXECUTE: slaif_preview_reader only).  A
+                # failed or rolled-back consume therefore leaves no
+                # usable binding; a media read exists only after a
+                # committed authorized consume.
+                async with connection.transaction():
+                    authorized = await connection.fetchrow(
+                        "SELECT * FROM control.slaif_render_browser_preview_authorize("
+                        "$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)",
+                        claims.capability_id,
+                        claims.site_id,
+                        claims.workspace_id,
+                        claims.run_id,
+                        claims.route,
+                        claims.target.value,
+                        [item.value for item in claims.evidence],
+                        claims.artifact_bytes_limit,
+                        claims.duration_seconds,
+                        claims.nonce_digest,
+                        True,
+                    )
+                    if (
+                        authorized is not None
+                        and authorized[0] == claims.workspace_id
+                        and authorized[1] == claims.site_id
+                        and authorized[2] == claims.run_id
+                    ):
+                        await connection.execute(
+                            "SELECT control.slaif_browser_preview_binding_register("
+                            "$1,$2,$3)",
+                            claims.run_id,
+                            hashlib.sha256(
+                                request.browser_token.get_secret_value().encode("ascii")
+                            ).hexdigest(),
+                            datetime.fromtimestamp(claims.expires_at, tz=UTC),
+                        )
         except asyncio.CancelledError:
             raise
         except (asyncpg.PostgresError, OSError, TimeoutError):
@@ -2097,10 +2449,12 @@ class RenderProjectionService:
                     raise ProjectionError("not_found")
                 try:
                     projection = await self._query(
-                        cow.native,
+                        fs.DatabaseRenderSurface(cow.native),
                         context=snapshot_context,
                         request=request,
                         render_mode="preview",
+                        preview_workspace_id=claims.workspace_id,
+                        preview_bound=True,
                     )
                 except ProjectionError as error:
                     _browser_stage("projection-query", _browser_outcome(error))
@@ -2141,6 +2495,7 @@ __all__ = [
     "RenderPageProjection",
     "RenderPageRequest",
     "RenderRedirectProjection",
+    "RenderReviewRequest",
     "RenderPreviewRequest",
     "RenderRouteProjection",
     "RenderProjectionService",

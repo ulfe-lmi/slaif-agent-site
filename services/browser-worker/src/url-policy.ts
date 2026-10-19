@@ -10,6 +10,35 @@ const allowedStaticPaths = new Set([
   "/slaif-logo.svg",
 ]);
 
+/**
+ * 083/5 run-bound private media subresource: the exact bound preview
+ * asset path only.  The bound-run token (existing run credential) is
+ * re-verified server-side against the run row, so this exact shape is
+ * the only authorized private byte subresource of a bound preview.
+ */
+const boundMediaAssetPath =
+  /^\/media\/v1\/browser-preview\/assets\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/content$/u;
+
+const boundMediaUuidPattern =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u;
+
+/**
+ * The exact bound media URL for a validated media id, or null when the id
+ * cannot produce the exact authorized path.  Used only by the worker's
+ * bounded document-media resource read; no client or page input can select
+ * another path, origin or upstream.
+ */
+export function boundMediaUrl(document: URL, mediaId: string): URL | null {
+  if (!boundMediaUuidPattern.test(mediaId)) return null;
+  const url = new URL(
+    `/media/v1/browser-preview/assets/${mediaId}/content`,
+    document.origin,
+  );
+  if (url.origin !== document.origin || !boundMediaAssetPath.test(url.pathname))
+    return null;
+  return url;
+}
+
 export class BrowserUrlPolicyError extends Error {
   public constructor() {
     super("browser navigation is unavailable");
@@ -54,12 +83,35 @@ function allowedAsset(url: URL): boolean {
   );
 }
 
+function isBoundMediaSubresource(url: URL, resourceType: string): boolean {
+  return (
+    boundMediaAssetPath.test(url.pathname) &&
+    url.search === "" &&
+    url.hash === "" &&
+    resourceType === "image"
+  );
+}
+
+// Strictly bounded authorized resource read for DOCUMENT media that the
+// rendered preview references (DocumentList anchors).  The worker issues
+// these as same-origin fetches from the page; they are never top-level
+// navigations, and the same confinement handler injects the run credential
+// and strips every other credential.
+function isBoundMediaDocumentFetch(url: URL, resourceType: string): boolean {
+  return (
+    boundMediaAssetPath.test(url.pathname) &&
+    url.search === "" &&
+    url.hash === "" &&
+    resourceType === "fetch"
+  );
+}
+
 export function requestIsAllowed(
   urlValue: string,
   method: string,
   resourceType: string,
   document: URL,
-): "DOCUMENT" | "ASSET" | null {
+): "DOCUMENT" | "ASSET" | "MEDIA" | null {
   let url: URL;
   try {
     url = new URL(urlValue);
@@ -75,6 +127,14 @@ export function requestIsAllowed(
     return null;
   if (url.href === document.href && resourceType === "document" && method === "GET") {
     return "DOCUMENT";
+  }
+  if (
+    url.origin === document.origin &&
+    method === "GET" &&
+    (isBoundMediaSubresource(url, resourceType) ||
+      isBoundMediaDocumentFetch(url, resourceType))
+  ) {
+    return "MEDIA";
   }
   if (allowedAsset(url) && resourceType !== "document") return "ASSET";
   return null;
@@ -135,6 +195,22 @@ export async function installRequestConfinement(
     if (policy === "DOCUMENT") {
       onBlocked(request);
       await route.abort("blockedbyclient");
+      return;
+    }
+    if (policy === "MEDIA") {
+      // Exact bound media subresource only: a direct fetch of the
+      // bound asset path, never a redirect hop.  The worker injects
+      // the existing run credential and strips every other
+      // credential (cookie, authorization, proxy, worker token) -
+      // the browser itself never holds the credential.
+      if (request.redirectedFrom() !== null) {
+        onBlocked(request);
+        await route.abort("blockedbyclient");
+        return;
+      }
+      await route.continue({
+        headers: confinedHeaders(request, previewCredential),
+      });
       return;
     }
     await route.continue({

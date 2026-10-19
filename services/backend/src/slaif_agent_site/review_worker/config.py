@@ -18,7 +18,7 @@ REVIEW_WORKER_PRIVILEGE_ROLE = "slaif_review_worker"
 REVIEW_WORKER_DSN_FILE = Path("/run/slaif-review-worker/review-worker-dsn")
 REVIEW_WORKER_APPLICATION_NAME = "slaif-review-worker"
 # Pinned product version surfaces recorded in every immutable snapshot.
-REVIEW_WORKER_STATE_VERSION = "review-snapshot/v1"
+REVIEW_WORKER_STATE_VERSION = "review-snapshot/v2"
 REVIEW_WORKER_PUCK_VERSION_PIN = "0.20.2"
 REVIEW_WORKER_CONTENT_MODEL_SCHEMA_VERSION = "content-model/v1"
 REVIEW_WORKER_POLL_INTERVAL_SECONDS = 1.0

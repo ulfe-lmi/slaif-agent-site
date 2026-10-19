@@ -68,6 +68,13 @@ class MediaSettings(BaseSettings):
     )
     application_name: str = MEDIA_APPLICATION_NAME
 
+    # 083/5: trusted preview-policy constants for the authorized
+    # active-workspace media byte read (same values as the Render
+    # preview policy; the 054 chain validates with them).
+    preview_idle_timeout_seconds: int = Field(default=1800, ge=2, le=86400)
+    preview_touch_interval_seconds: int = Field(default=300, ge=1, le=86400)
+    preview_recent_auth_seconds: int = Field(default=900, ge=1, le=604800)
+
     @field_validator("dsn_file", "media_root")
     @classmethod
     def absolute_path(cls, value: Path | None) -> Path | None:

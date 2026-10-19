@@ -23,6 +23,7 @@ from .projection import (
     RenderPageRequest,
     RenderPreviewRequest,
     RenderProjectionService,
+    RenderReviewRequest,
     RenderRouteProjection,
 )
 
@@ -147,6 +148,47 @@ def install_render_projection_routes(
             raise ResourceNotFoundError() from None
         try:
             return await service.preview(selected)
+        except ProjectionError as error:
+            _projection_error(error)
+
+    @router.post("/review", response_model=RenderRouteProjection)
+    async def review_snapshot(
+        payload: RenderReviewRequest,
+        response: Response,
+        request: Request,
+    ) -> RenderRouteProjection:
+        """Faithful frozen review read (COMPLETE review-snapshot/v2).
+
+        Exactly one x-slaif-human-session header authorizes; the
+        browser preview header is rejected on this route.  The 076
+        authorize function is the single authority (live session
+        checks, v2 supported-format gate, membership binding); every
+        refusal is a uniform 404 and infrastructure faults a 503.
+        """
+        _headers(response)
+        headers = request.scope.get("headers", [])
+        human_values = [
+            value for name, value in headers if name.lower() == b"x-slaif-human-session"
+        ]
+        browser_header = BROWSER_RENDER_HEADER.casefold().encode("ascii")
+        browser_values = [
+            value for name, value in headers if name.lower() == browser_header
+        ]
+        if (
+            len(human_values) != 1
+            or browser_values
+            or payload.session_token is not None
+        ):
+            raise ResourceNotFoundError()
+        try:
+            token = human_values[0].decode("ascii")
+            if not token or any(character.isspace() for character in token):
+                raise ValueError
+            selected = payload.model_copy(update={"session_token": SecretStr(token)})
+        except (UnicodeError, ValueError):
+            raise ResourceNotFoundError() from None
+        try:
+            return await service.review(selected)
         except ProjectionError as error:
             _projection_error(error)
 

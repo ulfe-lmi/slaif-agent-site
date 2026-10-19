@@ -138,6 +138,24 @@ const nextConfig = {
   outputFileTracingRoot: path.join(import.meta.dirname, "../.."),
   poweredByHeader: false,
   reactStrictMode: true,
+  async rewrites() {
+    // 083/5 bound-run private media, same-origin mediation: the browser
+    // worker's preview origin is this Web origin
+    // (BROWSER_WORKER_PREVIEW_ORIGIN=http://web:3000) and its confined
+    // requests only reach same-origin URLs.  This single exact path
+    // forwards the bound preview asset read to the existing media service
+    // over the shared internal Compose network.  No other path is
+    // mediated, the upstream is fixed (client input cannot select it),
+    // no redirect is issued, and the private no-store/no-index response
+    // headers pass through unchanged.
+    return [
+      {
+        source: "/media/v1/browser-preview/assets/:mediaId/content",
+        destination:
+          "http://media-service:8000/media/v1/browser-preview/assets/:mediaId/content",
+      },
+    ];
+  },
   webpack: (config, options) => {
     if (!options.dev) {
       config.plugins = [

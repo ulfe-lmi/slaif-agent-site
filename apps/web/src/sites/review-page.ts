@@ -1,11 +1,12 @@
 import "server-only";
 
+import { resolveFrozenReviewPage } from "./render";
 import {
   isReviewDocument,
-  projectionFromReviewDocument,
+  REVIEW_STATE_VERSION_V2,
   reviewBannerFacts,
+  selectReviewView,
   type ReviewDocument,
-  type ReviewProjectionResult,
 } from "./review-projection";
 
 /**
@@ -121,21 +122,24 @@ export async function resolveWorkspaceReview(
   const document = await fetchReviewDocument(workspaceId, requestContext.sessionCookie);
   if (!document) return { kind: "not_found" };
   const path = `/${(sitePath ?? []).join("/")}`;
-  const result: ReviewProjectionResult = projectionFromReviewDocument(document, path);
-  if (result.kind === "not_found") return { kind: "not_found" };
-  if (result.kind === "redirect") {
-    // Internal frozen targets are re-rooted under the review base, the
-    // exact preview contract.
-    const target = result.target.startsWith("/")
-      ? result.target === "/"
-        ? `/review/${workspaceId}`
-        : `/review/${workspaceId}${result.target}`
-      : result.target;
-    return { kind: "redirect", target, status_code: result.status_code };
-  }
+  const faithfulProjection =
+    document.snapshot.state_version === REVIEW_STATE_VERSION_V2
+      ? await resolveFrozenReviewPage(
+          requestContext.requestHeaders.get("host") ?? "",
+          path,
+          document.snapshot.id,
+          { humanSessionToken: requestContext.sessionCookie.value },
+        )
+      : null;
+  // The stored snapshot state version is the single view selector
+  // (v2 faithful frozen read with no v1 fallback on refusal, v1
+  // legacy web-side projection, unknown stored values refused).
+  const view = selectReviewView(document, faithfulProjection, workspaceId, path);
+  if (view.kind === "not_found") return { kind: "not_found" };
+  if (view.kind === "redirect") return view;
   return {
     kind: "page",
-    projection: result.projection,
+    projection: view.projection,
     document,
     banner: reviewBannerFacts(document),
   };
