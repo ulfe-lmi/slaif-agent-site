@@ -77,6 +77,7 @@ NEW_PACKAGE_FILES = {
     "slaif_agent_site/agent_state/reads.py",
     "slaif_agent_site/agent_state/locks.py",
     "slaif_agent_site/content_model/bounded_embed.py",
+    "slaif_agent_site/content_model/canonical.py",
     "slaif_agent_site/content_model/component_facets.py",
     "slaif_agent_site/application.py",
     "slaif_agent_site/authority.py",
@@ -157,6 +158,7 @@ NEW_PACKAGE_FILES = {
     "slaif_agent_site/db/alembic/versions/073_001_real_human_discard.py",
     "slaif_agent_site/db/alembic/versions/074_001_cache_outbox_consumer.py",
     "slaif_agent_site/db/alembic/versions/075_001_freeze_revision_coherence.py",
+    "slaif_agent_site/db/alembic/versions/076_001_faithful_frozen_review.py",
     "slaif_agent_site/db/connections.py",
     "slaif_agent_site/db/executor.py",
     "slaif_agent_site/db/migrations.py",
@@ -209,6 +211,7 @@ NEW_PACKAGE_FILES = {
     "slaif_agent_site/render_api/config.py",
     "slaif_agent_site/render_api/database.py",
     "slaif_agent_site/render_api/projection.py",
+    "slaif_agent_site/render_api/frozen_source.py",
     "slaif_agent_site/render_api/site_http.py",
     "slaif_agent_site/content_model/design_system.py",
     "slaif_agent_site/review_worker/__init__.py",
@@ -637,8 +640,9 @@ def test_locked_foundation_artifact_hash_constants_are_sha256() -> None:
 
 
 def test_alembic_graph_and_offline_sql_need_no_locator_or_network() -> None:
-    assert migration_heads() == ("075_001",)
+    assert migration_heads() == ("076_001",)
     assert migration_history() == (
+        "076_001",
         "075_001",
         "074_001",
         "073_001",

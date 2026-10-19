@@ -140,6 +140,44 @@ class SiteContext:
         object.__setattr__(instance, "matched_path_prefix", row[6])
         return instance
 
+    @classmethod
+    def _from_frozen(
+        cls,
+        *,
+        site_id: UUID,
+        site_key: str,
+        status: str,
+        base_site_revision: int,
+        default_locale: str,
+        matched_path_prefix: str | None = None,
+    ) -> SiteContext:
+        """Seal a context from CAPTURED review-snapshot/v2 site facts.
+
+        Frozen-faithful read: the status, key and the locked freeze
+        revision come from the snapshot's captured site profile (never
+        today's site row); the internal review read performs no
+        host/path edge matching, so ``matched_hostname`` is None.
+        ``matched_path_prefix`` defaults to "/" for callers that do
+        not address the path; the frozen review read passes None -
+        its request carries the site-local route verbatim and the
+        authority never addresses the site (identity comes from the
+        trusted authorize binding).  Live authority (session
+        ACTIVE/unrevoked/expiry/membership) stays in the 076
+        authorize function; current-vs-captured drift is separately
+        named metadata at the HTTP layer, never folded into this
+        context.  A captured status outside the enum is a refusal at
+        the caller (ValueError propagates).
+        """
+        instance = object.__new__(cls)
+        object.__setattr__(instance, "site_id", site_id)
+        object.__setattr__(instance, "site_key", site_key)
+        object.__setattr__(instance, "status", SiteStatus(status))
+        object.__setattr__(instance, "canonical_revision", base_site_revision)
+        object.__setattr__(instance, "default_locale", default_locale)
+        object.__setattr__(instance, "matched_hostname", None)
+        object.__setattr__(instance, "matched_path_prefix", matched_path_prefix or "/")
+        return instance
+
 
 __all__ = [
     "CreateSiteRequest",

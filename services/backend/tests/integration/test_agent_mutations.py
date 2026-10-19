@@ -2155,7 +2155,7 @@ async def test_agent_redirect_051_migration_round_trip_preserves_data_and_privil
             await owner.fetchval(
                 "SELECT version_num::text FROM control.alembic_version"
             )
-            == "075_001"
+            == "076_001"
         )
         assert tuple(
             await owner.fetchrow(
@@ -2502,7 +2502,7 @@ async def test_agent_060_component_migration_round_trip_restores_audit_contract(
             await owner.fetchval(
                 "SELECT version_num::text FROM control.alembic_version"
             )
-            == "075_001"
+            == "076_001"
         )
         definition = await owner.fetchval(
             "SELECT pg_get_functiondef($1::regprocedure)", signature
@@ -2567,7 +2567,7 @@ async def test_agent_062_component_authority_migration_downgrade_round_trip(
         operation="upgrade",
         revision="head",
     )
-    assert (await status(database.settings)).revision == "075_001"
+    assert (await status(database.settings)).revision == "076_001"
 
 
 @pytest.mark.asyncio
@@ -2645,7 +2645,7 @@ async def test_agent_063_component_audit_migration_preserves_data_on_downgrade(
             await owner.fetchval(
                 "SELECT version_num::text FROM control.alembic_version"
             )
-            == "075_001"
+            == "076_001"
         )
         assert (
             tuple(
@@ -2760,7 +2760,7 @@ async def test_agent_064_component_downgrade_guards_and_round_trips_contract(
             await owner.fetchval(
                 "SELECT version_num::text FROM control.alembic_version"
             )
-            == "075_001"
+            == "076_001"
         )
     await _disable_content_cow(database)
     await run_migration(
@@ -2816,7 +2816,7 @@ async def test_agent_064_component_downgrade_guards_and_round_trips_contract(
             )
         )
         before_contract = await contract(owner)
-    assert before_version == "075_001"
+    assert before_version == "076_001"
     await _disable_content_cow(database)
     with pytest.raises(Exception, match="064_DOWNGRADE_RESPONSIVE_COMPONENT_STATE"):
         await run_migration(
@@ -2898,7 +2898,7 @@ async def test_agent_049_plain_page_data_downgrade_and_upgrade_preserves_data(
             await owner.fetchval(
                 "SELECT version_num::text FROM control.alembic_version"
             )
-            == "075_001"
+            == "076_001"
         )
         row = await owner.fetchrow(
             "SELECT title, route_template, deleted_at FROM content.page_base "
@@ -10760,7 +10760,7 @@ async def test_agent_046_047_migration_round_trip_preserves_contract_and_state(
                 await owner.fetchval(
                     "SELECT version_num::text FROM control.alembic_version"
                 )
-                == "075_001"
+                == "076_001"
             )
             assert await owner.fetchval(
                 "SELECT to_regprocedure($1)",
@@ -11089,7 +11089,7 @@ async def test_agent_048_data_bearing_round_trip_preserves_relations_views_and_a
         )
         await reconcile(database.settings)
         final_status = await status(database.settings)
-        assert final_status.revision == "075_001"
+        assert final_status.revision == "076_001"
         assert final_status.state.value == "HARDENED"
         assert final_status.safe
         assert await cow_rows() == content_before
@@ -12432,19 +12432,10 @@ async def test_public_agent_builds_news_dynamic_listing_and_detail_render(
                 block_snapshot = False
 
                 async def intercept_dynamic_snapshot(
-                    connection: Any,
-                    *,
-                    context: Any,
-                    request: RenderPageRequest,
-                    render_mode: str,
+                    surface: Any, **kwargs: Any
                 ) -> Any:
-                    projection = await original_query(
-                        connection,
-                        context=context,
-                        request=request,
-                        render_mode=render_mode,
-                    )
-                    if block_snapshot and request.path.endswith(
+                    projection = await original_query(surface, **kwargs)
+                    if block_snapshot and str(kwargs["request"].path).endswith(
                         "/sl-si/news/published-item"
                     ):
                         snapshot_reached.set()
@@ -18270,7 +18261,7 @@ async def test_semantic_audit_contract_is_strict_and_reversible(
                 await owner.fetchval(
                     "SELECT version_num::text FROM control.alembic_version"
                 )
-                == "075_001"
+                == "076_001"
             )
             assert (
                 await owner.fetchval(
@@ -19406,7 +19397,7 @@ async def test_agent_065_theme_data_round_trip_preserves_legacy_state(
             await owner.fetchval(
                 "SELECT version_num::text FROM control.alembic_version"
             )
-            == "075_001"
+            == "076_001"
         )
         final_row = await owner.fetchrow(
             "SELECT id,schema_version,renderer_version,row_version,palette,typography,"

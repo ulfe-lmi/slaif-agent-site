@@ -145,6 +145,9 @@ def _error_envelope(response: httpx.Response) -> dict[str, Any]:
     }
 
 
+_CURRENT_VERSION_FACTS = r""" '{"catalog":"catalog-v1","composition_schema":"site-composition/v1","content_model":"content-model/v1","design_system":"design-system/v1","puck":"0.20.2","renderer":"renderer-v1"}'::jsonb"""
+
+
 async def _control_call(
     database: AgentSiteDatabase, sql: str, *arguments: Any
 ) -> list[Any]:
@@ -243,7 +246,10 @@ async def _seed_site(
             "INSERT INTO content.theme_base (id, site_id, schema_version,"
             " renderer_version, palette, typography, layout, shape) VALUES"
             " (gen_random_uuid(), $1, 'theme-schema/v1', 'renderer-v1',"
-            " '{}'::jsonb, '{}'::jsonb, '{}'::jsonb, '{}'::jsonb)",
+            ' \'{"preset":"ocean"}\'::jsonb,'
+            ' \'{"family":"system","scale":"balanced","weight":"regular"}\'::jsonb,'
+            ' \'{"content_width":"md","spacing":"md","grid_gap":"md"}\'::jsonb,'
+            ' \'{"radius":"md","shadow":"sm"}\'::jsonb)',
             site_id,
         )
         await owner.execute(
@@ -282,8 +288,11 @@ async def _seed_site(
         )
         workspace_id = await owner.fetchval(
             "INSERT INTO control.workspace (site_id, created_by, delegator_id,"
-            " title, delegation_preset, effective_scopes, status, expires_at)"
-            " VALUES ($1,$2,$2,'Accept Workspace','L4',$3::jsonb,'ACTIVE',"
+            " title, delegation_preset, effective_scopes, version_facts,"
+            " status, expires_at)"
+            " VALUES ($1,$2,$2,'Accept Workspace','L4',$3::jsonb,"
+            + _CURRENT_VERSION_FACTS
+            + ",'ACTIVE',"
             " now()+interval '1 hour') RETURNING id",
             site_id,
             delegator_id,
@@ -923,8 +932,11 @@ async def test_control_accept_route_authority_matrix(
         )
         active_ws = await owner.fetchval(
             "INSERT INTO control.workspace (site_id, created_by, delegator_id,"
-            " title, delegation_preset, effective_scopes, status, expires_at)"
+            " title, delegation_preset, effective_scopes, version_facts,"
+            " status, expires_at)"
             " VALUES ($1,$2,$2,'Accept Active WS','L4','[\"page:read\"]'::jsonb,"
+            + _CURRENT_VERSION_FACTS
+            + ","
             " 'ACTIVE', now()+interval '1 hour') RETURNING id",
             site_id,
             ids["delegator_id"],
@@ -933,8 +945,11 @@ async def test_control_accept_route_authority_matrix(
         # non-REVIEW status (the enqueue's status gate must fire).
         conflict_ws = await owner.fetchval(
             "INSERT INTO control.workspace (site_id, created_by, delegator_id,"
-            " title, delegation_preset, effective_scopes, status, expires_at)"
+            " title, delegation_preset, effective_scopes, version_facts,"
+            " status, expires_at)"
             " VALUES ($1,$2,$2,'Accept Conflict WS','L4','[\"page:read\"]'::jsonb,"
+            + _CURRENT_VERSION_FACTS
+            + ","
             " 'REVIEW', now()+interval '1 hour') RETURNING id",
             site_id,
             ids["delegator_id"],

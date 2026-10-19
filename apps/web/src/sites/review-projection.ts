@@ -21,6 +21,7 @@ import type {
   ProjectionNode,
   ProjectionRegionEntry,
   ProjectionRegion,
+  RenderProjection,
 } from "./render";
 
 /* ------------------------------------------------------------------ */
@@ -161,6 +162,64 @@ export type ReviewProjectionResult =
   | { kind: "not_found" }
   | { kind: "redirect"; target: string; status_code: 301 | 302 | 303 | 307 | 308 }
   | { kind: "page"; projection: PageProjection };
+
+/** Trusted stored snapshot state versions (payload facts, never claims). */
+export const REVIEW_STATE_VERSION_V2 = "review-snapshot/v2";
+export const REVIEW_STATE_VERSION_V1 = "review-snapshot/v1";
+
+/**
+ * 083/5 review view selection. The STORED ``snapshot.state_version``
+ * is the single selector:
+ *
+ * - ``review-snapshot/v2``: the faithful frozen read projection
+ *   (obtained from the trusted render service, which alone validates
+ *   the COMPLETE snapshot) is rendered; a ``null`` projection is a
+ *   uniform refusal and NO v1 fallback is reachable from a failed v2
+ *   read;
+ * - ``review-snapshot/v1``: the legacy web-side frozen projection
+ *   remains the honest supported view (v1 predates the faithful
+ *   frozen read contract);
+ * - any other stored value: uniform refusal.
+ *
+ * Internal redirect targets are re-rooted under the review base in
+ * both views (the exact preview confinement contract); external
+ * targets pass through untouched.
+ */
+export function selectReviewView(
+  document: ReviewDocument,
+  faithfulProjection: RenderProjection | null,
+  workspaceId: string,
+  path: string,
+): ReviewProjectionResult {
+  const reRoot = (target: string): string =>
+    target.startsWith("/")
+      ? target === "/"
+        ? `/review/${workspaceId}`
+        : `/review/${workspaceId}${target}`
+      : target;
+  const stateVersion = document.snapshot.state_version;
+  if (stateVersion === REVIEW_STATE_VERSION_V2) {
+    if (!faithfulProjection) return { kind: "not_found" };
+    if (faithfulProjection.route_kind === "redirect") {
+      return {
+        kind: "redirect",
+        target: reRoot(faithfulProjection.redirect.target),
+        status_code: faithfulProjection.redirect.status_code,
+      };
+    }
+    return { kind: "page", projection: faithfulProjection };
+  }
+  if (stateVersion !== REVIEW_STATE_VERSION_V1) return { kind: "not_found" };
+  const result = projectionFromReviewDocument(document, path);
+  if (result.kind === "redirect") {
+    return {
+      kind: "redirect",
+      target: reRoot(result.target),
+      status_code: result.status_code,
+    };
+  }
+  return result;
+}
 
 /* ------------------------------------------------------------------ */
 /* Trusted renderer semantics mirrored against the frozen state         */

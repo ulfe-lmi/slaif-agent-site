@@ -497,6 +497,12 @@ test("review-surface-review-render-and-summary", async ({ page }) => {
   const [digest, recomputedDigest] = digestPair.split("|") as [string, string];
   expect(digest).toMatch(/^[0-9a-f]{64}$/);
   expect(recomputedDigest).toBe(digest);
+  const snapshotId = psql(
+    project,
+    `SELECT id FROM control.review_snapshot
+      WHERE workspace_id = '${workspaceId}'`,
+  );
+  expect(snapshotId).toMatch(/^[0-9a-f-]{36}$/i);
   const revisionWatermark = Number(
     psql(
       project,
@@ -817,9 +823,12 @@ test("review-surface-review-render-and-summary", async ({ page }) => {
       String(revisionWatermark),
     );
     await expect(page.locator("h1#page-title")).toHaveText("Frozen Home");
+    // The faithful frozen read reports the review render mode (the
+    // legacy v1 web mapping reported "preview"); at the 076 head every
+    // fresh freeze captures review-snapshot/v2.
     await expect(page.locator("main.renderer-surface")).toHaveAttribute(
       "data-render-mode",
-      "preview",
+      "review",
     );
     await expect(page.getByRole("heading", { name: "SLAIF Demo Site" })).toBeVisible();
     await expect(
@@ -828,12 +837,13 @@ test("review-surface-review-render-and-summary", async ({ page }) => {
     await expect(
       page.getByRole("heading", { name: "082 Review heading" }),
     ).toBeVisible();
-    // Private staging media: the img src is the session-scoped private
-    // path and the bytes actually load in the session.
+    // Private staging media: the img src is the snapshot-scoped
+    // review byte path (076) and the bytes actually load in the
+    // session.
     const image = page.locator("img.sl-image");
     await expect(image).toHaveAttribute(
       "src",
-      `/media/v1/sites/${siteId}/assets/${mediaId}/content`,
+      `/media/v1/review/${snapshotId}/assets/${mediaId}/content`,
     );
     await image.scrollIntoViewIfNeeded();
     await image.evaluate((element) => (element as HTMLImageElement).decode());
@@ -1264,5 +1274,96 @@ test("review-surface-fail-closed-negatives", async ({ page }) => {
         WHERE workspace_id = '${frozenWorkspaceId}'`,
     ),
   ).toBe(snapshotDigest);
+  expect(failures(), "unexpected browser failure category").toEqual([]);
+});
+
+test("review-surface-v2-faithful-read-model-and-render", async ({ page }) => {
+  test.setTimeout(300_000);
+  const credential = secrets();
+  const project = composeProject();
+  const failures = observe(page);
+
+  await login(page, credential);
+  const siteId = await demoSiteId(page);
+
+  // L2 composition write: one marker heading, then freeze to v2.
+  const title = `083/5 v2 review ${randomHex(4)}`;
+  const workspaceId = await createAgentWorkspace(page, siteId, title, "L2_SITE_EDITOR");
+  const token = await createCapability(page, siteId, workspaceId);
+  const homeId = await homePageId(page, token);
+  const agentHeaders = { Authorization: `Bearer ${token}` };
+
+  const marker = `083/5 v2 marker ${randomHex(2)}`;
+  const heading = await page.request.post(`/api/agent/v1/pages/${homeId}/components`, {
+    headers: { ...agentHeaders, "Idempotency-Key": crypto.randomUUID() },
+    data: {
+      component_type: "Heading",
+      slot_key: "default",
+      props: { text: marker, level: 3 },
+    },
+  });
+  expect(heading.status()).toBe(201);
+
+  const frozen = await freezeWorkspace(page, siteId, workspaceId);
+  expect(frozen.status).toBe(202);
+  await waitForReview(page, project, siteId, workspaceId);
+  const snapshotId = psql(
+    project,
+    `SELECT id FROM control.review_snapshot
+      WHERE workspace_id = '${workspaceId}'`,
+  );
+  expect(snapshotId).toMatch(/^[0-9a-f-]{36}$/i);
+
+  // The public control read model carries the exact v2 stored facts.
+  const response = await page.request.get(
+    `/api/control/v1/sites/${siteId}/workspaces/${workspaceId}/review/`,
+  );
+  expect(response.status()).toBe(200);
+  const doc = (await response.json()) as {
+    snapshot: {
+      id: string;
+      digest: string;
+      state_version: string;
+      versions: Record<string, string>;
+    };
+    drift: {
+      equal: boolean;
+      current_site_revision: number;
+      base_site_revision: number;
+    };
+    normalized_state: Record<string, unknown>;
+  };
+  expect(doc.snapshot.id).toBe(snapshotId);
+  expect(doc.snapshot.state_version).toBe("review-snapshot/v2");
+  expect(doc.snapshot.versions).toEqual({
+    catalog: "catalog-v1",
+    composition_schema: "site-composition/v1",
+    content_model: "content-model/v1",
+    design_system: "design-system/v1",
+    puck: "0.20.2",
+    renderer: "renderer-v1",
+  });
+  expect(doc.drift.equal).toBe(true);
+  expect(typeof doc.normalized_state.workspace_versions).toBe("object");
+  expect(doc.normalized_state).toHaveProperty("media_inventory");
+  expect(doc.normalized_state).toHaveProperty("page_compositions");
+
+  // The faithful frozen read renders the v2 snapshot (review render
+  // mode), not the legacy v1 web mapping (preview render mode).
+  await page.goto(`/review/${workspaceId}/`);
+  await expect(page.locator(".review-banner")).toHaveAttribute(
+    "data-review-digest",
+    doc.snapshot.digest,
+  );
+  await expect(page.locator(".review-banner")).toHaveAttribute(
+    "data-review-equal",
+    "true",
+  );
+  await expect(page.locator("main.renderer-surface")).toHaveAttribute(
+    "data-render-mode",
+    "review",
+  );
+  await expect(page.getByRole("heading", { name: marker, exact: true })).toBeVisible();
+
   expect(failures(), "unexpected browser failure category").toEqual([]);
 });
