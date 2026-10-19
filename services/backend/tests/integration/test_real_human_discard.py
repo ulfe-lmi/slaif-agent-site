@@ -184,6 +184,9 @@ def _error_envelope(response: httpx.Response) -> dict[str, Any]:
     }
 
 
+_CURRENT_VERSION_FACTS = r""" '{"catalog":"catalog-v1","composition_schema":"site-composition/v1","content_model":"content-model/v1","design_system":"design-system/v1","puck":"0.20.2","renderer":"renderer-v1"}'::jsonb"""
+
+
 async def _control_call(
     database: AgentSiteDatabase, sql: str, *arguments: Any
 ) -> list[Any]:
@@ -331,7 +334,10 @@ async def _seed_site(
             "INSERT INTO content.theme_base (id, site_id, schema_version,"
             " renderer_version, palette, typography, layout, shape) VALUES"
             " (gen_random_uuid(), $1, 'theme-schema/v1', 'renderer-v1',"
-            " '{}'::jsonb, '{}'::jsonb, '{}'::jsonb, '{}'::jsonb)",
+            ' \'{"preset":"ocean"}\'::jsonb,'
+            ' \'{"family":"system","scale":"balanced","weight":"regular"}\'::jsonb,'
+            ' \'{"content_width":"md","spacing":"md","grid_gap":"md"}\'::jsonb,'
+            ' \'{"radius":"md","shadow":"sm"}\'::jsonb)',
             site_id,
         )
         await owner.execute(
@@ -370,8 +376,11 @@ async def _seed_site(
         )
         workspace_id = await owner.fetchval(
             "INSERT INTO control.workspace (site_id, created_by, delegator_id,"
-            " title, delegation_preset, effective_scopes, status, expires_at)"
-            " VALUES ($1,$2,$2,'Discard Workspace','L4',$3::jsonb,'ACTIVE',"
+            " title, delegation_preset, effective_scopes, version_facts,"
+            " status, expires_at)"
+            " VALUES ($1,$2,$2,'Discard Workspace','L4',$3::jsonb,"
+            + _CURRENT_VERSION_FACTS
+            + ",'ACTIVE',"
             " now()+interval '1 hour') RETURNING id",
             site_id,
             delegator_id,
@@ -726,7 +735,7 @@ async def test_discard_migration_round_trip(
     async with owner_connection(dsn, expected_database=database.name) as owner:
         assert (
             await owner.fetchval("SELECT version_num FROM control.alembic_version")
-            == "075_001"
+            == "076_001"
         )
         # Both new/rebuilt functions: SECURITY DEFINER, search_path pinned,
         # owned by slaif_owner.
@@ -749,7 +758,7 @@ async def test_discard_migration_round_trip(
             assert "search_path=pg_catalog" in list(row["proconfig"])
             assert row["owner"] == "slaif_owner"
 
-    # Downgrade to 072_001 (steps through 075_001, then 074_001, then 073_001).
+    # Downgrade to 072_001 (steps through 076_001, 075_001, 074_001, then 073_001).
     await run_migration(
         dsn, expected_database=database.name, operation="downgrade", revision="072_001"
     )
@@ -821,7 +830,7 @@ async def test_discard_migration_round_trip(
     async with owner_connection(dsn, expected_database=database.name) as owner:
         assert (
             await owner.fetchval("SELECT version_num FROM control.alembic_version")
-            == "075_001"
+            == "076_001"
         )
         assert (
             await owner.fetchval(
@@ -1177,16 +1186,22 @@ async def test_control_discard_route_authority_matrix(
         )
         discarded_ws = await owner.fetchval(
             "INSERT INTO control.workspace (site_id, created_by, delegator_id,"
-            " title, delegation_preset, effective_scopes, status, expires_at)"
+            " title, delegation_preset, effective_scopes, version_facts,"
+            " status, expires_at)"
             " VALUES ($1,$2,$2,'Discard Terminal WS','L4','[\"page:read\"]'::jsonb,"
+            + _CURRENT_VERSION_FACTS
+            + ","
             " 'DISCARDED', now()+interval '1 hour') RETURNING id",
             site_id,
             ids["delegator_id"],
         )
         freezing_ws = await owner.fetchval(
             "INSERT INTO control.workspace (site_id, created_by, delegator_id,"
-            " title, delegation_preset, effective_scopes, status, expires_at)"
+            " title, delegation_preset, effective_scopes, version_facts,"
+            " status, expires_at)"
             " VALUES ($1,$2,$2,'Discard Freezing WS','L4','[\"page:read\"]'::jsonb,"
+            + _CURRENT_VERSION_FACTS
+            + ","
             " 'FREEZING', now()+interval '1 hour') RETURNING id",
             site_id,
             ids["delegator_id"],
@@ -1786,16 +1801,22 @@ async def test_kind_aware_claim_discard_fifo(
         # third for the DISCARD job.
         accept_ws = await owner.fetchval(
             "INSERT INTO control.workspace (site_id, created_by, delegator_id,"
-            " title, delegation_preset, effective_scopes, status, expires_at)"
+            " title, delegation_preset, effective_scopes, version_facts,"
+            " status, expires_at)"
             " VALUES ($1,$2,$2,'Kind Accept WS','L4','[\"page:read\"]'::jsonb,"
+            + _CURRENT_VERSION_FACTS
+            + ","
             " 'REVIEW', now()+interval '1 hour') RETURNING id",
             ids["site_id"],
             ids["delegator_id"],
         )
         discard_ws = await owner.fetchval(
             "INSERT INTO control.workspace (site_id, created_by, delegator_id,"
-            " title, delegation_preset, effective_scopes, status, expires_at)"
+            " title, delegation_preset, effective_scopes, version_facts,"
+            " status, expires_at)"
             " VALUES ($1,$2,$2,'Kind Discard WS','L4','[\"page:read\"]'::jsonb,"
+            + _CURRENT_VERSION_FACTS
+            + ","
             " 'REVIEW', now()+interval '1 hour') RETURNING id",
             ids["site_id"],
             ids["delegator_id"],

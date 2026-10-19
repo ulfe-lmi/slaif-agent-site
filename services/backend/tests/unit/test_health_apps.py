@@ -203,6 +203,9 @@ async def test_each_app_has_only_typed_health_routes(
         expected_routes |= {
             "/v1/sites/{site_id}/assets",
             "/v1/sites/{site_id}/assets/{media_id}/content",
+            "/v1/sites/{site_id}/workspaces/{workspace_id}/preview/assets/{media_id}/content",
+            "/v1/browser-preview/assets/{media_id}/content",
+            "/v1/review/{snapshot_id}/assets/{media_id}/content",
             "/v1/public/sha256/{prefix1}/{prefix2}/{digest}",
         }
     if process is ProcessKind.MCP_ADAPTER:
@@ -266,6 +269,7 @@ async def test_each_app_has_only_typed_health_routes(
         expected_routes |= {
             "/internal/render/v1/page",
             "/internal/render/v1/preview",
+            "/internal/render/v1/review",
         }
     assert _route_paths(app) == expected_routes
     assert app.docs_url is None

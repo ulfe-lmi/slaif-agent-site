@@ -770,24 +770,18 @@ async def test_dynamic_collection_detail_route_binds_exact_published_item(
         async def run_snapshot_race(
             *,
             path: str,
-            resolved_route: str,
             mutate: Any,
         ) -> Any:
             snapshot_established = asyncio.Event()
             release_snapshot = asyncio.Event()
 
-            async def paused_query(connection: Any, **kwargs: Any) -> Any:
-                context = kwargs["context"]
-                await connection.fetchrow(
-                    "SELECT * FROM content.slaif_render_page_resolve($1,$2,$3,$4)",
-                    context.site_id,
-                    resolved_route,
-                    "en-US",
-                    ["PUBLISHED"],
-                )
+            async def paused_query(surface: Any, **kwargs: Any) -> Any:
+                # The repeatable-read snapshot is already established by
+                # the resolver query inside canonical() before _query runs;
+                # pausing here is the race window (snapshot before mutate).
                 snapshot_established.set()
                 await release_snapshot.wait()
-                return await original_query(connection, **kwargs)
+                return await original_query(surface, **kwargs)
 
             monkeypatch.setattr(service, "_query", paused_query)
             task = asyncio.create_task(
@@ -824,7 +818,6 @@ async def test_dynamic_collection_detail_route_binds_exact_published_item(
 
         before_item_race = await run_snapshot_race(
             path="/s/dynamic-collection-router/news/published-item",
-            resolved_route="/news/published-item",
             mutate=update_item_snapshot,
         )
         assert before_item_race.page.slug == "detail"
@@ -893,7 +886,6 @@ async def test_dynamic_collection_detail_route_binds_exact_published_item(
 
         before_delete_race = await run_snapshot_race(
             path="/s/dynamic-collection-router/news/delete-item",
-            resolved_route="/news/delete-item",
             mutate=delete_item_snapshot,
         )
         assert (
@@ -920,7 +912,6 @@ async def test_dynamic_collection_detail_route_binds_exact_published_item(
 
         before_view_race = await run_snapshot_race(
             path="/s/dynamic-collection-router/news",
-            resolved_route="/news",
             mutate=change_view_snapshot,
         )
         assert before_view_race.route_kind == "page"
@@ -946,7 +937,6 @@ async def test_dynamic_collection_detail_route_binds_exact_published_item(
 
         before_type_race = await run_snapshot_race(
             path="/s/dynamic-collection-router/news",
-            resolved_route="/news",
             mutate=change_type_snapshot,
         )
         assert before_type_race.route_kind == "page"
@@ -999,7 +989,6 @@ async def test_dynamic_collection_detail_route_binds_exact_published_item(
 
         before_page_move = await run_snapshot_race(
             path="/s/dynamic-collection-router/news/published-item",
-            resolved_route="/news/published-item",
             mutate=move_page_snapshot,
         )
         assert before_page_move.route_kind == "page"
@@ -1023,18 +1012,10 @@ async def test_dynamic_collection_detail_route_binds_exact_published_item(
         cancellation_snapshot = asyncio.Event()
         cancellation_release = asyncio.Event()
 
-        async def cancellable_query(connection: Any, **kwargs: Any) -> Any:
-            context = kwargs["context"]
-            await connection.fetchrow(
-                "SELECT * FROM content.slaif_render_page_resolve($1,$2,$3,$4)",
-                context.site_id,
-                "/moved/published-item",
-                "en-US",
-                ["PUBLISHED"],
-            )
+        async def cancellable_query(surface: Any, **kwargs: Any) -> Any:
             cancellation_snapshot.set()
             await cancellation_release.wait()
-            return await original_query(connection, **kwargs)
+            return await original_query(surface, **kwargs)
 
         monkeypatch.setattr(service, "_query", cancellable_query)
         cancelled = asyncio.create_task(
@@ -2141,18 +2122,12 @@ async def test_public_agent_cow_structure_is_visible_only_to_authorized_preview(
                 release_snapshot = asyncio.Event()
                 original_query = service._query
 
-                async def paused_query(connection: Any, **kwargs: Any) -> Any:
-                    context = kwargs["context"]
-                    await connection.fetch(
-                        "SELECT * FROM content.slaif_render_page_resolve($1,$2,$3,$4)",
-                        context.site_id,
-                        "/guide",
-                        "en",
-                        ["PUBLISHED", "DRAFT"],
-                    )
+                async def paused_query(surface: Any, **kwargs: Any) -> Any:
+                    # The human-preview snapshot is established by the COW
+                    # setup before _query runs; pause inside the window.
                     snapshot_established.set()
                     await release_snapshot.wait()
-                    return await original_query(connection, **kwargs)
+                    return await original_query(surface, **kwargs)
 
                 monkeypatch.setattr(service, "_query", paused_query)
                 snapshot_task = asyncio.create_task(
@@ -2240,22 +2215,10 @@ async def test_public_agent_cow_structure_is_visible_only_to_authorized_preview(
                 canonical_snapshot_established = asyncio.Event()
                 canonical_release_snapshot = asyncio.Event()
 
-                async def paused_canonical_query(connection: Any, **kwargs: Any) -> Any:
-                    context = kwargs["context"]
-                    await connection.fetchrow(
-                        "SELECT "
-                        "(SELECT count(*) FROM content.site_locale WHERE site_id=$1),"
-                        "(SELECT count(*) FROM content.navigation WHERE site_id=$1),"
-                        "(SELECT count(*) FROM content.redirect WHERE site_id=$1),"
-                        "(SELECT count(*) FROM content.slaif_render_page_resolve("
-                        "$1,'/canonical',$2,$3))",
-                        context.site_id,
-                        "en",
-                        ["PUBLISHED"],
-                    )
+                async def paused_canonical_query(surface: Any, **kwargs: Any) -> Any:
                     canonical_snapshot_established.set()
                     await canonical_release_snapshot.wait()
-                    return await original_query(connection, **kwargs)
+                    return await original_query(surface, **kwargs)
 
                 monkeypatch.setattr(service, "_query", paused_canonical_query)
                 canonical_snapshot_task = asyncio.create_task(

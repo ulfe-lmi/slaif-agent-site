@@ -10,6 +10,7 @@ import {
   isReviewDocument,
   projectionFromReviewDocument,
   reviewRedirectTarget,
+  selectReviewView,
 } from "../src/sites/review-projection.ts";
 
 const SITE_ID = "11111111-1111-4111-8111-111111111111";
@@ -48,7 +49,7 @@ const node = (extra = {}) => ({
 });
 
 const state = (overrides = {}) => ({
-  state_version: "state/v1",
+  state_version: "review-snapshot/v1",
   workspace_id: WORKSPACE_ID,
   site_id: SITE_ID,
   site: {
@@ -72,14 +73,21 @@ const state = (overrides = {}) => ({
 const document = (overrides = {}) => ({
   snapshot: {
     id: "snapshot-1",
-    digest: "sha256:0123456789abcdef",
-    state_version: "state/v1",
+    digest: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    state_version: "review-snapshot/v1",
     revision_watermark: 3,
     base_site_revision: 7,
     status: "COMPLETE",
     created_at: "2026-10-05T00:00:00Z",
     created_by: "human:reviewer",
-    versions: { composition_schema: "composition-schema/v1", catalog: "1" },
+    versions: {
+      catalog: "catalog-v1",
+      composition_schema: "site-composition/v1",
+      content_model: "content-model/v1",
+      design_system: "design-system/v1",
+      puck: "0.20.2",
+      renderer: "renderer-v1",
+    },
   },
   drift: { current_site_revision: 7, base_site_revision: 7, equal: true },
   timeline: [],
@@ -357,6 +365,153 @@ test("the projection is a deterministic function of the document", () => {
   const second = projectionFromReviewDocument(doc, "/about");
   assert.deepEqual(first, second);
   assert.equal(JSON.stringify(first), JSON.stringify(second));
+});
+
+const faithfulPage = {
+  route_kind: "page",
+  render_mode: "review",
+  site: { id: SITE_ID, key: "demo", canonical_revision: 7 },
+  requested_path: "/about",
+  matched_path: "/about",
+  locale: "en",
+  route_parameters: {},
+  page: {
+    id: "page-about",
+    site_id: SITE_ID,
+    slug: "about",
+    title: "About",
+    status: "PUBLISHED",
+    locale: "en",
+    parent_id: null,
+    route_template: null,
+    effective_route: "/about",
+    row_version: 1,
+  },
+  composition: {
+    schema_version: "1",
+    catalog_version: "catalog-v1",
+    nodes: [node({ id: "v2-node", component_type: "Section" })],
+  },
+  theme: {},
+  page_style: {},
+  locales: [],
+  navigation: [],
+  bindings: {},
+  binding_meta: {},
+  regions: [],
+  ancestors: [],
+  default_locale: "en",
+};
+
+const faithfulRedirect = {
+  route_kind: "redirect",
+  render_mode: "review",
+  site: { id: SITE_ID, key: "demo", canonical_revision: 7 },
+  requested_path: "/old",
+  matched_path: "/old",
+  locale: "en",
+  locales: [],
+  redirect: {
+    source: "/old",
+    target: "/new",
+    status_code: 301,
+    locale: null,
+  },
+};
+
+test("selectReviewView: v2 renders the faithful frozen read projection", () => {
+  const doc = document({
+    snapshot: { ...document().snapshot, state_version: "review-snapshot/v2" },
+  });
+  const view = selectReviewView(doc, faithfulPage, WORKSPACE_ID, "/about");
+  assert.equal(view.kind, "page");
+  assert.equal(view.projection, faithfulPage);
+});
+
+test("selectReviewView: v2 null projection is a uniform refusal (no v1 fallback)", () => {
+  const doc = document({
+    snapshot: { ...document().snapshot, state_version: "review-snapshot/v2" },
+    normalized_state: state({
+      pages: [page({ slug: "about", effective_route: "/about" })],
+    }),
+  });
+  assert.equal(selectReviewView(doc, null, WORKSPACE_ID, "/about").kind, "not_found");
+  // the legacy mapping WOULD resolve that state; the refusal proves
+  // selection is by the stored v2 fact, not by v1 renderability.
+  assert.equal(projectionFromReviewDocument(doc, "/about").kind, "page");
+});
+
+test("selectReviewView: v2 redirects re-root internal targets, pass external", () => {
+  const doc = document({
+    snapshot: { ...document().snapshot, state_version: "review-snapshot/v2" },
+  });
+  const internal = selectReviewView(doc, faithfulRedirect, WORKSPACE_ID, "/old");
+  assert.deepEqual(internal, {
+    kind: "redirect",
+    target: `/review/${WORKSPACE_ID}/new`,
+    status_code: 301,
+  });
+  const external = selectReviewView(
+    doc,
+    {
+      ...faithfulRedirect,
+      redirect: { ...faithfulRedirect.redirect, target: "https://example.com" },
+    },
+    WORKSPACE_ID,
+    "/old",
+  );
+  assert.equal(external.target, "https://example.com");
+});
+
+test("selectReviewView: v1 uses the legacy web-side projection (honest limitation)", () => {
+  const doc = document({
+    normalized_state: state({
+      pages: [page({ slug: "about", effective_route: "/about" })],
+    }),
+  });
+  const view = selectReviewView(doc, null, WORKSPACE_ID, "/about");
+  assert.equal(view.kind, "page");
+  assert.equal(view.projection.page.effective_route, "/about");
+  const redirectView = selectReviewView(
+    document({
+      normalized_state: state({
+        redirects: [
+          {
+            id: "r-1",
+            site_id: SITE_ID,
+            source_route: "/old",
+            target: "/new",
+            status_code: 301,
+            locale: null,
+          },
+        ],
+      }),
+    }),
+    null,
+    WORKSPACE_ID,
+    "/old",
+  );
+  assert.deepEqual(redirectView, {
+    kind: "redirect",
+    target: `/review/${WORKSPACE_ID}/new`,
+    status_code: 301,
+  });
+});
+
+test("selectReviewView: unknown stored state versions refuse uniformly", () => {
+  for (const stateVersion of ["state/v1", "review-snapshot/v3", "", "V2"]) {
+    const doc = document({
+      snapshot: { ...document().snapshot, state_version: stateVersion },
+      normalized_state: state({
+        pages: [page({ slug: "about", effective_route: "/about" })],
+      }),
+    });
+    assert.equal(
+      selectReviewView(doc, faithfulPage, WORKSPACE_ID, "/about").kind,
+      "not_found",
+      `expected uniform refusal for stored state_version=${JSON.stringify(stateVersion)}`,
+    );
+  }
 });
 
 test("the structural gate accepts the trusted shape and rejects corruption", () => {

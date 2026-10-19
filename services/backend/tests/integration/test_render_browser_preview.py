@@ -686,20 +686,9 @@ async def test_browser_token_projects_only_bound_overlay_and_is_one_time(
         dynamic_snapshot = asyncio.Event()
         release_dynamic_snapshot = asyncio.Event()
 
-        async def pause_after_dynamic_snapshot(
-            connection: Any,
-            *,
-            context: Any,
-            request: RenderPageRequest,
-            render_mode: str,
-        ) -> Any:
-            projection = await original_query(
-                connection,
-                context=context,
-                request=request,
-                render_mode=render_mode,
-            )
-            if request.path == dynamic_route:
+        async def pause_after_dynamic_snapshot(surface: Any, **kwargs: Any) -> Any:
+            projection = await original_query(surface, **kwargs)
+            if str(kwargs["request"].path) == dynamic_route:
                 dynamic_snapshot.set()
                 await release_dynamic_snapshot.wait()
             return projection

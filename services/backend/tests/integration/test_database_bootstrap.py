@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import os
 import subprocess
 import sys
@@ -638,6 +639,96 @@ async def test_bootstrap_downgrade_049_preflight_is_atomic(
     assert disable_calls == 0
 
 
+async def test_bootstrap_downgrade_retained_v2_preflight_refuses_before_effects(
+    agent_site_database: AgentSiteDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R9 operator path: a retained v2 snapshot blocks the preflight.
+
+    bootstrap.downgrade must refuse BEFORE committing readiness PENDING or
+    disabling content COW; the 076_001 migration guard remains the second
+    line of defense and the immutable snapshot bytes are never touched.
+    """
+
+    database = agent_site_database
+    await _prepare_hardened_database(database)
+    disable_calls = 0
+
+    async def forbidden_disable(*_args: Any, **_kwargs: Any) -> None:
+        nonlocal disable_calls
+        disable_calls += 1
+        raise AssertionError("public COW disable must not run during preflight")
+
+    service_module = cast(Any, bootstrap_service)
+    monkeypatch.setattr(service_module, "disable_cow_schema", forbidden_disable)
+
+    dsn = database.settings.resolved_owner_dsn()
+    workspace_id = str(uuid.uuid4())
+    site_id = str(uuid.uuid4())
+    # A well-formed retained v2 row: exact 18-key v2 payload shape.
+    payload = {
+        "state_version": "review-snapshot/v2",
+        "workspace_id": workspace_id,
+        "site_id": site_id,
+        "site": {"site_key": "downgrade-v2", "display_name": "Downgrade v2"},
+        "base_site_revision": 0,
+        "operation_watermark": 0,
+        "workspace_versions": {"catalog": "catalog-v1"},
+        "locales": [],
+        "theme": {},
+        "regions": [],
+        "navigation": {"definitions": [], "items": []},
+        "redirects": [],
+        "pages": [],
+        "page_compositions": [],
+        "content": {
+            "types": [],
+            "fields": [],
+            "items": [],
+            "translations": [],
+            "relations": [],
+            "views": [],
+        },
+        "proposals": [],
+        "media_inventory": [],
+        "media": {},
+    }
+    async with owner_connection(dsn, expected_database=database.name) as owner:
+        await owner.execute(
+            "INSERT INTO control.review_snapshot ("
+            "workspace_id, site_id, status, revision_watermark, versions, "
+            "normalized_state, validation_report, media_references, "
+            "browser_evidence, payload, digest, created_by) "
+            "VALUES ($1, $2, 'COMPLETE', 0, '{}', '{}', '{}', '[]', '[]', "
+            "$3, $4, 'unit-worker')",
+            workspace_id,
+            site_id,
+            json.dumps(payload),
+            "f" * 64,
+        )
+        snapshot_before = tuple(
+            await owner.fetchrow(
+                "SELECT id, payload, digest FROM control.review_snapshot"
+            )
+        )
+
+    before = await _downgrade_snapshot(database)
+    with pytest.raises(BootstrapStateError, match="retained review-snapshot/v2"):
+        await downgrade(database.settings)
+    after = await _downgrade_snapshot(database)
+    # Readiness/COW marker, revision, page/audit state, function
+    # identities, workspaces and operations are all unchanged.
+    assert after == before
+    assert disable_calls == 0
+    async with owner_connection(dsn, expected_database=database.name) as owner:
+        snapshot_after = tuple(
+            await owner.fetchrow(
+                "SELECT id, payload, digest FROM control.review_snapshot"
+            )
+        )
+    assert snapshot_after == snapshot_before
+
+
 async def test_bootstrap_downgrade_compatible_path_rehardens_after_round_trip(
     agent_site_database: AgentSiteDatabase,
     monkeypatch: pytest.MonkeyPatch,
@@ -697,7 +788,7 @@ async def test_clean_migration_current_repeat_downgrade_and_rebuild(
     database = agent_site_database
     await upgrade(database.settings)
     first = await status(database.settings)
-    assert first.revision == "075_001"
+    assert first.revision == "076_001"
     _assert_pending(first, deployed=False)
 
     async with owner_connection(
@@ -840,7 +931,7 @@ async def test_clean_migration_current_repeat_downgrade_and_rebuild(
 
     await upgrade(database.settings)
     rebuilt = await status(database.settings)
-    assert rebuilt.revision == "075_001"
+    assert rebuilt.revision == "076_001"
     _assert_pending(rebuilt, deployed=False)
     rebuilt_empty = await reconcile(database.settings)
     _assert_empty_safe(rebuilt_empty)
@@ -1205,20 +1296,20 @@ async def test_cli_secret_file_empty_bootstrap_current_and_validate(
     assert upgraded.stdout == "upgrade: OK\n"
     current = invoke("current")
     assert current.returncode == 0
-    assert current.stdout == ("current: revision=075_001 state=PENDING safe=false\n")
+    assert current.stdout == ("current: revision=076_001 state=PENDING safe=false\n")
     bootstrapped = invoke("bootstrap")
     assert bootstrapped.returncode == 0
     assert bootstrapped.stdout == (
-        "bootstrap: OK revision=075_001 state=HARDENED safe=true\n"
+        "bootstrap: OK revision=076_001 state=HARDENED safe=true\n"
     )
     validated = invoke("validate")
     assert validated.returncode == 0
     assert validated.stdout == (
-        "validate: OK revision=075_001 state=HARDENED safe=true\n"
+        "validate: OK revision=076_001 state=HARDENED safe=true\n"
     )
     ready = invoke("current")
     assert ready.returncode == 0
-    assert ready.stdout == ("current: revision=075_001 state=HARDENED safe=true\n")
+    assert ready.stdout == ("current: revision=076_001 state=HARDENED safe=true\n")
     output = "".join(
         process.stdout + process.stderr
         for process in (upgraded, current, bootstrapped, validated, ready)

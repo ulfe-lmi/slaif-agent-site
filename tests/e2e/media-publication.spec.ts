@@ -308,22 +308,25 @@ test("media-publication-core-human-agent-preview-finalize-public-hostile", async
   // -------------------------------------------------------- preview render
   const previewPage = await page.goto(`/preview/${previewWorkspaceId}/s/parity/`);
   expect(previewPage?.status()).toBe(200);
+  // R6: the preview renderer emits the workspace-scoped 054 preview-chain
+  // byte URL (human preview); the legacy site-level read route still exists
+  // for the route-level authorization negatives below and stays unchanged.
   const agentImage = page.locator('img.sl-image[src^="/media/v1/sites/"]').first();
   await expect(agentImage).toBeVisible();
   expect(await agentImage.getAttribute("src")).toBe(
-    `/media/v1/sites/${parity.site_id}/assets/${agentMediaId}/content`,
+    `/media/v1/sites/${parity.site_id}/workspaces/${previewWorkspaceId}/preview/assets/${agentMediaId}/content`,
   );
   expect(await agentImage.getAttribute("alt")).toBe("E2E agent media proof");
   expect(await agentImage.getAttribute("loading")).toBe("lazy");
   expect(await agentImage.getAttribute("referrerpolicy")).toBe("no-referrer");
   const humanImage = page.locator('img.sl-image[src^="/media/v1/sites/"]').nth(1);
   expect(await humanImage.getAttribute("src")).toBe(
-    `/media/v1/sites/${parity.site_id}/assets/${humanMediaId}/content`,
+    `/media/v1/sites/${parity.site_id}/workspaces/${previewWorkspaceId}/preview/assets/${humanMediaId}/content`,
   );
 
   // Byte-identical authenticated preview fetch for the human media.
   const previewFetch = await page.request.get(
-    `/media/v1/sites/${parity.site_id}/assets/${humanMediaId}/content`,
+    `/media/v1/sites/${parity.site_id}/workspaces/${previewWorkspaceId}/preview/assets/${humanMediaId}/content`,
   );
   expect(previewFetch.status()).toBe(200);
   expect(previewFetch.headers()["cache-control"]).toBe("private, no-store");
@@ -467,11 +470,11 @@ asyncio.run(main())
     );
     const previewAgentMarkup = imageMarkup(
       previewHtml,
-      `/media/v1/sites/${parity.site_id}/assets/${agentMediaId}/content`,
+      `/media/v1/sites/${parity.site_id}/workspaces/${previewWorkspaceId}/preview/assets/${agentMediaId}/content`,
     );
     expect(
       previewAgentMarkup.replace(
-        `/media/v1/sites/${parity.site_id}/assets/${agentMediaId}/content`,
+        `/media/v1/sites/${parity.site_id}/workspaces/${previewWorkspaceId}/preview/assets/${agentMediaId}/content`,
         `/media/public/sha256/${tinyDigest.slice(0, 2)}/${tinyDigest.slice(2, 4)}/${tinyDigest}`,
       ),
     ).toBe(canonicalAgentMarkup);
@@ -557,13 +560,13 @@ asyncio.run(main())
     .first();
   await expect(galleryAgentImage).toBeVisible();
   expect(await galleryAgentImage.getAttribute("src")).toBe(
-    `/media/v1/sites/${parity.site_id}/assets/${agentMediaId}/content`,
+    `/media/v1/sites/${parity.site_id}/workspaces/${previewWorkspaceId}/preview/assets/${agentMediaId}/content`,
   );
   const galleryHumanImage = page
     .locator('section.sl-gallery img.sl-image[src^="/media/v1/sites/"]')
     .nth(1);
   expect(await galleryHumanImage.getAttribute("src")).toBe(
-    `/media/v1/sites/${parity.site_id}/assets/${humanMediaId}/content`,
+    `/media/v1/sites/${parity.site_id}/workspaces/${previewWorkspaceId}/preview/assets/${humanMediaId}/content`,
   );
   const logoGridSection = page.locator("section.sl-logogrid");
   await expect(logoGridSection).toBeVisible();
@@ -572,7 +575,7 @@ asyncio.run(main())
     .first();
   await expect(logoGridAgentImage).toBeVisible();
   expect(await logoGridAgentImage.getAttribute("src")).toBe(
-    `/media/v1/sites/${parity.site_id}/assets/${agentMediaId}/content`,
+    `/media/v1/sites/${parity.site_id}/workspaces/${previewWorkspaceId}/preview/assets/${agentMediaId}/content`,
   );
   await page.setViewportSize({ width: 768, height: 1024 });
   await expect(gallerySection).toBeVisible();
@@ -651,11 +654,11 @@ asyncio.run(main())
     const previewToPublic = (markup: string): string =>
       markup
         .replaceAll(
-          `/media/v1/sites/${parity.site_id}/assets/${agentMediaId}/content`,
+          `/media/v1/sites/${parity.site_id}/workspaces/${previewWorkspaceId}/preview/assets/${agentMediaId}/content`,
           `/media/public/sha256/${tinyDigest.slice(0, 2)}/${tinyDigest.slice(2, 4)}/${tinyDigest}`,
         )
         .replaceAll(
-          `/media/v1/sites/${parity.site_id}/assets/${humanMediaId}/content`,
+          `/media/v1/sites/${parity.site_id}/workspaces/${previewWorkspaceId}/preview/assets/${humanMediaId}/content`,
           `/media/public/sha256/${fixtureDigest.slice(0, 2)}/${fixtureDigest.slice(2, 4)}/${fixtureDigest}`,
         );
     expect(previewToPublic(sectionMarkup(listPreviewHtml, "sl-gallery"))).toBe(
@@ -1293,13 +1296,13 @@ asyncio.run(main())
     .first();
   await expect(doclistAgentLink).toBeVisible();
   expect(await doclistAgentLink.getAttribute("href")).toBe(
-    `/media/v1/sites/${parity.site_id}/assets/${pdfAgentMediaId}/content`,
+    `/media/v1/sites/${parity.site_id}/workspaces/${previewWorkspaceId}/preview/assets/${pdfAgentMediaId}/content`,
   );
   const doclistHumanLink = page
     .locator('section.sl-doclist a.sl-doclist__link[href^="/media/v1/sites/"]')
     .nth(1);
   expect(await doclistHumanLink.getAttribute("href")).toBe(
-    `/media/v1/sites/${parity.site_id}/assets/${pdfHumanMediaId}/content`,
+    `/media/v1/sites/${parity.site_id}/workspaces/${previewWorkspaceId}/preview/assets/${pdfHumanMediaId}/content`,
   );
   await page.setViewportSize({ width: 768, height: 1024 });
   await expect(doclistSection).toBeVisible();
@@ -1455,11 +1458,11 @@ asyncio.run(main())
     const pdfPreviewToPublic = (markup: string): string =>
       markup
         .replaceAll(
-          `/media/v1/sites/${parity.site_id}/assets/${pdfAgentMediaId}/content`,
+          `/media/v1/sites/${parity.site_id}/workspaces/${previewWorkspaceId}/preview/assets/${pdfAgentMediaId}/content`,
           `/media/public/sha256/${pdfAgentDigest.slice(0, 2)}/${pdfAgentDigest.slice(2, 4)}/${pdfAgentDigest}`,
         )
         .replaceAll(
-          `/media/v1/sites/${parity.site_id}/assets/${pdfHumanMediaId}/content`,
+          `/media/v1/sites/${parity.site_id}/workspaces/${previewWorkspaceId}/preview/assets/${pdfHumanMediaId}/content`,
           `/media/public/sha256/${pdfHumanDigest.slice(0, 2)}/${pdfHumanDigest.slice(2, 4)}/${pdfHumanDigest}`,
         );
     expect(pdfPreviewToPublic(doclistSectionMarkup(doclistPreviewHtml))).toBe(

@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
+import importlib
 import json
+import re
 import time
 from collections.abc import Callable
 from datetime import timedelta
@@ -22,9 +25,24 @@ from slaif_agent_site.agent_state.capability import generate_capability_token
 from slaif_agent_site.agent_state.foundation import (
     asyncpg_cow_reviewer,
     asyncpg_cow_session,
+    get_session_operations,
 )
-from slaif_agent_site.bootstrap.service import reconcile, upgrade
+from slaif_agent_site.bootstrap.service import (
+    BootstrapStateError,
+    reconcile,
+    upgrade,
+)
 from slaif_agent_site.config import EnvironmentMode, ServiceSettings
+from slaif_agent_site.content_model.canonical import (
+    canonical_digest,
+    parse_snapshot_text,
+)
+from slaif_agent_site.content_model.design_system import (
+    CATALOG_VERSION,
+    COMPOSITION_SCHEMA_VERSION,
+    DESIGN_SYSTEM_VERSION,
+    RENDERER_VERSION,
+)
 from slaif_agent_site.control_api.app import create_app
 from slaif_agent_site.control_api.config import (
     ControlDatabaseMode,
@@ -34,14 +52,18 @@ from slaif_agent_site.control_api.database import ControlDatabase
 from slaif_agent_site.db.connections import owner_connection
 from slaif_agent_site.db.migrations import run_migration
 from slaif_agent_site.db.roles import ROLE_NAMES
+from slaif_agent_site.identity.sessions import format_session_token
+from slaif_agent_site.render_api.app import create_app as create_render_app
 from slaif_agent_site.review_worker.accept_job import (
     MediaBoundary,
     run_accept_job,
 )
 from slaif_agent_site.review_worker.config import (
+    REVIEW_WORKER_CONTENT_MODEL_SCHEMA_VERSION,
     ReviewWorkerDatabaseMode,
     ReviewWorkerSettings,
 )
+from slaif_agent_site.review_worker.discard_job import run_discard_job
 from slaif_agent_site.review_worker.freeze_job import run_freeze_job
 from slaif_agent_site.review_worker.snapshot import (
     PUCK_VERSION_PIN,
@@ -54,7 +76,13 @@ from test_real_human_accept import (
     _media_settings,
     _seed_site,
 )
+from test_render_projection_integration import _RestartableRenderAdapter
 
+_CURRENT_VERSION_FACTS = r""" '{"catalog":"catalog-v1",'
+
+    '"composition_schema":"site-composition/v1",'
+    '"content_model":"content-model/v1","design_system":"design-system/v1",'
+    '"puck":"0.20.2","renderer":"renderer-v1"}'::jsonb"""
 _AGGON2 = (
     "$argon2id$v=19$m=65536,t=3,p=4$"
     "AAAAAAAAAAAAAAAAAAAAAA$"
@@ -131,7 +159,12 @@ async def _seed(database: AgentSiteDatabase) -> dict[str, UUID]:
             "INSERT INTO content.theme_base (id, site_id, schema_version,"
             " renderer_version, palette, typography, layout, shape) VALUES"
             " (gen_random_uuid(), $1, 'theme-schema/v1', 'renderer-v1',"
-            " '{}'::jsonb, '{}'::jsonb, '{}'::jsonb, '{}'::jsonb)",
+            ' \'{"preset":"ocean"}\'::jsonb,'
+            ' \'{"family":"system",'
+            '"scale":"balanced","weight":"regular"}\'::jsonb,'
+            ' \'{"content_width":"md",'
+            '"spacing":"md","grid_gap":"md"}\'::jsonb,'
+            ' \'{"radius":"md","shadow":"sm"}\'::jsonb)',
             site_id,
         )
         media_id = uuid4()
@@ -139,7 +172,8 @@ async def _seed(database: AgentSiteDatabase) -> dict[str, UUID]:
             "INSERT INTO content.media_asset_base (id, site_id, uploaded_by,"
             " filename, mime_type, size_bytes, content_hash, storage_key,"
             " alt_text, metadata) VALUES ($1,$2,$3,'int.png','image/png',128,"
-            " $4, 'sha256/ab/cd/'||$4, 'Alt', '{}'::jsonb)",
+            " $4, 'sha256/' || substring($4, 1, 2) || '/' ||"
+            " substring($4, 3, 2) || '/' || $4, 'Alt', '{}'::jsonb)",
             media_id,
             site_id,
             delegator_id,
@@ -173,9 +207,11 @@ async def _seed(database: AgentSiteDatabase) -> dict[str, UUID]:
         )
         workspace_id = await owner.fetchval(
             "INSERT INTO control.workspace (site_id, created_by, delegator_id,"
-            " title, delegation_preset, effective_scopes, status, expires_at)"
+            " title, delegation_preset, effective_scopes, version_facts,"
+            " status, expires_at)"
             " VALUES ($1,$2,$2,'Freeze Workspace','L4',"
-            " '[\"page:read\"]'::jsonb,'ACTIVE',now()+interval '1 hour')"
+            " '[\"page:read\"]'::jsonb," + _CURRENT_VERSION_FACTS + ","
+            " 'ACTIVE',now()+interval '1 hour')"
             " RETURNING id",
             site_id,
             delegator_id,
@@ -199,7 +235,18 @@ async def _seed(database: AgentSiteDatabase) -> dict[str, UUID]:
         "capability_id": UUID(str(capability_id)),
         "page_id": page_id,
         "section_id": section_id,
+        "media_id": media_id,
     }
+
+
+class _ConnExecutor:
+    """The narrow executor surface the foundation operations API takes."""
+
+    def __init__(self, connection: asyncpg.Connection[Any]) -> None:
+        self._connection = connection
+
+    async def execute(self, sql: str) -> list[tuple[Any, ...]]:
+        return [tuple(row) for row in await self._connection.fetch(sql)]
 
 
 async def _control_call(
@@ -409,7 +456,7 @@ async def test_freeze_lifecycle_worker_snapshot(
     assert versions["puck"] == PUCK_VERSION_PIN
     assert versions["renderer"] == "renderer-v1"
     payload = json.loads(snapshot["payload"])
-    assert payload["state_version"] == "review-snapshot/v1"
+    assert payload["state_version"] == "review-snapshot/v2"
     media_refs = json.loads(snapshot["media_references"])
     assert len(media_refs) == 1
     assert media_refs[0]["mime_type"] == "image/png"
@@ -957,14 +1004,20 @@ async def _seed_raw(database: AgentSiteDatabase, owner: Any) -> dict[str, Any]:
         "INSERT INTO content.theme_base (id, site_id, schema_version,"
         " renderer_version, palette, typography, layout, shape) VALUES"
         " (gen_random_uuid(), $1, 'theme-schema/v1', 'renderer-v1',"
-        " '{}'::jsonb, '{}'::jsonb, '{}'::jsonb, '{}'::jsonb)",
+        ' \'{"preset":"ocean"}\'::jsonb,'
+        ' \'{"family":"system",'
+        '"scale":"balanced","weight":"regular"}\'::jsonb,'
+        ' \'{"content_width":"md",'
+        '"spacing":"md","grid_gap":"md"}\'::jsonb,'
+        ' \'{"radius":"md","shadow":"sm"}\'::jsonb)',
         site_id,
     )
     await owner.execute(
         "INSERT INTO content.media_asset_base (id, site_id, uploaded_by,"
         " filename, mime_type, size_bytes, content_hash, storage_key,"
         " alt_text, metadata) VALUES ($1,$2,$3,'repro.png','image/png',128,"
-        " $4, 'sha256/ab/cd/'||$4, 'Alt', '{}'::jsonb)",
+        " $4, 'sha256/' || substring($4, 1, 2) || '/' ||"
+        " substring($4, 3, 2) || '/' || $4, 'Alt', '{}'::jsonb)",
         media_id,
         site_id,
         delegator_id,
@@ -1048,9 +1101,10 @@ async def _create_workspace(
 
     workspace_id = await owner.fetchval(
         "INSERT INTO control.workspace (site_id, created_by, delegator_id,"
-        " title, delegation_preset, effective_scopes, status, expires_at)"
-        " VALUES ($1,$2,$2,$3,'L4', $4::jsonb, 'ACTIVE',"
-        " now() + interval '1 hour') RETURNING id",
+        " title, delegation_preset, effective_scopes, version_facts,"
+        " status, expires_at)"
+        " VALUES ($1,$2,$2,$3,'L4', $4::jsonb," + _CURRENT_VERSION_FACTS + ","
+        " 'ACTIVE', now() + interval '1 hour') RETURNING id",
         site_id,
         delegator_id,
         title,
@@ -1547,23 +1601,27 @@ async def test_075_001_round_trip_exact_restore_and_locked_materializer(
 ) -> None:
     """083/4 F + source reproduction.
 
-    The fixture database boots at the new head (075_001).  This test
-    downgrades to 074_001, proves the pre-fix materializer behavior at
-    runtime, re-upgrades, and proves the 075_001 materializer locks the
-    site row, re-checks ACTIVE against the locked row, and reports the
-    locked canonical revision.
+    The fixture database boots at the new head (076_001).  This test
+    downgrades to 074_001 (through 076_001 and 075_001), proves the
+    pre-fix materializer behavior at runtime, re-upgrades, and proves
+    the head materializer locks the site row, re-checks ACTIVE against
+    the locked row, and reports the locked canonical revision.  The
+    074-era workspace is version-unknown after the round trip and must
+    be refused by the v2 materializer (honest legacy behavior); the
+    head-behalf proofs run on a workspace created through the trusted
+    076 constructor.
     """
 
     database = agent_site_database
     dsn = database.settings.resolved_owner_dsn()
 
-    # The fixture provisions roles only; boot the intended 075_001 head
+    # The fixture provisions roles only; boot the intended 076_001 head
     # through the existing product helpers (as _seed does) before
     # inspecting the head state.
     await upgrade(database.settings)
     await reconcile(database.settings)
 
-    # --- 075_001 head state ---------------------------------------------
+    # --- 076_001 head state ---------------------------------------------
     async with owner_connection(dsn, expected_database=database.name) as owner:
         def_head = await owner.fetchval(_FUNCTION_LOOKUP)
         acl_head = {str(row[0]): bool(row[1]) for row in await owner.fetch(_ACL_LOOKUP)}
@@ -1644,14 +1702,56 @@ async def test_075_001_round_trip_exact_restore_and_locked_materializer(
     )
     await reconcile(database.settings)
     async with owner_connection(dsn, expected_database=database.name) as owner:
-        def_075 = await owner.fetchval(_FUNCTION_LOOKUP)
-        acl_075 = {str(row[0]): bool(row[1]) for row in await owner.fetch(_ACL_LOOKUP)}
-    assert def_075 == def_head
-    assert acl_075 == acl_head
+        def_reup = await owner.fetchval(_FUNCTION_LOOKUP)
+        acl_reup = {str(row[0]): bool(row[1]) for row in await owner.fetch(_ACL_LOOKUP)}
+    assert def_reup == def_head
+    assert acl_reup == acl_head
 
-    # New behavior: the materializer reports the LOCKED current revision.
-    doc_at_075 = await _call_materializer(database, ws074)
-    assert doc_at_075["base_site_revision"] == 1
+    # Legacy honesty: ws074 was created under 074, before version_facts
+    # existed. The 076 downgrade legitimately dropped the column on the
+    # round trip, so the workspace is version-unknown ('{}') and the v2
+    # materializer must refuse it: no invented backfill, no weakened gate
+    # (its only supported freeze path after upgrade is recreation).
+    with pytest.raises(asyncpg.PostgresError) as legacy_exc:
+        await _call_materializer(database, ws074)
+    assert legacy_exc.value.sqlstate == "P0002"
+    assert "REVIEW_WORKSPACE_VERSION_UNKNOWN" in str(legacy_exc.value)
+
+    # Genuinely supported current workspace: created through the trusted
+    # 076 constructor (the only product path that stamps the version
+    # facts the v2 materializer requires).
+    async with owner_connection(dsn, expected_database=database.name) as owner:
+        ws_head = await owner.fetchval(
+            "SELECT (control.slaif_workspace_create("
+            "$1, $2, '083/4 Head Workspace',"
+            " '083/5 faithful frozen review head workspace', 'L4', $3::jsonb, 1)).id",
+            ids["site_id"],
+            ids["delegator_id"],
+            json.dumps(_MUTATION_SCOPES),
+        )
+        await owner.execute(
+            "UPDATE control.site SET canonical_revision = canonical_revision"
+            " + 1 WHERE id = $1",
+            ids["site_id"],
+        )
+        revision_head = await owner.fetchval(
+            "SELECT canonical_revision FROM control.site WHERE id = $1",
+            ids["site_id"],
+        )
+        ws_base = await owner.fetchval(
+            "SELECT base_site_revision FROM control.workspace WHERE id = $1",
+            ws_head,
+        )
+    # The generic 024 constructor does not stamp base_site_revision
+    # (column default 0); the site already advanced to 2 by now.
+    assert ws_base == 0
+    assert revision_head == 2
+
+    # New behavior: the materializer reports the LOCKED current site
+    # revision (2), differing from the workspace creation-baseline
+    # column (0).
+    doc_at_head = await _call_materializer(database, ws_head)
+    assert doc_at_head["base_site_revision"] == 2
 
     # New behavior: it waits on the site row, bounded by lock_timeout.
     blocker = await asyncpg.connect(dsn=_dsn(database, owner_login, owner_password))
@@ -1668,7 +1768,7 @@ async def test_075_001_round_trip_exact_restore_and_locked_materializer(
             )
             try:
                 with pytest.raises(asyncpg.PostgresError) as excinfo:
-                    await _materializer_with_timeout(worker, ws074, "2s")
+                    await _materializer_with_timeout(worker, ws_head, "2s")
                 assert excinfo.value.sqlstate == "55P03"
             finally:
                 await worker.close()
@@ -1692,14 +1792,16 @@ async def test_075_001_round_trip_exact_restore_and_locked_materializer(
                 "SELECT id FROM control.site WHERE id = $1 FOR UPDATE",
                 ids["site_id"],
             )
-            task = asyncio.create_task(_materializer_with_timeout(worker, ws074, "30s"))
+            task = asyncio.create_task(
+                _materializer_with_timeout(worker, ws_head, "30s")
+            )
             # The materializer is queued on the blocked site row, really
             # blocked by the observed blocker PID.
             await _wait_for_blocked_waiter(
                 database,
                 query_predicate=_freeze_materializer_wait,
                 expected_blockers={blocker_pid},
-                label="075 materializer (stale-ACTIVE guard)",
+                label="head materializer (stale-ACTIVE guard)",
                 timeout=15.0,
                 diagnostic=task,
             )
@@ -1719,6 +1821,1021 @@ async def test_075_001_round_trip_exact_restore_and_locked_materializer(
             await asyncio.gather(task, return_exceptions=True)
         await worker.close()
         await blocker.close()
+
+
+# ---------------------------------------------------------------------------
+# 083/5 R9: the full 076_001 roundtrip at runtime - 075 -> 076 -> 075 ->
+# 076 with the retained-v2 downgrade refusal proven FIRST, genuine legacy
+# v1 retention, exact constructor/ACL/OID restoration and the reconciled
+# grant policy.  The comparison framework is the same catalog capture the
+# source-review probes used (pg_proc identity + aclexplode grants); the
+# expected EXECUTE policy is computed from the product's own declarative
+# privilege maps, never hardcoded.
+# ---------------------------------------------------------------------------
+M076 = importlib.import_module(
+    "slaif_agent_site.db.alembic.versions.076_001_faithful_frozen_review"
+)
+from slaif_agent_site.db import privileges as PRIV  # noqa: E402
+
+_RT_HELPER_KEYS = (
+    "slaif_review_string_cost{text}",
+    "slaif_review_value_cost{jsonb,bigint,bigint}",
+    "slaif_review_value_depth{jsonb,integer}",
+    "slaif_review_media_append{uuid,uuid,jsonb}",
+)
+# The 083/5 frozen read/binding surface added by 076 beside the four
+# cost/media helpers: (catalog key, M076 body constant, exact
+# pre-reconcile grants = owner + the single targeted caller role,
+# volatility char).
+_RT_MEDIA_SURFACE = (
+    (
+        "slaif_review_snapshot_frozen_state{uuid}",
+        "_FROZEN_STATE_SQL",
+        ["slaif_owner:EXECUTE", "slaif_preview_reader:EXECUTE"],
+        "s",
+    ),
+    (
+        "slaif_review_projection_authorize{text,bytea,uuid}",
+        "_PROJECTION_AUTHORIZE_SQL",
+        ["slaif_owner:EXECUTE", "slaif_preview_reader:EXECUTE"],
+        "v",
+    ),
+    (
+        "slaif_review_media_authorize{text,bytea,uuid,uuid}",
+        "_MEDIA_AUTHORIZE_SQL",
+        ["slaif_media:EXECUTE", "slaif_owner:EXECUTE"],
+        "v",
+    ),
+    (
+        "slaif_media_preview_read{text,bytea,uuid,uuid,uuid,integer,integer,integer}",
+        "_MEDIA_PREVIEW_READ_SQL",
+        ["slaif_media:EXECUTE", "slaif_owner:EXECUTE"],
+        "v",
+    ),
+    (
+        'slaif_browser_preview_binding_register{uuid,text,"timestamp with time zone"}',
+        "_BINDING_REGISTER_SQL",
+        ["slaif_owner:EXECUTE", "slaif_preview_reader:EXECUTE"],
+        "v",
+    ),
+    (
+        "slaif_media_bound_preview_read{text,uuid}",
+        "_BOUND_PREVIEW_READ_SQL",
+        ["slaif_media:EXECUTE", "slaif_owner:EXECUTE"],
+        "v",
+    ),
+)
+_RT_MEDIA_KEYS = tuple(k for k, _, _, _ in _RT_MEDIA_SURFACE)
+_RT_NEW_076_KEYS = _RT_HELPER_KEYS + _RT_MEDIA_KEYS
+_RT_CTOR_024_KEY = "slaif_workspace_create{uuid,uuid,text,text,text,jsonb,integer}"
+_RT_CTOR_028_KEY = "slaif_human_editor_workspace_resolve{uuid,uuid}"
+_RT_CTOR_038_KEY = (
+    "slaif_human_agent_workspace_create"
+    "{uuid,uuid,text,text,text,text[],jsonb,text[],integer,integer,"
+    "integer,integer,integer,integer}"
+)
+_RT_SC_KEY = "slaif_review_snapshot_complete{uuid,jsonb}"
+_RT_MAT_KEY = "slaif_review_workspace_state{uuid}"
+_RT_IDENTITY_FIELDS = (
+    "signature",
+    "prosrc_sha",
+    "owner",
+    "proconfig",
+    "prosecdef",
+    "provolatile",
+    "language",
+)
+_RT_TS_RE = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z?")
+_RT_EFFECTIVE_ROLES = (*ROLE_NAMES, "public")
+_CURRENT_VERSION_FACTS_JSON = (
+    '{"catalog":"catalog-v1","composition_schema":"site-composition/v1",'
+    '"content_model":"content-model/v1","design_system":"design-system/v1",'
+    '"puck":"0.20.2","renderer":"renderer-v1"}'
+)
+
+_RT_POLICY_ROLES: dict[tuple[str, str], set[str]] = {}
+
+
+def _rt_norm_sig(sig: str) -> str:
+    # Catalog signatures arrive as array-literal text in which elements
+    # containing whitespace are quoted ("timestamp with time zone"); map
+    # signatures are plain comma lists, some using type aliases
+    # (timestamptz).  Normalize both to bare canonical tokens.
+    bare = sig.replace(" ", "").strip("{}").replace('"', "")
+    for alias, canonical in (
+        ("timestampwithtimezone", "timestamptz"),
+        ("timewithtimezone", "timetz"),
+        ("doubleprecision", "float8"),
+    ):
+        bare = bare.replace(alias, canonical)
+    return bare
+
+
+def _rt_register(mapping: dict[tuple[str, str], str], roles: set[str]) -> None:
+    for (name, _identity), sig in mapping.items():
+        _RT_POLICY_ROLES.setdefault((name, _rt_norm_sig(sig)), set()).update(roles)
+
+
+_register = _rt_register
+_register(PRIV.CONTROL_FUNCTIONS, {"slaif_control"})
+_register(PRIV.AGENT_CONTROL_FUNCTIONS, {"slaif_agent_runtime"})
+_register(PRIV.MEDIA_CONTROL_FUNCTIONS, {"slaif_media"})
+_register(PRIV.REVIEW_WORKER_FUNCTIONS, {"slaif_review_worker"})
+_register(
+    PRIV.PUBLIC_RESOLVER_FUNCTIONS,
+    {"slaif_public_reader", "slaif_preview_reader"},
+)
+_register(PRIV.PREVIEW_RENDER_FUNCTIONS, {"slaif_preview_reader"})
+_register(
+    PRIV.RENDER_METADATA_FUNCTIONS,
+    {"slaif_public_reader", "slaif_preview_reader"},
+)
+for (name, _identity), sig in PRIV.HUMAN_EDITOR_FUNCTIONS.items():
+    _register(
+        {(name, _identity): sig},
+        {"slaif_control"}
+        if name == "slaif_human_editor_workspace_resolve"
+        else {"slaif_editor_runtime"},
+    )
+
+
+def _rt_expected_grants(name: str, sig: str) -> list[str]:
+    roles = sorted(_RT_POLICY_ROLES.get((name, _rt_norm_sig(sig)), set()))
+    return ["slaif_owner:EXECUTE"] + [f"{r}:EXECUTE" for r in roles]
+
+
+def _rt_sha(text: str) -> str:
+    return hashlib.sha256(text.encode()).hexdigest()
+
+
+def _rt_extract_body(sql: str) -> str:
+    i = sql.index("AS $fn$") + len("AS $fn$")
+    j = sql.rindex("$fn$")
+    return sql[i:j]
+
+
+def _rt_norm_argtypes(text: str) -> str:
+    # regtype[]::text carries an array-bounds prefix ([0:N]=) on some
+    # PostgreSQL versions; normalize to the bare {..} form.
+    if "{" in text:
+        return text[text.index("{") :]
+    return text
+
+
+def _rt_split_key(key: str) -> tuple[str, str]:
+    i = key.index("{")
+    return key[:i], key[i:]
+
+
+def _rt_diff_catalogs(a: dict[str, Any], b: dict[str, Any]) -> list[str]:
+    return [k for k in sorted(set(a) | set(b)) if a.get(k) != b.get(k)]
+
+
+async def _rt_capture_catalog(conn: Any) -> dict[str, Any]:
+    """The complete control-schema function catalog (ordered by OID)."""
+
+    rows = await conn.fetch(
+        """
+        SELECT p.proname AS name,
+               p.proargtypes::regtype[]::text AS argtypes,
+               p.prorettype::regtype::text AS rettype,
+               p.oid,
+               p.prosrc,
+               pg_get_userbyid(p.proowner) AS owner,
+               p.proconfig,
+               p.prosecdef,
+               p.provolatile,
+               l.lanname AS language
+        FROM pg_proc p
+        JOIN pg_namespace n ON n.oid = p.pronamespace
+        JOIN pg_language l ON l.oid = p.prolang
+        WHERE n.nspname = 'control'
+        ORDER BY p.oid
+        """
+    )
+    funcs: dict[str, Any] = {}
+    for row in rows:
+        name = row["name"]
+        argt = _rt_norm_argtypes(row["argtypes"])
+        grants = await conn.fetch(
+            """
+            SELECT a.grantee::regrole::text AS g,
+                   array_agg(a.privilege_type ORDER BY a.privilege_type) AS privs
+            FROM pg_proc p
+            JOIN pg_namespace n ON n.oid = p.pronamespace,
+                 aclexplode(p.proacl) a
+            WHERE n.nspname = 'control' AND p.proname = $1
+              AND regexp_replace(
+                  p.proargtypes::regtype[]::text, '^\\[[0-9:]+\\]=', '') = $2
+            GROUP BY a.grantee ORDER BY a.grantee::regrole::text
+            """,
+            name,
+            argt,
+        )
+        funcs[f"{name}{argt}"] = {
+            "signature": f"{argt} -> {row['rettype']}",
+            "oid": int(row["oid"]),
+            "prosrc_sha": _rt_sha(row["prosrc"]),
+            "owner": row["owner"],
+            "proconfig": row["proconfig"],
+            "prosecdef": row["prosecdef"],
+            "provolatile": row["provolatile"],
+            "language": row["language"],
+            "grants": [f"{r['g']}:{','.join(r['privs'])}" for r in grants],
+        }
+    return funcs
+
+
+def _rt_normalize_row(text: str | None, seed: dict[str, Any]) -> str | None:
+    if text is None:
+        return None
+    for token, key in (
+        ("$WSID", "workspace_id"),
+        ("$SITEID", "site_id"),
+        ("$USERID", "user_id"),
+    ):
+        text = text.replace(seed[key], token)
+    return _RT_TS_RE.sub("$TS", text)
+
+
+async def _rt_capture_state(conn: Any, seed: dict[str, Any]) -> dict[str, Any]:
+    out: dict[str, Any] = {
+        "alembic_version": await conn.fetchval(
+            "SELECT version_num::text FROM control.alembic_version"
+        ),
+        "workspace_columns": [
+            r[0]
+            for r in await conn.fetch(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_schema='control' AND table_name='workspace' "
+                "ORDER BY ordinal_position"
+            )
+        ],
+        "tables": {
+            name: await conn.fetchval(
+                "SELECT to_regclass('control.' || $1) IS NOT NULL", name
+            )
+            for name in ("review_snapshot", "review_job", "workspace", "site")
+        },
+        "marker": await conn.fetchrow(
+            "SELECT readiness_state, safe, migration_revision "
+            "FROM control.bootstrap_readiness WHERE singleton"
+        ),
+        "baseline_workspace_row": _rt_normalize_row(
+            await conn.fetchval(
+                "SELECT row_to_json(w)::text FROM control.workspace w WHERE w.id = $1",
+                seed["workspace_id"],
+            ),
+            seed,
+        ),
+    }
+    out["control_functions"] = await _rt_capture_catalog(conn)
+    return out
+
+
+async def _rt_seed_baseline(owner: Any) -> dict[str, Any]:
+    """Committed 075-era baseline data through the original 024 constructor."""
+
+    user_id = await owner.fetchval(
+        """
+        INSERT INTO control.user_account (
+            id, identity_kind, local_username, local_username_normalized,
+            password_hash, display_name, status
+        ) VALUES (gen_random_uuid(), 'LOCAL', 'Roundtrip.Delegator',
+            'roundtrip.delegator', $1, 'Roundtrip Delegator', 'ACTIVE')
+        RETURNING id
+        """,
+        _AGGON2,
+    )
+    site_id = await owner.fetchval(
+        "INSERT INTO control.site (site_key, display_name, default_locale,"
+        " component_catalog_version) VALUES ('roundtrip-rt','Roundtrip',"
+        " 'en-US', 'catalog-v1') RETURNING id"
+    )
+    await owner.execute(
+        "INSERT INTO control.site_membership (site_id,user_account_id,"
+        " role_key,delegation_ceiling) VALUES ($1,$2,'SITE_OWNER',4)",
+        site_id,
+        user_id,
+    )
+    created = await owner.fetchrow(
+        "SELECT * FROM control.slaif_workspace_create($1,$2,"
+        "'Roundtrip Baseline WS','roundtrip baseline','L2_SITE_EDITOR',"
+        "'[]'::jsonb,2)",
+        site_id,
+        user_id,
+    )
+    assert created is not None
+    return {
+        "user_id": str(user_id),
+        "site_id": str(site_id),
+        "workspace_id": str(created["id"]),
+    }
+
+
+async def _rt_invoke_constructors(
+    owner: Any, site_id: str, user_id: str, *, check_version_facts: bool
+) -> dict[str, Any]:
+    """All three INSERT-path constructors in one rolled-back transaction."""
+
+    results: dict[str, Any] = {}
+    txn = owner.transaction()
+    await txn.start()
+    try:
+        created = await owner.fetchrow(
+            "SELECT * FROM control.slaif_workspace_create($1,$2,'RT V2 WS',"
+            " 'roundtrip','L2_SITE_EDITOR','[]'::jsonb,2)",
+            site_id,
+            user_id,
+        )
+        results["ws_create"] = str(created["id"]) if created else None
+        user2_id = await owner.fetchval(
+            """
+            INSERT INTO control.user_account (
+                id, identity_kind, local_username, local_username_normalized,
+                password_hash, display_name, status
+            ) VALUES (gen_random_uuid(), 'LOCAL', 'Roundtrip.Editor2',
+                'roundtrip.editor2', $1, 'Roundtrip Editor 2', 'ACTIVE')
+            RETURNING id
+            """,
+            _AGGON2,
+        )
+        await owner.execute(
+            "INSERT INTO control.site_membership (site_id,user_account_id,"
+            " role_key,delegation_ceiling) VALUES ($1,$2,'SITE_OWNER',4)",
+            site_id,
+            user2_id,
+        )
+        resolved = await owner.fetchval(
+            "SELECT control.slaif_human_editor_workspace_resolve($1,$2)",
+            site_id,
+            user2_id,
+        )
+        results["editor_resolve_insert_path"] = str(resolved) if resolved else None
+        scope = await owner.fetchval(
+            "SELECT permission_key FROM control.permission "
+            "WHERE site_assignable AND agent_delegation_level IS NOT NULL "
+            "AND agent_delegation_level <= 4 ORDER BY permission_key LIMIT 1"
+        )
+        results["chosen_scope"] = scope
+        agent = None
+        if scope is not None:
+            agent = await owner.fetchrow(
+                "SELECT * FROM control.slaif_human_agent_workspace_create("
+                "$1,$2,'RT Agent','roundtrip','L4_SITE_ARCHITECT',ARRAY[$3],"
+                "'{}'::jsonb,ARRAY['127.0.0.1'],100,10,0,0,0,2)",
+                site_id,
+                user2_id,
+                scope,
+            )
+        results["agent_ws_create"] = str(agent["id"]) if agent is not None else None
+        if check_version_facts:
+            for label, row_id in (
+                ("ws_create", created["id"] if created else None),
+                ("agent_ws_create", agent["id"] if agent is not None else None),
+                ("editor_resolve", resolved if resolved else None),
+            ):
+                if row_id is None:
+                    continue
+                results[f"{label}_vf"] = await owner.fetchval(
+                    "SELECT version_facts IS NOT NULL "
+                    "AND version_facts = $2::jsonb FROM control.workspace "
+                    "WHERE id = $1::uuid",
+                    str(row_id),
+                    _CURRENT_VERSION_FACTS_JSON,
+                )
+    finally:
+        await txn.rollback()
+    return results
+
+
+async def _rt_create_probe_workspace(
+    owner: Any, site_id: str, user_id: str, title: str
+) -> str:
+    ws = await owner.fetchrow(
+        "SELECT * FROM control.slaif_workspace_create($1,$2,$3,$4,"
+        "'L2_SITE_EDITOR','[]'::jsonb,2)",
+        site_id,
+        user_id,
+        title,
+        "roundtrip probe",
+    )
+    assert ws is not None
+    return str(ws["id"])
+
+
+async def _rt_set_freezing(owner: Any, workspace_id: str) -> None:
+    n = await owner.execute(
+        "UPDATE control.workspace SET status='FREEZING' "
+        "WHERE id=$1 AND status='ACTIVE'",
+        workspace_id,
+    )
+    assert n == "UPDATE 1", n
+
+
+async def _rt_materialize_payload(owner: Any, workspace_id: str) -> dict[str, Any]:
+    raw = await owner.fetchval(
+        "SELECT control.slaif_review_workspace_state($1::uuid)", workspace_id
+    )
+    doc = json.loads(raw)
+    assert isinstance(doc, dict)
+    return doc
+
+
+async def _rt_canonical_digest(owner: Any, payload: dict[str, Any]) -> str:
+    return str(
+        await owner.fetchval(
+            "SELECT encode(sha256(convert_to("
+            "control.slaif_canonical_jsonb_text($1::jsonb),'UTF8')),'hex')",
+            json.dumps(payload),
+        )
+    )
+
+
+def _rt_complete_row(
+    workspace_id: str,
+    payload: dict[str, Any],
+    *,
+    digest: str,
+    site_id: str | None = None,
+) -> str:
+    versions = payload.get("workspace_versions")
+    if versions is None:
+        # Genuine legacy v1 row: the base-era worker
+        # (build_snapshot_document) built ``versions`` from the six trusted
+        # pin constants; v1 payloads carry no workspace_versions key.
+        versions = {
+            "catalog": CATALOG_VERSION,
+            "design_system": DESIGN_SYSTEM_VERSION,
+            "composition_schema": COMPOSITION_SCHEMA_VERSION,
+            "renderer": RENDERER_VERSION,
+            "puck": PUCK_VERSION_PIN,
+            "content_model": REVIEW_WORKER_CONTENT_MODEL_SCHEMA_VERSION,
+        }
+    return json.dumps(
+        {
+            "workspace_id": workspace_id,
+            "site_id": site_id if site_id is not None else payload["site_id"],
+            "status": "COMPLETE",
+            "revision_watermark": (
+                payload["base_site_revision"] + payload["operation_watermark"]
+            ),
+            "versions": versions,
+            "normalized_state": payload,
+            "validation_report": {
+                "state_version": payload.get("state_version"),
+                "pages_validated": len(payload.get("pages", [])),
+                "errors": [],
+                "cancelled_by_freeze": [],
+            },
+            "media_references": list(payload.get("media", {}).values()),
+            "browser_evidence": [],
+            "payload": payload,
+            "digest": digest,
+            "created_by": "roundtrip",
+        }
+    )
+
+
+async def _rt_effect_snapshot(
+    conn: Any, workspace_id: str, site_id: str
+) -> dict[str, Any]:
+    return {
+        "snap_rows": await conn.fetchval(
+            "SELECT count(*) FROM control.review_snapshot WHERE workspace_id=$1",
+            workspace_id,
+        ),
+        "ws_state": await conn.fetchval(
+            "SELECT status || '/' || coalesce(review_snapshot_id::text,'null') "
+            "FROM control.workspace WHERE id=$1",
+            workspace_id,
+        ),
+        "promo_rows": await conn.fetchval("SELECT count(*) FROM audit.promotion"),
+        "page_rows": await conn.fetchval(
+            "SELECT count(*) FROM content.page WHERE site_id=$1", site_id
+        ),
+        "composition_rows": await conn.fetchval(
+            "SELECT count(*) FROM content.page_composition_base"
+        ),
+    }
+
+
+_RT_SNAPSHOT_ROW_BYTES = (
+    "SELECT row_to_json(r)::text FROM control.review_snapshot r WHERE r.workspace_id=$1"
+)
+
+
+@pytest.mark.asyncio
+async def test_076_001_round_trip_retained_v2_and_exact_restore(
+    agent_site_database: AgentSiteDatabase,
+) -> None:
+    """083/5 R9: the complete 075 -> 076 -> 075 -> 076 runtime roundtrip.
+
+    S0 captures the true 075 catalog/ACL/OID state (after a real
+    downgrade of the fixture head) with a genuine legacy v1 snapshot
+    created through the real v1 materializer + v1 completion contract.
+    The upgrade to 076 preserves the identity+grants of every
+    non-replaced function exactly and carries the exact v2 bodies for
+    the five replaced functions.  Reconcile applies the normal
+    bootstrap hardening, after which every control function matches
+    the product's declarative privilege policy.  The completion guards
+    are proven with real materialized v2 payloads in FREEZING
+    (co-tampered site, corrupted digest, co-tampered version facts,
+    and the valid path).  The downgrade with BOTH retained v2 and v1
+    rows is refused FIRST (SNAPSHOT_DOWNGRADE_RETAINED_V2) with zero
+    effects; with the v2 row removed the downgrade restores the exact
+    075 catalog (identity incl. OID), the reconciled grant policy, the
+    byte-identical v1 row, and working 075 constructors.  The
+    re-upgrade reproduces the reconciled head exactly, with the
+    recreated 076 helpers keeping identity+grants at legitimately
+    fresh OIDs.
+    """
+
+    database = agent_site_database
+    dsn = database.settings.resolved_owner_dsn()
+    db_name = database.name
+    expected = {
+        "sc_v2_body_sha": _rt_sha(_rt_extract_body(M076._SNAPSHOT_COMPLETE_V2_SQL)),
+        "sc_v1_body_sha": _rt_sha(_rt_extract_body(M076._SNAPSHOT_COMPLETE_070_SQL)),
+        "mat_v2_body_sha": _rt_sha(_rt_extract_body(M076._MATERIALIZER_V2_SQL)),
+        "mat_075_body_sha": _rt_sha(_rt_extract_body(M076._MATERIALIZER_075)),
+        "ctor_024_body_sha": _rt_sha(_rt_extract_body(M076._WORKSPACE_CREATE_024_SQL)),
+        "ctor_028_body_sha": _rt_sha(
+            _rt_extract_body(M076._HUMAN_EDITOR_RESOLVE_028_SQL)
+        ),
+        "ctor_038_body_sha": _rt_sha(
+            _rt_extract_body(M076._AGENT_WORKSPACE_CREATE_038_SQL)
+        ),
+        "ctor_024_v2_body_sha": _rt_sha(
+            _rt_extract_body(M076._WORKSPACE_CREATE_V2_SQL)
+        ),
+        "ctor_028_v2_body_sha": _rt_sha(
+            _rt_extract_body(M076._HUMAN_EDITOR_RESOLVE_V2_SQL)
+        ),
+        "ctor_038_v2_body_sha": _rt_sha(
+            _rt_extract_body(M076._AGENT_WORKSPACE_CREATE_V2_SQL)
+        ),
+        "string_cost_body_sha": _rt_sha(_rt_extract_body(M076._STRING_COST_SQL)),
+        "value_cost_body_sha": _rt_sha(_rt_extract_body(M076._VALUE_COST_SQL)),
+        "value_depth_body_sha": _rt_sha(_rt_extract_body(M076._VALUE_DEPTH_SQL)),
+        "media_append_body_sha": _rt_sha(_rt_extract_body(M076._MEDIA_APPEND_SQL)),
+    }
+    assert M076._SNAPSHOT_COMPLETE_070_SQL.lstrip().startswith(
+        "CREATE OR REPLACE FUNCTION control.slaif_review_snapshot_complete"
+    )
+
+    # Framework non-vacuity (wrong-expectation counterfactual): a
+    # tampered prosrc MUST be detected by the exact comparison, and a
+    # clean copy MUST pass it.
+    probe = {"f{t}": {"prosrc_sha": "0" * 64}}
+    tampered = {**probe, "f{t}": {"prosrc_sha": _rt_sha("wrong-body")}}
+    assert _rt_diff_catalogs(probe, probe) == []
+    assert _rt_diff_catalogs(tampered, probe) == ["f{t}"]
+
+    # --- S0: the true 075 pre-upgrade baseline ---------------------------
+    # The fixture boots at the 076 head; the single-step downgrade
+    # (no snapshot rows exist yet, so the retained-v2 guard is inert)
+    # restores the exact 075 constructors before the baseline capture.
+    await upgrade(database.settings)
+    await run_migration(
+        dsn, expected_database=db_name, operation="downgrade", revision="075_001"
+    )
+    with pytest.raises(BootstrapStateError, match="not at the required migration"):
+        await reconcile(database.settings)
+    async with owner_connection(dsn, expected_database=db_name) as owner:
+        seed = await _rt_seed_baseline(owner)
+    s0: dict[str, Any] = {}
+    async with owner_connection(dsn, expected_database=db_name) as owner:
+        s0 = await _rt_capture_state(owner, seed)
+    assert s0["alembic_version"] == "075_001"
+    assert "version_facts" not in s0["workspace_columns"]
+    base = s0["control_functions"]
+    sc = base.get(_RT_SC_KEY)
+    mat = base.get(_RT_MAT_KEY)
+    c024 = base.get(_RT_CTOR_024_KEY)
+    c028 = base.get(_RT_CTOR_028_KEY)
+    c038 = base.get(_RT_CTOR_038_KEY)
+    assert sc is not None and sc["prosrc_sha"] == expected["sc_v1_body_sha"]
+    assert mat is not None and mat["prosrc_sha"] == expected["mat_075_body_sha"]
+    assert (
+        c024 is not None
+        and c024["prosrc_sha"] == expected["ctor_024_body_sha"]
+        and c028 is not None
+        and c028["prosrc_sha"] == expected["ctor_028_body_sha"]
+        and c038 is not None
+        and c038["prosrc_sha"] == expected["ctor_038_body_sha"]
+    )
+    assert all(k not in base for k in _RT_NEW_076_KEYS)
+    assert s0["baseline_workspace_row"] is not None
+
+    # --- S0b: genuine legacy v1 snapshot (075 state, v1 contract) --------
+    async with owner_connection(dsn, expected_database=db_name) as owner:
+        ws_legacy = await _rt_create_probe_workspace(
+            owner, seed["site_id"], seed["user_id"], "RT Legacy v1"
+        )
+        await _rt_set_freezing(owner, ws_legacy)
+        v1_payload = await _rt_materialize_payload(owner, ws_legacy)
+        assert v1_payload.get("state_version") == "review-snapshot/v1"
+        v1_digest = await _rt_canonical_digest(owner, v1_payload)
+        v1_snap_id = await owner.fetchval(
+            "SELECT control.slaif_review_snapshot_complete($1::uuid,$2::jsonb)",
+            ws_legacy,
+            _rt_complete_row(ws_legacy, v1_payload, digest=v1_digest),
+        )
+        assert v1_snap_id is not None
+        v1_row_bytes = await owner.fetchval(_RT_SNAPSHOT_ROW_BYTES, ws_legacy)
+        v1_ws_state = await owner.fetchval(
+            "SELECT status || '/' || coalesce(review_snapshot_id::text,'null') "
+            "FROM control.workspace WHERE id=$1",
+            ws_legacy,
+        )
+        assert v1_ws_state == f"REVIEW/{v1_snap_id}", v1_ws_state
+        v1_row_check = await owner.fetchrow(
+            "SELECT payload = $2::jsonb AND digest = $3 "
+            "FROM control.review_snapshot WHERE workspace_id=$1",
+            ws_legacy,
+            json.dumps(v1_payload),
+            v1_digest,
+        )
+        assert v1_row_check[0] is True
+
+    # --- S1: upgrade to head, migration effect ONLY (no reconcile) ------
+    await run_migration(
+        dsn, expected_database=db_name, operation="upgrade", revision="head"
+    )
+    s1: dict[str, Any] = {}
+    async with owner_connection(dsn, expected_database=db_name) as owner:
+        s1 = await _rt_capture_state(owner, seed)
+    assert s1["alembic_version"] == "076_001"
+    assert "version_facts" in s1["workspace_columns"]
+    head = s1["control_functions"]
+    assert set(head) - set(base) == set(_RT_NEW_076_KEYS) and set(base) <= set(head)
+    replaced_v2_bodies = {
+        _RT_SC_KEY: expected["sc_v2_body_sha"],
+        _RT_MAT_KEY: expected["mat_v2_body_sha"],
+        _RT_CTOR_024_KEY: expected["ctor_024_v2_body_sha"],
+        _RT_CTOR_028_KEY: expected["ctor_028_v2_body_sha"],
+        _RT_CTOR_038_KEY: expected["ctor_038_v2_body_sha"],
+    }
+    # Every NON-replaced pre-existing function keeps identity+OID+grants.
+    for k in base:
+        if k in replaced_v2_bodies:
+            continue
+        for f in (*_RT_IDENTITY_FIELDS, "oid", "grants"):
+            assert base[k][f] == head[k][f], (k, f, base[k][f], head[k][f])
+    # The five replaced functions carry the exact v2 bodies with
+    # owner/security/config/volatility/language/signature/oid/grants
+    # preserved.
+    for k, body_sha in replaced_v2_bodies.items():
+        assert head[k]["prosrc_sha"] == body_sha, k
+        assert head[k]["oid"] == base[k]["oid"], k
+        assert head[k]["owner"] == base[k]["owner"] == "slaif_owner", k
+        for f in (
+            "prosecdef",
+            "proconfig",
+            "provolatile",
+            "language",
+            "signature",
+            "grants",
+        ):
+            assert head[k][f] == base[k][f], (k, f)
+    for key, body_sha in (
+        ("slaif_review_string_cost{text}", expected["string_cost_body_sha"]),
+        (
+            "slaif_review_value_cost{jsonb,bigint,bigint}",
+            expected["value_cost_body_sha"],
+        ),
+        ("slaif_review_value_depth{jsonb,integer}", expected["value_depth_body_sha"]),
+        (
+            "slaif_review_media_append{uuid,uuid,jsonb}",
+            expected["media_append_body_sha"],
+        ),
+    ):
+        f = head[key]
+        assert f["prosrc_sha"] == body_sha, key
+        assert f["owner"] == "slaif_owner", key
+        assert f["grants"] == ["slaif_owner:EXECUTE"], (key, f["grants"])
+        assert f["proconfig"] == ["search_path=pg_catalog"], (key, f["proconfig"])
+        assert f["prosecdef"] is False, key
+    # The six frozen read/binding functions: exact bodies, owner
+    # slaif_owner, SECURITY DEFINER, pg_catalog search_path, and the
+    # single targeted caller role per the 076 grant convention.
+    for key, const, grants, vol in _RT_MEDIA_SURFACE:
+        f = head[key]
+        assert f["prosrc_sha"] == _rt_sha(_rt_extract_body(getattr(M076, const))), key
+        assert f["owner"] == "slaif_owner", key
+        assert f["grants"] == grants, (key, f["grants"])
+        assert f["proconfig"] == ["search_path=pg_catalog"], (key, f["proconfig"])
+        assert f["prosecdef"] is True, key
+        assert f["provolatile"] == vol.encode("ascii"), (key, f["provolatile"])
+    async with owner_connection(dsn, expected_database=db_name) as owner:
+        vf = await owner.fetchval(
+            "SELECT version_facts::text FROM control.workspace WHERE id=$1",
+            seed["workspace_id"],
+        )
+        assert vf == "{}", f"got={vf}"
+        with pytest.raises(asyncpg.PostgresError) as err:
+            await owner.fetchval(
+                "SELECT control.slaif_review_workspace_state($1::uuid)",
+                seed["workspace_id"],
+            )
+        assert err.value.sqlstate == "P0002"
+        assert "REVIEW_WORKSPACE_VERSION_UNKNOWN" in (err.value.message or "")
+
+    # 076 constructors: all three INSERT paths, version-facts stamping.
+    async with owner_connection(dsn, expected_database=db_name) as owner:
+        inv66 = await _rt_invoke_constructors(
+            owner, seed["site_id"], seed["user_id"], check_version_facts=True
+        )
+        ws_pinned = await _rt_create_probe_workspace(
+            owner, seed["site_id"], seed["user_id"], "RT P1 Pinned"
+        )
+        pinned_payload = await _rt_materialize_payload(owner, ws_pinned)
+        unpinned = {
+            r[0]
+            for r in await owner.fetch(
+                "SELECT id::text FROM control.workspace WHERE site_id=$1::uuid "
+                "AND version_facts IS NOT DISTINCT FROM '{}'::jsonb",
+                seed["site_id"],
+            )
+        }
+    assert inv66["ws_create"] is not None
+    assert inv66["editor_resolve_insert_path"] is not None
+    assert inv66["agent_ws_create"] is not None
+    assert unpinned == {seed["workspace_id"], ws_legacy}, f"unpinned={unpinned}"
+    assert inv66.get("ws_create_vf") is True
+    assert inv66.get("agent_ws_create_vf") is True
+    assert inv66.get("editor_resolve_vf") is True
+    assert pinned_payload.get("state_version") == "review-snapshot/v2"
+    assert set(pinned_payload) == {
+        "state_version",
+        "workspace_id",
+        "site_id",
+        "site",
+        "base_site_revision",
+        "operation_watermark",
+        "workspace_versions",
+        "locales",
+        "theme",
+        "regions",
+        "navigation",
+        "redirects",
+        "pages",
+        "page_compositions",
+        "content",
+        "proposals",
+        "media_inventory",
+        "media",
+    }, f"keys={sorted(pinned_payload)}"
+
+    # --- S2: reconcile = normal bootstrap hardening ----------------------
+    await reconcile(database.settings)
+    s2: dict[str, Any] = {}
+    async with owner_connection(dsn, expected_database=db_name) as owner:
+        s2 = await _rt_capture_state(owner, seed)
+    s2f = s2["control_functions"]
+    for k in head:
+        for f in _RT_IDENTITY_FIELDS:
+            assert head[k][f] == s2f[k][f], (k, f)
+    for k in s2f:
+        name, sig = _rt_split_key(k)
+        assert sorted(s2f[k]["grants"]) == sorted(_rt_expected_grants(name, sig)), (
+            k,
+            s2f[k]["grants"],
+            _rt_expected_grants(name, sig),
+        )
+    eff_placeholders = ", ".join(
+        f"${i}" for i in range(1, len(_RT_EFFECTIVE_ROLES) + 1)
+    )
+    async with owner_connection(dsn, expected_database=db_name) as eff:
+        eff_rows = await eff.fetch(
+            "SELECT r.rolname AS role, f.oid AS oid, "
+            "has_function_privilege(r.rolname, f.oid, 'EXECUTE') AS has "
+            "FROM pg_proc f "
+            "JOIN pg_namespace n ON n.oid = f.pronamespace "
+            f"CROSS JOIN (VALUES ({eff_placeholders})) AS r(rolname) "
+            "WHERE n.nspname = 'control' ORDER BY r.rolname, f.oid",
+            *_RT_EFFECTIVE_ROLES,
+        )
+    oid_to_key = {v["oid"]: k for k, v in s2f.items()}
+    for row in eff_rows:
+        name_sig = oid_to_key.get(row["oid"])
+        assert name_sig is not None, f"unknown oid {row['oid']}"
+        name, sig = _rt_split_key(name_sig)
+        roles = _RT_POLICY_ROLES.get((name, _rt_norm_sig(sig)), set())
+        expect = row["role"] in roles or row["role"] == "slaif_owner"
+        assert bool(row["has"]) == expect, (name_sig, row["role"], row["has"])
+    assert s2["marker"] is not None and s2["marker"]["readiness_state"] == "HARDENED"
+
+    # --- P2B: completion/context guards at head (FREEZING, real data) ----
+    async with owner_connection(dsn, expected_database=db_name) as owner:
+        site_b = await owner.fetchval(
+            "INSERT INTO control.site (site_key, display_name,"
+            " default_locale, component_catalog_version) VALUES "
+            "('roundtrip-rt-b','Roundtrip B','en-US','catalog-v1') "
+            "RETURNING id"
+        )
+        ws_a = await _rt_create_probe_workspace(
+            owner, seed["site_id"], seed["user_id"], "RT Probe Site"
+        )
+        ws_c = await _rt_create_probe_workspace(
+            owner, seed["site_id"], seed["user_id"], "RT Probe Digest"
+        )
+        ws_b = await _rt_create_probe_workspace(
+            owner, seed["site_id"], seed["user_id"], "RT Probe Version"
+        )
+        ws_s = await _rt_create_probe_workspace(
+            owner, seed["site_id"], seed["user_id"], "RT Probe Valid"
+        )
+        for w in (ws_a, ws_c, ws_b, ws_s):
+            await _rt_set_freezing(owner, w)
+        before = {
+            w: await _rt_effect_snapshot(owner, w, seed["site_id"])
+            for w in (ws_a, ws_c, ws_b, ws_s)
+        }
+        # (A) co-tampered site: the DIGEST-COVERED payload.site_id AND
+        #     row.site_id both move to the SAME foreign VALID site and
+        #     the digest is recomputed over the modified payload, so
+        #     every invariant before the context binding holds (incl.
+        #     payload-vs-row site equality and digest match) and only
+        #     the actual-workspace guard can refuse.
+        payload_a = await _rt_materialize_payload(owner, ws_a)
+        payload_a_t = dict(payload_a)
+        payload_a_t["site_id"] = str(site_b)
+        digest_a = await _rt_canonical_digest(owner, payload_a_t)
+        try:
+            await owner.fetchval(
+                "SELECT control.slaif_review_snapshot_complete($1::uuid, $2::jsonb)",
+                ws_a,
+                _rt_complete_row(
+                    ws_a, payload_a_t, digest=digest_a, site_id=str(site_b)
+                ),
+            )
+            raise AssertionError("co-tampered site completion did not refuse")
+        except asyncpg.PostgresError as error:
+            assert error.sqlstate == "P0002"
+            assert "SNAPSHOT_SITE_MISMATCH" in (error.message or "")
+        # (C) real payload, digest recomputed then corrupted.
+        payload_c = await _rt_materialize_payload(owner, ws_c)
+        digest_c = await _rt_canonical_digest(owner, payload_c)
+        assert re.fullmatch(r"[0-9a-f]{64}", digest_c), digest_c[:16]
+        corrupted = ("1" if digest_c[0] != "1" else "0") + digest_c[1:]
+        try:
+            await owner.fetchval(
+                "SELECT control.slaif_review_snapshot_complete($1::uuid, $2::jsonb)",
+                ws_c,
+                _rt_complete_row(ws_c, payload_c, digest=corrupted),
+            )
+            raise AssertionError("corrupted digest completion did not refuse")
+        except asyncpg.PostgresError as error:
+            assert error.sqlstate == "P0002"
+            assert "SNAPSHOT_DIGEST_MISMATCH" in (error.message or "")
+        # (B) real payload, workspace version facts co-tampered to '{}'.
+        payload_b = await _rt_materialize_payload(owner, ws_b)
+        row_b = _rt_complete_row(
+            ws_b, payload_b, digest=await _rt_canonical_digest(owner, payload_b)
+        )
+        await owner.execute(
+            "UPDATE control.workspace SET version_facts='{}'::jsonb WHERE id=$1",
+            ws_b,
+        )
+        try:
+            await owner.fetchval(
+                "SELECT control.slaif_review_snapshot_complete($1::uuid, $2::jsonb)",
+                ws_b,
+                row_b,
+            )
+            raise AssertionError("co-tampered version facts did not refuse")
+        except asyncpg.PostgresError as error:
+            assert error.sqlstate == "P0002"
+            assert "SNAPSHOT_WORKSPACE_VERSIONS_MISMATCH" in (error.message or "")
+        # (S) fully valid row: successful completion, real valid path.
+        payload_s = await _rt_materialize_payload(owner, ws_s)
+        digest_s = await _rt_canonical_digest(owner, payload_s)
+        snap_s = await owner.fetchval(
+            "SELECT control.slaif_review_snapshot_complete($1::uuid, $2::jsonb)",
+            ws_s,
+            _rt_complete_row(ws_s, payload_s, digest=digest_s),
+        )
+        assert snap_s is not None
+        row_s = await owner.fetchrow(
+            "SELECT payload = $2::jsonb AND digest = $3 "
+            "AND site_id = $4::uuid AND status = 'COMPLETE' "
+            "FROM control.review_snapshot WHERE workspace_id=$1",
+            ws_s,
+            json.dumps(payload_s),
+            digest_s,
+            seed["site_id"],
+        )
+        assert row_s[0] is True
+        v2_row_bytes = await owner.fetchval(_RT_SNAPSHOT_ROW_BYTES, ws_s)
+        ws_s_state = await owner.fetchval(
+            "SELECT status || '/' || coalesce(review_snapshot_id::text,'null') "
+            "FROM control.workspace WHERE id=$1",
+            ws_s,
+        )
+        assert ws_s_state == f"REVIEW/{snap_s}", ws_s_state
+        for w in (ws_a, ws_c, ws_b):
+            after = await _rt_effect_snapshot(owner, w, seed["site_id"])
+            assert before[w] == after, (w, before[w], after)
+        after_s = await _rt_effect_snapshot(owner, ws_s, seed["site_id"])
+        assert after_s["snap_rows"] == 1
+        assert after_s["ws_state"] == f"REVIEW/{snap_s}"
+        assert after_s["promo_rows"] == before[ws_s]["promo_rows"]
+        assert after_s["page_rows"] == before[ws_s]["page_rows"]
+        assert after_s["composition_rows"] == before[ws_s]["composition_rows"]
+
+    # --- P3a: BOTH genuine retained rows block the downgrade FIRST ------
+    try:
+        await run_migration(
+            dsn,
+            expected_database=db_name,
+            operation="downgrade",
+            revision="075_001",
+        )
+        raise AssertionError("retained-v2 downgrade did not refuse")
+    except Exception as error:  # noqa: BLE001 - exact text asserted below
+        assert "SNAPSHOT_DOWNGRADE_RETAINED_V2" in str(error), str(error)[:300]
+    s_refused: dict[str, Any] = {}
+    async with owner_connection(dsn, expected_database=db_name) as owner:
+        s_refused = await _rt_capture_state(owner, seed)
+    assert s_refused["alembic_version"] == "076_001"
+    assert s_refused["control_functions"] == s2f
+    assert "version_facts" in s_refused["workspace_columns"]
+    async with owner_connection(dsn, expected_database=db_name) as owner:
+        assert await owner.fetchval(_RT_SNAPSHOT_ROW_BYTES, ws_s) == v2_row_bytes
+        assert await owner.fetchval(_RT_SNAPSHOT_ROW_BYTES, ws_legacy) == v1_row_bytes
+        # Documented fixture resolution of the retained v2 snapshot: the
+        # migration never rewrites/deletes immutable history; the owner
+        # removes the v2 row so the roundtrip can exercise the supported
+        # downgrade path (the separate v1 rollback fixture is ws_legacy).
+        assert (
+            await owner.execute(
+                "DELETE FROM control.review_snapshot WHERE workspace_id=$1",
+                ws_s,
+            )
+            == "DELETE 1"
+        )
+
+    # --- P3b: downgrade with the genuine legacy v1 row retained ---------
+    await run_migration(
+        dsn, expected_database=db_name, operation="downgrade", revision="075_001"
+    )
+    s3: dict[str, Any] = {}
+    async with owner_connection(dsn, expected_database=db_name) as owner:
+        s3 = await _rt_capture_state(owner, seed)
+    s3f, s0f = s3["control_functions"], s0["control_functions"]
+    assert set(s3f) == set(s0f)
+    for k in s0f:
+        for f in (*_RT_IDENTITY_FIELDS, "oid"):
+            assert s3f[k][f] == s0f[k][f], (k, f, s3f[k][f], s0f[k][f])
+    # Restored grant state == the reconciled policy (hardening
+    # legitimately persists; raw baseline vs policy delta was disclosed
+    # in S2 above, not compared to S0 here).
+    for k in s0f:
+        assert s3f[k]["grants"] == s2f[k]["grants"], (k, s3f[k]["grants"])
+    for key in (
+        "alembic_version",
+        "workspace_columns",
+        "tables",
+        "baseline_workspace_row",
+    ):
+        assert s3[key] == s0[key], (key, s3[key], s0[key])
+    async with owner_connection(dsn, expected_database=db_name) as owner:
+        assert await owner.fetchval(_RT_SNAPSHOT_ROW_BYTES, ws_legacy) == v1_row_bytes
+        inv65 = await _rt_invoke_constructors(
+            owner, seed["site_id"], seed["user_id"], check_version_facts=False
+        )
+    assert inv65["ws_create"] is not None
+    assert inv65["editor_resolve_insert_path"] is not None
+    assert inv65["agent_ws_create"] is not None
+
+    # --- P4: upgrade back to head + reconcile ---------------------------
+    await run_migration(
+        dsn, expected_database=db_name, operation="upgrade", revision="head"
+    )
+    await reconcile(database.settings)
+    s4: dict[str, Any] = {}
+    async with owner_connection(dsn, expected_database=db_name) as owner:
+        s4 = await _rt_capture_state(owner, seed)
+    s4f = s4["control_functions"]
+    non_helper_bad = [
+        k for k in s2f if k not in _RT_NEW_076_KEYS and s4f.get(k) != s2f[k]
+    ]
+    assert not non_helper_bad, non_helper_bad[:5]
+    for k in _RT_NEW_076_KEYS:
+        for f in _RT_IDENTITY_FIELDS:
+            assert s4f[k][f] == s2f[k][f], (k, f)
+        assert s4f[k]["grants"] == s2f[k]["grants"], k
+    assert all(s4f[k]["oid"] == s0f[k]["oid"] for k in s0f)
+    for key in (
+        "alembic_version",
+        "workspace_columns",
+        "tables",
+        "baseline_workspace_row",
+        "marker",
+    ):
+        assert s4[key] == s2[key], (key, s4[key], s2[key])
 
 
 @pytest.mark.asyncio
@@ -2770,3 +3887,420 @@ async def test_freeze_site_lock_failure_rollback_no_leaked_lock(
     finally:
         await boundary.stop()
         await pool.close()
+
+
+def _review_http_body(snapshot_id: UUID, path: str) -> dict[str, Any]:
+    return {
+        "authority": "localhost",
+        "path": path,
+        "snapshot_id": str(snapshot_id),
+    }
+
+
+def _walk_nodes(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Depth-first walk of the actual composition tree (test-side)."""
+
+    walked: list[dict[str, Any]] = []
+    for node in nodes:
+        walked.append(node)
+        walked.extend(_walk_nodes(node.get("children") or []))
+    return walked
+
+
+async def test_review_endpoint_frozen_read_media_urls_and_role_denials(
+    agent_site_database: AgentSiteDatabase,
+) -> None:
+    """Faithful frozen review read on the real role/driver boundary.
+
+    A current human session reads the COMPLETE v2 snapshot through the
+    internal render route (ASGI, real role pools, standard driver):
+    DRAFT pages stay resolvable (active-preview candidate policy over
+    the captured workspace), captured media resolves to the
+    snapshot-authorized byte URL for BOTH stored publication statuses,
+    and exact fractional digits survive the JSONB -> admission round
+    trip.  The public reader cannot execute the 076 read functions,
+    every invalid input is a stable 404, and the read touches nothing
+    (last_seen_at equality across the whole read sequence).  The
+    discard runs to its real terminal worker state before the
+    after-read.  This case is owner-seeded canonical fixture evidence
+    at the internal route only: it does not prove public Web/NGINX
+    serving, Agent/Editor writes, or actual private media bytes; those
+    keep their real-workflow obligations.
+    """
+    from decimal import Decimal
+
+    database = agent_site_database
+    seeded = await _seed(database)
+    workspace_id = seeded["workspace_id"]
+    site_id = seeded["site_id"]
+
+    # A DRAFT page (active-preview candidate policy must carry into
+    # frozen review) and a MapBlock carrying a 23-digit fraction whose
+    # float64 round trip would change the canonical text.
+    draft_page_id = uuid4()
+    draft_section_id = uuid4()
+    draft_map_id = uuid4()
+    exact_fraction = "0.10000000000000000000001"
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        await owner.execute(
+            "INSERT INTO content.page_base (id, site_id, slug, title, status,"
+            " locale) VALUES ($1,$2,'draft','Draft page','DRAFT','en-US')",
+            draft_page_id,
+            site_id,
+        )
+        await owner.execute(
+            "INSERT INTO content.page_composition_base (id, site_id, page_id,"
+            " component_type, schema_version, parent_id, slot_key, order_key,"
+            " props) VALUES"
+            " ($1,$2,$3,'Section','1',NULL::uuid,'default',0,'{}'::jsonb),"
+            " ($4,$2,$3,'MapBlock','1',$1,'default',0,"
+            "  jsonb_build_object('title','Exact',"
+            "   'bbox', jsonb_build_object("
+            "     'west',$5::numeric,"
+            "     'south',-1,'east',1,'north',1)))",
+            draft_section_id,
+            site_id,
+            draft_page_id,
+            draft_map_id,
+            exact_fraction,
+        )
+        # The frozen review human session for the seeded SITE_OWNER.
+        session_id = uuid4()
+        review_secret = b"r" * 32
+        review_public_id = f"sas2_{session_id.hex}"
+        await owner.execute(
+            "INSERT INTO control.user_session (id, public_id, secret_digest,"
+            " csrf_secret_digest, user_account_id, absolute_expires_at)"
+            " VALUES ($1,$2,$3,$4,$5, now() + interval '1 hour')",
+            session_id,
+            review_public_id,
+            hashlib.sha256(review_secret).digest(),
+            b"c" * 32,
+            seeded["delegator_id"],
+        )
+    review_token = format_session_token(
+        review_public_id, review_secret
+    ).get_secret_value()
+
+    # Freeze: real control enqueue + real worker claim + real run.
+    job_id, _ = await _freeze(database, seeded)
+    pool = await _worker_pool(database)
+    try:
+        rows = await _worker_call(
+            database,
+            "SELECT * FROM control.slaif_review_job_claim($1, $2)",
+            "review-endpoint-worker",
+            ["FREEZE", "ACCEPT"],
+        )
+        assert len(rows) == 1
+        assert str(rows[0]["id"]) == str(job_id)
+        result = await run_freeze_job(pool, _worker_settings(database), dict(rows[0]))
+        assert result.status == "SUCCEEDED", result.error
+    finally:
+        await pool.close()
+
+    snapshot = await _snapshot_row(database, workspace_id)
+    assert snapshot is not None and snapshot["status"] == "COMPLETE"
+    snapshot_id: UUID = snapshot["id"]
+
+    # Exact-digit fidelity through the real JSONB storage round trip:
+    # the stored payload must still carry the 23-digit fraction and the
+    # exact-number decode must reproduce the stored digest.
+    stored_payload: Any = parse_snapshot_text(
+        json.dumps(snapshot["payload"])
+        if not isinstance(snapshot["payload"], str)
+        else snapshot["payload"]
+    )
+    assert isinstance(stored_payload, dict)
+    captured_map = None
+    for row in stored_payload["page_compositions"]:
+        if str(row.get("id")) == str(draft_map_id):
+            captured_map = row
+            break
+    assert captured_map is not None
+    assert captured_map["props"]["bbox"]["west"] == Decimal(exact_fraction), (
+        "JSONB round trip must retain every written digit"
+    )
+    assert canonical_digest(stored_payload) == str(snapshot["digest"])
+
+    # No-touch baseline: the 010 session row carries a NOT NULL
+    # last_seen_at, so the proof is before/after equality across the
+    # entire review read sequence, never a NULL assertion.
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        before_last_seen = await owner.fetchval(
+            "SELECT last_seen_at FROM control.user_session WHERE id = $1",
+            session_id,
+        )
+        assert before_last_seen is not None
+
+    render_adapter = _RestartableRenderAdapter(database)
+    await render_adapter.start()
+    render_app = create_render_app(
+        settings=ServiceSettings.for_test(),
+        database=render_adapter,
+    )
+    try:
+        async with render_app.router.lifespan_context(render_app):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=render_app),
+                base_url="http://render.test",
+            ) as client:
+                # PUBLISHED page: frozen bytes, snapshot media URL.
+                response = await client.post(
+                    "/internal/render/v1/review",
+                    headers={"X-SLAIF-Human-Session": review_token},
+                    json=_review_http_body(snapshot_id, "/"),
+                )
+                assert response.status_code == 200, response.text
+                body = response.json()
+                assert body["render_mode"] == "review"
+                assert body["page"]["title"] == "Home"
+                # The seeded Image hangs below the root Section: walk
+                # the actual descendant tree (the product hierarchy is
+                # never flattened) and assert identity, type and the
+                # frozen byte URL.
+                home_nodes = _walk_nodes(body["composition"]["nodes"])
+                media_nodes = [
+                    node for node in home_nodes if node.get("media") is not None
+                ]
+                assert len(media_nodes) == 1
+                media_node = media_nodes[0]
+                assert media_node["component_type"] == "Image"
+                assert media_node["props"]["mediaId"] == str(seeded["media_id"])
+                assert media_node["media"] == {
+                    "url": (
+                        f"/media/v1/review/{snapshot_id}"
+                        f"/assets/{seeded['media_id']}/content"
+                    ),
+                    "mime_type": "image/png",
+                    "size_bytes": 128,
+                }
+                # The frozen media map is exactly the seeded asset.
+                assert set(stored_payload["media"].keys()) == {str(seeded["media_id"])}
+                assert response.headers["Cache-Control"] == "private, no-store"
+                assert (
+                    response.headers["X-Robots-Tag"] == "noindex, nofollow, noarchive"
+                )
+
+                # DRAFT page: the active-preview candidate policy is
+                # preserved for the captured workspace in review.
+                draft_response = await client.post(
+                    "/internal/render/v1/review",
+                    headers={"X-SLAIF-Human-Session": review_token},
+                    json=_review_http_body(snapshot_id, "/draft/"),
+                )
+                assert draft_response.status_code == 200, draft_response.text
+                draft_body = draft_response.json()
+                assert draft_body["page"]["title"] == "Draft page"
+                map_node = next(
+                    node
+                    for node in _walk_nodes(draft_body["composition"]["nodes"])
+                    if node["component_type"] == "MapBlock"
+                )
+                assert map_node["id"] == str(draft_map_id)
+                assert float(map_node["props"]["bbox"]["west"]) == float(
+                    Decimal(exact_fraction)
+                )
+
+                # The frozen read is immutable input: enqueue the
+                # discard, run the real discard worker to its terminal
+                # state, and the same review read returns the same
+                # bytes.
+        discard_rows = await _control_call(
+            database,
+            "SELECT * FROM control.slaif_human_agent_workspace_discard($1,$2,$3)",
+            workspace_id,
+            site_id,
+            seeded["delegator_id"],
+        )
+        assert len(discard_rows) == 1
+        discard_job_id = UUID(str(discard_rows[0]["job_id"]))
+        discard_pool = await _worker_pool(database)
+        try:
+            discard_claimed = await _worker_call(
+                database,
+                "SELECT * FROM control.slaif_review_job_claim($1, $2)",
+                "review-endpoint-worker-discard",
+                ["DISCARD"],
+            )
+            assert len(discard_claimed) == 1
+            assert str(discard_claimed[0]["id"]) == str(discard_job_id)
+            discard_result = await run_discard_job(
+                discard_pool, _worker_settings(database), dict(discard_claimed[0])
+            )
+            assert discard_result.status == "SUCCEEDED", discard_result.error
+        finally:
+            await discard_pool.close()
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            discarded = await owner.fetchrow(
+                "SELECT status, discarded_at FROM control.workspace WHERE id = $1",
+                workspace_id,
+            )
+            discard_job_row = await owner.fetchrow(
+                "SELECT status, error FROM control.review_job WHERE id = $1",
+                discard_job_id,
+            )
+            pending_operations = await get_session_operations(
+                _ConnExecutor(owner), workspace_id, schema="content"
+            )
+        assert str(discarded["status"]) == "DISCARDED"
+        assert discarded["discarded_at"] is not None
+        assert discard_job_row["status"] == "SUCCEEDED"
+        assert discard_job_row["error"] is None
+        assert pending_operations == []
+        async with render_app.router.lifespan_context(render_app):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=render_app),
+                base_url="http://render.test",
+            ) as client:
+                after = await client.post(
+                    "/internal/render/v1/review",
+                    headers={"X-SLAIF-Human-Session": review_token},
+                    json=_review_http_body(snapshot_id, "/"),
+                )
+                assert after.status_code == 200, after.text
+                assert after.json() == body
+    finally:
+        await render_adapter.stop()
+
+    # Role boundary: only the preview reader may execute the 076 read
+    # surface; the public reader cannot, directly or effectively.
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        for function in (
+            "control.slaif_review_projection_authorize(text,bytea,uuid)",
+            "control.slaif_review_snapshot_frozen_state(uuid)",
+        ):
+            preview_ok = await owner.fetchval(
+                "SELECT has_function_privilege('slaif_preview_reader', $1, 'EXECUTE')",
+                function,
+            )
+            public_ok = await owner.fetchval(
+                "SELECT has_function_privilege('slaif_public_reader', $1, 'EXECUTE')",
+                function,
+            )
+            assert preview_ok is True
+            assert public_ok is False
+        direct_call_error = None
+        async with (
+            await database.role_pool("slaif_public_reader")
+        ).acquire() as public_connection:
+            try:
+                await public_connection.fetchval(
+                    "SELECT * FROM control.slaif_review_projection_authorize($1,$2,$3)",
+                    review_public_id,
+                    hashlib.sha256(review_secret).digest(),
+                    snapshot_id,
+                )
+            except asyncpg.InsufficientPrivilegeError as error:
+                direct_call_error = error
+            assert direct_call_error is not None
+
+    # Stable refusals: every invalid input is one uniform 404.
+    async with render_app.router.lifespan_context(render_app):
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=render_app),
+            base_url="http://render.test",
+        ) as client:
+            negative_cases = [
+                # no session header at all
+                ({}, _review_http_body(snapshot_id, "/")),
+                # body-supplied session token
+                (
+                    {"X-SLAIF-Human-Session": review_token},
+                    {
+                        **_review_http_body(snapshot_id, "/"),
+                        "session_token": review_token,
+                    },
+                ),
+                # browser run token header on the human route
+                (
+                    {
+                        "X-SLAIF-Human-Session": review_token,
+                        "X-SLAIF-Browser-Run-Token": "tok",
+                    },
+                    _review_http_body(snapshot_id, "/"),
+                ),
+            ]
+            for headers, payload in negative_cases:
+                refused = await client.post(
+                    "/internal/render/v1/review", headers=headers, json=payload
+                )
+                assert refused.status_code == 404, refused.text
+            # unknown snapshot id
+            refused = await client.post(
+                "/internal/render/v1/review",
+                headers={"X-SLAIF-Human-Session": review_token},
+                json=_review_http_body(uuid4(), "/"),
+            )
+            assert refused.status_code == 404, refused.text
+    # Revoked and expired sessions refuse with the same uniform 404,
+    # and the read touched nothing (no session touch, no audit row).
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        session_row = await owner.fetchrow(
+            "SELECT last_seen_at, revoked_at FROM control.user_session WHERE id = $1",
+            session_id,
+        )
+        assert session_row["revoked_at"] is None
+        assert session_row["last_seen_at"] == before_last_seen
+        audit_rows = await owner.fetchval(
+            "SELECT count(*) FROM audit.human_editor_mutation"
+        )
+        assert audit_rows == 0
+        # Coherent legacy sessions: every 010 timestamp no later than
+        # expiry, and unique secret/CSRF digests (both columns UNIQUE).
+        expired_raw_secret = b"e" * 32
+        revoked_raw_secret = b"v" * 32
+        expired_session_id = uuid4()
+        expired_public_id = f"sas2_{expired_session_id.hex}"
+        revoked_session_id = uuid4()
+        revoked_public_id = f"sas2_{revoked_session_id.hex}"
+        # Isolate the named guards: the expired row is NOT idle
+        # (last_seen inside the trusted 1800s window) so only the
+        # expiry disjunct fires; the revoked row is fresh and
+        # unexpired so only the revocation disjunct fires.
+        await owner.execute(
+            "INSERT INTO control.user_session (id, public_id, secret_digest,"
+            " csrf_secret_digest, user_account_id, created_at, last_seen_at,"
+            " recent_auth_at, absolute_expires_at, revoked_at) VALUES"
+            " ($1,$2,$3,$4,$5, now() - interval '20 minutes',"
+            "  now() - interval '20 minutes', now() - interval '20 minutes',"
+            "  now() - interval '5 minutes', NULL),"
+            " ($6,$7,$8,$9,$10, now() - interval '5 minutes',"
+            "  now() - interval '5 minutes', now() - interval '5 minutes',"
+            "  now() + interval '1 hour', now() - interval '1 minute')",
+            expired_session_id,
+            expired_public_id,
+            hashlib.sha256(expired_raw_secret).digest(),
+            hashlib.sha256(b"review-endpoint-expired-csrf").digest(),
+            seeded["delegator_id"],
+            revoked_session_id,
+            revoked_public_id,
+            hashlib.sha256(revoked_raw_secret).digest(),
+            hashlib.sha256(b"review-endpoint-revoked-csrf").digest(),
+            seeded["delegator_id"],
+        )
+    for expired_token in (
+        format_session_token(expired_public_id, expired_raw_secret).get_secret_value(),
+        format_session_token(revoked_public_id, revoked_raw_secret).get_secret_value(),
+    ):
+        async with render_app.router.lifespan_context(render_app):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=render_app),
+                base_url="http://render.test",
+            ) as client:
+                refused = await client.post(
+                    "/internal/render/v1/review",
+                    headers={"X-SLAIF-Human-Session": expired_token},
+                    json=_review_http_body(snapshot_id, "/"),
+                )
+                assert refused.status_code == 404, refused.text
