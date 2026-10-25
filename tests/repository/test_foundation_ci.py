@@ -141,6 +141,31 @@ def _run_aggregate(script: str, group_a: str, group_b: str) -> int:
     ).returncode
 
 
+AGGREGATE_NEGATIVES: tuple[tuple[str, str], ...] = (
+    ("failure", "success"),
+    ("success", "failure"),
+    ("cancelled", "success"),
+    ("success", "cancelled"),
+    ("skipped", "success"),
+    ("success", "skipped"),
+    ("", "success"),
+    ("success", ""),
+    ("unknown", "success"),
+    ("success", "unknown"),
+    ("neutral", "success"),
+    ("success", "neutral"),
+    ("stuck", "success"),
+    ("timed_out", "success"),
+    ("success", "timed_out"),
+)
+
+
+def _assert_fail_closed(script: str) -> None:
+    assert _run_aggregate(script, "success", "success") == 0
+    for group_a, group_b in AGGREGATE_NEGATIVES:
+        assert _run_aggregate(script, group_a, group_b) == 1, (group_a, group_b)
+
+
 def _foundation_blocks(text: str) -> tuple[str, str, str]:
     return (
         _job_block(text, "foundation-pg-group-a"),
@@ -259,25 +284,7 @@ class FoundationCiSplitTestCase(unittest.TestCase):
         self.assertIn("    timeout-minutes: 5", self.job_gate)
 
     def test_extracted_aggregate_script_is_fail_closed(self) -> None:
-        script = _aggregate_script(self.job_gate)
-        self.assertEqual(_run_aggregate(script, "success", "success"), 0)
-        for group_a, group_b in [
-            ("failure", "success"),
-            ("success", "failure"),
-            ("cancelled", "success"),
-            ("success", "cancelled"),
-            ("skipped", "success"),
-            ("success", "skipped"),
-            ("", "success"),
-            ("success", ""),
-            ("unknown", "success"),
-            ("success", "unknown"),
-            ("neutral", "success"),
-            ("success", "neutral"),
-            ("stuck", "success"),
-        ]:
-            with self.subTest(group_a=group_a, group_b=group_b):
-                self.assertEqual(_run_aggregate(script, group_a, group_b), 1)
+        _assert_fail_closed(_aggregate_script(self.job_gate))
 
     def test_baseline_positive_controls(self) -> None:
         _assert_required_names(self.text)
@@ -305,12 +312,6 @@ class FoundationCiSplitTestCase(unittest.TestCase):
                     ["/bin/bash", path], env=env, capture_output=True, text=True
                 )
                 self.assertEqual(result.returncode, 1)
-
-    def test_aggregate_script_refuses_timed_out(self) -> None:
-        script = _aggregate_script(self.job_gate)
-        for group_a, group_b in (("timed_out", "success"), ("success", "timed_out")):
-            with self.subTest(group_a=group_a, group_b=group_b):
-                self.assertEqual(_run_aggregate(script, group_a, group_b), 1)
 
     def test_mutation_omitted_group_a_command_fails(self) -> None:
         _assert_exact_commands(self.text)
@@ -381,17 +382,16 @@ class FoundationCiSplitTestCase(unittest.TestCase):
             _assert_skip_conditions(mutated)
 
     def test_mutation_weakened_result_guard_fails(self) -> None:
-        _assert_needs_and_env(self.text)
+        _assert_fail_closed(_aggregate_script(self.job_gate))
         old_guard = 'if [ "$result" != "success" ]; then'
         new_guard = 'if [ "$result" = "cancelled" ]; then'
         self.assertEqual(self.text.count(old_guard), 1)
         mutated = self.text.replace(old_guard, new_guard, 1)
         self.assertNotEqual(mutated, self.text)
         script = _aggregate_script(_job_block(mutated, "foundation-postgresql"))
-        rc = _run_aggregate(script, "failure", "success")
-        self.assertEqual(rc, 0)
+        self.assertEqual(_run_aggregate(script, "failure", "success"), 0)
         with self.assertRaises(AssertionError):
-            self.assertEqual(rc, 1)
+            _assert_fail_closed(script)
 
 
 if __name__ == "__main__":
