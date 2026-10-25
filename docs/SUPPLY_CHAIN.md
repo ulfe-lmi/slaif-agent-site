@@ -172,7 +172,11 @@ The normalized Apache application-file boundary is `/etc/apache2/` for this
 base-image layout.
 The PostgreSQL 18.6 Alpine 3.23 overlay keeps the official base and pins the
 standard-repository security packages `brotli-libs=1.2.1-r0` and
-`libcurl=8.22.0-r0` alongside the existing OpenSSL pins.
+`libcurl=8.23.0-r0` alongside the existing OpenSSL pins. The earlier
+`libcurl=8.22.0-r0` pin (introduced at `20c23890`) became unresolvable when
+the upstream v3.23/main index moved to 8.23.0-r0 on 2026-10-25; 8.23.0-r0 is
+installed through the same signed standard repository (archive SHA-256
+`d35e08ce3bafbcaf1a68512ac31483bd93e795ad5e8d8bfd76ada3106d81b569`).
 
 ## Vulnerability gate and database freshness
 

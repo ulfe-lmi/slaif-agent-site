@@ -20,9 +20,9 @@ RUN apk add --no-cache \
       --repository=https://dl-cdn.alpinelinux.org/alpine/v3.23/main \
       'brotli-libs=1.2.1-r0' \
       'libcrypto3=3.5.9-r0' \
-      'libcurl=8.22.0-r0' \
+      'libcurl=8.23.0-r0' \
       'libssl3=3.5.9-r0' \
     && test "$(awk '/^P:brotli-libs$/{found=1} found && /^V:/{print substr($0,3); exit}' /lib/apk/db/installed)" = "1.2.1-r0" \
     && test "$(awk '/^P:libcrypto3$/{found=1} found && /^V:/{print substr($0,3); exit}' /lib/apk/db/installed)" = "3.5.9-r0" \
-    && test "$(awk '/^P:libcurl$/{found=1} found && /^V:/{print substr($0,3); exit}' /lib/apk/db/installed)" = "8.22.0-r0" \
+    && test "$(awk '/^P:libcurl$/{found=1} found && /^V:/{print substr($0,3); exit}' /lib/apk/db/installed)" = "8.23.0-r0" \
     && test "$(awk '/^P:libssl3$/{found=1} found && /^V:/{print substr($0,3); exit}' /lib/apk/db/installed)" = "3.5.9-r0"

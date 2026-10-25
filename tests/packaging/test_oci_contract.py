@@ -80,7 +80,7 @@ class OciContractTests(unittest.TestCase):
             content,
         )
         self.assertIn("libcrypto3=3.5.9-r0", content)
-        self.assertIn("libcurl=8.22.0-r0", content)
+        self.assertIn("libcurl=8.23.0-r0", content)
         self.assertIn("libssl3=3.5.9-r0", content)
         self.assertIn("https://dl-cdn.alpinelinux.org/alpine/v3.23/main", content)
         self.assertNotIn("apk upgrade", content)
