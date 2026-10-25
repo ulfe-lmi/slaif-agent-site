@@ -298,3 +298,48 @@ Runtime proof checks the exact seccomp/capability/resource/network/mount/image
 inventory, no credential/log/artifact leakage, zero residual Chromium children,
 worker-secret failure/recovery, and continued public `QUEUED` runs with zero DB
 artifact rows.
+
+## Frozen-review parity control reliability diagnostics (083/6-a)
+
+The frozen-review parity spec (the six stable engine/target pairings
+across the active-preview and immutable-review surfaces) submits the
+shared same-path control form through real native button clicks.
+083/6-a adds bounded, secret-safe operation-level diagnostics to that
+sequence after the postmerge 600 s CI stall (run 40231055425, last
+stage `phaseB/firefox/Desktop Firefox/controls` entered at 38868 ms
+cumulative):
+
+- The single `stage` test annotation (the CI reporter reads the first
+  matching annotation) is extended with a fixed-enum `op` field and a
+  bounded `flags` field: leg states `r/n/c` (0 pending, 1 ok, 2
+  rejected), the observed numeric POST status, `navreq`/`mainframe`
+  booleans, and relative ms. It never carries URLs, IDs, tokens, DOM,
+  bodies, or a growing annotation list.
+- Every response/navigation/click leg of every control submission
+  carries an explicit diagnostic deadline of at most 30000 ms plus an
+  actual AbortSignal. On first failure the operation is frozen (the
+  first-failure leg state is snapshotted before abort/drain), pending
+  sibling waits are aborted and drained in a bounded way, and only a
+  sanitized fixed-enum-class/leg/flags error propagates; the raw
+  Playwright message, cause, and call log are never rethrown or
+  logged.
+- A fixed secret-free in-page sentinel (a per-document marker
+  installed by a context init script) is proven a non-empty value
+  before each click and is required to change after each same-path
+  POST, so a genuinely fresh main document is asserted even when the
+  URL is unchanged. Only boolean results cross back to the test
+  process as diagnostic output.
+- Pairing failure priority is body, then the observer-collector
+  assertion, then context close; the original collector assertion is
+  retained whenever the body passed, and no later failure replaces an
+  earlier first failure.
+- The control POST response matcher binds the main-frame navigation
+  request, the POST method, and the same expected URL; an iframe/fetch
+  or unrelated same-URL response is not accepted.
+
+These are diagnostic bounds on the existing harness only: no product
+behavior, global 600000 ms test budget, retry, project, descriptor,
+config, or CI budget change. Two bounded full local trials at the
+instrumented baseline (fresh stack each) passed (141830 ms and 142929
+ms, native exit 0); the postmerge CI stall was not reproduced locally
+and its cause remains unknown.
