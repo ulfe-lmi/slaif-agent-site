@@ -65,8 +65,8 @@ function reviewBanner(banner: {
         <p className="review-banner__drift">Canonical unchanged since freeze.</p>
       ) : (
         <p className="review-banner__drift review-banner__drift--warn">
-          Canonical drifted after freeze — acceptance is blocked until re-freeze
-          (enforced at 083/1); the frozen review remains visible.
+          Canonical drifted after freeze — acceptance is blocked. The frozen review
+          remains visible.
         </p>
       )}
     </div>

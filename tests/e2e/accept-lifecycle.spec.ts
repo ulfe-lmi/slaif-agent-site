@@ -676,7 +676,7 @@ test.describe("accept lifecycle (083/1)", () => {
     expect(await workspaceStatus(page, siteId, workspaceId)).toBe("REVIEW");
 
     // Drift: a canonical revision bump (test authority) removes the
-    // accept control and renders the re-review message.
+    // accept control and renders the blocked-acceptance warning.
     psql(
       project,
       `UPDATE control.site SET canonical_revision = canonical_revision + 1
@@ -685,7 +685,7 @@ test.describe("accept lifecycle (083/1)", () => {
     await page.goto(`/admin/sites/${siteId}/workspaces/${workspaceId}/review`);
     expect(await page.getByRole("button", { name: /accept/i }).count()).toBe(0);
     await expect(
-      page.getByText("acceptance is blocked until re-freeze", {
+      page.getByText("acceptance is blocked. The frozen review remains visible.", {
         exact: false,
       }),
     ).toBeVisible();

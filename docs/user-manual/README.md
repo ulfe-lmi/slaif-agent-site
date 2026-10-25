@@ -247,10 +247,15 @@ While a workspace is in review, the reviewer signs in and opens the workspace's
 private review page. The page renders the site exactly as captured in the
 frozen snapshot (pages, styles, navigation, and the media stored with the
 snapshot), never the live or canonical content, and shows a banner with the
-snapshot digest plus whether the canonical site changed after the freeze
-(drift blocks acceptance until a re-freeze). Media in the review is private to
-the signed-in reviewer and is never published. After acceptance or discard the
-review page no longer resolves.
+snapshot digest plus whether the canonical site changed after the freeze.
+Canonical drift blocks acceptance; the supported remedy is a fresh or
+reapplied workspace, with discard where appropriate. Re-review and a
+multiple-snapshot lifecycle are planned, not yet available. Media in the
+review is private to the signed-in reviewer; reviewing itself does not
+publish. After acceptance or discard the immutable snapshot history is
+retained: the frozen review and its private media remain readable under the
+existing authorization and retention policy and are never automatically
+published.
 
 ### Capability Tokens
 
