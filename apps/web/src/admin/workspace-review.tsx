@@ -157,8 +157,8 @@ function DriftBanner({ document }: { document: ReviewDocument }) {
   ) : (
     <StatusPanel>
       Canonical drifted after freeze (base {drift.base_site_revision}, current{" "}
-      {drift.current_site_revision}) — acceptance is blocked until re-freeze (enforced
-      server-side); the frozen review remains visible.
+      {drift.current_site_revision}) — acceptance is blocked. The frozen review remains
+      visible.
     </StatusPanel>
   );
 }

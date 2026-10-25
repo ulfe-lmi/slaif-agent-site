@@ -57,6 +57,11 @@ _DOWNGRADE_FAILURE = (
     "is unsafe; fix the migration failure and run bootstrap reconcile before "
     "serving traffic"
 )
+_DOWNGRADE_RETAINED_V2 = (
+    "bootstrap downgrade refused: a retained review-snapshot/v2 row cannot be "
+    "re-validated or rendered under the restored v1 contract; resolve the "
+    "retained v2 snapshots through a supported path and retry"
+)
 
 
 class BootstrapStateError(RuntimeError):
@@ -465,6 +470,7 @@ async def _assert_downgrade_compatible(
         "073_001",
         "074_001",
         "075_001",
+        "076_001",
         "067_001",
         "066_001",
         "065_001",
@@ -498,6 +504,31 @@ async def _mark_downgrade_unready(connection: Any) -> None:
     await _mark_pending(connection, deployed=False)
 
 
+async def _assert_no_retained_v2_snapshots(connection: Any) -> None:
+    """Operator-path preflight for the retained-v2 rollback refusal (R9).
+
+    A retained ``review-snapshot/v2`` row cannot be re-validated or rendered
+    under the restored v1 contract. The 076_001 migration's own downgrade
+    guard refuses such a rollback (SNAPSHOT_DOWNGRADE_RETAINED_V2), but this
+    bootstrap path commits readiness PENDING and disables content COW before
+    it runs the migration; the same product control snapshot fact is checked
+    here first, before any operator-path effect. The check reads the product
+    control table only (owner connection already in scope) and never rewrites
+    or deletes immutable snapshot history.
+    """
+    if await connection.fetchval(
+        "SELECT to_regclass('control.review_snapshot') IS NULL"
+    ):
+        return
+    retained = await connection.fetchval(
+        "SELECT EXISTS ("
+        "SELECT 1 FROM control.review_snapshot "
+        "WHERE payload->>'state_version' = 'review-snapshot/v2')"
+    )
+    if retained:
+        raise BootstrapStateError(_DOWNGRADE_RETAINED_V2)
+
+
 async def downgrade(settings: BootstrapSettings) -> None:
     async with owner_connection(
         settings.resolved_owner_dsn(), expected_database=settings.expected_database
@@ -507,6 +538,7 @@ async def downgrade(settings: BootstrapSettings) -> None:
             "SELECT version_num::text FROM control.alembic_version"
         )
         await _assert_downgrade_compatible(connection, executor, revision)
+        await _assert_no_retained_v2_snapshots(connection)
         cow_status = await get_cow_status(executor, schema="content")
         if cow_status["enabled"]:
             async with connection.transaction():

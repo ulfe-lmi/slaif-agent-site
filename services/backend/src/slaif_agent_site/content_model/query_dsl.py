@@ -79,7 +79,10 @@ def _walk(value: Any, depth: int = 0, state: list[int] | None = None) -> int:
     elif isinstance(value, str):
         counters[1] += len(value.encode("utf-8"))
         _reject_executable(value)
-    elif value is not None and not isinstance(value, (bool, int, float)):
+    elif value is not None and not isinstance(value, (bool, int, float, Decimal)):
+        # Decimal is a JSON numeric scalar here: the v2 capture retains
+        # exact stored numeric digits as Decimal (raw-retention boundary),
+        # and the aggregate bounds must accept them without coercion.
         raise ValueError("query values must be JSON scalars")
     if counters[1] > MAX_QUERY_BYTES:
         raise ValueError("query byte budget exceeds limit")

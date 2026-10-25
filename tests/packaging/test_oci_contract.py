@@ -80,7 +80,7 @@ class OciContractTests(unittest.TestCase):
             content,
         )
         self.assertIn("libcrypto3=3.5.9-r0", content)
-        self.assertIn("libcurl=8.22.0-r0", content)
+        self.assertIn("libcurl=8.23.0-r0", content)
         self.assertIn("libssl3=3.5.9-r0", content)
         self.assertIn("https://dl-cdn.alpinelinux.org/alpine/v3.23/main", content)
         self.assertNotIn("apk upgrade", content)
@@ -149,9 +149,9 @@ class OciContractTests(unittest.TestCase):
         runtime = content.split(" AS runtime", maxsplit=1)[1]
         self.assertNotIn("pnpm install", runtime)
         self.assertIn("rm -rf /ms-playwright/*", runtime)
-        self.assertIn("BROWSER_WORKER_EXPECTED_CHROMIUM_VERSION=155.0.8059.84", runtime)
+        self.assertIn("BROWSER_WORKER_EXPECTED_CHROMIUM_VERSION=156.0.8078.47", runtime)
         self.assertIn(
-            "cf0f049892dea22e6a6db26d47ed0d7776b7158edcbec4634086633df8bafcbc",
+            "e6c94490f0b6b337225aeb2d2a5034858516b7017356980ba94f5176d8774a50",
             content,
         )
         self.assertIn("USER 10001:10001", content)

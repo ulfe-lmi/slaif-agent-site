@@ -28,6 +28,14 @@ interface RenderProps {
   readonly locale: string;
   readonly data?: readonly Record<string, unknown>[];
   readonly meta?: Readonly<{ readonly filter_fields: readonly FilterField[] }>;
+  /**
+   * Composition node identifier. On the canonical surface the visible
+   * same-path form structure stays in markup parity with the flight-free
+   * private surfaces (083/5-b); the identifier itself is unused there
+   * because the canonical bounded local state filters live and the
+   * submission is suppressed client-side.
+   */
+  readonly nodeId?: string;
 }
 
 function text(value: unknown): string {
@@ -60,16 +68,36 @@ function CollectionSearch({ props, data, meta }: RenderProps) {
   const visible = items.filter((item) => matchesSearch(item, filterFields, query));
   return (
     <div className="renderer-collection-search">
-      <label className="renderer-collection-search-field">
-        <span>{text(props.placeholder) || "Search"}</span>
-        <input
-          className="renderer-collection-search-input"
-          type="search"
-          value={query}
-          maxLength={256}
-          onChange={(event) => setQuery(capSearchInput(event.target.value))}
-        />
-      </label>
+      {/*
+       * 083/5-b markup parity with the flight-free private surfaces: the
+       * same same-path form structure. On the canonical RSC surface the
+       * documented bounded local state already filters live, so the
+       * submission is suppressed client-side (no network I/O, no state
+       * change, no new authority).
+       */}
+      <form
+        className="renderer-collection-search-form"
+        method="POST"
+        onSubmit={(event) => event.preventDefault()}
+      >
+        <label className="renderer-collection-search-field">
+          <span>{text(props.placeholder) || "Search"}</span>
+          <input
+            className="renderer-collection-search-input"
+            name="q"
+            type="search"
+            value={query}
+            maxLength={256}
+            onChange={(event) => setQuery(capSearchInput(event.target.value))}
+          />
+        </label>
+        <button
+          className="renderer-button renderer-button--secondary renderer-collection-search-submit"
+          type="submit"
+        >
+          Search
+        </button>
+      </form>
       {visible.length === 0 ? (
         <p className="renderer-collection-search-empty">No results</p>
       ) : (
@@ -92,31 +120,49 @@ function CollectionFilter({ props, data, meta }: RenderProps) {
   const visible = items.filter((item) => matchesAllFacets(item, filterFields, active));
   return (
     <div className="renderer-collection-filter">
-      {facets.length > 0 ? (
-        <div className="renderer-collection-filter-facets">
-          {facets.map((facet, index) => (
-            <label
-              key={`${facet.fieldKey}-${facet.operator}-${index}`}
-              className="renderer-collection-filter-facet"
-            >
-              <span>{`${facet.fieldKey} ${facet.operator}`}</span>
-              <input
-                className="renderer-collection-filter-input"
-                type="text"
-                value={facetValues[index] ?? ""}
-                maxLength={4096}
-                onChange={(event) =>
-                  setFacetValues((previous) =>
-                    previous.map((value, i) =>
-                      i === index ? capFacetInput(event.target.value) : value,
-                    ),
-                  )
-                }
-              />
-            </label>
-          ))}
-        </div>
-      ) : null}
+      {/*
+       * 083/5-b markup parity with the flight-free private surfaces:
+       * same same-path form structure; bounded local state filters live,
+       * so the submission is suppressed client-side.
+       */}
+      <form
+        className="renderer-collection-filter-form"
+        method="POST"
+        onSubmit={(event) => event.preventDefault()}
+      >
+        {facets.length > 0 ? (
+          <div className="renderer-collection-filter-facets">
+            {facets.map((facet, index) => (
+              <label
+                key={`${facet.fieldKey}-${facet.operator}-${index}`}
+                className="renderer-collection-filter-facet"
+              >
+                <span>{`${facet.fieldKey} ${facet.operator}`}</span>
+                <input
+                  className="renderer-collection-filter-input"
+                  name={`f${index}`}
+                  type="text"
+                  value={facetValues[index] ?? ""}
+                  maxLength={4096}
+                  onChange={(event) =>
+                    setFacetValues((previous) =>
+                      previous.map((value, i) =>
+                        i === index ? capFacetInput(event.target.value) : value,
+                      ),
+                    )
+                  }
+                />
+              </label>
+            ))}
+          </div>
+        ) : null}
+        <button
+          className="renderer-button renderer-button--secondary renderer-collection-filter-submit"
+          type="submit"
+        >
+          Filter
+        </button>
+      </form>
       {visible.length === 0 ? (
         <p className="renderer-collection-filter-empty">No results</p>
       ) : (

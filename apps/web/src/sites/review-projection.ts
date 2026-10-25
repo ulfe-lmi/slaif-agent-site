@@ -21,6 +21,7 @@ import type {
   ProjectionNode,
   ProjectionRegionEntry,
   ProjectionRegion,
+  RenderProjection,
 } from "./render";
 
 /* ------------------------------------------------------------------ */
@@ -161,6 +162,107 @@ export type ReviewProjectionResult =
   | { kind: "not_found" }
   | { kind: "redirect"; target: string; status_code: 301 | 302 | 303 | 307 | 308 }
   | { kind: "page"; projection: PageProjection };
+
+/** Trusted stored snapshot state versions (payload facts, never claims). */
+export const REVIEW_STATE_VERSION_V2 = "review-snapshot/v2";
+export const REVIEW_STATE_VERSION_V1 = "review-snapshot/v1";
+
+/**
+ * 083/5-b generated-link/consumer agreement (site addressing authority).
+ * The trusted renderer emits links under the review base
+ * ``/review/<ws>/s/<site key>`` using the CAPTURED site key (the same
+ * value the frozen renderer payload and the emitted shell base use), and
+ * the frozen redirect set re-roots site-local targets to
+ * ``/review/<ws><path>``. Both forms must resolve to the SAME trusted
+ * site-local route:
+ *
+ * - ``["s", <trusted key>, ...rest]`` -> site-local ``/rest``: the only
+ *   prefix ever stripped, matched EXACTLY against the captured key;
+ * - ``["s"]``                          -> ``null``: a lone ``s`` is a
+ *   malformed prefix fragment of the review addressing form, uniformly
+ *   refused (never a fallback to a coincidentally retained ``/s`` route);
+ * - ``["s", <other key>, ...]``       -> ``null`` (uniform refusal): a
+ *   foreign binding must never be reinterpreted as a site-local route a
+ *   coincidentally retained page could match;
+ * - anything else                     -> the path is already site-local
+ *   (the redirect re-root form and direct site-local requests).
+ *
+ * The trusted key is the CAPTURED profile fact
+ * (``normalized_state.site.site_key``). The read-model's
+ * ``metadata.site.key`` is selected LIVE from ``control.site`` by the 071
+ * read route and is NOT captured snapshot data; it is never used as
+ * frozen addressing authority, even when it differs from the captured
+ * key. No live domain or content lookup is added; the caller's human
+ * session/site/workspace/snapshot binding is unchanged.
+ */
+export function siteLocalPath(
+  document: ReviewDocument,
+  sitePath: readonly string[] | undefined,
+): string | null {
+  const segments = sitePath ?? [];
+  if (segments[0] === "s") {
+    if (segments.length === 1) return null; // malformed prefix fragment
+    if (segments[1] !== document.normalized_state.site.site_key) {
+      return null; // foreign key: fail closed
+    }
+    return `/${segments.slice(2).join("/")}`;
+  }
+  return `/${segments.join("/")}`;
+}
+
+/**
+ * 083/5 review view selection. The STORED ``snapshot.state_version``
+ * is the single selector:
+ *
+ * - ``review-snapshot/v2``: the faithful frozen read projection
+ *   (obtained from the trusted render service, which alone validates
+ *   the COMPLETE snapshot) is rendered; a ``null`` projection is a
+ *   uniform refusal and NO v1 fallback is reachable from a failed v2
+ *   read;
+ * - ``review-snapshot/v1``: the legacy web-side frozen projection
+ *   remains the honest supported view (v1 predates the faithful
+ *   frozen read contract);
+ * - any other stored value: uniform refusal.
+ *
+ * Internal redirect targets are re-rooted under the review base in
+ * both views (the exact preview confinement contract); external
+ * targets pass through untouched.
+ */
+export function selectReviewView(
+  document: ReviewDocument,
+  faithfulProjection: RenderProjection | null,
+  workspaceId: string,
+  path: string,
+): ReviewProjectionResult {
+  const reRoot = (target: string): string =>
+    target.startsWith("/")
+      ? target === "/"
+        ? `/review/${workspaceId}`
+        : `/review/${workspaceId}${target}`
+      : target;
+  const stateVersion = document.snapshot.state_version;
+  if (stateVersion === REVIEW_STATE_VERSION_V2) {
+    if (!faithfulProjection) return { kind: "not_found" };
+    if (faithfulProjection.route_kind === "redirect") {
+      return {
+        kind: "redirect",
+        target: reRoot(faithfulProjection.redirect.target),
+        status_code: faithfulProjection.redirect.status_code,
+      };
+    }
+    return { kind: "page", projection: faithfulProjection };
+  }
+  if (stateVersion !== REVIEW_STATE_VERSION_V1) return { kind: "not_found" };
+  const result = projectionFromReviewDocument(document, path);
+  if (result.kind === "redirect") {
+    return {
+      kind: "redirect",
+      target: reRoot(result.target),
+      status_code: result.status_code,
+    };
+  }
+  return result;
+}
 
 /* ------------------------------------------------------------------ */
 /* Trusted renderer semantics mirrored against the frozen state         */

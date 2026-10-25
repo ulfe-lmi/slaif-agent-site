@@ -50,6 +50,7 @@ from slaif_agent_site.human_authorization import (
 from slaif_agent_site.media_service.config import MediaDatabaseMode, MediaSettings
 from slaif_agent_site.media_service.database import MediaDatabase
 from slaif_agent_site.media_service.finalize import (
+    FinalizationManifest,
     MediaFinalizationRepository,
     finalize_media_for_promotion,
 )
@@ -143,6 +144,9 @@ def _error_envelope(response: httpx.Response) -> dict[str, Any]:
         "operation_id": body.get("operation_id"),
         "details": body.get("details"),
     }
+
+
+_CURRENT_VERSION_FACTS = r""" '{"catalog":"catalog-v1","composition_schema":"site-composition/v1","content_model":"content-model/v1","design_system":"design-system/v1","puck":"0.20.2","renderer":"renderer-v1"}'::jsonb"""
 
 
 async def _control_call(
@@ -243,7 +247,10 @@ async def _seed_site(
             "INSERT INTO content.theme_base (id, site_id, schema_version,"
             " renderer_version, palette, typography, layout, shape) VALUES"
             " (gen_random_uuid(), $1, 'theme-schema/v1', 'renderer-v1',"
-            " '{}'::jsonb, '{}'::jsonb, '{}'::jsonb, '{}'::jsonb)",
+            ' \'{"preset":"ocean"}\'::jsonb,'
+            ' \'{"family":"system","scale":"balanced","weight":"regular"}\'::jsonb,'
+            ' \'{"content_width":"md","spacing":"md","grid_gap":"md"}\'::jsonb,'
+            ' \'{"radius":"md","shadow":"sm"}\'::jsonb)',
             site_id,
         )
         await owner.execute(
@@ -282,8 +289,11 @@ async def _seed_site(
         )
         workspace_id = await owner.fetchval(
             "INSERT INTO control.workspace (site_id, created_by, delegator_id,"
-            " title, delegation_preset, effective_scopes, status, expires_at)"
-            " VALUES ($1,$2,$2,'Accept Workspace','L4',$3::jsonb,'ACTIVE',"
+            " title, delegation_preset, effective_scopes, version_facts,"
+            " status, expires_at)"
+            " VALUES ($1,$2,$2,'Accept Workspace','L4',$3::jsonb,"
+            + _CURRENT_VERSION_FACTS
+            + ",'ACTIVE',"
             " now()+interval '1 hour') RETURNING id",
             site_id,
             delegator_id,
@@ -368,6 +378,34 @@ async def _apply_cow_operations(
             ids["created_heading_id"] = UUID(str(created["id"]))
     finally:
         await agent_pool.close()
+
+
+class _CountingMediaBoundary(MediaBoundary):
+    """Counting boundary over a REAL MediaBoundary (never a mock).
+
+    A true subtype of the worker boundary: ``finalize`` is the only
+    finalization entry point the accept job calls (accept_job.py
+    L599); counting it is runtime call evidence (0 calls after the
+    refused run, exactly 1 after the untampered positive), and both
+    ``finalize`` and ``stop`` delegate to the real boundary.  The
+    subclass constructor initializes its own lazy machinery with no
+    settings so it can never be used directly - only the delegated
+    methods are ever invoked.
+    """
+
+    def __init__(self, inner: MediaBoundary) -> None:
+        super().__init__(settings=None)
+        self._inner = inner
+        self.finalize_calls = 0
+
+    async def finalize(
+        self, site_id: UUID, workspace_id: UUID, media_ids: list[UUID]
+    ) -> FinalizationManifest:
+        self.finalize_calls += 1
+        return await self._inner.finalize(site_id, workspace_id, media_ids)
+
+    async def stop(self) -> None:
+        await self._inner.stop()
 
 
 async def _freeze_workspace(
@@ -923,8 +961,11 @@ async def test_control_accept_route_authority_matrix(
         )
         active_ws = await owner.fetchval(
             "INSERT INTO control.workspace (site_id, created_by, delegator_id,"
-            " title, delegation_preset, effective_scopes, status, expires_at)"
+            " title, delegation_preset, effective_scopes, version_facts,"
+            " status, expires_at)"
             " VALUES ($1,$2,$2,'Accept Active WS','L4','[\"page:read\"]'::jsonb,"
+            + _CURRENT_VERSION_FACTS
+            + ","
             " 'ACTIVE', now()+interval '1 hour') RETURNING id",
             site_id,
             ids["delegator_id"],
@@ -933,8 +974,11 @@ async def test_control_accept_route_authority_matrix(
         # non-REVIEW status (the enqueue's status gate must fire).
         conflict_ws = await owner.fetchval(
             "INSERT INTO control.workspace (site_id, created_by, delegator_id,"
-            " title, delegation_preset, effective_scopes, status, expires_at)"
+            " title, delegation_preset, effective_scopes, version_facts,"
+            " status, expires_at)"
             " VALUES ($1,$2,$2,'Accept Conflict WS','L4','[\"page:read\"]'::jsonb,"
+            + _CURRENT_VERSION_FACTS
+            + ","
             " 'REVIEW', now()+interval '1 hour') RETURNING id",
             site_id,
             ids["delegator_id"],
@@ -1729,3 +1773,339 @@ async def test_promote_workspace_retired(
         Path(__file__).resolve().parent.parent / "unit" / "test_promotion.py"
     ).read_text(encoding="utf-8")
     assert 'not hasattr(promotion, "promote_workspace")' in inventory
+
+
+@pytest.mark.asyncio
+async def test_accept_worker_stored_digest_cotamper_refused(
+    agent_site_database: AgentSiteDatabase, tmp_path: Path
+) -> None:
+    """G13/E-D1: a co-tampered STORED snapshot digest is refused by the
+    real accept worker with its actual stable code BEFORE media
+    finalization/canonical/revision/promotion-audit/cache/accepted
+    effects, with full no-effects.
+
+    Co-tamper: the digest column becomes the TRUSTED recomputed digest
+    of a coordinated altered document (a well-formed sha256 of a
+    well-formed canonical document), while the stored payload is left
+    untouched; every identity/revision binding stays valid so the
+    actual stored-payload digest guard is the one reached.  The target
+    is proven by independent digest recomputation.  Owner tampering is
+    a test threat fixture only.  The untampered twin digest then
+    accepts the SAME snapshot through the same qualified path.
+
+    The negative proves full no-effects including the canonical
+    promotion facts (heading props, created-node absence, pending COW
+    operations), hashed private bytes, and an ACTUAL finalizer call
+    count of 0 via a counting wrapper that delegates to the REAL
+    MediaBoundary (the positive then calls it exactly once).
+    """
+
+    database = agent_site_database
+    media_root = tmp_path / "media"
+    ids = await _seed_site(database, media_root=media_root, with_ops=True)
+    settings = _worker_settings(database)
+    pool = await _worker_pool(database)
+    boundary = MediaBoundary(settings=_media_settings(database, media_root))
+    counting = _CountingMediaBoundary(boundary)
+    try:
+        snapshot_id = await _freeze_workspace(database, ids, pool)
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(),
+            expected_database=database.name,
+        ) as owner:
+            stored = await owner.fetchrow(
+                "SELECT r.digest, r.payload, r.normalized_state,"
+                " r.versions, row_to_json(r)::text AS rowbytes"
+                " FROM control.review_snapshot r WHERE r.id = $1",
+                snapshot_id,
+            )
+            original_digest = str(stored["digest"])
+            stored_versions = json.loads(stored["versions"])
+            # Independent recomputation: the pre-tamper row is
+            # internally consistent (stored digest == trusted canonical
+            # digest of the stored payload).
+            recomputed = await owner.fetchval(
+                "SELECT encode(sha256(convert_to("
+                " control.slaif_canonical_jsonb_text($1::jsonb),'UTF8')),"
+                " 'hex')",
+                stored["payload"],
+            )
+            assert recomputed == original_digest
+            # Prior identity/revision bindings valid: the DIGEST guard,
+            # not an earlier binding refusal, is the one reached.
+            normalized = json.loads(stored["normalized_state"])
+            base_revision = await owner.fetchval(
+                "SELECT canonical_revision FROM control.site WHERE id = $1",
+                ids["site_id"],
+            )
+            assert int(normalized["base_site_revision"]) == int(base_revision)
+            assert stored_versions == {
+                "catalog": "catalog-v1",
+                "composition_schema": "site-composition/v1",
+                "content_model": "content-model/v1",
+                "design_system": "design-system/v1",
+                "puck": "0.20.2",
+                "renderer": "renderer-v1",
+            }
+            # Co-tamper: a well-formed sha256 of a well-formed altered
+            # canonical document, not a corrupted field.
+            altered = json.loads(stored["payload"])
+            altered["site"]["display_name"] = "Co-Tampered"
+            tampered_digest = await owner.fetchval(
+                "SELECT encode(sha256(convert_to("
+                " control.slaif_canonical_jsonb_text($1::jsonb),'UTF8')),"
+                " 'hex')",
+                json.dumps(altered),
+            )
+            assert len(tampered_digest) == 64
+            assert set(tampered_digest) <= set("0123456789abcdef")
+            assert tampered_digest != original_digest
+            await owner.execute(
+                "UPDATE control.review_snapshot SET digest = $1 WHERE id = $2",
+                tampered_digest,
+                snapshot_id,
+            )
+            # The stored payload is untouched: its trusted digest still
+            # recomputes to the ORIGINAL digest, so the digest column is
+            # the single inconsistent field.
+            still = await owner.fetchval(
+                "SELECT encode(sha256(convert_to("
+                " control.slaif_canonical_jsonb_text(payload),'UTF8')),"
+                " 'hex') FROM control.review_snapshot WHERE id = $1",
+                snapshot_id,
+            )
+            assert still == original_digest != tampered_digest
+            pre_rowbytes = await owner.fetchval(
+                "SELECT row_to_json(r)::text FROM control.review_snapshot r"
+                " WHERE r.id = $1",
+                snapshot_id,
+            )
+            # Canonical promotion facts BEFORE the refused run: the
+            # canonical heading still holds its original (pre-promotion)
+            # props, the COW-created node is absent from canonical, and
+            # the two qualified COW operations are still pending.
+            pre_heading_props = await owner.fetchval(
+                "SELECT props FROM content.page_composition_base WHERE id = $1",
+                ids["heading_id"],
+            )
+            assert json.loads(pre_heading_props) == {
+                "level": 1,
+                "text": "Accept",
+            }
+            pre_created_row = await owner.fetchrow(
+                "SELECT props FROM content.page_composition_base WHERE id = $1",
+                ids["created_heading_id"],
+            )
+            assert pre_created_row is None
+            pre_pending_ops = sorted(
+                row[0]
+                for row in await owner.fetch(
+                    "SELECT row_to_json(r)::text"
+                    " FROM content.page_composition_changes r"
+                    " WHERE r.session_id = $1"
+                    " ORDER BY r.operation_id::text, r._cow_order",
+                    ids["workspace_id"],
+                )
+            )
+            assert len(pre_pending_ops) == 2
+
+        pre_private_sha = hashlib.sha256(
+            _private_path(media_root, ids["media_digest"]).read_bytes()
+        ).hexdigest()
+        assert pre_private_sha == ids["media_digest"]
+
+        rows = await _enqueue_accept(database, ids["workspace_id"], ids["delegator_id"])
+        job_id = UUID(str(rows[0]["job_id"]))
+        job = await _claim_accept(database, "accept-cotamper-1")
+        assert str(job["id"]) == str(job_id)
+        result = await run_accept_job(pool, settings, job, media=counting)
+        assert result.status == "FAILED"
+        assert result.error == "SNAPSHOT_VALIDATION_FAILED"
+
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(),
+            expected_database=database.name,
+        ) as owner:
+            after_rowbytes = await owner.fetchval(
+                "SELECT row_to_json(r)::text FROM control.review_snapshot r"
+                " WHERE r.id = $1",
+                snapshot_id,
+            )
+            revision = await owner.fetchval(
+                "SELECT canonical_revision FROM control.site WHERE id = $1",
+                ids["site_id"],
+            )
+            workspace = await owner.fetchrow(
+                "SELECT status, accepted_at FROM control.workspace WHERE id = $1",
+                ids["workspace_id"],
+            )
+            job_row = await owner.fetchrow(
+                "SELECT status, error FROM control.review_job WHERE id = $1",
+                job_id,
+            )
+            audit_count = await owner.fetchval("SELECT count(*) FROM audit.promotion")
+            outbox_count = await owner.fetchval(
+                "SELECT count(*) FROM control.cache_outbox"
+            )
+            media_row = await owner.fetchrow(
+                "SELECT public_status, published_at, content_hash"
+                " FROM content.media_asset_base WHERE id = $1",
+                ids["media_id"],
+            )
+            heading_props_after = await owner.fetchval(
+                "SELECT props FROM content.page_composition_base WHERE id = $1",
+                ids["heading_id"],
+            )
+            created_row_after = await owner.fetchrow(
+                "SELECT props FROM content.page_composition_base WHERE id = $1",
+                ids["created_heading_id"],
+            )
+            pending_ops_after = sorted(
+                row[0]
+                for row in await owner.fetch(
+                    "SELECT row_to_json(r)::text"
+                    " FROM content.page_composition_changes r"
+                    " WHERE r.session_id = $1"
+                    " ORDER BY r.operation_id::text, r._cow_order",
+                    ids["workspace_id"],
+                )
+            )
+        # Full actual no-effects: the refusal hit the stored-payload
+        # digest guard BEFORE media finalization/canonical/revision/
+        # promotion-audit/cache/accepted; nothing moved.  The co-tamper
+        # stands untouched (the job neither repaired nor consumed it),
+        # and the media never flipped (no finalizer call: status,
+        # published_at, digest and private bytes all stand, and no
+        # public artifact exists).
+        assert after_rowbytes == pre_rowbytes
+        assert revision == base_revision
+        assert str(workspace["status"]) == "REVIEW"
+        assert workspace["accepted_at"] is None
+        assert job_row["status"] == "FAILED"
+        assert job_row["error"] == "SNAPSHOT_VALIDATION_FAILED"
+        assert audit_count == 0
+        assert outbox_count == 0
+        assert json.loads(heading_props_after) == json.loads(pre_heading_props)
+        assert created_row_after is None
+        assert pending_ops_after == pre_pending_ops
+        private_sha_after = hashlib.sha256(
+            _private_path(media_root, ids["media_digest"]).read_bytes()
+        ).hexdigest()
+        assert private_sha_after == pre_private_sha == ids["media_digest"]
+        assert str(media_row["public_status"]) == "private"
+        assert media_row["published_at"] is None
+        assert media_row["content_hash"] == ids["media_digest"]
+        assert not _public_path(media_root, ids["media_digest"]).exists()
+        assert _private_path(media_root, ids["media_digest"]).is_file()
+        # ACTUAL finalizer call count: the real MediaBoundary.finalize
+        # (accept_job.py L599) was never called by the refused run.
+        assert counting.finalize_calls == 0
+
+        # Positive control: restoring the exact original digest makes
+        # the SAME snapshot accept through the SAME qualified path.
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(),
+            expected_database=database.name,
+        ) as owner:
+            await owner.execute(
+                "UPDATE control.review_snapshot SET digest = $1 WHERE id = $2",
+                original_digest,
+                snapshot_id,
+            )
+        rows = await _enqueue_accept(database, ids["workspace_id"], ids["delegator_id"])
+        job_id = UUID(str(rows[0]["job_id"]))
+        job = await _claim_accept(database, "accept-cotamper-2")
+        assert str(job["id"]) == str(job_id)
+        result = await run_accept_job(pool, settings, job, media=counting)
+        assert result.status == "SUCCEEDED", result.error
+        # The untampered digest runs the real finalizer exactly once.
+        assert counting.finalize_calls == 1
+
+        digest = ids["media_digest"]
+        public_key = f"public/sha256/{digest[:2]}/{digest[2:4]}/{digest}"
+        manifest = [
+            {
+                "media_id": str(ids["media_id"]),
+                "digest": digest,
+                "public_key": public_key,
+            }
+        ]
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(),
+            expected_database=database.name,
+        ) as owner:
+            revision = await owner.fetchval(
+                "SELECT canonical_revision FROM control.site WHERE id = $1",
+                ids["site_id"],
+            )
+            workspace = await owner.fetchrow(
+                "SELECT status, accepted_at FROM control.workspace WHERE id = $1",
+                ids["workspace_id"],
+            )
+            job_row = await owner.fetchrow(
+                "SELECT status, error FROM control.review_job WHERE id = $1",
+                job_id,
+            )
+            audit_rows = await owner.fetch("SELECT * FROM audit.promotion ORDER BY id")
+            outbox_rows = await owner.fetch(
+                "SELECT * FROM control.cache_outbox ORDER BY id"
+            )
+            media_row = await owner.fetchrow(
+                "SELECT public_status, published_at"
+                " FROM content.media_asset_base WHERE id = $1",
+                ids["media_id"],
+            )
+            heading_props = await owner.fetchval(
+                "SELECT props FROM content.page_composition_base WHERE id = $1",
+                ids["heading_id"],
+            )
+            created_row = await owner.fetchrow(
+                "SELECT props FROM content.page_composition_base WHERE id = $1",
+                ids["created_heading_id"],
+            )
+        assert revision == base_revision + 1
+        assert str(workspace["status"]) == "ACCEPTED"
+        assert workspace["accepted_at"] is not None
+        assert job_row["status"] == "SUCCEEDED"
+        assert job_row["error"] is None
+        assert len(audit_rows) == 1
+        audit = audit_rows[0]
+        assert str(audit["site_id"]) == str(ids["site_id"])
+        assert str(audit["workspace_id"]) == str(ids["workspace_id"])
+        assert str(audit["snapshot_id"]) == str(snapshot_id)
+        assert str(audit["job_id"]) == str(job_id)
+        assert str(audit["digest"]) == original_digest
+        assert audit["base_site_revision"] == base_revision
+        assert audit["new_canonical_revision"] == base_revision + 1
+        assert audit["committed_operations"] == 2
+        assert json.loads(audit["versions"]) == stored_versions
+        assert str(audit["actor_user_account_id"]) == str(ids["delegator_id"])
+        assert len(outbox_rows) == 1
+        outbox = outbox_rows[0]
+        assert str(outbox["site_id"]) == str(ids["site_id"])
+        assert str(outbox["workspace_id"]) == str(ids["workspace_id"])
+        assert outbox["event_kind"] == "WORKSPACE_ACCEPTED"
+        assert json.loads(outbox["payload"]) == {
+            "snapshot_id": str(snapshot_id),
+            "digest": original_digest,
+            "base_site_revision": base_revision,
+            "new_canonical_revision": base_revision + 1,
+            "media_manifest": manifest,
+        }
+        assert json.loads(heading_props) == {
+            "level": 2,
+            "text": "Promoted heading",
+        }
+        assert created_row is not None
+        assert json.loads(created_row["props"]) == {
+            "level": 3,
+            "text": "New promoted node",
+        }
+        assert str(media_row["public_status"]) == "public"
+        assert media_row["published_at"] is not None
+        public_path = _public_path(media_root, digest)
+        assert public_path.is_file()
+        assert hashlib.sha256(public_path.read_bytes()).hexdigest() == digest
+    finally:
+        await boundary.stop()
+        await pool.close()

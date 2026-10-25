@@ -165,6 +165,12 @@ async def _read_model(
     return result
 
 
+_CURRENT_VERSION_FACTS = r""" '{"catalog":"catalog-v1",'
+    '"composition_schema":"site-composition/v1",'
+    '"content_model":"content-model/v1","design_system":"design-system/v1",'
+    '"puck":"0.20.2","renderer":"renderer-v1"}'::jsonb"""
+
+
 async def _seed(database: AgentSiteDatabase) -> dict[str, UUID]:
     """Upgrade to 074_001 and seed one site with renderable COW content."""
 
@@ -247,7 +253,12 @@ async def _seed(database: AgentSiteDatabase) -> dict[str, UUID]:
             "INSERT INTO content.theme_base (id, site_id, schema_version,"
             " renderer_version, palette, typography, layout, shape) VALUES"
             " (gen_random_uuid(), $1, 'theme-schema/v1', 'renderer-v1',"
-            " '{}'::jsonb, '{}'::jsonb, '{}'::jsonb, '{}'::jsonb)",
+            ' \'{"preset":"ocean"}\'::jsonb,'
+            ' \'{"family":"system",'
+            '"scale":"balanced","weight":"regular"}\'::jsonb,'
+            ' \'{"content_width":"md",'
+            '"spacing":"md","grid_gap":"md"}\'::jsonb,'
+            ' \'{"radius":"md","shadow":"sm"}\'::jsonb)',
             site_id,
         )
         media_id = uuid4()
@@ -255,7 +266,8 @@ async def _seed(database: AgentSiteDatabase) -> dict[str, UUID]:
             "INSERT INTO content.media_asset_base (id, site_id, uploaded_by,"
             " filename, mime_type, size_bytes, content_hash, storage_key,"
             " alt_text, metadata) VALUES ($1,$2,$3,'int.png','image/png',128,"
-            " $4, 'sha256/ab/cd/'||$4, 'Alt', '{}'::jsonb)",
+            " $4, 'sha256/' || substring($4, 1, 2) || '/' ||"
+            " substring($4, 3, 2) || '/' || $4, 'Alt', '{}'::jsonb)",
             media_id,
             site_id,
             delegator_id,
@@ -289,9 +301,12 @@ async def _seed(database: AgentSiteDatabase) -> dict[str, UUID]:
         )
         workspace_id = await owner.fetchval(
             "INSERT INTO control.workspace (site_id, created_by, delegator_id,"
-            " title, delegation_preset, effective_scopes, status, expires_at)"
+            " title, delegation_preset, effective_scopes, version_facts,"
+            " status, expires_at)"
             " VALUES ($1,$2,$2,'Review Workspace','L4',"
-            " '[\"page:read\"]'::jsonb,'ACTIVE',now()+interval '1 hour')"
+            " '[\"page:read\"]'::jsonb,"
+            + _CURRENT_VERSION_FACTS
+            + ",'ACTIVE',now()+interval '1 hour')"
             " RETURNING id",
             site_id,
             delegator_id,
@@ -567,6 +582,8 @@ async def test_read_model_document_shape_and_frozen_content(
         "agent_session_browser",
     }
     state = first["normalized_state"]
+    # review-snapshot/v2: the complete trusted domain capture (R1),
+    # not the 13-key v1 subset.
     assert set(state) == {
         "state_version",
         "workspace_id",
@@ -574,21 +591,59 @@ async def test_read_model_document_shape_and_frozen_content(
         "site",
         "base_site_revision",
         "operation_watermark",
+        "workspace_versions",
         "locales",
         "theme",
         "regions",
         "navigation",
         "redirects",
         "pages",
+        "page_compositions",
+        "content",
+        "proposals",
+        "media_inventory",
         "media",
     }
+    assert state["state_version"] == "review-snapshot/v2"
+    assert state["workspace_id"] == str(seeded["workspace_id"])
+    assert state["site_id"] == str(seeded["site_id"])
     assert set(state["site"]) == {
         "site_key",
         "display_name",
+        "status",
         "default_locale",
         "component_catalog_version",
+        "content_model_revision",
+        "created_at",
+        "updated_at",
     }
     assert state["site"]["site_key"] == _SITE_KEY
+    assert state["site"]["status"] == "ACTIVE"
+    assert state["site"]["default_locale"] == "en-US"
+    assert state["site"]["component_catalog_version"] == "catalog-v1"
+    # Trusted six-pin version facts recorded at workspace creation
+    # (digest-covered in the payload).
+    assert state["workspace_versions"] == {
+        "catalog": "catalog-v1",
+        "composition_schema": "site-composition/v1",
+        "content_model": "content-model/v1",
+        "design_system": "design-system/v1",
+        "puck": "0.20.2",
+        "renderer": "renderer-v1",
+    }
+    # The v2 materializer locks the canonical site revision; the drift
+    # block reports the same current value.
+    assert state["base_site_revision"] == first["drift"]["current_site_revision"]
+    assert set(state["content"]) == {
+        "types",
+        "fields",
+        "items",
+        "translations",
+        "relations",
+        "views",
+    }
+    assert set(state["navigation"]) == {"definitions", "items"}
+    assert state["theme"]["palette"] == {"preset": "ocean"}
     assert first["metadata"]["workspace"]["status"] == "REVIEW"
     assert first["metadata"]["workspace"]["id"] == str(seeded["workspace_id"])
 

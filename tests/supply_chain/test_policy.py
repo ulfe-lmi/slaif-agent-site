@@ -79,6 +79,46 @@ class SupplyChainPolicyTests(unittest.TestCase):
         with self.assertRaisesRegex(PolicyError, "evidence format contract"):
             validate_policy(incomplete_evidence)
 
+    def test_alpine_registry_override_is_exact_per_image(self) -> None:
+        v323 = "https://dl-cdn.alpinelinux.org/alpine/v3.23"
+        v324 = "https://dl-cdn.alpinelinux.org/alpine/v3.24"
+
+        missing_nginx = copy.deepcopy(self.policy)
+        del missing_nginx["alpine_package_overrides"]["images"]["nginx"]["registry"]
+        with self.assertRaisesRegex(PolicyError, "registry override is required"):
+            validate_policy(missing_nginx)
+
+        wrong_nginx = copy.deepcopy(self.policy)
+        wrong_nginx["alpine_package_overrides"]["images"]["nginx"]["registry"] = v323
+        with self.assertRaisesRegex(PolicyError, "registry for nginx is not exact"):
+            validate_policy(wrong_nginx)
+
+        foreign_nginx = copy.deepcopy(self.policy)
+        foreign_nginx["alpine_package_overrides"]["images"]["nginx"]["registry"] = (
+            "https://example.com/alpine/v3.24"
+        )
+        with self.assertRaisesRegex(PolicyError, "registry for nginx is not exact"):
+            validate_policy(foreign_nginx)
+
+        backend_324 = copy.deepcopy(self.policy)
+        backend_324["alpine_package_overrides"]["images"]["backend"]["registry"] = v324
+        with self.assertRaisesRegex(PolicyError, "registry for backend is not exact"):
+            validate_policy(backend_324)
+
+        postgres_foreign = copy.deepcopy(self.policy)
+        postgres_foreign["alpine_package_overrides"]["images"]["postgres"][
+            "registry"
+        ] = "https://example.com/alpine/v3.23"
+        with self.assertRaisesRegex(PolicyError, "registry for postgres is not exact"):
+            validate_policy(postgres_foreign)
+
+        web_foreign = copy.deepcopy(self.policy)
+        web_foreign["alpine_package_overrides"]["images"]["web"]["registry"] = (
+            "https://example.com/alpine/v3.24"
+        )
+        with self.assertRaisesRegex(PolicyError, "registry for web is not exact"):
+            validate_policy(web_foreign)
+
     def test_unknown_prohibited_and_explicit_review_licenses_fail_closed(self) -> None:
         base = {
             "direct": True,
@@ -195,7 +235,7 @@ class SupplyChainPolicyTests(unittest.TestCase):
     ) -> None:
         matrix = load_json(ROOT / "supply-chain/browser-worker-critical-matrix.json")
         qualifications = matrix["qualification_history"]
-        self.assertEqual(len(qualifications), 6)
+        self.assertEqual(len(qualifications), 7)
         qualification = qualifications[0]
         self.assertEqual(qualification["candidate"], "candidate-3 CfT: 152.0.7977.82")
         metadata = qualification["official_metadata"]
@@ -228,7 +268,7 @@ class SupplyChainPolicyTests(unittest.TestCase):
         self.assertEqual(attempt["scan_result"]["result"], "INCOMPLETE")
         self.assertEqual(attempt["scan_result"]["qualification"], "UNQUALIFIED")
 
-        previous = qualifications[-2]
+        previous = qualifications[-3]
         self.assertEqual(
             previous["candidate"],
             "candidate-7 CfT: 154.0.8037.92 measured scan coverage",
@@ -252,43 +292,83 @@ class SupplyChainPolicyTests(unittest.TestCase):
         self.assertEqual(previous["scan_result"]["result"], "PASS")
         self.assertEqual(previous["scan_result"]["unexcepted_critical"], 0)
 
-        current = qualifications[-1]
+        previous8 = qualifications[-2]
         self.assertEqual(
-            current["candidate"],
+            previous8["candidate"],
             "candidate-8 CfT: 155.0.8059.84 measured scan coverage",
         )
         self.assertEqual(
-            current["official_metadata"]["timestamp"], "2026-10-17T09:18:35.172Z"
+            previous8["official_metadata"]["timestamp"], "2026-10-17T09:18:35.172Z"
         )
-        self.assertEqual(current["official_metadata"]["revision"], "1697595")
-        self.assertEqual(current["official_metadata"]["version"], "155.0.8059.84")
+        self.assertEqual(previous8["official_metadata"]["revision"], "1697595")
+        self.assertEqual(previous8["official_metadata"]["version"], "155.0.8059.84")
         self.assertEqual(
-            current["archive_sha256"],
+            previous8["archive_sha256"],
             "cf0f049892dea22e6a6db26d47ed0d7776b7158edcbec4634086633df8bafcbc",
         )
         self.assertEqual(
-            current["runtime"]["executable"],
+            previous8["runtime"]["executable"],
             "/ms-playwright/chromium-1697595/chrome-linux64/chrome",
         )
         self.assertEqual(
-            current["runtime"]["image_digest"],
+            previous8["runtime"]["image_digest"],
             "sha256:3d66c69ff3bc28b86f5781f4bb5a1af6d90c92b7d94766614cddc2834a903007",
         )
         self.assertEqual(
-            current["runtime"]["executable_sha256"],
+            previous8["runtime"]["executable_sha256"],
             "b866a2964538c825538c454de4867973b926650da57ec12dc3328807d768247b",
         )
-        self.assertEqual(current["scanner"]["database_schema"], "v6.1.10")
-        self.assertEqual(current["scanner"]["database_built"], "2026-10-17T06:27:09Z")
+        self.assertEqual(previous8["scanner"]["database_schema"], "v6.1.10")
+        self.assertEqual(previous8["scanner"]["database_built"], "2026-10-17T06:27:09Z")
         self.assertEqual(
-            current["scanner"]["database_checksum"],
+            previous8["scanner"]["database_checksum"],
             "sha256:4c2b8b0cd02313f74a50c81c457796660c4997565cc2ff211e09cc1880205c10",
         )
         self.assertEqual(
-            current["sbom"]["chrome_purl"], "pkg:generic/chrome@155.0.8059.84"
+            previous8["sbom"]["chrome_purl"], "pkg:generic/chrome@155.0.8059.84"
+        )
+        self.assertEqual(previous8["scan_result"]["result"], "PASS")
+        self.assertEqual(previous8["scan_result"]["browser_worker_matches"], 1719)
+        self.assertEqual(previous8["scan_result"]["unexcepted_critical"], 0)
+        self.assertEqual(previous8["scan_result"]["exception_count"], 0)
+
+        current = qualifications[-1]
+        self.assertEqual(
+            current["candidate"],
+            "candidate-9 CfT: 156.0.8078.47 measured scan coverage",
+        )
+        self.assertEqual(
+            current["official_metadata"]["timestamp"], "2026-10-24T22:16:21.275Z"
+        )
+        self.assertEqual(current["official_metadata"]["revision"], "1706539")
+        self.assertEqual(current["official_metadata"]["version"], "156.0.8078.47")
+        self.assertEqual(
+            current["archive_sha256"],
+            "e6c94490f0b6b337225aeb2d2a5034858516b7017356980ba94f5176d8774a50",
+        )
+        self.assertEqual(
+            current["runtime"]["executable"],
+            "/ms-playwright/chromium-1706539/chrome-linux64/chrome",
+        )
+        self.assertEqual(
+            current["runtime"]["image_digest"],
+            "sha256:2ae551f1f1f2ff82fdb4aab23f45746e57edc7ccc6171609806f697e37be5586",
+        )
+        self.assertEqual(
+            current["runtime"]["executable_sha256"],
+            "230f0db8c5086182f46c59c867c0d461eb525d6552dfad226ea6b4d9ec249db2",
+        )
+        self.assertEqual(current["scanner"]["database_schema"], "v6.1.10")
+        self.assertEqual(current["scanner"]["database_built"], "2026-10-25T06:27:34Z")
+        self.assertEqual(
+            current["scanner"]["database_checksum"],
+            "sha256:4bdb42924659936a80a73f5df039603dc01734ed6032575b9879745216a713ea",
+        )
+        self.assertEqual(
+            current["sbom"]["chrome_purl"], "pkg:generic/chrome@156.0.8078.47"
         )
         self.assertEqual(current["scan_result"]["result"], "PASS")
-        self.assertEqual(current["scan_result"]["browser_worker_matches"], 1719)
+        self.assertEqual(current["scan_result"]["browser_worker_matches"], 1806)
         self.assertEqual(current["scan_result"]["unexcepted_critical"], 0)
         self.assertEqual(current["scan_result"]["exception_count"], 0)
 
@@ -414,7 +494,7 @@ class DependencySourceNegativeTests(unittest.TestCase):
         )
         self.replace(
             "infra/nginx/Dockerfile",
-            "nginx:1.29.7-alpine3.23@sha256:",
+            "nginx:1.30.6-alpine3.24@sha256:",
             "nginx:latest # removed-digest-",
         )
         self.assert_source_error("mutable image")

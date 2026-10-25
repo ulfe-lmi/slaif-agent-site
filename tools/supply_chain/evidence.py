@@ -33,7 +33,7 @@ SPDX_ID = re.compile(r"SPDXRef-[A-Za-z0-9.-]+")
 IMAGE_PREFIXES = {
     "apache": ("etc/apache2/",),
     "backend": ("opt/slaif/",),
-    "browser-worker": ("opt/slaif/", "ms-playwright/chromium-1697595/"),
+    "browser-worker": ("opt/slaif/", "ms-playwright/chromium-1706539/"),
     "nginx": ("etc/nginx/nginx.conf",),
     "postgres": ("usr/local/bin/docker-entrypoint.sh",),
     "web": ("opt/slaif/",),
@@ -47,6 +47,7 @@ NEXT_SERVER_REFERENCE_JSON = (
 NEXT_SERVER_REFERENCE_JS = (
     "opt/slaif/apps/web/.next/server/server-reference-manifest.js"
 )
+NEXT_PREVIEW_PROPS = "opt/slaif/apps/web/.next/server/preview-props.json"
 NORMALIZED_SECRET = "<normalized-per-build-cryptographic-value>"
 BROWSER_IDENTITY_KEYS = frozenset(
     {
@@ -780,6 +781,7 @@ def normalize_runtime_file(
         NEXT_APP_PATH_ROUTES_MANIFEST,
         NEXT_APP_PATHS_MANIFEST,
         NEXT_PRERENDER_MANIFEST,
+        NEXT_PREVIEW_PROPS,
         NEXT_SERVER_REFERENCE_JSON,
         NEXT_SERVER_REFERENCE_JS,
     }:
@@ -797,6 +799,7 @@ def normalize_runtime_file(
             raise ValueError("manifest is not an object or array")
         if name in {
             NEXT_PRERENDER_MANIFEST,
+            NEXT_PREVIEW_PROPS,
             NEXT_SERVER_REFERENCE_JSON,
         } and not isinstance(manifest, dict):
             raise ValueError("manifest is not an object")
@@ -814,6 +817,17 @@ def normalize_runtime_file(
                     raise ValueError(f"{field} is missing")
                 preview[field] = NORMALIZED_SECRET
             normalized = [f"preview.{field}" for field in fields]
+        elif name == NEXT_PREVIEW_PROPS:
+            fields = [
+                "previewModeId",
+                "previewModeSigningKey",
+                "previewModeEncryptionKey",
+            ]
+            for field in fields:
+                if not isinstance(manifest.get(field), str) or not manifest[field]:
+                    raise ValueError(f"{field} is missing")
+                manifest[field] = NORMALIZED_SECRET
+            normalized = [f"preview-props.{field}" for field in fields]
         elif name not in {NEXT_APP_PATH_ROUTES_MANIFEST, NEXT_APP_PATHS_MANIFEST}:
             if (
                 not isinstance(manifest.get("encryptionKey"), str)

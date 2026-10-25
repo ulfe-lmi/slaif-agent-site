@@ -139,8 +139,13 @@ jobs:
       - name: Verify no tracked file was generated
         run: git diff --exit-code
 
-  foundation-postgresql:
-    name: Foundation PostgreSQL ${{ matrix.postgresql }}
+  foundation-pg-group-a:
+    # D1 isolated child group A (per PostgreSQL version): EXACT existing
+    # generic foundation command, then EXACT existing 19-file
+    # bootstrap/privilege command, unchanged argv/order/selection
+    # (current selection 4+81=85). Own disposable PostgreSQL service; no DB
+    # fixture is shared across runners.
+    name: Foundation PG Group A PostgreSQL ${{ matrix.postgresql }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     strategy:
@@ -209,6 +214,56 @@ jobs:
           services/backend/tests/integration/test_render_browser_preview.py
           services/backend/tests/integration/test_render_projection_integration.py
           services/backend/tests/integration/test_render_preview_session_lock.py
+
+  foundation-pg-group-b:
+    # D1 isolated child group B (per PostgreSQL version): EXACT existing
+    # component command with -k component, then EXACT theme command, then
+    # EXACT page-style command, unchanged argv/order/selection (current
+    # selection 24+9+12=45). Own disposable PostgreSQL service; no DB
+    # fixture is shared across runners.
+    name: Foundation PG Group B PostgreSQL ${{ matrix.postgresql }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        postgresql: ["14", "15", "16", "17", "18"]
+    services:
+      postgres:
+        image: postgres:${{ matrix.postgresql }}
+        env:
+          POSTGRES_DB: qualification
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: qualification-admin
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d qualification"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      PGHOST: 127.0.0.1
+      PGPORT: "5432"
+      PGDATABASE: qualification
+      PGUSER: postgres
+      PGPASSWORD: qualification-admin
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Set up uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          version: "0.12.5"
+          enable-cache: false
+      - name: Sync frozen Python environment
+        run: uv sync --frozen --all-groups
       - name: Run Agent component authority and concurrency regressions
         run: >-
           uv run --frozen pytest
@@ -222,6 +277,49 @@ jobs:
         run: >-
           uv run --frozen pytest
           services/backend/tests/integration/test_agent_page_style.py
+
+  foundation-postgresql:
+    # D1 fail-closed required gate: the five exact required names
+    # "Foundation PostgreSQL 14..18" (existing spacing) supplied by this
+    # aggregator matrix. Each required job depends on BOTH entire child
+    # matrices by explicit job IDs with JOB-level always(), so failed
+    # prerequisites cannot silently skip the gate. The single step passes
+    # the fixed needs results via environment (trusted needs context; no
+    # caller-controlled interpolation of untrusted content into shell) and
+    # exits 0 ONLY when both are exactly success. Missing/empty/unknown/
+    # failed/cancelled/skipped/timed_out/other values refuse. Deliberately
+    # conservative cross-PG barrier: ANY failed child (any version, any
+    # group) blocks ALL FIVE required Foundation PostgreSQL names, even if
+    # another version's children passed. The extra ten internal child check
+    # names do not replace any required name.
+    name: Foundation PostgreSQL ${{ matrix.postgresql }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    if: always()
+    needs:
+      - foundation-pg-group-a
+      - foundation-pg-group-b
+    strategy:
+      fail-fast: false
+      matrix:
+        postgresql: ["14", "15", "16", "17", "18"]
+    steps:
+      - name: Fail-closed barrier over both child matrices
+        if: ${{ always() }}
+        env:
+          GROUP_A_RESULT: ${{ needs.foundation-pg-group-a.result }}
+          GROUP_B_RESULT: ${{ needs.foundation-pg-group-b.result }}
+        run: |
+          status=0
+          for pair in "A $GROUP_A_RESULT" "B $GROUP_B_RESULT"; do
+            label=${pair%% *}
+            result=${pair#* }
+            if [ "$result" != "success" ]; then
+              echo "foundation-postgresql gate: group $label result='$result'; expected exactly 'success'"
+              status=1
+            fi
+          done
+          exit "$status"
 
   compose-edge-packaging:
     name: Compose and edge packaging

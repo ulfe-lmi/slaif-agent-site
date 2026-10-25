@@ -31,6 +31,11 @@ MEDIA_REGISTER_SQL = (
 )
 MEDIA_GET_SQL = "SELECT * FROM content.slaif_media_asset_get($1,$2,$3,$4,$5,$6)"
 MEDIA_PUBLIC_GET_SQL = "SELECT * FROM content.slaif_media_public_get($1)"
+PREVIEW_READ_SQL = (
+    "SELECT * FROM control.slaif_media_preview_read($1,$2,$3,$4,$5,$6,$7,$8)"
+)
+FROZEN_READ_SQL = "SELECT * FROM control.slaif_review_media_authorize($1,$2,$3,$4)"
+BOUND_MEDIA_READ_SQL = "SELECT * FROM control.slaif_media_bound_preview_read($1,$2)"
 MEDIA_IDEMPOTENCY_BEGIN_SQL = (
     "SELECT * FROM control.slaif_media_idempotency_begin($1,$2,$3,$4,$5,$6,$7,$8)"
 )
@@ -38,6 +43,16 @@ MEDIA_IDEMPOTENCY_COMPLETE_SQL = (
     "SELECT control.slaif_media_idempotency_complete("
     "$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)"
 )
+
+
+@dataclass(frozen=True, slots=True)
+class FrozenMediaDescriptor:
+    """Frozen snapshot media reference (metadata only; no live row)."""
+
+    site_id: UUID
+    content_hash: str
+    size_bytes: int
+    mime_type: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -336,6 +351,116 @@ class MediaDatabase:
             public_status=row[3],
         )
 
+    async def read_preview_bytes(
+        self,
+        *,
+        public_id: str,
+        session_digest: bytes,
+        site_id: UUID,
+        workspace_id: UUID,
+        media_id: UUID,
+    ) -> MediaRecord | None:
+        """Authorized ACTIVE preview byte read in the selected workspace.
+
+        Delegates the full 054 preview chain (no session touch) to the
+        trusted 076 function, which reads the media row in the
+        authorized workspace's COW overlay, so Agent-pending private
+        media is visible to an authorized human before freeze.
+        """
+        try:
+            async with self.cow_pool().acquire(
+                timeout=self.settings.acquire_timeout_seconds
+            ) as connection:
+                row = await connection.fetchrow(
+                    PREVIEW_READ_SQL,
+                    public_id,
+                    session_digest,
+                    site_id,
+                    workspace_id,
+                    media_id,
+                    self.settings.preview_idle_timeout_seconds,
+                    self.settings.preview_touch_interval_seconds,
+                    self.settings.preview_recent_auth_seconds,
+                )
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            raise RuntimeError("media preview read unavailable") from error
+        return None if row is None else _record(row)
+
+    async def read_bound_preview_bytes(
+        self,
+        *,
+        credential_digest: str,
+        media_id: UUID,
+    ) -> MediaRecord | None:
+        """Confined run-bound private byte read BEFORE freeze.
+
+        ``credential_digest`` is the sha256 of the existing run
+        credential (the media service hashes the presented token; it
+        never receives the signing key, trusted caller claims or
+        stores the raw token).  The trusted 076 gate derives every
+        fact from the stored binding row (digest, original nonce,
+        verified expiry, attempt) and re-runs the actual 036
+        no-consume authorizer with the original binding nonce, so
+        the read exists only for the bound run after the authorized
+        bound document.  The media row is read in the bound
+        workspace's COW overlay; the path contributes only media_id.
+        """
+        try:
+            async with self.cow_pool().acquire(
+                timeout=self.settings.acquire_timeout_seconds
+            ) as connection:
+                row = await connection.fetchrow(
+                    BOUND_MEDIA_READ_SQL,
+                    credential_digest,
+                    media_id,
+                )
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            raise RuntimeError("media bound preview read unavailable") from error
+        return None if row is None else _record(row)
+
+    async def read_frozen_bytes(
+        self,
+        *,
+        public_id: str,
+        session_digest: bytes,
+        snapshot_id: UUID,
+        media_id: UUID,
+    ) -> FrozenMediaDescriptor | None:
+        """Frozen review byte reference from the immutable snapshot.
+
+        The trusted 076 gate returns the stored content-hash descriptor
+        only for an authorized session whose membership covers the
+        snapshot's site and whose media id is in the frozen map; no
+        live media_asset row is read.
+        """
+        try:
+            async with self.cow_pool().acquire(
+                timeout=self.settings.acquire_timeout_seconds
+            ) as connection:
+                row = await connection.fetchrow(
+                    FROZEN_READ_SQL,
+                    public_id,
+                    session_digest,
+                    snapshot_id,
+                    media_id,
+                )
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            raise RuntimeError("media frozen read unavailable") from error
+        if row is None:
+            return None
+        return FrozenMediaDescriptor(
+            site_id=row[0],
+            content_hash=row[1],
+            size_bytes=row[2],
+            mime_type=row[3],
+        )
+
 
 def _record(row: Any) -> MediaRecord:
     import json
@@ -403,6 +528,7 @@ def record_to_dict(record: MediaRecord) -> dict[str, Any]:
 
 
 __all__ = [
+    "FrozenMediaDescriptor",
     "MediaAuthContext",
     "MediaDatabase",
     "MediaIdempotencyMismatchError",

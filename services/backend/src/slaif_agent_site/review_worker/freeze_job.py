@@ -47,11 +47,31 @@ _PHASE_ERROR_CODES = {
 _DOMAIN_ERROR_CODES = {
     "REVIEW_WORKSPACE_NOT_FOUND": "STATE_DRIFT",
     "REVIEW_SITE_NOT_ACTIVE": "STATE_DRIFT",
+    # Materializer (v2) semantic failures: the frozen capture itself is
+    # invalid/unsupported/over budget.
+    "REVIEW_SNAPSHOT_OVER_BUDGET": "SNAPSHOT_OVER_BUDGET",
+    "SNAPSHOT_VALIDATION_FAILED": "SNAPSHOT_VALIDATION_FAILED",
+    "REVIEW_WORKSPACE_VERSION_UNKNOWN": "SNAPSHOT_VALIDATION_FAILED",
+    "REVIEW_MEDIA_REF_UNRESOLVED": "SNAPSHOT_VALIDATION_FAILED",
+    "PAGE_SITE_NOT_FOUND": "SNAPSHOT_VALIDATION_FAILED",
+    "LOCALE_INVALID": "SNAPSHOT_VALIDATION_FAILED",
+    "PAGE_PARENT_INVALID": "SNAPSHOT_VALIDATION_FAILED",
+    "PAGE_DYNAMIC_PARENT": "SNAPSHOT_VALIDATION_FAILED",
+    "PAGE_HIERARCHY_CYCLE": "SNAPSHOT_VALIDATION_FAILED",
+    # Completion (v2) contract failures, incl. the trusted context
+    # binding.
     "SNAPSHOT_ROW_INVALID": "SNAPSHOT_COMPLETE_FAILED",
     "SNAPSHOT_DIGEST_MISMATCH": "SNAPSHOT_COMPLETE_FAILED",
     "WORKSPACE_NOT_FREEZING": "SNAPSHOT_COMPLETE_FAILED",
     "REVIEW_TERMINAL_INVALID": "SNAPSHOT_COMPLETE_FAILED",
     "REVIEW_JOB_NOT_CLAIMED": "SNAPSHOT_COMPLETE_FAILED",
+    "SNAPSHOT_STATE_PAYLOAD_DIVERGED": "SNAPSHOT_COMPLETE_FAILED",
+    "SNAPSHOT_PAYLOAD_INVALID": "SNAPSHOT_COMPLETE_FAILED",
+    "SNAPSHOT_WORKSPACE_VERSIONS_MISMATCH": "SNAPSHOT_COMPLETE_FAILED",
+    "SNAPSHOT_WORKSPACE_VERSIONS_UNSUPPORTED": "SNAPSHOT_COMPLETE_FAILED",
+    "SNAPSHOT_MEDIA_REFERENCES_MISMATCH": "SNAPSHOT_COMPLETE_FAILED",
+    "SNAPSHOT_BROWSER_EVIDENCE_UNRESOLVED": "SNAPSHOT_COMPLETE_FAILED",
+    "SNAPSHOT_SITE_MISMATCH": "SNAPSHOT_COMPLETE_FAILED",
 }
 
 
@@ -220,11 +240,15 @@ async def run_freeze_job(
                         cancelled_runs=cancelled,
                     )
                     # Step 6: atomic snapshot insert + REVIEW transition.
+                    # The row is serialized in the PG-canonical form so
+                    # Decimal values (exact raw numeric retention) bind
+                    # losslessly and the stored jsonb canonical text
+                    # reproduces the digest byte-for-byte.
                     phase = "complete"
                     await connection.fetchval(
                         "SELECT control.slaif_review_snapshot_complete($1, $2)",
                         workspace_id,
-                        json.dumps(row_doc, sort_keys=True, separators=(",", ":")),
+                        snapshot.canonical_json(row_doc),
                     )
                     # Step 7: job SUCCEEDED, same transaction.
                     await connection.fetchval(

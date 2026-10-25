@@ -205,6 +205,28 @@ one `negative-bootstrap: correctly blocked` marker. Demo seeding is enabled
 only by reference Compose: before setup an exact existing seed is idempotent,
 any other site state fails and rolls back, and after setup it is ignored.
 
+The `076_001` downgrade (faithful frozen review) refuses FIRST with
+`SNAPSHOT_DOWNGRADE_RETAINED_V2` (P0002), before any destructive restoration,
+when a retained `control.review_snapshot` row has payload `state_version`
+`review-snapshot/v2`: a v2 snapshot cannot be re-validated or rendered under
+the restored v1 contract. The migration never rewrites or deletes immutable
+snapshot history, while the terminal lifecycle actions (accept or discard)
+retain the snapshot rows: the guard examines the CURRENTLY retained rows (it
+is not an ever-had-v2 historical flag), and resolving a review therefore
+does not clear the refusal. A database with any currently retained v2
+snapshot cannot be downgraded to 075. Supported operator choices are to
+keep that database at 076 — stored `review-snapshot/v1` rows keep the
+authorized honest limited read and discard, and v1 snapshot approval is
+deliberately refused under the 076 complete-input contract, with supported
+recovery through a freshly created and reapplied workspace; several 076
+function bodies and accepted version inputs deliberately change the 075
+behavior, so 076 is not blanket v1 compatibility — or to operate a 075-only
+database that never carried a retained v2 snapshot. Genuine legacy
+`review-snapshot/v1` rows are retained byte-identical through a 076 to 075
+roundtrip on such a database, which also restores the exact 075 constructor
+catalog (function identity including OIDs, the reconciled grant policy, and
+working 075 constructors) before any v2 workspace can be created again.
+
 ### Upstream health
 
 Use `docker compose ps` to identify an unhealthy process, then inspect that

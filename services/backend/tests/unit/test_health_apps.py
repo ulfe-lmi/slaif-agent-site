@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import importlib
+import subprocess
+import sys
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -203,6 +206,9 @@ async def test_each_app_has_only_typed_health_routes(
         expected_routes |= {
             "/v1/sites/{site_id}/assets",
             "/v1/sites/{site_id}/assets/{media_id}/content",
+            "/v1/sites/{site_id}/workspaces/{workspace_id}/preview/assets/{media_id}/content",
+            "/v1/browser-preview/assets/{media_id}/content",
+            "/v1/review/{snapshot_id}/assets/{media_id}/content",
             "/v1/public/sha256/{prefix1}/{prefix2}/{digest}",
         }
     if process is ProcessKind.MCP_ADAPTER:
@@ -266,6 +272,7 @@ async def test_each_app_has_only_typed_health_routes(
         expected_routes |= {
             "/internal/render/v1/page",
             "/internal/render/v1/preview",
+            "/internal/render/v1/review",
         }
     assert _route_paths(app) == expected_routes
     assert app.docs_url is None
@@ -488,3 +495,100 @@ def test_probe_component_and_reason_are_bounded_codes() -> None:
         ProbeResult(status=ComponentStatus.OK, reason="unexpected_reason")
     with pytest.raises(ValueError):
         ProbeResult(status=ComponentStatus.UNAVAILABLE)
+
+
+def _shell_validate_project(smoke: Path, name: str) -> int:
+    return subprocess.run(
+        ["sh", str(smoke), name, "--validate-project"],
+        capture_output=True,
+        text=True,
+    ).returncode
+
+
+def test_runner_project_allowlists_admit_exact_0835_only() -> None:
+    """083/5-b RC9: ALL THREE runner guards admit the exact whole-smoke
+    literal slaif0835 alongside each runner's OWN original prefix
+    catalog, and keep denying suffix look-alikes, semicolon/path/
+    uppercase/malformed forms and unrelated names. control_readiness
+    keeps its three-prefix catalog (no 010); public_agent_acceptance
+    keeps four. No broad regex, no new-prefix wildcard, no
+    destructive-target widening; the guards run safely and inertly
+    (the shell guard via --validate-project, the Python guards as pure
+    helpers plus their real entry points, all before any Docker or
+    service interaction)."""
+    repo_root = Path(__file__).resolve().parents[4]
+    compose_dir = repo_root / "tools" / "compose"
+    smoke = compose_dir / "smoke.sh"
+
+    # Shell guard: the exact literal and every original prefix form.
+    for admitted in (
+        "slaif0835",
+        "slaif007abc123",
+        "slaif009xyz",
+        "slaif010q1",
+        "slaif071smoke",
+    ):
+        assert _shell_validate_project(smoke, admitted) == 0, admitted
+    for denied in (
+        "slaif0835x",  # suffix look-alike of the exact literal
+        "slaif0835negative",
+        "slaif0835;reboot",  # shell metacharacter
+        "slaif0835/path",  # path form
+        "SLAIF0835",  # uppercase
+        "slaif0835 ",  # trailing whitespace
+        "slaif0835\n",  # embedded newline
+        "slaif083",  # prefix-only
+        "slaif007",  # prefix without its required suffix
+        "slaif008x",  # uncatalogued number
+        "slaif999",
+        "other0835",
+    ):
+        assert _shell_validate_project(smoke, denied) == 2, denied
+
+    # Python guards: import the ALREADY NAMED runner modules and exercise
+    # their pure admission helpers directly (no Docker, no setup).
+    sys.path.insert(0, str(compose_dir))
+    try:
+        acceptance = importlib.import_module("public_agent_acceptance")
+        readiness = importlib.import_module("control_readiness")
+    finally:
+        sys.path.pop(0)
+
+    for admitted in (
+        "slaif0835",
+        "slaif007abc123",
+        "slaif009xyz",
+        "slaif010q1",
+        "slaif071smoke",
+    ):
+        assert acceptance.admitted_project_name(admitted) is True, admitted
+    # control_readiness keeps its own original three-prefix catalog.
+    for admitted in ("slaif0835", "slaif007abc123", "slaif009xyz", "slaif071smoke"):
+        assert readiness.admitted_project_name(admitted) is True, admitted
+    assert acceptance.admitted_project_name("slaif010q1") is True
+    assert readiness.admitted_project_name("slaif010q1") is False
+    for denied in (
+        "slaif0835x",
+        "slaif0835negative",
+        "slaif0835;reboot",
+        "slaif0835/path",
+        "SLAIF0835",
+        "slaif0835 ",
+        "slaif0835\n",
+        "slaif083",
+        "slaif007",
+        "slaif008x",
+        "slaif999",
+        "other0835",
+    ):
+        assert acceptance.admitted_project_name(denied) is False, denied
+        assert readiness.admitted_project_name(denied) is False, denied
+
+    # Real production entry points fail closed on a denied name BEFORE any
+    # client, Docker or service interaction.
+    with pytest.raises(acceptance.ProofFailure):
+        acceptance.run_acceptance("slaif999")
+    with pytest.raises(readiness.FixtureError):
+        readiness.ControlReadinessFixture("slaif0835x", existing=False)
+    with pytest.raises(acceptance.ProofFailure):
+        acceptance.run_acceptance("slaif0835;reboot")

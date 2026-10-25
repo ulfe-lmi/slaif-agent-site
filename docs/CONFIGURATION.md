@@ -108,8 +108,8 @@ key, Render token, or human session. Reference Compose uses:
 | `BROWSER_WORKER_ARTIFACT_ROOT` | `/var/lib/slaif/browser-artifacts` | Absolute private worker-only store |
 | `BROWSER_WORKER_PREVIEW_ORIGIN` | `http://web:3000` | Fixed operator-owned internal navigation origin |
 | `SLAIF_BROWSER_PREVIEW_AUTHORITY` | `localhost:8080` | Web-only trusted site-resolution authority for browser-token mode |
-| `BROWSER_WORKER_CHROMIUM_EXECUTABLE` | `/ms-playwright/chromium-1697595/chrome-linux64/chrome` | Image-fixed executable |
-| `BROWSER_WORKER_EXPECTED_CHROMIUM_VERSION` | `155.0.8059.84` | Readiness version assertion |
+| `BROWSER_WORKER_CHROMIUM_EXECUTABLE` | `/ms-playwright/chromium-1706539/chrome-linux64/chrome` | Image-fixed executable |
+| `BROWSER_WORKER_EXPECTED_CHROMIUM_VERSION` | `156.0.8078.47` | Readiness version assertion |
 
 The Agent API's durable browser dispatcher is enabled by default in the
 development Compose profile. Its bounded settings are `SLAIF_AGENT_DISPATCHER_ENABLED`,

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import hashlib
 import json
 import os
@@ -142,7 +143,7 @@ def test_puck_pin_matches_the_web_package_pin() -> None:
     assert (
         REVIEW_WORKER_PUCK_VERSION_PIN == web_package["dependencies"]["@measured/puck"]
     )
-    assert REVIEW_WORKER_STATE_VERSION == "review-snapshot/v1"
+    assert REVIEW_WORKER_STATE_VERSION == "review-snapshot/v2"
 
 
 # ---------------------------------------------------------------------
@@ -150,13 +151,59 @@ def test_puck_pin_matches_the_web_package_pin() -> None:
 # ---------------------------------------------------------------------
 
 
+def _composition_row(node: dict[str, Any]) -> dict[str, Any]:
+    """The exact 13-key flat composition document the materializer emits."""
+
+    return {
+        "id": node["id"],
+        "site_id": node["site_id"],
+        "page_id": node["page_id"],
+        "component_type": node["component_type"],
+        "schema_version": node["schema_version"],
+        "parent_id": node["parent_id"],
+        "slot_key": node["slot_key"],
+        "order_key": node["order_key"],
+        "props": node["props"],
+        "catalog_version": "catalog-v1",
+        "created_at": node["created_at"],
+        "updated_at": node["updated_at"],
+        "row_version": 1,
+    }
+
+
 def _valid_doc() -> dict[str, Any]:
     site_id = uuid.uuid4()
     page_id = uuid.uuid4()
     section_id = uuid.uuid4()
     heading_id = uuid.uuid4()
+    section_row: dict[str, Any] = {
+        "id": str(section_id),
+        "site_id": str(site_id),
+        "page_id": str(page_id),
+        "component_type": "Section",
+        "schema_version": "1",
+        "parent_id": None,
+        "slot_key": "default",
+        "order_key": 0,
+        "props": {},
+        "created_at": "2026-01-01T00:00:00Z",
+        "updated_at": "2026-01-01T00:00:00Z",
+    }
+    heading_row: dict[str, Any] = {
+        "id": str(heading_id),
+        "site_id": str(site_id),
+        "page_id": str(page_id),
+        "component_type": "Heading",
+        "schema_version": "1",
+        "parent_id": str(section_id),
+        "slot_key": "default",
+        "order_key": 0,
+        "props": {"level": 1, "text": "Caf\u00e9 \U0001f600"},
+        "created_at": "2026-01-01T00:00:00Z",
+        "updated_at": "2026-01-01T00:00:00Z",
+    }
     return {
-        "state_version": "review-snapshot/v1",
+        "state_version": "review-snapshot/v2",
         "workspace_id": str(uuid.uuid4()),
         "site_id": str(site_id),
         "site": {
@@ -167,6 +214,14 @@ def _valid_doc() -> dict[str, Any]:
         },
         "base_site_revision": 7,
         "operation_watermark": 3,
+        "workspace_versions": {
+            "catalog": "catalog-v1",
+            "composition_schema": "site-composition/v1",
+            "content_model": "content-model/v1",
+            "design_system": "design-system/v1",
+            "puck": "0.20.2",
+            "renderer": "renderer-v1",
+        },
         "locales": [
             {"tag": "en-US", "enabled": True, "is_default": True, "position": 0}
         ],
@@ -189,36 +244,25 @@ def _valid_doc() -> dict[str, Any]:
                 "route_template": None,
                 "effective_route": "/home",
                 "row_version": 1,
-                "nodes": [
-                    {
-                        "id": str(section_id),
-                        "site_id": str(site_id),
-                        "page_id": str(page_id),
-                        "component_type": "Section",
-                        "schema_version": "1",
-                        "parent_id": None,
-                        "slot_key": "default",
-                        "order_key": 0,
-                        "props": {},
-                        "created_at": "2026-01-01T00:00:00Z",
-                        "updated_at": "2026-01-01T00:00:00Z",
-                    },
-                    {
-                        "id": str(heading_id),
-                        "site_id": str(site_id),
-                        "page_id": str(page_id),
-                        "component_type": "Heading",
-                        "schema_version": "1",
-                        "parent_id": str(section_id),
-                        "slot_key": "default",
-                        "order_key": 0,
-                        "props": {"level": 1, "text": "Caf\u00e9 \U0001f600"},
-                        "created_at": "2026-01-01T00:00:00Z",
-                        "updated_at": "2026-01-01T00:00:00Z",
-                    },
-                ],
+                "nodes": [section_row, heading_row],
             }
         ],
+        # The flat raw inventory is synchronized with the page nodes,
+        # exactly as the materializer emits both from the same rows.
+        "page_compositions": [
+            _composition_row(section_row),
+            _composition_row(heading_row),
+        ],
+        "content": {
+            "types": [],
+            "fields": [],
+            "items": [],
+            "translations": [],
+            "relations": [],
+            "views": [],
+        },
+        "proposals": [],
+        "media_inventory": [],
         "media": {},
     }
 
@@ -227,11 +271,7 @@ def test_canonical_digest_is_recomputable_and_tamper_sensitive() -> None:
     doc = _valid_doc()
     row = build_snapshot_document(doc, created_by="unit-worker")
     payload = row["payload"]
-    expected = hashlib.sha256(
-        json.dumps(
-            payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True
-        ).encode("utf-8")
-    ).hexdigest()
+    expected = hashlib.sha256(canonical_json(payload).encode("utf-8")).hexdigest()
     assert row["digest"] == expected
     assert canonical_digest(payload) == expected
     tampered = json.loads(json.dumps(payload))
@@ -280,6 +320,28 @@ def test_snapshot_row_shape_and_versions() -> None:
     assert child["props"] == {"level": 1, "text": "Caf\u00e9 \U0001f600"}
     assert child["parent_id"] == root["id"]
     assert row["media_references"] == []
+    # The v2 payload is the complete trusted domain capture (18 keys).
+    assert set(row["payload"]) == {
+        "state_version",
+        "workspace_id",
+        "site_id",
+        "site",
+        "base_site_revision",
+        "operation_watermark",
+        "workspace_versions",
+        "locales",
+        "theme",
+        "regions",
+        "navigation",
+        "redirects",
+        "pages",
+        "page_compositions",
+        "content",
+        "proposals",
+        "media_inventory",
+        "media",
+    }
+    assert row["payload"]["workspace_versions"] == doc["workspace_versions"]
 
 
 def test_snapshot_media_references_are_digest_objects_only() -> None:
@@ -308,9 +370,14 @@ def test_snapshot_media_references_are_digest_objects_only() -> None:
 
 def test_snapshot_build_rejects_invalid_documents() -> None:
     broken = _valid_doc()
-    broken["state_version"] = "review-snapshot/v2"
+    broken["state_version"] = "review-snapshot/v1"
     with pytest.raises(SnapshotBuildError, match="SNAPSHOT_VALIDATION_FAILED"):
         build_snapshot_document(broken, created_by="unit-worker")
+
+    missing_v2_key = _valid_doc()
+    del missing_v2_key["workspace_versions"]
+    with pytest.raises(SnapshotBuildError, match="SNAPSHOT_VALIDATION_FAILED"):
+        build_snapshot_document(missing_v2_key, created_by="unit-worker")
 
     missing_key = _valid_doc()
     del missing_key["media"]
@@ -335,6 +402,214 @@ def test_snapshot_build_rejects_invalid_documents() -> None:
 
     with pytest.raises(SnapshotBuildError, match="SNAPSHOT_VALIDATION_FAILED"):
         build_snapshot_document("not-a-doc", created_by="unit-worker")
+
+
+# ---------------------------------------------------------------------
+# v2 exact post-aggregation gates (design 083/5 section 8.2)
+# ---------------------------------------------------------------------
+
+
+def _container_chain(levels: int) -> Any:
+    """A single-key chain of ``levels`` nested containers around a scalar."""
+
+    value: Any = "leaf"
+    for _ in range(levels):
+        value = {"a": value}
+    return value
+
+
+def test_snapshot_raw_depth_gate_is_an_actual_recursive_guard() -> None:
+    from slaif_agent_site.review_worker.snapshot import _raw_value_depth
+
+    # Independent expected values against explicit construction: a scalar
+    # is 0, an empty container is 1, and each wrapper level adds 1.
+    assert _raw_value_depth("leaf") == 0
+    assert _raw_value_depth({}) == 1
+    assert _raw_value_depth([]) == 1
+    assert _raw_value_depth({"a": "leaf"}) == 1
+    assert _raw_value_depth(_container_chain(8)) == 8
+    assert _raw_value_depth(_container_chain(9)) == 9
+
+    # The gate measures an ACTUAL captured raw jsonb field (theme), with a
+    # valid surrounding document: component props are rejected first by
+    # trusted component validation, so they are not this gate's evidence.
+    ok = _valid_doc()
+    ok["theme"] = _container_chain(8)  # depth 8 == RAW_VALUE_MAX_DEPTH
+    assert build_snapshot_document(ok, created_by="unit-worker") is not None
+
+    too_deep = _valid_doc()
+    too_deep["theme"] = _container_chain(9)  # depth 9 > RAW_VALUE_MAX_DEPTH
+    with pytest.raises(SnapshotBuildError, match="SNAPSHOT_OVER_BUDGET"):
+        build_snapshot_document(too_deep, created_by="unit-worker")
+
+
+def _chain_nodes(depth: int, site_id: Any, page_id: Any) -> list[dict[str, Any]]:
+    """A single root-to-leaf chain of ``depth`` raw node rows.
+
+    Only allowlisted container types (Section/Container: slot "default",
+    no required props) form chains; Heading permits no children and
+    requires level/text, so a Heading-based chain is not write-legal.
+    """
+
+    ids = [uuid.uuid4() for _ in range(depth)]
+    nodes: list[dict[str, Any]] = []
+    for index in range(depth):
+        nodes.append(
+            {
+                "id": str(ids[index]),
+                "site_id": str(site_id),
+                "page_id": str(page_id),
+                "component_type": "Section" if index % 2 == 0 else "Container",
+                "schema_version": "1",
+                "parent_id": None if index == 0 else str(ids[index - 1]),
+                "slot_key": "default",
+                "order_key": 0,
+                "props": {},
+                "created_at": "2026-01-01T00:00:00Z",
+                "updated_at": "2026-01-01T00:00:00Z",
+            }
+        )
+    return nodes
+
+
+def _normalized_chain(depth: int) -> list[dict[str, Any]]:
+    """A normalized tree (children lists) of one depth-node chain."""
+
+    node: dict[str, Any] = {"children": []}
+    for _ in range(depth - 1):
+        node = {"children": [node]}
+    return [node]
+
+
+def test_snapshot_component_chain_gate_reverifies_the_write_side_invariant() -> None:
+    from slaif_agent_site.review_worker import snapshot as snapshot_module
+
+    # The counter itself, against explicit construction: a leaf is a
+    # 1-node path; a depth-node chain counts exactly depth.
+    assert snapshot_module._node_chain_depth(_normalized_chain(1)) == 1
+    assert snapshot_module._node_chain_depth(_normalized_chain(17)) == 17
+    assert snapshot_module._node_chain_depth(_normalized_chain(18)) == 18
+
+    # Full 17-node legal chain (MAX_COMPONENT_DEPTH 16 edges + 1 node):
+    # accepted end to end, exactly at the builder's chain limit.
+    doc = _valid_doc()
+    page = doc["pages"][0]
+    page["nodes"] = _chain_nodes(17, page["site_id"], page["id"])
+    doc["page_compositions"] = [_composition_row(node) for node in page["nodes"]]
+    assert build_snapshot_document(doc, created_by="unit-worker") is not None
+
+    # An 18th node is write-illegal: the shared engine's own depth gate
+    # (MAX_COMPONENT_DEPTH in _node_tree) enforces it BEFORE the builder's
+    # independent chain counter, with the stable validation code — the
+    # counter is a defense-in-depth reverification, not the first gate.
+    over = _valid_doc()
+    over_page = over["pages"][0]
+    over_page["nodes"] = _chain_nodes(18, over_page["site_id"], over_page["id"])
+    with pytest.raises(SnapshotBuildError, match="SNAPSHOT_VALIDATION_FAILED"):
+        build_snapshot_document(over, created_by="unit-worker")
+
+
+def test_snapshot_family_count_gates_fail_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from slaif_agent_site.review_worker import snapshot as snapshot_module
+
+    too_many_pages = _valid_doc()
+    original_page = too_many_pages["pages"][0]
+    for _ in range(4):
+        page = copy.deepcopy(original_page)
+        new_page_id = str(uuid.uuid4())
+        page["id"] = new_page_id
+        for node in page["nodes"]:
+            node["page_id"] = new_page_id
+        too_many_pages["pages"].append(page)
+        # Synchronize the flat raw inventory with the copied page.
+        for node in original_page["nodes"]:
+            row = copy.deepcopy(_composition_row(node))
+            row["page_id"] = new_page_id
+            too_many_pages["page_compositions"].append(row)
+    monkeypatch.setattr(snapshot_module, "MAX_PAGES", 4)
+    with pytest.raises(SnapshotBuildError, match="SNAPSHOT_OVER_BUDGET"):
+        build_snapshot_document(too_many_pages, created_by="unit-worker")
+
+    monkeypatch.setattr(snapshot_module, "MAX_CANONICAL_PAYLOAD_BYTES", 16)
+    with pytest.raises(SnapshotBuildError, match="SNAPSHOT_OVER_BUDGET"):
+        build_snapshot_document(_valid_doc(), created_by="unit-worker")
+
+
+def test_snapshot_text_parse_retains_exact_numeric_scale() -> None:
+    from decimal import Decimal
+
+    doc = _valid_doc()
+    page = doc["pages"][0]
+    section_id = page["nodes"][0]["id"]
+    # A genuinely supported fractional numeric prop: the real MapBlock
+    # bbox schema (four bounded numbers) plus its required title.
+    map_row = {
+        "id": str(uuid.uuid4()),
+        "site_id": page["site_id"],
+        "page_id": page["id"],
+        "component_type": "MapBlock",
+        "schema_version": "1",
+        "parent_id": section_id,
+        "slot_key": "default",
+        "order_key": 1,
+        "props": {
+            "title": "Campus",
+            "bbox": {
+                "west": -122.4194,
+                "south": 37.751,
+                "east": -122.357,
+                "north": 37.841,
+            },
+        },
+        "created_at": "2026-01-01T00:00:00Z",
+        "updated_at": "2026-01-01T00:00:00Z",
+    }
+    page["nodes"] = [page["nodes"][0], map_row]
+    doc["page_compositions"] = [_composition_row(node) for node in page["nodes"]]
+    # A raw captured value whose exact scale a float repr would drop.
+    doc["theme"]["scale"] = 1.5
+    text = json.dumps(doc)
+    # The materializer emits the stored jsonb digits verbatim; fabricate
+    # exactly the text PG writes for a stored 1.50 (json.dumps dropped
+    # the trailing zero).
+    assert '"scale": 1.5' in text
+    text = text.replace('"scale": 1.5', '"scale": 1.50', 1)
+
+    row = build_snapshot_document(text, created_by="unit-worker")
+
+    # RAW RETENTION: the raw composition block and theme keep the exact
+    # PG digits/scale as Decimal (no float coercion, no stringification).
+    raw_props = row["payload"]["page_compositions"][1]["props"]
+    assert raw_props["bbox"]["west"] == Decimal("-122.4194")
+    assert isinstance(raw_props["bbox"]["west"], Decimal)
+    assert row["payload"]["theme"]["scale"] == Decimal("1.50")
+    assert format(row["payload"]["theme"]["scale"], "f") == "1.50"
+
+    # RENDER BOUNDARY: the normalized tree consumes the float decode
+    # identical to the live path (the shared engine never sees Decimal).
+    props = row["payload"]["pages"][0]["nodes"][0]["children"][0]["props"]
+    assert props["bbox"]["west"] == -122.4194
+    assert isinstance(props["bbox"]["west"], float)
+
+    # The digest recomputes from the stored canonical bytes.
+    assert row["digest"] == canonical_digest(row["payload"])
+
+
+def test_snapshot_v1_document_is_rejected_with_the_stable_code() -> None:
+    old = _valid_doc()
+    for key in (
+        "workspace_versions",
+        "page_compositions",
+        "content",
+        "proposals",
+        "media_inventory",
+    ):
+        old.pop(key, None)
+    old["state_version"] = "review-snapshot/v1"
+    with pytest.raises(SnapshotBuildError, match="SNAPSHOT_VALIDATION_FAILED"):
+        build_snapshot_document(old, created_by="unit-worker")
 
 
 # ---------------------------------------------------------------------
@@ -363,6 +638,36 @@ def test_terminal_code_maps_domain_errors_and_phases() -> None:
     assert (
         _terminal_code_for(_FakeSqlError("WORKSPACE_NOT_FREEZING"), "complete")
         == "SNAPSHOT_COMPLETE_FAILED"
+    )
+    assert (
+        _terminal_code_for(_FakeSqlError("REVIEW_SNAPSHOT_OVER_BUDGET"), "materialize")
+        == "SNAPSHOT_OVER_BUDGET"
+    )
+    assert (
+        _terminal_code_for(
+            _FakeSqlError("REVIEW_WORKSPACE_VERSION_UNKNOWN"), "materialize"
+        )
+        == "SNAPSHOT_VALIDATION_FAILED"
+    )
+    assert (
+        _terminal_code_for(_FakeSqlError("SNAPSHOT_SITE_MISMATCH"), "complete")
+        == "SNAPSHOT_COMPLETE_FAILED"
+    )
+    assert (
+        _terminal_code_for(
+            _FakeSqlError("SNAPSHOT_WORKSPACE_VERSIONS_MISMATCH"), "complete"
+        )
+        == "SNAPSHOT_COMPLETE_FAILED"
+    )
+    assert (
+        _terminal_code_for(
+            _FakeSqlError("SNAPSHOT_BROWSER_EVIDENCE_UNRESOLVED"), "complete"
+        )
+        == "SNAPSHOT_COMPLETE_FAILED"
+    )
+    assert (
+        _terminal_code_for(_FakeSqlError("PAGE_HIERARCHY_CYCLE"), "materialize")
+        == "SNAPSHOT_VALIDATION_FAILED"
     )
     assert (
         _terminal_code_for(_FakeSqlError("some other failure"), "materialize")

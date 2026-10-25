@@ -236,10 +236,26 @@ stateDiagram-v2
 
 1. **Create** — A workspace is created for a specific site with a delegation preset
 2. **Active** — Agents/humans make changes through the API or editor
-3. **Freeze** — Changes stop; a review snapshot is materialized
-4. **Review** — Reviewers inspect the changes
+3. **Freeze** — Changes stop; an immutable review snapshot is materialized
+4. **Review** — Reviewers inspect the frozen snapshot at the site's private review page
 5. **Accept** — Changes are promoted to canonical atomically
 6. **Discard** — Changes are thrown away; canonical is untouched
+
+### Review Page
+
+While a workspace is in review, the reviewer signs in and opens the workspace's
+private review page. The page renders the site exactly as captured in the
+frozen snapshot (pages, styles, navigation, and the media stored with the
+snapshot), never the live or canonical content, and shows a banner with the
+snapshot digest plus whether the canonical site changed after the freeze.
+Canonical drift blocks acceptance; the supported remedy is a fresh or
+reapplied workspace, with discard where appropriate. Re-review and a
+multiple-snapshot lifecycle are planned, not yet available. Media in the
+review is private to the signed-in reviewer; reviewing itself does not
+publish. After acceptance or discard the immutable snapshot history is
+retained: the frozen review and its private media remain readable under the
+existing authorization and retention policy and are never automatically
+published.
 
 ### Capability Tokens
 

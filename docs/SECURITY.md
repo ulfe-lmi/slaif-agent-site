@@ -74,6 +74,22 @@ the actual request Host and path, no cookies, authorization, forwarded
 identity, or caller-selected base URL. NGINX and Apache explicitly reject
 `/internal/`; Control, Agent, Editor, and MCP expose no route to it.
 
+The faithful frozen review read reuses the preview-reader identity and one
+owner-defined authorization function as its single authority: live session
+checks (idle/absolute expiry, revocation, account/site/workspace state,
+membership), the v2 supported-format gate over the snapshot's stored trusted
+version pins, and the site/workspace binding to the stored COMPLETE
+`review-snapshot/v2` row. Every refusal is a uniform 404; the frozen review
+media URLs are snapshot-scoped private byte paths authorized only for the
+same human session against the snapshot's stored frozen media map, so a
+review never depends on current canonical media references and the anonymous
+public digest URL is never offered in review mode. The confined browser run
+byte path never forwards a human cookie or Agent capability: Render verifies
+and consumes the run credential and records its digest, verified expiry,
+nonce, and attempt in one transaction, and the Media service re-checks that
+trusted binding by digest only (it receives the existing credential solely to
+hash it and holds no signing key).
+
 Compose gives Render two isolated read-only locator files containing only the
 public-reader and preview-reader DSNs. A third isolated file contains only the
 high-entropy Web-to-Render credential and is mounted read-only to Web and
@@ -179,8 +195,8 @@ credential is attached only to the first exact document request and stripped
 from assets, redirects, results, logs, and artifacts.
 
 The current maintenance pin is the official Chrome for Testing
-`155.0.8059.84` archive at CfT revision `1697595`, verified by SHA-256
-`cf0f049892dea22e6a6db26d47ed0d7776b7158edcbec4634086633df8bafcbc` and kept
+`156.0.8078.47` archive at CfT revision `1706539`, verified by SHA-256
+`e6c94490f0b6b337225aeb2d2a5034858516b7017356980ba94f5176d8774a50` and kept
 separate from the Playwright bundle-directory label. The Playwright package and
 base image remain at the exact qualified `1.62.1` versions.
 

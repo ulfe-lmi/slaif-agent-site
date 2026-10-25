@@ -17,11 +17,16 @@ import type {
 import { RENDERER_STYLESHEET } from "./styles";
 import { CollectionFilter, CollectionSearch } from "./collection-filter-components";
 import {
+  PAGE_CONTROL_FORM_ID,
+  controlPositions,
+  filterControlFieldName,
+  searchControlFieldName,
   itemTitle,
   matchesAllFacets,
   matchesSearch,
   parseCollectionFacets,
   type FilterField,
+  type ControlRenderState,
 } from "./bounded-collection-filter";
 
 interface BindingMeta {
@@ -37,6 +42,27 @@ interface RenderProps {
   readonly meta?: BindingMeta;
   readonly media?: ProjectionMedia | null;
   readonly mediaItems?: readonly (ProjectionMedia | null)[] | null;
+  /**
+   * The composition node identifier. Flight-free private surfaces use it
+   * as the trusted-state lookup key for the same-path read-only POST
+   * form; it is a data reference only - every authority is re-derived
+   * server-side from the trusted projection.
+   */
+  readonly nodeId?: string;
+  /**
+   * The control's bounded deterministic POSITION in the trusted
+   * inventory (0-based tree order). The generated wire name carries
+   * this position, never the node identifier, so no composition UUID
+   * appears in any generated document.
+   */
+  readonly controlPosition?: number;
+  /**
+   * The page's same-path POST control states (trusted projection
+   * defaults on GET, the validated posted selection on POST). Present on
+   * the private flight-free surfaces only; the canonical client controls
+   * keep their documented bounded local state.
+   */
+  readonly controlStates?: ReadonlyMap<string, ControlRenderState> | null;
 }
 
 const CLASS_VALUES = new Set([
@@ -782,12 +808,18 @@ function FAQ({ props }: RenderProps) {
  * The trusted renderer is shared by RSC surfaces (public canonical, Puck
  * editor canvas), which render the interactive `"use client"`
  * implementations, and by flight-free SSR surfaces (workspace preview
- * route), which deliver a pure server-rendered document with no client
- * bundle and therefore cannot mount client state. The static variants
- * render the exact initial interactive state — empty search query,
- * initial facet values — with identical bounded markup and the same pure
- * fixed-operator logic, so every surface renders one consistent contract;
- * interactivity is simply absent where no client bundle is delivered.
+ * and frozen review routes), which deliver a pure server-rendered
+ * document with no client bundle and therefore cannot mount client
+ * state. The static variants render the exact initial interactive state
+ * — empty search query, initial facet values — with the same pure
+ * fixed-operator logic, so every surface renders one consistent
+ * contract. On the private surfaces the bound controls join ONE shared
+ * same-path authenticated read-only POST form per page (083/5-b): the
+ * page's inputs and submit buttons are associated with the single form
+ * element via the HTML ``form`` attribute, each control state is
+ * represented exactly once, and the server recomputes the bounded
+ * result sets and re-renders the identical document; the canonical
+ * public surface keeps its documented bounded client-state interaction.
  */
 function StaticResultsList({
   items,
@@ -811,20 +843,61 @@ function StaticResultsList({
     </ul>
   );
 }
-function CollectionSearchStatic({ props, data, meta }: RenderProps) {
+function CollectionSearchStatic({
+  props,
+  data,
+  meta,
+  nodeId,
+  controlPosition,
+  controlStates,
+}: RenderProps) {
   const items: readonly Record<string, unknown>[] = Array.isArray(data) ? data : [];
   const filterFields = meta?.filter_fields ?? [];
-  const visible = items.filter((item) => matchesSearch(item, filterFields, ""));
+  const state = nodeId !== undefined ? controlStates?.get(nodeId) : undefined;
+  const query = state ? (state.own["q"] ?? "") : "";
+  const visible = state
+    ? state.filtered
+    : items.filter((item) => matchesSearch(item, filterFields, ""));
   return (
     <div className="renderer-collection-search">
+      {/*
+       * The shared page form (083/5-b) is rendered exactly when the
+       * page delivered a bounded control state for this node: the input
+       * and the submit button join it via the ``form`` attribute, so
+       * this control's state is represented exactly once per page.
+       */}
       <label className="renderer-collection-search-field">
         <span>{text(props.placeholder) || "Search"}</span>
-        <input
-          className="renderer-collection-search-input"
-          type="search"
-          maxLength={256}
-        />
+        {state !== undefined && nodeId !== undefined ? (
+          <input
+            className="renderer-collection-search-input"
+            name={
+              controlPosition !== undefined
+                ? searchControlFieldName(controlPosition)
+                : undefined
+            }
+            form={PAGE_CONTROL_FORM_ID}
+            type="search"
+            value={query}
+            maxLength={256}
+          />
+        ) : (
+          <input
+            className="renderer-collection-search-input"
+            type="search"
+            maxLength={256}
+          />
+        )}
       </label>
+      {state !== undefined ? (
+        <button
+          className="renderer-button renderer-button--secondary renderer-collection-search-submit"
+          form={PAGE_CONTROL_FORM_ID}
+          type="submit"
+        >
+          Search
+        </button>
+      ) : null}
       {visible.length === 0 ? (
         <p className="renderer-collection-search-empty">No results</p>
       ) : (
@@ -833,13 +906,36 @@ function CollectionSearchStatic({ props, data, meta }: RenderProps) {
     </div>
   );
 }
-function CollectionFilterStatic({ props, data, meta }: RenderProps) {
+function CollectionFilterStatic({
+  props,
+  data,
+  meta,
+  nodeId,
+  controlPosition,
+  controlStates,
+}: RenderProps) {
   const facets = parseCollectionFacets(props);
   const items: readonly Record<string, unknown>[] = Array.isArray(data) ? data : [];
   const filterFields = meta?.filter_fields ?? [];
-  const visible = items.filter((item) => matchesAllFacets(item, filterFields, facets));
+  const state = nodeId !== undefined ? controlStates?.get(nodeId) : undefined;
+  const visible = state
+    ? state.filtered
+    : items.filter((item) => matchesAllFacets(item, filterFields, facets));
+  const facetValue = (index: number): string => {
+    const trusted = facets[index];
+    if (trusted === undefined) return "";
+    if (state) return state.own[`f${index}`] ?? trusted.value;
+    return trusted.value;
+  };
   return (
     <div className="renderer-collection-filter">
+      {/*
+       * The shared page form (083/5-b) is rendered exactly when the
+       * page delivered a bounded control state for this node: one input
+       * per TRUSTED facet plus the submit button join it via the
+       * ``form`` attribute, so this control's state is represented
+       * exactly once per page.
+       */}
       {facets.length > 0 ? (
         <div className="renderer-collection-filter-facets">
           {facets.map((facet, index) => (
@@ -848,15 +944,39 @@ function CollectionFilterStatic({ props, data, meta }: RenderProps) {
               className="renderer-collection-filter-facet"
             >
               <span>{`${facet.fieldKey} ${facet.operator}`}</span>
-              <input
-                className="renderer-collection-filter-input"
-                type="text"
-                value={facet.value}
-                maxLength={4096}
-              />
+              {state !== undefined && nodeId !== undefined ? (
+                <input
+                  className="renderer-collection-filter-input"
+                  name={
+                    controlPosition !== undefined
+                      ? filterControlFieldName(controlPosition, index)
+                      : undefined
+                  }
+                  form={PAGE_CONTROL_FORM_ID}
+                  type="text"
+                  value={facetValue(index)}
+                  maxLength={4096}
+                />
+              ) : (
+                <input
+                  className="renderer-collection-filter-input"
+                  type="text"
+                  value={facetValue(index)}
+                  maxLength={4096}
+                />
+              )}
             </label>
           ))}
         </div>
+      ) : null}
+      {state !== undefined ? (
+        <button
+          className="renderer-button renderer-button--secondary renderer-collection-filter-submit"
+          form={PAGE_CONTROL_FORM_ID}
+          type="submit"
+        >
+          Filter
+        </button>
       ) : null}
       {visible.length === 0 ? (
         <p className="renderer-collection-filter-empty">No results</p>
@@ -925,13 +1045,20 @@ const INTERACTIVE_RENDERERS: Record<string, (props: RenderProps) => ReactElement
 };
 
 export function renderComponent(
-  node: { componentType: string; props: Record<string, unknown>; children?: ReactNode },
+  node: {
+    componentType: string;
+    props: Record<string, unknown>;
+    children?: ReactNode;
+    id?: string;
+  },
   locale: string,
   data?: readonly Record<string, unknown>[],
   meta?: BindingMeta,
   clientState = true,
   media?: ProjectionMedia | null,
   mediaItems?: readonly (ProjectionMedia | null)[] | null,
+  controlStates?: ReadonlyMap<string, ControlRenderState> | null,
+  controlPositions?: ReadonlyMap<string, number> | null,
 ): ReactElement {
   // Render registry entries as real React elements (never direct function
   // calls): direct calls bypass React's client-component boundary
@@ -941,6 +1068,10 @@ export function renderComponent(
       ? INTERACTIVE_RENDERERS[node.componentType]
       : RENDERERS[node.componentType];
   if (!Renderer) throw new Error("unknown trusted component");
+  const controlPosition =
+    node.id !== undefined && controlStates !== undefined
+      ? controlPositions?.get(node.id)
+      : undefined;
   return createElement(Renderer, {
     definition: FALLBACK_DEFINITION,
     props: node.props,
@@ -950,6 +1081,9 @@ export function renderComponent(
     ...(meta === undefined ? {} : { meta }),
     ...(media === undefined ? {} : { media }),
     ...(mediaItems === undefined ? {} : { mediaItems }),
+    ...(node.id === undefined ? {} : { nodeId: node.id }),
+    ...(controlPosition === undefined ? {} : { controlPosition }),
+    ...(controlStates === undefined ? {} : { controlStates }),
   });
 }
 
@@ -966,20 +1100,37 @@ function renderNode(
   bindings: PageProjection["bindings"],
   bindingMeta: PageProjection["binding_meta"],
   clientState = true,
+  controlStates?: ReadonlyMap<string, ControlRenderState> | null,
+  controlPositions?: ReadonlyMap<string, number> | null,
 ): ReactElement {
   const children = node.children.map((child) =>
-    renderNode(child, locale, bindings, bindingMeta, clientState),
+    renderNode(
+      child,
+      locale,
+      bindings,
+      bindingMeta,
+      clientState,
+      controlStates,
+      controlPositions,
+    ),
   );
   return (
     <div data-component={node.component_type}>
       {renderComponent(
-        { componentType: node.component_type, props: node.props, children },
+        {
+          componentType: node.component_type,
+          props: node.props,
+          children,
+          id: node.id,
+        },
         locale,
         bindings[node.id],
         bindingMeta[node.id],
         clientState,
         node.media ?? null,
         node.media_items ?? null,
+        controlStates,
+        controlPositions,
       )}
     </div>
   );
@@ -1151,13 +1302,38 @@ export function renderProjection(
   projection: PageProjection,
   basePath?: string,
   clientState = true,
+  controlStates?: ReadonlyMap<string, ControlRenderState> | null,
 ): ReactElement {
   const base = basePath ?? `/s/${projection.site.key}`;
   const header = projection.regions.find((region) => region.region_key === "header");
   const footer = projection.regions.find((region) => region.region_key === "footer");
+  // 083/5-b: re-derive the bounded deterministic control positions from
+  // the SAME trusted projection the POST verifier uses, so the generated
+  // wire names (c.<position>.<slot>) match the admitted posted names
+  // exactly and no composition node identifier reaches any document.
+  const controlPositionsMap =
+    controlStates && controlStates.size > 0 ? controlPositions(projection) : null;
   return (
     <>
       <link rel="stylesheet" href={RENDERER_STYLESHEET} />
+      {controlStates && controlStates.size > 0 ? (
+        /*
+         * 083/5-b: the ONE shared native form of the flight-free private
+         * surface - the same-path read-only POST transport for every
+         * bound collection control on this page. The controls' inputs
+         * and submit buttons join it via the HTML ``form`` attribute;
+         * each control state is represented exactly once, so the
+         * generated form and every submission stay finite (bounded by
+         * the catalog's admitted composition limits) with no carried
+         * hidden groups. No client bundle: native browser form
+         * semantics only.
+         */
+        <form
+          id={PAGE_CONTROL_FORM_ID}
+          className="renderer-page-control-form"
+          method="POST"
+        />
+      ) : null}
       <div className="renderer-page">
         {header ? (
           <SiteRegionShell region={header} projection={projection} basePath={base} />
@@ -1184,6 +1360,8 @@ export function renderProjection(
               projection.bindings,
               projection.binding_meta,
               clientState,
+              controlStates,
+              controlPositionsMap,
             ),
           )}
         </main>

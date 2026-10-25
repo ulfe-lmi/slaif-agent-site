@@ -155,10 +155,19 @@ test("target, output, origin, and request policy expose no raw automation surfac
     serviceWorkers: "block",
   });
   const origin = validatePreviewOrigin("http://web:3000");
-  const document = previewDocumentUrl(origin, request());
+  // Production hands the PARSED request to the executor: the raw wire route
+  // "/s/demo/?a=1&b=2" is canonicalized by the contract parser (trailing
+  // slash stripped, query sorted) and its digest is bound to the canonical
+  // form, so the document must be the canonical slashless form too - the
+  // framework 308-normalizes trailing slashes before app routing and the
+  // confinement handler admits exactly one non-redirected document.
+  const document = previewDocumentUrl(
+    origin,
+    parseWorkerSubmitRequest(request(), 1_800_000_010),
+  );
   assert.equal(
     document.href,
-    `http://web:3000/preview/${ids.workspaceId}/s/demo/?a=1&b=2`,
+    `http://web:3000/preview/${ids.workspaceId}/s/demo?a=1&b=2`,
   );
   assert.equal(
     requestIsAllowed(document.href, "GET", "document", document),

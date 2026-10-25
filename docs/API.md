@@ -530,6 +530,7 @@ Render exposes typed, private projection routes on its internal listener:
 | `POST /internal/render/v1/site-context` | bounded authority/path routing context |
 | `POST /internal/render/v1/page` | published canonical page projection |
 | `POST /internal/render/v1/preview` | authorized HUMAN workspace overlay projection |
+| `POST /internal/render/v1/review` | faithful frozen review read of one COMPLETE `review-snapshot/v2` |
 
 Page responses contain site/revision, normalized route/locale, page metadata,
 a bounded normalized composition tree, catalog/schema versions,
@@ -570,3 +571,19 @@ use the routing shell; deeper unknown, unpublished, or deleted routes are 404.
 Preview responses are additionally private, no-store, and `noindex`. Public
 rendering does not emit a media URL until public media finalization exists;
 trusted image nodes use an honest non-broken placeholder meanwhile.
+
+The review route reads exactly one COMPLETE `review-snapshot/v2` by snapshot
+ID and requires exactly one `x-slaif-human-session` header; the browser
+preview header and in-body session token are rejected. The fixed database
+authorization function is the single authority (live session checks, the v2
+supported-format gate over the stored trusted version pins, and the
+site/workspace membership binding); every refusal is a uniform 404 and
+infrastructure faults are 503. The returned projection is the faithful frozen
+read (render mode `review`): its media URLs are snapshot-scoped private byte
+paths (`/media/v1/review/{snapshot_id}/assets/{media_id}/content`) readable
+only under the same authorized human session, so the frozen review never
+depends on current canonical media references. Legacy `review-snapshot/v1`
+snapshots remain viewable through the retained web-side frozen projection;
+the Web review route selects the view by the stored snapshot state version,
+uniformly refuses unknown stored versions, and never falls back from a
+failed v2 read to the v1 mapping.

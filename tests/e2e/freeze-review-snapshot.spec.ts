@@ -93,6 +93,33 @@ function seedHumanSession(
   };
 }
 
+const TINY_PNG = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ" +
+    "AAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==",
+  "base64",
+);
+
+function uploadForm(
+  file: Buffer,
+  filename: string,
+  mimeType: string,
+  fields: Record<string, string> = {},
+): FormData {
+  const form = new FormData();
+  form.append("file", new Blob([new Uint8Array(file)], { type: mimeType }), filename);
+  for (const [key, value] of Object.entries(fields)) {
+    form.append(key, value);
+  }
+  return form;
+}
+
+function requiredString(value: unknown, label: string): string {
+  if (typeof value !== "string" || value.length === 0) {
+    throw new Error(`unexpected ${label} in response`);
+  }
+  return value;
+}
+
 async function demoSiteId(page: Page): Promise<string> {
   const response = await page.request.get("/api/control/v1/me/sites");
   expect(response.status()).toBe(200);
@@ -938,9 +965,13 @@ test("freeze-review-snapshot-two-workspace-revision-coherence", async ({ page })
   const reviewBanner = page.locator(".review-banner");
   await expect(reviewBanner).toHaveAttribute("data-review-digest", review1.digest);
   await expect(reviewBanner).toHaveAttribute("data-review-equal", "true");
+  // 083/5: the current head freezes v2 snapshots; the review route
+  // renders them through the faithful frozen read (render mode
+  // "review"), so the legacy v1 mapping's "preview" mode is no longer
+  // the expected surface at the 076 head.
   await expect(page.locator("main.renderer-surface")).toHaveAttribute(
     "data-render-mode",
-    "preview",
+    "review",
   );
   await expect(
     page.getByRole("heading", { name: "Freeze coherence", exact: true }),
@@ -958,6 +989,236 @@ test("freeze-review-snapshot-two-workspace-revision-coherence", async ({ page })
   expect(publicSite.headers()["cache-control"]).toBe(
     "private, no-cache, no-store, max-age=0, must-revalidate",
   );
+
+  expect(failures(), "unexpected browser failure category").toEqual([]);
+});
+
+test("freeze-review-snapshot-faithful-frozen-review-v2", async ({ page }) => {
+  test.setTimeout(300_000);
+  const credential = secrets();
+  const project = composeProject();
+  const failures = observe(page);
+
+  await login(page, credential);
+  await expectAdminUsable(page);
+  const siteId = await demoSiteId(page);
+
+  // ------------------------- agent workspace with an explicit upload quota
+  // L2_SITE_EDITOR: the fixture adds composition nodes, which need
+  // component-structure:create (L2); L1_CONTENT_EDITOR allows the media
+  // upload but fails closed on the component POSTs.
+  const csrf = await adminCsrf(page);
+  const workspaceResponse = await page.request.post(
+    `/api/control/v1/sites/${siteId}/workspaces/`,
+    {
+      headers: { "X-CSRF-Token": csrf, "Idempotency-Key": crypto.randomUUID() },
+      data: {
+        title: `083/5 faithful review ${randomHex(4)}`,
+        task_description: "Bounded faithful frozen review proof",
+        delegation_preset: "L2_SITE_EDITOR",
+        duration_hours: 1,
+        request_quota: 200,
+        mutation_quota: 50,
+        delete_quota: 0,
+        upload_quota: 2,
+        browser_quota: 0,
+        resource_constraints: {},
+      },
+    },
+  );
+  expect(workspaceResponse.status()).toBe(201);
+  const workspaceBody = (await workspaceResponse.json()) as {
+    workspace_id?: unknown;
+  };
+  const workspaceId = requiredString(workspaceBody.workspace_id, "workspace id");
+  const capabilityResponse = await page.request.post(
+    `/api/control/v1/sites/${siteId}/workspaces/${workspaceId}/capabilities/`,
+    { headers: { "X-CSRF-Token": csrf, "Idempotency-Key": crypto.randomUUID() } },
+  );
+  expect(capabilityResponse.status()).toBe(201);
+  const capability = (await capabilityResponse.json()) as { token?: unknown };
+  const token = requiredString(capability.token, "capability token");
+  const agentHeaders = { Authorization: `Bearer ${token}` } as const;
+  const homeId = await homePageId(page, token);
+
+  // ------------------------------------------------ agent media + components
+  const pngDigest = sha256Hex(TINY_PNG);
+  const upload = await page.request.post("/api/agent/v1/media/assets", {
+    headers: { ...agentHeaders, "Idempotency-Key": crypto.randomUUID() },
+    multipart: uploadForm(TINY_PNG, "faithful-proof.png", "image/png", {
+      alt_text: "083/5 faithful review media",
+    }),
+  });
+  expect(upload.status()).toBe(201);
+  const uploadBody = (await upload.json()) as { record?: Record<string, unknown> };
+  const mediaId = requiredString(uploadBody.record?.id, "media id");
+  expect(uploadBody.record?.content_hash).toBe(pngDigest);
+
+  const marker = `083/5 faithful marker ${randomHex(2)}`;
+  const heading = await page.request.post(`/api/agent/v1/pages/${homeId}/components`, {
+    headers: { ...agentHeaders, "Idempotency-Key": crypto.randomUUID() },
+    data: {
+      component_type: "Heading",
+      slot_key: "default",
+      props: { text: marker, level: 2 },
+    },
+  });
+  expect(heading.status()).toBe(201);
+  const image = await page.request.post(`/api/agent/v1/pages/${homeId}/components`, {
+    headers: { ...agentHeaders, "Idempotency-Key": crypto.randomUUID() },
+    data: {
+      component_type: "Image",
+      slot_key: "default",
+      props: { mediaId, alt: "083/5 faithful review media" },
+    },
+  });
+  expect(image.status()).toBe(201);
+
+  // ------------------------------------------------------------- freeze + wait
+  const frozen = await freezeWorkspace(page, siteId, workspaceId);
+  expect(frozen.status).toBe(202);
+  await waitForReview(page, project, siteId, workspaceId);
+  const snapshotId = psql(
+    project,
+    `SELECT id FROM control.review_snapshot
+      WHERE workspace_id = '${workspaceId}'`,
+  );
+  expect(snapshotId).toMatch(/^[0-9a-f-]{36}$/i);
+
+  // ------------------------- stored payload: v2 state, pins, frozen media
+  expect(
+    psql(
+      project,
+      `SELECT payload->>'state_version'
+        FROM control.review_snapshot WHERE id = '${snapshotId}'`,
+    ),
+  ).toBe("review-snapshot/v2");
+  expect(
+    psql(
+      project,
+      // PostgreSQL: || and -> share precedence (left-associative), so each
+      // jsonb extraction is parenthesized before concatenation.
+      `SELECT (payload->'workspace_versions'->>'puck') || '|' ||
+             (payload->'workspace_versions'->>'catalog') || '|' ||
+             (payload->'workspace_versions'->>'composition_schema')
+        FROM control.review_snapshot WHERE id = '${snapshotId}'`,
+    ),
+  ).toBe("0.20.2|catalog-v1|site-composition/v1");
+  expect(
+    psql(
+      project,
+      // JSONPath: quote the UUID member (a bare uuid-like key starting with a
+      // digit parses as a numeric literal), and ::text for the boolean || text
+      // concatenation (there is no boolean || boolean operator).
+      `SELECT jsonb_path_exists(payload,
+         '$.media."${mediaId}"')::text || jsonb_path_exists(payload,
+         '$.media_inventory[*] ? (@.id == "${mediaId}")')::text
+        FROM control.review_snapshot WHERE id = '${snapshotId}'`,
+    ),
+  ).toBe("truetrue");
+
+  // ------------------------- read model: exact v2 shape through the API
+  const reviewResponse = await page.request.get(
+    `/api/control/v1/sites/${siteId}/workspaces/${workspaceId}/review/`,
+  );
+  expect(reviewResponse.status()).toBe(200);
+  const reviewDoc = (await reviewResponse.json()) as {
+    snapshot: { id: string; digest: string; state_version: string };
+    drift: { equal: boolean };
+    normalized_state: Record<string, unknown>;
+  };
+  expect(reviewDoc.snapshot.id).toBe(snapshotId);
+  expect(reviewDoc.snapshot.state_version).toBe("review-snapshot/v2");
+  expect(reviewDoc.drift.equal).toBe(true);
+  // The exact 18-key v2 normalized state (the six v2 additions over the
+  // v1 document: workspace_versions, page_compositions, content,
+  // proposals, media_inventory, plus the retained v1 facts).
+  expect(Object.keys(reviewDoc.normalized_state).sort()).toEqual([
+    "base_site_revision",
+    "content",
+    "locales",
+    "media",
+    "media_inventory",
+    "navigation",
+    "operation_watermark",
+    "page_compositions",
+    "pages",
+    "proposals",
+    "redirects",
+    "regions",
+    "site",
+    "site_id",
+    "state_version",
+    "theme",
+    "workspace_id",
+    "workspace_versions",
+  ]);
+
+  // ------------------------- faithful browser render of the v2 snapshot
+  await page.goto(`/review/${workspaceId}/`);
+  const reviewBanner = page.locator(".review-banner");
+  await expect(reviewBanner).toHaveAttribute(
+    "data-review-digest",
+    reviewDoc.snapshot.digest,
+  );
+  await expect(reviewBanner).toHaveAttribute("data-review-equal", "true");
+  // The faithful frozen read reports the review render mode (the legacy
+  // v1 web mapping reported "preview").
+  await expect(page.locator("main.renderer-surface")).toHaveAttribute(
+    "data-render-mode",
+    "review",
+  );
+  await expect(page.getByRole("heading", { name: marker, exact: true })).toBeVisible();
+  const frozenMediaUrl = `/media/v1/review/${snapshotId}/assets/${mediaId}/content`;
+  const reviewImage = page.locator(`img[src="${frozenMediaUrl}"]`);
+  await expect(reviewImage).toBeVisible();
+  await expect(reviewImage).toHaveCount(1);
+
+  // ------------------------- frozen private bytes through the public path
+  const mediaResponse = await page.request.get(frozenMediaUrl);
+  expect(mediaResponse.status()).toBe(200);
+  expect(mediaResponse.headers()["content-type"]).toBe("image/png");
+  expect(Buffer.from(await mediaResponse.body()).equals(TINY_PNG)).toBe(true);
+
+  // ------------------------- refusal without a human session
+  // No credentials at all -> 401 (authentication boundary, matching the
+  // integration contract for the frozen review byte route); a session that
+  // is not authorized -> uniform 404 (no existence oracle).
+  const browser = page.context().browser();
+  if (!browser) throw new Error("browser context missing");
+  const anonymous = await browser.newContext();
+  const anonymousMedia = await anonymous.request.get(frozenMediaUrl);
+  expect(anonymousMedia.status()).toBe(401);
+  // No trailing slash: the slash-normalizing 308 would otherwise
+  // precede the login 307 (same contract as the review-surface spec).
+  const anonymousReview = await anonymous.request.get(`/review/${workspaceId}`, {
+    maxRedirects: 0,
+  });
+  expect(anonymousReview.status()).toBe(307);
+  expect(anonymousReview.headers()["location"]).toMatch(/\/login$/);
+  await anonymous.close();
+
+  // ------------------------- non-frozen workspace review is a uniform 404
+  const activeResponse = await page.request.post(
+    `/api/control/v1/sites/${siteId}/workspaces/`,
+    {
+      headers: { "X-CSRF-Token": csrf, "Idempotency-Key": crypto.randomUUID() },
+      data: {
+        title: `083/5 non-frozen ${randomHex(4)}`,
+        delegation_preset: "L2_SITE_EDITOR",
+      },
+    },
+  );
+  expect(activeResponse.status()).toBe(201);
+  const activeBody = (await activeResponse.json()) as { workspace_id: string };
+  const activeReview = await page.request.get(
+    `/api/control/v1/sites/${siteId}/workspaces/${activeBody.workspace_id}/review/`,
+  );
+  expect(activeReview.status()).toBe(404);
+  const activeReviewPage = await page.request.get(
+    `/review/${activeBody.workspace_id}/`,
+  );
+  expect(activeReviewPage.status()).toBe(404);
 
   expect(failures(), "unexpected browser failure category").toEqual([]);
 });
