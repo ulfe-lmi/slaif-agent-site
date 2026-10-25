@@ -724,12 +724,38 @@ then
   echo "compose-smoke: unrelated uid unexpectedly read browser worker credential" >&2
   exit 1
 fi
+# 083-5-c: finite first-half retained-artifact fixture map (source-derived;
+# every permission/credential/retention predicate from the main-era baseline
+# is preserved verbatim):
+#   tools/compose/public_agent_acceptance.py (one tag per run):
+#     theme proof run: 4 (screenshot, structure-summary, console-summary,
+#       failed-request-summary); news journey run: 2 (heading-summary,
+#       structure-summary); component render-loop run: 4 (heading-summary,
+#       structure-summary, console-summary, failed-request-summary) = 10
+#   tests/e2e/review-surface.spec.ts: one run completed before the freeze,
+#     retained screenshot = 1
+#   tests/e2e/frozen-review-parity.spec.ts: one run completed, retained
+#     screenshot = 1 (its over-quota follow-up is refused 429 and retains
+#     nothing)
+#   tests/e2e/freeze-review-snapshot.spec.ts: one screenshot run that the
+#     freeze policy may leave COMPLETED (retains 1) or bounded-CANCELLED
+#     (retains 0); both are valid policy outcomes
+#   => 12..13 retained pairs (24..26 files). The main-era 11-pair baseline
+#      predates the review-surface and frozen-parity runs and is unreachable.
+# Coherence: every retained pair is a control.browser_artifact row and vice
+# versa (no orphan volume files, no missing retention).
+BROWSER_ARTIFACT_DB_TOTAL=$(docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif -Atc \
+  "SELECT count(*) FROM control.browser_artifact")
+BROWSER_ARTIFACT_DB_KINDS=$(docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif -Atc \
+  "SELECT COALESCE(string_agg(kind || '=' || count(*), ',' ORDER BY kind), '') FROM (SELECT kind, count(*) FROM control.browser_artifact GROUP BY kind) k")
+test -n "$BROWSER_ARTIFACT_DB_TOTAL"
 BROWSER_ARTIFACT_BASELINE=$(docker run --rm --network none --read-only --cap-drop ALL --cap-add DAC_READ_SEARCH \
   --user 0:0 --volume "${PROJECT}_browser-artifacts:/artifacts:ro" \
   --entrypoint python slaif-agent-site-backend:local -c \
-  "import pathlib,stat; root=pathlib.Path('/artifacts'); info=root.stat(); files=sorted(root.iterdir()); assert stat.S_IMODE(info.st_mode)==0o700 and info.st_uid==10001 and info.st_gid==10001; assert len(files)==22 and sum(p.suffix=='.bin' for p in files)==11 and sum(p.suffix=='.json' for p in files)==11; assert all(p.is_file() and not p.is_symlink() and stat.S_IMODE(p.stat().st_mode)==0o600 and p.stat().st_uid==10001 and p.stat().st_nlink==1 for p in files); assert not any(marker in p.read_bytes() for p in files for marker in (b'sbp1.',b'sbws1:',b'sas2_')); print(len(files))")
-test "$BROWSER_ARTIFACT_BASELINE" = 22
-echo "browser-artifact-root-policy: OK retained-files=$BROWSER_ARTIFACT_BASELINE retained-artifacts=11 mode=0600 owner=10001"
+  "import pathlib,stat,sys; root=pathlib.Path('/artifacts'); info=root.stat(); files=sorted(root.iterdir()); n=len(files); assert stat.S_IMODE(info.st_mode)==0o700 and info.st_uid==10001 and info.st_gid==10001; assert n in (24,26) and n%2==0; assert sum(p.suffix=='.bin' for p in files)==n//2 and sum(p.suffix=='.json' for p in files)==n//2; assert all(p.is_file() and not p.is_symlink() and stat.S_IMODE(p.stat().st_mode)==0o600 and p.stat().st_uid==10001 and p.stat().st_nlink==1 for p in files); assert not any(marker in p.read_bytes() for p in files for marker in (b'sbp1.',b'sbws1:',b'sas2_')); db_total=int(sys.argv[1]); kinds=dict(kv.split('=',1) for kv in sys.argv[2].split(',')) if sys.argv[2] else {}; fixed={'structure-summary':'3','console-summary':'2','failed-request-summary':'2','heading-summary':'2'}; assert all(kinds.get(k)==v for k,v in fixed.items()); assert kinds.get('screenshot') in ('3','4'); assert sum(int(v) for v in kinds.values())==db_total==n//2; print(n)" \
+  "$BROWSER_ARTIFACT_DB_TOTAL" "$BROWSER_ARTIFACT_DB_KINDS")
+test -n "$BROWSER_ARTIFACT_BASELINE"
+echo "browser-artifact-root-policy: OK retained-files=$BROWSER_ARTIFACT_BASELINE retained-pairs=$((BROWSER_ARTIFACT_BASELINE / 2)) db-artifacts=$BROWSER_ARTIFACT_DB_TOTAL fixture-map=12plus-conditional-freeze mode=0600 owner=10001"
 
 docker run --rm --network none --read-only --cap-drop ALL --cap-add DAC_READ_SEARCH \
   --user 0:0 --volume "${PROJECT}_local-secrets:/master:ro" \
