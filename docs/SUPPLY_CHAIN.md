@@ -193,8 +193,11 @@ findings in that older payload. The 152.0.7977.82 qualification and finding set
 remain historical evidence in
 [`supply-chain/browser-worker-critical-matrix.json`](../supply-chain/browser-worker-critical-matrix.json)
 while the active maintenance qualification uses Chrome for Testing
-`156.0.8078.47` at CfT revision `1706539` (083-5-c runs its own fresh
-six-image qualification for that pin). The 078-t attempt is retained as
+`156.0.8078.47` at CfT revision `1706539` (083-5-c measured that pin's fresh
+six-image qualification at intermediate commit J2
+`d161e9df4ade67a3bc83375a4124eb6e939b6608` on 2026-10-25: zero unexcepted
+Critical in all six images, 19 inherited High review findings, zero
+exceptions; the final I-bound pipeline re-qualifies at the final gates). The 078-t attempt is retained as
 unqualified coverage-gap evidence; 078-u records the measured component for
 the then-current `153.0.8010.36` pin in the remote CI bundle and passed the
 exact six-image scan for that pin; the separate `155.0.8059.84`
@@ -279,8 +282,10 @@ merely to make a gate green. The owner removed this exception after the official
 stable Chrome 152.0.7977.82 qualification; the later `153.0.8010.36`
 (078-u) and `155.0.8059.84` (083-3) maintenance qualifications remain
 historical evidence; the current pin is `156.0.8078.47`, whose fresh
-six-image qualification runs in 083-5-c without reopening issue #67 or
-claiming release readiness.
+six-image qualification was measured in 083-5-c at intermediate commit J2
+(`d161e9df4ade67a3bc83375a4124eb6e939b6608`, 2026-10-25: zero unexcepted
+Critical in all six images, 19 inherited High review findings, zero
+exceptions) without reopening issue #67 or claiming release readiness.
 
 An authorized update must preserve readable tags plus top-level digests,
 review source/license/signature metadata, update the machine policy and narrow

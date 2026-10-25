@@ -348,6 +348,63 @@
       },
       "qualification_date": "2026-10-18",
       "history_note": "The 083-3-d security closure refreshes the backend interpreter pin to python:3.12.15-alpine3.23 (multi-platform index sha256:1fd55c2f838c4f76262f9eeed899ff9168ea96ac383c61667d6f204325e1f169); the rebuilt backend image contains zero CVE-2026-19445 matches against the Python 3.12.15 interpreter (official PSF release). The browser remains CfT 155.0.8059.84 (revision 1697595, archive sha256 cf0f049892dea22e6a6db26d47ed0d7776b7158edcbec4634086633df8bafcbc) and CVE-2026-103628 is absent from all six refreshed scans. CVE-2026-19445 is not globally absent: four Medium-severity distribution matches remain in the browser-worker image (Ubuntu noble python3.12 3.12.3-1ubuntu0.15 packages python3.12, python3.12-minimal, libpython3.12-stdlib, libpython3.12-minimal) and are disclosed here; they do not trigger the Critical-only policy. Local measured six-image pipeline 2026-10-18 (start 00:36:56Z, exit 0): all six images zero unexcepted Critical, High review findings 43, exceptions 0, Grype 0.117.0 and Syft 1.51.0 on the fresh v6.1.10 database built 2026-10-17T06:27:09Z (checksum sha256:4c2b8b0cd02313f74a50c81c457796660c4997565cc2ff211e09cc1880205c10). No exception added and no gate weakened."
+    },
+{
+     "candidate": "candidate-9 CfT: 156.0.8078.47 measured scan coverage",
+     "official_metadata": {
+      "last_known_good_url": "https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions-with-downloads.json",
+      "exact_version_url": "https://googlechromelabs.github.io/chrome-for-testing/known-good-versions-with-downloads.json",
+      "timestamp": "2026-10-24T22:16:21.275Z",
+      "channel": "Stable",
+      "version": "156.0.8078.47",
+      "revision": "1706539",
+      "platform": "linux64",
+      "archive_url": "https://storage.googleapis.com/chrome-for-testing-public/156.0.8078.47/linux64/chrome-linux64.zip"
+     },
+     "archive_sha256": "e6c94490f0b6b337225aeb2d2a5034858516b7017356980ba94f5176d8774a50",
+     "runtime": {
+      "image": "browser-worker",
+      "image_digest": "sha256:2ae551f1f1f2ff82fdb4aab23f45746e57edc7ccc6171609806f697e37be5586",
+      "base_image": "mcr.microsoft.com/playwright:v1.62.1-noble@sha256:dcc5531e97840b9b5e794f2814476b21571c5124a3fca2267d73041f56e7580e",
+      "executable": "/ms-playwright/chromium-1706539/chrome-linux64/chrome",
+      "executable_version": "Google Chrome for Testing 156.0.8078.47",
+      "executable_sha256": "230f0db8c5086182f46c59c867c0d461eb525d6552dfad226ea6b4d9ec249db2"
+     },
+     "scanner": {
+      "name": "grype",
+      "version": "0.117.0",
+      "database_schema": "v6.1.10",
+      "database_built": "2026-10-25T06:27:34Z",
+      "database_checksum": "sha256:4bdb42924659936a80a73f5df039603dc01734ed6032575b9879745216a713ea",
+      "syft_name": "syft",
+      "syft_version": "1.51.0"
+     },
+     "sbom": {
+      "format": "SPDX-2.3",
+      "browser_worker_sbom_sha256": "066e847776d7d4df67086316e60c4cb4cc67fab53f9961db06d44d9f44002278",
+      "browser_worker_scan_sbom_sha256": "7bd361d3b717ed4fb327c2dadcdb0e2d5bc1258ab247d7cdd01cd7741f84c962",
+      "chrome_purl": "pkg:generic/chrome@156.0.8078.47",
+      "playwright_purl": "pkg:npm/playwright-core@1.62.1",
+      "identity_source": "supplemental-measured-runtime"
+     },
+     "scan_result": {
+      "result": "PASS",
+      "evidence_runner": "tools/supply_chain/run.sh",
+      "image_count": 6,
+      "critical": 0,
+      "unexcepted_critical": 0,
+      "high_review_findings": 19,
+      "browser_worker_matches": 1806,
+      "browser_worker_high": 4,
+      "browser_worker_medium": 1654,
+      "browser_worker_low": 134,
+      "browser_worker_negligible": 14,
+      "exception_count": 0,
+      "browser_worker_scan_sha256": "6aeabb1b2807a2a1381e7b67650062ec944f639dc5d449c97bbd4d062521efc5",
+      "checksum_validation": "PASS"
+     },
+     "qualification_date": "2026-10-25",
+     "history_note": "083-5-c security closure: the pinned browser payload is replaced with the SHA-256-verified Chrome for Testing 156.0.8078.47 (revision 1706539, archive sha256 e6c94490f0b6b337225aeb2d2a5034858516b7017356980ba94f5176d8774a50, executable sha256 230f0db8c5086182f46c59c867c0d461eb525d6552dfad226ea6b4d9ec249db2), replacing CfT 155.0.8059.84 (revision 1697595) which carried 26 Critical matches. All 31 Critical matches of the 083-5-b terminal census (browser-worker 26 chrome, nginx 2, postgres 1, web 2) are absent at every severity in the refreshed six-image scans; measured replacements: chrome 155.0.8059.84 -> 156.0.8078.47 (26 browser-worker matches, fixed versions 156.0.8078.47), nginx 1.29.7-r1 -> 1.30.6-r1 (CVE-2026-15176) and brotli-libs 1.2.0-r0 -> 1.2.1-r0 (CVE-2026-111497) in the nginx image, brotli-libs 1.2.0-r0 -> 1.2.1-r0 (CVE-2026-111497) in the postgres overlay, next 16.3.8 -> 16.4.1 (GHSA-2464-fhr4-w9xw, GHSA-673q-mjm6-r5xr) in the web image; backend and apache carry zero Critical. The 19 remaining High review findings (backend 1 zlib, browser-worker 4, postgres 7, web 7) all exactly match the High review findings of the prior FAILED census/attempt (candidate ea586641, supply-chain scan, artifact 12593246129); no new High id appears relative to that failed census. This is NOT a comparison against the prior successful (candidate-8, 155) qualification bundle, which is not re-derived here. Grype 0.117.0 (commit b5fa92bbcbef655497e3be840a2f718380e2cdd3) and Syft 1.51.0 (commit 2293641e3bd628a01bb37639318d62c0ebe89b39) on the fresh v6.1.10 database (built 2026-10-25T06:27:34Z, checksum sha256:4bdb42924659936a80a73f5df039603dc01734ed6032575b9879745216a713ea). Local measured six-image pipeline 2026-10-25 (evidence files 11:18Z-11:41Z, PIPELINE_NATIVE_EXIT=0, evidence revision d161e9df4ade67a3bc83375a4124eb6e939b6608, J2): all six images zero unexcepted Critical, 19 High review findings, 0 exceptions, checksum validation PASS. Independent GitHub qualification: supply-chain evidence job 121153129092 (workflow run 40188115724) artifact 12597008202 (zip sha256 6390cd2be4fb6af0a2babe0a57f15a9a50788bb4482b0ebcdedb5115fc3d35fb, 53/53 checksums, zero Critical and zero exceptions in all six scans) at actual CI revision M=be65db43a13917e19a7224b99ec0e8a9c59a1dd6 (parents 4bf74fdc8e74323045a7f8830cf393493e75fe0d and J2 d161e9df4ade67a3bc83375a4124eb6e939b6608), whose committed tree 08f3ab8f83026ef18c0076106b5451e0f7c3b1de is identical to the J2 tree; its browser-worker SPDX and scan SBOM bind the same executable 230f0db8..., archive e6c94490... and 156.0.8078.47. Official-metadata provenance: the CfT known-good-versions documents carry no per-version timestamp field; the recorded timestamp 2026-10-24T22:16:21.275Z is the official document timestamp recorded in the order, and 2026-10-25 re-fetches (document timestamps 2026-10-25T09:19:02.342Z last-known-good and 2026-10-25T09:19:02.351Z known-good-versions) confirm the same Stable entry 156.0.8078.47/1706539. This is an intermediate J2 qualification; the final I-bound pipeline re-qualifies at the final gates. No exception added and no gate weakened; the Next boundary is preserved (sharp remains ignoredOptionalDependencies, images unoptimized)."
     }
   ],
   "entries": [

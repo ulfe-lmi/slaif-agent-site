@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 
 import { expect, test } from "@playwright/test";
 
+import { classifyConsoleMessage, classifyConsoleSource } from "./observation";
 import { login, observe, secrets } from "./support";
 
 // One 1x1 PNG: the store's signature sniffer classifies it as image/png.
@@ -75,6 +76,49 @@ function objectPath(digest: string, publicNamespace: boolean): string {
   return `${root}/sha256/${p1}/${p2}/${digest}`;
 }
 
+// Bounded failure-only console diagnostics: fixed phase/source/message enums,
+// console type, numeric text length, bounded origin-scheme class. Never raw
+// message text, literal origins/hosts/paths/queries/URLs, IDs, cookies, tokens.
+const CONSOLE_SCHEME_CLASSES = new Set([
+  "http",
+  "https",
+  "data",
+  "blob",
+  "about",
+  "devtools",
+  "chrome-extension",
+  "chrome",
+  "chrome-untrusted",
+]);
+
+function originSchemeClass(url: string): string {
+  if (url === "") return "empty";
+  try {
+    const scheme = new URL(url).protocol.replace(/:$/, "");
+    return CONSOLE_SCHEME_CLASSES.has(scheme) ? scheme : "other-scheme";
+  } catch {
+    return "unparseable";
+  }
+}
+
+type ConsolePhase =
+  | "init"
+  | "login"
+  | "setup"
+  | "preview-image"
+  | "preview-gallery"
+  | "preview-doclist"
+  | "final";
+
+type RedactedConsoleRecord = {
+  phase: ConsolePhase;
+  source: string;
+  message: string;
+  type: "error";
+  len: number;
+  scheme: string;
+};
+
 test("media-publication-core-human-agent-preview-finalize-public-hostile", async ({
   page,
   browser,
@@ -87,12 +131,65 @@ test("media-publication-core-human-agent-preview-finalize-public-hostile", async
   if (!previewWorkspaceId) throw new Error("missing parity preview workspace");
   const failures = observe(page);
 
+  let consolePhase: ConsolePhase = "init";
+  let consoleEventCount = 0;
+  const consoleRecords: RedactedConsoleRecord[] = [];
+  page.on("console", (message) => {
+    if (message.type() !== "error") return;
+    consoleEventCount += 1;
+    const sourceUrl = message.location().url;
+    if (consoleRecords.length < 16) {
+      consoleRecords.push({
+        phase: consolePhase,
+        source: classifyConsoleSource(sourceUrl, page.url()),
+        message: classifyConsoleMessage(message.text()),
+        type: "error",
+        len: message.text().length,
+        scheme: originSchemeClass(sourceUrl),
+      });
+    }
+  });
+  const redactedConsoleDetail = () => {
+    const seen = new Set<string>();
+    const events: RedactedConsoleRecord[] = [];
+    for (const record of consoleRecords) {
+      const key = JSON.stringify(record);
+      if (!seen.has(key) && events.length < 4) {
+        seen.add(key);
+        events.push(record);
+      }
+    }
+    return (
+      "redacted-console:" +
+      JSON.stringify({
+        observed: consoleEventCount,
+        stored: consoleRecords.length,
+        events,
+      })
+    );
+  };
+  const expectConsoleClean = (label: string) => {
+    const current = failures();
+    try {
+      expect(current).toEqual([]);
+    } catch (err) {
+      throw new Error(
+        `${label} ${redactedConsoleDetail()} failures=${JSON.stringify(current)} ` +
+          String(err),
+        { cause: err },
+      );
+    }
+  };
+
   // ---------------------------------------------------------------- login
+  consolePhase = "login";
   await login(page, credential);
   const csrf = (await page.context().cookies()).find(
     (cookie) => cookie.name === "slaif_csrf",
   )?.value;
   expect(csrf).toBeTruthy();
+  expectConsoleClean("login");
+  consolePhase = "setup";
   const editorHeaders = (key = crypto.randomUUID()) =>
     ({
       "Content-Type": "application/json",
@@ -306,6 +403,7 @@ test("media-publication-core-human-agent-preview-finalize-public-hostile", async
   const humanComponentId = humanImageCreateBody.id as string;
 
   // -------------------------------------------------------- preview render
+  consolePhase = "preview-image";
   const previewPage = await page.goto(`/preview/${previewWorkspaceId}/s/parity/`);
   expect(previewPage?.status()).toBe(200);
   // R6: the preview renderer emits the workspace-scoped 054 preview-chain
@@ -331,6 +429,9 @@ test("media-publication-core-human-agent-preview-finalize-public-hostile", async
   expect(previewFetch.status()).toBe(200);
   expect(previewFetch.headers()["cache-control"]).toBe("private, no-store");
   expect((await previewFetch.body()).equals(fixtureBytes)).toBe(true);
+
+  expectConsoleClean("preview-image");
+  consolePhase = "preview-gallery";
 
   // --------------------------------------- direct finalization (083 boundary call)
   const finalizationScript = `
@@ -670,6 +771,9 @@ asyncio.run(main())
   } finally {
     await listParityContext.close();
   }
+
+  expectConsoleClean("preview-gallery");
+  consolePhase = "preview-doclist";
 
   // ------------------------------------------ agent hostile suite (079/2)
   // L2_SITE_EDITOR is the least-privilege preset adding
@@ -1376,6 +1480,9 @@ asyncio.run(main())
 
   // Unauthenticated public digest reads: byte-identical PDF bytes with the
   // record's exact Content-Type and the immutable cache headers.
+  expectConsoleClean("preview-doclist");
+  consolePhase = "final";
+
   const pdfAnonymous = await browser.newContext();
   try {
     for (const [mediaId, bytes] of [
@@ -2066,5 +2173,6 @@ asyncio.run(main())
   );
   expect(publicStatusCheck).toBe("t");
 
+  expectConsoleClean("final");
   expect(failures()).toEqual([]);
 });
