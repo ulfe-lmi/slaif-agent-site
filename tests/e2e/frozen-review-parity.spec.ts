@@ -758,7 +758,10 @@ function safeDiagnosticClass(error: unknown): string {
  * round-trip (real native button click; no manual POST, forced click,
  * reload/goto workaround, sleep or retry).  The POST-response waiter AND
  * the POSTed-document navigation waiter are both registered BEFORE the
- * click so the submission cannot slip between actions.
+ * click so the submission cannot slip between actions.  Response
+ * matching binds the main frame / navigation request, method and same
+ * expected URL (R3), and the post-POST document identity must be
+ * fresh (the sentinel changed) even when the URL is unchanged.
  *
  * 083-6-a R2 bounded diagnostics: every leg is observable independently
  * (fixed enums/booleans/relative durations only; no URLs, IDs, DOM,
@@ -826,8 +829,14 @@ async function submitControlForm(
   try {
     const responsePromise = page
       .waitForResponse(
+        // R3: bind the main-frame navigation request, the POST method
+        // and the same expected URL; an iframe/fetch or unrelated
+        // same-URL response is not accepted.
         (candidate) =>
-          candidate.request().method() === "POST" && candidate.url() === current,
+          candidate.request().method() === "POST" &&
+          candidate.url() === current &&
+          candidate.request().isNavigationRequest() &&
+          candidate.frame() === page.mainFrame(),
         { timeout: 30_000, signal: abort.signal },
       )
       .then(
