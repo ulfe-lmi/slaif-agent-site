@@ -794,10 +794,20 @@ async function submitControlForm(
   let legR = 0;
   let legN = 0;
   let legC = 0;
+  // Observed response facts (numeric status + two booleans only): kept
+  // in common state so the heartbeat, freeze and first-failure lines
+  // retain them after the transient submit-response marker is replaced.
+  let respStatus = "";
+  let respNavReq = "";
+  let respMainFrame = "";
+  const respEvidence = () =>
+    respStatus === ""
+      ? ""
+      : ` status=${respStatus} navreq=${respNavReq} mainframe=${respMainFrame}`;
   const stateFlags = () =>
     onOp?.(
       `submit-${op}`,
-      `r=${legR} n=${legN} c=${legC} t=${Date.now() - startedAt}ms`,
+      `r=${legR} n=${legN} c=${legC}${respEvidence()} t=${Date.now() - startedAt}ms`,
     );
   const annotate = () => {
     if (!failed) stateFlags();
@@ -808,7 +818,7 @@ async function submitControlForm(
     firstLeg = leg;
     // Snapshot the FIRST-failure leg state before any abort/drain can
     // mutate sibling leg states.
-    firstFlags = `r=${legR} n=${legN} c=${legC} t=${Date.now() - startedAt}ms`;
+    firstFlags = `r=${legR} n=${legN} c=${legC}${respEvidence()} t=${Date.now() - startedAt}ms`;
     stateFlags();
   };
   const heartbeat = setInterval(annotate, 5_000);
@@ -824,10 +834,13 @@ async function submitControlForm(
         (response) => {
           if (!failed) {
             legR = 1;
+            respStatus = String(response.status());
+            respNavReq = response.request().isNavigationRequest() ? "1" : "0";
+            respMainFrame = response.frame() === page.mainFrame() ? "1" : "0";
             annotate();
             onOp?.(
               "submit-response",
-              `op=${op} status=${response.status()} navreq=${response.request().isNavigationRequest() ? 1 : 0} mainframe=${response.frame() === page.mainFrame() ? 1 : 0} t=${Date.now() - startedAt}ms`,
+              `op=${op} status=${respStatus} navreq=${respNavReq} mainframe=${respMainFrame} t=${Date.now() - startedAt}ms`,
             );
           }
           return response;
@@ -887,7 +900,7 @@ async function submitControlForm(
         // The status assertion failed: all legs settled ok.
         failed = true;
         firstLeg = "status";
-        firstFlags = `r=${legR} n=${legN} c=${legC} t=${Date.now() - startedAt}ms`;
+        firstFlags = `r=${legR} n=${legN} c=${legC}${respEvidence()} t=${Date.now() - startedAt}ms`;
       }
       abort.abort();
       await Promise.allSettled([responsePromise, navigationPromise, clickPromise]);
