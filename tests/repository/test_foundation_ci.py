@@ -141,6 +141,53 @@ def _run_aggregate(script: str, group_a: str, group_b: str) -> int:
     ).returncode
 
 
+def _foundation_blocks(text: str) -> tuple[str, str, str]:
+    return (
+        _job_block(text, "foundation-pg-group-a"),
+        _job_block(text, "foundation-pg-group-b"),
+        _job_block(text, "foundation-postgresql"),
+    )
+
+
+def _assert_required_names(text: str) -> None:
+    assert text.count("    name: Foundation PostgreSQL ${{ matrix.postgresql }}") == 1
+
+
+def _assert_exact_commands(text: str) -> None:
+    job_a, job_b, _gate = _foundation_blocks(text)
+    assert _run_values(job_a) == [SYNC, GENERIC, BOOTSTRAP]
+    assert _run_values(job_b) == [SYNC, COMPONENT, THEME, PAGE_STYLE]
+
+
+def _assert_complete_matrices(text: str) -> None:
+    for block in _foundation_blocks(text):
+        assert PG_MATRIX in block
+        assert "fail-fast: false" in block
+        assert re.search(r"^\s*(include|exclude):", block, re.M) is None
+
+
+def _assert_skip_conditions(text: str) -> None:
+    job_a, job_b, job_gate = _foundation_blocks(text)
+    for block in (job_a, job_b):
+        assert re.search(r"^\s+if:", block, re.M) is None
+    gate_ifs = re.findall(r"^\s+if: (.*)$", job_gate, re.M)
+    assert sorted(gate_ifs) == sorted(["always()", "${{ always() }}"])
+
+
+def _assert_needs_and_env(text: str) -> None:
+    job_gate = _job_block(text, "foundation-postgresql")
+    assert _needs_ids(job_gate) == ["foundation-pg-group-a", "foundation-pg-group-b"]
+    assert "\n    if: always()" in job_gate
+    assert "GROUP_A_RESULT: ${{ needs.foundation-pg-group-a.result }}" in job_gate
+    assert "GROUP_B_RESULT: ${{ needs.foundation-pg-group-b.result }}" in job_gate
+    assert "\n        if: ${{ always() }}" in job_gate
+
+
+def _assert_no_weakening(text: str) -> None:
+    assert "continue-on-error" not in text
+    assert "retries:" not in text
+
+
 class FoundationCiSplitTestCase(unittest.TestCase):
     def setUp(self) -> None:
         self.text = WORKFLOW.read_text(encoding="utf-8")
@@ -231,6 +278,120 @@ class FoundationCiSplitTestCase(unittest.TestCase):
         ]:
             with self.subTest(group_a=group_a, group_b=group_b):
                 self.assertEqual(_run_aggregate(script, group_a, group_b), 1)
+
+    def test_baseline_positive_controls(self) -> None:
+        _assert_required_names(self.text)
+        _assert_exact_commands(self.text)
+        _assert_complete_matrices(self.text)
+        _assert_skip_conditions(self.text)
+        _assert_needs_and_env(self.text)
+        _assert_no_weakening(self.text)
+
+    def test_aggregate_script_refuses_unset_environment(self) -> None:
+        script = _aggregate_script(self.job_gate)
+        for partial in (
+            {"GROUP_A_RESULT": "success"},
+            {"GROUP_B_RESULT": "success"},
+            {},
+        ):
+            with self.subTest(present=sorted(partial)):
+                env = {"PATH": "/usr/bin:/bin", **partial}
+                with tempfile.NamedTemporaryFile(
+                    "w", suffix=".sh", delete=False
+                ) as handle:
+                    handle.write(script)
+                    path = handle.name
+                result = subprocess.run(
+                    ["/bin/bash", path], env=env, capture_output=True, text=True
+                )
+                self.assertEqual(result.returncode, 1)
+
+    def test_aggregate_script_refuses_timed_out(self) -> None:
+        script = _aggregate_script(self.job_gate)
+        for group_a, group_b in (("timed_out", "success"), ("success", "timed_out")):
+            with self.subTest(group_a=group_a, group_b=group_b):
+                self.assertEqual(_run_aggregate(script, group_a, group_b), 1)
+
+    def test_mutation_omitted_group_a_command_fails(self) -> None:
+        _assert_exact_commands(self.text)
+        needle = (
+            "\n          uv run --frozen pytest\n"
+            "          services/backend/tests/integration/"
+            "test_foundation_postgres.py"
+        )
+        self.assertEqual(self.text.count(needle), 1)
+        mutated = self.text.replace(needle, "", 1)
+        self.assertNotEqual(mutated, self.text)
+        with self.assertRaises(AssertionError):
+            _assert_exact_commands(mutated)
+
+    def test_mutation_omitted_group_b_command_fails(self) -> None:
+        _assert_exact_commands(self.text)
+        needle = (
+            "\n          uv run --frozen pytest\n"
+            "          services/backend/tests/integration/"
+            "test_agent_theme_boundaries.py"
+        )
+        self.assertEqual(self.text.count(needle), 1)
+        mutated = self.text.replace(needle, "", 1)
+        self.assertNotEqual(mutated, self.text)
+        with self.assertRaises(AssertionError):
+            _assert_exact_commands(mutated)
+
+    def test_mutation_omitted_matrix_leg_fails(self) -> None:
+        _assert_complete_matrices(self.text)
+        mutated = self.text.replace(
+            PG_MATRIX, 'postgresql: ["14", "15", "16", "17"]', 1
+        )
+        self.assertNotEqual(mutated, self.text)
+        with self.assertRaises(AssertionError):
+            _assert_complete_matrices(mutated)
+
+    def test_mutation_partial_matrix_via_exclude_fails(self) -> None:
+        _assert_complete_matrices(self.text)
+        needle = '        postgresql: ["14", "15", "16", "17", "18"]\n'
+        self.assertEqual(self.text.count(needle), 3)
+        mutated = self.text.replace(
+            needle, needle + '        exclude:\n          - postgresql: "18"\n', 1
+        )
+        self.assertNotEqual(mutated, self.text)
+        with self.assertRaises(AssertionError):
+            _assert_complete_matrices(mutated)
+
+    def test_mutation_omitted_needs_id_fails(self) -> None:
+        _assert_needs_and_env(self.text)
+        needle = "- foundation-pg-group-b\n"
+        self.assertEqual(self.text.count(needle), 1)
+        mutated = self.text.replace(needle, "", 1)
+        self.assertNotEqual(mutated, self.text)
+        with self.assertRaises(AssertionError):
+            _assert_needs_and_env(mutated)
+
+    def test_mutation_child_job_if_condition_fails(self) -> None:
+        _assert_skip_conditions(self.text)
+        needle = (
+            "    name: Foundation PG Group A PostgreSQL "
+            "${{ matrix.postgresql }}\n    runs-on: ubuntu-24.04\n"
+            "    timeout-minutes: 15\n"
+        )
+        self.assertEqual(self.text.count(needle), 1)
+        mutated = self.text.replace(needle, needle + "    if: ${{ success() }}\n", 1)
+        self.assertNotEqual(mutated, self.text)
+        with self.assertRaises(AssertionError):
+            _assert_skip_conditions(mutated)
+
+    def test_mutation_weakened_result_guard_fails(self) -> None:
+        _assert_needs_and_env(self.text)
+        old_guard = 'if [ "$result" != "success" ]; then'
+        new_guard = 'if [ "$result" = "cancelled" ]; then'
+        self.assertEqual(self.text.count(old_guard), 1)
+        mutated = self.text.replace(old_guard, new_guard, 1)
+        self.assertNotEqual(mutated, self.text)
+        script = _aggregate_script(_job_block(mutated, "foundation-postgresql"))
+        rc = _run_aggregate(script, "failure", "success")
+        self.assertEqual(rc, 0)
+        with self.assertRaises(AssertionError):
+            self.assertEqual(rc, 1)
 
 
 if __name__ == "__main__":
