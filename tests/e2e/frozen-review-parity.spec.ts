@@ -10,6 +10,7 @@ import {
   webkit,
   type APIRequestContext,
   type Browser,
+  type BrowserContext,
   type Locator,
   type Page,
   type TestInfo,
@@ -705,34 +706,233 @@ function assertStyle(route: RouteName, facts: RouteFacts, target: TargetName): v
 }
 
 /**
- * Submit the ONE shared same-path native form through its real POST
- * round-trip.  The POST-response waiter AND the POSTed-document
- * navigation waiter are both registered BEFORE the click so the
- * submission cannot slip between actions; the response is the fresh
- * server document of the POSTed projection.  Awaiting the navigation
- * (not just the load state, which can resolve against the still-current
- * previous document) keeps every later assertion on the POSTed page.
- *  No sleeps, retries, or weakened item sets.
+ * 083-6-a R3 observational document sentinel: every committed main
+ * document re-runs context init scripts, so a fresh per-document UUID on
+ * window is a fixed, secret-free document-identity marker.  It grants no
+ * product browser capability or authority; the controls sequence asserts
+ * it is installed (boolean) before each click and that it CHANGED after
+ * each same-path POST, proving a genuinely fresh main document even when
+ * the URL is unchanged.  The per-document UUID crosses to the test
+ * process for the pre/post comparison only and is never logged; all
+ * diagnostic output is boolean/fixed-enum.
  */
-async function submitControlForm(page: Page, button: Locator): Promise<void> {
-  const current = page.url();
-  const [response] = await Promise.all([
-    page.waitForResponse(
-      (candidate) =>
-        candidate.request().method() === "POST" && candidate.url() === current,
-    ),
-    page.waitForNavigation({ waitUntil: "load" }),
-    button.click(),
-  ]);
-  expect(response.status(), "same-path control POST status").toBe(200);
+const DOC_SENTINEL_KEY = "__slaif_fpar_doc";
+
+async function installDocumentSentinel(context: BrowserContext): Promise<void> {
+  await context.addInitScript((key: string) => {
+    (window as unknown as Record<string, unknown>)[key] =
+      globalThis.crypto.randomUUID();
+  }, DOC_SENTINEL_KEY);
 }
 
-async function formSequence(page: Page, url: string): Promise<void> {
+/** Non-empty sentinel value, or null when missing (safe rejection). */
+function readSentinel(page: Page): Promise<string | null> {
+  return page.evaluate((key: string) => {
+    const doc = (window as unknown as Record<string, unknown>)[key];
+    return typeof doc === "string" && doc.length > 0 ? doc : null;
+  }, DOC_SENTINEL_KEY);
+}
+
+/**
+ * 083-6-a R2: fixed-enum classification of a failed control leg.
+ * Maps the pinned Playwright 1.62.1 error `name` identifiers (stable in
+ * the frozen coreBundle) to a fixed enum; never surfaces the raw error
+ * message, cause or Playwright call log.
+ */
+function safeDiagnosticClass(error: unknown): string {
+  if (!(error instanceof Error)) return "unknown";
+  switch (error.name) {
+    case "TimeoutError":
+      return "timeout";
+    case "TargetClosedError":
+      return "target-closed";
+    case "AbortError":
+      return "aborted";
+    default:
+      return "error";
+  }
+}
+
+/**
+ * Submit the ONE shared same-path native form through its real POST
+ * round-trip (real native button click; no manual POST, forced click,
+ * reload/goto workaround, sleep or retry).  The POST-response waiter AND
+ * the POSTed-document navigation waiter are both registered BEFORE the
+ * click so the submission cannot slip between actions.
+ *
+ * 083-6-a R2 bounded diagnostics: every leg is observable independently
+ * (fixed enums/booleans/relative durations only; no URLs, IDs, DOM,
+ * bodies or raw call logs).  Each leg carries an explicit diagnostic
+ * deadline of at most 30000ms (R4) so any pending stall yields an
+ * attributed leg error before the global 600s budget.  On first failure
+ * the operation is FROZEN (the first-failure leg state is snapshotted
+ * before abort/drain; no late leg or cleanup overwrites it), pending
+ * sibling waits are aborted through an actual AbortSignal and drained in
+ * a bounded way, and only a sanitized fixed-class/leg/flags error
+ * propagates (class is a fixed whitelist, never the raw message, cause
+ * or Playwright call log).  Leg states: 0 pending, 1 settled-ok,
+ * 2 settled-rejected.
+ */
+async function submitControlForm(
+  page: Page,
+  button: Locator,
+  op: "a" | "b" | "c",
+  onOp?: (op: string, flags?: string) => void,
+): Promise<void> {
+  const current = page.url();
+  // The pre-click identity must itself be proven a non-empty string; a
+  // missing marker is safely rejected (never a fallback that could make
+  // the post-POST "changed" comparison vacuous).
+  const docBefore = await readSentinel(page);
+  if (typeof docBefore !== "string" || docBefore.length === 0)
+    throw new Error("controls sentinel rejected: not a non-empty string before click");
+  onOp?.(`submit-${op}`);
+  const startedAt = Date.now();
+  let failed = false;
+  let firstLeg: string | null = null;
+  let firstFlags: string | null = null;
+  let legR = 0;
+  let legN = 0;
+  let legC = 0;
+  const stateFlags = () =>
+    onOp?.(
+      `submit-${op}`,
+      `r=${legR} n=${legN} c=${legC} t=${Date.now() - startedAt}ms`,
+    );
+  const annotate = () => {
+    if (!failed) stateFlags();
+  };
+  const freeze = (leg: string) => {
+    if (failed) return;
+    failed = true;
+    firstLeg = leg;
+    // Snapshot the FIRST-failure leg state before any abort/drain can
+    // mutate sibling leg states.
+    firstFlags = `r=${legR} n=${legN} c=${legC} t=${Date.now() - startedAt}ms`;
+    stateFlags();
+  };
+  const heartbeat = setInterval(annotate, 5_000);
+  const abort = new AbortController();
+  try {
+    const responsePromise = page
+      .waitForResponse(
+        (candidate) =>
+          candidate.request().method() === "POST" && candidate.url() === current,
+        { timeout: 30_000, signal: abort.signal },
+      )
+      .then(
+        (response) => {
+          if (!failed) {
+            legR = 1;
+            annotate();
+            onOp?.(
+              "submit-response",
+              `op=${op} status=${response.status()} navreq=${response.request().isNavigationRequest() ? 1 : 0} mainframe=${response.frame() === page.mainFrame() ? 1 : 0} t=${Date.now() - startedAt}ms`,
+            );
+          }
+          return response;
+        },
+        (error: unknown) => {
+          legR = 2;
+          freeze("resp");
+          throw error;
+        },
+      );
+    const navigationPromise = page
+      .waitForNavigation({ waitUntil: "load", timeout: 30_000, signal: abort.signal })
+      .then(
+        () => {
+          if (!failed) {
+            legN = 1;
+            annotate();
+          }
+        },
+        (error: unknown) => {
+          legN = 2;
+          freeze("nav");
+          throw error;
+        },
+      );
+    const clickPromise = button.click({ timeout: 30_000, signal: abort.signal }).then(
+      () => {
+        if (!failed) {
+          legC = 1;
+          annotate();
+        }
+      },
+      (error: unknown) => {
+        legC = 2;
+        freeze("click");
+        throw error;
+      },
+    );
+    let submitFailure: Error | undefined;
+    try {
+      const [response] = await Promise.all([
+        responsePromise,
+        navigationPromise,
+        clickPromise,
+      ]);
+      expect(response.status(), "same-path control POST status").toBe(200);
+    } catch (error) {
+      // Freeze first-failure state, stop the heartbeat, then abort the
+      // pending sibling waits (the actual AbortSignal rejects them
+      // immediately) and drain them in a bounded way.  Only a sanitized
+      // fixed-enum-class/leg/flags error propagates - never the raw
+      // message, cause or Playwright call log (which can carry private
+      // URLs); the sanitized error is therefore thrown from function
+      // scope, not with the caught error attached.
+      clearInterval(heartbeat);
+      if (!failed) {
+        // The status assertion failed: all legs settled ok.
+        failed = true;
+        firstLeg = "status";
+        firstFlags = `r=${legR} n=${legN} c=${legC} t=${Date.now() - startedAt}ms`;
+      }
+      abort.abort();
+      await Promise.allSettled([responsePromise, navigationPromise, clickPromise]);
+      const klass = safeDiagnosticClass(error);
+      submitFailure = new Error(
+        `controls submit-${op} failed leg=${firstLeg} class=${klass} ${firstFlags}`,
+      );
+    }
+    if (submitFailure !== undefined) throw submitFailure;
+    // R3 freshness: an unchanged URL does not mean the same document.
+    // The raw per-document marker is passed in for the comparison only
+    // and is never logged; only the boolean results cross back to the
+    // test process as diagnostic output.
+    const docFresh = await page.evaluate(
+      (arg: { key: string; before: string }) => {
+        const doc = (window as unknown as Record<string, unknown>)[arg.key];
+        return {
+          installed: typeof doc === "string" && doc.length > 0,
+          changed: typeof doc === "string" && doc !== arg.before,
+        };
+      },
+      { key: DOC_SENTINEL_KEY, before: docBefore },
+    );
+    expect(docFresh.installed, "document sentinel observable after POST").toBe(true);
+    expect(docFresh.changed, "same-path POST produced a fresh main document").toBe(
+      true,
+    );
+  } finally {
+    clearInterval(heartbeat);
+  }
+}
+
+async function formSequence(
+  page: Page,
+  url: string,
+  onOp?: (op: string, flags?: string) => void,
+): Promise<void> {
   // Deployed same-path POST interaction: the ONE shared native form
   // carries every bound control exactly once; successive submissions
   // must preserve the other control's state (multi-control parity).
+  onOp?.("goto");
   await page.goto(url);
+  onOp?.("form");
   await expect(page.locator("form#slaif-page-control-form")).toHaveCount(1);
+  onOp?.("state");
   const searchInput = page.locator("input.renderer-collection-search-input");
   const facetInputs = page.locator("input.renderer-collection-filter-input");
   expect(await facetInputs.count()).toBe(2);
@@ -745,29 +945,41 @@ async function formSequence(page: Page, url: string): Promise<void> {
   // The server-delivered default set (both surfaces, both phases).
   const delivered = ["Alpha briefing", "Beta dispatch"];
   // A: search "beta" -> only Beta in search; filter state untouched.
+  onOp?.("fill-a");
   await searchInput.fill("beta");
   await submitControlForm(
     page,
     page.locator("button.renderer-collection-search-submit"),
+    "a",
+    onOp,
   );
+  onOp?.("assert-a");
   expect(await listTitles("CollectionSearch")).toEqual(["Beta dispatch"]);
   expect(await listTitles("CollectionFilter")).toEqual(delivered);
   // B: facet kind=Press -> filter narrows; the search state is retained.
+  onOp?.("fill-b");
   await facetInputs.nth(0).fill("Press");
   await submitControlForm(
     page,
     page.locator("button.renderer-collection-filter-submit"),
+    "b",
+    onOp,
   );
+  onOp?.("assert-b");
   expect(await listTitles("CollectionSearch")).toEqual(["Beta dispatch"]);
   expect(await listTitles("CollectionFilter")).toEqual(["Beta dispatch"]);
   expect(await facetInputs.nth(0).inputValue()).toBe("Press");
   // C: clear search -> search restores its default set; the filter
   // state stays posted (no reset of the other control).
+  onOp?.("fill-c");
   await searchInput.fill("");
   await submitControlForm(
     page,
     page.locator("button.renderer-collection-search-submit"),
+    "c",
+    onOp,
   );
+  onOp?.("assert-c");
   expect(await listTitles("CollectionSearch")).toEqual(delivered);
   expect(await listTitles("CollectionFilter")).toEqual(["Beta dispatch"]);
 }
@@ -832,7 +1044,11 @@ async function canonicalControlSequence(page: Page, url: string): Promise<void> 
   expect(postCount, "suppressed canonical submissions make no network I/O").toBe(0);
 }
 
-async function navigationProof(page: Page, base: string): Promise<void> {
+async function navigationProof(
+  page: Page,
+  base: string,
+  onOp?: (op: string, flags?: string) => void,
+): Promise<void> {
   // Real link navigation on the deployed surface (no test handlers);
   // every switch carries concrete href AND destination-URL evidence in
   // both directions on both the static and dynamic routes.  The
@@ -841,6 +1057,7 @@ async function navigationProof(page: Page, base: string): Promise<void> {
   // HTML) and site-rooted absolute hrefs on the review surface
   // (regionHref); both exact forms are pinned, and the browser's own
   // resolution plus the final page URL prove the concrete destination.
+  // 083-6-a: operation-level bounded diagnostics (R2) on every leg.
   const isPreview = base.startsWith("/preview/");
   const siteKey = base.slice(base.lastIndexOf("/s/") + 3);
   const hrefFor = (currentRoute: string, target: string): string => {
@@ -853,15 +1070,20 @@ async function navigationProof(page: Page, base: string): Promise<void> {
     return targetPath ? `${ups}${targetPath}` : `${ups}./`;
   };
   // Forward on the STATIC route (home): the concrete counterpart href.
+  onOp?.("home-goto");
   await page.goto(base);
+  onOp?.("home-href");
   const slHome = page
     .locator(".renderer-region-language-item", { hasText: "sl-SI" })
     .locator("a");
   expect(await slHome.getAttribute("href"), "static switcher href").toBe(
     hrefFor("/", "/sl-SI"),
   );
+  onOp?.("home-click");
   await slHome.click();
+  onOp?.("home-load");
   await page.waitForLoadState();
+  onOp?.("home-check");
   expect(page.url(), "static switch destination").toBe(`${ORIGIN}${base}/sl-SI`);
   expect(await page.locator("h1#page-title").innerText()).toBe("Domača stran");
   expect(await page.locator("main.renderer-surface").getAttribute("lang")).toBe(
@@ -869,15 +1091,20 @@ async function navigationProof(page: Page, base: string): Promise<void> {
   );
   // Forward on the DYNAMIC route: the concrete (brace-free) href must
   // resolve the requested slug in the counterpart locale.
+  onOp?.("detail-goto");
   await page.goto(`${base}/news/alpha`);
+  onOp?.("detail-href");
   const slItem = page
     .locator(".renderer-region-language-item", { hasText: "sl-SI" })
     .locator("a");
   expect(await slItem.getAttribute("href"), "dynamic switcher href").toBe(
     hrefFor("/news/alpha", "/sl-SI/news/alpha"),
   );
+  onOp?.("detail-click");
   await slItem.click();
+  onOp?.("detail-load");
   await page.waitForLoadState();
+  onOp?.("detail-check");
   expect(page.url(), "dynamic switch destination").toBe(
     `${ORIGIN}${base}/sl-SI/news/alpha`,
   );
@@ -886,6 +1113,7 @@ async function navigationProof(page: Page, base: string): Promise<void> {
     "sl-SI",
   );
   // The bound item rendered in the counterpart locale (detail body).
+  onOp?.("detail-body");
   expect(await page.locator("article.renderer-collection-detail h2").innerText()).toBe(
     "Prvi članek",
   );
@@ -895,14 +1123,18 @@ async function navigationProof(page: Page, base: string): Promise<void> {
     "Prvi povzetek",
   );
   // Reverse on the SAME dynamic route back to the default locale.
+  onOp?.("reverse-href");
   const enItem = page
     .locator(".renderer-region-language-item", { hasText: "en" })
     .locator("a");
   expect(await enItem.getAttribute("href"), "reverse switcher href").toBe(
     hrefFor("/sl-SI/news/alpha", "/news/alpha"),
   );
+  onOp?.("reverse-click");
   await enItem.click();
+  onOp?.("reverse-load");
   await page.waitForLoadState();
+  onOp?.("reverse-check");
   expect(page.url(), "reverse switch destination").toBe(`${ORIGIN}${base}/news/alpha`);
   expect(await page.locator("h1#page-title").innerText()).toBe("Article");
   expect(await page.locator("main.renderer-surface").getAttribute("lang")).toBe("en");
@@ -915,12 +1147,17 @@ async function navigationProof(page: Page, base: string): Promise<void> {
     "Alpha summary",
   );
   // The region brand anchor itself navigates to the site root.
+  onOp?.("brand-goto");
   await page.goto(`${base}/news/alpha`);
+  onOp?.("brand");
   const brand = page.locator("a.renderer-region-brand");
   await expect(brand).toHaveCount(1);
   await expect(brand).toHaveText(/fpar-[0-9a-f]{8}/);
+  onOp?.("brand-click");
   await brand.click();
+  onOp?.("brand-load");
   await page.waitForLoadState();
+  onOp?.("brand-check");
   expect(await page.locator("h1#page-title").innerText()).toBe("Parity home");
 }
 
@@ -977,6 +1214,10 @@ type StageDetail = {
   target?: string;
   route?: number;
   action?: string;
+  /** 083-6-a R2: fixed-enum operation within an action leg. */
+  op?: string;
+  /** 083-6-a R2: bounded fixed-enum/boolean/relative-ms evidence. */
+  flags?: string;
 };
 function makeStageTracker(info: TestInfo) {
   const startedAt = Date.now();
@@ -989,6 +1230,8 @@ function makeStageTracker(info: TestInfo) {
         detail?.target ? `target=${detail.target}` : "",
         detail?.route !== undefined ? `route=${detail.route}` : "",
         `action=${detail?.action ?? "enter"}`,
+        detail?.op ? `op=${detail.op}` : "",
+        detail?.flags ? detail.flags : "",
         `elapsed=${Date.now() - startedAt}ms`,
       ]
         .filter(Boolean)
@@ -1022,8 +1265,23 @@ async function runPhase(
       ...devices[pairing.target],
       baseURL: "http://localhost:8080",
     });
+    await installDocumentSentinel(context);
     const page = await context.newPage();
     const failures = observe(page);
+    let bodyFailed = false;
+    // Bounded op-level diagnostic sink: fixed-enum op + optional
+    // bounded flags; exactOptionalPropertyTypes keeps undefined out of
+    // the stage detail.
+    const opStage = (action: string, op: string, flags?: string): void => {
+      const detail: StageDetail = {
+        engine: pairing.engine,
+        target: pairing.target,
+        action,
+        op,
+      };
+      if (flags !== undefined) detail.flags = flags;
+      onStage?.(detail);
+    };
     try {
       // A REAL current human session in THIS context: fresh browser
       // contexts hold no cookies of their own, and the private pages
@@ -1059,16 +1317,32 @@ async function runPhase(
         target: pairing.target,
         action: "controls",
       });
-      await formSequence(page, `${base}/news`);
+      await formSequence(page, `${base}/news`, (op, flags) =>
+        opStage("controls", op, flags),
+      );
       onStage?.({
         engine: pairing.engine,
         target: pairing.target,
         action: "locale-nav",
       });
-      await navigationProof(page, base);
+      await navigationProof(page, base, (op, flags) =>
+        opStage("locale-nav", op, flags),
+      );
+    } catch (error) {
+      bodyFailed = true;
+      throw error;
     } finally {
-      expect(failures(), `${phase} ${pairing.engine}/${pairing.target}`).toEqual([]);
-      await context.close();
+      try {
+        // The original collector assertion is retained whenever the body
+        // passed; when the body already failed, its first failure is
+        // preserved and the observation assertion cannot replace it.
+        if (!bodyFailed)
+          expect(failures(), `${phase} ${pairing.engine}/${pairing.target}`).toEqual(
+            [],
+          );
+      } finally {
+        await context.close();
+      }
     }
     combos.push({
       engine: pairing.engine,
@@ -2459,6 +2733,7 @@ test("frozen-review-parity-six-stable-pairings", async () => {
     // form, and the static/dynamic routes re-render the exact phase-B
     // fingerprints.
     const rc3Context = await browsers.chromium.newContext({ baseURL: ORIGIN });
+    await installDocumentSentinel(rc3Context);
     const rc3Page = await rc3Context.newPage();
     await login(rc3Page, credential);
     const phaseBKey = (route: RouteName): string => {
