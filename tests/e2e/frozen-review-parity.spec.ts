@@ -1269,6 +1269,7 @@ async function runPhase(
     const page = await context.newPage();
     const failures = observe(page);
     let bodyFailed = false;
+    let firstError: unknown = undefined;
     // Bounded op-level diagnostic sink: fixed-enum op + optional
     // bounded flags; exactOptionalPropertyTypes keeps undefined out of
     // the stage detail.
@@ -1330,19 +1331,34 @@ async function runPhase(
       );
     } catch (error) {
       bodyFailed = true;
-      throw error;
+      firstError = error;
     } finally {
-      try {
-        // The original collector assertion is retained whenever the body
-        // passed; when the body already failed, its first failure is
-        // preserved and the observation assertion cannot replace it.
-        if (!bodyFailed)
+      // Failure priority body > collector > close: the original
+      // collector assertion is retained whenever the body passed, and a
+      // close failure still fails the pairing when body and collector
+      // passed; no later failure ever replaces an earlier first failure
+      // (which is rethrown from function scope after cleanup).
+      if (!bodyFailed) {
+        try {
           expect(failures(), `${phase} ${pairing.engine}/${pairing.target}`).toEqual(
             [],
           );
-      } finally {
-        await context.close();
+        } catch (error) {
+          firstError = error;
+        }
       }
+      try {
+        await context.close();
+      } catch (error) {
+        if (firstError === undefined) firstError = error;
+      }
+    }
+    if (firstError !== undefined) {
+      // Body/collector/close paths only throw Error objects; the fixed
+      // fallback keeps the throw typed without embedding an
+      // unclassified raw value.
+      if (firstError instanceof Error) throw firstError;
+      throw new Error("unclassified pairing failure");
     }
     combos.push({
       engine: pairing.engine,
