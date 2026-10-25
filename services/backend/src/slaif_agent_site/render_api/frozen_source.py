@@ -165,6 +165,13 @@ MAX_ITEMS_PER_TYPE: Final[int] = 2000
 MAX_TRANSLATIONS_TOTAL: Final[int] = 20_000
 MAX_VIEWS_PER_TYPE: Final[int] = 64
 MAX_RELATIONS_PER_PAIR: Final[int] = 1000
+# 076 materializes relations against a dedicated 262144-unit
+# canonical cost pool, summing each row's cost BEFORE appending it;
+# slaif_review_value_cost's object branch charges at least 2 units
+# for every emitted row object, so every genuine capture holds at
+# most 262144 / 2 rows.  The cap preserves every valid capture (it
+# does NOT claim 131072 full rows fit the share).
+MAX_RELATION_ROWS: Final[int] = 131_072
 RAW_VALUE_MAX_DEPTH: Final[int] = 8
 MAX_CANONICAL_PAYLOAD_BYTES: Final[int] = 8 * 1024 * 1024
 
@@ -1230,9 +1237,60 @@ def _group_count_field(
         raise _refusal() from None
 
 
+def _group_count_bounded(counts: dict[Any, int], key: Any, limit: int) -> None:
+    """One count for a grouping key, plus a distinct-group bound: a
+    NEW key that would exceed the finite retained-parent limit refuses
+    at the FIRST excess, before unbounded group allocation from
+    foreign parent ids (a stored v2 document only references retained
+    parents, so distinct groups can never reach the limit).  A
+    non-hashable grouping value is a malformed row and refuses
+    stably (never an uncaught TypeError)."""
+    try:
+        current = counts.get(key)
+        if current is None:
+            if len(counts) >= limit:
+                raise _refusal()
+            counts[key] = 1
+        else:
+            counts[key] = current + 1
+    except TypeError:
+        raise _refusal() from None
+
+
+def _group_count_field_bounded(
+    per_type: dict[Any, dict[str, int]], key: Any, name: str, type_limit: int
+) -> None:
+    """_group_count_field plus the distinct-type bound: a NEW type_id
+    that would exceed the retained-type limit refuses at the FIRST
+    excess, before unbounded per-type allocation from foreign type
+    ids."""
+    try:
+        group = per_type.get(key)
+        if group is None:
+            if len(per_type) >= type_limit:
+                raise _refusal()
+            group = per_type[key] = {}
+        group[name] = group.get(name, 0) + 1
+    except TypeError:
+        raise _refusal() from None
+
+
 def _check_family_caps(payload: Mapping[str, Any]) -> None:
     """The exact 076 capture row caps, checked before any family
-    structure is built (a stored v2 document always satisfies them)."""
+    structure is built (a stored v2 document always satisfies them).
+
+    Every group count fails at the FIRST excess - never after a full
+    walk or an unbounded group dict built from foreign parent ids.
+    Distinct group keys are bounded by the retained parent families
+    they must bind to (pages, navigations x locales, content types);
+    aggregate field/item/view lengths by the exact type x per-type
+    products.  The relations (source, field) pair dict is bounded by
+    its row count (one entry per row, no amplification) and fails at
+    the first per-pair excess; the relation row LENGTH is additionally
+    capped early by MAX_RELATION_ROWS (see the constant comment for the
+    076 cost-pool derivation), which preserves every valid capture while
+    independently bounding the pair index before the canonical budget
+    gate could run."""
     if len(payload["pages"]) > MAX_PAGES:
         raise _refusal()
     compositions = payload["page_compositions"]
@@ -1242,10 +1300,9 @@ def _check_family_caps(payload: Mapping[str, Any]) -> None:
     for row in compositions:
         if isinstance(row, dict):
             key = row.get("page_id")
-            _group_count(per_page, key)
-    for count in per_page.values():
-        if count > MAX_COMPOSITIONS_PER_PAGE:
-            raise _refusal()
+            _group_count_bounded(per_page, key, MAX_PAGES)
+            if per_page[key] > MAX_COMPOSITIONS_PER_PAGE:
+                raise _refusal()
     if len(payload["locales"]) > MAX_LOCALES:
         raise _refusal()
     if len(payload["regions"]) > MAX_REGIONS:
@@ -1260,10 +1317,9 @@ def _check_family_caps(payload: Mapping[str, Any]) -> None:
     for row in items:
         if isinstance(row, dict):
             key = (row.get("navigation_id"), row.get("locale"))
-            _group_count(per_group, key)
-    for count in per_group.values():
-        if count > MAX_NAVIGATION_ITEMS_PER_GROUP:
-            raise _refusal()
+            _group_count_bounded(per_group, key, MAX_NAVIGATIONS * MAX_LOCALES)
+            if per_group[key] > MAX_NAVIGATION_ITEMS_PER_GROUP:
+                raise _refusal()
     if len(payload["redirects"]) > MAX_REDIRECTS:
         raise _refusal()
     if len(payload["media_inventory"]) > MAX_MEDIA_INVENTORY:
@@ -1277,31 +1333,40 @@ def _check_family_caps(payload: Mapping[str, Any]) -> None:
         raise _refusal()
     if len(content["translations"]) > MAX_TRANSLATIONS_TOTAL:
         raise _refusal()
+    if len(content["fields"]) > MAX_CONTENT_TYPES * MAX_FIELDS_PER_TYPE:
+        raise _refusal()
+    if len(content["items"]) > MAX_CONTENT_TYPES * MAX_ITEMS_PER_TYPE:
+        raise _refusal()
+    if len(content["views"]) > MAX_CONTENT_TYPES * MAX_VIEWS_PER_TYPE:
+        raise _refusal()
+    if len(content["relations"]) > MAX_RELATION_ROWS:
+        raise _refusal()
     per_type: dict[Any, dict[str, int]] = {}
     for row in content["fields"]:
         if isinstance(row, dict):
-            _group_count_field(per_type, row.get("type_id"), "fields")
+            key = row.get("type_id")
+            _group_count_field_bounded(per_type, key, "fields", MAX_CONTENT_TYPES)
+            if per_type[key]["fields"] > MAX_FIELDS_PER_TYPE:
+                raise _refusal()
     for row in content["items"]:
         if isinstance(row, dict):
-            _group_count_field(per_type, row.get("type_id"), "items")
+            key = row.get("type_id")
+            _group_count_field_bounded(per_type, key, "items", MAX_CONTENT_TYPES)
+            if per_type[key]["items"] > MAX_ITEMS_PER_TYPE:
+                raise _refusal()
     for row in content["views"]:
         if isinstance(row, dict):
-            _group_count_field(per_type, row.get("type_id"), "views")
-    for group in per_type.values():
-        if group.get("fields", 0) > MAX_FIELDS_PER_TYPE:
-            raise _refusal()
-        if group.get("items", 0) > MAX_ITEMS_PER_TYPE:
-            raise _refusal()
-        if group.get("views", 0) > MAX_VIEWS_PER_TYPE:
-            raise _refusal()
+            key = row.get("type_id")
+            _group_count_field_bounded(per_type, key, "views", MAX_CONTENT_TYPES)
+            if per_type[key]["views"] > MAX_VIEWS_PER_TYPE:
+                raise _refusal()
     per_pair: dict[tuple[Any, Any], int] = {}
     for row in content["relations"]:
         if isinstance(row, dict):
             key = (row.get("source_item_id"), row.get("field_definition_id"))
             _group_count(per_pair, key)
-    for count in per_pair.values():
-        if count > MAX_RELATIONS_PER_PAIR:
-            raise _refusal()
+            if per_pair[key] > MAX_RELATIONS_PER_PAIR:
+                raise _refusal()
 
 
 ScalarShapes = tuple[tuple[str, Callable[[Any], Any]], ...]
@@ -2031,53 +2096,9 @@ def admit_frozen_snapshot(
     media_map = payload["media"]
     if not isinstance(media_map, dict):
         raise _refusal()
-    media_ids: set[UUID] = set()
-    for key, descriptor in media_map.items():
-        if not isinstance(key, str):
-            raise _refusal()
-        try:
-            media_id = UUID(key)
-        except ValueError:
-            raise _refusal() from None
-        media_ids.add(media_id)
-        if not isinstance(descriptor, Mapping) or set(descriptor) != _MEDIA_ENTRY_KEYS:
-            raise _refusal()
-        if _uuid(descriptor.get("id")) != media_id:
-            raise _refusal()
-        if (
-            not isinstance(descriptor.get("mime_type"), str)
-            or not isinstance(descriptor.get("content_hash"), str)
-            or not isinstance(descriptor.get("public_status"), str)
-        ):
-            raise _refusal()
-        size = descriptor.get("size_bytes")
-        if not _is_int(size) or size < 0:
-            raise _refusal()
     references = row.get("media_references")
     if not isinstance(references, list) or len(references) != len(media_map):
         raise _refusal()
-    seen: set[UUID] = set()
-    for entry in references:
-        if not isinstance(entry, Mapping) or set(entry) != _MEDIA_REFERENCE_KEYS:
-            raise _refusal()
-        try:
-            entry_id = UUID(_text(entry.get("id")))
-        except SurfaceReadError:
-            raise
-        except ValueError:
-            raise _refusal() from None
-        if entry_id in seen or entry_id not in media_ids:
-            raise _refusal()
-        seen.add(entry_id)
-        descriptor = media_map[_text(entry.get("id"))]
-        if (
-            entry.get("mime_type") != descriptor["mime_type"]
-            or entry.get("size_bytes") != descriptor["size_bytes"]
-            or entry.get("content_hash") != descriptor["content_hash"]
-            or entry.get("public_status") != descriptor["public_status"]
-        ):
-            raise _refusal()
-
     evidence = row.get("browser_evidence")
     if not isinstance(evidence, list):
         raise _refusal()
@@ -2109,27 +2130,83 @@ def admit_frozen_snapshot(
     _timestamp(site_profile.get("created_at"))
     _timestamp(site_profile.get("updated_at"))
 
-    # Bounded-work ordering (R8), on BOTH the payload and its normalized
-    # counterpart, in this exact order:
-    #   1. the exact 076 capture row caps - O(1) family lengths plus the
-    #      bounded per-group counts, the cheapest complete checks, run
-    #      FIRST (before any index, walk or allocation),
-    #   2. the finite depth/width walkers: the exact 076 preflight
-    #      raw-value depth gate (<= 8 on the exact captured fields), the
-    #      valid component-tree depth gate (<= 17 node chain, <= 128
-    #      nodes per page), and the derived whole-document container
-    #      depth bound (<= 45) - each walker enforces an explicit finite
-    #      element-width bound before it grows its stack,
-    # which make the bounded serializer's recursion and every allocation
-    # impossible to exceed the budget.  The two depth semantics stay
-    # separate: raw-value depth gates the opaque JSON fields, the chain
-    # gate gates the normalized node tree.
+    # Bounded-work ordering (R8), in this exact order:
+    #   1. the exact 076 capture row caps, on BOTH the payload and its
+    #      normalized counterpart - O(1) family lengths plus the bounded
+    #      per-group counts, the cheapest complete checks, run FIRST
+    #      (before any index, walk or allocation): a 4097-entry media
+    #      map or media inventory refuses here, never after a full walk,
+    #   2. the finite depth/width walkers on BOTH documents: the exact
+    #      076 preflight raw-value depth gate (<= 8 on the exact captured
+    #      fields), the valid component-tree depth gate (<= 17 node chain,
+    #      <= 128 nodes per page), and the derived whole-document
+    #      container depth bound (<= 45) - each walker enforces an
+    #      explicit finite element-width bound before it grows its stack,
+    #   3. the allocation-heavy media cross-check below (one UUID set per
+    #      side, one walk per entry): every length it touches was already
+    #      capped in step 1, so its allocations are input-bounded,
+    #   4. the complete family id indexes + reference validation.
+    # Steps 1-2 make the bounded serializer's recursion and every
+    # allocation impossible to exceed the budget.  The two depth
+    # semantics stay separate: raw-value depth gates the opaque JSON
+    # fields, the chain gate gates the normalized node tree.
     for document in (payload, normalized_state):
         _check_family_caps(document)
     for document in (payload, normalized_state):
         _check_payload_raw_depth(document)
         _check_page_node_chains(document)
         if not _raw_depth_ok(document, MAX_WHOLE_DOCUMENT_RAW_DEPTH):
+            raise _refusal()
+
+    # The media cross-check is the admission's allocation-heavy step
+    # (one UUID set per side plus a full walk of every descriptor and
+    # reference), so it runs AFTER the O(1) caps and the bounded
+    # walkers: a 4097-entry media map refuses at the
+    # MAX_MEDIA_INVENTORY cap gate without ever being fully walked.  Its
+    # only allocations are the two UUID sets, each bounded by the
+    # already-capped lengths.
+    media_ids: set[UUID] = set()
+    for key, descriptor in media_map.items():
+        if not isinstance(key, str):
+            raise _refusal()
+        try:
+            media_id = UUID(key)
+        except ValueError:
+            raise _refusal() from None
+        media_ids.add(media_id)
+        if not isinstance(descriptor, Mapping) or set(descriptor) != _MEDIA_ENTRY_KEYS:
+            raise _refusal()
+        if _uuid(descriptor.get("id")) != media_id:
+            raise _refusal()
+        if (
+            not isinstance(descriptor.get("mime_type"), str)
+            or not isinstance(descriptor.get("content_hash"), str)
+            or not isinstance(descriptor.get("public_status"), str)
+        ):
+            raise _refusal()
+        size = descriptor.get("size_bytes")
+        if not _is_int(size) or size < 0:
+            raise _refusal()
+    seen: set[UUID] = set()
+    for entry in references:
+        if not isinstance(entry, Mapping) or set(entry) != _MEDIA_REFERENCE_KEYS:
+            raise _refusal()
+        try:
+            entry_id = UUID(_text(entry.get("id")))
+        except SurfaceReadError:
+            raise
+        except ValueError:
+            raise _refusal() from None
+        if entry_id in seen or entry_id not in media_ids:
+            raise _refusal()
+        seen.add(entry_id)
+        descriptor = media_map[_text(entry.get("id"))]
+        if (
+            entry.get("mime_type") != descriptor["mime_type"]
+            or entry.get("size_bytes") != descriptor["size_bytes"]
+            or entry.get("content_hash") != descriptor["content_hash"]
+            or entry.get("public_status") != descriptor["public_status"]
+        ):
             raise _refusal()
 
     # COMPLETE family validation (exact shape/reference/uniqueness of

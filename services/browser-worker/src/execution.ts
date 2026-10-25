@@ -42,62 +42,80 @@ function terminalError(code: string): BrowserRunError {
   return Object.freeze({ code, message: "browser attempt failed" });
 }
 
-// Bounded document-media resource read: only document media the rendered
-// preview actually references (exact bound asset anchors), fetched as
-// same-origin requests through the same confinement handler.  Anchor
-// traversal is bounded (no full NodeList materialization), each body is
-// streamed with a hard byte ceiling that cancels the read before an
-// oversized allocation, and the summary reports exactly how much of the
-// referenced set was inspected so completion is never presented as full
-// byte verification when a bound was hit.  Bytes are digested in the
-// worker process and never stored as artifacts.
-const boundDocumentMediaLimits = Object.freeze({
-  maxAnchorsSeen: 64,
-  maxDocuments: 8,
-  maxBytesPerDocument: 262_144,
+// Bounded media resource read: only bound preview media the rendered
+// preview actually references — document anchors and image sources that
+// reproduce the exact bound asset URL — fetched as same-origin requests
+// through the same confinement handler.  Reference traversal is bounded
+// (no full NodeList materialization), each body is streamed with a hard
+// byte ceiling that cancels the read before an oversized allocation, and
+// the summary reports exactly how much of the referenced set was
+// inspected so completion is never presented as full byte verification
+// when a bound was hit.  Bytes are digested in the worker process and
+// never stored as artifacts; each read records the declaring element
+// kind (document anchor vs image source) alongside the response facts.
+const boundMediaLimits = Object.freeze({
+  maxMediaRefsSeen: 64,
+  maxAssetsFetched: 8,
+  maxBytesPerAsset: 262_144,
   maxNodesVisited: 20_000,
   maxChildrenPerLevel: 1024,
 });
 
-const boundDocumentMediaIdPattern =
+const boundMediaIdPattern =
   /^\/media\/v1\/browser-preview\/assets\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/content$/u;
 
-interface BoundDocumentMediaRead {
+type BoundMediaAssetType = "document" | "image";
+
+interface BoundMediaRead {
   readonly mediaId: string;
+  readonly assetType: BoundMediaAssetType;
   readonly sha256: string;
   readonly sizeBytes: number;
   readonly contentType: string;
 }
 
-interface BoundDocumentMediaFailure {
+interface BoundMediaFailure {
   readonly mediaId: string;
   readonly status: string;
 }
 
-interface BoundDocumentMediaResult {
-  readonly anchorsSeen: number;
+interface BoundMediaResult {
+  readonly refsSeen: number;
   readonly nodesVisited: number;
   readonly walkLimitReached: boolean;
   readonly candidates: number;
   readonly omittedOverLimit: number;
-  readonly reads: readonly BoundDocumentMediaRead[];
-  readonly failures: readonly BoundDocumentMediaFailure[];
+  readonly reads: readonly BoundMediaRead[];
+  readonly failures: readonly BoundMediaFailure[];
 }
 
-async function readBoundDocumentMedia(
+async function readBoundMedia(
   page: Page,
   document: URL,
-): Promise<BoundDocumentMediaResult> {
+): Promise<BoundMediaResult> {
   // True bounded DOM walk: explicit visited-node budget and per-level
   // child bound, indexed child access (no NodeList/array materialization
   // and no selector collection of every anchor).  When a bound is hit
   // the scan reports walkLimitReached; the referenced set may then be
   // incomplete and the summary says so.
   const scan = await page.evaluate(
-    (limits: { anchorLimit: number; nodeLimit: number; childLimit: number }) => {
-      const hrefs: string[] = [];
+    (limits: {
+      refLimit: number;
+      nodeLimit: number;
+      childLimit: number;
+    }) => {
+      const refs: { href: string; kind: "document" | "image" }[] = [];
       let visited = 0;
       let limitReached = false;
+      const collect = (href: string, kind: "document" | "image"): void => {
+        if (refs.length < limits.refLimit) {
+          refs.push({ href, kind });
+          return;
+        }
+        // First omitted reference: the bounded set is
+        // incomplete; stop the walk and report it.
+        limitReached = true;
+      };
       const visit = (element: Element): void => {
         if (limitReached) return;
         if (visited >= limits.nodeLimit) {
@@ -108,14 +126,14 @@ async function readBoundDocumentMedia(
         if (element.tagName === "A") {
           const href = element.getAttribute("href");
           if (href !== null) {
-            if (hrefs.length < limits.anchorLimit) {
-              hrefs.push(href);
-            } else {
-              // First omitted anchor: the bounded set is
-              // incomplete; stop the walk and report it.
-              limitReached = true;
-              return;
-            }
+            collect(href, "document");
+            if (limitReached) return;
+          }
+        } else if (element.tagName === "IMG") {
+          const src = element.getAttribute("src");
+          if (src !== null) {
+            collect(src, "image");
+            if (limitReached) return;
           }
         }
         const childCount = Math.min(element.children.length, limits.childLimit);
@@ -126,45 +144,50 @@ async function readBoundDocumentMedia(
         if (element.children.length > childCount) limitReached = true;
       };
       visit(window.document.documentElement);
-      return { hrefs, visited, limitReached };
+      return { refs, visited, limitReached };
     },
     {
-      anchorLimit: boundDocumentMediaLimits.maxAnchorsSeen,
-      nodeLimit: boundDocumentMediaLimits.maxNodesVisited,
-      childLimit: boundDocumentMediaLimits.maxChildrenPerLevel,
+      refLimit: boundMediaLimits.maxMediaRefsSeen,
+      nodeLimit: boundMediaLimits.maxNodesVisited,
+      childLimit: boundMediaLimits.maxChildrenPerLevel,
     },
   );
-  const candidates: string[] = [];
-  for (const href of scan.hrefs) {
+  const candidateUrls: string[] = [];
+  const candidateKinds = new Map<string, BoundMediaAssetType>();
+  for (const ref of scan.refs) {
     let value: URL;
     try {
-      value = new URL(href, document.href);
+      value = new URL(ref.href, document.href);
     } catch {
       continue;
     }
     if (value.search !== "" || value.hash !== "") continue;
-    const match = boundDocumentMediaIdPattern.exec(value.pathname);
+    const match = boundMediaIdPattern.exec(value.pathname);
     // The shared policy helper is the single trusted bound-URL
-    // constructor: the anchor must reproduce exactly what
+    // constructor: the reference must reproduce exactly what
     // boundMediaUrl derives for its media id (same origin, exact
     // path shape), so no rendered input can widen the subresource.
     if (match === null || match[1] === undefined) continue;
     const bound = boundMediaUrl(document, match[1]);
     if (bound === null || bound.href !== value.href) continue;
-    if (!candidates.includes(value.href)) candidates.push(value.href);
+    if (!candidateUrls.includes(value.href)) {
+      candidateUrls.push(value.href);
+      candidateKinds.set(value.href, ref.kind);
+    }
   }
+  const candidates = candidateUrls;
   const omittedOverLimit = Math.max(
     0,
-    candidates.length - boundDocumentMediaLimits.maxDocuments,
+    candidates.length - boundMediaLimits.maxAssetsFetched,
   );
   const targets = candidates
-    .slice(0, boundDocumentMediaLimits.maxDocuments)
+    .slice(0, boundMediaLimits.maxAssetsFetched)
     .map((url) => ({
       url,
-      maxBytes: boundDocumentMediaLimits.maxBytesPerDocument,
+      maxBytes: boundMediaLimits.maxBytesPerAsset,
     }));
-  const empty: BoundDocumentMediaResult = {
-    anchorsSeen: scan.hrefs.length,
+  const empty: BoundMediaResult = {
+    refsSeen: scan.refs.length,
     nodesVisited: scan.visited,
     walkLimitReached: scan.limitReached,
     candidates: candidates.length,
@@ -246,8 +269,8 @@ async function readBoundDocumentMedia(
     },
     targets,
   );
-  const reads: BoundDocumentMediaRead[] = [];
-  const failures: BoundDocumentMediaFailure[] = [];
+  const reads: BoundMediaRead[] = [];
+  const failures: BoundMediaFailure[] = [];
   for (const result of results) {
     let url: URL;
     try {
@@ -255,7 +278,7 @@ async function readBoundDocumentMedia(
     } catch {
       continue;
     }
-    const match = boundDocumentMediaIdPattern.exec(url.pathname);
+    const match = boundMediaIdPattern.exec(url.pathname);
     const mediaId = match?.[1] ?? "";
     const bytes = result.bytes;
     if (!result.ok || mediaId === "" || bytes === undefined) {
@@ -264,13 +287,14 @@ async function readBoundDocumentMedia(
     }
     reads.push({
       mediaId,
+      assetType: candidateKinds.get(url.href) ?? "document",
       sha256: createHash("sha256").update(Buffer.from(bytes)).digest("hex"),
       sizeBytes: bytes.byteLength,
       contentType: result.contentType ?? "",
     });
   }
   return Object.freeze({
-    anchorsSeen: empty.anchorsSeen,
+    refsSeen: empty.refsSeen,
     nodesVisited: empty.nodesVisited,
     walkLimitReached: empty.walkLimitReached,
     candidates: empty.candidates,
@@ -452,8 +476,8 @@ export class BrowserAttemptExecutor {
           .locator('main[data-render-mode="preview"]')
           .waitFor({ state: "visible" });
         await page.waitForFunction(() => document.readyState === "complete");
-        failureCode = "BROWSER_DOCUMENT_MEDIA_FAILED";
-        const documentMedia = await readBoundDocumentMedia(page, expectedDocument);
+        failureCode = "BROWSER_MEDIA_FAILED";
+        const boundMedia = await readBoundMedia(page, expectedDocument);
         failureCode = "BROWSER_EVIDENCE_FAILED";
         const content = await collectEvidence(page, request, observation.events);
         const published = [];
@@ -465,14 +489,14 @@ export class BrowserAttemptExecutor {
         summary = Object.freeze({
           artifactCount: artifacts.length,
           blockedRequestCount: observation.events.blockedRequests,
-          documentMedia: {
-            anchorsSeen: documentMedia.anchorsSeen,
-            nodesVisited: documentMedia.nodesVisited,
-            walkLimitReached: documentMedia.walkLimitReached,
-            candidates: documentMedia.candidates,
-            omittedOverLimit: documentMedia.omittedOverLimit,
-            reads: documentMedia.reads,
-            failures: documentMedia.failures,
+          boundMedia: {
+            refsSeen: boundMedia.refsSeen,
+            nodesVisited: boundMedia.nodesVisited,
+            walkLimitReached: boundMedia.walkLimitReached,
+            candidates: boundMedia.candidates,
+            omittedOverLimit: boundMedia.omittedOverLimit,
+            reads: boundMedia.reads,
+            failures: boundMedia.failures,
           },
           evidenceCount: request.evidence.length,
         });

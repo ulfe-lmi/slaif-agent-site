@@ -7,7 +7,7 @@ NEGATIVE_PROJECT="${PROJECT}negative"
 
 validate_project() {
   case "$1" in
-    slaif007[a-z0-9]*|slaif009[a-z0-9]*|slaif010[a-z0-9]*|slaif071[a-z0-9]*) return 0 ;;
+    slaif0835|slaif007[a-z0-9]*|slaif009[a-z0-9]*|slaif010[a-z0-9]*|slaif071[a-z0-9]*) return 0 ;;
     *) echo "compose-smoke: unsafe project name" >&2; return 2 ;;
   esac
 }

@@ -152,7 +152,7 @@ const nextConfig = {
       {
         source: "/media/v1/browser-preview/assets/:mediaId/content",
         destination:
-          "http://media-service:8000/media/v1/browser-preview/assets/:mediaId/content",
+          "http://media-service:8000/v1/browser-preview/assets/:mediaId/content",
       },
     ];
   },

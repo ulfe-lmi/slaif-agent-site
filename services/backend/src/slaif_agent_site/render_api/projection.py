@@ -1189,10 +1189,15 @@ class RenderProjectionService:
         """
         rest = current_route
         if current_locale.casefold() != default_locale.casefold():
+            # Request routes arrive NORMALIZED (lowercased) while stored
+            # locale tags keep their configured casing (for example
+            # ``sl-SI``); prefix recognition must therefore compare
+            # case-folded exactly like the route resolver, while the
+            # re-prefixed target keeps the stored tag verbatim.
             prefix = f"/{current_locale}/"
-            if rest.startswith(prefix):
+            if rest.casefold().startswith(prefix.casefold()):
                 rest = f"/{rest[len(prefix) :]}"
-            elif rest == f"/{current_locale}":
+            elif rest.casefold() == f"/{current_locale}".casefold():
                 rest = "/"
         if target_locale.casefold() == default_locale.casefold():
             # Default-locale routes carry no locale prefix.
@@ -1241,9 +1246,12 @@ class RenderProjectionService:
             if fact is None:
                 resolved.append(locale)
                 continue
-            resolved.append(
-                locale.model_copy(update={"switcher_href": memo.route(fact.id)})
-            )
+            # The href is the CONCRETE re-rooted route that the resolver
+            # just matched: memo.route(fact.id) is the effective route,
+            # which carries the ``/{slug}`` template for dynamic pages and
+            # would emit brace-bearing inert links for valid counterparts.
+            # For static counterparts the two are byte-identical.
+            resolved.append(locale.model_copy(update={"switcher_href": target}))
         return tuple(resolved)
 
     @staticmethod
@@ -1980,6 +1988,13 @@ class RenderProjectionService:
             raise ProjectionError("not_found")
         page = _page_from_fact(fact, memo.route(fact.id))
         route_parameter = _dynamic_route_parameter(page.effective_route, route)
+        # The switcher re-resolves each locale counterpart from the CONCRETE
+        # matched route: page.effective_route carries the ``/{slug}`` template
+        # for dynamic pages, which would make every counterpart target a
+        # non-matching template route and leave valid counterparts with inert
+        # locale links.  For static pages the matched route equals the
+        # effective route, so supported static/fallback semantics are
+        # unchanged.
         projected_locales = self._locale_switcher(
             facts=facts,
             memo=memo,
@@ -1987,7 +2002,7 @@ class RenderProjectionService:
             locales=projected_locales,
             current_locale=locale,
             default_locale=default_locale,
-            current_route=page.effective_route,
+            current_route=route,
             statuses=statuses,
             enabled_tags=enabled_tags,
         )

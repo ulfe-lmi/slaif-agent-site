@@ -507,12 +507,29 @@ PDF_BYTES = (
     b"trailer <</Root 1 0 R>>\n"
     b"%%EOF\n"
 )
+ORPHAN_PDF = (
+    b"%PDF-1.4\n"
+    b"1 0 obj <</Type /Catalog /Pages 2 0 R>> endobj\n"
+    b"2 0 obj <</Type /Pages /Kids [3 0 R] /Count 1>> endobj\n"
+    b"3 0 obj <</Type /Page /Parent 2 0 R /MediaBox [0 0 300 300]>> endobj\n"
+    b"trailer <</Root 1 0 R>>\n"
+    b"%%EOF\n"
+)
+FOREIGN_PDF = (
+    b"%PDF-1.4\n"
+    b"1 0 obj <</Type /Catalog /Pages 2 0 R>> endobj\n"
+    b"2 0 obj <</Type /Pages /Kids [3 0 R] /Count 1>> endobj\n"
+    b"3 0 obj <</Type /Page /Parent 2 0 R /MediaBox [0 0 400 500]>> endobj\n"
+    b"trailer <</Root 1 0 R>>\n"
+    b"%%EOF\n"
+)
 SIGNER = BrowserPreviewCredentialSigner(
     BrowserSigningKey("0123456789abcdef", bytes(range(32)))
 )
 NONCE_A = "00112233445566778899aabbccddeeff"
 NONCE_B = "aabbccddeeff00112233445566778899"
 NONCE_C = "ffeeddccbbaa99887766554433221100"
+NONCE_A2 = "deadbeef00112233445566778899aabb"
 AGENT_SCOPES = (
     "preview:inspect",
     "media:upload",
@@ -728,7 +745,27 @@ async def test_private_media_bytes_human_preview_bound_worker_frozen_review(
     the real terminal discard and pending cleanup, the frozen review
     read returns the same bytes.  Credential-shape failures are 401;
     every authorization/reference denial is one uniform 404; the read
-    surfaces touch nothing.
+    surfaces touch nothing.  Phase 4b adds committed-binding hostile
+    negatives, each preceded by an exact-bytes positive control: a
+    correctly signed alternate nonce (refused at the committed-binding
+    digest lookup), a real foreign-site asset (same-site predicate),
+    post-bind capability revocation and real attempt rotation; the
+    unreferenced orphan upload stays in the retained inventory, out of
+    the selected closure, and private.
+
+    Honest scope for reader (b): this integration test exercises the
+    confined bound-worker contract in-process.  The run token is minted
+    by the test itself (manual signature) and presented over ASGI to
+    the real Render and Media apps, so the real 036 consume, the 076
+    binding registrar in one Render transaction, the media
+    credential-hash verification and the private byte serving are all
+    actually exercised -- but no deployed browser runs.  This is NOT
+    the deployed-worker phase: it does not execute the real TypeScript
+    browser worker, its page navigation, bounded DOM walk or
+    Playwright browser.  The actual deployed confined-worker proof
+    (a real queued run rendered by the real worker with bound IMAGE
+    and DOCUMENT digests in the stored run summary) is the 083/5-b
+    frozen-review-parity e2e against the public edge.
     """
     database = agent_site_database
     await upgrade(database.settings)
@@ -880,6 +917,8 @@ async def test_private_media_bytes_human_preview_bound_worker_frozen_review(
     )
     png_hash = hashlib.sha256(PNG_BYTES).hexdigest()
     pdf_hash = hashlib.sha256(PDF_BYTES).hexdigest()
+    orphan_hash = hashlib.sha256(ORPHAN_PDF).hexdigest()
+    foreign_hash = hashlib.sha256(FOREIGN_PDF).hexdigest()
 
     def session_cookie(public_id: str, secret: bytes) -> dict[str, str]:
         return {
@@ -889,6 +928,7 @@ async def test_private_media_bytes_human_preview_bound_worker_frozen_review(
 
     png_id: UUID
     pdf_id: UUID
+    orphan_id: UUID
     page_id: UUID
     run_a: UUID
     run_b: UUID
@@ -896,6 +936,10 @@ async def test_private_media_bytes_human_preview_bound_worker_frozen_review(
     token_a: str
     now_a: int
     token_c: str
+    site_b_id: UUID
+    workspace_b_id: UUID
+    foreign_asset_id: UUID
+    token_a2: str
     snapshot_id: UUID
     review_body: dict[str, Any]
     try:
@@ -936,6 +980,31 @@ async def test_private_media_bytes_human_preview_bound_worker_frozen_review(
                 assert pdf_record["content_hash"] == pdf_hash
                 assert pdf_record["mime_type"] == "application/pdf"
                 assert pdf_record["size_bytes"] == len(PDF_BYTES)
+                # (G4) A third real Agent upload that NO composition,
+                # field or region references: distinct content means a
+                # distinct id/hash (no dedup or duplicate-reference
+                # case).  It must stay in the retained inventory, out
+                # of the selected closure, and private everywhere.
+                orphan_upload = await agent_client.post(
+                    "/api/agent/v1/media/assets",
+                    headers={
+                        **agent_headers,
+                        "Idempotency-Key": "media-bytes-orphan",
+                    },
+                    data={
+                        "alt_text": "Unreferenced private asset",
+                        "metadata": "{}",
+                    },
+                    files={"file": ("orphan.pdf", ORPHAN_PDF, "application/pdf")},
+                )
+                assert orphan_upload.status_code == 201, orphan_upload.text
+                orphan_record = orphan_upload.json()["record"]
+                orphan_id = UUID(orphan_record["id"])
+                assert orphan_id not in (png_id, pdf_id)
+                assert orphan_record["content_hash"] == orphan_hash
+                assert orphan_hash not in (png_hash, pdf_hash)
+                assert orphan_record["mime_type"] == "application/pdf"
+                assert orphan_record["size_bytes"] == len(ORPHAN_PDF)
                 created_page = await agent_client.post(
                     "/api/agent/v1/pages",
                     headers={
@@ -986,6 +1055,14 @@ async def test_private_media_bytes_human_preview_bound_worker_frozen_review(
                     )
                     assert read_back.status_code == 200, read_back.text
                     assert read_back.content == expected
+                # The Agent also reads back the orphan bytes pre-freeze:
+                # a real, stored, private asset (not just a DB row).
+                orphan_read_back = await agent_client.get(
+                    f"/api/agent/v1/media/assets/{orphan_id}/content",
+                    headers=agent_headers,
+                )
+                assert orphan_read_back.status_code == 200, orphan_read_back.text
+                assert orphan_read_back.content == ORPHAN_PDF
         async with (
             media_app.router.lifespan_context(media_app),
             render_app.router.lifespan_context(render_app),
@@ -1007,6 +1084,13 @@ async def test_private_media_bytes_human_preview_bound_worker_frozen_review(
                         json={"authority": "localhost", "path": route},
                     )
                     assert canonical.status_code == 404, canonical.text
+                    orphan_public_key = (
+                        f"sha256/{orphan_hash[:2]}/{orphan_hash[2:4]}/{orphan_hash}"
+                    )
+                    orphan_public = await media_client.get(
+                        f"/v1/public/{orphan_public_key}"
+                    )
+                    assert orphan_public.status_code == 404
                     # -- Phase 3: human active preview, exact bytes. --
                     preview_url = (
                         f"/v1/sites/{site_id}/workspaces/{workspace_id}/preview/assets"
@@ -1079,7 +1163,16 @@ async def test_private_media_bytes_human_preview_bound_worker_frozen_review(
                         headers=session_cookie(session_public, session_secret),
                     )
                     assert foreign_media.status_code == 404
-                    # -- Phase 4: the confined bound worker, exact bytes. --
+                    # -- Phase 4: the confined bound-worker contract,
+                    #    in-process (manual-sign ASGI), exact bytes. --
+                    # HONEST SCOPE: token_a is minted by this test
+                    # (manual signature), not by the deployed TypeScript
+                    # worker.  The real 036 consume + 076 binding +
+                    # credential-hash verification + private byte
+                    # serving are exercised through the real ASGI apps,
+                    # but no real browser runs here; this is NOT the
+                    # deployed-worker proof (see the test docstring and
+                    # the 083/5-b frozen-review-parity e2e).
                     # The real dispatcher leases the run (QUEUED ->
                     # RUNNING, attempt 1) before the worker renders: the
                     # 076 registrar records run.attempt_count, which the
@@ -1245,6 +1338,280 @@ async def test_private_media_bytes_human_preview_bound_worker_frozen_review(
                 "SELECT * FROM audit.browser_event WHERE run_id=$1", run_a
             )
             assert token_a not in json.dumps([dict(row) for row in events], default=str)
+        # -- Phase 4b: hostile committed-binding negatives. --
+        # (G8) A correctly signed ALTERNATE NONCE for the SAME
+        # run/route/capability, minted by the trusted test signer: a
+        # real signed credential, not a tampered string.  Its
+        # credential digest differs from the committed binding digest,
+        # so the FIRST refusal is the committed-binding DIGEST LOOKUP
+        # (076: the run row is matched on preview_credential_digest)
+        # before re-authorization, the stored-nonce recheck or the
+        # post-lock recheck can run.  Honest label: this proves the
+        # digest-lookup refusal; the stored-nonce recheck branch is
+        # never reached by this vector and is not claimed here.
+        token_a2 = _issue_token(
+            capability_id=capability_id,
+            site_id=site_id,
+            workspace_id=workspace_id,
+            run_id=run_a,
+            route=bound_route,
+            nonce=NONCE_A2,
+            now=now_a,
+        )
+        async with media_app.router.lifespan_context(media_app):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=media_app),
+                base_url="http://media.test",
+            ) as media_client:
+                alt_nonce = await media_client.get(
+                    f"{bound_prefix}/{png_id}/content",
+                    headers={"x-slaif-browser-preview": token_a2},
+                )
+                assert alt_nonce.status_code == 404, alt_nonce.text
+                # Control: the committed binding is still fully live
+                # for the ORIGINAL credential right after the refusal.
+                alive = await media_client.get(
+                    f"{bound_prefix}/{png_id}/content",
+                    headers={"x-slaif-browser-preview": token_a},
+                )
+                assert alive.status_code == 200, alive.text
+                assert alive.content == PNG_BYTES
+        async with owner_connection(
+            owner_dsn, expected_database=database.name
+        ) as owner:
+            binding_alt_nonce = await owner.fetchrow(
+                "SELECT preview_credential_digest, preview_credential_attempt,"
+                " preview_token_used_at FROM control.browser_run WHERE id=$1",
+                run_a,
+            )
+            assert binding_alt_nonce is not None
+            assert binding_alt_nonce[0] == hashlib.sha256(token_a.encode()).hexdigest()
+            assert binding_alt_nonce[1] == 1
+            assert binding_alt_nonce[2] == binding[5]
+        # (G3) A real FOREIGN-SITE media asset: a second real site,
+        # real stored bytes, a real base row - not a random
+        # nonexistent UUID.  Its authorized OWN-context read (real 054
+        # session chain, the same surface as Phase 3) succeeds with
+        # exact bytes, so the site-A bound refusal below cannot be
+        # missing content.
+        site_b = await SiteService(control_pool).create(
+            CreateSiteRequest(
+                site_key=f"media-bytes-foreign-{uuid4().hex[:10]}",
+                display_name="Media Bytes Foreign",
+                default_locale="en-US",
+            )
+        )
+        site_b_id = site_b.site_id
+        workspace_b_id = uuid4()
+        async with owner_connection(
+            owner_dsn, expected_database=database.name
+        ) as owner:
+            await owner.execute(
+                "INSERT INTO control.site_membership"
+                " (site_id, user_account_id, role_key, delegation_ceiling)"
+                " VALUES ($1,$2,'SITE_OWNER',4)",
+                site_b_id,
+                user_id,
+            )
+            await owner.execute(
+                "INSERT INTO control.workspace"
+                " (id, site_id, created_by, delegator_id, actor_type, title,"
+                " delegation_preset, effective_scopes, version_facts,"
+                " status, expires_at) VALUES ($1,$2,$3,$3,'HUMAN',"
+                " 'Media bytes foreign workspace','L2',"
+                " '[\"preview:inspect\"]'::jsonb,"
+                + _CURRENT_VERSION_FACTS
+                + ", 'ACTIVE', now() + interval '2 hours')",
+                workspace_b_id,
+                site_b_id,
+                user_id,
+            )
+        foreign_staging = store.create_staging_path()
+        foreign_staging.write_bytes(FOREIGN_PDF)
+        foreign_key = store.publish(
+            StagedMedia(
+                foreign_staging,
+                foreign_hash,
+                len(FOREIGN_PDF),
+                "application/pdf",
+            )
+        )
+        foreign_asset_id = uuid4()
+        async with owner_connection(
+            owner_dsn, expected_database=database.name
+        ) as owner:
+            await owner.execute(
+                "INSERT INTO content.media_asset_base"
+                " (id, site_id, uploaded_by, filename, mime_type, size_bytes,"
+                " content_hash, storage_key, alt_text, metadata)"
+                " VALUES ($1,$2,$3,'foreign.pdf','application/pdf',$4,$5,"
+                " $6,'Foreign private asset','{}'::jsonb)",
+                foreign_asset_id,
+                site_b_id,
+                user_id,
+                len(FOREIGN_PDF),
+                foreign_hash,
+                foreign_key,
+            )
+            assert (
+                await owner.fetchval(
+                    "SELECT count(*) FROM content.media_asset"
+                    " WHERE id=$1 AND site_id=$2",
+                    foreign_asset_id,
+                    site_b_id,
+                )
+                == 1
+            )
+        async with media_app.router.lifespan_context(media_app):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=media_app),
+                base_url="http://media.test",
+            ) as media_client:
+                own_context = await media_client.get(
+                    f"/v1/sites/{site_b_id}/workspaces/{workspace_b_id}"
+                    f"/preview/assets/{foreign_asset_id}/content",
+                    headers=session_cookie(session_public, session_secret),
+                )
+                assert own_context.status_code == 200, own_context.text
+                assert own_context.content == FOREIGN_PDF
+        async with owner_connection(
+            owner_dsn, expected_database=database.name
+        ) as owner:
+            foreign_before = await owner.fetchrow(
+                "SELECT site_id, content_hash, size_bytes, public_status,"
+                " published_at FROM content.media_asset WHERE id=$1",
+                foreign_asset_id,
+            )
+            assert foreign_before is not None
+            assert foreign_before["public_status"] == "private"
+        async with media_app.router.lifespan_context(media_app):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=media_app),
+                base_url="http://media.test",
+            ) as media_client:
+                # Control: the same committed credential still reads
+                # its own site's exact bytes right before the foreign
+                # read.
+                own_site_control = await media_client.get(
+                    f"{bound_prefix}/{png_id}/content",
+                    headers={"x-slaif-browser-preview": token_a},
+                )
+                assert own_site_control.status_code == 200, own_site_control.text
+                assert own_site_control.content == PNG_BYTES
+                foreign_bound = await media_client.get(
+                    f"{bound_prefix}/{foreign_asset_id}/content",
+                    headers={"x-slaif-browser-preview": token_a},
+                )
+                assert foreign_bound.status_code == 404, foreign_bound.text
+        async with owner_connection(
+            owner_dsn, expected_database=database.name
+        ) as owner:
+            # Required site/publication effects unchanged.
+            foreign_after = await owner.fetchrow(
+                "SELECT site_id, content_hash, size_bytes, public_status,"
+                " published_at FROM content.media_asset WHERE id=$1",
+                foreign_asset_id,
+            )
+            assert foreign_after == foreign_before
+            assert (
+                await owner.fetchval(
+                    "SELECT count(*) FROM content.media_asset"
+                    " WHERE site_id=$1 AND public_status <> 'private'",
+                    site_id,
+                )
+                == 0
+            )
+        # (G2) Capability revoked AFTER the committed binding: the 036
+        # re-authorization predicate (capability.revoked_at IS NULL)
+        # fails before the post-lock recheck, so the bound read dies
+        # although the binding row and the attempt are untouched.
+        async with media_app.router.lifespan_context(media_app):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=media_app),
+                base_url="http://media.test",
+            ) as media_client:
+                # Control: exact bytes at the live committed binding
+                # right before the revocation.
+                pre_revoke_control = await media_client.get(
+                    f"{bound_prefix}/{pdf_id}/content",
+                    headers={"x-slaif-browser-preview": token_a},
+                )
+                assert pre_revoke_control.status_code == 200, pre_revoke_control.text
+                assert pre_revoke_control.content == PDF_BYTES
+        async with owner_connection(
+            owner_dsn, expected_database=database.name
+        ) as owner:
+            await owner.execute(
+                "UPDATE control.capability SET revoked_at = CURRENT_TIMESTAMP"
+                " WHERE id=$1",
+                capability_id,
+            )
+        async with media_app.router.lifespan_context(media_app):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=media_app),
+                base_url="http://media.test",
+            ) as media_client:
+                revoked_bound = await media_client.get(
+                    f"{bound_prefix}/{pdf_id}/content",
+                    headers={"x-slaif-browser-preview": token_a},
+                )
+                assert revoked_bound.status_code == 404, revoked_bound.text
+        async with owner_connection(
+            owner_dsn, expected_database=database.name
+        ) as owner:
+            # Un-revoke: the downstream TTL phase begins run_c with
+            # this capability; the binding row itself never changed.
+            await owner.execute(
+                "UPDATE control.capability SET revoked_at = NULL WHERE id=$1",
+                capability_id,
+            )
+            binding_revoked = await owner.fetchrow(
+                "SELECT preview_credential_digest, preview_credential_attempt"
+                " FROM control.browser_run WHERE id=$1",
+                run_a,
+            )
+            assert binding_revoked is not None
+            assert binding_revoked[0] == hashlib.sha256(token_a.encode()).hexdigest()
+            assert binding_revoked[1] == 1
+        # (G1) Real attempt rotation AFTER the committed binding
+        # through the existing release/reclaim lifecycle: the 035
+        # claim orders by created_at, so the released run_a is claimed
+        # back (attempt 2) ahead of still-queued run_b.  The positive
+        # controls above (exact bytes at attempt 1) precede the
+        # rotation; afterwards the ORIGINAL credential is refused by
+        # the post-lock recheck (attempt_count <>
+        # preview_credential_attempt) and the committed binding row
+        # keeps its attempt-1 facts.  No invented attempt-only state:
+        # the rotation is the real 035 release -> claim lifecycle.
+        async with agent_pool.acquire() as agent:
+            await _release_run(agent, run_a, lease_a)
+            lease_a, attempt_a_rotated = await _claim_run(agent, run_a)
+        assert attempt_a_rotated == 2
+        async with media_app.router.lifespan_context(media_app):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=media_app),
+                base_url="http://media.test",
+            ) as media_client:
+                rotated = await media_client.get(
+                    f"{bound_prefix}/{png_id}/content",
+                    headers={"x-slaif-browser-preview": token_a},
+                )
+                assert rotated.status_code == 404, rotated.text
+        async with owner_connection(
+            owner_dsn, expected_database=database.name
+        ) as owner:
+            binding_rotated = await owner.fetchrow(
+                "SELECT preview_credential_digest,"
+                " preview_credential_nonce_digest,"
+                " preview_credential_expires_at, preview_credential_attempt"
+                " FROM control.browser_run WHERE id=$1",
+                run_a,
+            )
+            assert binding_rotated is not None
+            assert binding_rotated[0] == hashlib.sha256(token_a.encode()).hexdigest()
+            assert binding_rotated[1] == hashlib.sha256(NONCE_A.encode()).hexdigest()
+            assert binding_rotated[2] == datetime.fromtimestamp(now_a + 30, tz=UTC)
+            assert binding_rotated[3] == 1
         # Terminal run: the bound read dies with the run, and the render
         # preview itself rejects the one-time token replay.
         async with agent_pool.acquire() as agent:
@@ -1375,7 +1742,19 @@ async def test_private_media_bytes_human_preview_bound_worker_frozen_review(
             for row in stored_payload["media_inventory"]
             if isinstance(row, dict)
         }
-        assert set(inventory) == {str(png_id), str(pdf_id)}
+        # (G4) The UNREFERENCED orphan asset is retained in the
+        # inventory (metadata only) but is absent from the selected
+        # media map above and from the sibling references: the
+        # selected closure is reference-driven and the orphan has no
+        # declared reference position.
+        assert set(inventory) == {str(png_id), str(pdf_id), str(orphan_id)}
+        assert str(orphan_id) not in stored_payload["media"]
+        # The sibling media_references column is raw JSONB text under
+        # this owner connection (same as payload above); decode it.
+        stored_references = json.loads(snapshot["media_references"])
+        assert sorted(reference["id"] for reference in stored_references) == sorted(
+            {str(png_id), str(pdf_id)}
+        )
         # -- Phase 6: frozen review read serves the same bytes. --
         review_token = format_session_token(
             session_public, session_secret
@@ -1467,6 +1846,21 @@ async def test_private_media_bytes_human_preview_bound_worker_frozen_review(
                         headers=session_cookie(session_public, session_secret),
                     )
                     assert unknown_media.status_code == 404
+                    # (G4) The orphan is not in the frozen payload
+                    # media map, so the frozen review read refuses it
+                    # too.
+                    orphan_frozen = await media_client.get(
+                        f"/v1/review/{snapshot_id}/assets/{orphan_id}/content",
+                        headers=session_cookie(session_public, session_secret),
+                    )
+                    assert orphan_frozen.status_code == 404
+                    # (G4) The unauthenticated public edge refuses the
+                    # orphan too: it was never published, and the
+                    # freeze created no public surface for it.
+                    orphan_public_frozen = await media_client.get(
+                        f"/v1/public/{orphan_public_key}"
+                    )
+                    assert orphan_public_frozen.status_code == 404
         # -- Phase 7: real terminal discard + pending cleanup. --
         discard_rows = await _control_call(
             database,
@@ -1536,19 +1930,46 @@ async def test_private_media_bytes_human_preview_bound_worker_frozen_review(
                         )
                         assert still_frozen.status_code == 200, still_frozen.text
                         assert still_frozen.content == expected
+                    # (G4) The orphan is still private after the real
+                    # terminal discard: not in the frozen payload, no
+                    # public leak.
+                    orphan_after_discard = await media_client.get(
+                        f"/v1/review/{snapshot_id}/assets/{orphan_id}/content",
+                        headers=session_cookie(session_public, session_secret),
+                    )
+                    assert orphan_after_discard.status_code == 404
+                    # (G4) The unauthenticated public edge still
+                    # refuses the orphan after the real terminal
+                    # discard: private media has no public URL.
+                    orphan_public_after_discard = await media_client.get(
+                        f"/v1/public/{orphan_public_key}"
+                    )
+                    assert orphan_public_after_discard.status_code == 404
         async with owner_connection(
             owner_dsn, expected_database=database.name
         ) as owner:
-            # Site-scoped base media rows survive the workspace discard.
+            # Site-scoped base media rows (including the UNREFERENCED
+            # orphan) survive the workspace discard.
             assert (
                 await owner.fetchval(
                     "SELECT count(*) FROM content.media_asset_base"
                     " WHERE site_id=$1 AND content_hash = ANY($2::text[])",
                     site_id,
-                    [png_hash, pdf_hash],
+                    [png_hash, pdf_hash, orphan_hash],
                 )
-                == 2
+                == 3
             )
+            # (G4) Final retained orphan metadata: the base row
+            # survives the discard and stays private.
+            orphan_final = await owner.fetchrow(
+                "SELECT site_id, content_hash, public_status"
+                " FROM content.media_asset WHERE id=$1",
+                orphan_id,
+            )
+            assert orphan_final is not None
+            assert orphan_final["site_id"] == site_id
+            assert orphan_final["content_hash"] == orphan_hash
+            assert orphan_final["public_status"] == "private"
             # No effects: the read surfaces touched nothing.
             after_last_seen = await owner.fetchval(
                 "SELECT array_agg(last_seen_at ORDER BY id::text) FROM "

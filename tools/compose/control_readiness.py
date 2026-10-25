@@ -161,9 +161,22 @@ def _run(
     return result
 
 
+# 083/5-b: bounded project admission. The exact whole-smoke literal
+# slaif0835 is admitted alongside the original per-prefix catalog; the
+# pure helper is the single admission authority (no I/O) and is exercised
+# directly by the unit contract, so no guard path relies on a broader
+# regex, a new prefix wildcard or a destructive-target widening.
+_ADMITTED_PROJECT_RE = re.compile(r"slaif(?:007|009|071)[a-z0-9]+|slaif0835")
+
+
+def admitted_project_name(project: str) -> bool:
+    """Pure bounded admission of one runner project name."""
+    return _ADMITTED_PROJECT_RE.fullmatch(project) is not None
+
+
 class ControlReadinessFixture:
     def __init__(self, project: str, *, existing: bool) -> None:
-        if not re.fullmatch(r"slaif(?:007|009|071)[a-z0-9]+", project):
+        if not admitted_project_name(project):
             raise FixtureError("state-mismatch")
         self.project = project
         self.existing = existing

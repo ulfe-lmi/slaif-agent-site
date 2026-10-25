@@ -3941,8 +3941,21 @@ def _run_component_render_loop(
                 _revoke_capability(client, site_id, workspace, capability)
 
 
+# 083/5-b: bounded project admission. The exact whole-smoke literal
+# slaif0835 is admitted alongside the original per-prefix catalog; the
+# pure helper is the single admission authority (no I/O) and is exercised
+# directly by the unit contract, so no guard path relies on a broader
+# regex, a new prefix wildcard or a destructive-target widening.
+_ADMITTED_PROJECT_RE = re.compile(r"slaif(?:007|009|010|071)[a-z0-9]+|slaif0835")
+
+
+def admitted_project_name(project: str) -> bool:
+    """Pure bounded admission of one runner project name."""
+    return _ADMITTED_PROJECT_RE.fullmatch(project) is not None
+
+
 def run_acceptance(project: str) -> None:
-    if not re.fullmatch(r"slaif(?:007|009|010|071)[a-z0-9]+", project):
+    if not admitted_project_name(project):
         raise ProofFailure("unsafe-project-name")
     _CAPABILITY_CONTEXTS.clear()
     _EXPECTED_SEMANTIC_AUDIT.clear()

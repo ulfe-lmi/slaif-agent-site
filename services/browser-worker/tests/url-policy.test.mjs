@@ -5,6 +5,7 @@ import { URL } from "node:url";
 import {
   CONFINEMENT_SELF_CHECK_URLS,
   installRequestConfinement,
+  previewDocumentUrl,
   requestIsAllowed,
 } from "../dist/url-policy.js";
 
@@ -237,6 +238,59 @@ test("confinement: redirected bounded fetch is denied", async () => {
   );
   assert.equal(blocked, 1);
   assert.equal(route.actions[0].kind, "abort");
+});
+
+const documentWorkspaceId = "00000000-0000-4000-8000-000000000001";
+const documentOrigin = new URL(origin);
+
+test("previewDocumentUrl: canonical slashless document form", () => {
+  // The framework 308-normalizes trailing slashes before app routing and
+  // the confinement handler admits exactly one non-redirected document,
+  // so every route - including the root and the root carrying a query -
+  // must request the canonical slashless document form.
+  const cases = [
+    ["/", `${origin}/preview/${documentWorkspaceId}`],
+    ["/?q=one", `${origin}/preview/${documentWorkspaceId}?q=one`],
+    ["/news", `${origin}/preview/${documentWorkspaceId}/news`],
+    ["/news/", `${origin}/preview/${documentWorkspaceId}/news`],
+    ["/news?q=one", `${origin}/preview/${documentWorkspaceId}/news?q=one`],
+    ["/a/b", `${origin}/preview/${documentWorkspaceId}/a/b`],
+    ["/a/b/", `${origin}/preview/${documentWorkspaceId}/a/b`],
+  ];
+  for (const [route, expected] of cases) {
+    const value = previewDocumentUrl(documentOrigin, {
+      workspaceId: documentWorkspaceId,
+      route,
+    });
+    assert.equal(value.href, expected, route);
+    assert.equal(value.origin, documentOrigin.origin, route);
+    // The query is preserved verbatim: the server normalized and digest-
+    // bound the route, so the worker must not re-encode it.
+    assert.equal(
+      value.search,
+      new URL(expected).search,
+      route,
+    );
+  }
+});
+
+test("previewDocumentUrl: document origin stays pinned to the preview origin", () => {
+  // The submit contract binds workspace_id as a UUID and the route to its
+  // exact digest, so these malformed shapes cannot reach the worker on the
+  // wire; the assertion keeps the origin pin itself honest: whatever the
+  // workspace segment carries, the document never leaves the configured
+  // preview origin (no authority or origin widening).
+  for (const workspaceId of [
+    documentWorkspaceId,
+    `//evil.example/${documentWorkspaceId}`,
+    `@evil.example${documentWorkspaceId}`,
+  ]) {
+    const value = previewDocumentUrl(documentOrigin, {
+      workspaceId,
+      route: "/?q=one",
+    });
+    assert.equal(value.origin, documentOrigin.origin, workspaceId);
+  }
 });
 
 test("confinement: document policy unchanged after media addition", async () => {

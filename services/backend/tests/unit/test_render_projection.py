@@ -14,6 +14,7 @@ from slaif_agent_site.content_model.canonical import canonical_digest
 from slaif_agent_site.render_api import frozen_source as fs
 from slaif_agent_site.render_api.projection import (
     ProjectionError,
+    ProjectionLocale,
     RenderPageRequest,
     RenderProjectionService,
     _node_tree,
@@ -941,6 +942,133 @@ def test_port_ancestor_chain_root_first_positions() -> None:
         )
         == ()
     )
+
+
+def _plocale(tag: str, *, default: bool, position: int) -> ProjectionLocale:
+    return ProjectionLocale(
+        id=uuid4(),
+        site_id=SITE_ID,
+        tag=tag,
+        enabled=True,
+        is_default=default,
+        position=position,
+        metadata={},
+    )
+
+
+def test_port_locale_switcher_emits_concrete_links_not_templates() -> None:
+    # R4: dynamic-slug locale switching.  The switcher re-resolves each
+    # locale counterpart from the CONCRETE matched route and emits concrete
+    # hrefs; a ``/{slug}`` template effective route would leave valid
+    # counterparts with brace-bearing inert links (canonical/active/frozen
+    # all share this port).  Request routes arrive normalized (lowercased)
+    # while stored tags keep their casing, so both directions must work
+    # against a mixed-case tag.
+    service = RenderProjectionService(None)
+    # a static "news" parent in each locale; the dynamic child carries the
+    # ``{slug}`` template directly under it
+    news_en = _pfact("news")
+    news_sl = _pfact("news", locale="sl-SI")
+    dyn_en = _pfact("news-item", template="{slug}", parent=news_en)
+    dyn_sl = _pfact("news-item", template="{slug}", parent=news_sl, locale="sl-SI")
+    guide_en = _pfact("guide")
+    guide_sl = _pfact("guide", locale="sl-SI")
+    home_en = _pfact("home")
+    home_sl = _pfact("home", locale="sl-SI")
+    facts = _pfacts(
+        news_en, news_sl, dyn_en, dyn_sl, guide_en, guide_sl, home_en, home_sl
+    )
+    enabled = frozenset({"en", "sl-SI", "de"})
+    memo = fs.new_route_memo(facts, default_locale="en", enabled_tags=enabled)
+    locales = (
+        _plocale("en", default=True, position=0),
+        _plocale("sl-SI", default=False, position=1),
+        _plocale("de", default=False, position=2),
+    )
+
+    # dynamic detail page requested in the default locale: the stored
+    # sl-SI casing is preserved in the emitted href
+    out = service._locale_switcher(
+        facts=facts,
+        memo=memo,
+        site_id=SITE_ID,
+        locales=locales,
+        current_locale="en",
+        default_locale="en",
+        current_route="/news/alpha",
+        statuses=["PUBLISHED"],
+        enabled_tags=enabled,
+    )
+    by_tag = {locale.tag: locale for locale in out}
+    assert by_tag["en"].switcher_href is None  # current locale stays as-is
+    assert by_tag["sl-SI"].switcher_href == "/sl-SI/news/alpha"
+    assert "{" not in by_tag["sl-SI"].switcher_href
+    assert (
+        fs.resolve_page_route(
+            facts,
+            site_id=SITE_ID,
+            route=by_tag["sl-SI"].switcher_href.lower(),
+            locale="sl-SI",
+            statuses=["PUBLISHED"],
+            default_locale="en",
+            enabled_tags=enabled,
+        )
+        is dyn_sl
+    )
+    # no de counterpart exists: the locale stays inert, not a fake link
+    assert by_tag["de"].switcher_href is None
+
+    # REVERSE: the same dynamic page requested in the non-default locale.
+    # The normalized /sl-si prefix must be stripped case-folded against the
+    # stored sl-SI tag, yielding the unprefixed default-locale route.
+    back = service._locale_switcher(
+        facts=facts,
+        memo=memo,
+        site_id=SITE_ID,
+        locales=locales,
+        current_locale="sl-SI",
+        default_locale="en",
+        current_route="/sl-si/news/alpha",
+        statuses=["PUBLISHED"],
+        enabled_tags=enabled,
+    )
+    back_by_tag = {locale.tag: locale for locale in back}
+    assert back_by_tag["sl-SI"].switcher_href is None
+    assert back_by_tag["en"].switcher_href == "/news/alpha"
+
+    # static page: the concrete href is byte-identical to the effective
+    # route, so supported static/fallback semantics are unchanged
+    static = service._locale_switcher(
+        facts=facts,
+        memo=memo,
+        site_id=SITE_ID,
+        locales=locales,
+        current_locale="en",
+        default_locale="en",
+        current_route="/guide",
+        statuses=["PUBLISHED"],
+        enabled_tags=enabled,
+    )
+    static_by_tag = {locale.tag: locale for locale in static}
+    assert static_by_tag["sl-SI"].switcher_href == "/sl-SI/guide"
+    assert static_by_tag["sl-SI"].switcher_href == memo.route(guide_sl.id)
+    assert static_by_tag["de"].switcher_href is None
+
+    # root page in the non-default locale switches back to "/"
+    root = service._locale_switcher(
+        facts=facts,
+        memo=memo,
+        site_id=SITE_ID,
+        locales=locales,
+        current_locale="sl-SI",
+        default_locale="en",
+        current_route="/sl-si",
+        statuses=["PUBLISHED"],
+        enabled_tags=enabled,
+    )
+    root_by_tag = {locale.tag: locale for locale in root}
+    assert root_by_tag["en"].switcher_href == "/"
+    assert root_by_tag["sl-SI"].switcher_href is None
 
 
 class _ScanningFacts(Mapping[UUID, fs.RenderPageFact]):

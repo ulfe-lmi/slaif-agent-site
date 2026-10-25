@@ -6,6 +6,7 @@ import {
   REVIEW_STATE_VERSION_V2,
   reviewBannerFacts,
   selectReviewView,
+  siteLocalPath,
   type ReviewDocument,
 } from "./review-projection";
 
@@ -121,7 +122,11 @@ export async function resolveWorkspaceReview(
   if (!requestContext.sessionCookie) return { kind: "login" };
   const document = await fetchReviewDocument(workspaceId, requestContext.sessionCookie);
   if (!document) return { kind: "not_found" };
-  const path = `/${(sitePath ?? []).join("/")}`;
+  // 083/5-b: generated links arrive as ["s", <captured key>, ...rest];
+  // the captured key (never the live metadata key) is the only prefix
+  // stripped; malformed/foreign forms are a uniform not_found.
+  const path = siteLocalPath(document, sitePath);
+  if (path === null) return { kind: "not_found" };
   const faithfulProjection =
     document.snapshot.state_version === REVIEW_STATE_VERSION_V2
       ? await resolveFrozenReviewPage(

@@ -71,7 +71,25 @@ export function previewDocumentUrl(
   origin: URL,
   request: BrowserWorkerSubmitRequest,
 ): URL {
-  const value = new URL(`/preview/${request.workspaceId}${request.route}`, origin);
+  // Canonical (slashless) document form.  The framework normalizes a
+  // trailing slash with a 308 before app routing, and the confinement
+  // handler admits exactly ONE non-redirected document request, so the
+  // route must be requested in its canonical form or the normalization
+  // hop would be aborted and the run would fail closed.  The server
+  // already normalized the route (trailing slash stripped except for the
+  // root "/", query pairs sorted) and bound its digest, so only the path
+  // is reshaped here - the root requests no segment after the workspace
+  // prefix, also when a query follows - and the query is preserved
+  // verbatim.
+  const questionMark = request.route.indexOf("?");
+  let path = questionMark === -1 ? request.route : request.route.slice(0, questionMark);
+  const query = questionMark === -1 ? "" : request.route.slice(questionMark);
+  if (path.length > 1 && path.endsWith("/")) path = path.slice(0, -1);
+  const documentPath = path === "/" ? "" : path;
+  const value = new URL(
+    `/preview/${request.workspaceId}${documentPath}${query}`,
+    origin,
+  );
   if (value.origin !== origin.origin) throw new BrowserUrlPolicyError();
   return value;
 }

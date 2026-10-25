@@ -2,8 +2,10 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import {
   capSearchInput,
+  defaultControlStates,
   matchesAllFacets,
   matchesFacet,
+  PAGE_CONTROL_FORM_ID,
   matchesSearch,
   splitInList,
   type CollectionFacet,
@@ -739,54 +741,286 @@ describe("trusted catalog renderer behavior", () => {
       { id: "1", slug: "a", values: { title: "Alpha news", rank: 3 } },
       { id: "2", slug: "b", values: { title: "Beta news", rank: 7 } },
     ];
+    const searchNodeId = "33333333-3333-4333-8333-333333333333";
+    const filterNodeId = "44444444-4444-4444-8444-444444444444";
+    const searchFields = [{ key: "title", primitive: "short_text" }];
+    const filterFields = [{ key: "rank", primitive: "integer" }];
+    const facets = [{ fieldKey: "rank", operator: "gte", value: "5" }];
+    const listOf = (markup: string) =>
+      markup.slice(markup.indexOf('<ul class="renderer-collection-list">'));
+
+    // The deployed private document renders every BOUND control with
+    // its trusted initial state (defaultControlStates), so the identity
+    // contract is checked against that real bound context: the static
+    // variant carries the same initial content AND the same controls as
+    // the interactive variant, differing only in the documented 083/5-b
+    // single shared page form attachment (generated field names + form
+    // attribute instead of the per-control form wrapper). Controls are
+    // never stripped from the comparison.
+    const searchStates = defaultControlStates({
+      composition: {
+        nodes: [
+          {
+            id: searchNodeId,
+            component_type: "CollectionSearch",
+            props: { placeholder: "Find" },
+            children: [],
+          },
+        ],
+      },
+      bindings: { [searchNodeId]: items },
+      binding_meta: { [searchNodeId]: { filter_fields: searchFields } },
+    });
     const interactiveSearch = renderToStaticMarkup(
       renderComponent(
-        { componentType: "CollectionSearch", props: { placeholder: "Find" } },
+        {
+          componentType: "CollectionSearch",
+          id: searchNodeId,
+          props: { placeholder: "Find" },
+        },
         "en",
         items,
-        { filter_fields: [{ key: "title", primitive: "short_text" }] },
+        { filter_fields: searchFields },
       ),
     );
     const staticSearch = renderToStaticMarkup(
       renderComponent(
-        { componentType: "CollectionSearch", props: { placeholder: "Find" } },
+        {
+          componentType: "CollectionSearch",
+          id: searchNodeId,
+          props: { placeholder: "Find" },
+        },
         "en",
         items,
-        { filter_fields: [{ key: "title", primitive: "short_text" }] },
+        { filter_fields: searchFields },
+        false,
+        null,
+        null,
+        searchStates,
+      ),
+    );
+    // Exact bound private initial state: generated name, shared-form
+    // attachment, initial value and the submit button.
+    expect(staticSearch).toContain(
+      `<input class="renderer-collection-search-input" form="${PAGE_CONTROL_FORM_ID}" type="search" maxLength="256" name="c.${searchNodeId}.q" value=""/>`,
+    );
+    expect(staticSearch).toContain(
+      `<button class="renderer-button renderer-button--secondary renderer-collection-search-submit" form="${PAGE_CONTROL_FORM_ID}" type="submit">Search</button>`,
+    );
+    // Normalize ONLY the documented 083/5-b form-attachment difference
+    // (per-control form wrapper, form attributes, generated field
+    // names) plus the SSR value="" artifact: the initial-state markup
+    // is then byte-identical, controls and list content included.
+    const detachSearchForm = (markup: string) =>
+      markup
+        .replace(/ value=""/g, "")
+        .replace(
+          /<form class="renderer-collection-search-form" method="POST">/,
+          "",
+        )
+        .replace(/<\/form>/g, "")
+        .replace(new RegExp(` form="${PAGE_CONTROL_FORM_ID}"`, "g"), "")
+        .replace(`name="c.${searchNodeId}.q"`, 'name="q"')
+        .replace(/\s+/g, " ");
+    expect(detachSearchForm(staticSearch)).toBe(
+      detachSearchForm(interactiveSearch),
+    );
+    // The result list is byte-identical without ANY normalization.
+    expect(listOf(staticSearch)).toBe(listOf(interactiveSearch));
+
+    // Unbound fallback (node absent from the delivered control states):
+    // inert input with no POST surface - no form, no name, no button -
+    // and the same initial result list.
+    const staticSearchUnbound = renderToStaticMarkup(
+      renderComponent(
+        {
+          componentType: "CollectionSearch",
+          id: searchNodeId,
+          props: { placeholder: "Find" },
+        },
+        "en",
+        items,
+        { filter_fields: searchFields },
         false,
       ),
     );
-    // The only SSR artifact difference is the controlled-input value
-    // attribute React emits for the interactive variant; normalize it and
-    // the initial-state markup is byte-identical.
-    const normalized = (markup: string) =>
-      markup.replace(/ value=""/g, "").replace(/\s+/g, " ");
-    expect(normalized(staticSearch)).toBe(normalized(interactiveSearch));
+    expect(staticSearchUnbound).not.toContain(
+      "renderer-collection-search-form",
+    );
+    expect(staticSearchUnbound).not.toContain('type="submit"');
+    expect(staticSearchUnbound).not.toContain("name=");
+    expect(staticSearchUnbound).toContain(
+      '<input class="renderer-collection-search-input" type="search" maxLength="256"/>',
+    );
+    expect(listOf(staticSearchUnbound)).toBe(listOf(interactiveSearch));
 
-    const facets = [{ fieldKey: "rank", operator: "gte", value: "5" }];
+    const filterStates = defaultControlStates({
+      composition: {
+        nodes: [
+          {
+            id: filterNodeId,
+            component_type: "CollectionFilter",
+            props: { facets },
+            children: [],
+          },
+        ],
+      },
+      bindings: { [filterNodeId]: items },
+      binding_meta: { [filterNodeId]: { filter_fields: filterFields } },
+    });
     const interactiveFilter = renderToStaticMarkup(
       renderComponent(
-        { componentType: "CollectionFilter", props: { facets } },
+        {
+          componentType: "CollectionFilter",
+          id: filterNodeId,
+          props: { facets },
+        },
         "en",
         items,
-        { filter_fields: [{ key: "rank", primitive: "integer" }] },
+        { filter_fields: filterFields },
       ),
     );
     const staticFilter = renderToStaticMarkup(
       renderComponent(
-        { componentType: "CollectionFilter", props: { facets } },
+        {
+          componentType: "CollectionFilter",
+          id: filterNodeId,
+          props: { facets },
+        },
         "en",
         items,
-        { filter_fields: [{ key: "rank", primitive: "integer" }] },
+        { filter_fields: filterFields },
         false,
+        null,
+        null,
+        filterStates,
       ),
     );
-    expect(staticFilter).toBe(interactiveFilter);
-    // Initial facet state: only rank 7 is visible; the empty state is not
-    // rendered because the initial visible set is non-empty.
+    expect(staticFilter).toContain(
+      `<input class="renderer-collection-filter-input" form="${PAGE_CONTROL_FORM_ID}" type="text" maxLength="4096" name="c.${filterNodeId}.f0" value="5"/>`,
+    );
+    expect(staticFilter).toContain(
+      `<button class="renderer-button renderer-button--secondary renderer-collection-filter-submit" form="${PAGE_CONTROL_FORM_ID}" type="submit">Filter</button>`,
+    );
+    const detachFilterForm = (markup: string) =>
+      markup
+        .replace(/ value=""/g, "")
+        .replace(
+          /<form class="renderer-collection-filter-form" method="POST">/,
+          "",
+        )
+        .replace(/<\/form>/g, "")
+        .replace(new RegExp(` form="${PAGE_CONTROL_FORM_ID}"`, "g"), "")
+        .replace(`name="c.${filterNodeId}.f0"`, 'name="f0"')
+        .replace(/\s+/g, " ");
+    expect(detachFilterForm(staticFilter)).toBe(
+      detachFilterForm(interactiveFilter),
+    );
+    // Initial facet state: only rank 7 is visible; the empty state is
+    // not rendered because the initial visible set is non-empty.
     expect(staticFilter).toContain(">Beta news<");
     expect(staticFilter).not.toContain(">Alpha news<");
     expect(staticFilter).not.toContain("renderer-collection-filter-empty");
+
+    // The deployed private page renders exactly ONE shared native form
+    // when any bound control state is present, and none otherwise.
+    const themeRecord = {
+      id: "55555555-5555-4555-8555-555555555555",
+      site_id: "55555555-5555-4555-8555-555555555555",
+      schema_version: "theme-schema/v1",
+      renderer_version: "renderer-v1",
+      row_version: 1,
+      palette: { preset: "meadow" },
+      typography: { family: "system", scale: "balanced", weight: "regular" },
+      layout: { content_width: "md", spacing: "md", grid_gap: "md" },
+      shape: { radius: "md", shadow: "sm" },
+      created_at: "2026-01-01T00:00:00Z",
+      updated_at: "2026-01-01T00:00:01Z",
+    } as const;
+    const pageProjection = {
+      route_kind: "page",
+      render_mode: "preview",
+      site: {
+        id: "55555555-5555-4555-8555-555555555555",
+        key: "control-site",
+        canonical_revision: 1,
+      },
+      requested_path: "/",
+      matched_path: "/",
+      locale: "en-US",
+      route_parameters: {},
+      page: {
+        id: "66666666-6666-4666-8666-666666666666",
+        site_id: "55555555-5555-4555-8555-555555555555",
+        slug: "home",
+        title: "Control home",
+        status: "DRAFT",
+        locale: "en-US",
+        parent_id: null,
+        route_template: null,
+        effective_route: "/",
+        row_version: 1,
+      },
+      composition: {
+        schema_version: "site-composition/v1",
+        catalog_version: "catalog-v1",
+        nodes: [
+          {
+            id: searchNodeId,
+            component_type: "CollectionSearch",
+            schema_version: "1",
+            parent_id: null,
+            slot_key: "default",
+            order_key: 0,
+            props: { placeholder: "Find" },
+            children: [],
+          },
+        ],
+      },
+      theme: themeRecord,
+      page_style: themeRecord,
+      locales: [
+        {
+          id: "77777777-7777-4777-8777-777777777777",
+          site_id: "55555555-5555-4555-8555-555555555555",
+          tag: "en-US",
+          enabled: true,
+          is_default: true,
+          position: 0,
+          metadata: {},
+          switcher_href: null,
+        },
+      ],
+      navigation: [],
+      bindings: { [searchNodeId]: items },
+      binding_meta: { [searchNodeId]: { filter_fields: searchFields } },
+      regions: [],
+      ancestors: [],
+      default_locale: "en-US",
+    } as const;
+    const pageWithStates = renderToStaticMarkup(
+      renderProjection(
+        pageProjection,
+        "/preview/55555555-5555-4555-8555-555555555555",
+        false,
+        searchStates,
+      ),
+    );
+    expect(pageWithStates).toContain(
+      `<form id="${PAGE_CONTROL_FORM_ID}" class="renderer-page-control-form" method="POST"></form>`,
+    );
+    expect(pageWithStates).toContain(
+      `form="${PAGE_CONTROL_FORM_ID}" type="search" maxLength="256" name="c.${searchNodeId}.q"`,
+    );
+    const pageWithoutStates = renderToStaticMarkup(
+      renderProjection(
+        pageProjection,
+        "/preview/55555555-5555-4555-8555-555555555555",
+        false,
+        new Map(),
+      ),
+    );
+    expect(pageWithoutStates).not.toContain(PAGE_CONTROL_FORM_ID);
   });
 });
 

@@ -109,7 +109,9 @@ export default defineConfig({
     {
       name: "freeze-review-snapshot",
       dependencies: ["governance"],
-      testMatch: /freeze-review-snapshot\.spec\.ts/,
+      // 083/5-b: the frozen-review parity spec rides this existing
+      // project (no new runner wiring; e2e.sh is unchanged).
+      testMatch: /(freeze-review-snapshot|frozen-review-parity)\.spec\.ts/,
       use: { ...devices["Desktop Chrome"] },
     },
     {
