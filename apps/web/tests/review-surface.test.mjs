@@ -650,15 +650,18 @@ test("POST form decode: real UTF-8 form encoding round-trips, malformed input re
   assert.equal(decodePostedForm("a=&&b=c"), null);
   assert.equal(decodePostedForm("&a=b"), null);
   assert.equal(decodePostedForm("a=b&"), null);
-  // Duplicates: ordinary AND special names refuse (no silent drop).
+  // Duplicates: ordinary names refuse (no silent drop).
   assert.equal(decodePostedForm("q=a&q=b"), null);
+  // Special object names beyond the 8-byte generated-name transport
+  // bound refuse at the name-length guard - uniform, never decoded.
   assert.equal(decodePostedForm("__proto__=a&__proto__=b"), null);
   assert.equal(decodePostedForm("constructor=a&constructor=b"), null);
-  // A special name is RETAINED in the result for validation...
-  const withSpecial = decodePostedForm("ctl=x&__proto__=a");
+  // A special object name WITHIN the transport bound is RETAINED in
+  // the result for validation...
+  const withSpecial = decodePostedForm("ctl=x&valueOf=a");
   assert.ok(withSpecial instanceof Map);
-  assert.equal(withSpecial.has("__proto__"), true);
-  assert.equal(withSpecial.get("__proto__"), "a");
+  assert.equal(withSpecial.has("valueOf"), true);
+  assert.equal(withSpecial.get("valueOf"), "a");
   // ...while aggregate and control-count bounds refuse.
   assert.equal(
     decodePostedForm(`q=${"a".repeat(POST_FORM_MAX_BODY_LENGTH + 1)}`),
@@ -763,15 +766,17 @@ const collectionProjection = () => {
 
 /**
  * The EXACT generated field set of the fixture page's ONE shared form:
- * one name per bound control state slot (tree order
- * search-1/filter-1/ghost-1) - no ``ctl``, no carried groups. A valid
- * submission is exactly this set, with values changed as needed.
+ * one name per bound control state slot (positions 0/1/2 in tree order
+ * search-1/filter-1/ghost-1) - the generated name carries the bounded
+ * deterministic position, never the node identifier; no ``ctl``, no
+ * carried groups. A valid submission is exactly this set, with values
+ * changed as needed.
  */
 const FULL_DEFAULTS = {
-  "c.search-1.q": "",
-  "c.filter-1.f0": "red",
-  "c.filter-1.f1": "10",
-  "c.ghost-1.q": "",
+  "c.0.q": "",
+  "c.1.f0": "red",
+  "c.1.f1": "10",
+  "c.2.q": "",
 };
 const submission = (overrides = {}) => {
   const fields = new Map(Object.entries(FULL_DEFAULTS));
@@ -799,12 +804,12 @@ test("POST control states: defaults render the trusted initial state, one state 
   );
   // A bound control without binding/meta renders no items, not an error.
   assert.equal(states.get("ghost-1").filtered.length, 0);
-  // The generated form field set is exactly one name per state slot.
-  const expected = new Set([
-    ...controlFieldNames(projection.composition.nodes[1]),
-    ...controlFieldNames(projection.composition.nodes[2].children[0]),
-    ...controlFieldNames(projection.composition.nodes[3]),
-  ]);
+  // The generated form field set is exactly one name per state slot,
+  // re-derived from the trusted inventory at its positions.
+  const expected = new Set();
+  for (const [position, node] of controlInventory(projection).entries()) {
+    for (const name of controlFieldNames(node, position)) expected.add(name);
+  }
   assert.deepEqual([...expected].sort(), Object.keys(FULL_DEFAULTS).sort());
   // A page without bound controls yields the empty map (total function).
   assert.equal(
@@ -818,10 +823,7 @@ test("POST control selection: multi-control state survives successive submission
   const projection = collectionProjection();
   // Submit search A (beta): the shared form carries EVERY control's
   // inputs in ONE body, so B (filter) stays at its trusted default.
-  const step1 = selectPostedControls(
-    projection,
-    submission({ "c.search-1.q": "beta" }),
-  );
+  const step1 = selectPostedControls(projection, submission({ "c.0.q": "beta" }));
   assert.ok(step1);
   assert.equal(step1.submittedNodeId, undefined); // no single submitted control
   assert.deepEqual(step1.states.get("search-1").own, { q: "beta" });
@@ -839,9 +841,9 @@ test("POST control selection: multi-control state survives successive submission
   const step2 = selectPostedControls(
     projection,
     submission({
-      "c.filter-1.f0": "blue",
-      "c.filter-1.f1": "20",
-      "c.search-1.q": "beta",
+      "c.1.f0": "blue",
+      "c.1.f1": "20",
+      "c.0.q": "beta",
     }),
   );
   assert.ok(step2);
@@ -858,7 +860,7 @@ test("POST control selection: multi-control state survives successive submission
   // Clear search A (empty query) with B's state in the form: B REMAINS.
   const step3 = selectPostedControls(
     projection,
-    submission({ "c.filter-1.f0": "blue", "c.filter-1.f1": "20", "c.search-1.q": "" }),
+    submission({ "c.1.f0": "blue", "c.1.f1": "20", "c.0.q": "" }),
   );
   assert.ok(step3);
   assert.deepEqual(step3.states.get("search-1").own, { q: "" });
@@ -872,9 +874,9 @@ test("POST control selection: multi-control state survives successive submission
   const step4 = selectPostedControls(
     projection,
     submission({
-      "c.search-1.q": "café",
-      "c.filter-1.f0": "blue",
-      "c.filter-1.f1": "20",
+      "c.0.q": "café",
+      "c.1.f0": "blue",
+      "c.1.f1": "20",
     }),
   );
   assert.equal(step4.states.get("search-1").own["q"], "café");
@@ -886,12 +888,9 @@ test("POST control selection: multi-control state survives successive submission
 
 test("POST control selection: unknown, foreign and tampered state refuses uniformly", () => {
   const projection = collectionProjection();
-  // Extra field beyond the generated set: a facet index the TRUSTED
-  // node does not declare.
-  assert.equal(
-    selectPostedControls(projection, submission({ "c.filter-1.f3": "1" })),
-    null,
-  );
+  // Extra field beyond the generated set: a facet index (at a real
+  // position) the TRUSTED node does not declare.
+  assert.equal(selectPostedControls(projection, submission({ "c.1.f3": "1" })), null);
   // A legacy per-control ``ctl`` name is no longer part of the form.
   assert.equal(selectPostedControls(projection, submission({ ctl: "search-1" })), null);
   // Authority-like special names are refused, never dropped. (An object
@@ -900,31 +899,28 @@ test("POST control selection: unknown, foreign and tampered state refuses unifor
   const authority = submission();
   authority.set("__proto__", "a");
   assert.equal(selectPostedControls(projection, authority), null);
-  // A field for a control that is NOT on the page (bound-1 has a
-  // binding but no composition node).
-  assert.equal(
-    selectPostedControls(projection, submission({ "c.bound-1.q": "x" })),
-    null,
-  );
+  // A field for a control POSITION that is NOT on the page (the
+  // fixture inventory has positions 0-2 only; 5 does not exist).
+  assert.equal(selectPostedControls(projection, submission({ "c.5.q": "x" })), null);
   // Missing a field of the generated set (any control, own or not).
   const missingGhost = submission();
-  missingGhost.delete("c.ghost-1.q");
+  missingGhost.delete("c.2.q");
   assert.equal(selectPostedControls(projection, missingGhost), null);
-  const missingOwn = submission({ "c.search-1.q": "x" });
-  missingOwn.delete("c.filter-1.f0");
+  const missingOwn = submission({ "c.0.q": "x" });
+  missingOwn.delete("c.1.f0");
   assert.equal(selectPostedControls(projection, missingOwn), null);
   // Oversized own input / oversized value for another control.
   assert.equal(
-    selectPostedControls(projection, submission({ "c.search-1.q": "a".repeat(257) })),
+    selectPostedControls(projection, submission({ "c.0.q": "a".repeat(257) })),
     null,
   );
   assert.equal(
-    selectPostedControls(projection, submission({ "c.filter-1.f1": "1".repeat(4097) })),
+    selectPostedControls(projection, submission({ "c.1.f1": "1".repeat(4097) })),
     null,
   );
   // A bound control without binding/meta selects fine and renders no
   // items.
-  const ghost = selectPostedControls(projection, submission({ "c.ghost-1.q": "x" }));
+  const ghost = selectPostedControls(projection, submission({ "c.2.q": "x" }));
   assert.ok(ghost);
   assert.equal(ghost.states.get("ghost-1").filtered.length, 0);
 });
@@ -962,8 +958,8 @@ test("POST control transport: the catalog's admitted limits bound the shared for
   };
   const fullSubmission = (projection) => {
     const fields = new Map();
-    for (const node of controlInventory(projection)) {
-      for (const name of controlFieldNames(node)) {
+    for (const [position, node] of controlInventory(projection).entries()) {
+      for (const name of controlFieldNames(node, position)) {
         fields.set(name, node.component_type === "CollectionSearch" ? "" : "v");
       }
     }
@@ -992,19 +988,29 @@ test("POST control transport: the catalog's admitted limits bound the shared for
   assert.ok(selectPostedControls(filters, full));
   // One field beyond the generated set refuses...
   const plusOne = fullSubmission(filters);
-  plusOne.set("c.c0.f4", "x");
+  plusOne.set("c.0.f4", "x");
   assert.equal(selectPostedControls(filters, plusOne), null);
+  // ...and a retained special name (within the transport bound)
+  // refuses at the verifier: uniform null, never a partial state.
+  const withSpecial128 = fullSubmission(searches);
+  withSpecial128.set("valueOf", "a");
+  assert.equal(selectPostedControls(searches, withSpecial128), null);
   // ...and the decode cap refuses one field beyond the admitted maximum.
   const overParts = Array.from(
     { length: POST_FORM_MAX_FIELDS + 1 },
     (_, i) => `f${i}=1`,
   ).join("&");
   assert.equal(decodePostedForm(overParts), null);
-  // The WORST admitted encoding: 36-character identifiers and every
-  // facet value at 4096 decoded code units, each a THREE-byte UTF-8 BMP
-  // character (nine percent-encoded ASCII bytes per code unit). The
-  // generated body is EXACTLY the body cap: it decodes, preserves the
-  // exact Unicode, and is admitted. One more ASCII byte refuses.
+  // The WORST admitted encoding: every facet value at 4096 decoded code
+  // units, each a THREE-byte UTF-8 BMP character (nine percent-encoded
+  // ASCII bytes per code unit). The names carry the bounded positions
+  // (1-3 digits for the 128 admitted controls: 40 of 6 bytes, 360 of
+  // 7, 112 of 8), and the global cap is derived from exactly these
+  // name bytes, so this body sits EXACTLY on the cap; the 36-character
+  // node identifiers never reach the wire. The body decodes, preserves
+  // the exact Unicode, and is admitted. One more ASCII byte refuses at
+  // the global length guard, and the interior encodings below stay
+  // admitted.
   const euro = "%E2%82%AC"; // € U+20AC: 3 UTF-8 bytes -> 9 encoded bytes
   const maxIds = Array.from(
     { length: 128 },
@@ -1016,27 +1022,39 @@ test("POST control transport: the catalog's admitted limits bound the shared for
   const maxBody = [...fullSubmission(maxFilters).entries()]
     .map(([name]) => `${name}=${euro.repeat(FACET_INPUT_MAX_LENGTH)}`)
     .join("&");
+  const worstNameBytes = 40 * 6 + 360 * 7 + 112 * 8;
+  assert.equal(
+    maxBody.length,
+    worstNameBytes +
+      POST_FORM_MAX_FIELDS +
+      (POST_FORM_MAX_FIELDS - 1) +
+      POST_FORM_MAX_FIELDS * FACET_INPUT_MAX_LENGTH * 9,
+  );
+  // Exact global boundary: the worst admitted body length equals the
+  // derived cap itself (N is admitted, N+1 refuses below, and the
+  // interior encodings stay admitted).
   assert.equal(maxBody.length, POST_FORM_MAX_BODY_LENGTH);
   const maxDecoded = decodePostedForm(maxBody);
   assert.ok(maxDecoded);
-  assert.equal(
-    maxDecoded.get("c.n00000000000000000000000000000000000.f0"),
-    "\u20ac".repeat(FACET_INPUT_MAX_LENGTH),
-  );
+  assert.equal(maxDecoded.get("c.0.f0"), "\u20ac".repeat(FACET_INPUT_MAX_LENGTH));
   assert.ok(selectPostedControls(maxFilters, maxDecoded));
   // A real intermediate encoding also stays admitted: 600 euro
-  // characters per value produce 2,786,815 encoded bytes.
+  // characters per value produce 2,769,479 encoded bytes.
   const euro600 = [...fullSubmission(maxFilters).entries()]
     .map(([name]) => `${name}=${euro.repeat(600)}`)
     .join("&");
-  assert.equal(euro600.length, 2786815);
+  assert.equal(euro600.length, 2769479);
   assert.ok(selectPostedControls(maxFilters, decodePostedForm(euro600)));
+  // N-9: one euro code unit removed from the last value - a valid
+  // encoding strictly below the cap, still admitted at the length
+  // guard.
+  assert.ok(decodePostedForm(maxBody.slice(0, maxBody.length - 9)));
   // N+1: one ASCII byte beyond the cap refuses at the length guard.
   assert.equal(decodePostedForm(`${maxBody}a`), null);
   // A value beyond the per-part worst case (4097 decoded code units)
   // refuses at the part-length guard before any byte collection.
-  const oversizedPart = `c.${maxIds[0]}.f0=${euro.repeat(FACET_INPUT_MAX_LENGTH + 1)}`;
-  assert.equal(decodePostedForm(`${oversizedPart}&c.${maxIds[1]}.f0=v`), null);
+  const oversizedPart = `c.0.f0=${euro.repeat(FACET_INPUT_MAX_LENGTH + 1)}`;
+  assert.equal(decodePostedForm(`${oversizedPart}&c.1.f0=v`), null);
   // The raw-bytes cap equals the body cap: a decodable body is
   // percent-encoded ASCII, exactly one raw byte per character.
   assert.equal(POST_FORM_MAX_RAW_BYTES, POST_FORM_MAX_BODY_LENGTH);

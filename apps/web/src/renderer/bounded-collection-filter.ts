@@ -227,9 +227,11 @@ export function matchesAllFacets(
  * represented exactly ONCE in the generated document and exactly once
  * in every submission - no per-control forms, no carried hidden
  * groups, no O(controls^2) matrix. The generated field set of a page is
- * exactly one name per control state slot (``c.<nodeId>.q`` for a
- * CollectionSearch, one ``c.<nodeId>.f<i>`` per TRUSTED facet of a
- * CollectionFilter); a valid submission is exactly that set, so
+ * exactly one name per control state slot (``c.<position>.q`` for a
+ * CollectionSearch, one ``c.<position>.f<i>`` per TRUSTED facet of a
+ * CollectionFilter; position is the control's bounded 0-based inventory
+ * position, never the composition node identifier); a valid submission
+ * is exactly that set, so
  * multi-control state is preserved across successive submissions with
  * finite O(fields) work and no duplicated bytes.
  */
@@ -237,20 +239,25 @@ export function matchesAllFacets(
 /**
  * Trusted component catalog bounds mirrored for transport sizing: at
  * most 128 composition nodes per page (MAX_COMPONENTS_PER_PAGE), at
- * most 4 facets per CollectionFilter, and composition node identifiers
- * are UUID strings (36 characters). The transport caps below are
- * derived EXACTLY from the largest admitted generated form - 128
- * controls, each a four-facet CollectionFilter - so the own form of
- * every admitted page decodes, and a hostile body cannot exceed them
- * without a uniform refusal.
+ * most 4 facets per CollectionFilter. Generated form names carry the
+ * control's bounded deterministic inventory POSITION (0-based, at most
+ * ``String(MAX_CONTROLS_PER_PAGE - 1)`` digits), never the composition
+ * node identifier (083/5-b: the raw document - private or canonical -
+ * must not leak node UUIDs). The transport caps below are derived
+ * EXACTLY from the largest admitted generated form - 128 controls, each
+ * a four-facet CollectionFilter - so the own form of every admitted
+ * page decodes, and a hostile body cannot exceed them without a uniform
+ * refusal.
  */
 export const MAX_CONTROLS_PER_PAGE = 128;
 export const MAX_FACETS_PER_FILTER = 4;
-export const MAX_NODE_ID_LENGTH = 36;
+/** Digits of the largest admitted 0-based control position. */
+export const MAX_CONTROL_POSITION_DIGITS = String(MAX_CONTROLS_PER_PAGE - 1).length;
 /** Slot name length: ``q`` or ``f<i>``. */
 const MAX_SLOT_NAME_LENGTH = 2;
-/** Generated name length: ``c.<nodeId>.<slot>``. */
-const MAX_CONTROL_FORM_NAME_LENGTH = 2 + MAX_NODE_ID_LENGTH + 1 + MAX_SLOT_NAME_LENGTH;
+/** Generated name length: ``c.<position>.<slot>``. */
+const MAX_CONTROL_FORM_NAME_LENGTH =
+  2 + MAX_CONTROL_POSITION_DIGITS + 1 + MAX_SLOT_NAME_LENGTH;
 /** Worst slots per control: four facets (a search control has one). */
 const MAX_SLOTS_PER_CONTROL = MAX_FACETS_PER_FILTER;
 
@@ -277,14 +284,33 @@ export const POST_FORM_MAX_PART_LENGTH =
 export const POST_FORM_MAX_FIELDS = MAX_CONTROLS_PER_PAGE * MAX_SLOTS_PER_CONTROL;
 
 /**
- * Maximum percent-encoded length of one admitted submission: every
- * generated name plus its ``=``, the worst admitted encoded value total
- * (128 controls x 4 facets x 4096 code units x nine encoded bytes per
- * code unit), and the ``&`` separators between parts.
+ * Exact total generated-name bytes of the largest admitted form: every
+ * control position ``0..MAX_CONTROLS_PER_PAGE - 1`` carries the worst
+ * four-facet names, each ``c.<position>.<slot>`` - 5 bytes plus the
+ * position's digit count. For 128 positions that is 40 names of 6
+ * bytes, 360 of 7 and 112 of 8 (3656 bytes). Deriving the total from
+ * the actual position digit lengths keeps the cap exact for every
+ * admitted inventory: no uniform name-length padding.
+ */
+const WORST_TOTAL_NAME_BYTES = Array.from(
+  { length: MAX_CONTROLS_PER_PAGE },
+  (_, position) =>
+    MAX_SLOTS_PER_CONTROL * (2 + String(position).length + 1 + MAX_SLOT_NAME_LENGTH),
+).reduce((total, nameBytes) => total + nameBytes, 0);
+
+/**
+ * Maximum percent-encoded length of one admitted submission, derived
+ * EXACTLY: the worst admitted name-byte total, one ``=`` per part, the
+ * worst admitted encoded value total (128 controls x 4 facets x 4096
+ * code units x nine encoded bytes per code unit), and the ``&``
+ * separators between parts. The largest admitted body therefore sits
+ * exactly on this cap: it decodes and is admitted, and one more byte
+ * refuses at the length guard.
  */
 export const POST_FORM_MAX_BODY_LENGTH =
-  POST_FORM_MAX_FIELDS * (MAX_CONTROL_FORM_NAME_LENGTH + 1) +
-  MAX_CONTROLS_PER_PAGE * MAX_SLOTS_PER_CONTROL * MAX_ENCODED_VALUE_LENGTH +
+  WORST_TOTAL_NAME_BYTES +
+  POST_FORM_MAX_FIELDS +
+  POST_FORM_MAX_FIELDS * MAX_ENCODED_VALUE_LENGTH +
   (POST_FORM_MAX_FIELDS - 1);
 
 /**
@@ -485,13 +511,48 @@ export function controlInventory(projection: ControlProjectionInput): ControlNod
 }
 
 /**
- * The generated form field names of one control: ``c.<nodeId>.q`` for a
- * search control, one ``c.<nodeId>.f<i>`` per TRUSTED facet (facet
- * order from the node's own props) for a filter control.
+ * The generated form field names of one control at its trusted
+ * inventory POSITION: ``c.<position>.q`` for a search control, one
+ * ``c.<position>.f<i>`` per TRUSTED facet (facet order from the node's
+ * own props) for a filter control. The position is the control's
+ * 0-based index in the deterministic trusted inventory (tree order);
+ * BOTH the document renderer and the POST verifier re-derive it from
+ * the same trusted projection, so a posted name is admitted only when
+ * it matches the page's generated set exactly. The node identifier
+ * itself never appears in a generated document.
  */
-export function controlFieldNames(node: ControlNode): string[] {
-  if (node.component_type === "CollectionSearch") return [`c.${node.id}.q`];
-  return parseCollectionFacets(node.props).map((_, index) => `c.${node.id}.f${index}`);
+export function searchControlFieldName(position: number): string {
+  return `c.${position}.q`;
+}
+
+export function filterControlFieldName(position: number, index: number): string {
+  return `c.${position}.f${index}`;
+}
+
+export function controlFieldNames(node: ControlNode, position: number): string[] {
+  if (node.component_type === "CollectionSearch") {
+    return [searchControlFieldName(position)];
+  }
+  return parseCollectionFacets(node.props).map((_, index) =>
+    filterControlFieldName(position, index),
+  );
+}
+
+/**
+ * The bounded deterministic position of every bound control: the node's
+ * 0-based index in the trusted inventory tree order. Derived from the
+ * trusted projection only - the document renderer and the POST verifier
+ * must both re-derive positions this way (or an equivalent trusted
+ * re-derivation) so generated names and posted names agree exactly.
+ */
+export function controlPositions(
+  projection: ControlProjectionInput,
+): ReadonlyMap<string, number> {
+  const out = new Map<string, number>();
+  for (const [position, node] of controlInventory(projection).entries()) {
+    out.set(node.id, position);
+  }
+  return out;
 }
 
 function deliveredItems(
@@ -557,12 +618,15 @@ export function defaultControlStates(
  * 083/5-b: validate and select the posted control states of one
  * same-path POST submission over the SINGLE shared page form. The body
  * supplies control STATE only, and exactly the page's generated field
- * set - one ``c.<nodeId>.q`` per search control and one
- * ``c.<nodeId>.f<i>`` per TRUSTED facet of every filter control.
- * Field names, operators, facet keys, item data and the control
- * inventory always come from the trusted projection. Any mismatch -
- * missing or extra field, unknown name (including authority-like
- * special names), oversized value - is a uniform ``null`` refusal.
+ * set - one ``c.<position>.q`` per search control and one
+ * ``c.<position>.f<i>`` per TRUSTED facet of every filter control,
+ * where the position is the control's 0-based index in the trusted
+ * inventory (re-derived here from the trusted projection, never taken
+ * from the body). Field names, operators, facet keys, item data and
+ * the control inventory always come from the trusted projection. Any
+ * mismatch - missing or extra field, unknown name or position
+ * (including authority-like special names), oversized value - is a
+ * uniform ``null`` refusal.
  */
 export function selectPostedControls(
   projection: ControlProjectionInput,
@@ -572,17 +636,21 @@ export function selectPostedControls(
 }> | null {
   const inventory = controlInventory(projection);
   const expected = new Set<string>();
-  for (const node of inventory) {
-    for (const name of controlFieldNames(node)) expected.add(name);
+  for (let position = 0; position < inventory.length; position += 1) {
+    const node = inventory[position];
+    if (node === undefined) return null;
+    for (const name of controlFieldNames(node, position)) expected.add(name);
   }
   if (fields.size !== expected.size) return null;
   for (const name of fields.keys()) {
     if (!expected.has(name)) return null;
   }
   const states = new Map<string, ControlRenderState>();
-  for (const node of inventory) {
+  for (let position = 0; position < inventory.length; position += 1) {
+    const node = inventory[position];
+    if (node === undefined) return null;
     if (node.component_type === "CollectionSearch") {
-      const query = fields.get(`c.${node.id}.q`);
+      const query = fields.get(searchControlFieldName(position));
       if (query === undefined || query.length > SEARCH_INPUT_MAX_LENGTH) {
         return null;
       }
@@ -600,7 +668,7 @@ export function selectPostedControls(
     for (let index = 0; index < facets.length; index += 1) {
       const facet = facets[index];
       if (facet === undefined) return null;
-      const value = fields.get(`c.${node.id}.f${index}`);
+      const value = fields.get(filterControlFieldName(position, index));
       if (value === undefined || value.length > FACET_INPUT_MAX_LENGTH) {
         return null;
       }

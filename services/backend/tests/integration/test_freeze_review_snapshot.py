@@ -8806,7 +8806,8 @@ async def test_rc1_public_agent_and_editor_capture_retained_families(
         # The trusted region read (067_001 slaif_region_list) projects
         # header + footer; a missing stored row falls back to the
         # deterministic trusted DEFAULT (footer: single-column,
-        # {'links': [], 'note': ''}, md5-derived id, row_version 1).
+        # {'links': [], 'note': ''}, md5-derived deterministic id (non-security
+        # identifier, usedforsecurity=False), row_version 1).
         # The capture must retain both rows, sorted by region_key.
         assert len(payload["regions"]) == 2
         assert all(set(row) == RC1_REGION_KEYS for row in payload["regions"])
@@ -8829,7 +8830,12 @@ async def test_rc1_public_agent_and_editor_capture_retained_families(
         assert footer_row["region_key"] == "footer"
         # The trusted default footer: deterministic id + closed shape.
         assert footer_row["id"] == str(
-            UUID(hashlib.md5(f"{seeded['site_id']}:footer".encode()).hexdigest())
+            UUID(
+                hashlib.md5(
+                    f"{seeded['site_id']}:footer".encode(),
+                    usedforsecurity=False,
+                ).hexdigest()
+            )
         )
         assert footer_row["variant"] == "single-column"
         assert footer_row["schema_version"] == "global-region/v1"

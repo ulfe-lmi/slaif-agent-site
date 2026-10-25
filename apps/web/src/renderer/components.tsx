@@ -18,6 +18,9 @@ import { RENDERER_STYLESHEET } from "./styles";
 import { CollectionFilter, CollectionSearch } from "./collection-filter-components";
 import {
   PAGE_CONTROL_FORM_ID,
+  controlPositions,
+  filterControlFieldName,
+  searchControlFieldName,
   itemTitle,
   matchesAllFacets,
   matchesSearch,
@@ -41,11 +44,18 @@ interface RenderProps {
   readonly mediaItems?: readonly (ProjectionMedia | null)[] | null;
   /**
    * The composition node identifier. Flight-free private surfaces use it
-   * as the ``ctl`` reference of the same-path read-only POST form; it is
-   * a data reference only — every authority is re-derived server-side
-   * from the trusted projection.
+   * as the trusted-state lookup key for the same-path read-only POST
+   * form; it is a data reference only - every authority is re-derived
+   * server-side from the trusted projection.
    */
   readonly nodeId?: string;
+  /**
+   * The control's bounded deterministic POSITION in the trusted
+   * inventory (0-based tree order). The generated wire name carries
+   * this position, never the node identifier, so no composition UUID
+   * appears in any generated document.
+   */
+  readonly controlPosition?: number;
   /**
    * The page's same-path POST control states (trusted projection
    * defaults on GET, the validated posted selection on POST). Present on
@@ -838,6 +848,7 @@ function CollectionSearchStatic({
   data,
   meta,
   nodeId,
+  controlPosition,
   controlStates,
 }: RenderProps) {
   const items: readonly Record<string, unknown>[] = Array.isArray(data) ? data : [];
@@ -860,7 +871,11 @@ function CollectionSearchStatic({
         {state !== undefined && nodeId !== undefined ? (
           <input
             className="renderer-collection-search-input"
-            name={`c.${nodeId}.q`}
+            name={
+              controlPosition !== undefined
+                ? searchControlFieldName(controlPosition)
+                : undefined
+            }
             form={PAGE_CONTROL_FORM_ID}
             type="search"
             value={query}
@@ -896,6 +911,7 @@ function CollectionFilterStatic({
   data,
   meta,
   nodeId,
+  controlPosition,
   controlStates,
 }: RenderProps) {
   const facets = parseCollectionFacets(props);
@@ -931,7 +947,11 @@ function CollectionFilterStatic({
               {state !== undefined && nodeId !== undefined ? (
                 <input
                   className="renderer-collection-filter-input"
-                  name={`c.${nodeId}.f${index}`}
+                  name={
+                    controlPosition !== undefined
+                      ? filterControlFieldName(controlPosition, index)
+                      : undefined
+                  }
                   form={PAGE_CONTROL_FORM_ID}
                   type="text"
                   value={facetValue(index)}
@@ -1038,6 +1058,7 @@ export function renderComponent(
   media?: ProjectionMedia | null,
   mediaItems?: readonly (ProjectionMedia | null)[] | null,
   controlStates?: ReadonlyMap<string, ControlRenderState> | null,
+  controlPositions?: ReadonlyMap<string, number> | null,
 ): ReactElement {
   // Render registry entries as real React elements (never direct function
   // calls): direct calls bypass React's client-component boundary
@@ -1047,6 +1068,10 @@ export function renderComponent(
       ? INTERACTIVE_RENDERERS[node.componentType]
       : RENDERERS[node.componentType];
   if (!Renderer) throw new Error("unknown trusted component");
+  const controlPosition =
+    node.id !== undefined && controlStates !== undefined
+      ? controlPositions?.get(node.id)
+      : undefined;
   return createElement(Renderer, {
     definition: FALLBACK_DEFINITION,
     props: node.props,
@@ -1057,6 +1082,7 @@ export function renderComponent(
     ...(media === undefined ? {} : { media }),
     ...(mediaItems === undefined ? {} : { mediaItems }),
     ...(node.id === undefined ? {} : { nodeId: node.id }),
+    ...(controlPosition === undefined ? {} : { controlPosition }),
     ...(controlStates === undefined ? {} : { controlStates }),
   });
 }
@@ -1075,9 +1101,18 @@ function renderNode(
   bindingMeta: PageProjection["binding_meta"],
   clientState = true,
   controlStates?: ReadonlyMap<string, ControlRenderState> | null,
+  controlPositions?: ReadonlyMap<string, number> | null,
 ): ReactElement {
   const children = node.children.map((child) =>
-    renderNode(child, locale, bindings, bindingMeta, clientState, controlStates),
+    renderNode(
+      child,
+      locale,
+      bindings,
+      bindingMeta,
+      clientState,
+      controlStates,
+      controlPositions,
+    ),
   );
   return (
     <div data-component={node.component_type}>
@@ -1095,6 +1130,7 @@ function renderNode(
         node.media ?? null,
         node.media_items ?? null,
         controlStates,
+        controlPositions,
       )}
     </div>
   );
@@ -1271,6 +1307,12 @@ export function renderProjection(
   const base = basePath ?? `/s/${projection.site.key}`;
   const header = projection.regions.find((region) => region.region_key === "header");
   const footer = projection.regions.find((region) => region.region_key === "footer");
+  // 083/5-b: re-derive the bounded deterministic control positions from
+  // the SAME trusted projection the POST verifier uses, so the generated
+  // wire names (c.<position>.<slot>) match the admitted posted names
+  // exactly and no composition node identifier reaches any document.
+  const controlPositionsMap =
+    controlStates && controlStates.size > 0 ? controlPositions(projection) : null;
   return (
     <>
       <link rel="stylesheet" href={RENDERER_STYLESHEET} />
@@ -1319,6 +1361,7 @@ export function renderProjection(
               projection.binding_meta,
               clientState,
               controlStates,
+              controlPositionsMap,
             ),
           )}
         </main>

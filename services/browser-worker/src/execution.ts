@@ -89,21 +89,14 @@ interface BoundMediaResult {
   readonly failures: readonly BoundMediaFailure[];
 }
 
-async function readBoundMedia(
-  page: Page,
-  document: URL,
-): Promise<BoundMediaResult> {
+async function readBoundMedia(page: Page, document: URL): Promise<BoundMediaResult> {
   // True bounded DOM walk: explicit visited-node budget and per-level
   // child bound, indexed child access (no NodeList/array materialization
   // and no selector collection of every anchor).  When a bound is hit
   // the scan reports walkLimitReached; the referenced set may then be
   // incomplete and the summary says so.
   const scan = await page.evaluate(
-    (limits: {
-      refLimit: number;
-      nodeLimit: number;
-      childLimit: number;
-    }) => {
+    (limits: { refLimit: number; nodeLimit: number; childLimit: number }) => {
       const refs: { href: string; kind: "document" | "image" }[] = [];
       let visited = 0;
       let limitReached = false;
@@ -180,12 +173,10 @@ async function readBoundMedia(
     0,
     candidates.length - boundMediaLimits.maxAssetsFetched,
   );
-  const targets = candidates
-    .slice(0, boundMediaLimits.maxAssetsFetched)
-    .map((url) => ({
-      url,
-      maxBytes: boundMediaLimits.maxBytesPerAsset,
-    }));
+  const targets = candidates.slice(0, boundMediaLimits.maxAssetsFetched).map((url) => ({
+    url,
+    maxBytes: boundMediaLimits.maxBytesPerAsset,
+  }));
   const empty: BoundMediaResult = {
     refsSeen: scan.refs.length,
     nodesVisited: scan.visited,

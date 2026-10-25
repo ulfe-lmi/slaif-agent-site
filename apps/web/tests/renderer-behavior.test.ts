@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   capSearchInput,
   defaultControlStates,
+  controlPositions,
   matchesAllFacets,
   matchesFacet,
   PAGE_CONTROL_FORM_ID,
@@ -757,7 +758,7 @@ describe("trusted catalog renderer behavior", () => {
     // single shared page form attachment (generated field names + form
     // attribute instead of the per-control form wrapper). Controls are
     // never stripped from the comparison.
-    const searchStates = defaultControlStates({
+    const searchFixture = {
       composition: {
         nodes: [
           {
@@ -770,7 +771,8 @@ describe("trusted catalog renderer behavior", () => {
       },
       bindings: { [searchNodeId]: items },
       binding_meta: { [searchNodeId]: { filter_fields: searchFields } },
-    });
+    };
+    const searchStates = defaultControlStates(searchFixture);
     const interactiveSearch = renderToStaticMarkup(
       renderComponent(
         {
@@ -797,12 +799,15 @@ describe("trusted catalog renderer behavior", () => {
         null,
         null,
         searchStates,
+        controlPositions(searchFixture),
       ),
     );
-    // Exact bound private initial state: generated name, shared-form
-    // attachment, initial value and the submit button.
+    // Exact bound private initial state: the generated name carries the
+    // bounded deterministic POSITION (0 in this single-control
+    // fixture), never the node identifier; shared-form attachment,
+    // initial value and the submit button.
     expect(staticSearch).toContain(
-      `<input class="renderer-collection-search-input" form="${PAGE_CONTROL_FORM_ID}" type="search" maxLength="256" name="c.${searchNodeId}.q" value=""/>`,
+      `<input class="renderer-collection-search-input" form="${PAGE_CONTROL_FORM_ID}" type="search" maxLength="256" name="c.0.q" value=""/>`,
     );
     expect(staticSearch).toContain(
       `<button class="renderer-button renderer-button--secondary renderer-collection-search-submit" form="${PAGE_CONTROL_FORM_ID}" type="submit">Search</button>`,
@@ -814,17 +819,12 @@ describe("trusted catalog renderer behavior", () => {
     const detachSearchForm = (markup: string) =>
       markup
         .replace(/ value=""/g, "")
-        .replace(
-          /<form class="renderer-collection-search-form" method="POST">/,
-          "",
-        )
+        .replace(/<form class="renderer-collection-search-form" method="POST">/, "")
         .replace(/<\/form>/g, "")
         .replace(new RegExp(` form="${PAGE_CONTROL_FORM_ID}"`, "g"), "")
-        .replace(`name="c.${searchNodeId}.q"`, 'name="q"')
+        .replace('name="c.0.q"', 'name="q"')
         .replace(/\s+/g, " ");
-    expect(detachSearchForm(staticSearch)).toBe(
-      detachSearchForm(interactiveSearch),
-    );
+    expect(detachSearchForm(staticSearch)).toBe(detachSearchForm(interactiveSearch));
     // The result list is byte-identical without ANY normalization.
     expect(listOf(staticSearch)).toBe(listOf(interactiveSearch));
 
@@ -844,9 +844,7 @@ describe("trusted catalog renderer behavior", () => {
         false,
       ),
     );
-    expect(staticSearchUnbound).not.toContain(
-      "renderer-collection-search-form",
-    );
+    expect(staticSearchUnbound).not.toContain("renderer-collection-search-form");
     expect(staticSearchUnbound).not.toContain('type="submit"');
     expect(staticSearchUnbound).not.toContain("name=");
     expect(staticSearchUnbound).toContain(
@@ -854,7 +852,7 @@ describe("trusted catalog renderer behavior", () => {
     );
     expect(listOf(staticSearchUnbound)).toBe(listOf(interactiveSearch));
 
-    const filterStates = defaultControlStates({
+    const filterFixture = {
       composition: {
         nodes: [
           {
@@ -867,7 +865,8 @@ describe("trusted catalog renderer behavior", () => {
       },
       bindings: { [filterNodeId]: items },
       binding_meta: { [filterNodeId]: { filter_fields: filterFields } },
-    });
+    };
+    const filterStates = defaultControlStates(filterFixture);
     const interactiveFilter = renderToStaticMarkup(
       renderComponent(
         {
@@ -894,10 +893,11 @@ describe("trusted catalog renderer behavior", () => {
         null,
         null,
         filterStates,
+        controlPositions(filterFixture),
       ),
     );
     expect(staticFilter).toContain(
-      `<input class="renderer-collection-filter-input" form="${PAGE_CONTROL_FORM_ID}" type="text" maxLength="4096" name="c.${filterNodeId}.f0" value="5"/>`,
+      `<input class="renderer-collection-filter-input" form="${PAGE_CONTROL_FORM_ID}" type="text" maxLength="4096" name="c.0.f0" value="5"/>`,
     );
     expect(staticFilter).toContain(
       `<button class="renderer-button renderer-button--secondary renderer-collection-filter-submit" form="${PAGE_CONTROL_FORM_ID}" type="submit">Filter</button>`,
@@ -905,17 +905,12 @@ describe("trusted catalog renderer behavior", () => {
     const detachFilterForm = (markup: string) =>
       markup
         .replace(/ value=""/g, "")
-        .replace(
-          /<form class="renderer-collection-filter-form" method="POST">/,
-          "",
-        )
+        .replace(/<form class="renderer-collection-filter-form" method="POST">/, "")
         .replace(/<\/form>/g, "")
         .replace(new RegExp(` form="${PAGE_CONTROL_FORM_ID}"`, "g"), "")
-        .replace(`name="c.${filterNodeId}.f0"`, 'name="f0"')
+        .replace('name="c.0.f0"', 'name="f0"')
         .replace(/\s+/g, " ");
-    expect(detachFilterForm(staticFilter)).toBe(
-      detachFilterForm(interactiveFilter),
-    );
+    expect(detachFilterForm(staticFilter)).toBe(detachFilterForm(interactiveFilter));
     // Initial facet state: only rank 7 is visible; the empty state is
     // not rendered because the initial visible set is non-empty.
     expect(staticFilter).toContain(">Beta news<");
@@ -1010,7 +1005,7 @@ describe("trusted catalog renderer behavior", () => {
       `<form id="${PAGE_CONTROL_FORM_ID}" class="renderer-page-control-form" method="POST"></form>`,
     );
     expect(pageWithStates).toContain(
-      `form="${PAGE_CONTROL_FORM_ID}" type="search" maxLength="256" name="c.${searchNodeId}.q"`,
+      `form="${PAGE_CONTROL_FORM_ID}" type="search" maxLength="256" name="c.0.q"`,
     );
     const pageWithoutStates = renderToStaticMarkup(
       renderProjection(

@@ -266,11 +266,7 @@ test("previewDocumentUrl: canonical slashless document form", () => {
     assert.equal(value.origin, documentOrigin.origin, route);
     // The query is preserved verbatim: the server normalized and digest-
     // bound the route, so the worker must not re-encode it.
-    assert.equal(
-      value.search,
-      new URL(expected).search,
-      route,
-    );
+    assert.equal(value.search, new URL(expected).search, route);
   }
 });
 
