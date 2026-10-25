@@ -69,8 +69,7 @@ THEME = (
     "services/backend/tests/integration/test_agent_theme_boundaries.py"
 )
 PAGE_STYLE = (
-    "uv run --frozen pytest "
-    "services/backend/tests/integration/test_agent_page_style.py"
+    "uv run --frozen pytest services/backend/tests/integration/test_agent_page_style.py"
 )
 
 
@@ -129,9 +128,7 @@ def _needs_ids(block: str) -> list[str]:
 
 
 def _run_aggregate(script: str, group_a: str, group_b: str) -> int:
-    with tempfile.NamedTemporaryFile(
-        "w", suffix=".sh", delete=False
-    ) as handle:
+    with tempfile.NamedTemporaryFile("w", suffix=".sh", delete=False) as handle:
         handle.write(script)
         path = handle.name
     env = {
@@ -169,7 +166,7 @@ class FoundationCiSplitTestCase(unittest.TestCase):
             self.assertIn("POSTGRES_PASSWORD: qualification-admin", block)
             self.assertIn("- 5432:5432", block)
             self.assertIn(
-                "--health-cmd \"pg_isready -U postgres -d qualification\"", block
+                '--health-cmd "pg_isready -U postgres -d qualification"', block
             )
             self.assertIn("PGHOST: 127.0.0.1", block)
             self.assertIn('PGPORT: "5432"', block)
@@ -182,13 +179,14 @@ class FoundationCiSplitTestCase(unittest.TestCase):
 
     def test_exact_five_commands_split_85_plus_45(self) -> None:
         self.assertEqual(_run_values(self.job_a), [SYNC, GENERIC, BOOTSTRAP])
-        self.assertEqual(
-            _run_values(self.job_b), [SYNC, COMPONENT, THEME, PAGE_STYLE]
-        )
+        self.assertEqual(_run_values(self.job_b), [SYNC, COMPONENT, THEME, PAGE_STYLE])
 
     def test_aggregator_depends_on_both_child_jobs_with_job_level_always(self) -> None:
         self.assertIn("\n    if: always()", self.job_gate)
-        self.assertEqual(_needs_ids(self.job_gate), ["foundation-pg-group-a", "foundation-pg-group-b"])
+        self.assertEqual(
+            _needs_ids(self.job_gate),
+            ["foundation-pg-group-a", "foundation-pg-group-b"],
+        )
         self.assertIn(
             "GROUP_A_RESULT: ${{ needs.foundation-pg-group-a.result }}",
             self.job_gate,
