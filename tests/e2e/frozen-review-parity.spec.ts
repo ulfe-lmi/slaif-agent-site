@@ -1291,6 +1291,10 @@ async function runPhase(
     const page = await context.newPage();
     const failures = observe(page);
     let bodyFailed = false;
+    // Explicit failure presence: `firstError === undefined` alone is not
+    // a guarantee for an arbitrary thrown value (e.g. undefined itself),
+    // so no captured failure can be turned into success by cleanup.
+    let failureCaptured = false;
     let firstError: unknown = undefined;
     // Bounded op-level diagnostic sink: fixed-enum op + optional
     // bounded flags; exactOptionalPropertyTypes keeps undefined out of
@@ -1353,6 +1357,7 @@ async function runPhase(
       );
     } catch (error) {
       bodyFailed = true;
+      failureCaptured = true;
       firstError = error;
     } finally {
       // Failure priority body > collector > close: the original
@@ -1366,17 +1371,21 @@ async function runPhase(
             [],
           );
         } catch (error) {
+          failureCaptured = true;
           firstError = error;
         }
       }
       try {
         await context.close();
       } catch (error) {
-        if (firstError === undefined) firstError = error;
+        if (!failureCaptured) {
+          failureCaptured = true;
+          firstError = error;
+        }
       }
     }
-    if (firstError !== undefined) {
-      // Body/collector/close paths only throw Error objects; the fixed
+    if (failureCaptured) {
+      // Not every possible thrown value is an Error object; the fixed
       // fallback keeps the throw typed without embedding an
       // unclassified raw value.
       if (firstError instanceof Error) throw firstError;
