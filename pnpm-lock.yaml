@@ -392,7 +392,6 @@ packages:
 
   '@measured/puck@0.20.2':
     resolution: {integrity: sha512-/GuzlsGs1T2S3lY9so4GyHpDBlWnC1h/4rkYuelrLNHvacnXBZyn50hvgRhWAqlLn/xOuJvJeuY740Zemxdt3Q==}
-    deprecated: 'Puck has moved. Please use @puckeditor/core instead: https://www.npmjs.com/package/@puckeditor/core'
     peerDependencies:
       react: ^18.0.0 || ^19.0.0
 
@@ -1010,7 +1009,6 @@ packages:
 
   deep-diff@1.0.2:
     resolution: {integrity: sha512-aWS3UIVH+NPGCD1kki+DCU9Dua032iSsO43LqQpcs4R3+dVv7tX0qBGjiVHJHjplsoUM2XRO/KB92glqc68awg==}
-    deprecated: Package no longer supported. Contact Support at https://www.npmjs.com/support for more info.
 
   deep-is@0.1.4:
     resolution: {integrity: sha512-oIPzksmTg4/MriiaYGO+okXDT7ztn/w3Eptv/+gSIdMdKsJo0u4CfYNFJPy+4SKMuCqGw2wxnA+URMg3t8a/bQ==}

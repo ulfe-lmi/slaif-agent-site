@@ -257,8 +257,8 @@ echo "review-worker-media-boundary: OK dsn=0400:uid10001 root=0700:uid10001"
 docker inspect "${PROJECT}-browser-worker-1" | python -c \
   'import json,sys; value=json.load(sys.stdin)[0]; host=value["HostConfig"]; config=value["Config"]; assert config["User"]=="10001:10001" and host["ReadonlyRootfs"] is True; assert host["CapDrop"]==["ALL"] and host["CapAdd"]==["CAP_SYS_CHROOT"]; assert host["PidsLimit"]==256 and host["Memory"]==805306368 and host["ShmSize"]==134217728 and host["NanoCpus"]==1000000000; assert "no-new-privileges:true" in host["SecurityOpt"] and any(item.startswith("seccomp=") for item in host["SecurityOpt"]); assert host["NetworkMode"].endswith("_browser"); print("browser-worker-runtime-policy: OK uid=10001 readonly=yes caps=SYS_CHROOT limits=exact network=browser")'
 docker exec "${PROJECT}-browser-worker-1" sh -c \
-  'test "$(find /ms-playwright -mindepth 1 -maxdepth 1 -type d | wc -l)" -eq 1; test -x /ms-playwright/chromium-1697595/chrome-linux64/chrome; test ! -e /usr/bin/npm; test ! -e /usr/bin/corepack; test "$(node --version)" = v24.18.1; /ms-playwright/chromium-1697595/chrome-linux64/chrome --version | grep -Eq "^Google Chrome for Testing 155[.]0[.]8059[.]84 *$"'
-echo "browser-worker-image-policy: OK playwright=1.62.1 cft_revision=1697595 chromium=155.0.8059.84 browsers=chromium-only package-manager=absent"
+  'test "$(find /ms-playwright -mindepth 1 -maxdepth 1 -type d | wc -l)" -eq 1; test -x /ms-playwright/chromium-1706539/chrome-linux64/chrome; test ! -e /usr/bin/npm; test ! -e /usr/bin/corepack; test "$(node --version)" = v24.18.1; /ms-playwright/chromium-1706539/chrome-linux64/chrome --version | grep -Eq "^Google Chrome for Testing 156[.]0[.]8078[.]47 *$"'
+echo "browser-worker-image-policy: OK playwright=1.62.1 cft_revision=1706539 chromium=156.0.8078.47 browsers=chromium-only package-manager=absent"
 
 curl --fail --show-error --silent http://localhost:8080/ | grep -q "Self-hosted human control"
 docker compose -p "$PROJECT" logs --no-color bootstrap 2>/dev/null \

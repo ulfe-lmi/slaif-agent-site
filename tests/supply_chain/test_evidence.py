@@ -24,6 +24,7 @@ from tools.supply_chain.evidence import (
     normalize_syft_sbom,
     package_signature,
     rootfs_manifest,
+    sha256_bytes,
     sha256_file,
     validate_bundle,
     validate_database_status,
@@ -503,6 +504,11 @@ class EvidenceTests(unittest.TestCase):
                             )
                         )
                     ),
+                    "opt/slaif/apps/web/.next/server/preview-props.json": {
+                        "previewModeId": marker * 32,
+                        "previewModeSigningKey": marker * 64,
+                        "previewModeEncryptionKey": marker * 64,
+                    },
                 }
                 for name, document in documents.items():
                     data = (
@@ -518,11 +524,86 @@ class EvidenceTests(unittest.TestCase):
         normalized = [
             entry for entry in manifests[0]["entries"] if entry["normalized_fields"]
         ]
-        self.assertEqual(len(normalized), 3)
+        self.assertEqual(len(normalized), 4)
+        normalized_names = sorted(
+            entry["path"]
+            for entry in manifests[0]["entries"]
+            if entry["normalized_fields"]
+        )
+        self.assertEqual(
+            normalized_names,
+            [
+                "opt/slaif/apps/web/.next/prerender-manifest.json",
+                "opt/slaif/apps/web/.next/server/preview-props.json",
+                "opt/slaif/apps/web/.next/server/server-reference-manifest.js",
+                "opt/slaif/apps/web/.next/server/server-reference-manifest.json",
+            ],
+        )
 
         changed = manifests[1]["entries"][0]
         changed["size"] += 1
         self.assertNotEqual(manifests[0], manifests[1])
+
+    def test_web_rootfs_preview_props_normalization_fails_closed(self) -> None:
+        preview_path = "opt/slaif/apps/web/.next/server/preview-props.json"
+        base = {
+            "previewModeId": "a" * 32,
+            "previewModeSigningKey": "b" * 64,
+            "previewModeEncryptionKey": "c" * 64,
+        }
+        cases = {
+            "missing-field": {
+                k: v for k, v in base.items() if k != "previewModeSigningKey"
+            },
+            "non-string-field": {**base, "previewModeId": 1234},
+            "empty-field": {**base, "previewModeEncryptionKey": ""},
+            "non-object": [base],
+        }
+        for label, document in cases.items():
+            with self.subTest(label=label):
+                archive = self.root / f"web-{label}.tar"
+                with tarfile.open(archive, "w") as stream:
+                    data = json.dumps(document).encode()
+                    member = tarfile.TarInfo(preview_path)
+                    member.size = len(data)
+                    stream.addfile(member, io.BytesIO(data))
+                with self.assertRaisesRegex(PolicyError, "cannot normalize"):
+                    rootfs_manifest(archive, "web")
+
+        # A non-web image keeps the raw bytes untouched (no web-only rewrite).
+        archive = self.root / "web-other-image.tar"
+        with tarfile.open(archive, "w") as stream:
+            data = json.dumps(base).encode()
+            member = tarfile.TarInfo(preview_path)
+            member.size = len(data)
+            stream.addfile(member, io.BytesIO(data))
+        manifest = rootfs_manifest(archive, "backend")
+        self.assertEqual(manifest["entries"][0]["sha256"], sha256_bytes(data))
+        self.assertEqual(manifest["entries"][0]["normalized_fields"], [])
+
+        # Changing a field OUTSIDE the three cryptographic ones must change
+        # the manifest: normalization retains non-crypto content, it never
+        # blanket-excludes the file.
+        documents = [base, {**base, "other": "x" * 8}]
+        digests = []
+        for index, document in enumerate(documents):
+            archive = self.root / f"web-preview-other-{index}.tar"
+            with tarfile.open(archive, "w") as stream:
+                data = json.dumps(document).encode()
+                member = tarfile.TarInfo(preview_path)
+                member.size = len(data)
+                stream.addfile(member, io.BytesIO(data))
+            entry = rootfs_manifest(archive, "web")["entries"][0]
+            self.assertEqual(
+                entry["normalized_fields"],
+                [
+                    "preview-props.previewModeId",
+                    "preview-props.previewModeSigningKey",
+                    "preview-props.previewModeEncryptionKey",
+                ],
+            )
+            digests.append(entry["sha256"])
+        self.assertNotEqual(digests[0], digests[1])
 
 
 if __name__ == "__main__":

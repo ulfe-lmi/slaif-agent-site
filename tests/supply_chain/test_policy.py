@@ -101,9 +101,7 @@ class SupplyChainPolicyTests(unittest.TestCase):
             validate_policy(foreign_nginx)
 
         backend_324 = copy.deepcopy(self.policy)
-        backend_324["alpine_package_overrides"]["images"]["backend"]["registry"] = (
-            v324
-        )
+        backend_324["alpine_package_overrides"]["images"]["backend"]["registry"] = v324
         with self.assertRaisesRegex(PolicyError, "registry for backend is not exact"):
             validate_policy(backend_324)
 
