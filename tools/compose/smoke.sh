@@ -733,27 +733,33 @@ fi
 #       structure-summary); component render-loop run: 4 (heading-summary,
 #       structure-summary, console-summary, failed-request-summary) = 10
 #   tests/e2e/review-surface.spec.ts: one run completed before the freeze,
-#     retained screenshot = 1
+#     retained screenshot = 1 (already inside the main-era 11-pair baseline;
+#     082-2-a commit 482506f9 raised the smoke literal from 10/5 to 22/11)
 #   tests/e2e/frozen-review-parity.spec.ts: one run completed, retained
 #     screenshot = 1 (its over-quota follow-up is refused 429 and retains
-#     nothing)
+#     nothing) - new in 083-5, the certain +1 over the main-era set
 #   tests/e2e/freeze-review-snapshot.spec.ts: one screenshot run that the
 #     freeze policy may leave COMPLETED (retains 1) or bounded-CANCELLED
 #     (retains 0); both are valid policy outcomes
-#   => 12..13 retained pairs (24..26 files). The main-era 11-pair baseline
-#      predates the review-surface and frozen-parity runs and is unreachable.
-# Coherence: every retained pair is a control.browser_artifact row and vice
-# versa (no orphan volume files, no missing retention).
+#   => fixed 12 pairs plus the 0/1 conditional freeze pair (24..26 files);
+#      the main-era 11-pair literal is incompatible with this finite map.
+# Volume<->DB identity: every volume pair is named
+# v1-<artifact_id>-<sha256> (services/browser-worker/src/artifact-store.ts)
+# and is matched one-to-one against control.browser_artifact rows (id,
+# sha256) - no orphan files, no missing retention; the kind histogram is
+# checked against the closed finite map.
 BROWSER_ARTIFACT_DB_TOTAL=$(docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif -Atc \
   "SELECT count(*) FROM control.browser_artifact")
 BROWSER_ARTIFACT_DB_KINDS=$(docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif -Atc \
-  "SELECT COALESCE(string_agg(kind || '=' || count(*), ',' ORDER BY kind), '') FROM (SELECT kind, count(*) FROM control.browser_artifact GROUP BY kind) k")
+  "SELECT COALESCE(string_agg(label, ',' ORDER BY label), '') FROM (SELECT kind || '=' || count(*) AS label FROM control.browser_artifact GROUP BY kind) k")
+BROWSER_ARTIFACT_DB_STEMS=$(docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif -Atc \
+  "SELECT COALESCE(string_agg('v1-' || replace(id::text, '-', '') || '-' || sha256, ',' ORDER BY 1), '') FROM control.browser_artifact")
 test -n "$BROWSER_ARTIFACT_DB_TOTAL"
 BROWSER_ARTIFACT_BASELINE=$(docker run --rm --network none --read-only --cap-drop ALL --cap-add DAC_READ_SEARCH \
   --user 0:0 --volume "${PROJECT}_browser-artifacts:/artifacts:ro" \
   --entrypoint python slaif-agent-site-backend:local -c \
-  "import pathlib,stat,sys; root=pathlib.Path('/artifacts'); info=root.stat(); files=sorted(root.iterdir()); n=len(files); assert stat.S_IMODE(info.st_mode)==0o700 and info.st_uid==10001 and info.st_gid==10001; assert n in (24,26) and n%2==0; assert sum(p.suffix=='.bin' for p in files)==n//2 and sum(p.suffix=='.json' for p in files)==n//2; assert all(p.is_file() and not p.is_symlink() and stat.S_IMODE(p.stat().st_mode)==0o600 and p.stat().st_uid==10001 and p.stat().st_nlink==1 for p in files); assert not any(marker in p.read_bytes() for p in files for marker in (b'sbp1.',b'sbws1:',b'sas2_')); db_total=int(sys.argv[1]); kinds=dict(kv.split('=',1) for kv in sys.argv[2].split(',')) if sys.argv[2] else {}; fixed={'structure-summary':'3','console-summary':'2','failed-request-summary':'2','heading-summary':'2'}; assert all(kinds.get(k)==v for k,v in fixed.items()); assert kinds.get('screenshot') in ('3','4'); assert sum(int(v) for v in kinds.values())==db_total==n//2; print(n)" \
-  "$BROWSER_ARTIFACT_DB_TOTAL" "$BROWSER_ARTIFACT_DB_KINDS")
+  "import pathlib,stat,sys; root=pathlib.Path('/artifacts'); info=root.stat(); files=sorted(root.iterdir()); n=len(files); assert stat.S_IMODE(info.st_mode)==0o700 and info.st_uid==10001 and info.st_gid==10001; assert n in (24,26) and n%2==0; assert sum(p.suffix=='.bin' for p in files)==n//2 and sum(p.suffix=='.json' for p in files)==n//2; assert all(p.is_file() and not p.is_symlink() and stat.S_IMODE(p.stat().st_mode)==0o600 and p.stat().st_uid==10001 and p.stat().st_nlink==1 for p in files); assert not any(marker in p.read_bytes() for p in files for marker in (b'sbp1.',b'sbws1:',b'sas2_')); kinds=dict(kv.split('=',1) for kv in sys.argv[2].split(',')) if sys.argv[2] else {}; assert set(kinds)=={'screenshot','structure-summary','console-summary','failed-request-summary','heading-summary'}; fixed={'structure-summary':'3','console-summary':'2','failed-request-summary':'2','heading-summary':'2'}; assert all(kinds[k]==v for k,v in fixed.items()); assert kinds['screenshot'] in ('3','4'); assert sum(int(v) for v in kinds.values())==int(sys.argv[1]); db_stems=set(sys.argv[3].split(',')) if sys.argv[3] else set(); stems={p.with_suffix('').name for p in files if p.suffix in ('.bin','.json')}; assert len(stems)==int(sys.argv[1]); assert stems==db_stems; assert n==2*len(stems); print(n)" \
+  "$BROWSER_ARTIFACT_DB_TOTAL" "$BROWSER_ARTIFACT_DB_KINDS" "$BROWSER_ARTIFACT_DB_STEMS")
 test -n "$BROWSER_ARTIFACT_BASELINE"
 echo "browser-artifact-root-policy: OK retained-files=$BROWSER_ARTIFACT_BASELINE retained-pairs=$((BROWSER_ARTIFACT_BASELINE / 2)) db-artifacts=$BROWSER_ARTIFACT_DB_TOTAL fixture-map=12plus-conditional-freeze mode=0600 owner=10001"
 
