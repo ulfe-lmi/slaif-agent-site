@@ -12,6 +12,7 @@ import {
   type Browser,
   type Locator,
   type Page,
+  type TestInfo,
 } from "@playwright/test";
 
 import { expectPrivateHeaders, login, observe, secrets, type Secrets } from "./support";
@@ -963,6 +964,42 @@ interface PhaseResult {
   combos: Array<{ engine: EngineName; target: TargetName; version: string }>;
 }
 
+/**
+ * 600s ceiling diagnostics: keeps exactly ONE `stage` annotation
+ * (the CI SafeReporter reads the first via find) and replaces its
+ * description in place at each phase boundary, so a timeout reports
+ * the last reached stage.  The description carries ONLY phase,
+ * engine, target, route ordinal, action and cumulative ms - no URLs,
+ * IDs, tokens or growing annotation list.
+ */
+type StageDetail = {
+  engine?: string;
+  target?: string;
+  route?: number;
+  action?: string;
+};
+function makeStageTracker(info: TestInfo) {
+  const startedAt = Date.now();
+  return (phase: string, detail?: StageDetail): void => {
+    const entry = {
+      type: "stage",
+      description: [
+        `phase=${phase}`,
+        detail?.engine ? `engine=${detail.engine}` : "",
+        detail?.target ? `target=${detail.target}` : "",
+        detail?.route !== undefined ? `route=${detail.route}` : "",
+        `action=${detail?.action ?? "enter"}`,
+        `elapsed=${Date.now() - startedAt}ms`,
+      ]
+        .filter(Boolean)
+        .join(" "),
+    };
+    const index = info.annotations.findIndex((a) => a.type === "stage");
+    if (index >= 0) info.annotations[index] = entry;
+    else info.annotations.push(entry);
+  };
+}
+
 async function runPhase(
   browsers: Record<EngineName, Browser>,
   phase: "preview" | "review",
@@ -971,10 +1008,16 @@ async function runPhase(
   siteKey: string,
   credential: Secrets,
   snapshotDigest: string | null,
+  onStage?: (detail: StageDetail) => void,
 ): Promise<PhaseResult> {
   const keys = new Map<string, string>();
   const combos: PhaseResult["combos"] = [];
   for (const pairing of MATRIX) {
+    onStage?.({
+      engine: pairing.engine,
+      target: pairing.target,
+      action: "combo",
+    });
     const context = await browsers[pairing.engine].newContext({
       ...devices[pairing.target],
       baseURL: "http://localhost:8080",
@@ -986,7 +1029,15 @@ async function runPhase(
       // contexts hold no cookies of their own, and the private pages
       // and same-path POST form require the session.
       await login(page, credential);
+      let routeOrdinal = 0;
       for (const route of ROUTES) {
+        onStage?.({
+          engine: pairing.engine,
+          target: pairing.target,
+          route: routeOrdinal,
+          action: "route",
+        });
+        routeOrdinal += 1;
         const response = await page.goto(`${base}${route}`);
         expect(response?.status(), `${phase} ${pairing.target} ${route}`).toBe(200);
         expectPrivateHeaders(response!);
@@ -1003,7 +1054,17 @@ async function runPhase(
         }
         keys.set(`${pairing.engine}/${pairing.target} :: ${route}`, contentKey(facts));
       }
+      onStage?.({
+        engine: pairing.engine,
+        target: pairing.target,
+        action: "controls",
+      });
       await formSequence(page, `${base}/news`);
+      onStage?.({
+        engine: pairing.engine,
+        target: pairing.target,
+        action: "locale-nav",
+      });
       await navigationProof(page, base);
     } finally {
       expect(failures(), `${phase} ${pairing.engine}/${pairing.target}`).toEqual([]);
@@ -1331,10 +1392,16 @@ async function canonicalPhase(
   browsers: Record<EngineName, Browser>,
   base: string,
   siteKey: string,
+  onStage?: (detail: StageDetail) => void,
 ): Promise<PhaseResult> {
   const keys = new Map<string, string>();
   const combos: PhaseResult["combos"] = [];
   for (const pairing of MATRIX) {
+    onStage?.({
+      engine: pairing.engine,
+      target: pairing.target,
+      action: "combo",
+    });
     const context = await browsers[pairing.engine].newContext({
       ...devices[pairing.target],
       baseURL: ORIGIN,
@@ -1342,7 +1409,15 @@ async function canonicalPhase(
     const page = await context.newPage();
     const failures = observe(page);
     try {
+      let routeOrdinal = 0;
       for (const route of ROUTES) {
+        onStage?.({
+          engine: pairing.engine,
+          target: pairing.target,
+          route: routeOrdinal,
+          action: "route",
+        });
+        routeOrdinal += 1;
         const response = await page.goto(`${base}${route}`);
         expect(response?.status(), `canonical ${pairing.target} ${route}`).toBe(200);
         if (route === "/") {
@@ -1357,7 +1432,17 @@ async function canonicalPhase(
         assertCanonical(route, facts, siteKey);
         keys.set(`${pairing.engine}/${pairing.target} :: ${route}`, contentKey(facts));
       }
+      onStage?.({
+        engine: pairing.engine,
+        target: pairing.target,
+        action: "controls",
+      });
       await canonicalControlSequence(page, `${base}/news`);
+      onStage?.({
+        engine: pairing.engine,
+        target: pairing.target,
+        action: "locale-nav",
+      });
       await navigationProof(page, base);
     } finally {
       expect(failures(), `canonical ${pairing.engine}/${pairing.target}`).toEqual([]);
@@ -1380,6 +1465,10 @@ test("frozen-review-parity-six-stable-pairings", async () => {
   const project = composeProject();
   const tag = randomHex(4);
   const idem = () => `fpar-${tag}-${crypto.randomUUID().slice(0, 8)}`;
+  // 600s ceiling diagnostics: the single in-place-replaced stage marker.
+  const stage = makeStageTracker(test.info());
+  stage("setup");
+  let bodyCompleted = false;
 
   const browsers: Record<EngineName, Browser> = {
     chromium: await chromium.launch(),
@@ -1396,6 +1485,7 @@ test("frozen-review-parity-six-stable-pairings", async () => {
       baseURL: "http://localhost:8080",
     });
     const setupPage = await setupContext.newPage();
+    stage("setup", { action: "login" });
     await login(setupPage, credential);
     const contextCookies = await setupContext.cookies();
     const csrf = contextCookies.find((c) => c.name === "slaif_csrf")?.value;
@@ -1403,6 +1493,7 @@ test("frozen-review-parity-six-stable-pairings", async () => {
     const api = setupPage.request;
 
     // ------------------------------------------------------- trusted setup
+    stage("setup", { action: "seed" });
     const { siteId, siteKey } = seedParitySite(project);
 
     const workspaceResponse = await api.post(
@@ -1457,6 +1548,7 @@ test("frozen-review-parity-six-stable-pairings", async () => {
       });
 
     // ------------------------------------------------- public Agent capture
+    stage("api", { action: "capture" });
     const newsSlug = `fpar-${tag}`;
     const typeDoc = await agentRecord("/api/agent/v1/content-model/types", {
       key: `oap_fpar_${tag}`,
@@ -1789,6 +1881,7 @@ test("frozen-review-parity-six-stable-pairings", async () => {
     const reviewBase = `/review/${workspaceId}/s/${siteKey}`;
 
     // ----------------------------------------------------------- phase A
+    stage("phaseA", { action: "enter" });
     const phaseAStart = Date.now();
     const previewPhase = await runPhase(
       browsers,
@@ -1798,8 +1891,10 @@ test("frozen-review-parity-six-stable-pairings", async () => {
       siteKey,
       credential,
       null,
+      (detail) => stage("phaseA", detail),
     );
     const phaseADurationMs = Date.now() - phaseAStart;
+    stage("api", { action: "preview-media" });
 
     // active private bytes BEFORE freeze (workspace-scoped namespace)
     const previewPng = await api.get(
@@ -1825,6 +1920,7 @@ test("frozen-review-parity-six-stable-pairings", async () => {
     // the human flow uses: the existing SiteResolver local branch
     // resolves the run-unique site from the authority host without any
     // domain row, and the signed credential binds exactly that route.
+    stage("worker", { action: "run" });
     const runCreated = await api.post("/api/agent/v1/preview-runs", {
       headers: { Authorization: `Bearer ${token}`, "Idempotency-Key": idem() },
       data: {
@@ -1866,6 +1962,7 @@ test("frozen-review-parity-six-stable-pairings", async () => {
       }>;
       failures: Array<{ mediaId: string; status: string }>;
     }
+    stage("worker", { action: "wait-complete" });
     let boundMedia: BoundMediaSummary | undefined;
     const runDeadline = Date.now() + 240_000;
     for (;;) {
@@ -1958,11 +2055,13 @@ test("frozen-review-parity-six-stable-pairings", async () => {
     await assertRefusals(api, previewBase, siteKey, "preview");
 
     // ------------------------------------------------------------ freeze
+    stage("freeze", { action: "request" });
     const freeze = await api.post(
       `/api/control/v1/sites/${siteId}/workspaces/${workspaceId}/freeze/`,
       { headers: { "X-CSRF-Token": csrf! } },
     );
     expect(freeze.status()).toBe(202);
+    stage("freeze", { action: "wait-review" });
     const deadline = Date.now() + 240_000;
     let status = "";
     for (;;) {
@@ -2058,6 +2157,7 @@ test("frozen-review-parity-six-stable-pairings", async () => {
     ).toBe("1");
 
     // ------------------------------------------------------------- review
+    stage("review", { action: "read" });
     const reviewResponse = await api.get(
       `/api/control/v1/sites/${siteId}/workspaces/${workspaceId}/review/`,
     );
@@ -2092,6 +2192,7 @@ test("frozen-review-parity-six-stable-pairings", async () => {
     ]);
 
     // -------------------------------------------------------- phase B
+    stage("phaseB", { action: "enter" });
     const phaseBStart = Date.now();
     const reviewPhase = await runPhase(
       browsers,
@@ -2101,6 +2202,7 @@ test("frozen-review-parity-six-stable-pairings", async () => {
       siteKey,
       credential,
       reviewDoc.snapshot.digest,
+      (detail) => stage("phaseB", detail),
     );
     const phaseBDurationMs = Date.now() - phaseBStart;
 
@@ -2189,6 +2291,7 @@ test("frozen-review-parity-six-stable-pairings", async () => {
         `SELECT canonical_revision FROM control.site WHERE id = '${siteId}'`,
       ),
     );
+    stage("w2", { action: "create" });
     const w2Created = await api.post(`/api/control/v1/sites/${siteId}/workspaces/`, {
       headers: { "X-CSRF-Token": csrf!, "Idempotency-Key": `fpar-${tag}-w2` },
       data: {
@@ -2228,6 +2331,7 @@ test("frozen-review-parity-six-stable-pairings", async () => {
     };
     expect(w2ThemeRecord.palette.preset, "default theme preset").toBe("ocean");
     expect(w2ThemeRecord.row_version, "theme row version").toBeGreaterThan(0);
+    stage("w2", { action: "theme" });
     const w2ThemePatch = await api.patch("/api/agent/v1/theme", {
       headers: {
         Authorization: `Bearer ${w2Token}`,
@@ -2245,11 +2349,13 @@ test("frozen-review-parity-six-stable-pairings", async () => {
     };
     expect(w2ThemeResult.record.palette.preset, "theme change landed").toBe("ember");
     expect(w2ThemeResult.action, "theme action").toBe("THEME_UPDATED");
+    stage("w2", { action: "freeze" });
     const w2Freeze = await api.post(
       `/api/control/v1/sites/${siteId}/workspaces/${w2Id}/freeze/`,
       { headers: { "X-CSRF-Token": csrf! } },
     );
     expect(w2Freeze.status(), "W2 freeze").toBe(202);
+    stage("w2", { action: "freeze-wait" });
     let w2Status = "";
     const w2FreezeDeadline = Date.now() + 240_000;
     for (;;) {
@@ -2271,11 +2377,13 @@ test("frozen-review-parity-six-stable-pairings", async () => {
     expect(w2SnapshotId, "W2 snapshot id").toMatch(/^[0-9a-f-]{36}$/i);
     // Re-authenticate immediately before the two recent-auth-gated
     // transitions (the existing 900s window, same authority).
+    stage("w2", { action: "reauth" });
     await login(setupPage, credential);
     const refreshedCsrf = (await setupContext.cookies()).find(
       (c) => c.name === "slaif_csrf",
     )?.value;
     expect(refreshedCsrf, "refreshed csrf cookie").toBeTruthy();
+    stage("w2", { action: "accept" });
     const w2Accept = await api.post(
       `/api/control/v1/sites/${siteId}/workspaces/${w2Id}/accept/`,
       {
@@ -2288,6 +2396,7 @@ test("frozen-review-parity-six-stable-pairings", async () => {
       },
     );
     expect(w2Accept.status(), "W2 accept").toBe(202);
+    stage("w2", { action: "accept-wait" });
     let w2Terminal = "";
     const w2AcceptDeadline = Date.now() + 240_000;
     for (;;) {
@@ -2394,6 +2503,7 @@ test("frozen-review-parity-six-stable-pairings", async () => {
     // W1's pending COW operations NONEMPTY before its real terminal
     // discard, so the after-empty proof cannot be vacuous (an
     // always-empty or wrong-workspace helper would fail here).
+    stage("terminal", { action: "pending-check" });
     const pendingBefore = pendingOperations(project, workspaceId);
     for (const operation of pendingBefore)
       expect(operation, "W1 pending operation id").toMatch(/^[0-9a-f-]{36}$/i);
@@ -2402,6 +2512,7 @@ test("frozen-review-parity-six-stable-pairings", async () => {
       "W1 pending operations nonempty before discard",
     ).toBeGreaterThan(0);
     // Real terminal discard of W1 + repeated retained checks.
+    stage("terminal", { action: "discard" });
     const w1Discard = await api.post(
       `/api/control/v1/sites/${siteId}/workspaces/${workspaceId}/discard/`,
       {
@@ -2410,6 +2521,7 @@ test("frozen-review-parity-six-stable-pairings", async () => {
       },
     );
     expect(w1Discard.status(), "W1 discard").toBe(202);
+    stage("terminal", { action: "cleanup-wait" });
     let w1Terminal = "";
     const w1DiscardDeadline = Date.now() + 240_000;
     for (;;) {
@@ -2475,6 +2587,7 @@ test("frozen-review-parity-six-stable-pairings", async () => {
     // exact original uploaded bytes with the private frozen-
     // namespace headers.  Terminal status alone does not prove an
     // empty pending operation set.
+    stage("terminal", { action: "post-bytes" });
     const postTerminalPng = await api.get(
       `/media/v1/review/${snapshotId}/assets/${pngMediaId}/content`,
     );
@@ -2544,6 +2657,7 @@ test("frozen-review-parity-six-stable-pairings", async () => {
     // referenced (W1 is terminal-discarded; its private media never
     // enters this fixture).
     const canonicalBase = `/s/${siteKey}`;
+    stage("canonical", { action: "seed" });
     seedCanonicalFixture(project, siteId, tag);
     const canonicalSetup = await api.get(canonicalBase);
     expect(canonicalSetup.status(), "canonical setup render").toBe(200);
@@ -2552,7 +2666,13 @@ test("frozen-review-parity-six-stable-pairings", async () => {
     // surface, plus the retained supported controls and the
     // forward/reverse locale link clicks repeated per pairing AFTER
     // the real W1 terminal discard + pending cleanup.
-    const canonicalProof = await canonicalPhase(browsers, canonicalBase, siteKey);
+    stage("canonical", { action: "enter" });
+    const canonicalProof = await canonicalPhase(
+      browsers,
+      canonicalBase,
+      siteKey,
+      (detail) => stage("canonical", detail),
+    );
     expect(canonicalProof.keys.size).toBe(MATRIX.length * ROUTES.length);
     expect(canonicalProof.combos).toHaveLength(MATRIX.length);
     const canonicalPairs = new Set(
@@ -2578,7 +2698,9 @@ test("frozen-review-parity-six-stable-pairings", async () => {
           "honest initial canonical test-data seed (trusted psql setup; not online publication evidence)",
       },
     );
+    bodyCompleted = true;
   } finally {
+    if (bodyCompleted) stage("cleanup", { action: "close" });
     for (const browser of Object.values(browsers)) await browser.close();
   }
 });

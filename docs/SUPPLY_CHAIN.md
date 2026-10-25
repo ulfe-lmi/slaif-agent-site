@@ -131,13 +131,13 @@ Grype scans that checksummed document; the index links both forms.
 
 The browser worker uses the digest-pinned official Playwright 1.62.1 Noble
 image, Node 24.18.1, exact `playwright-core==1.62.1`, and Chrome for Testing
-`155.0.8059.84` at CfT revision `1697595`. The exact linux/amd64 archive is
+`156.0.8078.47` at CfT revision `1706539`. The exact linux/amd64 archive is
 SHA-256 verified before
 extraction by the bounded source-controlled parser. Its runtime removes
 Firefox, WebKit, the duplicate Chromium
 headless shell, ffmpeg, npm, and Corepack. Evidence requires the worker package
 and `playwright-core`, rejects Firefox/WebKit inventory, and hashes the retained
-`/ms-playwright/chromium-1697595` tree during both clean image builds. The separate
+`/ms-playwright/chromium-1706539` tree during both clean image builds. The separate
 root E2E runner still installs all three test-only browser families outside the
 product image.
 
@@ -156,8 +156,11 @@ The Apache adapter uses the official
 `httpd:2.4.68-trixie@sha256:979c38c2228d28c2edfd45c6e27dcee1c7b4a101a5526721ae8ece454e89e99e`
 multi-platform image. Its deterministic Debian Trixie package overlay pins
 `libaprutil1-ldap`/`libaprutil1t64` 1.6.3-3+deb13u1 and OpenSSL
-3.5.7-1~deb13u2. The other Alpine
-images retain their independently qualified 3.23 package sources. The Apache
+3.5.7-1~deb13u2. The NGINX edge base moves to Alpine 3.24
+(`nginx:1.30.6-alpine3.24`), whose overlay pins `brotli-libs=1.2.1-r0` beside
+the exact OpenSSL fix packages from the base's own v3.24 repositories; the
+backend, PostgreSQL, and Web overlays retain their independently qualified
+3.23 package sources. The Apache
 image is accepted only after two reproducible builds, parity, SBOM/license
 evidence, and a current Grype scan with zero unexcepted Critical findings.
 
@@ -168,8 +171,8 @@ with standard Ubuntu Apache 2.4 security packages and glibc 2.39-0ubuntu8.8.
 The normalized Apache application-file boundary is `/etc/apache2/` for this
 base-image layout.
 The PostgreSQL 18.6 Alpine 3.23 overlay keeps the official base and pins the
-standard-repository security package `libcurl=8.22.0-r0` alongside the existing
-OpenSSL pins.
+standard-repository security packages `brotli-libs=1.2.1-r0` and
+`libcurl=8.22.0-r0` alongside the existing OpenSSL pins.
 
 ## Vulnerability gate and database freshness
 
@@ -190,9 +193,13 @@ findings in that older payload. The 152.0.7977.82 qualification and finding set
 remain historical evidence in
 [`supply-chain/browser-worker-critical-matrix.json`](../supply-chain/browser-worker-critical-matrix.json)
 while the active maintenance qualification uses Chrome for Testing
-`155.0.8059.84` at CfT revision `1697595`. The 078-t attempt is retained as
-unqualified coverage-gap evidence; 078-u records the measured component in the
-remote CI bundle and passes the exact six-image scan. The closed risk record remains at
+`156.0.8078.47` at CfT revision `1706539` (083-5-c runs its own fresh
+six-image qualification for that pin). The 078-t attempt is retained as
+unqualified coverage-gap evidence; 078-u records the measured component for
+the then-current `153.0.8010.36` pin in the remote CI bundle and passed the
+exact six-image scan for that pin; the separate `155.0.8059.84`
+qualification (083-3, PR #102) remains candidate-8 history evidence. The
+closed risk record remains at
 [issue #67](https://github.com/ulfe-lmi/slaif-agent-site/issues/67); coding does
 not reopen it. Validation requires every non-empty exception set to match
 a current Critical finding's exact ID, PURL, and scope; unused, stale,
@@ -269,8 +276,11 @@ stale, near-match, and wrong-severity entries fail closed. A valid exception
 changes only the conclusion for that exact finding; it never removes the
 component or finding from evidence. Coding agents must not author an exception
 merely to make a gate green. The owner removed this exception after the official
-stable Chrome 152.0.7977.82 qualification; the current 155.0.8059.84
-maintenance qualification does not reopen issue #67 or claim release readiness.
+stable Chrome 152.0.7977.82 qualification; the later `153.0.8010.36`
+(078-u) and `155.0.8059.84` (083-3) maintenance qualifications remain
+historical evidence; the current pin is `156.0.8078.47`, whose fresh
+six-image qualification runs in 083-5-c without reopening issue #67 or
+claiming release readiness.
 
 An authorized update must preserve readable tags plus top-level digests,
 review source/license/signature metadata, update the machine policy and narrow

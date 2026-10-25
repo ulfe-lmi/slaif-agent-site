@@ -8075,6 +8075,14 @@ async def test_rc1_public_agent_and_editor_capture_retained_families(
                 observed["redirect"] = await ag_get(
                     f"/api/agent/v1/redirects/{ids['redirect']}"
                 )
+                # Trusted region projection (067_001 slaif_region_list):
+                # the stored header plus the deterministic trusted footer
+                # DEFAULT, read live BEFORE the freeze and separate from the
+                # snapshot under test.  The default footer id is derived
+                # server-side by the 067 default-id SQL (PostgreSQL md5, a
+                # non-security identifier), so this live read is the
+                # independent expected-value source for the frozen footer.
+                observed["regions"] = await ag_get("/api/agent/v1/global-regions")
 
         site = str(seeded["site_id"])
         base = f"/api/editor/v1/sites/{site}"
@@ -8806,8 +8814,8 @@ async def test_rc1_public_agent_and_editor_capture_retained_families(
         # The trusted region read (067_001 slaif_region_list) projects
         # header + footer; a missing stored row falls back to the
         # deterministic trusted DEFAULT (footer: single-column,
-        # {'links': [], 'note': ''}, md5-derived deterministic id (non-security
-        # identifier, usedforsecurity=False), row_version 1).
+        # {'links': [], 'note': ''}, a non-security identifier derived
+        # server-side by the 067_001 default-id SQL, row_version 1).
         # The capture must retain both rows, sorted by region_key.
         assert len(payload["regions"]) == 2
         assert all(set(row) == RC1_REGION_KEYS for row in payload["regions"])
@@ -8829,14 +8837,13 @@ async def test_rc1_public_agent_and_editor_capture_retained_families(
         assert footer_row["site_id"] == str(seeded["site_id"])
         assert footer_row["region_key"] == "footer"
         # The trusted default footer: deterministic id + closed shape.
-        assert footer_row["id"] == str(
-            UUID(
-                hashlib.md5(
-                    f"{seeded['site_id']}:footer".encode(),
-                    usedforsecurity=False,
-                ).hexdigest()
-            )
+        # Expected id from the live trusted region read above (F3, BEFORE
+        # the freeze), not recomputed with the Python stdlib in the test:
+        # the frozen capture must retain the exact canonical id.
+        observed_footer = next(
+            row for row in observed["regions"] if row["region_key"] == "footer"
         )
+        assert footer_row["id"] == observed_footer["id"]
         assert footer_row["variant"] == "single-column"
         assert footer_row["schema_version"] == "global-region/v1"
         assert footer_row["content"] == {"links": [], "note": ""}

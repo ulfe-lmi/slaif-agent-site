@@ -258,8 +258,20 @@ def validate_policy(policy: dict[str, Any]) -> None:
     overrides = policy["alpine_package_overrides"]
     if not isinstance(overrides, dict) or set(overrides) != {"images", "registry"}:
         raise PolicyError("policy: Alpine package overrides are malformed")
-    if overrides["registry"] != "https://dl-cdn.alpinelinux.org/alpine/v3.23":
+    global_registry = "https://dl-cdn.alpinelinux.org/alpine/v3.23"
+    if overrides["registry"] != global_registry:
         raise PolicyError("policy: Alpine package registry is not exact and approved")
+    # Exact effective registry per image.  NGINX is the only overlay that
+    # moves to Alpine 3.24 (its 1.30.6 base ships the v3.24 repositories);
+    # every other overlay stays on the global v3.23 registry.  nginx must
+    # state its v3.24 registry explicitly; any other value, on any image,
+    # is a foreign registry and fails closed.
+    expected_image_registries = {
+        "backend": global_registry,
+        "nginx": "https://dl-cdn.alpinelinux.org/alpine/v3.24",
+        "postgres": global_registry,
+        "web": global_registry,
+    }
     expected_override_images = {"backend", "nginx", "postgres", "web"}
     if (
         not isinstance(overrides["images"], dict)
@@ -269,10 +281,24 @@ def validate_policy(policy: dict[str, Any]) -> None:
             "policy: Alpine package override image coverage is incomplete"
         )
     for name, configuration in overrides["images"].items():
-        allowed_keys = {"install", "remove"}
-        if not isinstance(configuration, dict) or set(configuration) != allowed_keys:
+        allowed_keys = {"install", "remove", "registry"}
+        if (
+            not isinstance(configuration, dict)
+            or not {"install", "remove"} <= set(configuration)
+            or not set(configuration) <= allowed_keys
+        ):
             raise PolicyError(
                 f"policy: Alpine package overrides for {name} are malformed"
+            )
+        if name == "nginx" and "registry" not in configuration:
+            raise PolicyError(
+                "policy: nginx Alpine package registry override is required"
+            )
+        if "registry" in configuration and (
+            configuration["registry"] != expected_image_registries[name]
+        ):
+            raise PolicyError(
+                f"policy: Alpine package registry for {name} is not exact"
             )
         installed = configuration["install"]
         removed = configuration["remove"]
@@ -353,16 +379,16 @@ def validate_policy(policy: dict[str, Any]) -> None:
     if (
         browser_runtime["base_image"] != "playwright"
         or browser_runtime["playwright_core_version"] != "1.62.1"
-        or browser_runtime["chromium_revision"] != "1697595"
-        or browser_runtime["chromium_version"] != "155.0.8059.84"
+        or browser_runtime["chromium_revision"] != "1706539"
+        or browser_runtime["chromium_version"] != "156.0.8078.47"
         or browser_runtime["chromium_archive_url"]
-        != "https://storage.googleapis.com/chrome-for-testing-public/155.0.8059.84/linux64/chrome-linux64.zip"
+        != "https://storage.googleapis.com/chrome-for-testing-public/156.0.8078.47/linux64/chrome-linux64.zip"
         or browser_runtime["chromium_archive_sha256"]
-        != "cf0f049892dea22e6a6db26d47ed0d7776b7158edcbec4634086633df8bafcbc"
+        != "e6c94490f0b6b337225aeb2d2a5034858516b7017356980ba94f5176d8774a50"
         or browser_runtime["platform"] != "linux/amd64"
         or browser_runtime["node_version"] != "24.18.1"
         or browser_runtime["chromium_executable"]
-        != "/ms-playwright/chromium-1697595/chrome-linux64/chrome"
+        != "/ms-playwright/chromium-1706539/chrome-linux64/chrome"
         or browser_runtime["allowed_capabilities"] != ["SYS_CHROOT"]
         or browser_runtime["forbidden_product_browsers"] != ["firefox", "webkit"]
         or not SHA256.fullmatch(str(browser_runtime["seccomp_profile_sha256"]))
@@ -764,6 +790,18 @@ def validate_dependency_sources(root: Path, policy: dict[str, Any]) -> dict[str,
                 marker = f"apk del {package}"
             if marker not in dockerfile_text:
                 raise PolicyError(f"{name}: missing Alpine package removal {package}")
+        # Any explicit apk repository pin in the Dockerfile must stay
+        # within the image's exact effective policy registry (the global
+        # v3.23 default unless the image states its own approved one).
+        effective_registry = configuration.get(
+            "registry", policy["alpine_package_overrides"]["registry"]
+        )
+        for repository in set(re.findall(r"--repository=(\S+)", dockerfile_text)):
+            if not repository.startswith(effective_registry + "/"):
+                raise PolicyError(
+                    f"{name}: Dockerfile repository drifts from the policy "
+                    f"registry {effective_registry}"
+                )
 
     ubuntu_paths = {"apache": root / "infra/apache/Dockerfile"}
     for name, configuration in policy["ubuntu_package_overrides"]["images"].items():

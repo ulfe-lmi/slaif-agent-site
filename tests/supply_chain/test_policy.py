@@ -79,6 +79,48 @@ class SupplyChainPolicyTests(unittest.TestCase):
         with self.assertRaisesRegex(PolicyError, "evidence format contract"):
             validate_policy(incomplete_evidence)
 
+    def test_alpine_registry_override_is_exact_per_image(self) -> None:
+        v323 = "https://dl-cdn.alpinelinux.org/alpine/v3.23"
+        v324 = "https://dl-cdn.alpinelinux.org/alpine/v3.24"
+
+        missing_nginx = copy.deepcopy(self.policy)
+        del missing_nginx["alpine_package_overrides"]["images"]["nginx"]["registry"]
+        with self.assertRaisesRegex(PolicyError, "registry override is required"):
+            validate_policy(missing_nginx)
+
+        wrong_nginx = copy.deepcopy(self.policy)
+        wrong_nginx["alpine_package_overrides"]["images"]["nginx"]["registry"] = v323
+        with self.assertRaisesRegex(PolicyError, "registry for nginx is not exact"):
+            validate_policy(wrong_nginx)
+
+        foreign_nginx = copy.deepcopy(self.policy)
+        foreign_nginx["alpine_package_overrides"]["images"]["nginx"]["registry"] = (
+            "https://example.com/alpine/v3.24"
+        )
+        with self.assertRaisesRegex(PolicyError, "registry for nginx is not exact"):
+            validate_policy(foreign_nginx)
+
+        backend_324 = copy.deepcopy(self.policy)
+        backend_324["alpine_package_overrides"]["images"]["backend"]["registry"] = (
+            v324
+        )
+        with self.assertRaisesRegex(PolicyError, "registry for backend is not exact"):
+            validate_policy(backend_324)
+
+        postgres_foreign = copy.deepcopy(self.policy)
+        postgres_foreign["alpine_package_overrides"]["images"]["postgres"][
+            "registry"
+        ] = "https://example.com/alpine/v3.23"
+        with self.assertRaisesRegex(PolicyError, "registry for postgres is not exact"):
+            validate_policy(postgres_foreign)
+
+        web_foreign = copy.deepcopy(self.policy)
+        web_foreign["alpine_package_overrides"]["images"]["web"]["registry"] = (
+            "https://example.com/alpine/v3.24"
+        )
+        with self.assertRaisesRegex(PolicyError, "registry for web is not exact"):
+            validate_policy(web_foreign)
+
     def test_unknown_prohibited_and_explicit_review_licenses_fail_closed(self) -> None:
         base = {
             "direct": True,
@@ -414,7 +456,7 @@ class DependencySourceNegativeTests(unittest.TestCase):
         )
         self.replace(
             "infra/nginx/Dockerfile",
-            "nginx:1.29.7-alpine3.23@sha256:",
+            "nginx:1.30.6-alpine3.24@sha256:",
             "nginx:latest # removed-digest-",
         )
         self.assert_source_error("mutable image")

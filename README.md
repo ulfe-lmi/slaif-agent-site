@@ -114,12 +114,14 @@ promotion, publication, and final MVP claims.
 > runs with durable private artifact retrieval. Review snapshots, promotion,
 > publication, and public media finalization remain separate work.
 
-The supply-chain policy qualifies Chrome for Testing `155.0.8059.84` at CfT
-revision `1697595`, replacing the vulnerable `152.0.7977.82` payload. The
-078-t built and scanned the six images, but its apparent zero-Critical result
+The supply-chain policy pins Chrome for Testing `156.0.8078.47` at CfT
+revision `1706539` in the 083-5-c security closure, replacing the vulnerable
+`155.0.8059.84` payload. The 078-t built and scanned the six images, but its
+apparent zero-Critical result
 was unqualified because Syft omitted the Chrome 153 identity from the Grype
 input. The 078-u continuation closed that scanner-coverage gap with a
-measured, artifact-bound component; 078/3 was accepted and merged at
+measured, artifact-bound component for the then-current `153.0.8010.36` pin;
+078/3 was accepted and merged at
 `fe31c9f30a7797d0916ad7f8fb56344bc61526f3` in PR #80 on 2026-09-10. No
 vulnerability exception was added. Earlier qualifications remain historical
 evidence in
