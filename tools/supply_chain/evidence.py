@@ -32,7 +32,13 @@ HEX_ID = re.compile(r"sha256:[0-9a-f]{64}")
 SPDX_ID = re.compile(r"SPDXRef-[A-Za-z0-9.-]+")
 IMAGE_PREFIXES = {
     "apache": ("etc/apache2/",),
-    "backend": ("opt/slaif/",),
+    "backend": (
+        "opt/slaif/",
+        # 083-7-a: measured system-Python installer-removal coverage scopes
+        "usr/local/lib/python3.12/site-packages/",
+        "usr/local/lib/python3.12/ensurepip/",
+        "usr/local/bin/",
+    ),
     "browser-worker": ("opt/slaif/", "ms-playwright/chromium-1706539/"),
     "nginx": ("etc/nginx/nginx.conf",),
     "postgres": ("usr/local/bin/docker-entrypoint.sh",),
@@ -846,6 +852,105 @@ def normalize_runtime_file(
         raise PolicyError(f"{image_name}: cannot normalize {name}: {exc}") from exc
 
 
+BACKEND_GUARD_COVERAGE_PREFIXES = (
+    "opt/slaif/",
+    "usr/local/bin/",
+    "usr/local/lib/python3.12/ensurepip/",
+    "usr/local/lib/python3.12/site-packages/",
+)
+BACKEND_DIRECTORY_ANCHORS = (
+    "opt/slaif",
+    "opt/slaif/.venv",
+    "opt/slaif/.venv/lib/python3.12/site-packages",
+    "opt/slaif/.venv/lib/python3.12/site-packages/slaif_agent_site",
+    "opt/slaif/migrations",
+    "usr/local/bin",
+    "usr/local/lib/python3.12/ensurepip",
+    "usr/local/lib/python3.12/site-packages",
+)
+BACKEND_ENTRYPOINT_ANCHORS = (
+    "opt/slaif/.venv/bin/python",
+    "opt/slaif/alembic.ini",
+    "opt/slaif/bin/initialize-local-secrets.py",
+    "usr/local/bin/python3.12",
+)
+BACKEND_PIP_CODE_ROOT = "usr/local/lib/python3.12/site-packages/pip"
+BACKEND_PIP_DISTINFO = re.compile(
+    r"^usr/local/lib/python3\.12/site-packages/pip-.+\.dist-info(/.*)?$"
+)
+BACKEND_VENDOR_CERTIFI = re.compile(r"(?:^|.*/)_vendor/certifi(?:/.*)?$")
+BACKEND_BUNDLED_PREFIX = "usr/local/lib/python3.12/ensurepip/_bundled/"
+BACKEND_BUNDLED_PIP_WHEEL = re.compile(r"^pip-.+\.whl$")
+BACKEND_BIN_PIP_COMMAND = re.compile(r"^pip3?(\.\d+)?$")
+
+
+def _prefix_matches(name: str, prefix: str) -> bool:
+    """Directory prefixes (trailing slash) match the exact parent or a
+    slash-descendant; file prefixes match exactly so sibling-prefix
+    lookalikes never match."""
+    if prefix.endswith("/"):
+        return name == prefix[:-1] or name.startswith(prefix)
+    return name == prefix
+
+
+def backend_installer_guard(manifest: dict[str, Any], image_name: str) -> None:
+    """Fail-closed backend guard on the checksummed merged-filesystem
+    manifest: measured application/interpreter anchors must exist as real
+    entries, while system pip code, pip distribution metadata, pip commands
+    and the ensurepip bootstrap pip wheel (including pip's vendored certifi
+    under the pip code root) must be absent."""
+    if image_name != "backend":
+        return
+    missing = set(BACKEND_GUARD_COVERAGE_PREFIXES) - set(manifest.get("prefixes", []))
+    if missing:
+        raise PolicyError(
+            "backend: rootfs manifest lacks installer-guard coverage prefixes: "
+            + ", ".join(sorted(missing))
+        )
+    entries = manifest.get("entries")
+    if not isinstance(entries, list) or not entries:
+        raise PolicyError("backend: rootfs manifest entries are missing or empty")
+    by_path: dict[str, dict[str, Any]] = {}
+    for entry in entries:
+        if not isinstance(entry, dict) or not isinstance(entry.get("path"), str):
+            raise PolicyError("backend: rootfs manifest entry is malformed")
+        path = entry["path"]
+        if path in by_path:
+            raise PolicyError(f"backend: duplicate rootfs path {path}")
+        by_path[path] = entry
+    for anchor in BACKEND_DIRECTORY_ANCHORS:
+        entry = by_path.get(anchor)
+        if entry is None or entry.get("kind") != "directory":
+            raise PolicyError(
+                f"backend: required directory anchor {anchor!r} is missing or "
+                "not a real directory"
+            )
+    for anchor in BACKEND_ENTRYPOINT_ANCHORS:
+        entry = by_path.get(anchor)
+        if entry is None or entry.get("kind") not in {"file", "symlink"}:
+            raise PolicyError(
+                f"backend: required entrypoint anchor {anchor!r} is missing"
+            )
+    for entry in entries:
+        path = entry["path"]
+        if path == BACKEND_PIP_CODE_ROOT or path.startswith(
+            BACKEND_PIP_CODE_ROOT + "/"
+        ):
+            raise PolicyError(f"backend: system pip code present at {path}")
+        if BACKEND_PIP_DISTINFO.fullmatch(path):
+            raise PolicyError(
+                f"backend: system pip distribution metadata present at {path}"
+            )
+        if BACKEND_VENDOR_CERTIFI.fullmatch(path):
+            raise PolicyError(f"backend: vendored certifi fragment present at {path}")
+        if path.startswith(BACKEND_BUNDLED_PREFIX):
+            if BACKEND_BUNDLED_PIP_WHEEL.fullmatch(path.rsplit("/", 1)[-1]):
+                raise PolicyError(f"backend: bootstrap pip wheel present at {path}")
+        if path.startswith("usr/local/bin/"):
+            if BACKEND_BIN_PIP_COMMAND.fullmatch(path.rsplit("/", 1)[-1]):
+                raise PolicyError(f"backend: system pip command present at {path}")
+
+
 def rootfs_manifest(archive: Path, image_name: str) -> dict[str, Any]:
     prefixes = IMAGE_PREFIXES.get(image_name)
     if prefixes is None:
@@ -854,9 +959,7 @@ def rootfs_manifest(archive: Path, image_name: str) -> dict[str, Any]:
     with tarfile.open(archive, mode="r:*") as rootfs:
         for member in rootfs:
             name = member.name.lstrip("./")
-            if not any(
-                name == prefix or name.startswith(prefix) for prefix in prefixes
-            ):
+            if not any(_prefix_matches(name, prefix) for prefix in prefixes):
                 continue
             kind = "other"
             digest: str | None = None
@@ -1114,6 +1217,10 @@ def finalize_bundle(root: Path, revision: str) -> dict[str, Any]:
     matched_critical: set[tuple[str, str, str]] = set()
     for image_name, configured in sorted(policy["required_images"].items()):
         metadata = load_json(root / f"images/{image_name}.json")
+        if image_name == "backend":
+            backend_installer_guard(
+                load_json(root / "manifests/backend.files.json"), "backend"
+            )
         validate_labels(image_name, metadata, revision)
         sbom_path = root / f"sboms/{image_name}.spdx.json"
         scan_sbom_path = root / f"scan-sboms/{image_name}.syft.json"
@@ -1321,6 +1428,12 @@ def validate_bundle(root: Path) -> None:
     )
     if indexed_browser != browser_inventory:
         raise PolicyError("index.json: browser inventory identity drift")
+    indexed = sorted(
+        str(item.get("image", "")) for item in index["images"] if isinstance(item, dict)
+    )
+    if indexed != sorted(policy["required_images"]):
+        raise PolicyError("index.json: image coverage is incomplete or duplicated")
+    backend_installer_guard(load_json(root / "manifests/backend.files.json"), "backend")
     scan_bundle_forbidden_content(root, policy)
 
 

@@ -13,8 +13,10 @@ from pathlib import Path
 
 from tools.supply_chain.evidence import (
     FIXED_CREATED,
+    IMAGE_PREFIXES,
     add_browser_identity_to_spdx,
     add_browser_identity_to_syft,
+    backend_installer_guard,
     docker_archive_config_id,
     finalize_bundle,
     normalize_database_status,
@@ -227,6 +229,77 @@ class EvidenceTests(unittest.TestCase):
                     },
                 },
             )
+        (self.root / "manifests").mkdir(exist_ok=True)
+        for image in self.policy["required_images"]:
+            if image == "backend":
+                document = self.backend_manifest_doc(self.healthy_backend_entries())
+            else:
+                document = self.generic_manifest_doc(image)
+            write_json(self.root / f"manifests/{image}.files.json", document)
+
+    def manifest_entry(
+        self, path: str, kind: str, target: str | None = None
+    ) -> dict[str, object]:
+        return {
+            "kind": kind,
+            "mode": "0755",
+            "normalized_fields": [],
+            "path": path,
+            "sha256": sha256_bytes(b"synthetic-entry") if kind == "file" else None,
+            "size": 12 if kind == "file" else 0,
+            "target": target,
+        }
+
+    def backend_manifest_doc(
+        self, entries: list[dict[str, object]]
+    ) -> dict[str, object]:
+        return {
+            "entries": sorted(entries, key=lambda item: item["path"]),
+            "image": "backend",
+            "prefixes": list(IMAGE_PREFIXES["backend"]),
+            "schema_version": 1,
+        }
+
+    def healthy_backend_entries(self) -> list[dict[str, object]]:
+        return [
+            self.manifest_entry("opt/slaif", "directory"),
+            self.manifest_entry("opt/slaif/.venv", "directory"),
+            self.manifest_entry(
+                "opt/slaif/.venv/bin/python",
+                "symlink",
+                target="/usr/local/bin/python3",
+            ),
+            self.manifest_entry(
+                "opt/slaif/.venv/lib/python3.12/site-packages", "directory"
+            ),
+            self.manifest_entry(
+                "opt/slaif/.venv/lib/python3.12/site-packages/slaif_agent_site",
+                "directory",
+            ),
+            self.manifest_entry("opt/slaif/alembic.ini", "file"),
+            self.manifest_entry("opt/slaif/bin/initialize-local-secrets.py", "file"),
+            self.manifest_entry("opt/slaif/migrations", "directory"),
+            self.manifest_entry("usr/local/bin", "directory"),
+            self.manifest_entry(
+                "usr/local/bin/python3", "symlink", target="python3.12"
+            ),
+            self.manifest_entry("usr/local/bin/python3.12", "file"),
+            self.manifest_entry("usr/local/lib/python3.12/ensurepip", "directory"),
+            self.manifest_entry(
+                "usr/local/lib/python3.12/ensurepip/__init__.py", "file"
+            ),
+            self.manifest_entry("usr/local/lib/python3.12/site-packages", "directory"),
+        ]
+
+    def generic_manifest_doc(self, image: str) -> dict[str, object]:
+        prefix = IMAGE_PREFIXES[image][0]
+        entry_path = prefix + "application.bin" if prefix.endswith("/") else prefix
+        return {
+            "entries": [self.manifest_entry(entry_path, "file")],
+            "image": image,
+            "prefixes": list(IMAGE_PREFIXES[image]),
+            "schema_version": 1,
+        }
 
     def test_spdx_and_image_metadata_normalization(self) -> None:
         document = {
@@ -604,6 +677,262 @@ class EvidenceTests(unittest.TestCase):
             )
             digests.append(entry["sha256"])
         self.assertNotEqual(digests[0], digests[1])
+
+    def test_backend_installer_guard_rejects_returned_installer_copies(self) -> None:
+        healthy = self.backend_manifest_doc(self.healthy_backend_entries())
+        backend_installer_guard(healthy, "backend")
+
+        def with_mutations(mutations: list[dict[str, object]]) -> dict[str, object]:
+            return self.backend_manifest_doc(self.healthy_backend_entries() + mutations)
+
+        cases = {
+            "installed pip": (
+                [
+                    self.manifest_entry(
+                        "usr/local/lib/python3.12/site-packages/pip", "directory"
+                    ),
+                    self.manifest_entry(
+                        "usr/local/lib/python3.12/site-packages/pip/_vendor/certifi/cacert.pem",
+                        "file",
+                    ),
+                ],
+                "system pip code",
+            ),
+            "partial vendor removal": (
+                [
+                    self.manifest_entry(
+                        "usr/local/lib/python3.12/site-packages/pip/_vendor/certifi/__init__.py",
+                        "file",
+                    ),
+                ],
+                "system pip code",
+            ),
+            "retained metadata": (
+                [
+                    self.manifest_entry(
+                        "usr/local/lib/python3.12/site-packages/pip-25.0.1.dist-info",
+                        "directory",
+                    ),
+                    self.manifest_entry(
+                        "usr/local/lib/python3.12/site-packages/pip-25.0.1.dist-info/METADATA",
+                        "file",
+                    ),
+                ],
+                "distribution metadata",
+            ),
+            "ensurepip vendor certifi": (
+                [
+                    self.manifest_entry(
+                        "usr/local/lib/python3.12/ensurepip/_vendor/certifi/cacert.pem",
+                        "file",
+                    ),
+                ],
+                "vendored certifi",
+            ),
+            "venv orphan vendor certifi": (
+                [
+                    self.manifest_entry(
+                        "opt/slaif/.venv/lib/python3.12/site-packages/orphan/"
+                        "_vendor/certifi/cacert.pem",
+                        "file",
+                    ),
+                ],
+                "vendored certifi",
+            ),
+            "bootstrap wheel": (
+                [
+                    self.manifest_entry(
+                        "usr/local/lib/python3.12/ensurepip/_bundled/pip-25.0.1-py3-none-any.whl",
+                        "file",
+                    ),
+                ],
+                "bootstrap pip wheel",
+            ),
+            "pip commands": (
+                [
+                    self.manifest_entry("usr/local/bin/pip", "symlink", target="pip3"),
+                    self.manifest_entry("usr/local/bin/pip3", "file"),
+                    self.manifest_entry("usr/local/bin/pip3.12", "file"),
+                ],
+                "pip command",
+            ),
+        }
+        for label, (mutations, message) in cases.items():
+            with self.subTest(label=label):
+                with self.assertRaisesRegex(PolicyError, message):
+                    backend_installer_guard(with_mutations(mutations), "backend")
+
+        # A standalone certifi package is not a vendor fragment: it passes.
+        standalone = self.backend_manifest_doc(
+            self.healthy_backend_entries()
+            + [
+                self.manifest_entry(
+                    "usr/local/lib/python3.12/site-packages/certifi/cacert.pem",
+                    "file",
+                )
+            ]
+        )
+        backend_installer_guard(standalone, "backend")
+
+    def test_backend_installer_guard_rejects_missing_or_forged_anchors(self) -> None:
+        def document_without(entry_path: str) -> dict[str, object]:
+            entries = [
+                entry
+                for entry in self.healthy_backend_entries()
+                if entry["path"] != entry_path
+            ]
+            return self.backend_manifest_doc(entries)
+
+        with self.assertRaisesRegex(PolicyError, "directory anchor"):
+            backend_installer_guard(
+                document_without("usr/local/lib/python3.12/site-packages"),
+                "backend",
+            )
+        with self.assertRaisesRegex(PolicyError, "entrypoint anchor"):
+            backend_installer_guard(
+                document_without("usr/local/bin/python3.12"), "backend"
+            )
+        with self.assertRaisesRegex(PolicyError, "entrypoint anchor"):
+            backend_installer_guard(
+                document_without("opt/slaif/.venv/bin/python"), "backend"
+            )
+
+        with self.assertRaisesRegex(PolicyError, "entrypoint anchor"):
+            backend_installer_guard(
+                document_without("opt/slaif/bin/initialize-local-secrets.py"),
+                "backend",
+            )
+
+        forged = self.backend_manifest_doc(self.healthy_backend_entries())
+        for entry in forged["entries"]:
+            if entry["path"] == "opt/slaif/migrations":
+                entry["kind"] = "symlink"
+                entry["target"] = "migrations"
+        with self.assertRaisesRegex(PolicyError, "not a real directory"):
+            backend_installer_guard(forged, "backend")
+
+        stale = self.backend_manifest_doc(self.healthy_backend_entries())
+        stale["prefixes"] = ["opt/slaif/"]
+        with self.assertRaisesRegex(PolicyError, "coverage prefixes"):
+            backend_installer_guard(stale, "backend")
+
+        duplicate = self.backend_manifest_doc(
+            self.healthy_backend_entries()
+            + [self.manifest_entry("opt/slaif/alembic.ini", "file")]
+        )
+        with self.assertRaisesRegex(PolicyError, "duplicate rootfs path"):
+            backend_installer_guard(duplicate, "backend")
+
+        foreign = self.generic_manifest_doc("web")
+        foreign["entries"].append(
+            self.manifest_entry(
+                "usr/local/lib/python3.12/site-packages/pip", "directory"
+            )
+        )
+        backend_installer_guard(foreign, "web")
+
+    def test_rootfs_prefix_matching_spellings_and_lookalikes(self) -> None:
+        archive = self.root / "file-prefix-lookalike.tar"
+        with tarfile.open(archive, "w") as stream:
+            for name, content in (
+                ("etc/nginx/nginx.conf", b"http {}"),
+                ("etc/nginx/nginx.conf.bak", b"stale"),
+                ("usr/local/bin/docker-entrypoint.sh", b"entry"),
+                ("usr/local/bin/docker-entrypoint.sh.old", b"stale"),
+            ):
+                member = tarfile.TarInfo(name)
+                member.size = len(content)
+                stream.addfile(member, io.BytesIO(content))
+        self.assertEqual(
+            [e["path"] for e in rootfs_manifest(archive, "nginx")["entries"]],
+            ["etc/nginx/nginx.conf"],
+        )
+        self.assertEqual(
+            [e["path"] for e in rootfs_manifest(archive, "postgres")["entries"]],
+            ["usr/local/bin/docker-entrypoint.sh"],
+        )
+
+        archive = self.root / "parent-anchor.tar"
+        with tarfile.open(archive, "w") as stream:
+            parent = tarfile.TarInfo("opt/slaif")
+            parent.type = tarfile.DIRTYPE
+            stream.addfile(parent)
+            lookalike = tarfile.TarInfo("opt/slaif-lookalike")
+            lookalike.type = tarfile.DIRTYPE
+            stream.addfile(lookalike)
+            child = tarfile.TarInfo("opt/slaif/x/y.bin")
+            child.size = 2
+            stream.addfile(child, io.BytesIO(b"xy"))
+        self.assertEqual(
+            [e["path"] for e in rootfs_manifest(archive, "web")["entries"]],
+            ["opt/slaif", "opt/slaif/x/y.bin"],
+        )
+
+    def test_finalize_and_validate_recheck_backend_guard_after_tamper(self) -> None:
+        self.populate()
+        index = finalize_bundle(self.root, "local")
+        self.assertEqual(len(index["images"]), 6)
+        validate_bundle(self.root)
+
+        # An index that evades backend coverage (duplicate apache in place of
+        # backend) must fail even with recomputed checksums.
+        self.populate()
+        finalize_bundle(self.root, "local")
+        index_document = load_json(self.root / "index.json")
+        images = index_document["images"]
+        backend = next(item for item in images if item["image"] == "backend")
+        apache = next(item for item in images if item["image"] == "apache")
+        images[images.index(backend)] = dict(apache)
+        write_json(self.root / "index.json", index_document)
+        checksum_path = self.root / "SHA256SUMS"
+        files = sorted(
+            path
+            for path in self.root.rglob("*")
+            if path.is_file() and path != checksum_path
+        )
+        checksum_path.write_text(
+            "".join(
+                f"{sha256_file(path)}  {path.relative_to(self.root)}\n"
+                for path in files
+            ),
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(PolicyError, "image coverage"):
+            validate_bundle(self.root)
+
+        self.populate()
+        manifest_path = self.root / "manifests/backend.files.json"
+        document = load_json(manifest_path)
+        document["entries"].append(self.manifest_entry("usr/local/bin/pip3", "file"))
+        write_json(manifest_path, document)
+        with self.assertRaisesRegex(PolicyError, "pip command"):
+            finalize_bundle(self.root, "local")
+
+        self.populate()
+        finalize_bundle(self.root, "local")
+        document = load_json(manifest_path)
+        document["entries"].append(
+            self.manifest_entry(
+                "usr/local/lib/python3.12/ensurepip/_bundled/pip-25.0.1-py3-none-any.whl",
+                "file",
+            )
+        )
+        write_json(manifest_path, document)
+        checksum_path = self.root / "SHA256SUMS"
+        files = sorted(
+            path
+            for path in self.root.rglob("*")
+            if path.is_file() and path != checksum_path
+        )
+        checksum_path.write_text(
+            "".join(
+                f"{sha256_file(path)}  {path.relative_to(self.root)}\n"
+                for path in files
+            ),
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(PolicyError, "bootstrap pip wheel"):
+            validate_bundle(self.root)
 
 
 if __name__ == "__main__":
