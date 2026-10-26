@@ -643,7 +643,13 @@ test("puck-editor-round-trip-through-human-editor-api", async ({ page }) => {
     targetPosition: "top" | "bottom" | undefined = undefined,
     onAttempt?: (attempt: number, ready: boolean) => void | Promise<void>,
   ) {
-    for (let attempt = 0; attempt < 4; attempt += 1) {
+    // B3 outcome synchronization (deliberate repair, distinct from the
+    // passive 71b B2 baseline): the non-idempotent insertion gesture is
+    // performed exactly ONCE (the loop cannot replay it); the exact
+    // target state is then established under the existing configured
+    // 8s expectation budget before any possibility of another
+    // side-effectful gesture.
+    for (let attempt = 0; attempt < 1; attempt += 1) {
       await source.scrollIntoViewIfNeeded();
       await target.scrollIntoViewIfNeeded();
       await expect(source).toBeVisible();
@@ -687,12 +693,16 @@ test("puck-editor-round-trip-through-human-editor-api", async ({ page }) => {
       await page.waitForTimeout(120);
       await page.mouse.up();
       await page.waitForTimeout(300);
-      // Passive readiness-boundary observer: the single existing ready()
-      // evaluation keeps its original position and decision; the
-      // observer runs after it and cannot alter the retry outcome.
+      // Passive readiness-boundary observer (B2): the single existing
+      // ready() evaluation keeps its original position and decision.
       const readyNow = await ready();
       await onAttempt?.(attempt, readyNow);
       if (readyNow) return;
+      // B3: outcome unresolved after the one real gesture. Establish
+      // the exact target state under the existing configured 8s
+      // expectation budget, then FAIL; never replay a non-idempotent
+      // insertion, delete extras, or relax the count.
+      await expect.poll(ready).toBe(true);
     }
   }
   async function pointerDragUntil(
@@ -702,7 +712,13 @@ test("puck-editor-round-trip-through-human-editor-api", async ({ page }) => {
     targetPosition: "top" | "bottom" = "bottom",
     onAttempt?: (attempt: number, ready: boolean) => void | Promise<void>,
   ) {
-    for (let attempt = 0; attempt < 4; attempt += 1) {
+    // B3 outcome synchronization (deliberate repair, distinct from the
+    // passive 71b B2 baseline): the non-idempotent insertion gesture is
+    // performed exactly ONCE (the loop cannot replay it); the exact
+    // target state is then established under the existing configured
+    // 8s expectation budget before any possibility of another
+    // side-effectful gesture.
+    for (let attempt = 0; attempt < 1; attempt += 1) {
       await source.scrollIntoViewIfNeeded();
       await target.scrollIntoViewIfNeeded();
       const sourceBounds = await source.boundingBox();
@@ -728,22 +744,32 @@ test("puck-editor-round-trip-through-human-editor-api", async ({ page }) => {
       await page.waitForTimeout(150);
       await page.mouse.up();
       await page.waitForTimeout(300);
+      // Passive readiness-boundary observer (B2): the single existing
+      // ready() evaluation keeps its original position and decision.
       const readyNow = await ready();
       await onAttempt?.(attempt, readyNow);
       if (readyNow) return;
+      // B3: outcome unresolved after the one real gesture. Establish
+      // the exact target state under the existing configured 8s
+      // expectation budget, then FAIL; never replay a non-idempotent
+      // insertion, delete extras, or relax the count.
+      await expect.poll(ready).toBe(true);
     }
   }
   const sectionDrawerItem = page.getByTestId("drawer-item:Section");
   await expect(sectionDrawerItem).toBeVisible();
   const sectionComponent = page.locator(".puck-trusted-component");
   // 083-6-b B2 bounded passive diagnostics around the existing gesture
-  // attempts and readiness boundaries. Fixed-enum stage labels, numeric
-  // counts and relative ms only: no raw IDs, attribute values, DOM
-  // content, URLs or bodies cross into the diagnostic file. Snapshots
-  // are passive reads at existing boundaries; no waits or polls are
-  // inserted before the original ready decision, so the retry mechanics
-  // are unchanged. The one extra in-page distinct-count read per
-  // boundary is disclosed observational overhead, not runtime causation.
+  // attempts and readiness boundaries (the 71b baseline was purely
+  // passive: no waits or polls before the original ready decision).
+  // The B3 repair adds a deliberate outcome synchronization AFTER each
+  // gesture (exact target state under the existing 8s expectation
+  // budget, before any replay was possible); these records keep the
+  // same shape. Fixed-enum stage labels, numeric counts and relative ms
+  // only: no raw IDs, attribute values, DOM content, URLs or bodies
+  // cross into the diagnostic file. Snapshots are passive reads at
+  // existing boundaries; the one in-page tuple read per boundary is
+  // disclosed observational overhead, not runtime causation.
   const dragDiagStartedAt = Date.now();
   const dragDiagRecords: Array<Record<string, number | string | boolean>> = [];
   let dragDiagRecordCapReached = false;
@@ -841,6 +867,11 @@ test("puck-editor-round-trip-through-human-editor-api", async ({ page }) => {
       dragDiagWriteErrorCaptured = true;
     }
   };
+  // B3 legal starting state: before the first insertion the exact
+  // rendered count is 0 (asserted, not assumed); the real gesture below
+  // always runs, so a pre-existing duplicate cannot hide a
+  // non-insertion.
+  await expect(sectionComponent).toHaveCount(0);
   try {
     await dragDiagSnapshot("drag-section-first/pre");
     await dragUntil(

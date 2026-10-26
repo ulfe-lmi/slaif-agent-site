@@ -343,3 +343,31 @@ config, or CI budget change. Two bounded full local trials at the
 instrumented baseline (fresh stack each) passed (141830 ms and 142929
 ms, native exit 0); the postmerge CI stall was not reproduced locally
 and its cause remains unknown.
+
+## Governance drag outcome synchronization and teardown first-error
+preservation (083/6-b)
+
+The governance Puck drag helpers previously allowed up to four
+non-idempotent insertion gestures before a later outcome check, so a
+late-ready insertion could be followed by another insertion. A fresh
+whole-stack run at 083/6-a failed the rendered-count contract
+(expected 2, received 5); the mechanism is unknown. Bounded passive
+diagnostics (private bounded JSON: wrapper count, distinct
+component-instance count, missing-identity count and relative ms at
+existing gesture attempts/readiness boundaries, one atomic in-page
+read, no raw IDs) were added at a recorded revision; the ONE
+authorized fresh setup+governance diagnostic suite passed with both
+insertions ready on the first gesture (0 to 1, then 1 to 2, wrappers
+equal to distinct instances throughout), so the mismatch did not
+reproduce and its cause remains unknown. The B3 repair makes each
+requested insertion perform the one real existing gesture and then
+establish the exact target state under the existing configured 8 s
+expectation budget before any possibility of another side-effectful
+gesture; an unresolved outcome fails with the preserved diagnostics
+instead of replaying the insertion. Legal starting counts (0 before
+the first insertion, 1 before the second) are asserted. The outer
+parity teardown and the canonical/private pairing cleanups now
+preserve the first captured failure through all closes, report close
+failures with fixed-enum output only when the body passed, and never
+serialize an arbitrary non-Error thrown value. All original
+assertions, budgets, and retry configuration are unchanged.
