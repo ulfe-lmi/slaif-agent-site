@@ -13,6 +13,8 @@ import {
   observe,
   secrets,
 } from "./support";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 
 type Membership = {
   version: number;
@@ -639,8 +641,15 @@ test("puck-editor-round-trip-through-human-editor-api", async ({ page }) => {
     target: Locator,
     ready: () => Promise<boolean>,
     targetPosition: "top" | "bottom" | undefined = undefined,
+    onAttempt?: (attempt: number, ready: boolean) => void | Promise<void>,
   ) {
-    for (let attempt = 0; attempt < 4; attempt += 1) {
+    // B3 outcome synchronization (deliberate repair, distinct from the
+    // passive 71b B2 baseline): the non-idempotent insertion gesture is
+    // performed exactly ONCE (the loop cannot replay it); the exact
+    // target state is then established under the existing configured
+    // 8s expectation budget before any possibility of another
+    // side-effectful gesture.
+    for (let attempt = 0; attempt < 1; attempt += 1) {
       await source.scrollIntoViewIfNeeded();
       await target.scrollIntoViewIfNeeded();
       await expect(source).toBeVisible();
@@ -684,7 +693,16 @@ test("puck-editor-round-trip-through-human-editor-api", async ({ page }) => {
       await page.waitForTimeout(120);
       await page.mouse.up();
       await page.waitForTimeout(300);
-      if (await ready()) return;
+      // Passive readiness-boundary observer (B2): the single existing
+      // ready() evaluation keeps its original position and decision.
+      const readyNow = await ready();
+      await onAttempt?.(attempt, readyNow);
+      if (readyNow) return;
+      // B3: outcome unresolved after the one real gesture. Establish
+      // the exact target state under the existing configured 8s
+      // expectation budget, then FAIL; never replay a non-idempotent
+      // insertion, delete extras, or relax the count.
+      await expect.poll(ready).toBe(true);
     }
   }
   async function pointerDragUntil(
@@ -692,8 +710,15 @@ test("puck-editor-round-trip-through-human-editor-api", async ({ page }) => {
     target: Locator,
     ready: () => Promise<boolean>,
     targetPosition: "top" | "bottom" = "bottom",
+    onAttempt?: (attempt: number, ready: boolean) => void | Promise<void>,
   ) {
-    for (let attempt = 0; attempt < 4; attempt += 1) {
+    // B3 outcome synchronization (deliberate repair, distinct from the
+    // passive 71b B2 baseline): the non-idempotent insertion gesture is
+    // performed exactly ONCE (the loop cannot replay it); the exact
+    // target state is then established under the existing configured
+    // 8s expectation budget before any possibility of another
+    // side-effectful gesture.
+    for (let attempt = 0; attempt < 1; attempt += 1) {
       await source.scrollIntoViewIfNeeded();
       await target.scrollIntoViewIfNeeded();
       const sourceBounds = await source.boundingBox();
@@ -719,17 +744,151 @@ test("puck-editor-round-trip-through-human-editor-api", async ({ page }) => {
       await page.waitForTimeout(150);
       await page.mouse.up();
       await page.waitForTimeout(300);
-      if (await ready()) return;
+      // Passive readiness-boundary observer (B2): the single existing
+      // ready() evaluation keeps its original position and decision.
+      const readyNow = await ready();
+      await onAttempt?.(attempt, readyNow);
+      if (readyNow) return;
+      // B3: outcome unresolved after the one real gesture. Establish
+      // the exact target state under the existing configured 8s
+      // expectation budget, then FAIL; never replay a non-idempotent
+      // insertion, delete extras, or relax the count.
+      await expect.poll(ready).toBe(true);
     }
   }
   const sectionDrawerItem = page.getByTestId("drawer-item:Section");
   await expect(sectionDrawerItem).toBeVisible();
   const sectionComponent = page.locator(".puck-trusted-component");
-  await dragUntil(
-    sectionDrawerItem,
-    rootDropZone,
-    async () => (await sectionComponent.count()) === 1,
-  );
+  // 083-6-b B2 bounded passive diagnostics around the existing gesture
+  // attempts and readiness boundaries (the 71b baseline was purely
+  // passive: no waits or polls before the original ready decision).
+  // The B3 repair adds a deliberate outcome synchronization AFTER each
+  // gesture (exact target state under the existing 8s expectation
+  // budget, before any replay was possible); these records keep the
+  // same shape. Fixed-enum stage labels, numeric counts and relative ms
+  // only: no raw IDs, attribute values, DOM content, URLs or bodies
+  // cross into the diagnostic file. Snapshots are passive reads at
+  // existing boundaries; the one in-page tuple read per boundary is
+  // disclosed observational overhead, not runtime causation.
+  const dragDiagStartedAt = Date.now();
+  const dragDiagRecords: Array<Record<string, number | string | boolean>> = [];
+  let dragDiagRecordCapReached = false;
+  const dragDiagRecord = (
+    stage: string,
+    fields: Record<string, number | boolean>,
+  ): void => {
+    if (dragDiagRecords.length >= 64) {
+      dragDiagRecordCapReached = true;
+      return;
+    }
+    dragDiagRecords.push({ stage, ms: Date.now() - dragDiagStartedAt, ...fields });
+  };
+  // Same wrapper population as the original assertions: the distinct
+  // component-instance count plus the number of wrappers missing the
+  // identity attribute, both computed in-page as plain numbers (no raw
+  // IDs ever leave the page).
+  // ONE atomic tuple from a single in-page evaluateAll over the same
+  // wrapper population as the original assertions: wrapper count,
+  // distinct component-instance count and missing-identity count are
+  // read at the same DOM moment (no separate awaits that could observe
+  // different moments and misclassify), as plain numbers only (no raw
+  // IDs ever leave the page).
+  const dragDiagWrapperCounts = async (): Promise<{
+    wrappers: number;
+    distinct: number;
+    missingId: number;
+  }> =>
+    page.locator(".puck-trusted-component").evaluateAll((items) => {
+      const seen = new Set<string>();
+      let missingId = 0;
+      for (const item of items) {
+        const value = item.getAttribute("data-puck-component");
+        if (value === null) missingId += 1;
+        else seen.add(value);
+      }
+      return { wrappers: items.length, distinct: seen.size, missingId };
+    });
+  const dragDiagSnapshot = async (stage: string): Promise<void> => {
+    try {
+      const counts = await dragDiagWrapperCounts();
+      dragDiagRecord(stage, {
+        wrappers: counts.wrappers,
+        distinct: counts.distinct,
+        missingId: counts.missingId,
+      });
+    } catch {
+      dragDiagRecord(stage, { snapshotError: 1 });
+    }
+  };
+  const dragDiagAttempt = async (stage: string, ready: boolean): Promise<void> => {
+    try {
+      const counts = await dragDiagWrapperCounts();
+      dragDiagRecord(stage, {
+        wrappers: counts.wrappers,
+        distinct: counts.distinct,
+        missingId: counts.missingId,
+        ready,
+      });
+    } catch {
+      dragDiagRecord(stage, { snapshotError: 1, ready });
+    }
+  };
+  let dragDiagWriteErrorCaptured = false;
+  const dragDiagWrite = (): void => {
+    // The diagnostic write is harness-internal: any IO failure is
+    // recorded through the explicit presence flag and never replaces a
+    // primary drag failure (the finally stays throw-free); a write
+    // failure on a passed drag still fails the test below.
+    try {
+      const truncated: Record<string, boolean> = {
+        records: dragDiagRecordCapReached,
+        bytes: false,
+      };
+      let records = dragDiagRecords;
+      const render = (): string =>
+        JSON.stringify({
+          scope: "puck-drag-b2",
+          bounded: { maxRecords: 64, maxBytes: 16384 },
+          truncated,
+          records,
+        });
+      let text = render();
+      while (Buffer.byteLength(text, "utf8") > 16384 && records.length > 0) {
+        records = records.slice(0, -1);
+        truncated.bytes = true;
+        text = render();
+      }
+      const outputDir = test.info().outputDir;
+      mkdirSync(outputDir, { recursive: true });
+      writeFileSync(join(outputDir, "governance-drag-diagnostics.json"), text, {
+        mode: 0o600,
+      });
+    } catch {
+      dragDiagWriteErrorCaptured = true;
+    }
+  };
+  // B3 legal starting state: before the first insertion the exact
+  // rendered count is 0 (asserted, not assumed); the real gesture below
+  // always runs, so a pre-existing duplicate cannot hide a
+  // non-insertion.
+  await expect(sectionComponent).toHaveCount(0);
+  try {
+    await dragDiagSnapshot("drag-section-first/pre");
+    await dragUntil(
+      sectionDrawerItem,
+      rootDropZone,
+      async () => (await sectionComponent.count()) === 1,
+      undefined,
+      (attempt, ready) =>
+        dragDiagAttempt(`drag-section-first/attempt${attempt}`, ready),
+    );
+  } finally {
+    await dragDiagSnapshot("drag-section-first/post");
+    dragDiagWrite();
+  }
+  if (dragDiagWriteErrorCaptured) {
+    throw new Error("drag diagnostics write failed");
+  }
   await expect(sectionComponent).toHaveCount(1);
   async function saveComposition() {
     const saved = page.waitForResponse(
@@ -802,11 +961,28 @@ test("puck-editor-round-trip-through-human-editor-api", async ({ page }) => {
   };
   await page.keyboard.press("Escape");
   await page.waitForTimeout(300);
-  await pointerDragUntil(
-    sectionDrawerItem,
-    rootDropZone,
-    async () => (await sectionComponent.count()) === 2,
-  );
+  // B3 legal starting state: after the save, API edit and reload the
+  // exact rendered count is 1 (asserted, not assumed); the real gesture
+  // below always runs, so a pre-existing second wrapper cannot hide a
+  // non-insertion.
+  await expect(sectionComponent).toHaveCount(1);
+  try {
+    await dragDiagSnapshot("drag-section-second/pre");
+    await pointerDragUntil(
+      sectionDrawerItem,
+      rootDropZone,
+      async () => (await sectionComponent.count()) === 2,
+      "bottom",
+      (attempt, ready) =>
+        dragDiagAttempt(`drag-section-second/attempt${attempt}`, ready),
+    );
+  } finally {
+    await dragDiagSnapshot("drag-section-second/post");
+    dragDiagWrite();
+  }
+  if (dragDiagWriteErrorCaptured) {
+    throw new Error("drag diagnostics write failed");
+  }
   await expect(sectionComponent).toHaveCount(2);
   await page.keyboard.press("Escape");
   await page.waitForTimeout(300);
