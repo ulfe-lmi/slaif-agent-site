@@ -13,6 +13,8 @@ import {
   observe,
   secrets,
 } from "./support";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 
 type Membership = {
   version: number;
@@ -639,6 +641,7 @@ test("puck-editor-round-trip-through-human-editor-api", async ({ page }) => {
     target: Locator,
     ready: () => Promise<boolean>,
     targetPosition: "top" | "bottom" | undefined = undefined,
+    onAttempt?: (attempt: number, ready: boolean) => void | Promise<void>,
   ) {
     for (let attempt = 0; attempt < 4; attempt += 1) {
       await source.scrollIntoViewIfNeeded();
@@ -684,7 +687,12 @@ test("puck-editor-round-trip-through-human-editor-api", async ({ page }) => {
       await page.waitForTimeout(120);
       await page.mouse.up();
       await page.waitForTimeout(300);
-      if (await ready()) return;
+      // Passive readiness-boundary observer: the single existing ready()
+      // evaluation keeps its original position and decision; the
+      // observer runs after it and cannot alter the retry outcome.
+      const readyNow = await ready();
+      await onAttempt?.(attempt, readyNow);
+      if (readyNow) return;
     }
   }
   async function pointerDragUntil(
@@ -692,6 +700,7 @@ test("puck-editor-round-trip-through-human-editor-api", async ({ page }) => {
     target: Locator,
     ready: () => Promise<boolean>,
     targetPosition: "top" | "bottom" = "bottom",
+    onAttempt?: (attempt: number, ready: boolean) => void | Promise<void>,
   ) {
     for (let attempt = 0; attempt < 4; attempt += 1) {
       await source.scrollIntoViewIfNeeded();
@@ -719,17 +728,101 @@ test("puck-editor-round-trip-through-human-editor-api", async ({ page }) => {
       await page.waitForTimeout(150);
       await page.mouse.up();
       await page.waitForTimeout(300);
-      if (await ready()) return;
+      const readyNow = await ready();
+      await onAttempt?.(attempt, readyNow);
+      if (readyNow) return;
     }
   }
   const sectionDrawerItem = page.getByTestId("drawer-item:Section");
   await expect(sectionDrawerItem).toBeVisible();
   const sectionComponent = page.locator(".puck-trusted-component");
-  await dragUntil(
-    sectionDrawerItem,
-    rootDropZone,
-    async () => (await sectionComponent.count()) === 1,
-  );
+  // 083-6-b B2 bounded passive diagnostics around the existing gesture
+  // attempts and readiness boundaries. Fixed-enum stage labels, numeric
+  // counts and relative ms only: no raw IDs, attribute values, DOM
+  // content, URLs or bodies cross into the diagnostic file. Snapshots
+  // are passive reads at existing boundaries; no waits or polls are
+  // inserted before the original ready decision, so the retry mechanics
+  // are unchanged. The one extra in-page distinct-count read per
+  // boundary is disclosed observational overhead, not runtime causation.
+  const dragDiagStartedAt = Date.now();
+  const dragDiagRecords: Array<Record<string, number | string | boolean>> = [];
+  let dragDiagRecordCapReached = false;
+  const dragDiagRecord = (
+    stage: string,
+    fields: Record<string, number | boolean>,
+  ): void => {
+    if (dragDiagRecords.length >= 64) {
+      dragDiagRecordCapReached = true;
+      return;
+    }
+    dragDiagRecords.push({ stage, ms: Date.now() - dragDiagStartedAt, ...fields });
+  };
+  const dragDiagDistinctCount = async (): Promise<number> =>
+    page.locator("[data-puck-component]").evaluateAll((items) => {
+      const seen = new Set<string>();
+      for (const item of items) {
+        const value = item.getAttribute("data-puck-component");
+        if (value !== null) seen.add(value);
+      }
+      return seen.size;
+    });
+  const dragDiagSnapshot = async (stage: string): Promise<void> => {
+    try {
+      const wrappers = await sectionComponent.count();
+      const distinct = await dragDiagDistinctCount();
+      dragDiagRecord(stage, { wrappers, distinct });
+    } catch {
+      dragDiagRecord(stage, { snapshotError: 1 });
+    }
+  };
+  const dragDiagAttempt = async (stage: string, ready: boolean): Promise<void> => {
+    try {
+      const wrappers = await sectionComponent.count();
+      const distinct = await dragDiagDistinctCount();
+      dragDiagRecord(stage, { wrappers, distinct, ready });
+    } catch {
+      dragDiagRecord(stage, { snapshotError: 1, ready });
+    }
+  };
+  const dragDiagWrite = (): void => {
+    const truncated: Record<string, boolean> = {
+      records: dragDiagRecordCapReached,
+      bytes: false,
+    };
+    let records = dragDiagRecords;
+    const render = (): string =>
+      JSON.stringify({
+        scope: "puck-drag-b2",
+        bounded: { maxRecords: 64, maxBytes: 16384 },
+        truncated,
+        records,
+      });
+    let text = render();
+    while (Buffer.byteLength(text, "utf8") > 16384 && records.length > 0) {
+      records = records.slice(0, -1);
+      truncated.bytes = true;
+      text = render();
+    }
+    const outputDir = test.info().outputDir;
+    mkdirSync(outputDir, { recursive: true });
+    writeFileSync(join(outputDir, "governance-drag-diagnostics.json"), text, {
+      mode: 0o600,
+    });
+  };
+  try {
+    await dragDiagSnapshot("drag-section-first/pre");
+    await dragUntil(
+      sectionDrawerItem,
+      rootDropZone,
+      async () => (await sectionComponent.count()) === 1,
+      undefined,
+      (attempt, ready) =>
+        dragDiagAttempt(`drag-section-first/attempt${attempt}`, ready),
+    );
+  } finally {
+    await dragDiagSnapshot("drag-section-first/post");
+    dragDiagWrite();
+  }
   await expect(sectionComponent).toHaveCount(1);
   async function saveComposition() {
     const saved = page.waitForResponse(
@@ -802,11 +895,20 @@ test("puck-editor-round-trip-through-human-editor-api", async ({ page }) => {
   };
   await page.keyboard.press("Escape");
   await page.waitForTimeout(300);
-  await pointerDragUntil(
-    sectionDrawerItem,
-    rootDropZone,
-    async () => (await sectionComponent.count()) === 2,
-  );
+  try {
+    await dragDiagSnapshot("drag-section-second/pre");
+    await pointerDragUntil(
+      sectionDrawerItem,
+      rootDropZone,
+      async () => (await sectionComponent.count()) === 2,
+      "bottom",
+      (attempt, ready) =>
+        dragDiagAttempt(`drag-section-second/attempt${attempt}`, ready),
+    );
+  } finally {
+    await dragDiagSnapshot("drag-section-second/post");
+    dragDiagWrite();
+  }
   await expect(sectionComponent).toHaveCount(2);
   await page.keyboard.press("Escape");
   await page.waitForTimeout(300);

@@ -1729,6 +1729,12 @@ async function canonicalPhase(
     });
     const page = await context.newPage();
     const failures = observe(page);
+    let bodyFailed = false;
+    // Explicit failure presence: `firstError === undefined` alone is not
+    // a guarantee for an arbitrary thrown value (e.g. undefined itself),
+    // so no captured failure can be turned into success by cleanup.
+    let failureCaptured = false;
+    let firstError: unknown = undefined;
     try {
       let routeOrdinal = 0;
       for (const route of ROUTES) {
@@ -1765,9 +1771,41 @@ async function canonicalPhase(
         action: "locale-nav",
       });
       await navigationProof(page, base);
+    } catch (error) {
+      bodyFailed = true;
+      failureCaptured = true;
+      firstError = error;
     } finally {
-      expect(failures(), `canonical ${pairing.engine}/${pairing.target}`).toEqual([]);
-      await context.close();
+      // Failure priority body > collector > close: the original
+      // collector assertion is retained whenever the body passed, a
+      // close failure still fails the pairing when body and collector
+      // passed, and no later failure ever replaces an earlier first
+      // failure (rethrown from function scope after cleanup).
+      if (!bodyFailed) {
+        try {
+          expect(failures(), `canonical ${pairing.engine}/${pairing.target}`).toEqual(
+            [],
+          );
+        } catch (error) {
+          failureCaptured = true;
+          firstError = error;
+        }
+      }
+      try {
+        await context.close();
+      } catch (error) {
+        if (!failureCaptured) {
+          failureCaptured = true;
+          firstError = error;
+        }
+      }
+    }
+    if (failureCaptured) {
+      // Not every possible thrown value is an Error object; the fixed
+      // fallback keeps the throw typed without embedding an
+      // unclassified raw value.
+      if (firstError instanceof Error) throw firstError;
+      throw new Error("unclassified canonical pairing failure");
     }
     combos.push({
       engine: pairing.engine,
@@ -1790,6 +1828,13 @@ test("frozen-review-parity-six-stable-pairings", async () => {
   const stage = makeStageTracker(test.info());
   stage("setup");
   let bodyCompleted = false;
+  // Explicit failure presence for the outer teardown: the first captured
+  // body failure (any thrown value) is preserved and rethrown only after
+  // every browser close has been attempted; close errors are reported
+  // with fixed-enum (engine name) output only when the body passed.
+  let bodyFailureCaptured = false;
+  let bodyFailure: unknown = undefined;
+  const closeFailures: string[] = [];
 
   const browsers: Record<EngineName, Browser> = {
     chromium: await chromium.launch(),
@@ -3021,8 +3066,30 @@ test("frozen-review-parity-six-stable-pairings", async () => {
       },
     );
     bodyCompleted = true;
+  } catch (error) {
+    bodyFailureCaptured = true;
+    bodyFailure = error;
   } finally {
+    // Failed-stage attribution stays on the single stage marker: the
+    // cleanup stage is marked only when the body completed.
     if (bodyCompleted) stage("cleanup", { action: "close" });
-    for (const browser of Object.values(browsers)) await browser.close();
+    for (const [engine, browser] of Object.entries(browsers)) {
+      try {
+        await browser.close();
+      } catch {
+        closeFailures.push(engine);
+      }
+    }
+  }
+  if (bodyFailureCaptured) throw bodyFailure;
+  if (closeFailures.length > 0) {
+    // Body passed; a cleanup failure still fails the test, with
+    // sanitized fixed-enum output (engine names only). The throw is
+    // after the finally so it can never replace a captured body error.
+    test.info().annotations.push({
+      type: "cleanup-close-failures",
+      description: closeFailures.join(","),
+    });
+    throw new Error(`browser close failed for: ${closeFailures.join(",")}`);
   }
 });
