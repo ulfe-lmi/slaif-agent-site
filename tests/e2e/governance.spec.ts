@@ -757,20 +757,33 @@ test("puck-editor-round-trip-through-human-editor-api", async ({ page }) => {
     }
     dragDiagRecords.push({ stage, ms: Date.now() - dragDiagStartedAt, ...fields });
   };
-  const dragDiagDistinctCount = async (): Promise<number> =>
-    page.locator("[data-puck-component]").evaluateAll((items) => {
+  // Same wrapper population as the original assertions: the distinct
+  // component-instance count plus the number of wrappers missing the
+  // identity attribute, both computed in-page as plain numbers (no raw
+  // IDs ever leave the page).
+  const dragDiagWrapperCounts = async (): Promise<{
+    distinct: number;
+    missingId: number;
+  }> =>
+    page.locator(".puck-trusted-component").evaluateAll((items) => {
       const seen = new Set<string>();
+      let missingId = 0;
       for (const item of items) {
         const value = item.getAttribute("data-puck-component");
-        if (value !== null) seen.add(value);
+        if (value === null) missingId += 1;
+        else seen.add(value);
       }
-      return seen.size;
+      return { distinct: seen.size, missingId };
     });
   const dragDiagSnapshot = async (stage: string): Promise<void> => {
     try {
       const wrappers = await sectionComponent.count();
-      const distinct = await dragDiagDistinctCount();
-      dragDiagRecord(stage, { wrappers, distinct });
+      const counts = await dragDiagWrapperCounts();
+      dragDiagRecord(stage, {
+        wrappers,
+        distinct: counts.distinct,
+        missingId: counts.missingId,
+      });
     } catch {
       dragDiagRecord(stage, { snapshotError: 1 });
     }
@@ -778,36 +791,50 @@ test("puck-editor-round-trip-through-human-editor-api", async ({ page }) => {
   const dragDiagAttempt = async (stage: string, ready: boolean): Promise<void> => {
     try {
       const wrappers = await sectionComponent.count();
-      const distinct = await dragDiagDistinctCount();
-      dragDiagRecord(stage, { wrappers, distinct, ready });
+      const counts = await dragDiagWrapperCounts();
+      dragDiagRecord(stage, {
+        wrappers,
+        distinct: counts.distinct,
+        missingId: counts.missingId,
+        ready,
+      });
     } catch {
       dragDiagRecord(stage, { snapshotError: 1, ready });
     }
   };
+  let dragDiagWriteErrorCaptured = false;
   const dragDiagWrite = (): void => {
-    const truncated: Record<string, boolean> = {
-      records: dragDiagRecordCapReached,
-      bytes: false,
-    };
-    let records = dragDiagRecords;
-    const render = (): string =>
-      JSON.stringify({
-        scope: "puck-drag-b2",
-        bounded: { maxRecords: 64, maxBytes: 16384 },
-        truncated,
-        records,
+    // The diagnostic write is harness-internal: any IO failure is
+    // recorded through the explicit presence flag and never replaces a
+    // primary drag failure (the finally stays throw-free); a write
+    // failure on a passed drag still fails the test below.
+    try {
+      const truncated: Record<string, boolean> = {
+        records: dragDiagRecordCapReached,
+        bytes: false,
+      };
+      let records = dragDiagRecords;
+      const render = (): string =>
+        JSON.stringify({
+          scope: "puck-drag-b2",
+          bounded: { maxRecords: 64, maxBytes: 16384 },
+          truncated,
+          records,
+        });
+      let text = render();
+      while (Buffer.byteLength(text, "utf8") > 16384 && records.length > 0) {
+        records = records.slice(0, -1);
+        truncated.bytes = true;
+        text = render();
+      }
+      const outputDir = test.info().outputDir;
+      mkdirSync(outputDir, { recursive: true });
+      writeFileSync(join(outputDir, "governance-drag-diagnostics.json"), text, {
+        mode: 0o600,
       });
-    let text = render();
-    while (Buffer.byteLength(text, "utf8") > 16384 && records.length > 0) {
-      records = records.slice(0, -1);
-      truncated.bytes = true;
-      text = render();
+    } catch {
+      dragDiagWriteErrorCaptured = true;
     }
-    const outputDir = test.info().outputDir;
-    mkdirSync(outputDir, { recursive: true });
-    writeFileSync(join(outputDir, "governance-drag-diagnostics.json"), text, {
-      mode: 0o600,
-    });
   };
   try {
     await dragDiagSnapshot("drag-section-first/pre");
@@ -822,6 +849,9 @@ test("puck-editor-round-trip-through-human-editor-api", async ({ page }) => {
   } finally {
     await dragDiagSnapshot("drag-section-first/post");
     dragDiagWrite();
+  }
+  if (dragDiagWriteErrorCaptured) {
+    throw new Error("drag diagnostics write failed");
   }
   await expect(sectionComponent).toHaveCount(1);
   async function saveComposition() {
@@ -908,6 +938,9 @@ test("puck-editor-round-trip-through-human-editor-api", async ({ page }) => {
   } finally {
     await dragDiagSnapshot("drag-section-second/post");
     dragDiagWrite();
+  }
+  if (dragDiagWriteErrorCaptured) {
+    throw new Error("drag diagnostics write failed");
   }
   await expect(sectionComponent).toHaveCount(2);
   await page.keyboard.press("Escape");

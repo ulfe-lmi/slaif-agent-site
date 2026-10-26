@@ -1291,6 +1291,7 @@ async function runPhase(
     const page = await context.newPage();
     const failures = observe(page);
     let bodyFailed = false;
+    let failureSource: "body" | "collector" | "close" = "body";
     // Explicit failure presence: `firstError === undefined` alone is not
     // a guarantee for an arbitrary thrown value (e.g. undefined itself),
     // so no captured failure can be turned into success by cleanup.
@@ -1357,6 +1358,7 @@ async function runPhase(
       );
     } catch (error) {
       bodyFailed = true;
+      failureSource = "body";
       failureCaptured = true;
       firstError = error;
     } finally {
@@ -1371,6 +1373,7 @@ async function runPhase(
             [],
           );
         } catch (error) {
+          failureSource = "collector";
           failureCaptured = true;
           firstError = error;
         }
@@ -1379,12 +1382,19 @@ async function runPhase(
         await context.close();
       } catch (error) {
         if (!failureCaptured) {
+          failureSource = "close";
           failureCaptured = true;
           firstError = error;
         }
       }
     }
     if (failureCaptured) {
+      // A close failure is a harness cleanup failure: fixed-enum output
+      // only; the raw Playwright close error is neither propagated nor
+      // serialized.
+      if (failureSource === "close") {
+        throw new Error("pairing context close failed");
+      }
       // Not every possible thrown value is an Error object; the fixed
       // fallback keeps the throw typed without embedding an
       // unclassified raw value.
@@ -1730,6 +1740,7 @@ async function canonicalPhase(
     const page = await context.newPage();
     const failures = observe(page);
     let bodyFailed = false;
+    let failureSource: "body" | "collector" | "close" = "body";
     // Explicit failure presence: `firstError === undefined` alone is not
     // a guarantee for an arbitrary thrown value (e.g. undefined itself),
     // so no captured failure can be turned into success by cleanup.
@@ -1773,6 +1784,7 @@ async function canonicalPhase(
       await navigationProof(page, base);
     } catch (error) {
       bodyFailed = true;
+      failureSource = "body";
       failureCaptured = true;
       firstError = error;
     } finally {
@@ -1787,6 +1799,7 @@ async function canonicalPhase(
             [],
           );
         } catch (error) {
+          failureSource = "collector";
           failureCaptured = true;
           firstError = error;
         }
@@ -1795,12 +1808,19 @@ async function canonicalPhase(
         await context.close();
       } catch (error) {
         if (!failureCaptured) {
+          failureSource = "close";
           failureCaptured = true;
           firstError = error;
         }
       }
     }
     if (failureCaptured) {
+      // A close failure is a harness cleanup failure: fixed-enum output
+      // only; the raw Playwright close error is neither propagated nor
+      // serialized.
+      if (failureSource === "close") {
+        throw new Error("canonical pairing context close failed");
+      }
       // Not every possible thrown value is an Error object; the fixed
       // fallback keeps the throw typed without embedding an
       // unclassified raw value.
@@ -3081,7 +3101,14 @@ test("frozen-review-parity-six-stable-pairings", async () => {
       }
     }
   }
-  if (bodyFailureCaptured) throw bodyFailure;
+  if (bodyFailureCaptured) {
+    // The explicit presence flag keeps even a thrown `undefined` a
+    // failure; an Error is preserved as-is, and any arbitrary non-Error
+    // thrown value is reported through the typed fixed fallback so no
+    // raw value is serialized.
+    if (bodyFailure instanceof Error) throw bodyFailure;
+    throw new Error("unclassified body failure");
+  }
   if (closeFailures.length > 0) {
     // Body passed; a cleanup failure still fails the test, with
     // sanitized fixed-enum output (engine names only). The throw is
