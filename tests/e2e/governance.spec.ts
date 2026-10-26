@@ -761,7 +761,14 @@ test("puck-editor-round-trip-through-human-editor-api", async ({ page }) => {
   // component-instance count plus the number of wrappers missing the
   // identity attribute, both computed in-page as plain numbers (no raw
   // IDs ever leave the page).
+  // ONE atomic tuple from a single in-page evaluateAll over the same
+  // wrapper population as the original assertions: wrapper count,
+  // distinct component-instance count and missing-identity count are
+  // read at the same DOM moment (no separate awaits that could observe
+  // different moments and misclassify), as plain numbers only (no raw
+  // IDs ever leave the page).
   const dragDiagWrapperCounts = async (): Promise<{
+    wrappers: number;
     distinct: number;
     missingId: number;
   }> =>
@@ -773,14 +780,13 @@ test("puck-editor-round-trip-through-human-editor-api", async ({ page }) => {
         if (value === null) missingId += 1;
         else seen.add(value);
       }
-      return { distinct: seen.size, missingId };
+      return { wrappers: items.length, distinct: seen.size, missingId };
     });
   const dragDiagSnapshot = async (stage: string): Promise<void> => {
     try {
-      const wrappers = await sectionComponent.count();
       const counts = await dragDiagWrapperCounts();
       dragDiagRecord(stage, {
-        wrappers,
+        wrappers: counts.wrappers,
         distinct: counts.distinct,
         missingId: counts.missingId,
       });
@@ -790,10 +796,9 @@ test("puck-editor-round-trip-through-human-editor-api", async ({ page }) => {
   };
   const dragDiagAttempt = async (stage: string, ready: boolean): Promise<void> => {
     try {
-      const wrappers = await sectionComponent.count();
       const counts = await dragDiagWrapperCounts();
       dragDiagRecord(stage, {
-        wrappers,
+        wrappers: counts.wrappers,
         distinct: counts.distinct,
         missingId: counts.missingId,
         ready,
