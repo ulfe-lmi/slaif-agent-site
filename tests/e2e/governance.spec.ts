@@ -961,6 +961,11 @@ test("puck-editor-round-trip-through-human-editor-api", async ({ page }) => {
   };
   await page.keyboard.press("Escape");
   await page.waitForTimeout(300);
+  // B3 legal starting state: after the save, API edit and reload the
+  // exact rendered count is 1 (asserted, not assumed); the real gesture
+  // below always runs, so a pre-existing second wrapper cannot hide a
+  // non-insertion.
+  await expect(sectionComponent).toHaveCount(1);
   try {
     await dragDiagSnapshot("drag-section-second/pre");
     await pointerDragUntil(

@@ -344,12 +344,11 @@ instrumented baseline (fresh stack each) passed (141830 ms and 142929
 ms, native exit 0); the postmerge CI stall was not reproduced locally
 and its cause remains unknown.
 
-## Governance drag outcome synchronization and teardown first-error
-preservation (083/6-b)
+## Governance drag outcome synchronization and teardown first-error preservation (083/6-b)
 
 The governance Puck drag helpers previously allowed up to four
-non-idempotent insertion gestures before a later outcome check, so a
-late-ready insertion could be followed by another insertion. A fresh
+non-idempotent insertion attempts, each followed by its own readiness
+check, so a not-yet-ready insertion could be followed by another. A fresh
 whole-stack run at 083/6-a failed the rendered-count contract
 (expected 2, received 5); the mechanism is unknown. Bounded passive
 diagnostics (private bounded JSON: wrapper count, distinct
