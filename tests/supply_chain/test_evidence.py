@@ -260,6 +260,27 @@ class EvidenceTests(unittest.TestCase):
             "schema_version": 1,
         }
 
+    def backend_tar_doc(self, entries: list[dict[str, object]]) -> dict[str, object]:
+        archive = self.root / "backend-guard.tar"
+        with tarfile.open(archive, "w") as stream:
+            for entry in entries:
+                member = tarfile.TarInfo(str(entry["path"]))
+                member.mode = int(str(entry.get("mode") or "0755"), 8)
+                if entry["kind"] == "file":
+                    payload = b"synthetic-entry"
+                    member.size = len(payload)
+                    stream.addfile(member, io.BytesIO(payload))
+                elif entry["kind"] == "symlink":
+                    member.type = tarfile.SYMTYPE
+                    member.linkname = str(entry["target"])
+                    stream.addfile(member)
+                elif entry["kind"] == "directory":
+                    member.type = tarfile.DIRTYPE
+                    stream.addfile(member)
+                else:
+                    raise AssertionError(f"unknown manifest kind {entry['kind']!r}")
+        return rootfs_manifest(archive, "backend")
+
     def healthy_backend_entries(self) -> list[dict[str, object]]:
         return [
             self.manifest_entry("opt/slaif", "directory"),
@@ -679,11 +700,11 @@ class EvidenceTests(unittest.TestCase):
         self.assertNotEqual(digests[0], digests[1])
 
     def test_backend_installer_guard_rejects_returned_installer_copies(self) -> None:
-        healthy = self.backend_manifest_doc(self.healthy_backend_entries())
+        healthy = self.backend_tar_doc(self.healthy_backend_entries())
         backend_installer_guard(healthy, "backend")
 
         def with_mutations(mutations: list[dict[str, object]]) -> dict[str, object]:
-            return self.backend_manifest_doc(self.healthy_backend_entries() + mutations)
+            return self.backend_tar_doc(self.healthy_backend_entries() + mutations)
 
         cases = {
             "installed pip": (
@@ -763,7 +784,7 @@ class EvidenceTests(unittest.TestCase):
                     backend_installer_guard(with_mutations(mutations), "backend")
 
         # A standalone certifi package is not a vendor fragment: it passes.
-        standalone = self.backend_manifest_doc(
+        standalone = self.backend_tar_doc(
             self.healthy_backend_entries()
             + [
                 self.manifest_entry(
@@ -781,7 +802,7 @@ class EvidenceTests(unittest.TestCase):
                 for entry in self.healthy_backend_entries()
                 if entry["path"] != entry_path
             ]
-            return self.backend_manifest_doc(entries)
+            return self.backend_tar_doc(entries)
 
         with self.assertRaisesRegex(PolicyError, "directory anchor"):
             backend_installer_guard(
@@ -803,11 +824,12 @@ class EvidenceTests(unittest.TestCase):
                 "backend",
             )
 
-        forged = self.backend_manifest_doc(self.healthy_backend_entries())
-        for entry in forged["entries"]:
+        forged_entries = self.healthy_backend_entries()
+        for entry in forged_entries:
             if entry["path"] == "opt/slaif/migrations":
                 entry["kind"] = "symlink"
                 entry["target"] = "migrations"
+        forged = self.backend_tar_doc(forged_entries)
         with self.assertRaisesRegex(PolicyError, "not a real directory"):
             backend_installer_guard(forged, "backend")
 
@@ -831,7 +853,43 @@ class EvidenceTests(unittest.TestCase):
         )
         backend_installer_guard(foreign, "web")
 
+    def raw_directory_block(self, name: bytes) -> bytes:
+        header = bytearray(512)
+        header[0 : len(name)] = name
+        header[100:108] = b"0000755\0"
+        header[108:116] = b"0000000\0"
+        header[116:124] = b"0000000\0"
+        header[124:136] = b"00000000000\0"
+        header[136:148] = b"00000000000\0"
+        header[148:156] = b"        "
+        header[156] = ord("5")
+        header[257:263] = b"ustar\0"
+        header[263:265] = b"00"
+        checksum = sum(header)
+        header[148:156] = f"{checksum:06o}\0 ".encode()
+        return bytes(header)
+
     def test_rootfs_prefix_matching_spellings_and_lookalikes(self) -> None:
+        for label, raw in (("bare", b"opt/slaif"), ("slashed", b"opt/slaif/")):
+            archive = self.root / f"dir-spelling-{label}.tar"
+            child = io.BytesIO()
+            with tarfile.open(
+                fileobj=child, mode="w", format=tarfile.USTAR_FORMAT
+            ) as stream:
+                member = tarfile.TarInfo("opt/slaif/x/y.bin")
+                member.size = 2
+                stream.addfile(member, io.BytesIO(b"xy"))
+            data = self.raw_directory_block(raw) + child.getvalue()
+            archive.write_bytes(data)
+            # The raw headers genuinely differ; the tarfile reader
+            # normalizes both directory spellings to the bare parent.
+            self.assertEqual(data[:100].rstrip(b"\0"), raw)
+            manifest = rootfs_manifest(archive, "web")
+            self.assertEqual(
+                [entry["path"] for entry in manifest["entries"]],
+                ["opt/slaif", "opt/slaif/x/y.bin"],
+            )
+
         archive = self.root / "file-prefix-lookalike.tar"
         with tarfile.open(archive, "w") as stream:
             for name, content in (
