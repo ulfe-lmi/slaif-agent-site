@@ -83,11 +83,15 @@ from __future__ import annotations
 import asyncio
 import importlib
 import importlib.metadata
+import io
+import json
 import os
+import sys
 import uuid
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from pathlib import Path
+from types import TracebackType
 from typing import Any
 
 import asyncpg
@@ -171,6 +175,26 @@ ORACLE_COLUMNS = {
     "cycle_a": "id, site_id, partner_id, note",
     "cycle_b": "id, site_id, partner_id, note",
 }
+
+
+# asyncpg returns jsonb columns as TEXT. Decode ONLY the known jsonb
+# oracle columns to their exact public Python values before the
+# independent row comparison; no broad stringification and no other
+# value type changes.
+_JSONB_ORACLE_COLUMNS = {
+    "content_item": frozenset({"values"}),
+    "content_item_translation": frozenset({"localized_values"}),
+    "page_composition": frozenset({"props"}),
+}
+
+
+def _decode_jsonb_oracle(table: str, row: tuple[Any, ...]) -> tuple[Any, ...]:
+    names = [part.strip() for part in ORACLE_COLUMNS[table].split(",")]
+    jsonb_columns = _JSONB_ORACLE_COLUMNS.get(table, frozenset())
+    return tuple(
+        json.loads(value) if name in jsonb_columns else value
+        for name, value in zip(names, row, strict=False)
+    )
 
 
 def _q(ident: str) -> str:
@@ -362,6 +386,32 @@ async def _fk_state(
     return {row[0]: (row[1], row[2]) for row in rows}
 
 
+async def _bounded_pool_close(pool: asyncpg.Pool[Any], phase: str) -> list[str]:
+    """Bound an owned pool.close() with a builtin asyncio deadline.
+
+    asyncpg 0.31.0 Pool.close() gathers holder.wait_until_released(), so a
+    lost checked-out holder (e.g., after a P6 deadline miss) would hang the
+    session fixture teardown forever and hide the failed test assertion.
+    On any close failure the pool is already terminated by close() itself
+    (cancellation included); the explicit public pool.terminate() is the
+    failed-owned-fixture cleanup fallback and never runs before positive
+    oracles or to pass a check. Failures are recorded, not cleaned away.
+    """
+    failures: list[str] = []
+    try:
+        await asyncio.wait_for(pool.close(), timeout=P6_BOUND_SECONDS)
+    except BaseException as close_exc:
+        failures.append(
+            f"{phase}: pool.close() failed within {P6_BOUND_SECONDS:.0f}s: "
+            f"{type(close_exc).__name__}"
+        )
+        try:
+            pool.terminate()
+        except BaseException as term_exc:
+            failures.append(f"{phase}: pool.terminate() failed: {term_exc!r}")
+    return failures
+
+
 @dataclass(frozen=True, slots=True)
 class WholeSessionDatabase:
     """Owned disposable multi-table COW qualification fixture.
@@ -531,9 +581,13 @@ async def db() -> AsyncIterator[WholeSessionDatabase]:
             fk_state_after=fk_state_after,
         )
     finally:
-        for pool in (runtime_pool, reviewer_pool):
+        cleanup_failures: list[str] = []
+        for pool, phase in (
+            (runtime_pool, "runtime-pool"),
+            (reviewer_pool, "reviewer-pool"),
+        ):
             if pool is not None:
-                await pool.close()
+                cleanup_failures.extend(await _bounded_pool_close(pool, phase))
         if setup is not None:
             await setup.close()
         # DROP OWNED is database-local: the schema/agentcow objects live in
@@ -553,6 +607,12 @@ async def db() -> AsyncIterator[WholeSessionDatabase]:
             await admin.execute(f"DROP ROLE IF EXISTS {_q(role)}")
         await admin.execute(f"DROP DATABASE IF EXISTS {_q(database)}")
         await admin.close()
+        if cleanup_failures:
+            for failure in cleanup_failures:
+                print(f"fixture-cleanup-failure: {failure}", file=sys.stderr)
+            raise RuntimeError(
+                "owned fixture cleanup failed: " + "; ".join(cleanup_failures)
+            )
 
 
 async def _assert_rows(
@@ -568,9 +628,9 @@ async def _assert_rows(
         f"WHERE id IN ({placeholders}) ORDER BY id",
         *ids,
     )
-    assert [tuple(row) for row in rows] == sorted(expected, key=lambda item: item[0]), (
-        table
-    )
+    assert [_decode_jsonb_oracle(table, tuple(row)) for row in rows] == sorted(
+        expected, key=lambda item: item[0]
+    ), table
 
 
 async def _assert_absent(
@@ -747,27 +807,37 @@ async def test_p2_mixed_table_whole_session_promotion(
             f"VALUES ('{nav_a2}', '{SITE_A}', '{nav_a}', '{nav_a1}', "
             f"'{page_a}', 'PAGE', '{page_a}', 'de', 1)"
         )
+        # Representative media-reference + self-hierarchy facts: the
+        # actual d18 component catalog Hero (allowed_slots ["content"],
+        # max_children 8) holds the child Image in slot "content"; the
+        # Image (max_children 0, a leaf) carries the referenced asset as
+        # a JSON STRING UUID in props.mediaId (060_001 lines 526..527
+        # read it back via p_props->>'mediaId'::uuid), site-scoped; no
+        # URL/hash/storage_key enters the JSON. media_a is inserted later
+        # in the SAME session (op_multi_table) and promotes with the
+        # referencing composition.
         await cow.execute(
             f"INSERT INTO {view('page_composition')} "
             f"(id, site_id, page_id, component_type, slot_key, order_key, "
             f"parent_id, props) "
-            f"VALUES ('{comp_a1}', '{SITE_A}', '{page_a}', 'hero', 'default', "
-            f"0, NULL, '{{}}')"
+            f"VALUES ('{comp_a1}', '{SITE_A}', '{page_a}', 'Hero', 'default', "
+            f'0, NULL, \'{{"heading": "A hero"}}\')'
         )
         await cow.execute(
             f"INSERT INTO {view('page_composition')} "
             f"(id, site_id, page_id, component_type, slot_key, order_key, "
             f"parent_id, props) "
-            f"VALUES ('{comp_a2}', '{SITE_A}', '{page_a}', 'body', 'default', "
-            f"1, '{comp_a1}', '{{}}')"
+            f"VALUES ('{comp_a2}', '{SITE_A}', '{page_a}', 'Image', 'content', "
+            f"1, '{comp_a1}', "
+            f'\'{{"mediaId": "{media_a}", "alt": "A hero"}}\')'
         )
         await cow.set_operation(op_multi_table)
         await cow.execute(
             f"INSERT INTO {view('media_asset')} "
             f"(id, site_id, filename, mime_type, size_bytes, content_hash, "
             f"storage_key) "
-            f"VALUES ('{media_a}', '{SITE_A}', 'a.bin', "
-            f"'application/octet-stream', 3, 'hash-a', 'key-a')"
+            f"VALUES ('{media_a}', '{SITE_A}', 'a.png', "
+            f"'image/png', 3, 'hash-a', 'key-a')"
         )
         await cow.execute(
             f"INSERT INTO {view('redirect')} "
@@ -920,8 +990,26 @@ async def test_p2_mixed_table_whole_session_promotion(
         "page_composition",
         [comp_a1, comp_a2],
         [
-            (comp_a1, SITE_A, page_a, "hero", "default", 0, None, {}),
-            (comp_a2, SITE_A, page_a, "body", "default", 1, comp_a1, {}),
+            (
+                comp_a1,
+                SITE_A,
+                page_a,
+                "Hero",
+                "default",
+                0,
+                None,
+                {"heading": "A hero"},
+            ),
+            (
+                comp_a2,
+                SITE_A,
+                page_a,
+                "Image",
+                "content",
+                1,
+                comp_a1,
+                {"mediaId": str(media_a), "alt": "A hero"},
+            ),
         ],
     )
     await _assert_rows(
@@ -932,8 +1020,8 @@ async def test_p2_mixed_table_whole_session_promotion(
             (
                 media_a,
                 SITE_A,
-                "a.bin",
-                "application/octet-stream",
+                "a.png",
+                "image/png",
                 3,
                 "hash-a",
                 "key-a",
@@ -1165,7 +1253,9 @@ async def test_p4_row_conflict_refusal_preserves_pending(
         conflict = conflicts[0]
         assert conflict["conflict_kind"] == "BASE_ROW_CHANGED"
         assert conflict["table_name"] == "page"
-        assert conflict["primary_key"] == {"id": page}
+        # Public conflicts() reports primary_key values in the exact
+        # public serialized form (UUID text), not Python objects:
+        assert conflict["primary_key"] == {"id": str(page)}
         assert conflict["operation_id"] == op_b
         # `order` is the frozen foundation's authoritative operation order:
         # a per-schema _cow_operation_order_seq sequence value (1-based
@@ -1227,10 +1317,15 @@ async def test_p4_schema_conflict_refusal_restores_and_promotes(
             assert conflict["table_name"] == "items"
             assert conflict["primary_key"] == {"id": 1}
             assert conflict["operation_id"] == op
-            # Fresh function-scoped database/schema: this is the first COW
-            # operation, so the 1-based _cow_operation_order_seq value is
-            # exactly 1.
-            assert conflict["order"] == 1
+            # `order` is the frozen foundation's authoritative operation
+            # order: a per-schema _cow_operation_order_seq sequence value
+            # (1-based bigint). foundation_database is SESSION-scoped
+            # (conftest.py line 188), so an earlier test in the same
+            # selection may have consumed sequence values; pin the public
+            # 1-based invariant, not an execution-order-dependent
+            # absolute position.
+            assert isinstance(conflict["order"], int)
+            assert conflict["order"] >= 1
             with pytest.raises(CowConflictError) as exc_info:
                 await reviewer.commit_session(session, schema=schema)
         assert exc_info.value.session_id == session
@@ -1401,6 +1496,101 @@ async def test_p5_write_time_refusal_is_distinct(db: WholeSessionDatabase) -> No
     assert exc_info.value.sqlstate == "22023"
 
 
+P6_BOUND_SECONDS = 30.0
+
+
+async def _await_task_bounded(task: asyncio.Task[Any], phase: str) -> Any:
+    """Await the exact owned task under a builtin asyncio deadline.
+
+    A deadline miss is a REAL failed safety-test outcome, not cleanup:
+    the task's suspended stack is captured via its public print_stack()
+    BEFORE cancellation so the awaited line survives, then the task is
+    canceled and drained under a second deadline and its actual state
+    (exception, cancellation, suppressed-cancellation completion, or
+    still pending) is recorded in the failure before the test fails.
+    """
+    try:
+        return await asyncio.wait_for(asyncio.shield(task), timeout=P6_BOUND_SECONDS)
+    except TimeoutError as exc:
+        # A done non-cancelled target means it raised its OWN
+        # TimeoutError (or finished first in a deadline race); preserve
+        # its actual exception/traceback instead of misreporting our
+        # deadline.
+        if task.done() and not task.cancelled():
+            raise
+        try:
+            stack_buffer = io.StringIO()
+            task.print_stack(file=stack_buffer)
+            stack_repr = (
+                " | ".join(
+                    line.strip()
+                    for line in stack_buffer.getvalue().splitlines()
+                    if line.strip()
+                )
+                or "<empty stack>"
+            )
+        except BaseException as stack_exc:
+            stack_repr = f"unavailable ({stack_exc!r})"
+        task.cancel()
+        try:
+            await asyncio.wait_for(asyncio.shield(task), timeout=P6_BOUND_SECONDS)
+        except BaseException:
+            pass
+        if not task.done():
+            detail = (
+                "task still pending after cancel and the drain deadline "
+                "(cancellation not effective; NOT drained)"
+            )
+        elif task.cancelled():
+            detail = "task ended cancelled after the deadline"
+        elif task.exception() is not None:
+            detail = f"task ended with {task.exception()!r} after the deadline"
+        else:
+            detail = "task completed despite cancel (cancellation suppressed)"
+        raise AssertionError(
+            f"{phase}: owned task did not reach a terminal state within "
+            f"{P6_BOUND_SECONDS:.0f}s; suspended at {stack_repr}; {detail}"
+        ) from exc
+
+
+class _BoundedAsyncCtx:
+    """Test-side builtin-asyncio deadline around a public async context
+    manager's entry and exit (standard __aenter__/__aexit__ protocol).
+
+    The frozen SDK context managers (safe_promotion.py
+    asyncpg_cow_reviewer / asyncpg_cow_session) pool.acquire() with no
+    timeout; asyncpg 0.31.0 pool.acquire(timeout=None) then performs a
+    bare await on the internal queue (pool.py _acquire: `if timeout is
+    None: return await _acquire_impl()`), so a stuck acquire would hang
+    a safety test forever. Entry/exit run as explicit owned tasks under
+    the shared bounded await, so a REAL deadline miss fails the test
+    (never cleanup), a target-raised TimeoutError is preserved with its
+    own traceback, and the wrapped body checks are unchanged.
+    """
+
+    def __init__(self, ctx: Any, phase: str) -> None:
+        self._ctx = ctx
+        self._phase = phase
+
+    async def __aenter__(self) -> Any:
+        # Explicit owned task so the shared bounded await can preserve a
+        # target-raised TimeoutError, capture the suspended stack, and
+        # drain honestly on a real deadline miss:
+        enter = asyncio.ensure_future(self._ctx.__aenter__())
+        return await _await_task_bounded(enter, f"{self._phase}-enter")
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> bool:
+        exit_ = asyncio.ensure_future(
+            self._ctx.__aexit__(exc_type, exc_value, traceback)
+        )
+        return bool(await _await_task_bounded(exit_, f"{self._phase}-exit"))
+
+
 async def _run_p6_window(
     db: WholeSessionDatabase,
     outcome: str,
@@ -1450,7 +1640,7 @@ async def _run_p6_window(
     task = asyncio.create_task(reviewer_body())
     try:
         await asyncio.wait_for(entered.wait(), timeout=30)
-    except BaseException:
+    except BaseException as barrier_failure:
         # Barrier failure/timeout before the window opened: unconditionally
         # cancel and await the exact owned task so no reviewer task or
         # transaction can outlive the window, then preserve the first
@@ -1459,13 +1649,20 @@ async def _run_p6_window(
         task.cancel()
         child_failure: BaseException | None = None
         try:
-            await task
+            await _await_task_bounded(task, "p6-barrier-cleanup")
         except BaseException as child_exc:
             child_failure = child_exc
         if child_failure is not None and not task.cancelled():
-            # The child failed before the barrier; its exception is the
-            # original first failure (the timeout is derivative):
-            raise child_failure from None
+            if task.done():
+                # The child reached a terminal state with its own
+                # exception before the barrier; that exception is the
+                # original first failure (the barrier timeout is
+                # derivative):
+                raise child_failure from None
+            # Drain deadline missed with the task still pending: the
+            # barrier failure is the primary first failure; chain the
+            # cleanup diagnostic so both are preserved.
+            raise child_failure from barrier_failure
         raise
     try:
         pid = window["pid"]
@@ -1482,13 +1679,13 @@ async def _run_p6_window(
         if outcome == "postcondition":
             release.set()
             with pytest.raises(RuntimeError, match="qw8 postcondition refusal"):
-                await task
+                await _await_task_bounded(task, "p6-postcondition-window")
         elif outcome == "cancel":
             # Positive cancellation proof: the exact owned task must
             # actually raise CancelledError and end in the cancelled state.
             task.cancel()
             with pytest.raises(asyncio.CancelledError):
-                await task
+                await _await_task_bounded(task, "p6-cancel-window")
             assert task.cancelled() is True
         else:
             assert (
@@ -1498,7 +1695,7 @@ async def _run_p6_window(
             with pytest.raises(
                 (asyncpg.InterfaceError, asyncpg.PostgresConnectionError)
             ):
-                await task
+                await _await_task_bounded(task, "p6-terminate-window")
     finally:
         # No window-phase failure (driver assertion, admin query, or
         # outcome handling) may leave the exact owned task running or
@@ -1507,7 +1704,7 @@ async def _run_p6_window(
         if not task.done():
             task.cancel()
             try:
-                await task
+                await _await_task_bounded(task, "p6-window-teardown")
             except BaseException:
                 pass
     await _p6_restored(db, session, op, item, pid, outcome)
@@ -1530,7 +1727,9 @@ async def _p6_restored(
     )
     assert await db.setup.fetchval(f"SELECT count(*) FROM {db.tbl('txn_probe')}") == 0
     # Pending operation retained for a fresh public reviewer:
-    async with asyncpg_cow_reviewer(db.reviewer_pool) as reviewer:
+    async with _BoundedAsyncCtx(
+        asyncpg_cow_reviewer(db.reviewer_pool), "p6-restored-pending"
+    ) as reviewer:
         assert await reviewer.operations(session, schema=db.schema) == [op]
     # No leaked transaction or locks for the window pid. Termination kills
     # the backend outright; an escaped refusal or cancel may legally leave
@@ -1558,15 +1757,18 @@ async def _p6_restored(
     # Unique per-test slug: (site_id, type_id, slug) is UNIQUE and the
     # session-scoped fixture database is shared across the three P6 tests.
     replace_slug = f"p6-replace-{uuid.uuid4().hex[:12]}"
-    async with asyncpg_cow_session(
-        db.runtime_pool, session_id=session2, operation_id=op2
+    async with _BoundedAsyncCtx(
+        asyncpg_cow_session(db.runtime_pool, session_id=session2, operation_id=op2),
+        "p6-restored-replace",
     ) as cow:
         await cow.execute(
             f"INSERT INTO {db.view('content_item')} "
             f"(id, site_id, type_id, slug, values) "
             f"VALUES ('{item2}', '{SITE_A}', '{TYPE_P6}', '{replace_slug}', '{{}}')"
         )
-    async with asyncpg_cow_reviewer(db.reviewer_pool) as reviewer:
+    async with _BoundedAsyncCtx(
+        asyncpg_cow_reviewer(db.reviewer_pool), "p6-restored-replace-commit"
+    ) as reviewer:
         result2 = await reviewer.commit_session(
             session2, schema=db.schema, defer_fk_constraints=True
         )
@@ -1582,11 +1784,15 @@ async def _p6_restored(
     # semantics (safe_session._normalize_context, values or None; SQL side
     # NULLIF(current_setting(..., true), '')) treat BOTH NULL and empty
     # string as clean, so only a nonempty stale value is a leak:
-    async with db.runtime_pool.acquire() as conn:
+    async with _BoundedAsyncCtx(
+        db.runtime_pool.acquire(), "p6-restored-runtime-guc"
+    ) as conn:
         for guc in ("app.session_id", "app.operation_id", "app.visible_operations"):
             value = await conn.fetchval("SELECT current_setting($1, true)", guc)
             assert value in (None, "")
-    async with db.reviewer_pool.acquire() as conn:
+    async with _BoundedAsyncCtx(
+        db.reviewer_pool.acquire(), "p6-restored-reviewer-guc"
+    ) as conn:
         for guc in ("app.session_id", "app.operation_id", "app.visible_operations"):
             value = await conn.fetchval("SELECT current_setting($1, true)", guc)
             assert value in (None, "")
@@ -1596,8 +1802,9 @@ async def test_p6_escaped_postcondition_rolls_back_promotion(
     db: WholeSessionDatabase,
 ) -> None:
     session, op, item = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
-    async with asyncpg_cow_session(
-        db.runtime_pool, session_id=session, operation_id=op
+    async with _BoundedAsyncCtx(
+        asyncpg_cow_session(db.runtime_pool, session_id=session, operation_id=op),
+        "p6-postcondition-setup",
     ) as cow:
         await cow.execute(
             f"INSERT INTO {db.view('content_item')} "
@@ -1609,8 +1816,9 @@ async def test_p6_escaped_postcondition_rolls_back_promotion(
 
 async def test_p6_task_cancel_rolls_back_promotion(db: WholeSessionDatabase) -> None:
     session, op, item = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
-    async with asyncpg_cow_session(
-        db.runtime_pool, session_id=session, operation_id=op
+    async with _BoundedAsyncCtx(
+        asyncpg_cow_session(db.runtime_pool, session_id=session, operation_id=op),
+        "p6-cancel-setup",
     ) as cow:
         await cow.execute(
             f"INSERT INTO {db.view('content_item')} "
@@ -1624,8 +1832,9 @@ async def test_p6_reviewer_termination_rolls_back_promotion(
     db: WholeSessionDatabase,
 ) -> None:
     session, op, item = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
-    async with asyncpg_cow_session(
-        db.runtime_pool, session_id=session, operation_id=op
+    async with _BoundedAsyncCtx(
+        asyncpg_cow_session(db.runtime_pool, session_id=session, operation_id=op),
+        "p6-terminate-setup",
     ) as cow:
         await cow.execute(
             f"INSERT INTO {db.view('content_item')} "
