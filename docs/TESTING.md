@@ -370,3 +370,28 @@ preserve the first captured failure through all closes, report close
 failures with fixed-enum output only when the body passed, and never
 serialize an arbitrary non-Error thrown value. All original
 assertions, budgets, and retry configuration are unchanged.
+## Public whole-session promotion qualification (083/8)
+
+A new integration module
+(`services/backend/tests/integration/test_foundation_whole_session_qualification.py`,
+16 tests) qualifies the generic whole-session COW promotion mechanism
+through the public `agentcow.postgres` 0.2.0 API on an owned disposable
+cluster: two whole mixed-FK deferred sessions promote with canonical
+absence and unchanged-seed oracles before approval plus in-scope
+`operations()` checks inside the reviewer body; empty/coalesced/net-zero
+sessions; row- and genuine schema-conflict refusals; the deferred physical
+two-table cycle commits while the non-deferred cycle is refused
+pre-promotion and dangling deferred states are refused at the
+SET-CONSTRAINTS-IMMEDIATE stage; and three terminal-window outcomes
+(escaped postcondition refusal, positive task cancellation, backend
+termination) each roll the promotion back with no leaked transaction,
+locks, or nonempty stale COW context (frozen 0.2.0 semantics treat NULL
+and `''` as clean). The module creates its own disposable
+database/schema/roles per session, proves in-window `idle in transaction`
+state and live locks on the exact reviewer backend, and checks the pools
+are reusable afterward under the same deferred mode. CI runs it as an exact
+fourth command of the Python integration job (45 + Q) on PostgreSQL 14-18;
+no existing selection, budget, matrix, or aggregator changed. The P7
+composite-FK `dependencies()` characterization is scratch-only and outside
+the CI selection. No product source, migration, dependency, or
+configuration changed in this increment.

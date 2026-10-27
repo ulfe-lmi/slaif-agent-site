@@ -219,8 +219,10 @@ jobs:
     # D1 isolated child group B (per PostgreSQL version): EXACT existing
     # component command with -k component, then EXACT theme command, then
     # EXACT page-style command, unchanged argv/order/selection (current
-    # selection 24+9+12=45). Own disposable PostgreSQL service; no DB
-    # fixture is shared across runners.
+    # selection 24+9+12=45), then the appended public whole-session
+    # promotion qualification command (Q; exact module path, no -k
+    # selection). B is now 45+Q. Own disposable PostgreSQL service; no
+    # DB fixture is shared across runners.
     name: Foundation PG Group B PostgreSQL ${{ matrix.postgresql }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -277,6 +279,10 @@ jobs:
         run: >-
           uv run --frozen pytest
           services/backend/tests/integration/test_agent_page_style.py
+      - name: Run public whole-session promotion qualification
+        run: >-
+          uv run --frozen pytest
+          services/backend/tests/integration/test_foundation_whole_session_qualification.py
 
   foundation-postgresql:
     # D1 fail-closed required gate: the five exact required names
