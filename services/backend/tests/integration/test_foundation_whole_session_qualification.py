@@ -311,7 +311,7 @@ def _ddl(schema: str, reviewer_role: str) -> tuple[str, ...]:
           CONSTRAINT redirect_site_locale_fk FOREIGN KEY (site_id, locale)
             REFERENCES {s}.site_locale(site_id, tag)
         )""",
-        f"CREATE UNIQUE INDEX {s}.redirect_site_source_locale_idx "
+        f"CREATE UNIQUE INDEX redirect_site_source_locale_idx "
         f"ON {s}.redirect (site_id, source_route, coalesce(locale, ''))",
         # Explicitly synthetic physical two-table deferred-FK cycle (P5).
         f"CREATE TABLE {s}.cycle_a (id uuid PRIMARY KEY, "
@@ -1167,7 +1167,13 @@ async def test_p4_row_conflict_refusal_preserves_pending(
         assert conflict["table_name"] == "page"
         assert conflict["primary_key"] == {"id": page}
         assert conflict["operation_id"] == op_b
-        assert conflict["order"] == 0
+        # `order` is the frozen foundation's authoritative operation order:
+        # a per-schema _cow_operation_order_seq sequence value (1-based
+        # bigint). This shared session schema has already consumed sequence
+        # values in earlier tests, so pin the public 1-based invariant
+        # rather than an execution-order-dependent absolute position.
+        assert isinstance(conflict["order"], int)
+        assert conflict["order"] >= 1
         with pytest.raises(CowConflictError) as exc_info:
             await reviewer.commit_session(sess_b, schema=db.schema)
     assert exc_info.value.session_id == sess_b
@@ -1221,7 +1227,10 @@ async def test_p4_schema_conflict_refusal_restores_and_promotes(
             assert conflict["table_name"] == "items"
             assert conflict["primary_key"] == {"id": 1}
             assert conflict["operation_id"] == op
-            assert conflict["order"] == 0
+            # Fresh function-scoped database/schema: this is the first COW
+            # operation, so the 1-based _cow_operation_order_seq value is
+            # exactly 1.
+            assert conflict["order"] == 1
             with pytest.raises(CowConflictError) as exc_info:
                 await reviewer.commit_session(session, schema=schema)
         assert exc_info.value.session_id == session
