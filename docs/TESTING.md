@@ -401,3 +401,15 @@ ordered fourth exact command of group B, and the only dependency change is
 the released asyncpg driver pin `0.31.0` -> `0.32.0` (round 083-8-f) with
 its exact lock, pin, metadata, notices, SBOM, and documentation
 reconciliation.
+
+The qualification subject is the generic whole-session COW promotion
+mechanism through the public `agentcow.postgres` 0.2.0 API on an owned
+disposable cluster; this increment does not implement or accept actual
+product publication, complete U/audit or causal closure, or MVP.
+Actual I_f results (per-version Q passes on PostgreSQL 14..18, the
+unfiltered backend integration run, and the I_f CI outcomes) carry into
+later rounds only under the increment's identity/scope gates, labeled
+as I_f evidence, and no later PASS is claimed before its own fresh
+run. The increment's remaining acceptance requirements are fresh
+LOCALWHOLE and LOCAL6 supply-chain evidence runs bound to the actual
+tested implementation SHA, each reported when and if executed.

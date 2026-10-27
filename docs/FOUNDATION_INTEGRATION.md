@@ -222,12 +222,24 @@ OAP report, not declared here before execution.
 - P7 (composite-FK `dependencies()` characterization) is a separate
   scratch-only diagnostic outside this module and the CI selection: the
   whole-session commit path does not call the dependencies SQL, and the
-  module keeps `dependencies()` out of pass/fail assertions. The
-  pre-existing frozen 0.2.0 gap (the intra-table part skips 1-2 column
-  primary-key tables at `ordinal_position >= 3`, spurious single-column
-  UNION edges for composite FKs, `cow_sql_functions.py` lines 1745..1800)
-  is a known source limitation, not a new runtime diagnosis; the scratch
-  native outcome is reported separately.
+  module keeps `dependencies()` out of pass/fail assertions. Its I_f
+  scratch returned normally with four known pending operations and three
+  relation pairs in the public `(depends_on, operation_id)` direction
+  (`core.py` lines 1428..1440, `operations.py` lines 575..584); the
+  printed `reversed_present=True` is a scratch artifact because its own
+  expected-pairs block used the opposite convention, not an API reversal
+  or a failed qualification, and no promotion or full-graph proof
+  occurred in that diagnostic. The frozen 0.2.0 changes-table primary
+  key is `(session_id, operation_id, ORIGINAL_PK...)`, so
+  `ordinal_position >= 3` removes the two internal bookkeeping prefixes
+  rather than skipping any original 1-2 column primary-key table, and
+  the dirty-changes enumeration returns changes-table names. The
+  composite-FK per-column/single-column UNION edge concern
+  (`cow_sql_functions.py` lines 1745..1800) remains a bounded source
+  lead, not an observed UUID/TEXT exception or a general graph verdict
+  from P7. The I_f fixture has composite `(site_id, id)` foreign keys; a
+  single UUID primary key is not a single-column foreign key. The
+  executed scratch, orders, and reports are preserved unchanged.
 
 Citation erratum: the order parenthetical "asyncpg.py478" cites the public
 `asyncpg_cow_reviewer` manager, which actually lives at `safe_promotion.py`
