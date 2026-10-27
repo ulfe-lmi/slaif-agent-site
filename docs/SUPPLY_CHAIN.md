@@ -298,6 +298,49 @@ complete evidence and Compose gates. Language and PostgreSQL major versions,
 edge families, scanner choices, or runtime dependencies require explicit
 strategic scope.
 
+## Backend installer remediation (083-7)
+
+PR #111 (083-7, in flight at `083-7-b`) remediates the measured certifi
+exposure in the frozen test lock and removes the unnecessary system
+installer copies from the backend runtime image.
+
+- Lock: the transitive `certifi` is pinned to the exact patched `2026.10.19`
+  (wheel sha256 `42d35340cc5b9ba78e818ddbff0c5b1c2b779de448a340fd1b989f5fa8670e1b`,
+  sdist sha256 `035c1e85572b141bf1c3a3eff0e33a8eb74917522f2559075ff8d2fea780a1ae`,
+  both non-yanked PyPI artifacts). The old and new artifacts carry
+  byte-identical 989-byte MPL-2.0 licenses, so the approved certifi
+  component is retained with only the exact PURL key updated in
+  `supply-chain/policy.json` and the regenerated `THIRD_PARTY_NOTICES.md`
+  version row.
+- Image: the Dockerfile removes, as root before `USER 10001`, the measured
+  system `pip` code, `pip-25.0.1.dist-info`, the `pip|pip3|pip3.12` command
+  entries, and the `ensurepip` `_bundled` pip bootstrap wheel. The builder,
+  base, interpreter, the `ensurepip` module, the app venv, and all
+  production dependencies are unchanged.
+- Guard: `tools/supply_chain/evidence.py` adds a fail-closed backend
+  merged-filesystem guard that runs in BOTH `finalize_bundle` and
+  `validate_bundle`: required coverage prefixes, real directory anchors and
+  app entrypoints (including the local-secrets initializer) must exist,
+  while pip code, pip distribution metadata, pip commands, the bootstrap
+  wheel, and actual `_vendor/certifi` fragments across the covered scopes
+  are rejected. Directory prefixes match normalized exact-parent or
+  slash-descendant and file prefixes stay exact, so sibling lookalikes are
+  excluded.
+- Evidence: a before raw rootfs export of the accepted backend image (641
+  inventory entries with original TAR kinds, modes, links and digests) plus
+  isolated before/after interpreter probes bound to the actual image ID;
+  the guard tests drive synthetic merged-TAR archives through the real
+  collector into the guard, including genuinely different raw
+  directory-header spellings.
+
+Limits: `RUN rm` whiteouts remove effective merged-filesystem entries, but
+historical lower OCI layers still contain the bytes; scoped absence is not
+universal absence of every filesystem CA copy; OS and browser trust stores,
+other alerts, and any global-TLS or release claim are out of scope. The
+default-branch certifi Dependabot alert (#17) remains OPEN until its
+post-merge default-branch state is actually verified; it must not be
+dismissed or suppressed.
+
 ## Limitations
 
 This repository is pre-alpha. Green evidence is time-bounded engineering

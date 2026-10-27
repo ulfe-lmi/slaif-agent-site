@@ -37,6 +37,14 @@ LABEL org.opencontainers.image.title="SLAIF Agent-Site backend" \
 RUN apk --timeout 30 add --no-cache 'libcrypto3=3.5.9-r0' 'libssl3=3.5.9-r0' \
     && addgroup -g 10001 -S slaif \
     && adduser -u 10001 -S -D -H -h /nonexistent -s /sbin/nologin -G slaif slaif
+# 083-7-a: remove the measured unnecessary system pip installer copies from the
+# runtime image only: pip package + distribution metadata, ensurepip bootstrap
+# wheel, and pip command links/scripts. Builder, base, interpreter, stdlib and
+# the app venv are unchanged; the ensurepip module itself is retained.
+RUN rm -r -- /usr/local/lib/python3.12/site-packages/pip \
+    /usr/local/lib/python3.12/site-packages/pip-25.0.1.dist-info \
+    && rm -- /usr/local/lib/python3.12/ensurepip/_bundled/pip-25.0.1-py3-none-any.whl \
+    && rm -- /usr/local/bin/pip /usr/local/bin/pip3 /usr/local/bin/pip3.12
 ENV PATH=/opt/slaif/.venv/bin:$PATH \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
