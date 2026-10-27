@@ -395,6 +395,9 @@ component 24 + theme 9 + page-style 12, unchanged; group A 85 unchanged) on
 PostgreSQL 14-18; no existing selection, budget, matrix, or aggregator
 changed, and actual per-version Q and SELF results are reported evidence.
 The P7 composite-FK `dependencies()` characterization is scratch-only and
-outside the CI selection. No product source, migration, dependency, or
-product/runtime configuration changed in this increment; the only workflow
-change is the ordered fourth exact command of group B.
+outside the CI selection. No product source, migration, or product/runtime
+configuration changed in this increment; the only workflow change is the
+ordered fourth exact command of group B, and the only dependency change is
+the released asyncpg driver pin `0.31.0` -> `0.32.0` (round 083-8-f) with
+its exact lock, pin, metadata, notices, SBOM, and documentation
+reconciliation.
