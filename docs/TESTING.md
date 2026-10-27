@@ -370,3 +370,31 @@ preserve the first captured failure through all closes, report close
 failures with fixed-enum output only when the body passed, and never
 serialize an arbitrary non-Error thrown value. All original
 assertions, budgets, and retry configuration are unchanged.
+## Public whole-session promotion qualification (083/8)
+
+A new integration module
+(`services/backend/tests/integration/test_foundation_whole_session_qualification.py`,
+16 tests) is configured to qualify the generic whole-session COW promotion
+mechanism through the public `agentcow.postgres` 0.2.0 API on an owned
+disposable cluster: two whole mixed-FK deferred sessions with canonical
+absence and unchanged-seed oracles before approval plus in-scope
+`operations()` checks inside the reviewer body; empty/coalesced/net-zero
+sessions; row- and genuine schema-conflict refusal assertions; the deferred
+physical two-table cycle versus the non-deferred pre-promotion refusal and
+the SET-CONSTRAINTS-IMMEDIATE dangling-state refusal; and three
+terminal-window outcomes (escaped postcondition refusal, positive task
+cancellation, backend termination) each asserting the promotion rolls back
+with no leaked transaction, locks, or nonempty stale COW context (frozen
+0.2.0 semantics treat NULL and `''` as clean). The module creates its own
+disposable database/schema/roles per session, asserts in-window
+`idle in transaction` state and live locks on the exact reviewer backend,
+and checks the pools are reusable afterward under the same deferred mode.
+CI is configured to run it as the fourth exact pytest command of the
+Python integration job group B (existing three commands, 45 tests:
+component 24 + theme 9 + page-style 12, unchanged; group A 85 unchanged) on
+PostgreSQL 14-18; no existing selection, budget, matrix, or aggregator
+changed, and actual per-version Q and SELF results are reported evidence.
+The P7 composite-FK `dependencies()` characterization is scratch-only and
+outside the CI selection. No product source, migration, dependency, or
+product/runtime configuration changed in this increment; the only workflow
+change is the ordered fourth exact command of group B.
