@@ -109,7 +109,7 @@ design rather than weaken this baseline.
 | Editor HTTP service | Backend | `10001:10001` | edge/database plus isolated Control/Editor secrets | no media volume |
 | Media HTTP service | Backend | `10001:10001` | edge/database plus isolated Media secret | private `media-data` only; initialized `0700` for UID 10001 |
 | Three Python workers | Backend | `10001:10001` | database | media volume on media-GC only |
-| `browser-worker` | Playwright 1.62.1 / Chrome for Testing 156.0.8078.47 (CfT revision 1706539) | `10001:10001` | browser only | read-only worker credential; writable private browser artifacts |
+| `browser-worker` | Playwright 1.62.1 / Chrome for Testing 156.0.8078.80 (CfT revision 1706539) | `10001:10001` | browser only | read-only worker credential; writable private browser artifacts |
 | `web` | Next.js | `10001:10001` | edge, application, browser | read-only `render-auth-secret` credential |
 | `nginx` | NGINX Open Source | `101:101` | edge only | none |
 
@@ -141,7 +141,7 @@ The reviewed OCI inputs are:
 | --- | --- | --- | --- |
 | `python:3.12.15-alpine3.23` | `sha256:1fd55c2f838c4f76262f9eeed899ff9168ea96ac383c61667d6f204325e1f169` | PSF | official multi-platform index |
 | `ghcr.io/astral-sh/uv:0.12.5` | `sha256:e85be844203885286c60ffad8a858d48afb6c5a5c237ca0e67f12e74b8f174b1` | Apache-2.0 or MIT | amd64, arm64 |
-| `node:24.14.1-alpine3.23` | `sha256:8510330d3eb72c804231a834b1a8ebb55cb3796c3e4431297a24d246b8add4d5` | MIT | official multi-platform index |
+| `node:24.22.1-alpine3.23` | `sha256:0468540aa58203ff9e40c2aab3907c52644ab818af6176b1c70a026137dc92a2` | MIT | official multi-platform index |
 | `mcr.microsoft.com/playwright:v1.62.1-noble` | `sha256:dcc5531e97840b9b5e794f2814476b21571c5124a3fca2267d73041f56e7580e` | Apache-2.0 application package plus inventoried Ubuntu/runtime aggregation | amd64, arm64 |
 | `postgres:18.6-alpine3.23` base | `sha256:697c180dbf244d3ce4a8f4cbc0156cde840af055c1bf8b76aebe422a4822086f` | PostgreSQL | official multi-platform index; derived by `infra/postgres/Dockerfile` |
 | `nginx:1.30.6-alpine3.24` | `sha256:47928bf67eb62a1863cb08d9ecb52d3e704304ba614eaee17884204677702951` | two-clause BSD | official multi-platform index |
@@ -171,9 +171,9 @@ optional dependency is denied by pnpm policy, and the status surface sets
 unoptimized local images, so its LGPL libvips bundle is neither locked nor
 installed in product images. `@playwright/test==1.62.1` is an Apache-2.0
 test runner. The product worker declares exact Apache-2.0
-`playwright-core==1.62.1` and bakes only Chrome for Testing `156.0.8078.47`
+`playwright-core==1.62.1` and bakes only Chrome for Testing `156.0.8078.80`
 (CfT revision `1706539`). The exact amd64 archive SHA-256 is
-`e6c94490f0b6b337225aeb2d2a5034858516b7017356980ba94f5176d8774a50`.
+`b711c720f774be355197f32edf37e0651418ba036d92446ee2da19ac017540a7`.
 Firefox, WebKit, the headless-shell duplicate, npm, and Corepack are removed
 from the runtime image. The product worker is currently qualified only on
 `linux/amd64`; an arm64 browser payload is not claimed.

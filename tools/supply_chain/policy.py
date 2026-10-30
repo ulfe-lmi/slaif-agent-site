@@ -324,7 +324,10 @@ def validate_policy(policy: dict[str, Any]) -> None:
     ubuntu = policy["ubuntu_package_overrides"]
     if not isinstance(ubuntu, dict) or set(ubuntu) != {"images"}:
         raise PolicyError("policy: Ubuntu package overrides are malformed")
-    if not isinstance(ubuntu["images"], dict) or set(ubuntu["images"]) != {"apache"}:
+    if not isinstance(ubuntu["images"], dict) or set(ubuntu["images"]) != {
+        "apache",
+        "browser-worker",
+    }:
         raise PolicyError(
             "policy: Ubuntu package override image coverage is incomplete"
         )
@@ -369,6 +372,8 @@ def validate_policy(policy: dict[str, Any]) -> None:
             "chromium_revision",
             "chromium_version",
             "forbidden_product_browsers",
+            "node_archive_sha256",
+            "node_archive_url",
             "node_version",
             "platform",
             "playwright_core_version",
@@ -380,13 +385,17 @@ def validate_policy(policy: dict[str, Any]) -> None:
         browser_runtime["base_image"] != "playwright"
         or browser_runtime["playwright_core_version"] != "1.62.1"
         or browser_runtime["chromium_revision"] != "1706539"
-        or browser_runtime["chromium_version"] != "156.0.8078.47"
+        or browser_runtime["chromium_version"] != "156.0.8078.80"
         or browser_runtime["chromium_archive_url"]
-        != "https://storage.googleapis.com/chrome-for-testing-public/156.0.8078.47/linux64/chrome-linux64.zip"
+        != "https://storage.googleapis.com/chrome-for-testing-public/156.0.8078.80/linux64/chrome-linux64.zip"
         or browser_runtime["chromium_archive_sha256"]
-        != "e6c94490f0b6b337225aeb2d2a5034858516b7017356980ba94f5176d8774a50"
+        != "b711c720f774be355197f32edf37e0651418ba036d92446ee2da19ac017540a7"
         or browser_runtime["platform"] != "linux/amd64"
-        or browser_runtime["node_version"] != "24.18.1"
+        or browser_runtime["node_version"] != "24.22.1"
+        or browser_runtime["node_archive_url"]
+        != "https://nodejs.org/dist/v24.22.1/node-v24.22.1-linux-x64.tar.gz"
+        or browser_runtime["node_archive_sha256"]
+        != "eb6728e77c576a35162c122c45ccadf224d89ff00abc8dae46cc2897c6002d7c"
         or browser_runtime["chromium_executable"]
         != "/ms-playwright/chromium-1706539/chrome-linux64/chrome"
         or browser_runtime["allowed_capabilities"] != ["SYS_CHROOT"]
@@ -803,7 +812,10 @@ def validate_dependency_sources(root: Path, policy: dict[str, Any]) -> dict[str,
                     f"registry {effective_registry}"
                 )
 
-    ubuntu_paths = {"apache": root / "infra/apache/Dockerfile"}
+    ubuntu_paths = {
+        "apache": root / "infra/apache/Dockerfile",
+        "browser-worker": root / "services/browser-worker/Dockerfile",
+    }
     for name, configuration in policy["ubuntu_package_overrides"]["images"].items():
         dockerfile_text = ubuntu_paths[name].read_text(encoding="utf-8")
         for package in configuration["install"]:
@@ -825,6 +837,9 @@ def validate_dependency_sources(root: Path, policy: dict[str, Any]) -> dict[str,
         (browser_runtime["chromium_version"], worker_dockerfile),
         (browser_runtime["chromium_archive_url"], worker_dockerfile),
         (browser_runtime["chromium_archive_sha256"], worker_dockerfile),
+        (browser_runtime["node_archive_url"], worker_dockerfile),
+        (browser_runtime["node_archive_sha256"], worker_dockerfile),
+        (f"v{browser_runtime['node_version']}", worker_dockerfile),
         (
             f'"playwright-core": "{browser_runtime["playwright_core_version"]}"',
             worker_manifest,

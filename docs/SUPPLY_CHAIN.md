@@ -130,16 +130,24 @@ retains Go standard-library symbol evidence needed for accurate Grype matches.
 Grype scans that checksummed document; the index links both forms.
 
 The browser worker uses the digest-pinned official Playwright 1.62.1 Noble
-image, Node 24.18.1, exact `playwright-core==1.62.1`, and Chrome for Testing
-`156.0.8078.47` at CfT revision `1706539`. The exact linux/amd64 archive is
-SHA-256 verified before
-extraction by the bounded source-controlled parser. Its runtime removes
-Firefox, WebKit, the duplicate Chromium
-headless shell, ffmpeg, npm, and Corepack. Evidence requires the worker package
-and `playwright-core`, rejects Firefox/WebKit inventory, and hashes the retained
-`/ms-playwright/chromium-1706539` tree during both clean image builds. The separate
-root E2E runner still installs all three test-only browser families outside the
-product image.
+image, exact `playwright-core==1.62.1`, and Chrome for Testing
+`156.0.8078.80` at CfT revision `1706539`. The exact linux/amd64 archive is
+SHA-256 verified before extraction by the bounded source-controlled parser.
+The base image's NodeSource nodejs 24.18.1 is purged and replaced with the
+SHA-256-verified, MIT-licensed official Node.js 24.22.1 archive, and its
+vulnerable libbrotli1 1.1.0-2build2 is replaced by the exact
+1.1.0-2ubuntu0.1 installed from the Noble repositories. Its runtime removes
+Firefox, WebKit, the duplicate Chromium headless shell, ffmpeg, npm, npx,
+Corepack including its library tree, pnpm, and pnpx from both /usr/bin and
+/usr/local. Evidence requires the worker package and `playwright-core`,
+rejects Firefox/WebKit inventory, and hashes the retained
+`/ms-playwright/chromium-1706539` tree during both clean image builds.
+The supply-chain policy binds the exact Node archive URL, SHA-256 and version
+literals in the worker Dockerfile and the exact Ubuntu override (fixed
+libbrotli1 install, nodejs removal); the fail-closed compose smoke guard
+checks the installed Node version, the CfT version, and the absence of the
+removed runtime tools and libraries. The separate root E2E runner
+still installs all three test-only browser families outside the product image.
 
 Syft 1.51.0's default binary catalogers can identify the Chrome 152 payload but
 returned only an unowned ELF file for the current 153 payload. The runner
@@ -196,12 +204,15 @@ qualification scan; the subsequent post-merge scan found 26 unexcepted Critical
 findings in that older payload. The 152.0.7977.82 qualification and finding set
 remain historical evidence in
 [`supply-chain/browser-worker-critical-matrix.json`](../supply-chain/browser-worker-critical-matrix.json)
-while the active maintenance qualification uses Chrome for Testing
-`156.0.8078.47` at CfT revision `1706539` (083-5-c measured that pin's fresh
-six-image qualification at intermediate commit J2
-`d161e9df4ade67a3bc83375a4124eb6e939b6608` on 2026-10-25: zero unexcepted
-Critical in all six images, 19 inherited High review findings, zero
-exceptions; the final I-bound pipeline re-qualifies at the final gates). The 078-t attempt is retained as
+while the active maintenance pin is Chrome for Testing
+`156.0.8078.80` at CfT revision `1706539` (083-9-b source update, its fresh
+six-image qualification pending at the current gates). The prior pin
+`156.0.8078.47` had its fresh six-image qualification measured in 083-5-c at
+intermediate commit J2 `d161e9df4ade67a3bc83375a4124eb6e939b6608` on
+2026-10-25: zero unexcepted Critical in all six images, 19 inherited High
+review findings, zero exceptions; that qualification remains historical
+evidence and the final I-bound pipeline re-qualifies at the final gates. The
+078-t attempt is retained as
 unqualified coverage-gap evidence; 078-u records the measured component for
 the then-current `153.0.8010.36` pin in the remote CI bundle and passed the
 exact six-image scan for that pin; the separate `155.0.8059.84`
@@ -285,8 +296,10 @@ component or finding from evidence. Coding agents must not author an exception
 merely to make a gate green. The owner removed this exception after the official
 stable Chrome 152.0.7977.82 qualification; the later `153.0.8010.36`
 (078-u) and `155.0.8059.84` (083-3) maintenance qualifications remain
-historical evidence; the current pin is `156.0.8078.47`, whose fresh
-six-image qualification was measured in 083-5-c at intermediate commit J2
+historical evidence; the current pin is `156.0.8078.80` (083-9-b source
+update, its fresh six-image qualification pending at the current gates),
+while the prior pin `156.0.8078.47` had its fresh six-image qualification
+measured in 083-5-c at intermediate commit J2
 (`d161e9df4ade67a3bc83375a4124eb6e939b6608`, 2026-10-25: zero unexcepted
 Critical in all six images, 19 inherited High review findings, zero
 exceptions) without reopening issue #67 or claiming release readiness.

@@ -148,12 +148,19 @@ class OciContractTests(unittest.TestCase):
         self.assertNotIn("playwright install", content.casefold())
         runtime = content.split(" AS runtime", maxsplit=1)[1]
         self.assertNotIn("pnpm install", runtime)
-        self.assertIn("rm -rf /ms-playwright/*", runtime)
-        self.assertIn("BROWSER_WORKER_EXPECTED_CHROMIUM_VERSION=156.0.8078.47", runtime)
+        self.assertIn("rm -rf /ms-playwright ", runtime)
+        self.assertIn("BROWSER_WORKER_EXPECTED_CHROMIUM_VERSION=156.0.8078.80", runtime)
         self.assertIn(
-            "e6c94490f0b6b337225aeb2d2a5034858516b7017356980ba94f5176d8774a50",
+            "b711c720f774be355197f32edf37e0651418ba036d92446ee2da19ac017540a7",
             content,
         )
+        self.assertIn(
+            "eb6728e77c576a35162c122c45ccadf224d89ff00abc8dae46cc2897c6002d7c",
+            content,
+        )
+        self.assertIn("'libbrotli1=1.1.0-2ubuntu0.1'", content)
+        self.assertIn("apt-get purge -y nodejs", content)
+        self.assertEqual(content.count('test "$(node --version)" = v24.22.1'), 2)
         self.assertIn("USER 10001:10001", content)
 
     def test_unused_vulnerable_runtime_tools_are_removed(self) -> None:
@@ -167,6 +174,13 @@ class OciContractTests(unittest.TestCase):
         )
         self.assertIn("/usr/lib/node_modules/npm", worker)
         self.assertIn("rm -f /usr/bin/npm /usr/bin/npx /usr/bin/corepack", worker)
+        self.assertIn("/usr/local/lib/node_modules/npm", worker)
+        self.assertIn("/usr/local/lib/node_modules/corepack", worker)
+        self.assertIn("/usr/lib/node_modules/corepack", worker)
+        self.assertIn(
+            "rm -f /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack",
+            worker,
+        )
 
 
 if __name__ == "__main__":
