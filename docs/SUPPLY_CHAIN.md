@@ -130,16 +130,24 @@ retains Go standard-library symbol evidence needed for accurate Grype matches.
 Grype scans that checksummed document; the index links both forms.
 
 The browser worker uses the digest-pinned official Playwright 1.62.1 Noble
-image, Node 24.18.1, exact `playwright-core==1.62.1`, and Chrome for Testing
+image, exact `playwright-core==1.62.1`, and Chrome for Testing
 `156.0.8078.47` at CfT revision `1706539`. The exact linux/amd64 archive is
-SHA-256 verified before
-extraction by the bounded source-controlled parser. Its runtime removes
-Firefox, WebKit, the duplicate Chromium
-headless shell, ffmpeg, npm, and Corepack. Evidence requires the worker package
-and `playwright-core`, rejects Firefox/WebKit inventory, and hashes the retained
-`/ms-playwright/chromium-1706539` tree during both clean image builds. The separate
-root E2E runner still installs all three test-only browser families outside the
-product image.
+SHA-256 verified before extraction by the bounded source-controlled parser.
+The base image's NodeSource nodejs 24.18.1 is purged and replaced with the
+SHA-256-verified, MIT-licensed official Node.js 24.22.1 archive, and its
+vulnerable libbrotli1 1.1.0-2build2 is replaced by the exact
+1.1.0-2ubuntu0.1 installed from the Noble repositories. Its runtime removes
+Firefox, WebKit, the duplicate Chromium headless shell, ffmpeg, npm, npx,
+Corepack including its library tree, pnpm, and pnpx from both /usr/bin and
+/usr/local. Evidence requires the worker package and `playwright-core`,
+rejects Firefox/WebKit inventory, and hashes the retained
+`/ms-playwright/chromium-1706539` tree during both clean image builds.
+The supply-chain policy binds the exact Node archive URL, SHA-256 and version
+literals in the worker Dockerfile and the exact Ubuntu override (fixed
+libbrotli1 install, nodejs removal); the fail-closed compose smoke guard
+checks the installed Node version, the CfT version, and the absence of the
+removed runtime tools and libraries. The separate root E2E runner
+still installs all three test-only browser families outside the product image.
 
 Syft 1.51.0's default binary catalogers can identify the Chrome 152 payload but
 returned only an unowned ELF file for the current 153 payload. The runner

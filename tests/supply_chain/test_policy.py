@@ -79,6 +79,24 @@ class SupplyChainPolicyTests(unittest.TestCase):
         with self.assertRaisesRegex(PolicyError, "evidence format contract"):
             validate_policy(incomplete_evidence)
 
+    def test_browser_node_facts_reject_stale_and_unapproved_archive(self) -> None:
+        stale_version = copy.deepcopy(self.policy)
+        stale_version["browser_runtime"]["node_version"] = "24.18.1"
+        with self.assertRaisesRegex(PolicyError, "browser runtime facts are invalid"):
+            validate_policy(stale_version)
+
+        unapproved_url = copy.deepcopy(self.policy)
+        unapproved_url["browser_runtime"]["node_archive_url"] = (
+            "https://example.com/node-v24.22.1-linux-x64.tar.xz"
+        )
+        with self.assertRaisesRegex(PolicyError, "browser runtime facts are invalid"):
+            validate_policy(unapproved_url)
+
+        wrong_sha = copy.deepcopy(self.policy)
+        wrong_sha["browser_runtime"]["node_archive_sha256"] = "0" * 64
+        with self.assertRaisesRegex(PolicyError, "browser runtime facts are invalid"):
+            validate_policy(wrong_sha)
+
     def test_alpine_registry_override_is_exact_per_image(self) -> None:
         v323 = "https://dl-cdn.alpinelinux.org/alpine/v3.23"
         v324 = "https://dl-cdn.alpinelinux.org/alpine/v3.24"

@@ -154,6 +154,13 @@ class OciContractTests(unittest.TestCase):
             "e6c94490f0b6b337225aeb2d2a5034858516b7017356980ba94f5176d8774a50",
             content,
         )
+        self.assertIn(
+            "6c172a9ab6718f7b801fb5a7bd486af2ee5e32758086a04b84fcce2aa77095e6",
+            content,
+        )
+        self.assertIn("'libbrotli1=1.1.0-2ubuntu0.1'", content)
+        self.assertIn("apt-get purge -y nodejs", content)
+        self.assertEqual(content.count('test "$(node --version)" = v24.22.1'), 2)
         self.assertIn("USER 10001:10001", content)
 
     def test_unused_vulnerable_runtime_tools_are_removed(self) -> None:
@@ -167,6 +174,12 @@ class OciContractTests(unittest.TestCase):
         )
         self.assertIn("/usr/lib/node_modules/npm", worker)
         self.assertIn("rm -f /usr/bin/npm /usr/bin/npx /usr/bin/corepack", worker)
+        self.assertIn("/usr/local/lib/node_modules/npm", worker)
+        self.assertIn("/usr/local/lib/node_modules/corepack", worker)
+        self.assertIn(
+            "rm -f /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack",
+            worker,
+        )
 
 
 if __name__ == "__main__":
