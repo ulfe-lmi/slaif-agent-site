@@ -442,7 +442,7 @@ class DependencySourceNegativeTests(unittest.TestCase):
         self.assert_source_error("unapproved source")
 
     def test_rejects_mutable_runtime_requirement(self) -> None:
-        self.replace("pyproject.toml", "asyncpg==0.31.0", "asyncpg>=0.31")
+        self.replace("pyproject.toml", "asyncpg==0.32.0", "asyncpg>=0.32")
         self.assert_source_error("runtime dependency is not exact")
 
     def test_rejects_hosted_sdk_and_npm_range(self) -> None:

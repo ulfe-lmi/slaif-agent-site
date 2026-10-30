@@ -300,9 +300,10 @@ strategic scope.
 
 ## Backend installer remediation (083-7)
 
-PR #111 (083-7, in flight at `083-7-b`) remediates the measured certifi
-exposure in the frozen test lock and removes the unnecessary system
-installer copies from the backend runtime image.
+PR #111 (083/7, accepted and merged in `main` at
+`d18b6e4c9423f61de99b516be90619bf2ab5d3e0` on 2026-10-27) remediates the
+measured certifi exposure in the frozen test lock and removes the
+unnecessary system installer copies from the backend runtime image.
 
 - Lock: the transitive `certifi` is pinned to the exact patched `2026.10.19`
   (wheel sha256 `42d35340cc5b9ba78e818ddbff0c5b1c2b779de448a340fd1b989f5fa8670e1b`,
@@ -336,10 +337,16 @@ installer copies from the backend runtime image.
 Limits: `RUN rm` whiteouts remove effective merged-filesystem entries, but
 historical lower OCI layers still contain the bytes; scoped absence is not
 universal absence of every filesystem CA copy; OS and browser trust stores,
-other alerts, and any global-TLS or release claim are out of scope. The
-default-branch certifi Dependabot alert (#17) remains OPEN until its
-post-merge default-branch state is actually verified; it must not be
-dismissed or suppressed.
+other alerts, and any global-TLS or release claim are out of scope. Alert
+state (observed 2026-10-27): the default-branch Dependabot alert #17
+endpoint returns HTTP 410 with the alert explicitly withdrawn, while the
+global `GHSA-6q48-6c7w-9gw2` remains ACTIVE (updated 2026-10-26, severity
+critical, vulnerable range `>= 2019.03.09, < 2026.10.18`, first-patched
+metadata `2026.10.18`, official text recommending `2026.10.19`); the other
+thirteen open repository alerts carry no Critical. Alert withdrawal is not
+a fix: there is no fixed-by-merge proof, the advisory is not closed, no
+release claim is made, and reachability adjudication plus any future
+remediation remain with strategy.
 
 ## Limitations
 

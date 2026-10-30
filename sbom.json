@@ -138,8 +138,8 @@
     {
       "type": "library",
       "name": "asyncpg",
-      "version": "0.31.0",
-      "purl": "pkg:pypi/asyncpg@0.31.0"
+      "version": "0.32.0",
+      "purl": "pkg:pypi/asyncpg@0.32.0"
     },
     {
       "type": "library",

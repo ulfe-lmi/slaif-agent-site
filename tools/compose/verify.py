@@ -7,8 +7,10 @@ import argparse
 import json
 import os
 import re
+import stat
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -228,6 +230,268 @@ class PolicyError(RuntimeError):
 def _fail(condition: bool, message: str) -> None:
     if not condition:
         raise PolicyError(message)
+
+
+RECEIPT_MAX_BYTES = 1024 * 1024
+
+
+def _lifecycle_bad(message: str) -> None:
+    raise ValueError(message) from None
+
+
+def _lifecycle_int(value: Any, low: int, high: int) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        _lifecycle_bad("lifecycle integer is malformed")
+    if value < low or value > high:
+        _lifecycle_bad("lifecycle integer is malformed")
+    return value
+
+
+def _lifecycle_full_id(value: Any) -> str:
+    if not isinstance(value, str) or not re.fullmatch(
+        r"[0-9a-f]{64}", value
+    ):
+        _lifecycle_bad("lifecycle id is malformed")
+    return value
+
+
+def _lifecycle_relpath(value: Any) -> str:
+    if not isinstance(value, str) or not re.fullmatch(
+        r"[A-Za-z0-9][A-Za-z0-9._-]*\.json", value
+    ):
+        _lifecycle_bad("lifecycle receipt name is malformed")
+    return value
+
+
+def _lifecycle_open_dir(evidence_dir: Path) -> list[int]:
+    """Open the evidence dir componentwise from the filesystem root.
+
+    Every path component is opened with O_DIRECTORY|O_NOFOLLOW so no
+    component, including the final one, may be a symlink. Public
+    ancestors need not be private; the final evidence directory must
+    be an euid-owned private (0700) directory. Returns every opened
+    fd; the caller must close them all. Failures close the fds opened
+    so far and raise a stable safe error.
+    """
+    if not isinstance(evidence_dir, Path) or not evidence_dir.is_absolute():
+        _lifecycle_bad("lifecycle evidence dir must be absolute")
+    if any(part in (".", "..") for part in evidence_dir.parts):
+        _lifecycle_bad("lifecycle evidence dir has unsafe components")
+    open_fds: list[int] = []
+    try:
+        dir_fd = os.open(os.sep, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    except OSError:
+        _lifecycle_bad("lifecycle evidence dir open failed")
+    open_fds.append(dir_fd)
+    for component in evidence_dir.parts[1:]:
+        try:
+            dir_fd = os.open(
+                component,
+                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                dir_fd=dir_fd,
+            )
+        except OSError:
+            _lifecycle_close_all(open_fds)
+            _lifecycle_bad("lifecycle evidence dir open failed")
+        open_fds.append(dir_fd)
+    try:
+        st = os.fstat(dir_fd)
+    except OSError:
+        _lifecycle_close_all(open_fds)
+        _lifecycle_bad("lifecycle evidence dir stat failed")
+    if (
+        not stat.S_ISDIR(st.st_mode)
+        or (st.st_mode & 0o7777) != 0o700
+        or st.st_uid != os.geteuid()
+    ):
+        _lifecycle_close_all(open_fds)
+        _lifecycle_bad("lifecycle evidence dir is not private")
+    return open_fds
+
+
+def _lifecycle_close_all(open_fds: list[int]) -> None:
+    """Close every fd; one stable raise after all attempts if any fail."""
+    close_failed = False
+    for fd in open_fds:
+        try:
+            os.close(fd)
+        except OSError:
+            close_failed = True
+    if close_failed:
+        _lifecycle_bad("lifecycle close failed")
+
+
+def _write_evidence_record(
+    evidence_dir: Path, relpath: str, record: dict[str, Any]
+) -> None:
+    """Write one flat exclusive 0600 receipt under a private dir.
+
+    The record must be a dict whose strict JSON/UTF-8 serialization
+    succeeds (nonfinite, unserializable, or non-UTF-8 content is
+    refused) and whose envelope stays within the size bound before
+    any leaf is created. The leaf is created with
+    O_CREAT|O_EXCL|O_NOFOLLOW (collisions and symlinks are refused),
+    written fully, fsynced, and verified by fstat (regular, 0600,
+    euid-owned, exact size). The envelope is sorted JSON with
+    utc/time_ns/record plus a trailing newline. Partial evidence is
+    retained on failure (never unlinked); errors are stable and carry
+    no payload, path, or exception data; every opened descriptor is
+    closed even when one close fails.
+    """
+    _lifecycle_relpath(relpath)
+    if not isinstance(record, dict):
+        _lifecycle_bad("lifecycle record must be a dict")
+    try:
+        text = json.dumps(
+            {
+                "record": record,
+                "time_ns": time.time_ns(),
+                "utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            },
+            sort_keys=True,
+            allow_nan=False,
+        )
+    except (TypeError, ValueError, RecursionError):
+        _lifecycle_bad("lifecycle record is not serializable")
+    try:
+        payload = (text + "\n").encode("utf-8")
+    except UnicodeEncodeError:
+        _lifecycle_bad("lifecycle record is not valid utf8")
+    if len(payload) > RECEIPT_MAX_BYTES:
+        _lifecycle_bad("lifecycle record size exceeds bound")
+    open_fds = _lifecycle_open_dir(evidence_dir)
+    try:
+        try:
+            leaf_fd = os.open(
+                relpath,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                0o600,
+                dir_fd=open_fds[-1],
+            )
+        except OSError:
+            _lifecycle_bad("lifecycle receipt create failed")
+        open_fds.append(leaf_fd)
+        view = memoryview(payload)
+        while view:
+            try:
+                written = os.write(leaf_fd, view)
+            except OSError:
+                _lifecycle_bad("lifecycle receipt write failed")
+            if written <= 0:
+                _lifecycle_bad("lifecycle receipt write failed")
+            view = view[written:]
+        try:
+            os.fsync(leaf_fd)
+        except OSError:
+            _lifecycle_bad("lifecycle receipt fsync failed")
+        try:
+            st = os.fstat(leaf_fd)
+        except OSError:
+            _lifecycle_bad("lifecycle receipt stat failed")
+        if (
+            not stat.S_ISREG(st.st_mode)
+            or (st.st_mode & 0o7777) != 0o600
+            or st.st_uid != os.geteuid()
+            or st.st_size != len(payload)
+        ):
+            _lifecycle_bad("lifecycle receipt verify failed")
+    finally:
+        _lifecycle_close_all(open_fds)
+
+
+def _strict_json_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    if len({key for key, _ in pairs}) != len(pairs):
+        _lifecycle_bad("lifecycle receipt has duplicate keys")
+    return dict(pairs)
+
+
+def _strict_json_constant(name: str) -> float:
+    _lifecycle_bad("lifecycle receipt has nonfinite constant")
+
+
+def _read_evidence_record(evidence_dir: Path, relpath: str) -> dict[str, Any]:
+    """Read one private flat JSON receipt back under the writer contract.
+
+    The caller supplies the exact known receipt name; no directory
+    listing, mtime, or latest-selection happens here. The evidence dir
+    is traversed as in the writer (final dir private/euid, no symlink
+    components). The leaf is opened read-only with O_NOFOLLOW and
+    O_NONBLOCK, must be a regular euid-owned 0600 file within the size
+    bound, and the full payload is read under the bound, decoded as
+    strict UTF-8, and parsed as the strict envelope: exactly the keys
+    utc (nonempty str), time_ns (int, never bool), record (dict).
+    Duplicate JSON keys and nonfinite constants are rejected. Errors
+    are stable with no payload/path/exception data; every opened
+    descriptor is closed even when one close fails.
+    """
+    _lifecycle_relpath(relpath)
+    open_fds = _lifecycle_open_dir(evidence_dir)
+    payload = b""
+    try:
+        try:
+            leaf_fd = os.open(
+                relpath,
+                os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW,
+                dir_fd=open_fds[-1],
+            )
+        except OSError:
+            _lifecycle_bad("lifecycle receipt open failed")
+        open_fds.append(leaf_fd)
+        try:
+            st = os.fstat(leaf_fd)
+        except OSError:
+            _lifecycle_bad("lifecycle receipt stat failed")
+        if not stat.S_ISREG(st.st_mode):
+            _lifecycle_bad("lifecycle receipt is not regular")
+        if st.st_uid != os.geteuid():
+            _lifecycle_bad("lifecycle receipt owner is unexpected")
+        if (st.st_mode & 0o7777) != 0o600:
+            _lifecycle_bad("lifecycle receipt mode is unexpected")
+        if st.st_size > RECEIPT_MAX_BYTES:
+            _lifecycle_bad("lifecycle receipt size exceeds bound")
+        chunks: list[bytes] = []
+        total = 0
+        while True:
+            try:
+                chunk = os.read(leaf_fd, 65536)
+            except OSError:
+                _lifecycle_bad("lifecycle receipt read failed")
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > RECEIPT_MAX_BYTES:
+                _lifecycle_bad("lifecycle receipt size exceeds bound")
+            chunks.append(chunk)
+        payload = b"".join(chunks)
+    finally:
+        _lifecycle_close_all(open_fds)
+    try:
+        text = payload.decode("utf-8")
+    except UnicodeDecodeError:
+        _lifecycle_bad("lifecycle receipt is not valid utf8")
+    try:
+        envelope = json.loads(
+            text,
+            object_pairs_hook=_strict_json_pairs,
+            parse_constant=_strict_json_constant,
+        )
+    except (ValueError, RecursionError):
+        _lifecycle_bad("lifecycle receipt envelope is malformed")
+    if not isinstance(envelope, dict) or set(envelope) != {
+        "record",
+        "time_ns",
+        "utc",
+    }:
+        _lifecycle_bad("lifecycle receipt envelope is malformed")
+    if (
+        not isinstance(envelope["utc"], str)
+        or not envelope["utc"]
+        or isinstance(envelope["time_ns"], bool)
+        or not isinstance(envelope["time_ns"], int)
+        or not isinstance(envelope["record"], dict)
+    ):
+        _lifecycle_bad("lifecycle receipt envelope is malformed")
+    return envelope["record"]
 
 
 def validate_config(config: dict[str, Any]) -> None:
