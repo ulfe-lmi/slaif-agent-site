@@ -87,7 +87,7 @@ class SupplyChainPolicyTests(unittest.TestCase):
 
         unapproved_url = copy.deepcopy(self.policy)
         unapproved_url["browser_runtime"]["node_archive_url"] = (
-            "https://example.com/node-v24.22.1-linux-x64.tar.xz"
+            "https://example.com/node-v24.22.1-linux-x64.tar.gz"
         )
         with self.assertRaisesRegex(PolicyError, "browser runtime facts are invalid"):
             validate_policy(unapproved_url)

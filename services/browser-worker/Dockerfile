@@ -15,12 +15,12 @@ RUN test "$TARGETARCH" = amd64 \
     && apt-get install --no-install-recommends --yes 'libbrotli1=1.1.0-2ubuntu0.1' \
     && test "$(dpkg-query -W -f='${Version}' libbrotli1)" = 1.1.0-2ubuntu0.1 \
     && curl --fail --location --retry 3 \
-      --output /tmp/node-v24.22.1-linux-x64.tar.xz \
-      https://nodejs.org/dist/v24.22.1/node-v24.22.1-linux-x64.tar.xz \
-    && echo '6c172a9ab6718f7b801fb5a7bd486af2ee5e32758086a04b84fcce2aa77095e6  /tmp/node-v24.22.1-linux-x64.tar.xz' \
+      --output /tmp/node-v24.22.1-linux-x64.tar.gz \
+      https://nodejs.org/dist/v24.22.1/node-v24.22.1-linux-x64.tar.gz \
+    && echo 'eb6728e77c576a35162c122c45ccadf224d89ff00abc8dae46cc2897c6002d7c  /tmp/node-v24.22.1-linux-x64.tar.gz' \
       | sha256sum --check --strict \
-    && tar -xJf /tmp/node-v24.22.1-linux-x64.tar.xz -C /usr/local --strip-components=1 \
-    && rm /tmp/node-v24.22.1-linux-x64.tar.xz \
+    && tar -xzf /tmp/node-v24.22.1-linux-x64.tar.gz -C /usr/local --strip-components=1 \
+    && rm /tmp/node-v24.22.1-linux-x64.tar.gz \
     && test "$(node --version)" = v24.22.1
 RUN corepack enable && corepack prepare pnpm@11.22.0 --activate
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json tsconfig.json ./
@@ -84,14 +84,14 @@ RUN test "$TARGETARCH" = amd64 \
     && rm -rf /var/lib/apt/lists/*
 RUN test "$TARGETARCH" = amd64 \
     && curl --fail --location --retry 3 \
-      --output /tmp/node-v24.22.1-linux-x64.tar.xz \
-      https://nodejs.org/dist/v24.22.1/node-v24.22.1-linux-x64.tar.xz \
-    && echo '6c172a9ab6718f7b801fb5a7bd486af2ee5e32758086a04b84fcce2aa77095e6  /tmp/node-v24.22.1-linux-x64.tar.xz' \
+      --output /tmp/node-v24.22.1-linux-x64.tar.gz \
+      https://nodejs.org/dist/v24.22.1/node-v24.22.1-linux-x64.tar.gz \
+    && echo 'eb6728e77c576a35162c122c45ccadf224d89ff00abc8dae46cc2897c6002d7c  /tmp/node-v24.22.1-linux-x64.tar.gz' \
       | sha256sum --check --strict \
-    && tar -xJf /tmp/node-v24.22.1-linux-x64.tar.xz -C /usr/local --strip-components=1 \
-    && rm /tmp/node-v24.22.1-linux-x64.tar.xz \
+    && tar -xzf /tmp/node-v24.22.1-linux-x64.tar.gz -C /usr/local --strip-components=1 \
+    && rm /tmp/node-v24.22.1-linux-x64.tar.gz \
     && test "$(node --version)" = v24.22.1
-RUN rm -rf /ms-playwright/* /usr/lib/node_modules/npm /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack \
+RUN rm -rf /ms-playwright/* /usr/lib/node_modules/npm /usr/lib/node_modules/corepack /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack \
     && rm -f /usr/bin/npm /usr/bin/npx /usr/bin/corepack /usr/bin/pnpm /usr/bin/pnpx \
     && rm -f /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack /usr/local/bin/pnpm /usr/local/bin/pnpx \
     && groupadd --gid 10001 slaif \

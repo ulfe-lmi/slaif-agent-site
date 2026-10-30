@@ -393,9 +393,9 @@ def validate_policy(policy: dict[str, Any]) -> None:
         or browser_runtime["platform"] != "linux/amd64"
         or browser_runtime["node_version"] != "24.22.1"
         or browser_runtime["node_archive_url"]
-        != "https://nodejs.org/dist/v24.22.1/node-v24.22.1-linux-x64.tar.xz"
+        != "https://nodejs.org/dist/v24.22.1/node-v24.22.1-linux-x64.tar.gz"
         or browser_runtime["node_archive_sha256"]
-        != "6c172a9ab6718f7b801fb5a7bd486af2ee5e32758086a04b84fcce2aa77095e6"
+        != "eb6728e77c576a35162c122c45ccadf224d89ff00abc8dae46cc2897c6002d7c"
         or browser_runtime["chromium_executable"]
         != "/ms-playwright/chromium-1706539/chrome-linux64/chrome"
         or browser_runtime["allowed_capabilities"] != ["SYS_CHROOT"]

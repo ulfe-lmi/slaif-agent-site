@@ -155,7 +155,7 @@ class OciContractTests(unittest.TestCase):
             content,
         )
         self.assertIn(
-            "6c172a9ab6718f7b801fb5a7bd486af2ee5e32758086a04b84fcce2aa77095e6",
+            "eb6728e77c576a35162c122c45ccadf224d89ff00abc8dae46cc2897c6002d7c",
             content,
         )
         self.assertIn("'libbrotli1=1.1.0-2ubuntu0.1'", content)
@@ -176,6 +176,7 @@ class OciContractTests(unittest.TestCase):
         self.assertIn("rm -f /usr/bin/npm /usr/bin/npx /usr/bin/corepack", worker)
         self.assertIn("/usr/local/lib/node_modules/npm", worker)
         self.assertIn("/usr/local/lib/node_modules/corepack", worker)
+        self.assertIn("/usr/lib/node_modules/corepack", worker)
         self.assertIn(
             "rm -f /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack",
             worker,
