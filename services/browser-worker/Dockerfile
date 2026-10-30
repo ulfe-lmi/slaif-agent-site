@@ -91,7 +91,7 @@ RUN test "$TARGETARCH" = amd64 \
     && tar -xzf /tmp/node-v24.22.1-linux-x64.tar.gz -C /usr/local --strip-components=1 \
     && rm /tmp/node-v24.22.1-linux-x64.tar.gz \
     && test "$(node --version)" = v24.22.1
-RUN rm -rf /ms-playwright/* /usr/lib/node_modules/npm /usr/lib/node_modules/corepack /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack \
+RUN rm -rf /ms-playwright /usr/lib/node_modules/npm /usr/lib/node_modules/corepack /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack \
     && rm -f /usr/bin/npm /usr/bin/npx /usr/bin/corepack /usr/bin/pnpm /usr/bin/pnpx \
     && rm -f /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack /usr/local/bin/pnpm /usr/local/bin/pnpx \
     && groupadd --gid 10001 slaif \
