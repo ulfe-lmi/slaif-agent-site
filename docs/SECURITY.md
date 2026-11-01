@@ -202,7 +202,9 @@ base image remain at the exact qualified `1.62.1` versions.
 The 083-9-c round remediates CVE-2026-115557: the backend base moves to the
 digest-pinned official `python:3.12.16-alpine3.23` (fixed upstream in
 3.12.16), and the browser worker purges the seven inherited Ubuntu Python 3.12
-packages from both stages; final image verification is pending.
+packages from both stages. Acceptance of the final implementation commit
+requires fresh required checks, a fresh local runtime probe, and the current
+six-image CI at the final gates.
 
 The worker artifact root is descriptor-anchored and mode `0700`. Files are
 server-named, mode `0600`, single-link, SHA-256-addressed, exclusively staged,
