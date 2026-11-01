@@ -149,6 +149,25 @@ checks the installed Node version, the CfT version, and the absence of the
 removed runtime tools and libraries. The separate root E2E runner
 still installs all three test-only browser families outside the product image.
 
+A bounded 083-9-b qualification measured the current pin at intermediate P1
+source `6fcad094f410d7495e9841496367c17dfe844423` before the final F commit.
+The independent GitHub six-image CI at P1 (2026-10-30, recorded as
+candidate-10 in the critical matrix) found zero unexcepted Critical and zero
+exceptions in all six images, all 29 prior `156.0.8078.47` Chrome High tuples
+absent at every severity and no new High tuple, with the 13 inherited High
+review findings retained unchanged, and the 20 required strict plus 10
+PostgreSQL checks at P1 succeeded. A separate local two-image runtime probe
+against the same P1 source (2026-11-01) is a distinct local-only subject with
+locally built image IDs
+`sha256:8315ee8bcf6177a99c95e777a4c13b3d90226f2df0f62ef1133d9e50c1ea7f38`
+(web) and
+`sha256:7704ac15be2e271f2fe3909d68640f26319cbcb8c0c73b78c0f494007f2bbf76`
+(browser-worker), never the CI image identities; it verified the measured
+Node, Brotli and Chrome runtime facts under observation-only confinement and
+removed exactly the containers and refs it created. The final F/SELF-bound
+pipeline re-qualifies with fresh required checks and current six-image CI at
+the final gates.
+
 Syft 1.51.0's default binary catalogers can identify the Chrome 152 payload but
 returned only an unowned ELF file for the current 153 payload. The runner
 therefore measures the real image executable with `chrome --version` and
@@ -205,8 +224,10 @@ findings in that older payload. The 152.0.7977.82 qualification and finding set
 remain historical evidence in
 [`supply-chain/browser-worker-critical-matrix.json`](../supply-chain/browser-worker-critical-matrix.json)
 while the active maintenance pin is Chrome for Testing
-`156.0.8078.80` at CfT revision `1706539` (083-9-b source update, its fresh
-six-image qualification pending at the current gates). The prior pin
+`156.0.8078.80` at CfT revision `1706539` (083-9-b source update, its
+intermediate P1 six-image CI qualification recorded as candidate-10 at
+2026-10-30; the final F/SELF gates require fresh required checks and
+six-image CI re-qualification). The prior pin
 `156.0.8078.47` had its fresh six-image qualification measured in 083-5-c at
 intermediate commit J2 `d161e9df4ade67a3bc83375a4124eb6e939b6608` on
 2026-10-25: zero unexcepted Critical in all six images, 19 inherited High
@@ -297,8 +318,10 @@ merely to make a gate green. The owner removed this exception after the official
 stable Chrome 152.0.7977.82 qualification; the later `153.0.8010.36`
 (078-u) and `155.0.8059.84` (083-3) maintenance qualifications remain
 historical evidence; the current pin is `156.0.8078.80` (083-9-b source
-update, its fresh six-image qualification pending at the current gates),
-while the prior pin `156.0.8078.47` had its fresh six-image qualification
+update, its intermediate P1 six-image CI qualification recorded as
+candidate-10 at 2026-10-30; the final F/SELF gates require fresh required
+checks and six-image CI re-qualification), while the prior pin
+`156.0.8078.47` had its fresh six-image qualification
 measured in 083-5-c at intermediate commit J2
 (`d161e9df4ade67a3bc83375a4124eb6e939b6608`, 2026-10-25: zero unexcepted
 Critical in all six images, 19 inherited High review findings, zero

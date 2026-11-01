@@ -253,7 +253,7 @@ class SupplyChainPolicyTests(unittest.TestCase):
     ) -> None:
         matrix = load_json(ROOT / "supply-chain/browser-worker-critical-matrix.json")
         qualifications = matrix["qualification_history"]
-        self.assertEqual(len(qualifications), 7)
+        self.assertEqual(len(qualifications), 8)
         qualification = qualifications[0]
         self.assertEqual(qualification["candidate"], "candidate-3 CfT: 152.0.7977.82")
         metadata = qualification["official_metadata"]
@@ -286,7 +286,7 @@ class SupplyChainPolicyTests(unittest.TestCase):
         self.assertEqual(attempt["scan_result"]["result"], "INCOMPLETE")
         self.assertEqual(attempt["scan_result"]["qualification"], "UNQUALIFIED")
 
-        previous = qualifications[-3]
+        previous = qualifications[-4]
         self.assertEqual(
             previous["candidate"],
             "candidate-7 CfT: 154.0.8037.92 measured scan coverage",
@@ -310,7 +310,7 @@ class SupplyChainPolicyTests(unittest.TestCase):
         self.assertEqual(previous["scan_result"]["result"], "PASS")
         self.assertEqual(previous["scan_result"]["unexcepted_critical"], 0)
 
-        previous8 = qualifications[-2]
+        previous8 = qualifications[-3]
         self.assertEqual(
             previous8["candidate"],
             "candidate-8 CfT: 155.0.8059.84 measured scan coverage",
@@ -350,7 +350,7 @@ class SupplyChainPolicyTests(unittest.TestCase):
         self.assertEqual(previous8["scan_result"]["unexcepted_critical"], 0)
         self.assertEqual(previous8["scan_result"]["exception_count"], 0)
 
-        current = qualifications[-1]
+        current = qualifications[-2]
         self.assertEqual(
             current["candidate"],
             "candidate-9 CfT: 156.0.8078.47 measured scan coverage",
@@ -389,6 +389,69 @@ class SupplyChainPolicyTests(unittest.TestCase):
         self.assertEqual(current["scan_result"]["browser_worker_matches"], 1806)
         self.assertEqual(current["scan_result"]["unexcepted_critical"], 0)
         self.assertEqual(current["scan_result"]["exception_count"], 0)
+
+        final = qualifications[-1]
+        self.assertEqual(
+            final["candidate"],
+            "candidate-10 CfT: 156.0.8078.80 measured scan coverage",
+        )
+        self.assertEqual(
+            final["official_metadata"]["timestamp"], "2026-10-29T22:14:17.810Z"
+        )
+        self.assertEqual(final["official_metadata"]["revision"], "1706539")
+        self.assertEqual(final["official_metadata"]["version"], "156.0.8078.80")
+        self.assertEqual(
+            final["archive_sha256"],
+            "b711c720f774be355197f32edf37e0651418ba036d92446ee2da19ac017540a7",
+        )
+        self.assertEqual(
+            final["runtime"]["executable"],
+            "/ms-playwright/chromium-1706539/chrome-linux64/chrome",
+        )
+        self.assertEqual(
+            final["runtime"]["image_digest"],
+            "sha256:7462572a3f5d4a5a1ff6ddaf71f49ee4c6aa51a5046d0e0aa8e62681d8a3093e",
+        )
+        self.assertEqual(
+            final["runtime"]["executable_sha256"],
+            "1bcad71ad1bff85955db13c6d8dd9f32374934d5a5cb079b526c46fb51f9bd97",
+        )
+        self.assertEqual(final["scanner"]["database_schema"], "v6.1.10")
+        self.assertEqual(final["scanner"]["database_built"], "2026-10-29T06:23:34Z")
+        self.assertEqual(
+            final["scanner"]["database_checksum"],
+            "sha256:a5ad3344d964e4d1472fa615b0e70f87c27cd21470fede2a8fbf6e4c6c32c907",
+        )
+        self.assertEqual(
+            final["sbom"]["browser_worker_sbom_sha256"],
+            "80db71fc00ada1064c885f4cae9b2c9afc031ccd8b3b5df2a21839b132e56931",
+        )
+        self.assertEqual(
+            final["sbom"]["browser_worker_scan_sbom_sha256"],
+            "2399e2694991b662a3076e8c414850afc19dccdd756c309f735604ea22dc0ca5",
+        )
+        self.assertEqual(
+            final["sbom"]["chrome_purl"], "pkg:generic/chrome@156.0.8078.80"
+        )
+        self.assertEqual(final["scan_result"]["result"], "PASS")
+        self.assertEqual(final["scan_result"]["browser_worker_matches"], 1761)
+        self.assertEqual(final["scan_result"]["browser_worker_high"], 4)
+        self.assertEqual(final["scan_result"]["high_review_findings"], 13)
+        self.assertEqual(final["scan_result"]["critical"], 0)
+        self.assertEqual(final["scan_result"]["unexcepted_critical"], 0)
+        self.assertEqual(final["scan_result"]["exception_count"], 0)
+        self.assertEqual(
+            final["scan_result"]["browser_worker_scan_sha256"],
+            "c9102aa6b806fc3175ec255c096e1cb834a7ab9845f471950b000a2396ad59a4",
+        )
+        self.assertEqual(final["scan_result"]["ci_run"], "41009725680")
+        self.assertEqual(
+            final["scan_result"]["evidence_revision"],
+            "0d993d562c92f66fdbc47aa183b26c104cfee8bd",
+        )
+        self.assertEqual(final["qualification_date"], "2026-10-30")
+        self.assertIn("intermediate P1 qualification", final["history_note"])
+        self.assertIn("6fcad094f410d7495e9841496367c17dfe844423", final["history_note"])
 
     def test_notice_generation_is_sorted_and_deterministic(self) -> None:
         component = {
