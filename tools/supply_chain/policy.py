@@ -824,6 +824,35 @@ def validate_dependency_sources(root: Path, policy: dict[str, Any]) -> dict[str,
         for package in configuration["remove"]:
             if package not in dockerfile_text:
                 raise PolicyError(f"{name}: missing Ubuntu package removal {package}")
+        if name == "browser-worker":
+            simulation = "DEBIAN_FRONTEND=noninteractive apt-get -s purge -y"
+            exact_purge = (
+                "apt-get purge -y \\\n"
+                "      python3 python3-minimal libpython3-stdlib \\\n"
+            )
+            expected_set = (
+                "printf 'libpython3-stdlib\\nlibpython3.12-minimal"
+                "\\nlibpython3.12-stdlib\\npython3\\npython3-minimal"
+                "\\npython3.12\\npython3.12-minimal\\n' > /tmp/"
+                "python3-purge-expected-unsorted.txt"
+            )
+            exact_compare = (
+                "cmp /tmp/python3-purge-actual.txt /tmp/python3-purge-expected.txt"
+            )
+            known_records = (
+                "dpkg-query -W -a -f='${Package} "
+                "${db:Status-Status}\\n' > /tmp/python3-known.txt"
+            )
+            if (
+                dockerfile_text.count(simulation) != 2
+                or dockerfile_text.count(exact_purge) != 2
+                or dockerfile_text.count(expected_set) != 2
+                or dockerfile_text.count(exact_compare) != 2
+                or dockerfile_text.count(known_records) != 2
+            ):
+                raise PolicyError(
+                    "browser-worker: seven-package Python purge guard is incomplete"
+                )
 
     browser_runtime = policy["browser_runtime"]
     worker_dockerfile = (root / "services/browser-worker/Dockerfile").read_text(

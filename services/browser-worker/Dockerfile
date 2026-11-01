@@ -22,6 +22,48 @@ RUN test "$TARGETARCH" = amd64 \
     && tar -xzf /tmp/node-v24.22.1-linux-x64.tar.gz -C /usr/local --strip-components=1 \
     && rm /tmp/node-v24.22.1-linux-x64.tar.gz \
     && test "$(node --version)" = v24.22.1
+# 083-9-c: remove the seven unnecessary inherited Python 3.12 packages: the
+# four versioned packages are catalogued 3.12.3-1ubuntu0.15 with
+# CVE-2026-115557, the three defaults 3.12.3-0ubuntu2.1. The fail-closed
+# simulation accepts only Purg operation rows, and only for exactly these
+# seven; any other operative action is rejected; the post check proves
+# known-record state and path absence.
+RUN test "$TARGETARCH" = amd64 \
+    && set -e \
+    && LC_ALL=C DEBIAN_FRONTEND=noninteractive apt-get -s purge -y \
+      python3 python3-minimal libpython3-stdlib \
+      python3.12 python3.12-minimal libpython3.12-stdlib libpython3.12-minimal \
+      > /tmp/python3-purge-simulation.txt \
+    && awk ' \
+        $1 == "Purg" { print $2 > "/tmp/python3-purge-removed.txt"; next } \
+        $1 ~ /^[A-Z][a-z][a-z][a-z]$/ { bad = 1 } \
+        END { exit bad + 0 } \
+    ' /tmp/python3-purge-simulation.txt \
+    && printf 'libpython3-stdlib\nlibpython3.12-minimal\nlibpython3.12-stdlib\npython3\npython3-minimal\npython3.12\npython3.12-minimal\n' > /tmp/python3-purge-expected-unsorted.txt \
+    && LC_ALL=C sort /tmp/python3-purge-expected-unsorted.txt > /tmp/python3-purge-expected.txt \
+    && LC_ALL=C sort /tmp/python3-purge-removed.txt > /tmp/python3-purge-actual.txt \
+    && cmp /tmp/python3-purge-actual.txt /tmp/python3-purge-expected.txt \
+    && cat /tmp/python3-purge-simulation.txt \
+    && rm /tmp/python3-purge-simulation.txt /tmp/python3-purge-removed.txt /tmp/python3-purge-expected-unsorted.txt /tmp/python3-purge-actual.txt /tmp/python3-purge-expected.txt
+RUN test "$TARGETARCH" = amd64 \
+    && test "$(dpkg-query -W -f='${Version}' python3)" = 3.12.3-0ubuntu2.1 \
+    && test "$(dpkg-query -W -f='${Version}' python3-minimal)" = 3.12.3-0ubuntu2.1 \
+    && test "$(dpkg-query -W -f='${Version}' libpython3-stdlib)" = 3.12.3-0ubuntu2.1 \
+    && test "$(dpkg-query -W -f='${Version}' python3.12)" = 3.12.3-1ubuntu0.15 \
+    && test "$(dpkg-query -W -f='${Version}' python3.12-minimal)" = 3.12.3-1ubuntu0.15 \
+    && test "$(dpkg-query -W -f='${Version}' libpython3.12-stdlib)" = 3.12.3-1ubuntu0.15 \
+    && test "$(dpkg-query -W -f='${Version}' libpython3.12-minimal)" = 3.12.3-1ubuntu0.15
+RUN test "$TARGETARCH" = amd64 \
+    && DEBIAN_FRONTEND=noninteractive apt-get purge -y \
+      python3 python3-minimal libpython3-stdlib \
+      python3.12 python3.12-minimal libpython3.12-stdlib libpython3.12-minimal
+RUN set -e; \
+    test "$TARGETARCH" = amd64; \
+    LC_ALL=C dpkg-query -W -a -f='${Package} ${db:Status-Status}\n' > /tmp/python3-known.txt; \
+    awk '$1 ~ /^(python3|libpython3)/ && $2 != "not-installed" {bad=1} END{exit bad+0}' /tmp/python3-known.txt; \
+    find /usr /opt \( -name 'python3*' -o -name 'libpython3*' \) -print > /tmp/python3-leftover.txt; \
+    test "$(wc -l < /tmp/python3-leftover.txt)" -eq 0; \
+    rm /tmp/python3-known.txt /tmp/python3-leftover.txt
 RUN corepack enable && corepack prepare pnpm@11.22.0 --activate
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json tsconfig.json ./
 COPY packages ./packages
@@ -77,6 +119,44 @@ ENV BROWSER_WORKER_HOST=0.0.0.0 \
 WORKDIR /opt/slaif
 RUN test "$TARGETARCH" = amd64 \
     && DEBIAN_FRONTEND=noninteractive apt-get purge -y nodejs
+# 083-9-c: same fail-closed operation-row simulation, pre-check, exact
+# purge and known-record/path absence verification.
+RUN test "$TARGETARCH" = amd64 \
+    && set -e \
+    && LC_ALL=C DEBIAN_FRONTEND=noninteractive apt-get -s purge -y \
+      python3 python3-minimal libpython3-stdlib \
+      python3.12 python3.12-minimal libpython3.12-stdlib libpython3.12-minimal \
+      > /tmp/python3-purge-simulation.txt \
+    && awk ' \
+        $1 == "Purg" { print $2 > "/tmp/python3-purge-removed.txt"; next } \
+        $1 ~ /^[A-Z][a-z][a-z][a-z]$/ { bad = 1 } \
+        END { exit bad + 0 } \
+    ' /tmp/python3-purge-simulation.txt \
+    && printf 'libpython3-stdlib\nlibpython3.12-minimal\nlibpython3.12-stdlib\npython3\npython3-minimal\npython3.12\npython3.12-minimal\n' > /tmp/python3-purge-expected-unsorted.txt \
+    && LC_ALL=C sort /tmp/python3-purge-expected-unsorted.txt > /tmp/python3-purge-expected.txt \
+    && LC_ALL=C sort /tmp/python3-purge-removed.txt > /tmp/python3-purge-actual.txt \
+    && cmp /tmp/python3-purge-actual.txt /tmp/python3-purge-expected.txt \
+    && cat /tmp/python3-purge-simulation.txt \
+    && rm /tmp/python3-purge-simulation.txt /tmp/python3-purge-removed.txt /tmp/python3-purge-expected-unsorted.txt /tmp/python3-purge-actual.txt /tmp/python3-purge-expected.txt
+RUN test "$TARGETARCH" = amd64 \
+    && test "$(dpkg-query -W -f='${Version}' python3)" = 3.12.3-0ubuntu2.1 \
+    && test "$(dpkg-query -W -f='${Version}' python3-minimal)" = 3.12.3-0ubuntu2.1 \
+    && test "$(dpkg-query -W -f='${Version}' libpython3-stdlib)" = 3.12.3-0ubuntu2.1 \
+    && test "$(dpkg-query -W -f='${Version}' python3.12)" = 3.12.3-1ubuntu0.15 \
+    && test "$(dpkg-query -W -f='${Version}' python3.12-minimal)" = 3.12.3-1ubuntu0.15 \
+    && test "$(dpkg-query -W -f='${Version}' libpython3.12-stdlib)" = 3.12.3-1ubuntu0.15 \
+    && test "$(dpkg-query -W -f='${Version}' libpython3.12-minimal)" = 3.12.3-1ubuntu0.15
+RUN test "$TARGETARCH" = amd64 \
+    && DEBIAN_FRONTEND=noninteractive apt-get purge -y \
+      python3 python3-minimal libpython3-stdlib \
+      python3.12 python3.12-minimal libpython3.12-stdlib libpython3.12-minimal
+RUN set -e; \
+    test "$TARGETARCH" = amd64; \
+    LC_ALL=C dpkg-query -W -a -f='${Package} ${db:Status-Status}\n' > /tmp/python3-known.txt; \
+    awk '$1 ~ /^(python3|libpython3)/ && $2 != "not-installed" {bad=1} END{exit bad+0}' /tmp/python3-known.txt; \
+    find /usr /opt \( -name 'python3*' -o -name 'libpython3*' \) -print > /tmp/python3-leftover.txt; \
+    test "$(wc -l < /tmp/python3-leftover.txt)" -eq 0; \
+    rm /tmp/python3-known.txt /tmp/python3-leftover.txt
 RUN test "$TARGETARCH" = amd64 \
     && apt-get update \
     && apt-get install --no-install-recommends --yes 'libbrotli1=1.1.0-2ubuntu0.1' \

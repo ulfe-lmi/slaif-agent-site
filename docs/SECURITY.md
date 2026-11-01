@@ -199,6 +199,10 @@ The current maintenance pin is the official Chrome for Testing
 `b711c720f774be355197f32edf37e0651418ba036d92446ee2da19ac017540a7` and kept
 separate from the Playwright bundle-directory label. The Playwright package and
 base image remain at the exact qualified `1.62.1` versions.
+The 083-9-c round remediates CVE-2026-115557: the backend base moves to the
+digest-pinned official `python:3.12.16-alpine3.23` (fixed upstream in
+3.12.16), and the browser worker purges the seven inherited Ubuntu Python 3.12
+packages from both stages; final image verification is pending.
 
 The worker artifact root is descriptor-anchored and mode `0700`. Files are
 server-named, mode `0600`, single-link, SHA-256-addressed, exclusively staged,

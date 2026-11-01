@@ -486,6 +486,7 @@ class DependencySourceNegativeTests(unittest.TestCase):
             "compose.yaml",
             "infra/apache/Dockerfile",
             "infra/nginx/Dockerfile",
+            "infra/postgres/Dockerfile",
             "package.json",
             "pnpm-lock.yaml",
             "pyproject.toml",
@@ -579,6 +580,24 @@ class DependencySourceNegativeTests(unittest.TestCase):
             "nginx:latest # removed-digest-",
         )
         self.assert_source_error("mutable image")
+
+    def test_rejects_backend_python_base_regression(self) -> None:
+        self.replace(
+            "services/backend/Dockerfile",
+            "python:3.12.16-alpine3.23@sha256:"
+            "a4ad86fc2eaa4f9a5c3153776c9fb56e502dbd8e23dfa855d164308f376a6dd2",
+            "python:3.12.15-alpine3.23@sha256:"
+            "1fd55c2f838c4f76262f9eeed899ff9168ea96ac383c61667d6f204325e1f169",
+        )
+        self.assert_source_error("OCI source drift")
+
+    def test_rejects_worker_python_purge_guard_degradation(self) -> None:
+        self.replace(
+            "services/browser-worker/Dockerfile",
+            "DEBIAN_FRONTEND=noninteractive apt-get -s purge -y",
+            "DEBIAN_FRONTEND=noninteractive apt-get purge -y",
+        )
+        self.assert_source_error("seven-package Python purge guard is incomplete")
 
 
 if __name__ == "__main__":

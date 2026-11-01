@@ -139,14 +139,17 @@ vulnerable libbrotli1 1.1.0-2build2 is replaced by the exact
 1.1.0-2ubuntu0.1 installed from the Noble repositories. Its runtime removes
 Firefox, WebKit, the duplicate Chromium headless shell, ffmpeg, npm, npx,
 Corepack including its library tree, pnpm, and pnpx from both /usr/bin and
-/usr/local. Evidence requires the worker package and `playwright-core`,
+/usr/local, and the seven inherited Ubuntu Python 3.12 packages are purged
+from both stages under a fail-closed simulated operation check, pre-removal
+version checks, and a post-removal dpkg record-state and path-absence check. Evidence requires the worker package and `playwright-core`,
 rejects Firefox/WebKit inventory, and hashes the retained
 `/ms-playwright/chromium-1706539` tree during both clean image builds.
 The supply-chain policy binds the exact Node archive URL, SHA-256 and version
 literals in the worker Dockerfile and the exact Ubuntu override (fixed
-libbrotli1 install, nodejs removal); the fail-closed compose smoke guard
+libbrotli1 install, nodejs and python3 removals); the fail-closed compose
+smoke guard
 checks the installed Node version, the CfT version, and the absence of the
-removed runtime tools and libraries. The separate root E2E runner
+removed runtime tools and libraries, including the python3 binaries. The separate root E2E runner
 still installs all three test-only browser families outside the product image.
 
 A bounded 083-9-b qualification measured the current pin at intermediate P1
