@@ -190,7 +190,7 @@ class OciContractTests(unittest.TestCase):
         self.assertEqual(content.count(" = 3.12.3-1ubuntu0.15"), 8)
         self.assertEqual(
             content.count(
-                "dpkg-query -W -a -f='${Package} "
+                "dpkg-query -W -f='${Package} "
                 "${db:Status-Status}\\n' > /tmp/python3-known.txt"
             ),
             2,

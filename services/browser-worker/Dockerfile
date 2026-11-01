@@ -59,7 +59,7 @@ RUN test "$TARGETARCH" = amd64 \
       python3.12 python3.12-minimal libpython3.12-stdlib libpython3.12-minimal
 RUN set -e; \
     test "$TARGETARCH" = amd64; \
-    LC_ALL=C dpkg-query -W -a -f='${Package} ${db:Status-Status}\n' > /tmp/python3-known.txt; \
+    LC_ALL=C dpkg-query -W -f='${Package} ${db:Status-Status}\n' > /tmp/python3-known.txt; \
     awk '$1 ~ /^(python3|libpython3)/ && $2 != "not-installed" {bad=1} END{exit bad+0}' /tmp/python3-known.txt; \
     find /usr /opt \( -name 'python3*' -o -name 'libpython3*' \) -print > /tmp/python3-leftover.txt; \
     test "$(wc -l < /tmp/python3-leftover.txt)" -eq 0; \
@@ -152,7 +152,7 @@ RUN test "$TARGETARCH" = amd64 \
       python3.12 python3.12-minimal libpython3.12-stdlib libpython3.12-minimal
 RUN set -e; \
     test "$TARGETARCH" = amd64; \
-    LC_ALL=C dpkg-query -W -a -f='${Package} ${db:Status-Status}\n' > /tmp/python3-known.txt; \
+    LC_ALL=C dpkg-query -W -f='${Package} ${db:Status-Status}\n' > /tmp/python3-known.txt; \
     awk '$1 ~ /^(python3|libpython3)/ && $2 != "not-installed" {bad=1} END{exit bad+0}' /tmp/python3-known.txt; \
     find /usr /opt \( -name 'python3*' -o -name 'libpython3*' \) -print > /tmp/python3-leftover.txt; \
     test "$(wc -l < /tmp/python3-leftover.txt)" -eq 0; \

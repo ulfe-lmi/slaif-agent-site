@@ -840,7 +840,7 @@ def validate_dependency_sources(root: Path, policy: dict[str, Any]) -> dict[str,
                 "cmp /tmp/python3-purge-actual.txt /tmp/python3-purge-expected.txt"
             )
             known_records = (
-                "dpkg-query -W -a -f='${Package} "
+                "dpkg-query -W -f='${Package} "
                 "${db:Status-Status}\\n' > /tmp/python3-known.txt"
             )
             if (
