@@ -413,3 +413,32 @@ as I_f evidence, and no later PASS is claimed before its own fresh
 run. The increment's remaining acceptance requirements are fresh
 LOCALWHOLE and LOCAL6 supply-chain evidence runs bound to the actual
 tested implementation SHA, each reported when and if executed.
+
+## Opt-in Compose smoke lifecycle evidence (083-8-k)
+
+`sh tools/compose/smoke.sh <project> --lifecycle <absolute-evidence-dir>`
+opts into the bounded lifecycle evidence contract; without the flag the
+smoke never invokes lifecycle operations and its default helper argv,
+stdout/stderr, and exit semantics are unchanged. Capture mode proves both
+namespaces fresh before any disposal-capable trap, durably records each
+helper container's full created ID before start, and never adopts a
+failed create's stdout as an owned ID. Body results are exposed to caller
+denial/value branches only after the complete receipt chain parses and
+validates, with an executed-container terminal state (any 0..255 exit,
+including a genuine 97 or 125/126/127) distinguished from a docker-level
+start failure by that authoritative state. Post-absence is proven with a
+matchable full-ID query, and each failed capture/cleanup/absence native is
+recorded independently. Metadata stays an allowlist (ID/name, immutable
+image digest plus reference, Created, minimal State, mount
+name/source/destination/type/RW with an empty tmpfs source accepted and
+the template sentinel rejected, scoped labels); Config.Env/Args/Cmd, full
+inspect output, secrets, DSNs, and artifact bytes are never retained.
+
+`tests/packaging/test_compose_smoke_contract.py` exercises the real
+verify.py producers/readers/auditors and the real smoke.sh helper and
+final callers with only the external Docker boundary mocked, including
+the full 0..255 producer round-trip, failed-create foreign-ID rejection,
+rm/absence-failure retention, and the real denial and value caller
+blocks. No product runtime run is executed by these tests; the fresh
+whole-session and LOCAL6 runs remain ordered later steps and nothing here
+is an acceptance or a future PASS claim.

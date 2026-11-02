@@ -233,6 +233,92 @@ def _fail(condition: bool, message: str) -> None:
 
 
 RECEIPT_MAX_BYTES = 1024 * 1024
+RECEIPT_NAME_MAX_CHARS = 200
+
+# Fixed opt-in lifecycle operations. The CLI dispatches only these named
+# verbs; there is no general command proxy or service surface.
+LIFECYCLE_PHASES = frozenset(
+    {
+        "up",
+        "recreate-old",
+        "recreate-new",
+        "recreate2-old",
+        "recreate2-new",
+        "pre-disposal",
+        "negative",
+    }
+)
+# Docker CLI --format is a Go text/template restricted to the CLI's fixed
+# function map (json/split/join/replace/truncate...): it has NO dict
+# function, so every projection below is a plain allowlisted field
+# projection. Fields are separated by the ASCII unit-separator byte, which
+# cannot appear in the fixed charset of the allowed metadata. Projections
+# emit ONLY the allowed metadata (ID/name, immutable Image plus reference,
+# Created, minimal State, Mounts name/source/destination/type/RW, scoped
+# project labels); they never emit Config.Env, Args, Cmd, full
+# inspect/config, secrets, DSNs, tokens or artifact bytes. A missing map
+# lookup may render the template sentinel "<no value>"; for the optional
+# fields (mount Name, volume Mountpoint/CreatedAt) the projection maps the
+# sentinel and the empty string to None, while every required field rejects
+# the sentinel; mount Source additionally accepts the empty string that the
+# pinned v1.51 MountPoint schema renders for tmpfs mounts.
+_LIFECYCLE_SEP = "\x1f"
+CONTAINER_PROJECTION_TEMPLATE = (
+    "{{.Id}}"
+    + _LIFECYCLE_SEP
+    + "{{.Name}}"
+    + _LIFECYCLE_SEP
+    + "{{.Image}}"
+    + _LIFECYCLE_SEP
+    + "{{.Config.Image}}"
+    + _LIFECYCLE_SEP
+    + "{{.Created}}"
+    + _LIFECYCLE_SEP
+    + "{{.State.Status}}"
+    + _LIFECYCLE_SEP
+    + "{{.State.Running}}"
+    + _LIFECYCLE_SEP
+    + "{{.State.ExitCode}}"
+    + _LIFECYCLE_SEP
+    + "{{.State.StartedAt}}"
+    + _LIFECYCLE_SEP
+    + "{{.State.FinishedAt}}"
+)
+CONTAINER_MOUNTS_TEMPLATE = (
+    "{{range .Mounts}}{{.Name}}"
+    + _LIFECYCLE_SEP
+    + "{{.Source}}"
+    + _LIFECYCLE_SEP
+    + "{{.Destination}}"
+    + _LIFECYCLE_SEP
+    + "{{.Type}}"
+    + _LIFECYCLE_SEP
+    + "{{.RW}}\n{{end}}"
+)
+CONTAINER_PROJECT_LABEL_TEMPLATE = (
+    '{{with .Config.Labels}}{{index . "com.docker.compose.project"}}{{end}}'
+)
+CONTAINER_SERVICE_LABEL_TEMPLATE = (
+    '{{with .Config.Labels}}{{index . "com.docker.compose.service"}}{{end}}'
+)
+VOLUME_PROJECTION_TEMPLATE = (
+    "{{.Name}}"
+    + _LIFECYCLE_SEP
+    + "{{.Driver}}"
+    + _LIFECYCLE_SEP
+    + "{{.Mountpoint}}"
+    + _LIFECYCLE_SEP
+    + "{{.CreatedAt}}"
+)
+NETWORK_PROJECTION_TEMPLATE = (
+    "{{.Id}}" + _LIFECYCLE_SEP + "{{.Name}}" + _LIFECYCLE_SEP + "{{.Created}}"
+)
+TEMPLATE_NO_VALUE = "<no value>"
+# The pinned engine's authoritative container State.Status vocabulary;
+# any other rendered status is a non-pinned engine or broken capture.
+LIFECYCLE_STATE_STATUSES = frozenset(
+    {"created", "running", "paused", "restarting", "removing", "exited", "dead"}
+)
 
 
 def _lifecycle_bad(message: str) -> None:
@@ -248,19 +334,1460 @@ def _lifecycle_int(value: Any, low: int, high: int) -> int:
 
 
 def _lifecycle_full_id(value: Any) -> str:
-    if not isinstance(value, str) or not re.fullmatch(
-        r"[0-9a-f]{64}", value
-    ):
+    if not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value):
         _lifecycle_bad("lifecycle id is malformed")
     return value
 
 
+def _lifecycle_image_digest(value: Any) -> str:
+    # The engine reports the creating image as a digest-prefixed ID
+    # (sha256:<64hex>); container IDs stay bare 64-hex, so the two
+    # identities are validated by different exact patterns.
+    if not isinstance(value, str) or not re.fullmatch(r"sha256:[0-9a-f]{64}", value):
+        _lifecycle_bad("lifecycle image digest is malformed")
+    return value
+
+
 def _lifecycle_relpath(value: Any) -> str:
-    if not isinstance(value, str) or not re.fullmatch(
-        r"[A-Za-z0-9][A-Za-z0-9._-]*\.json", value
+    if (
+        not isinstance(value, str)
+        or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*\.json", value)
+        or len(value) > RECEIPT_NAME_MAX_CHARS
     ):
         _lifecycle_bad("lifecycle receipt name is malformed")
     return value
+
+
+def _lifecycle_tag(value: Any) -> str:
+    if not isinstance(value, str) or not re.fullmatch(
+        r"[a-z0-9][a-z0-9-]{0,63}", value
+    ):
+        _lifecycle_bad("lifecycle tag is malformed")
+    return value
+
+
+def _lifecycle_single(value: Any, what: str) -> str:
+    if not isinstance(value, list) or len(value) != 1 or not isinstance(value[0], str):
+        _lifecycle_bad(f"lifecycle {what} must be provided exactly once")
+    return value[0]
+
+
+def _lifecycle_project(value: Any) -> str:
+    if not isinstance(value, str) or not re.fullmatch(
+        r"[A-Za-z0-9][A-Za-z0-9-]{0,255}", value
+    ):
+        _lifecycle_bad("lifecycle project is malformed")
+    return value
+
+
+def _lifecycle_scope(value: Any) -> str:
+    if not isinstance(value, str) or not re.fullmatch(
+        r"[A-Za-z0-9][A-Za-z0-9-]{0,255}", value
+    ):
+        _lifecycle_bad("lifecycle scope is malformed")
+    return value
+
+
+def _lifecycle_run(argv: list[str], root: Path) -> tuple[int, str]:
+    """Run one fixed docker query and return (native, stdout text).
+
+    A nonzero child is a data point for the caller, never an exception:
+    the caller decides whether the native means absence, failure or a
+    genuine body. Spawn failure and non-UTF-8 output are stable errors.
+    Stderr is discarded so no payload, path or engine text is retained.
+    """
+    try:
+        result = subprocess.run(
+            argv,
+            cwd=root,
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+        )
+    except OSError:
+        _lifecycle_bad("lifecycle query spawn failed")
+    try:
+        text = result.stdout.decode("utf-8")
+    except UnicodeDecodeError:
+        _lifecycle_bad("lifecycle query output is not valid utf8")
+    return result.returncode, text
+
+
+def _lifecycle_query_lines(native: int, text: str, context: str) -> list[str]:
+    """Split a successful query into its nonempty output lines.
+
+    A failed query is a stable error here: callers that must distinguish
+    absence from failure invoke _lifecycle_run directly.
+    """
+    if native != 0:
+        _lifecycle_bad(f"lifecycle {context} query failed")
+    return [line for line in text.splitlines() if line]
+
+
+def _lifecycle_optional_label(text: str) -> str | None:
+    value = text.strip()
+    if value in ("", TEMPLATE_NO_VALUE):
+        return None
+    if len(value) > 512 or not re.fullmatch(r"[A-Za-z0-9._:/-]+", value):
+        _lifecycle_bad("lifecycle label is malformed")
+    return value
+
+
+def _lifecycle_required_scalar(value: Any, context: str) -> str:
+    # A required projection field must carry real native data: the empty
+    # string and the Go template sentinel are absence, never a value.
+    if not isinstance(value, str) or value in ("", TEMPLATE_NO_VALUE):
+        _lifecycle_bad(f"lifecycle {context} is malformed")
+    return value
+
+
+def _lifecycle_project_mounts(text: str) -> list[dict[str, Any]]:
+    # The range renders one line per mount; a container with no mounts
+    # renders zero lines and projects to [] (never null): a non-list
+    # rendering would indicate a non-pinned engine or broken capture.
+    mounts: list[dict[str, Any]] = []
+    for line in text.splitlines():
+        fields = line.split(_LIFECYCLE_SEP)
+        if len(fields) != 5:
+            _lifecycle_bad("lifecycle mount projection is malformed")
+        name, source, destination, mount_type, read_write = fields
+        # Destination/type carry real native data: the empty string and
+        # the template sentinel are absence, never a value. Source may be
+        # empty (legitimate tmpfs in the pinned v1.51 MountPoint schema),
+        # but the sentinel is never a value. Only the mount Name stays
+        # honestly optional (None).
+        if not isinstance(source, str) or source == TEMPLATE_NO_VALUE:
+            _lifecycle_bad("lifecycle mount source is malformed")
+        destination = _lifecycle_required_scalar(destination, "mount destination")
+        mount_type = _lifecycle_required_scalar(mount_type, "mount type")
+        if read_write not in ("true", "false"):
+            _lifecycle_bad("lifecycle mount rw is malformed")
+        mounts.append(
+            {
+                "name": name if name not in ("", TEMPLATE_NO_VALUE) else None,
+                "source": source,
+                "destination": destination,
+                "type": mount_type,
+                "rw": read_write == "true",
+            }
+        )
+    return mounts
+
+
+def _lifecycle_project_state(fields: list[str]) -> dict[str, Any]:
+    status, running, exit_code, started_at, finished_at = fields
+    if status not in LIFECYCLE_STATE_STATUSES:
+        _lifecycle_bad("lifecycle state status is malformed")
+    if running not in ("true", "false"):
+        _lifecycle_bad("lifecycle state running is malformed")
+    if not re.fullmatch(r"[0-9]+", exit_code):
+        _lifecycle_bad("lifecycle state exit code is malformed")
+    started_at = _lifecycle_required_scalar(started_at, "state started at")
+    finished_at = _lifecycle_required_scalar(finished_at, "state finished at")
+    return {
+        "status": status,
+        "running": running == "true",
+        "exit_code": int(exit_code),
+        "started_at": started_at,
+        "finished_at": finished_at,
+    }
+
+
+def _lifecycle_container_record(
+    fields: list[str],
+    mounts: list[dict[str, Any]],
+    project: str | None,
+    service: str | None,
+    source_point: str,
+) -> dict[str, Any]:
+    """Project one fixed-template inspection to the flat meta schema.
+
+    The scoped ownership (compose project/service labels) is caller-proven:
+    scoped containers must carry exactly the caller's project and the
+    expected service, helpers must carry neither. Labels are metadata, not
+    a deletion authority.
+    """
+    if len(fields) != 10:
+        _lifecycle_bad("lifecycle container projection is malformed")
+    raw_id, name, image, image_ref, created = fields[:5]
+    container_id = _lifecycle_full_id(raw_id)
+    if (
+        not isinstance(name, str)
+        or not name.startswith("/")
+        or len(name) < 2
+        or len(name) > 201
+        or "/" in name[1:]
+    ):
+        _lifecycle_bad("lifecycle container name is malformed")
+    image_digest = _lifecycle_image_digest(image)
+    image_ref = _lifecycle_required_scalar(image_ref, "container image reference")
+    if len(image_ref) > 512:
+        _lifecycle_bad("lifecycle container image reference is malformed")
+    created = _lifecycle_required_scalar(created, "container created")
+    return {
+        "id": container_id,
+        "name": name,
+        "image": image_digest,
+        "image_ref": image_ref,
+        "created": created,
+        "state": _lifecycle_project_state(fields[5:]),
+        "mounts": mounts,
+        "ownership": {"project": project, "service": service},
+        "source_point": source_point,
+    }
+
+
+def _lifecycle_volume_record(text: str, source_point: str) -> dict[str, Any]:
+    # Volume identity is the actual Name; there is no immutable volume Id.
+    volume_name, driver, mountpoint, created = _lifecycle_project_scalar(
+        text, "volume", 4
+    )
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,200}", volume_name):
+        _lifecycle_bad("lifecycle volume name is malformed")
+    driver = _lifecycle_required_scalar(driver, "volume driver")
+    # CreatedAt is optional in the pinned engine response: absence (empty
+    # or template sentinel) is honestly unknown, not a failure.
+    created = created if created not in ("", TEMPLATE_NO_VALUE) else None
+    return {
+        "name": volume_name,
+        "driver": driver,
+        "mountpoint": mountpoint if mountpoint not in ("", TEMPLATE_NO_VALUE) else None,
+        "created": created,
+        "source_point": source_point,
+    }
+
+
+def _lifecycle_network_record(text: str, source_point: str) -> dict[str, Any]:
+    # Network identity is the full native ID plus its Name.
+    network_id, network_name, created = _lifecycle_project_scalar(text, "network", 3)
+    network_id = _lifecycle_full_id(network_id)
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,200}", network_name):
+        _lifecycle_bad("lifecycle network name is malformed")
+    created = _lifecycle_required_scalar(created, "network created")
+    return {
+        "id": network_id,
+        "name": network_name,
+        "created": created,
+        "source_point": source_point,
+    }
+
+
+def _lifecycle_preflight_name(project: str) -> str:
+    return _lifecycle_relpath(f"preflight-{project}.json")
+
+
+def _lifecycle_capture_name(project: str, phase: str) -> str:
+    return _lifecycle_relpath(f"capture-{project}-{phase}.json")
+
+
+def _lifecycle_object_name(project: str, phase: str, kind: str, key: str) -> str:
+    if kind not in {"c", "v", "n"}:
+        _lifecycle_bad("lifecycle object kind is malformed")
+    return _lifecycle_relpath(f"capture-{project}-{phase}-{kind}-{key}.json")
+
+
+def _lifecycle_cleanup_name(project: str) -> str:
+    return _lifecycle_relpath(f"cleanup-{project}.json")
+
+
+def _lifecycle_helper_name(
+    tag: str, point: str, container_id: str | None = None
+) -> str:
+    if point not in {
+        "begin",
+        "created",
+        "created-failed",
+        "meta",
+        "start",
+        "state",
+        "removed",
+        "absent",
+        "complete",
+    }:
+        _lifecycle_bad("lifecycle helper point is malformed")
+    _lifecycle_tag(tag)
+    if container_id is not None:
+        return _lifecycle_relpath(f"helper-{tag}-{point}-{container_id}.json")
+    return _lifecycle_relpath(f"helper-{tag}-{point}.json")
+
+
+def _lifecycle_expected_names(root: Path, project: str) -> dict[str, list[str]]:
+    """Derive exact prospective physical names from the frozen rendered
+    compose config. Names are label-independent: they are the physical
+    objects compose would render for this project."""
+    try:
+        config = rendered_config(root)
+    except (
+        OSError,
+        PolicyError,
+        RecursionError,
+        subprocess.SubprocessError,
+        ValueError,
+    ):
+        _lifecycle_bad("lifecycle rendered config query failed")
+    services = config.get("services")
+    networks = config.get("networks")
+    volumes = config.get("volumes")
+    for label, values in (
+        ("services", services),
+        ("networks", networks),
+        ("volumes", volumes),
+    ):
+        if not isinstance(values, dict) or not values:
+            _lifecycle_bad(f"lifecycle rendered {label} are malformed")
+        for key in values:
+            if not isinstance(key, str) or not re.fullmatch(
+                r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}", key
+            ):
+                _lifecycle_bad("lifecycle rendered name is malformed")
+    return {
+        "containers": [f"{project}-{service}-1" for service in sorted(services)],
+        "volumes": [f"{project}_{name}" for name in sorted(volumes)],
+        "networks": [f"{project}_{name}" for name in sorted(networks)],
+    }
+
+
+def _lifecycle_anchored_filter(kind: str, name: str) -> list[str]:
+    # Anchored exact-name filter. Pinned moby matches the name filter against
+    # both the container name and the slash-trimmed form, so the anchored
+    # bare name is exact and label-independent; re.escape keeps the filter a
+    # literal even for a hypothetical future metacharacter.
+    if kind == "container":
+        argv = ["docker", "ps", "-a", "--no-trunc"]
+        fmt = "{{.ID}}"
+    elif kind == "volume":
+        argv = ["docker", "volume", "ls"]
+        fmt = "{{.Name}}"
+    else:
+        argv = ["docker", "network", "ls"]
+        fmt = "{{.ID}}"
+    return [*argv, "--filter", f"name=^{re.escape(name)}$", "--format", fmt]
+
+
+def _lifecycle_freshness_check(root: Path, kind: str, name: str) -> dict[str, Any]:
+    # A failed query is not absence: only a healthy zero native with an
+    # empty anchored result proves freshness for this exact physical name.
+    native, text = _lifecycle_run(_lifecycle_anchored_filter(kind, name), root)
+    if native != 0:
+        _lifecycle_bad(f"lifecycle {kind} preflight query failed")
+    return {
+        "kind": kind,
+        "name": name,
+        "native": native,
+        "listed": [line for line in text.splitlines() if line],
+    }
+
+
+def _lifecycle_preflight(
+    root: Path, project: str, scope: str, evidence_dir: Path
+) -> None:
+    _lifecycle_project(project)
+    _lifecycle_scope(scope)
+    daemon_native, _ = _lifecycle_run(
+        ["docker", "version", "--format", "{{.Server.Version}}"], root
+    )
+    if daemon_native != 0:
+        _lifecycle_bad("lifecycle daemon query failed")
+    expected = _lifecycle_expected_names(root, project)
+    checks: list[dict[str, Any]] = []
+    for kind in ("containers", "volumes", "networks"):
+        for name in expected[kind]:
+            check = _lifecycle_freshness_check(root, kind[:-1], name)
+            if check["listed"]:
+                _lifecycle_bad(f"lifecycle {kind[:-1]} namespace is not fresh")
+            checks.append(check)
+    native, text = _lifecycle_run(
+        [
+            "docker",
+            "ps",
+            "-a",
+            "--no-trunc",
+            "--filter",
+            f"label=com.docker.compose.project={project}",
+            "--format",
+            "{{.ID}}",
+        ],
+        root,
+    )
+    if native != 0:
+        _lifecycle_bad("lifecycle label preflight query failed")
+    label_listed = [line for line in text.splitlines() if line]
+    if label_listed:
+        _lifecycle_bad("lifecycle label namespace is not fresh")
+    _write_evidence_record(
+        evidence_dir,
+        _lifecycle_preflight_name(project),
+        {
+            "project": project,
+            "invocation": scope,
+            "source_point": "preflight",
+            "daemon_native": daemon_native,
+            "checks": checks,
+            "label_check": {"native": native, "listed": label_listed},
+        },
+    )
+
+
+def _lifecycle_project_scalar(text: str, context: str, count: int) -> list[str]:
+    # One successful projection query renders exactly one line of
+    # separator-joined fields; anything else is a non-pinned engine or a
+    # broken capture and must fail complete-evidence capture.
+    lines = text.splitlines()
+    if len(lines) != 1:
+        _lifecycle_bad(f"lifecycle {context} projection is malformed")
+    fields = lines[0].split(_LIFECYCLE_SEP)
+    if len(fields) != count:
+        _lifecycle_bad(f"lifecycle {context} projection is malformed")
+    return fields
+
+
+def _lifecycle_helper_labels(
+    root: Path, container_id: str
+) -> tuple[str | None, str | None]:
+    native, project_text = _lifecycle_run(
+        [
+            "docker",
+            "inspect",
+            "--format",
+            CONTAINER_PROJECT_LABEL_TEMPLATE,
+            container_id,
+        ],
+        root,
+    )
+    if native != 0:
+        _lifecycle_bad("lifecycle helper label query failed")
+    project_label = _lifecycle_optional_label(project_text)
+    native, service_text = _lifecycle_run(
+        [
+            "docker",
+            "inspect",
+            "--format",
+            CONTAINER_SERVICE_LABEL_TEMPLATE,
+            container_id,
+        ],
+        root,
+    )
+    if native != 0:
+        _lifecycle_bad("lifecycle helper label query failed")
+    service_label = _lifecycle_optional_label(service_text)
+    return project_label, service_label
+
+
+def _lifecycle_capture_container(
+    root: Path,
+    project: str,
+    phase: str,
+    name: str,
+    required: bool,
+) -> dict[str, Any] | None:
+    expected_service = name[len(project) + 1 : -2]
+    native, text = _lifecycle_run(
+        ["docker", "inspect", "--format", CONTAINER_PROJECTION_TEMPLATE, name], root
+    )
+    if native != 0:
+        if required:
+            _lifecycle_bad("lifecycle container capture query failed")
+        return None
+    native, mounts_text = _lifecycle_run(
+        ["docker", "inspect", "--format", CONTAINER_MOUNTS_TEMPLATE, name], root
+    )
+    if native != 0:
+        _lifecycle_bad("lifecycle container mounts query failed")
+    fields = _lifecycle_project_scalar(text, "container", 10)
+    native, project_text = _lifecycle_run(
+        ["docker", "inspect", "--format", CONTAINER_PROJECT_LABEL_TEMPLATE, name], root
+    )
+    if native != 0:
+        _lifecycle_bad("lifecycle container label query failed")
+    native, service_text = _lifecycle_run(
+        ["docker", "inspect", "--format", CONTAINER_SERVICE_LABEL_TEMPLATE, name], root
+    )
+    if native != 0:
+        _lifecycle_bad("lifecycle container label query failed")
+    project_label = _lifecycle_optional_label(project_text)
+    service_label = _lifecycle_optional_label(service_text)
+    if project_label != project or service_label != expected_service:
+        _lifecycle_bad("lifecycle container ownership is not caller-proven")
+    record = _lifecycle_container_record(
+        fields,
+        _lifecycle_project_mounts(mounts_text),
+        project,
+        expected_service,
+        "capture",
+    )
+    return _lifecycle_object_name(project, phase, "c", record["id"]), record
+
+
+def _lifecycle_capture(
+    root: Path, project: str, phase: str, scope: str, evidence_dir: Path
+) -> None:
+    _lifecycle_project(project)
+    _lifecycle_scope(scope)
+    if phase not in LIFECYCLE_PHASES:
+        _lifecycle_bad("lifecycle phase is malformed")
+    daemon_native, _ = _lifecycle_run(
+        ["docker", "version", "--format", "{{.Server.Version}}"], root
+    )
+    if daemon_native != 0:
+        _lifecycle_bad("lifecycle daemon query failed")
+    expected = _lifecycle_expected_names(root, project)
+    objects: list[dict[str, Any]] = []
+    for name in expected["containers"]:
+        required = phase != "negative" or name == f"{project}-bootstrap-1"
+        captured = _lifecycle_capture_container(root, project, phase, name, required)
+        if captured is None:
+            continue
+        relpath, record = captured
+        _write_evidence_record(evidence_dir, relpath, record)
+        objects.append(
+            {
+                "kind": "container",
+                "id": record["id"],
+                "name": name,
+                "service": record["ownership"]["service"],
+                "receipt": relpath,
+            }
+        )
+    for name in expected["volumes"]:
+        native, text = _lifecycle_run(
+            [
+                "docker",
+                "volume",
+                "inspect",
+                "--format",
+                VOLUME_PROJECTION_TEMPLATE,
+                name,
+            ],
+            root,
+        )
+        if native != 0:
+            _lifecycle_bad("lifecycle volume capture query failed")
+        record = _lifecycle_volume_record(text, "capture")
+        if record["name"] != name:
+            _lifecycle_bad("lifecycle volume identity mismatch")
+        relpath = _lifecycle_object_name(project, phase, "v", name)
+        _write_evidence_record(evidence_dir, relpath, record)
+        objects.append({"kind": "volume", "name": name, "receipt": relpath})
+    for name in expected["networks"]:
+        native, text = _lifecycle_run(
+            [
+                "docker",
+                "network",
+                "inspect",
+                "--format",
+                NETWORK_PROJECTION_TEMPLATE,
+                name,
+            ],
+            root,
+        )
+        if native != 0:
+            _lifecycle_bad("lifecycle network capture query failed")
+        record = _lifecycle_network_record(text, "capture")
+        if record["name"] != name:
+            _lifecycle_bad("lifecycle network identity mismatch")
+        relpath = _lifecycle_object_name(project, phase, "n", record["id"])
+        _write_evidence_record(evidence_dir, relpath, record)
+        objects.append(
+            {"kind": "network", "id": record["id"], "name": name, "receipt": relpath}
+        )
+    # The inventory is written only after every object receipt is durable, so
+    # an inventory can never reference a missing or partial capture.
+    _write_evidence_record(
+        evidence_dir,
+        _lifecycle_capture_name(project, phase),
+        {
+            "project": project,
+            "invocation": scope,
+            "phase": phase,
+            "source_point": "capture",
+            "daemon_native": daemon_native,
+            "objects": objects,
+        },
+    )
+
+
+def _lifecycle_helper_begin(
+    root: Path, project: str, scope: str, tag: str, name: str, evidence_dir: Path
+) -> None:
+    _lifecycle_project(project)
+    _lifecycle_scope(scope)
+    _lifecycle_tag(tag)
+    if not isinstance(name, str) or not re.fullmatch(
+        r"[A-Za-z0-9][A-Za-z0-9-]{0,200}", name
+    ):
+        _lifecycle_bad("lifecycle helper name is malformed")
+    _write_evidence_record(
+        evidence_dir,
+        _lifecycle_helper_name(tag, "begin"),
+        {
+            "project": project,
+            "tag": tag,
+            "invocation": scope,
+            "source_point": "helper-begin",
+            "name": name,
+        },
+    )
+
+
+def _lifecycle_helper_created(
+    root: Path,
+    project: str,
+    scope: str,
+    tag: str,
+    name: str,
+    container_id: str | None,
+    create_rc: int,
+    evidence_dir: Path,
+) -> None:
+    _lifecycle_project(project)
+    _lifecycle_scope(scope)
+    _lifecycle_tag(tag)
+    if not isinstance(name, str) or not re.fullmatch(
+        r"[A-Za-z0-9][A-Za-z0-9-]{0,200}", name
+    ):
+        _lifecycle_bad("lifecycle helper name is malformed")
+    if isinstance(create_rc, bool) or create_rc < 0 or create_rc > 255:
+        _lifecycle_bad("lifecycle create native is malformed")
+    if container_id is None:
+        # Failed create: the native is recorded, its stdout is never adopted
+        # as an owned ID, and no later lifecycle point may follow.
+        if create_rc == 0:
+            _lifecycle_bad("lifecycle create native is malformed")
+        _write_evidence_record(
+            evidence_dir,
+            _lifecycle_helper_name(tag, "created-failed"),
+            {
+                "project": project,
+                "tag": tag,
+                "invocation": scope,
+                "source_point": "helper-create",
+                "name": name,
+                "create_rc": create_rc,
+            },
+        )
+        return
+    if create_rc != 0:
+        _lifecycle_bad("lifecycle create native is malformed")
+    _lifecycle_full_id(container_id)
+    _write_evidence_record(
+        evidence_dir,
+        _lifecycle_helper_name(tag, "created", container_id),
+        {
+            "project": project,
+            "tag": tag,
+            "invocation": scope,
+            "source_point": "helper-create",
+            "name": name,
+            "create_rc": 0,
+        },
+    )
+    # The full created ID is now durable; capture safe pre-start metadata
+    # before any later fallible work.
+    native, text = _lifecycle_run(
+        ["docker", "inspect", "--format", CONTAINER_PROJECTION_TEMPLATE, container_id],
+        root,
+    )
+    if native != 0:
+        _lifecycle_bad("lifecycle helper metadata query failed")
+    native, mounts_text = _lifecycle_run(
+        ["docker", "inspect", "--format", CONTAINER_MOUNTS_TEMPLATE, container_id],
+        root,
+    )
+    if native != 0:
+        _lifecycle_bad("lifecycle helper metadata query failed")
+    project_label, service_label = _lifecycle_helper_labels(root, container_id)
+    if project_label is not None or service_label is not None:
+        _lifecycle_bad("lifecycle helper carries compose labels")
+    meta = _lifecycle_container_record(
+        _lifecycle_project_scalar(text, "helper metadata", 10),
+        _lifecycle_project_mounts(mounts_text),
+        None,
+        None,
+        "helper-created",
+    )
+    if meta["name"] != f"/{name}":
+        _lifecycle_bad("lifecycle helper name binding failed")
+    _write_evidence_record(
+        evidence_dir, _lifecycle_helper_name(tag, "meta", container_id), meta
+    )
+
+
+def _lifecycle_helper_start(
+    root: Path,
+    project: str,
+    scope: str,
+    tag: str,
+    container_id: str,
+    start_rc: int,
+    evidence_dir: Path,
+) -> None:
+    _lifecycle_project(project)
+    _lifecycle_scope(scope)
+    _lifecycle_full_id(container_id)
+    if isinstance(start_rc, bool) or start_rc < 0 or start_rc > 255:
+        _lifecycle_bad("lifecycle start native is malformed")
+    _write_evidence_record(
+        evidence_dir,
+        _lifecycle_helper_name(tag, "start", container_id),
+        {
+            "project": project,
+            "tag": tag,
+            "invocation": scope,
+            "source_point": "helper-start",
+            "start_rc": start_rc,
+        },
+    )
+
+
+def _lifecycle_helper_terminal(
+    root: Path,
+    project: str,
+    scope: str,
+    tag: str,
+    container_id: str,
+    evidence_dir: Path,
+) -> None:
+    _lifecycle_project(project)
+    _lifecycle_scope(scope)
+    _lifecycle_full_id(container_id)
+    native, text = _lifecycle_run(
+        ["docker", "inspect", "--format", CONTAINER_PROJECTION_TEMPLATE, container_id],
+        root,
+    )
+    if native != 0:
+        _lifecycle_bad("lifecycle helper terminal query failed")
+    native, mounts_text = _lifecycle_run(
+        ["docker", "inspect", "--format", CONTAINER_MOUNTS_TEMPLATE, container_id],
+        root,
+    )
+    if native != 0:
+        _lifecycle_bad("lifecycle helper terminal query failed")
+    project_label, service_label = _lifecycle_helper_labels(root, container_id)
+    if project_label is not None or service_label is not None:
+        _lifecycle_bad("lifecycle helper carries compose labels")
+    state = _lifecycle_container_record(
+        _lifecycle_project_scalar(text, "helper terminal", 10),
+        _lifecycle_project_mounts(mounts_text),
+        None,
+        None,
+        "helper-terminal",
+    )
+    _write_evidence_record(
+        evidence_dir, _lifecycle_helper_name(tag, "state", container_id), state
+    )
+
+
+def _lifecycle_helper_remove(
+    root: Path,
+    project: str,
+    scope: str,
+    tag: str,
+    container_id: str,
+    evidence_dir: Path,
+) -> None:
+    _lifecycle_project(project)
+    _lifecycle_scope(scope)
+    _lifecycle_full_id(container_id)
+    native, _ = _lifecycle_run(["docker", "rm", container_id], root)
+    _write_evidence_record(
+        evidence_dir,
+        _lifecycle_helper_name(tag, "removed", container_id),
+        {
+            "project": project,
+            "tag": tag,
+            "invocation": scope,
+            "source_point": "helper-remove",
+            "rm_rc": native,
+        },
+    )
+    if native != 0:
+        _lifecycle_bad("lifecycle helper removal failed")
+    # Absence uses the full 64-hex ID as a literal-prefix filter: the
+    # audited daemon resolves id= through an exact GetByPrefix lookup, so
+    # a still-present container answers with its exact known ID while an
+    # anchored ^...$ form would be vacuous. A failed query is not absence.
+    native, text = _lifecycle_run(
+        [
+            "docker",
+            "ps",
+            "-a",
+            "--no-trunc",
+            "--filter",
+            f"id={container_id}",
+            "--format",
+            "{{.ID}}",
+        ],
+        root,
+    )
+    if native != 0:
+        # A failed absence query is not absence: the chain stays incomplete.
+        _lifecycle_bad("lifecycle helper absence query failed")
+    listed = [line for line in text.splitlines() if line]
+    _write_evidence_record(
+        evidence_dir,
+        _lifecycle_helper_name(tag, "absent", container_id),
+        {
+            "project": project,
+            "tag": tag,
+            "invocation": scope,
+            "source_point": "helper-absent",
+            "ps_rc": native,
+            "listed": listed,
+        },
+    )
+    if listed:
+        _lifecycle_bad("lifecycle helper is not absent")
+
+
+def _lifecycle_validate_flat_meta(record: dict[str, Any], source_point: str) -> None:
+    if set(record) != {
+        "id",
+        "name",
+        "image",
+        "image_ref",
+        "created",
+        "state",
+        "mounts",
+        "ownership",
+        "source_point",
+    }:
+        _lifecycle_bad("lifecycle helper metadata is malformed")
+    if record["source_point"] != source_point:
+        _lifecycle_bad("lifecycle helper metadata point is malformed")
+    _lifecycle_full_id(record["id"])
+    name = record["name"]
+    if (
+        not isinstance(name, str)
+        or not name.startswith("/")
+        or len(name) < 2
+        or len(name) > 201
+        or "/" in name[1:]
+    ):
+        _lifecycle_bad("lifecycle helper metadata name is malformed")
+    _lifecycle_image_digest(record["image"])
+    image_ref = _lifecycle_required_scalar(
+        record["image_ref"], "helper metadata image reference"
+    )
+    if len(image_ref) > 512:
+        _lifecycle_bad("lifecycle helper metadata image reference is malformed")
+    _lifecycle_required_scalar(record["created"], "helper metadata created")
+    state = record["state"]
+    if not isinstance(state, dict) or set(state) != {
+        "status",
+        "running",
+        "exit_code",
+        "started_at",
+        "finished_at",
+    }:
+        _lifecycle_bad("lifecycle helper metadata state is malformed")
+    if state["status"] not in LIFECYCLE_STATE_STATUSES:
+        _lifecycle_bad("lifecycle helper metadata state is malformed")
+    if not isinstance(state["running"], bool):
+        _lifecycle_bad("lifecycle helper metadata state is malformed")
+    if isinstance(state["exit_code"], bool) or not isinstance(state["exit_code"], int):
+        _lifecycle_bad("lifecycle helper metadata state is malformed")
+    if (
+        not isinstance(state["started_at"], str)
+        or not isinstance(state["finished_at"], str)
+        or state["started_at"] in ("", TEMPLATE_NO_VALUE)
+        or state["finished_at"] in ("", TEMPLATE_NO_VALUE)
+    ):
+        _lifecycle_bad("lifecycle helper metadata state is malformed")
+    mounts = record["mounts"]
+    if not isinstance(mounts, list):
+        _lifecycle_bad("lifecycle helper metadata mounts are malformed")
+    for mount in mounts:
+        if not isinstance(mount, dict) or set(mount) != {
+            "name",
+            "source",
+            "destination",
+            "type",
+            "rw",
+        }:
+            _lifecycle_bad("lifecycle helper metadata mount is malformed")
+        if mount["name"] is not None and not isinstance(mount["name"], str):
+            _lifecycle_bad("lifecycle helper metadata mount is malformed")
+        if not isinstance(mount["source"], str) or mount["source"] == TEMPLATE_NO_VALUE:
+            _lifecycle_bad("lifecycle helper metadata mount is malformed")
+        if not isinstance(mount["destination"], str) or mount["destination"] in (
+            "",
+            TEMPLATE_NO_VALUE,
+        ):
+            _lifecycle_bad("lifecycle helper metadata mount is malformed")
+        if not isinstance(mount["type"], str) or mount["type"] in (
+            "",
+            TEMPLATE_NO_VALUE,
+        ):
+            _lifecycle_bad("lifecycle helper metadata mount is malformed")
+        if not isinstance(mount["rw"], bool):
+            _lifecycle_bad("lifecycle helper metadata mount is malformed")
+    ownership = record["ownership"]
+    if not isinstance(ownership, dict) or set(ownership) != {"project", "service"}:
+        _lifecycle_bad("lifecycle helper metadata ownership is malformed")
+    for key in ("project", "service"):
+        value = ownership[key]
+        if value is not None and not isinstance(value, str):
+            _lifecycle_bad("lifecycle helper metadata ownership is malformed")
+
+
+def _lifecycle_validate_common(
+    record: dict[str, Any],
+    expected: set[str],
+    source_point: str,
+    project: str,
+    tag: str,
+    scope: str,
+) -> None:
+    if set(record) != expected:
+        _lifecycle_bad("lifecycle helper record is malformed")
+    if record["source_point"] != source_point:
+        _lifecycle_bad("lifecycle helper record point is malformed")
+    if record["project"] != project:
+        _lifecycle_bad("lifecycle helper binding is broken")
+    if record["tag"] != tag:
+        _lifecycle_bad("lifecycle helper binding is broken")
+    if record["invocation"] != scope:
+        _lifecycle_bad("lifecycle helper binding is broken")
+
+
+def _lifecycle_audit_helper_chain(
+    begin: dict[str, Any],
+    created: dict[str, Any],
+    meta: dict[str, Any],
+    start: dict[str, Any],
+    state: dict[str, Any],
+    removed: dict[str, Any],
+    absent: dict[str, Any],
+    project: str,
+    tag: str,
+    scope: str,
+    name: str,
+    container_id: str,
+    start_rc: int,
+    body_exit: int,
+) -> None:
+    """Pure chain audit. Validating the complete receipts happens before any
+    caller may accept the body result as a denial or a value match."""
+    _lifecycle_validate_common(
+        begin,
+        {"project", "tag", "invocation", "source_point", "name"},
+        "helper-begin",
+        project,
+        tag,
+        scope,
+    )
+    if begin["name"] != name:
+        _lifecycle_bad("lifecycle helper name binding failed")
+    _lifecycle_validate_common(
+        created,
+        {"project", "tag", "invocation", "source_point", "name", "create_rc"},
+        "helper-create",
+        project,
+        tag,
+        scope,
+    )
+    if created["name"] != name:
+        _lifecycle_bad("lifecycle helper name binding failed")
+    if created["create_rc"] != 0:
+        _lifecycle_bad("lifecycle helper create did not succeed")
+    _lifecycle_validate_flat_meta(meta, "helper-created")
+    if meta["id"] != container_id:
+        _lifecycle_bad("lifecycle helper id binding failed")
+    if meta["name"] != f"/{name}":
+        _lifecycle_bad("lifecycle helper name binding failed")
+    if meta["ownership"] != {"project": None, "service": None}:
+        _lifecycle_bad("lifecycle helper ownership is not unknown")
+    _lifecycle_validate_common(
+        start,
+        {"project", "tag", "invocation", "source_point", "start_rc"},
+        "helper-start",
+        project,
+        tag,
+        scope,
+    )
+    if start["start_rc"] != start_rc:
+        _lifecycle_bad("lifecycle helper start native mismatch")
+    _lifecycle_validate_flat_meta(state, "helper-terminal")
+    if state["id"] != container_id:
+        _lifecycle_bad("lifecycle helper id binding failed")
+    if state["name"] != meta["name"]:
+        _lifecycle_bad("lifecycle helper name binding failed")
+    if state["image"] != meta["image"]:
+        _lifecycle_bad("lifecycle helper image binding failed")
+    _lifecycle_validate_common(
+        removed,
+        {"project", "tag", "invocation", "source_point", "rm_rc"},
+        "helper-remove",
+        project,
+        tag,
+        scope,
+    )
+    if removed["rm_rc"] != 0:
+        _lifecycle_bad("lifecycle helper removal did not succeed")
+    _lifecycle_validate_common(
+        absent,
+        {"project", "tag", "invocation", "source_point", "ps_rc", "listed"},
+        "helper-absent",
+        project,
+        tag,
+        scope,
+    )
+    if absent["ps_rc"] != 0:
+        _lifecycle_bad("lifecycle helper absence query did not succeed")
+    if not isinstance(absent["listed"], list) or absent["listed"] != []:
+        _lifecycle_bad("lifecycle helper is not absent")
+    # The body result is genuine only when the authoritative terminal state
+    # proves the container executed and terminated: a docker-level start
+    # failure (for example a 125 native while the container is still
+    # created) is infrastructure, while any 0..255 exit of an executed
+    # container - including 97 and 125/126/127 - is the body's own result.
+    terminal = state["state"]
+    if terminal["status"] != "exited":
+        _lifecycle_bad("lifecycle body did not reach terminal execution")
+    if terminal["exit_code"] != start_rc:
+        _lifecycle_bad("lifecycle body native mismatch")
+    if start_rc != body_exit:
+        _lifecycle_bad("lifecycle body native mismatch")
+
+
+def _lifecycle_helper_complete(
+    root: Path,
+    project: str,
+    scope: str,
+    tag: str,
+    name: str,
+    container_id: str,
+    start_rc: int,
+    body_exit: int,
+    evidence_dir: Path,
+) -> None:
+    _lifecycle_project(project)
+    _lifecycle_scope(scope)
+    _lifecycle_tag(tag)
+    _lifecycle_full_id(container_id)
+    if isinstance(start_rc, bool) or start_rc < 0 or start_rc > 255:
+        _lifecycle_bad("lifecycle start native is malformed")
+    if isinstance(body_exit, bool) or body_exit < 0 or body_exit > 255:
+        _lifecycle_bad("lifecycle body exit is malformed")
+    begin = _read_evidence_record(evidence_dir, _lifecycle_helper_name(tag, "begin"))
+    created = _read_evidence_record(
+        evidence_dir, _lifecycle_helper_name(tag, "created", container_id)
+    )
+    meta = _read_evidence_record(
+        evidence_dir, _lifecycle_helper_name(tag, "meta", container_id)
+    )
+    start = _read_evidence_record(
+        evidence_dir, _lifecycle_helper_name(tag, "start", container_id)
+    )
+    state = _read_evidence_record(
+        evidence_dir, _lifecycle_helper_name(tag, "state", container_id)
+    )
+    removed = _read_evidence_record(
+        evidence_dir, _lifecycle_helper_name(tag, "removed", container_id)
+    )
+    absent = _read_evidence_record(
+        evidence_dir, _lifecycle_helper_name(tag, "absent", container_id)
+    )
+    _lifecycle_audit_helper_chain(
+        begin,
+        created,
+        meta,
+        start,
+        state,
+        removed,
+        absent,
+        project,
+        tag,
+        scope,
+        name,
+        container_id,
+        start_rc,
+        body_exit,
+    )
+    _write_evidence_record(
+        evidence_dir,
+        _lifecycle_helper_name(tag, "complete"),
+        {
+            "project": project,
+            "tag": tag,
+            "invocation": scope,
+            "source_point": "helper-complete",
+            "id": container_id,
+            "name": name,
+            "start_rc": start_rc,
+            "body_exit": body_exit,
+            "rm_rc": removed["rm_rc"],
+            "ps_rc": absent["ps_rc"],
+        },
+    )
+
+
+def _lifecycle_cleanup_absent(
+    root: Path, project: str, scope: str, down_native: int, evidence_dir: Path
+) -> None:
+    _lifecycle_project(project)
+    _lifecycle_scope(scope)
+    if isinstance(down_native, bool) or down_native < 0 or down_native > 255:
+        _lifecycle_bad("lifecycle removal native is malformed")
+    expected = _lifecycle_expected_names(root, project)
+    checks: list[dict[str, Any]] = []
+    for kind in ("containers", "volumes", "networks"):
+        for name in expected[kind]:
+            check = _lifecycle_freshness_check(root, kind[:-1], name)
+            checks.append(check)
+    _write_evidence_record(
+        evidence_dir,
+        _lifecycle_cleanup_name(project),
+        {
+            "project": project,
+            "invocation": scope,
+            "source_point": "cleanup",
+            "down_native": down_native,
+            "checks": checks,
+        },
+    )
+    if down_native != 0:
+        _lifecycle_bad("lifecycle removal native is not zero")
+    for check in checks:
+        if check["listed"]:
+            _lifecycle_bad("lifecycle removal left a residual object")
+
+
+def _lifecycle_inventory_container_id(
+    inventory: dict[str, Any], expected_name: str
+) -> str:
+    for entry in inventory.get("objects", []):
+        if (
+            isinstance(entry, dict)
+            and entry.get("kind") == "container"
+            and entry.get("name") == expected_name
+        ):
+            return _lifecycle_full_id(entry.get("id"))
+    _lifecycle_bad("lifecycle inventory container is missing")
+
+
+def _lifecycle_recreate_diff(
+    root: Path,
+    project: str,
+    scope: str,
+    old_phase: str,
+    new_phase: str,
+    service: str,
+    evidence_dir: Path,
+) -> None:
+    _lifecycle_project(project)
+    _lifecycle_scope(scope)
+    if old_phase not in LIFECYCLE_PHASES or new_phase not in LIFECYCLE_PHASES:
+        _lifecycle_bad("lifecycle phase is malformed")
+    if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,63}", service):
+        _lifecycle_bad("lifecycle service is malformed")
+    old = _read_evidence_record(
+        evidence_dir, _lifecycle_capture_name(project, old_phase)
+    )
+    new = _read_evidence_record(
+        evidence_dir, _lifecycle_capture_name(project, new_phase)
+    )
+    expected_name = f"{project}-{service}-1"
+    old_id = _lifecycle_inventory_container_id(old, expected_name)
+    new_id = _lifecycle_inventory_container_id(new, expected_name)
+    if old_id == new_id:
+        _lifecycle_bad("lifecycle recreate did not replace the container")
+
+
+def _lifecycle_audit_preflight(
+    root: Path, project: str, scope: str, evidence_dir: Path
+) -> None:
+    _lifecycle_project(project)
+    _lifecycle_scope(scope)
+    record = _read_evidence_record(evidence_dir, _lifecycle_preflight_name(project))
+    if set(record) != {
+        "project",
+        "invocation",
+        "source_point",
+        "daemon_native",
+        "checks",
+        "label_check",
+    }:
+        _lifecycle_bad("lifecycle preflight record is malformed")
+    if record["source_point"] != "preflight":
+        _lifecycle_bad("lifecycle preflight point is malformed")
+    if record["project"] != project or record["invocation"] != scope:
+        _lifecycle_bad("lifecycle preflight binding is broken")
+    if record["daemon_native"] != 0:
+        _lifecycle_bad("lifecycle preflight daemon query failed")
+    expected = _lifecycle_expected_names(root, project)
+    seen: dict[str, set[str]] = {"container": set(), "volume": set(), "network": set()}
+    checks = record["checks"]
+    if not isinstance(checks, list) or not checks:
+        _lifecycle_bad("lifecycle preflight checks are malformed")
+    for check in checks:
+        if not isinstance(check, dict) or set(check) != {
+            "kind",
+            "name",
+            "native",
+            "listed",
+        }:
+            _lifecycle_bad("lifecycle preflight check is malformed")
+        kind = check["kind"]
+        if kind not in seen:
+            _lifecycle_bad("lifecycle preflight check kind is malformed")
+        if check["native"] != 0:
+            _lifecycle_bad("lifecycle preflight query failed")
+        if check["listed"] != []:
+            _lifecycle_bad("lifecycle namespace was not fresh")
+        if check["name"] not in expected[kind + "s"]:
+            _lifecycle_bad("lifecycle preflight name is unexpected")
+        seen[kind].add(check["name"])
+    if seen["container"] != set(expected["containers"]):
+        _lifecycle_bad("lifecycle preflight coverage is incomplete")
+    if seen["volume"] != set(expected["volumes"]):
+        _lifecycle_bad("lifecycle preflight coverage is incomplete")
+    if seen["network"] != set(expected["networks"]):
+        _lifecycle_bad("lifecycle preflight coverage is incomplete")
+    label = record["label_check"]
+    if not isinstance(label, dict) or set(label) != {"native", "listed"}:
+        _lifecycle_bad("lifecycle preflight label check is malformed")
+    if label["native"] != 0 or label["listed"] != []:
+        _lifecycle_bad("lifecycle label namespace was not fresh")
+
+
+def _lifecycle_audit_capture(
+    root: Path, project: str, scope: str, phase: str, evidence_dir: Path
+) -> None:
+    _lifecycle_project(project)
+    _lifecycle_scope(scope)
+    if phase not in LIFECYCLE_PHASES:
+        _lifecycle_bad("lifecycle phase is malformed")
+    inventory = _read_evidence_record(
+        evidence_dir, _lifecycle_capture_name(project, phase)
+    )
+    if set(inventory) != {
+        "project",
+        "invocation",
+        "phase",
+        "source_point",
+        "daemon_native",
+        "objects",
+    }:
+        _lifecycle_bad("lifecycle capture inventory is malformed")
+    if inventory["source_point"] != "capture":
+        _lifecycle_bad("lifecycle capture point is malformed")
+    if inventory["project"] != project or inventory["invocation"] != scope:
+        _lifecycle_bad("lifecycle capture binding is broken")
+    if inventory["phase"] != phase:
+        _lifecycle_bad("lifecycle capture phase mismatch")
+    if inventory["daemon_native"] != 0:
+        _lifecycle_bad("lifecycle capture daemon query failed")
+    objects = inventory["objects"]
+    if not isinstance(objects, list) or not objects:
+        _lifecycle_bad("lifecycle capture inventory is empty")
+    expected = _lifecycle_expected_names(root, project)
+    container_records: dict[str, dict[str, Any]] = {}
+    seen_volumes: set[str] = set()
+    seen_networks: set[str] = set()
+    for entry in objects:
+        if not isinstance(entry, dict):
+            _lifecycle_bad("lifecycle capture object is malformed")
+        kind = entry.get("kind")
+        if kind == "container":
+            if set(entry) != {"kind", "id", "name", "service", "receipt"}:
+                _lifecycle_bad("lifecycle capture object is malformed")
+            object_id = _lifecycle_full_id(entry["id"])
+            name = entry["name"]
+            service = entry["service"]
+            receipt = entry["receipt"]
+            if (
+                not isinstance(name, str)
+                or not isinstance(service, str)
+                or not isinstance(receipt, str)
+            ):
+                _lifecycle_bad("lifecycle capture object is malformed")
+            if name not in expected["containers"]:
+                _lifecycle_bad("lifecycle capture object is unexpected")
+            if service != name[len(project) + 1 : -2]:
+                _lifecycle_bad("lifecycle capture object service is broken")
+            if receipt != _lifecycle_object_name(project, phase, "c", object_id):
+                _lifecycle_bad("lifecycle capture receipt binding is broken")
+            record = _read_evidence_record(evidence_dir, receipt)
+            _lifecycle_validate_flat_meta(record, "capture")
+            if record["id"] != object_id or record["name"] != f"/{name}":
+                _lifecycle_bad("lifecycle capture object binding is broken")
+            if record["ownership"] != {"project": project, "service": service}:
+                _lifecycle_bad("lifecycle capture ownership is not caller-proven")
+            if name in container_records:
+                _lifecycle_bad("lifecycle capture object is duplicated")
+            container_records[name] = record
+        elif kind == "volume":
+            if set(entry) != {"kind", "name", "receipt"}:
+                _lifecycle_bad("lifecycle capture object is malformed")
+            name = entry["name"]
+            receipt = entry["receipt"]
+            if not isinstance(name, str) or not isinstance(receipt, str):
+                _lifecycle_bad("lifecycle capture object is malformed")
+            if name not in expected["volumes"]:
+                _lifecycle_bad("lifecycle capture object is unexpected")
+            if receipt != _lifecycle_object_name(project, phase, "v", name):
+                _lifecycle_bad("lifecycle capture receipt binding is broken")
+            record = _read_evidence_record(evidence_dir, receipt)
+            if (
+                not isinstance(record, dict)
+                or set(record)
+                != {"name", "driver", "mountpoint", "created", "source_point"}
+                or record["source_point"] != "capture"
+                or record["name"] != name
+            ):
+                _lifecycle_bad("lifecycle capture volume is malformed")
+            driver = record["driver"]
+            mountpoint = record["mountpoint"]
+            created = record["created"]
+            if (
+                not isinstance(driver, str)
+                or driver in ("", TEMPLATE_NO_VALUE)
+                or mountpoint is not None
+                and (
+                    not isinstance(mountpoint, str)
+                    or mountpoint in ("", TEMPLATE_NO_VALUE)
+                )
+                or created is not None
+                and (not isinstance(created, str) or created in ("", TEMPLATE_NO_VALUE))
+            ):
+                _lifecycle_bad("lifecycle capture volume is malformed")
+            if name in seen_volumes:
+                _lifecycle_bad("lifecycle capture object is duplicated")
+            seen_volumes.add(name)
+        elif kind == "network":
+            if set(entry) != {"kind", "id", "name", "receipt"}:
+                _lifecycle_bad("lifecycle capture object is malformed")
+            object_id = _lifecycle_full_id(entry["id"])
+            name = entry["name"]
+            receipt = entry["receipt"]
+            if not isinstance(name, str) or not isinstance(receipt, str):
+                _lifecycle_bad("lifecycle capture object is malformed")
+            if name not in expected["networks"]:
+                _lifecycle_bad("lifecycle capture object is unexpected")
+            if receipt != _lifecycle_object_name(project, phase, "n", object_id):
+                _lifecycle_bad("lifecycle capture receipt binding is broken")
+            record = _read_evidence_record(evidence_dir, receipt)
+            if (
+                not isinstance(record, dict)
+                or set(record) != {"id", "name", "created", "source_point"}
+                or record["source_point"] != "capture"
+                or record["id"] != object_id
+                or record["name"] != name
+            ):
+                _lifecycle_bad("lifecycle capture network is malformed")
+            created = record["created"]
+            if not isinstance(created, str) or created in ("", TEMPLATE_NO_VALUE):
+                _lifecycle_bad("lifecycle capture network is malformed")
+            if name in seen_networks:
+                _lifecycle_bad("lifecycle capture object is duplicated")
+            seen_networks.add(name)
+        else:
+            _lifecycle_bad("lifecycle capture object kind is malformed")
+    if seen_volumes != set(expected["volumes"]):
+        _lifecycle_bad("lifecycle capture volumes are incomplete")
+    if seen_networks != set(expected["networks"]):
+        _lifecycle_bad("lifecycle capture networks are incomplete")
+    if phase == "negative":
+        bootstrap = f"{project}-bootstrap-1"
+        if bootstrap not in container_records:
+            _lifecycle_bad("lifecycle negative bootstrap is missing")
+        state = container_records[bootstrap]["state"]
+        if state["status"] != "exited" or state["exit_code"] == 0:
+            _lifecycle_bad("lifecycle negative bootstrap is not failed")
+        for name in container_records:
+            if name not in expected["containers"]:
+                _lifecycle_bad("lifecycle capture object is unexpected")
+    else:
+        if set(container_records) != set(expected["containers"]):
+            _lifecycle_bad("lifecycle capture containers are incomplete")
+
+
+def _lifecycle_audit_helpers(
+    project: str, scope: str, evidence_dir: Path, tags: list[str]
+) -> None:
+    # The caller supplies the complete static tag list of this invocation:
+    # every helper tag is unique per invocation and known before any
+    # subshell runs, so command-substitution callers cannot omit receipts.
+    _lifecycle_project(project)
+    _lifecycle_scope(scope)
+    if not tags:
+        _lifecycle_bad("lifecycle helper audit binding is missing")
+    seen: set[str] = set()
+    for tag in tags:
+        if tag in seen:
+            _lifecycle_bad("lifecycle helper audit binding is duplicated")
+        seen.add(tag)
+        complete = _read_evidence_record(
+            evidence_dir, _lifecycle_helper_name(tag, "complete")
+        )
+        if set(complete) != {
+            "project",
+            "tag",
+            "invocation",
+            "source_point",
+            "id",
+            "name",
+            "start_rc",
+            "body_exit",
+            "rm_rc",
+            "ps_rc",
+        }:
+            _lifecycle_bad("lifecycle helper complete is malformed")
+        if complete["source_point"] != "helper-complete":
+            _lifecycle_bad("lifecycle helper complete point is malformed")
+        if (
+            complete["project"] != project
+            or complete["tag"] != tag
+            or complete["invocation"] != scope
+        ):
+            _lifecycle_bad("lifecycle helper binding is broken")
+        container_id = _lifecycle_full_id(complete["id"])
+        name = complete["name"]
+        start_rc = complete["start_rc"]
+        body_exit = complete["body_exit"]
+        begin = _read_evidence_record(
+            evidence_dir, _lifecycle_helper_name(tag, "begin")
+        )
+        created = _read_evidence_record(
+            evidence_dir, _lifecycle_helper_name(tag, "created", container_id)
+        )
+        meta = _read_evidence_record(
+            evidence_dir, _lifecycle_helper_name(tag, "meta", container_id)
+        )
+        start = _read_evidence_record(
+            evidence_dir, _lifecycle_helper_name(tag, "start", container_id)
+        )
+        state = _read_evidence_record(
+            evidence_dir, _lifecycle_helper_name(tag, "state", container_id)
+        )
+        removed = _read_evidence_record(
+            evidence_dir, _lifecycle_helper_name(tag, "removed", container_id)
+        )
+        absent = _read_evidence_record(
+            evidence_dir, _lifecycle_helper_name(tag, "absent", container_id)
+        )
+        _lifecycle_audit_helper_chain(
+            begin,
+            created,
+            meta,
+            start,
+            state,
+            removed,
+            absent,
+            project,
+            tag,
+            scope,
+            name,
+            container_id,
+            start_rc,
+            body_exit,
+        )
+        if (
+            complete["rm_rc"] != removed["rm_rc"]
+            or complete["ps_rc"] != absent["ps_rc"]
+        ):
+            _lifecycle_bad("lifecycle helper complete natives are broken")
 
 
 def _lifecycle_open_dir(evidence_dir: Path) -> list[int]:
@@ -1144,25 +2671,202 @@ def validate_running(root: Path, project: str) -> None:
     _fail(seen == REQUIRED_SERVICES, "runtime service inventory mismatch")
 
 
+def _lifecycle_dispatch(arguments: argparse.Namespace) -> None:
+    operation = arguments.lifecycle_operation
+    helper_ops = {
+        "helper-begin",
+        "helper-created",
+        "helper-start",
+        "helper-terminal",
+        "helper-remove",
+        "helper-complete",
+    }
+    if operation in helper_ops and arguments.tag is not None:
+        arguments.tag = _lifecycle_single(arguments.tag, "tag")
+    if operation in helper_ops and arguments.id is not None:
+        arguments.id = _lifecycle_single(arguments.id, "id")
+    root = arguments.root
+    if arguments.lifecycle_evidence is None or arguments.scope is None:
+        _lifecycle_bad("lifecycle evidence binding is missing")
+    evidence_dir = arguments.lifecycle_evidence
+    scope = arguments.scope
+    project = arguments.project
+    project_ops = {
+        "preflight",
+        "capture",
+        "cleanup-absent",
+        "recreate-diff",
+        "audit-preflight",
+        "audit-capture",
+    }
+    if operation in project_ops and not project:
+        _lifecycle_bad("lifecycle project is missing")
+    if operation == "preflight":
+        _lifecycle_preflight(root, project, scope, evidence_dir)
+    elif operation == "capture":
+        if not arguments.phase:
+            _lifecycle_bad("lifecycle phase is missing")
+        _lifecycle_capture(root, project, arguments.phase, scope, evidence_dir)
+    elif operation == "cleanup-absent":
+        if arguments.down_native is None:
+            _lifecycle_bad("lifecycle removal native is missing")
+        _lifecycle_cleanup_absent(
+            root, project, scope, arguments.down_native, evidence_dir
+        )
+    elif operation == "recreate-diff":
+        if not (arguments.phase_old and arguments.phase_new and arguments.service):
+            _lifecycle_bad("lifecycle recreate binding is missing")
+        _lifecycle_recreate_diff(
+            root,
+            project,
+            scope,
+            arguments.phase_old,
+            arguments.phase_new,
+            arguments.service,
+            evidence_dir,
+        )
+    elif operation == "audit-preflight":
+        _lifecycle_audit_preflight(root, project, scope, evidence_dir)
+    elif operation == "audit-capture":
+        if not arguments.phase:
+            _lifecycle_bad("lifecycle phase is missing")
+        _lifecycle_audit_capture(root, project, scope, arguments.phase, evidence_dir)
+    elif operation == "audit-helpers":
+        tags = arguments.tag or []
+        if not tags:
+            _lifecycle_bad("lifecycle helper audit binding is missing")
+        _lifecycle_audit_helpers(project, scope, evidence_dir, list(tags))
+    elif operation == "helper-begin":
+        if not (arguments.tag and arguments.name):
+            _lifecycle_bad("lifecycle helper binding is missing")
+        _lifecycle_helper_begin(
+            root, project, scope, arguments.tag, arguments.name, evidence_dir
+        )
+    elif operation == "helper-created":
+        if not (arguments.tag and arguments.name):
+            _lifecycle_bad("lifecycle helper binding is missing")
+        if arguments.id is not None:
+            if arguments.create_rc not in (None, 0):
+                _lifecycle_bad("lifecycle create native is malformed")
+            _lifecycle_helper_created(
+                root,
+                project,
+                scope,
+                arguments.tag,
+                arguments.name,
+                arguments.id,
+                0,
+                evidence_dir,
+            )
+        elif arguments.create_rc is not None:
+            _lifecycle_helper_created(
+                root,
+                project,
+                scope,
+                arguments.tag,
+                arguments.name,
+                None,
+                arguments.create_rc,
+                evidence_dir,
+            )
+        else:
+            _lifecycle_bad("lifecycle helper create result is missing")
+    elif operation == "helper-start":
+        if not (arguments.tag and arguments.id and arguments.start_rc is not None):
+            _lifecycle_bad("lifecycle helper binding is missing")
+        _lifecycle_helper_start(
+            root,
+            project,
+            scope,
+            arguments.tag,
+            arguments.id,
+            arguments.start_rc,
+            evidence_dir,
+        )
+    elif operation == "helper-terminal":
+        if not (arguments.tag and arguments.id):
+            _lifecycle_bad("lifecycle helper binding is missing")
+        _lifecycle_helper_terminal(
+            root, project, scope, arguments.tag, arguments.id, evidence_dir
+        )
+    elif operation == "helper-remove":
+        if not (arguments.tag and arguments.id):
+            _lifecycle_bad("lifecycle helper binding is missing")
+        _lifecycle_helper_remove(
+            root, project, scope, arguments.tag, arguments.id, evidence_dir
+        )
+    elif operation == "helper-complete":
+        if not (
+            arguments.tag
+            and arguments.name
+            and arguments.id
+            and arguments.start_rc is not None
+            and arguments.body_exit is not None
+        ):
+            _lifecycle_bad("lifecycle helper binding is missing")
+        _lifecycle_helper_complete(
+            root,
+            project,
+            scope,
+            arguments.tag,
+            arguments.name,
+            arguments.id,
+            arguments.start_rc,
+            arguments.body_exit,
+            evidence_dir,
+        )
+    else:
+        _lifecycle_bad("lifecycle operation is unknown")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--root", type=Path, default=Path.cwd())
     parser.add_argument("--project")
+    parser.add_argument("--lifecycle-operation")
+    parser.add_argument("--lifecycle-evidence", type=Path)
+    parser.add_argument("--scope")
+    parser.add_argument("--phase")
+    parser.add_argument("--phase-old")
+    parser.add_argument("--phase-new")
+    parser.add_argument("--tag", action="append")
+    parser.add_argument("--id", action="append")
+    parser.add_argument("--name")
+    parser.add_argument("--create-rc", type=int)
+    parser.add_argument("--start-rc", type=int)
+    parser.add_argument("--body-exit", type=int)
+    parser.add_argument("--down-native", type=int)
+    parser.add_argument("--service")
     arguments = parser.parse_args()
+    if arguments.lifecycle_operation is None:
+        try:
+            validate_config(rendered_config(arguments.root))
+            if arguments.project:
+                validate_running(arguments.root, arguments.project)
+        except (
+            KeyError,
+            OSError,
+            PolicyError,
+            subprocess.SubprocessError,
+            ValueError,
+        ) as error:
+            print(f"compose-policy: FAILED: {error}", file=sys.stderr)
+            return 1
+        print("compose-policy: OK")
+        return 0
     try:
-        validate_config(rendered_config(arguments.root))
-        if arguments.project:
-            validate_running(arguments.root, arguments.project)
+        _lifecycle_dispatch(arguments)
     except (
         KeyError,
         OSError,
         PolicyError,
+        RecursionError,
         subprocess.SubprocessError,
+        TypeError,
         ValueError,
     ) as error:
         print(f"compose-policy: FAILED: {error}", file=sys.stderr)
         return 1
-    print("compose-policy: OK")
     return 0
 
 
