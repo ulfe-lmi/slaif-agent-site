@@ -1103,19 +1103,25 @@ class LifecycleProducerContractTests(unittest.TestCase):
         self.assertEqual(ok[0]["source"], "")
         self.assertIsNone(ok[0]["name"])
         row1 = SEP + "/src/secrets" + SEP + "/secrets" + SEP + "bind" + SEP + "true\n"
-        row2 = (
-            SEP + "named" + SEP + "/sb" + SEP + "/b" + SEP + "tmpfs" + SEP + "false\n"
-        )
+        row2 = "named" + SEP + "/sb" + SEP + "/b" + SEP + "tmpfs" + SEP + "false\n"
         field_bad = (
             SEP + TEMPLATE_SENTINEL + SEP + "/dest" + SEP + "tmpfs" + SEP + "true\n",
             "/src" + SEP + SEP + SEP + "tmpfs" + SEP + "true\n",
-            "/src" + SEP + "/dest" + SEP + TEMPLATE_SENTINEL + SEP + "true\n",
-            "/src" + SEP + "/dest" + SEP + "tmpfs" + SEP + "maybe\n",
+            SEP + "/src" + SEP + "/dest" + SEP + TEMPLATE_SENTINEL + SEP + "true\n",
+            SEP + "/src" + SEP + "/dest" + SEP + "tmpfs" + SEP + "maybe\n",
             "/src" + SEP + "/dest" + SEP + "tmpfs" + SEP + "true\n",
-            "/src" + SEP + "/dest" + SEP + "tmpfs" + SEP + "true" + SEP + "x\n",
+            "/a" + SEP + "/b" + SEP + "c" + SEP + "d" + SEP + "e" + SEP + "f\n",
         )
-        for line in field_bad:
-            with self.subTest(line=line), self.assertRaises(ValueError):
+        field_msgs = (
+            "lifecycle mount source is malformed",
+            "lifecycle mount destination is malformed",
+            "lifecycle mount type is malformed",
+            "lifecycle mount rw is malformed",
+            "lifecycle mount projection is malformed",
+            "lifecycle mount projection is malformed",
+        )
+        for line, msg in zip(field_bad, field_msgs, strict=True):
+            with self.subTest(line=line), self.assertRaisesRegex(ValueError, msg):
                 V._lifecycle_project_mounts(line + "\n")
         frame_bad = (
             row1,
