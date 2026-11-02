@@ -4,7 +4,14 @@ import { readFileSync } from "node:fs";
 
 import { expect, test } from "@playwright/test";
 
-import { classifyConsoleMessage, classifyConsoleSource } from "./observation";
+import {
+  classifyConsoleMessage,
+  classifyConsoleMessageFamily,
+  classifyConsoleOriginFamily,
+  classifyConsoleSource,
+  type ConsoleMessageFamily,
+  type ConsoleOriginFamily,
+} from "./observation";
 import { login, observe, secrets } from "./support";
 
 // One 1x1 PNG: the store's signature sniffer classifies it as image/png.
@@ -117,6 +124,8 @@ type RedactedConsoleRecord = {
   type: "error";
   len: number;
   scheme: string;
+  originFamily: ConsoleOriginFamily;
+  messageFamily: ConsoleMessageFamily;
 };
 
 test("media-publication-core-human-agent-preview-finalize-public-hostile", async ({
@@ -146,6 +155,8 @@ test("media-publication-core-human-agent-preview-finalize-public-hostile", async
         type: "error",
         len: message.text().length,
         scheme: originSchemeClass(sourceUrl),
+        originFamily: classifyConsoleOriginFamily(sourceUrl, page.url()),
+        messageFamily: classifyConsoleMessageFamily(message.text()),
       });
     }
   });

@@ -92,3 +92,98 @@ export function classifyResponseFailure(
       : "UNKNOWN";
   return `response-${safeMethod}-${safeStatus}-${classifyResponseRoute(source, pageUrl)}`;
 }
+
+// e-round diagnostic-only closed vocabularies: category detail for the
+// existing bounded redacted console records. They never replace the original
+// classifiers, grant no trust or failure exemption, and unknown input stays
+// "other"/"other-browser-error" (unknown stays a failure). Parsed URL
+// equality and fixed static predicates only; no raw text/URL/ID/hash output.
+
+export type ConsoleOriginFamily =
+  | "same-origin"
+  | "empty"
+  | "unparseable"
+  | "embed-youtube-nocookie"
+  | "embed-vimeo"
+  | "embed-openstreetmap"
+  | "other";
+
+// The edge CSP frame-src allowlists exactly these three origins
+// (bounded-embed family); matching is exact HTTPS origin equality with the
+// URL parser's default-port normalization (default ports dropped, non-default
+// ports retained, userinfo never present in origin). Labels grant no
+// authority or exemption.
+const APPROVED_EMBED_ORIGINS: ReadonlyArray<readonly [string, ConsoleOriginFamily]> = [
+  ["https://www.youtube-nocookie.com", "embed-youtube-nocookie"],
+  ["https://player.vimeo.com", "embed-vimeo"],
+  ["https://www.openstreetmap.org", "embed-openstreetmap"],
+];
+
+export function classifyConsoleOriginFamily(
+  source: string,
+  pageUrl: string,
+): ConsoleOriginFamily {
+  if (source === "") return "empty";
+  let sourceUrl: URL;
+  try {
+    sourceUrl = new URL(source);
+  } catch {
+    return "unparseable";
+  }
+  let pageOrigin: string;
+  try {
+    pageOrigin = new URL(pageUrl).origin;
+  } catch {
+    pageOrigin = "";
+  }
+  // Opaque origins stringify to "null"; equal "null" strings are never
+  // same-origin.
+  if (pageOrigin !== "" && pageOrigin !== "null" && sourceUrl.origin === pageOrigin) {
+    return "same-origin";
+  }
+  // Credentials are rejected for provider attribution: a URL carrying a
+  // user/password is never attributed to an approved embed origin.
+  if (sourceUrl.username !== "" || sourceUrl.password !== "") {
+    return "other";
+  }
+  for (const [approvedOrigin, family] of APPROVED_EMBED_ORIGINS) {
+    if (sourceUrl.origin === approvedOrigin) return family;
+  }
+  return "other";
+}
+
+// Bounded static predicates over standard fixed browser-console message
+// shapes; unmatched text stays "other". No captured groups or dynamic
+// labels. These are additional diagnostic hints only: the original
+// classifier verdicts stay unchanged, and its other-browser-error class
+// explicitly excludes every prefix below (the len-79 class stays unknown).
+export type ConsoleMessageFamily =
+  | "csp-permissions-policy"
+  | "cors-mixed-content"
+  | "network-tls"
+  | "api-decode-runtime"
+  | "other";
+
+export function classifyConsoleMessageFamily(text: string): ConsoleMessageFamily {
+  if (
+    text.startsWith("Refused to ") ||
+    text.startsWith("Content Security Policy") ||
+    text.startsWith("Permissions policy violation:")
+  ) {
+    return "csp-permissions-policy";
+  }
+  if (
+    (text.startsWith("Access to") &&
+      text.includes("has been blocked by CORS policy")) ||
+    text.startsWith("Mixed Content")
+  ) {
+    return "cors-mixed-content";
+  }
+  if (text.startsWith("Failed to load resource: net::ERR_")) {
+    return "network-tls";
+  }
+  if (text.startsWith("Uncaught (in promise) ") || text.startsWith("Uncaught ")) {
+    return "api-decode-runtime";
+  }
+  return "other";
+}
