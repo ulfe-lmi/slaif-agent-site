@@ -188,6 +188,11 @@ describe("safe E2E console diagnostics", () => {
       ["https://user:pass@www.openstreetmap.org/export/embed.html", page, "other"],
       ["https://player.vimeo.com@evil.example/x", page, "other"],
       ["https://private.invalid/path?credential=secret", page, "other"],
+      // blob: URLs never grant provider attribution (protocol guard);
+      // a blob whose embedded origin equals the page stays same-origin.
+      ["blob:https://player.vimeo.com/secret-uuid", page, "other"],
+      ["blob:https://www.youtube-nocookie.com/secret-uuid", page, "other"],
+      ["blob:http://localhost:8080/secret-uuid", page, "same-origin"],
     ] as const;
 
     for (const [source, pageUrl, expected] of cases) {

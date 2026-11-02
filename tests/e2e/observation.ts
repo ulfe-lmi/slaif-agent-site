@@ -146,8 +146,12 @@ export function classifyConsoleOriginFamily(
   if (sourceUrl.username !== "" || sourceUrl.password !== "") {
     return "other";
   }
-  for (const [approvedOrigin, family] of APPROVED_EMBED_ORIGINS) {
-    if (sourceUrl.origin === approvedOrigin) return family;
+  // Provider attribution requires the actual HTTPS protocol: a matching
+  // origin string alone is insufficient (e.g. blob:https://provider).
+  if (sourceUrl.protocol === "https:") {
+    for (const [approvedOrigin, family] of APPROVED_EMBED_ORIGINS) {
+      if (sourceUrl.origin === approvedOrigin) return family;
+    }
   }
   return "other";
 }
@@ -155,8 +159,10 @@ export function classifyConsoleOriginFamily(
 // Bounded static predicates over standard fixed browser-console message
 // shapes; unmatched text stays "other". No captured groups or dynamic
 // labels. These are additional diagnostic hints only: the original
-// classifier verdicts stay unchanged, and its other-browser-error class
-// explicitly excludes every prefix below (the len-79 class stays unknown).
+// classifier verdicts stay unchanged. Its other-browser-error class
+// excludes only the "Failed to load resource:" and "Uncaught " forms, so
+// CSP/CORS and other new family hints can retain the old other class; the
+// len-79/HTTPS cause remains UNKNOWN.
 export type ConsoleMessageFamily =
   | "csp-permissions-policy"
   | "cors-mixed-content"
