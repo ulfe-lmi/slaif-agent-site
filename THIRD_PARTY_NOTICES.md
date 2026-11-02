@@ -269,7 +269,7 @@ CI SBOM evidence bundle.
 | `anyio` | `4.14.2` | PyPI / production | `MIT` | <https://github.com/agronholm/anyio> | — |
 | `argon2-cffi` | `25.1.0` | PyPI / production | `MIT` | <https://github.com/hynek/argon2-cffi> | — |
 | `argon2-cffi-bindings` | `25.1.0` | PyPI / production | `MIT` | <https://github.com/hynek/argon2-cffi-bindings> | — |
-| `asyncpg` | `0.31.0` | PyPI / production | `Apache-2.0` | <https://github.com/MagicStack/asyncpg> | — |
+| `asyncpg` | `0.32.0` | PyPI / production | `Apache-2.0` | <https://github.com/MagicStack/asyncpg> | — |
 | `build` | `1.5.0` | PyPI / build | `MIT` | <https://github.com/pypa/build> | — |
 | `certifi` | `2026.10.19` | PyPI / development | `MPL-2.0` | <https://github.com/certifi/python-certifi> | — |
 | `cffi` | `2.1.1` | PyPI / production | `MIT-0` | <https://github.com/python-cffi/cffi> | — |

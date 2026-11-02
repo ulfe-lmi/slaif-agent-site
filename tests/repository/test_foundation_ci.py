@@ -4,7 +4,9 @@ Proves, from the workflow source without any YAML parser dependency:
 - the two child jobs keep the complete PG14..18 matrices with isolated
   disposable PostgreSQL services and the unchanged five exact commands,
   split 85 (generic + 19-file bootstrap/privilege) and 45 (component +
-  theme + page-style) per version;
+  theme + page-style) per version; group B additionally appends the
+  public whole-session promotion qualification module as a fourth exact
+  pytest command (Q; no -k selection), making B 45+Q;
 - the five exact required names are supplied by an aggregator that
   depends on BOTH child job IDs with JOB-level always();
 - the ACTUAL extracted aggregate script is fail-closed: only the
@@ -70,6 +72,10 @@ THEME = (
 )
 PAGE_STYLE = (
     "uv run --frozen pytest services/backend/tests/integration/test_agent_page_style.py"
+)
+WHOLE_SESSION = (
+    "uv run --frozen pytest "
+    "services/backend/tests/integration/test_foundation_whole_session_qualification.py"
 )
 
 
@@ -181,7 +187,7 @@ def _assert_required_names(text: str) -> None:
 def _assert_exact_commands(text: str) -> None:
     job_a, job_b, _gate = _foundation_blocks(text)
     assert _run_values(job_a) == [SYNC, GENERIC, BOOTSTRAP]
-    assert _run_values(job_b) == [SYNC, COMPONENT, THEME, PAGE_STYLE]
+    assert _run_values(job_b) == [SYNC, COMPONENT, THEME, PAGE_STYLE, WHOLE_SESSION]
 
 
 def _assert_complete_matrices(text: str) -> None:
@@ -249,9 +255,12 @@ class FoundationCiSplitTestCase(unittest.TestCase):
             self.assertIn(SETUP_PYTHON, block)
             self.assertIn(SETUP_UV, block)
 
-    def test_exact_five_commands_split_85_plus_45(self) -> None:
+    def test_exact_five_commands_split_85_plus_45_plus_q(self) -> None:
         self.assertEqual(_run_values(self.job_a), [SYNC, GENERIC, BOOTSTRAP])
-        self.assertEqual(_run_values(self.job_b), [SYNC, COMPONENT, THEME, PAGE_STYLE])
+        self.assertEqual(
+            _run_values(self.job_b),
+            [SYNC, COMPONENT, THEME, PAGE_STYLE, WHOLE_SESSION],
+        )
 
     def test_aggregator_depends_on_both_child_jobs_with_job_level_always(self) -> None:
         self.assertIn("\n    if: always()", self.job_gate)
@@ -335,6 +344,31 @@ class FoundationCiSplitTestCase(unittest.TestCase):
         )
         self.assertEqual(self.text.count(needle), 1)
         mutated = self.text.replace(needle, "", 1)
+        self.assertNotEqual(mutated, self.text)
+        with self.assertRaises(AssertionError):
+            _assert_exact_commands(mutated)
+
+    def test_mutation_omitted_whole_session_command_fails(self) -> None:
+        _assert_exact_commands(self.text)
+        needle = (
+            "\n          uv run --frozen pytest\n"
+            "          services/backend/tests/integration/"
+            "test_foundation_whole_session_qualification.py"
+        )
+        self.assertEqual(self.text.count(needle), 1)
+        mutated = self.text.replace(needle, "", 1)
+        self.assertNotEqual(mutated, self.text)
+        with self.assertRaises(AssertionError):
+            _assert_exact_commands(mutated)
+
+    def test_mutation_whole_session_selection_added_fails(self) -> None:
+        _assert_exact_commands(self.text)
+        needle = (
+            "          services/backend/tests/integration/"
+            "test_foundation_whole_session_qualification.py"
+        )
+        self.assertEqual(self.text.count(needle), 1)
+        mutated = self.text.replace(needle, needle + " -k component", 1)
         self.assertNotEqual(mutated, self.text)
         with self.assertRaises(AssertionError):
             _assert_exact_commands(mutated)
