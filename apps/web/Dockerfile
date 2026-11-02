@@ -1,5 +1,5 @@
-# Node.js 24.14.1; MIT license; official multi-platform image.
-FROM node:24.14.1-alpine3.23@sha256:8510330d3eb72c804231a834b1a8ebb55cb3796c3e4431297a24d246b8add4d5 AS builder
+# Node.js 24.22.1; MIT license; official multi-platform image.
+FROM node:24.22.1-alpine3.23@sha256:0468540aa58203ff9e40c2aab3907c52644ab818af6176b1c70a026137dc92a2 AS builder
 ARG SOURCE_DATE_EPOCH=1704067200
 ENV NEXT_TELEMETRY_DISABLED=1 \
     SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH}
@@ -15,7 +15,7 @@ RUN pnpm install --frozen-lockfile --filter @slaif-agent-site/web... \
     && pnpm --filter @slaif-agent-site/web build
 
 # Keep the readable version beside the immutable top-level multi-architecture digest.
-FROM node:24.14.1-alpine3.23@sha256:8510330d3eb72c804231a834b1a8ebb55cb3796c3e4431297a24d246b8add4d5 AS runtime
+FROM node:24.22.1-alpine3.23@sha256:0468540aa58203ff9e40c2aab3907c52644ab818af6176b1c70a026137dc92a2 AS runtime
 ARG SOURCE_DATE_EPOCH=1704067200
 ARG SLAIF_IMAGE_CREATED=2024-01-01T00:00:00Z
 ARG SLAIF_IMAGE_REVISION=local

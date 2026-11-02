@@ -67,6 +67,15 @@ class OciContractTests(unittest.TestCase):
         builder = content.split(" AS runtime", maxsplit=1)[0]
         self.assertIn("compileall -q -f /build/.venv/lib", builder)
         self.assertIn("uv sync --frozen --no-default-groups --no-editable", content)
+        self.assertIn(
+            "python:3.12.16-alpine3.23@sha256:"
+            "a4ad86fc2eaa4f9a5c3153776c9fb56e502dbd8e23dfa855d164308f376a6dd2",
+            content,
+        )
+        self.assertEqual(content.count("python:3.12.16-alpine3.23@"), 2)
+        self.assertNotIn("3.12.15", content)
+        self.assertIn("pip-25.0.1.dist-info", content)
+        self.assertIn("pip-25.0.1-py3-none-any.whl", content)
         runtime = content.split(" AS runtime", maxsplit=1)[1]
         self.assertIn("USER 10001:10001", runtime)
         self.assertNotIn("uv sync", runtime)
@@ -148,12 +157,57 @@ class OciContractTests(unittest.TestCase):
         self.assertNotIn("playwright install", content.casefold())
         runtime = content.split(" AS runtime", maxsplit=1)[1]
         self.assertNotIn("pnpm install", runtime)
-        self.assertIn("rm -rf /ms-playwright/*", runtime)
-        self.assertIn("BROWSER_WORKER_EXPECTED_CHROMIUM_VERSION=156.0.8078.47", runtime)
+        self.assertIn("rm -rf /ms-playwright ", runtime)
+        self.assertIn("BROWSER_WORKER_EXPECTED_CHROMIUM_VERSION=156.0.8078.80", runtime)
         self.assertIn(
-            "e6c94490f0b6b337225aeb2d2a5034858516b7017356980ba94f5176d8774a50",
+            "b711c720f774be355197f32edf37e0651418ba036d92446ee2da19ac017540a7",
             content,
         )
+        self.assertIn(
+            "eb6728e77c576a35162c122c45ccadf224d89ff00abc8dae46cc2897c6002d7c",
+            content,
+        )
+        self.assertIn("'libbrotli1=1.1.0-2ubuntu0.1'", content)
+        self.assertIn("apt-get purge -y nodejs", content)
+        self.assertEqual(content.count("apt-get -s purge -y"), 2)
+        self.assertEqual(content.count('$1 == "Purg"'), 2)
+        self.assertEqual(content.count("$1 ~ /^[A-Z][a-z][a-z][a-z]$/ { bad = 1 }"), 2)
+        self.assertNotIn("$1 ~ /^[A-Z][A-Z][A-Z][A-Z]$/ { bad = 1 }", content)
+        self.assertEqual(
+            content.count(
+                "cmp /tmp/python3-purge-actual.txt /tmp/python3-purge-expected.txt"
+            ),
+            2,
+        )
+        self.assertEqual(
+            content.count(
+                "apt-get purge -y \\\n"
+                "      python3 python3-minimal libpython3-stdlib \\\n"
+            ),
+            2,
+        )
+        self.assertEqual(content.count(" = 3.12.3-0ubuntu2.1"), 6)
+        self.assertEqual(content.count(" = 3.12.3-1ubuntu0.15"), 8)
+        self.assertEqual(
+            content.count(
+                "dpkg-query -W -f='${Package} "
+                "${db:Status-Status}\\n' > /tmp/python3-known.txt"
+            ),
+            2,
+        )
+        self.assertEqual(
+            content.count(
+                "find /usr /opt \\( -name 'python3*' -o "
+                "-name 'libpython3*' \\) -print > /tmp/python3-leftover.txt"
+            ),
+            2,
+        )
+        self.assertEqual(
+            content.count('test "$(wc -l < /tmp/python3-leftover.txt)" -eq 0'),
+            2,
+        )
+        self.assertNotIn("autoremove", content)
+        self.assertEqual(content.count('test "$(node --version)" = v24.22.1'), 2)
         self.assertIn("USER 10001:10001", content)
 
     def test_unused_vulnerable_runtime_tools_are_removed(self) -> None:
@@ -167,6 +221,13 @@ class OciContractTests(unittest.TestCase):
         )
         self.assertIn("/usr/lib/node_modules/npm", worker)
         self.assertIn("rm -f /usr/bin/npm /usr/bin/npx /usr/bin/corepack", worker)
+        self.assertIn("/usr/local/lib/node_modules/npm", worker)
+        self.assertIn("/usr/local/lib/node_modules/corepack", worker)
+        self.assertIn("/usr/lib/node_modules/corepack", worker)
+        self.assertIn(
+            "rm -f /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack",
+            worker,
+        )
 
 
 if __name__ == "__main__":

@@ -1,10 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
   classifyConsoleMessage,
+  classifyConsoleMessageFamily,
+  classifyConsoleOriginFamily,
   classifyConsoleSource,
   classifyResponseFailure,
   classifyResponseRoute,
   type ConsoleMessageClass,
+  type ConsoleMessageFamily,
+  type ConsoleOriginFamily,
   type ConsoleSourceClass,
   type ResponseRouteClass,
 } from "../e2e/observation";
@@ -22,6 +26,22 @@ const messageVocabulary = new Set<ConsoleMessageClass>([
   "failed-resource-other",
   "uncaught",
   "other-browser-error",
+]);
+const originFamilyVocabulary = new Set<ConsoleOriginFamily>([
+  "same-origin",
+  "empty",
+  "unparseable",
+  "embed-youtube-nocookie",
+  "embed-vimeo",
+  "embed-openstreetmap",
+  "other",
+]);
+const messageFamilyVocabulary = new Set<ConsoleMessageFamily>([
+  "csp-permissions-policy",
+  "cors-mixed-content",
+  "network-tls",
+  "api-decode-runtime",
+  "other",
 ]);
 const responseVocabulary = new Set<ResponseRouteClass>([
   "same-origin-control",
@@ -123,6 +143,132 @@ describe("safe E2E console diagnostics", () => {
       expect(result).not.toContain("secret");
       expect(result).not.toContain("workspace");
       expect(result).not.toContain("token");
+    }
+  });
+
+  it("classifies console origin families with exact-origin boundaries", () => {
+    const page = "http://localhost:8080/preview/workspace";
+    const opaquePage = "data:text/html,secret";
+    const cases = [
+      ["", page, "empty"],
+      ["not a URL with secret data", page, "unparseable"],
+      ["http://localhost:8080/api/control/v1/secret", page, "same-origin"],
+      ["http://localhost:8080/other/path?token=secret", page, "same-origin"],
+      // Equal opaque "null" origins are never same-origin.
+      ["data:text/plain,secret", opaquePage, "other"],
+      // An invalid page URL never grants same-origin.
+      ["http://localhost:8080/api/control/v1/secret", "not a page URL", "other"],
+      // Exact HTTPS provider origins (default port normalized away).
+      [
+        "https://www.youtube-nocookie.com/embed/secret?token=secret",
+        page,
+        "embed-youtube-nocookie",
+      ],
+      [
+        "https://www.youtube-nocookie.com:443/embed/secret",
+        page,
+        "embed-youtube-nocookie",
+      ],
+      ["https://player.vimeo.com/video/secret", page, "embed-vimeo"],
+      [
+        "https://www.openstreetmap.org/export/embed.html?bbox=secret",
+        page,
+        "embed-openstreetmap",
+      ],
+      // Hostile scheme/port/userinfo/suffix values stay other.
+      ["http://www.youtube-nocookie.com/embed/secret", page, "other"],
+      ["http://player.vimeo.com/video/secret", page, "other"],
+      ["http://www.openstreetmap.org/export/embed.html?bbox=secret", page, "other"],
+      ["https://www.youtube-nocookie.com.evil.example/x", page, "other"],
+      ["https://evilyoutube-nocookie.com/x", page, "other"],
+      ["https://sub.www.youtube-nocookie.com/x", page, "other"],
+      ["https://www.openstreetmap.org.attacker.example/x", page, "other"],
+      ["https://www.youtube-nocookie.com:8443/x", page, "other"],
+      ["https://user@player.vimeo.com/video/secret", page, "other"],
+      ["https://user:pass@www.openstreetmap.org/export/embed.html", page, "other"],
+      ["https://player.vimeo.com@evil.example/x", page, "other"],
+      ["https://private.invalid/path?credential=secret", page, "other"],
+      // blob: URLs never grant provider attribution (protocol guard);
+      // a blob whose embedded origin equals the page stays same-origin.
+      ["blob:https://player.vimeo.com/secret-uuid", page, "other"],
+      ["blob:https://www.youtube-nocookie.com/secret-uuid", page, "other"],
+      ["blob:http://localhost:8080/secret-uuid", page, "same-origin"],
+    ] as const;
+
+    for (const [source, pageUrl, expected] of cases) {
+      const result = classifyConsoleOriginFamily(source, pageUrl);
+      expect(result).toBe(expected);
+      expect(originFamilyVocabulary.has(result)).toBe(true);
+      expect(result).not.toContain("secret");
+      expect(result).not.toContain("token");
+      expect(result).not.toContain("credential");
+    }
+  });
+
+  it("classifies console message families with fixed standard prefixes", () => {
+    const cases = [
+      [
+        "Refused to apply content from https://evil.example/x because of CSP secret",
+        "csp-permissions-policy",
+      ],
+      [
+        "Content Security Policy: Blocked 'script' loaded from secret origin",
+        "csp-permissions-policy",
+      ],
+      [
+        "Permissions policy violation: secret-feature is not allowed in this context",
+        "csp-permissions-policy",
+      ],
+      [
+        "Access to script at 'https://private.invalid/x' from origin 'secret' has been blocked by CORS policy: no token",
+        "cors-mixed-content",
+      ],
+      [
+        "Mixed Content: The page at 'https://secret.example' was loaded over a more secure connection",
+        "cors-mixed-content",
+      ],
+      [
+        "Failed to load resource: net::ERR_NAME_NOT_RESOLVED for secret host",
+        "network-tls",
+      ],
+      ["Uncaught TypeError: cannot read secret property", "api-decode-runtime"],
+      ["Uncaught (in promise) TypeError: secret reject", "api-decode-runtime"],
+      // Non-standard lookalike prefixes stay other (exact predicates).
+      ["Permissions-Policy: feature is not allowed in secret context", "other"],
+      ["net::ERR_NAME_NOT_RESOLVED for secret host", "other"],
+      ["TLS error 100 while connecting to secret.example", "other"],
+      ["JSON.parse failed: unexpected token in secret payload", "other"],
+      ["TypeError: cannot read secret property", "other"],
+      ["credential=secret and arbitrary browser text", "other"],
+      ["%3Cscript%3E encoded secret value", "other"],
+    ] as const;
+
+    for (const [text, expected] of cases) {
+      const result = classifyConsoleMessageFamily(text);
+      expect(result).toBe(expected);
+      expect(messageFamilyVocabulary.has(result)).toBe(true);
+      expect(result).not.toContain("secret");
+      expect(result).not.toContain("token");
+      expect(result).not.toContain("credential");
+    }
+  });
+
+  it("keeps the original message verdicts for the standard forms", () => {
+    const cases: [string, ConsoleMessageClass][] = [
+      [
+        "Failed to load resource: the server responded with a status of 404 (Not Found)",
+        "failed-resource-404",
+      ],
+      [
+        "Failed to load resource: net::ERR_NAME_NOT_RESOLVED for secret host",
+        "failed-resource-other",
+      ],
+      ["Uncaught (in promise) TypeError: secret reject", "uncaught"],
+      ["other browser error text with secret and len 79", "other-browser-error"],
+    ];
+    for (const [text, expected] of cases) {
+      expect(classifyConsoleMessage(text)).toBe(expected);
+      expect(messageVocabulary.has(expected)).toBe(true);
     }
   });
 });

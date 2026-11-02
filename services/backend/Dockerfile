@@ -1,5 +1,5 @@
-# Python 3.12.15; PSF license; multi-platform official image.
-FROM python:3.12.15-alpine3.23@sha256:1fd55c2f838c4f76262f9eeed899ff9168ea96ac383c61667d6f204325e1f169 AS builder
+# Python 3.12.16; PSF license; multi-platform official image.
+FROM python:3.12.16-alpine3.23@sha256:a4ad86fc2eaa4f9a5c3153776c9fb56e502dbd8e23dfa855d164308f376a6dd2 AS builder
 ARG SOURCE_DATE_EPOCH=1704067200
 # uv 0.12.5; Apache-2.0 OR MIT; multi-platform official image.
 COPY --from=ghcr.io/astral-sh/uv:0.12.5@sha256:e85be844203885286c60ffad8a858d48afb6c5a5c237ca0e67f12e74b8f174b1 /uv /uvx /bin/
@@ -22,7 +22,7 @@ RUN uv sync --frozen --no-default-groups --no-editable \
 RUN /build/.venv/bin/python -m compileall -q -f /build/.venv/lib
 
 # Keep the readable version beside the immutable top-level multi-architecture digest.
-FROM python:3.12.15-alpine3.23@sha256:1fd55c2f838c4f76262f9eeed899ff9168ea96ac383c61667d6f204325e1f169 AS runtime
+FROM python:3.12.16-alpine3.23@sha256:a4ad86fc2eaa4f9a5c3153776c9fb56e502dbd8e23dfa855d164308f376a6dd2 AS runtime
 ARG SOURCE_DATE_EPOCH=1704067200
 ARG SLAIF_IMAGE_CREATED=2024-01-01T00:00:00Z
 ARG SLAIF_IMAGE_REVISION=local

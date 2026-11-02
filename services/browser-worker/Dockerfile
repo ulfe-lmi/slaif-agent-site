@@ -5,6 +5,65 @@ ARG TARGETARCH
 ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 \
     SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH}
 WORKDIR /build
+# Before any build step, the base image's NodeSource nodejs 24.18.1 is
+# purged and its vulnerable libbrotli1 1.1.0-2build2 is replaced by the
+# fixed 1.1.0-2ubuntu0.1 installed from the Noble repositories; Node.js
+# comes from the hash-pinned official 24.22.1 archive (CVE-2026-111497 fix).
+RUN test "$TARGETARCH" = amd64 \
+    && DEBIAN_FRONTEND=noninteractive apt-get purge -y nodejs \
+    && apt-get update \
+    && apt-get install --no-install-recommends --yes 'libbrotli1=1.1.0-2ubuntu0.1' \
+    && test "$(dpkg-query -W -f='${Version}' libbrotli1)" = 1.1.0-2ubuntu0.1 \
+    && curl --fail --location --retry 3 \
+      --output /tmp/node-v24.22.1-linux-x64.tar.gz \
+      https://nodejs.org/dist/v24.22.1/node-v24.22.1-linux-x64.tar.gz \
+    && echo 'eb6728e77c576a35162c122c45ccadf224d89ff00abc8dae46cc2897c6002d7c  /tmp/node-v24.22.1-linux-x64.tar.gz' \
+      | sha256sum --check --strict \
+    && tar -xzf /tmp/node-v24.22.1-linux-x64.tar.gz -C /usr/local --strip-components=1 \
+    && rm /tmp/node-v24.22.1-linux-x64.tar.gz \
+    && test "$(node --version)" = v24.22.1
+# 083-9-c: remove the seven unnecessary inherited Python 3.12 packages: the
+# four versioned packages are catalogued 3.12.3-1ubuntu0.15 with
+# CVE-2026-115557, the three defaults 3.12.3-0ubuntu2.1. The fail-closed
+# simulation accepts only Purg operation rows, and only for exactly these
+# seven; any other operative action is rejected; the post check proves
+# known-record state and path absence.
+RUN test "$TARGETARCH" = amd64 \
+    && set -e \
+    && LC_ALL=C DEBIAN_FRONTEND=noninteractive apt-get -s purge -y \
+      python3 python3-minimal libpython3-stdlib \
+      python3.12 python3.12-minimal libpython3.12-stdlib libpython3.12-minimal \
+      > /tmp/python3-purge-simulation.txt \
+    && awk ' \
+        $1 == "Purg" { print $2 > "/tmp/python3-purge-removed.txt"; next } \
+        $1 ~ /^[A-Z][a-z][a-z][a-z]$/ { bad = 1 } \
+        END { exit bad + 0 } \
+    ' /tmp/python3-purge-simulation.txt \
+    && printf 'libpython3-stdlib\nlibpython3.12-minimal\nlibpython3.12-stdlib\npython3\npython3-minimal\npython3.12\npython3.12-minimal\n' > /tmp/python3-purge-expected-unsorted.txt \
+    && LC_ALL=C sort /tmp/python3-purge-expected-unsorted.txt > /tmp/python3-purge-expected.txt \
+    && LC_ALL=C sort /tmp/python3-purge-removed.txt > /tmp/python3-purge-actual.txt \
+    && cmp /tmp/python3-purge-actual.txt /tmp/python3-purge-expected.txt \
+    && cat /tmp/python3-purge-simulation.txt \
+    && rm /tmp/python3-purge-simulation.txt /tmp/python3-purge-removed.txt /tmp/python3-purge-expected-unsorted.txt /tmp/python3-purge-actual.txt /tmp/python3-purge-expected.txt
+RUN test "$TARGETARCH" = amd64 \
+    && test "$(dpkg-query -W -f='${Version}' python3)" = 3.12.3-0ubuntu2.1 \
+    && test "$(dpkg-query -W -f='${Version}' python3-minimal)" = 3.12.3-0ubuntu2.1 \
+    && test "$(dpkg-query -W -f='${Version}' libpython3-stdlib)" = 3.12.3-0ubuntu2.1 \
+    && test "$(dpkg-query -W -f='${Version}' python3.12)" = 3.12.3-1ubuntu0.15 \
+    && test "$(dpkg-query -W -f='${Version}' python3.12-minimal)" = 3.12.3-1ubuntu0.15 \
+    && test "$(dpkg-query -W -f='${Version}' libpython3.12-stdlib)" = 3.12.3-1ubuntu0.15 \
+    && test "$(dpkg-query -W -f='${Version}' libpython3.12-minimal)" = 3.12.3-1ubuntu0.15
+RUN test "$TARGETARCH" = amd64 \
+    && DEBIAN_FRONTEND=noninteractive apt-get purge -y \
+      python3 python3-minimal libpython3-stdlib \
+      python3.12 python3.12-minimal libpython3.12-stdlib libpython3.12-minimal
+RUN set -e; \
+    test "$TARGETARCH" = amd64; \
+    LC_ALL=C dpkg-query -W -f='${Package} ${db:Status-Status}\n' > /tmp/python3-known.txt; \
+    awk '$1 ~ /^(python3|libpython3)/ && $2 != "not-installed" {bad=1} END{exit bad+0}' /tmp/python3-known.txt; \
+    find /usr /opt \( -name 'python3*' -o -name 'libpython3*' \) -print > /tmp/python3-leftover.txt; \
+    test "$(wc -l < /tmp/python3-leftover.txt)" -eq 0; \
+    rm /tmp/python3-known.txt /tmp/python3-leftover.txt
 RUN corepack enable && corepack prepare pnpm@11.22.0 --activate
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json tsconfig.json ./
 COPY packages ./packages
@@ -12,13 +71,13 @@ COPY services/browser-worker ./services/browser-worker
 RUN test "$TARGETARCH" = amd64 \
     && curl --fail --location --retry 3 \
       --output /tmp/chrome-for-testing.zip \
-      https://storage.googleapis.com/chrome-for-testing-public/156.0.8078.47/linux64/chrome-linux64.zip \
-    && echo 'e6c94490f0b6b337225aeb2d2a5034858516b7017356980ba94f5176d8774a50  /tmp/chrome-for-testing.zip' \
+      https://storage.googleapis.com/chrome-for-testing-public/156.0.8078.80/linux64/chrome-linux64.zip \
+    && echo 'b711c720f774be355197f32edf37e0651418ba036d92446ee2da19ac017540a7  /tmp/chrome-for-testing.zip' \
       | sha256sum --check --strict \
     && node services/browser-worker/extract-zip.mjs \
       /tmp/chrome-for-testing.zip /chrome-for-testing \
     && test "$(/chrome-for-testing/chrome-linux64/chrome --version)" \
-      = 'Google Chrome for Testing 156.0.8078.47 ' \
+      = 'Google Chrome for Testing 156.0.8078.80 ' \
     && rm /tmp/chrome-for-testing.zip \
     && pnpm install --frozen-lockfile --filter @slaif-agent-site/browser-worker... \
     && pnpm --filter @slaif-agent-site/browser-tool-contracts build \
@@ -28,12 +87,17 @@ RUN test "$TARGETARCH" = amd64 \
     && rm -f /output/node_modules/.modules.yaml \
       /output/node_modules/.package-map.json /output/node_modules/.pnpm/lock.yaml
 
-# Node.js 24.18.1 and compatible Chromium libraries come from the exact
-# Playwright image. The builder replaces its vulnerable browser payload with
-# SHA-256-verified Chrome for Testing 156.0.8078.47 (CfT revision 1706539).
+# The builder replaces the base browser payload with SHA-256-verified
+# Chrome for Testing 156.0.8078.80 (CfT revision 1706539). Compatible
+# Chromium libraries come from the exact Playwright Noble base; the base
+# image's vulnerable libbrotli1 1.1.0-2build2 is replaced by the fixed
+# 1.1.0-2ubuntu0.1 installed from the Noble repositories, and its
+# NodeSource nodejs 24.18.1 is purged and replaced with the hash-pinned
+# official Node.js 24.22.1 archive (CVE-2026-111497 fixed release).
 # No install or download runs after build.
 FROM mcr.microsoft.com/playwright:v1.62.1-noble@sha256:dcc5531e97840b9b5e794f2814476b21571c5124a3fca2267d73041f56e7580e AS runtime
 ARG SOURCE_DATE_EPOCH=1704067200
+ARG TARGETARCH
 ARG SLAIF_IMAGE_CREATED=2024-01-01T00:00:00Z
 ARG SLAIF_IMAGE_REVISION=local
 ARG SLAIF_IMAGE_VERSION=0.0.0
@@ -47,14 +111,69 @@ LABEL org.opencontainers.image.title="SLAIF Agent-Site browser worker" \
 ENV BROWSER_WORKER_HOST=0.0.0.0 \
     BROWSER_WORKER_PORT=3100 \
     BROWSER_WORKER_CHROMIUM_EXECUTABLE=/ms-playwright/chromium-1706539/chrome-linux64/chrome \
-    BROWSER_WORKER_EXPECTED_CHROMIUM_VERSION=156.0.8078.47 \
+    BROWSER_WORKER_EXPECTED_CHROMIUM_VERSION=156.0.8078.80 \
     HOME=/tmp \
     NODE_ENV=production \
     PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
     SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH}
 WORKDIR /opt/slaif
-RUN rm -rf /ms-playwright/* /usr/lib/node_modules/npm \
+RUN test "$TARGETARCH" = amd64 \
+    && DEBIAN_FRONTEND=noninteractive apt-get purge -y nodejs
+# 083-9-c: same fail-closed operation-row simulation, pre-check, exact
+# purge and known-record/path absence verification.
+RUN test "$TARGETARCH" = amd64 \
+    && set -e \
+    && LC_ALL=C DEBIAN_FRONTEND=noninteractive apt-get -s purge -y \
+      python3 python3-minimal libpython3-stdlib \
+      python3.12 python3.12-minimal libpython3.12-stdlib libpython3.12-minimal \
+      > /tmp/python3-purge-simulation.txt \
+    && awk ' \
+        $1 == "Purg" { print $2 > "/tmp/python3-purge-removed.txt"; next } \
+        $1 ~ /^[A-Z][a-z][a-z][a-z]$/ { bad = 1 } \
+        END { exit bad + 0 } \
+    ' /tmp/python3-purge-simulation.txt \
+    && printf 'libpython3-stdlib\nlibpython3.12-minimal\nlibpython3.12-stdlib\npython3\npython3-minimal\npython3.12\npython3.12-minimal\n' > /tmp/python3-purge-expected-unsorted.txt \
+    && LC_ALL=C sort /tmp/python3-purge-expected-unsorted.txt > /tmp/python3-purge-expected.txt \
+    && LC_ALL=C sort /tmp/python3-purge-removed.txt > /tmp/python3-purge-actual.txt \
+    && cmp /tmp/python3-purge-actual.txt /tmp/python3-purge-expected.txt \
+    && cat /tmp/python3-purge-simulation.txt \
+    && rm /tmp/python3-purge-simulation.txt /tmp/python3-purge-removed.txt /tmp/python3-purge-expected-unsorted.txt /tmp/python3-purge-actual.txt /tmp/python3-purge-expected.txt
+RUN test "$TARGETARCH" = amd64 \
+    && test "$(dpkg-query -W -f='${Version}' python3)" = 3.12.3-0ubuntu2.1 \
+    && test "$(dpkg-query -W -f='${Version}' python3-minimal)" = 3.12.3-0ubuntu2.1 \
+    && test "$(dpkg-query -W -f='${Version}' libpython3-stdlib)" = 3.12.3-0ubuntu2.1 \
+    && test "$(dpkg-query -W -f='${Version}' python3.12)" = 3.12.3-1ubuntu0.15 \
+    && test "$(dpkg-query -W -f='${Version}' python3.12-minimal)" = 3.12.3-1ubuntu0.15 \
+    && test "$(dpkg-query -W -f='${Version}' libpython3.12-stdlib)" = 3.12.3-1ubuntu0.15 \
+    && test "$(dpkg-query -W -f='${Version}' libpython3.12-minimal)" = 3.12.3-1ubuntu0.15
+RUN test "$TARGETARCH" = amd64 \
+    && DEBIAN_FRONTEND=noninteractive apt-get purge -y \
+      python3 python3-minimal libpython3-stdlib \
+      python3.12 python3.12-minimal libpython3.12-stdlib libpython3.12-minimal
+RUN set -e; \
+    test "$TARGETARCH" = amd64; \
+    LC_ALL=C dpkg-query -W -f='${Package} ${db:Status-Status}\n' > /tmp/python3-known.txt; \
+    awk '$1 ~ /^(python3|libpython3)/ && $2 != "not-installed" {bad=1} END{exit bad+0}' /tmp/python3-known.txt; \
+    find /usr /opt \( -name 'python3*' -o -name 'libpython3*' \) -print > /tmp/python3-leftover.txt; \
+    test "$(wc -l < /tmp/python3-leftover.txt)" -eq 0; \
+    rm /tmp/python3-known.txt /tmp/python3-leftover.txt
+RUN test "$TARGETARCH" = amd64 \
+    && apt-get update \
+    && apt-get install --no-install-recommends --yes 'libbrotli1=1.1.0-2ubuntu0.1' \
+    && test "$(dpkg-query -W -f='${Version}' libbrotli1)" = 1.1.0-2ubuntu0.1 \
+    && rm -rf /var/lib/apt/lists/*
+RUN test "$TARGETARCH" = amd64 \
+    && curl --fail --location --retry 3 \
+      --output /tmp/node-v24.22.1-linux-x64.tar.gz \
+      https://nodejs.org/dist/v24.22.1/node-v24.22.1-linux-x64.tar.gz \
+    && echo 'eb6728e77c576a35162c122c45ccadf224d89ff00abc8dae46cc2897c6002d7c  /tmp/node-v24.22.1-linux-x64.tar.gz' \
+      | sha256sum --check --strict \
+    && tar -xzf /tmp/node-v24.22.1-linux-x64.tar.gz -C /usr/local --strip-components=1 \
+    && rm /tmp/node-v24.22.1-linux-x64.tar.gz \
+    && test "$(node --version)" = v24.22.1
+RUN rm -rf /ms-playwright /usr/lib/node_modules/npm /usr/lib/node_modules/corepack /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack \
     && rm -f /usr/bin/npm /usr/bin/npx /usr/bin/corepack /usr/bin/pnpm /usr/bin/pnpx \
+    && rm -f /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack /usr/local/bin/pnpm /usr/local/bin/pnpx \
     && groupadd --gid 10001 slaif \
     && useradd --uid 10001 --gid 10001 --no-create-home --home-dir /nonexistent \
       --shell /usr/sbin/nologin slaif
