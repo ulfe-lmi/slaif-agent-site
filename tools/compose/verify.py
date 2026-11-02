@@ -442,11 +442,21 @@ def _lifecycle_required_scalar(value: Any, context: str) -> str:
 
 
 def _lifecycle_project_mounts(text: str) -> list[dict[str, Any]]:
-    # The range renders one line per mount; a container with no mounts
-    # renders zero lines and projects to [] (never null): a non-list
-    # rendering would indicate a non-pinned engine or broken capture.
+    # The pinned docker CLI template inspector (docker/cli v28.0.0
+    # cli/command/inspect/inspector.go) appends exactly one LF after
+    # the rendered template: zero mounts render the footer LF alone;
+    # every rendered row carries its own row LF plus that single
+    # footer. The footer is framing, never a data line; a missing or
+    # duplicated footer, or any blank data line, is malformed.
+    if not text.endswith("\n"):
+        _lifecycle_bad("lifecycle mount projection is malformed")
+    body = text[:-1]
+    if body == "":
+        return []
+    if not body.endswith("\n"):
+        _lifecycle_bad("lifecycle mount projection is malformed")
     mounts: list[dict[str, Any]] = []
-    for line in text.splitlines():
+    for line in body[:-1].split("\n"):
         fields = line.split(_LIFECYCLE_SEP)
         if len(fields) != 5:
             _lifecycle_bad("lifecycle mount projection is malformed")

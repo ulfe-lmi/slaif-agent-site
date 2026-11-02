@@ -35,7 +35,7 @@ FINISHED_AT = "2026-11-02T00:00:02.000000000Z"
 ZERO_TIME = "0001-01-01T00:00:00Z"
 PROJECT = "slaif007ktest"
 SCOPE = "slaif007ktest"
-MOUNTS_LINE = SEP + "/src/secrets" + SEP + "/secrets" + SEP + "bind" + SEP + "true\n"
+MOUNTS_LINE = SEP + "/src/secrets" + SEP + "/secrets" + SEP + "bind" + SEP + "true\n\n"
 
 
 def _load_verify():
@@ -373,6 +373,7 @@ inspect)
         ;;
     *'range .Mounts'*)
         printf '\037/src/secrets\037/secrets\037bind\037true\n'
+        printf '\n'
         exit 0
         ;;
     *com.docker.compose.project*)
@@ -448,7 +449,7 @@ def make_driver(tmp, scenario, active=1, functions=None):
         .replace("@SCENARIO@", scenario)
     )
     env = dict(os.environ)
-    env["PATH"] = f"{Path(sys.executable).parent}:{bin_dir}:" + env.get("PATH", "")
+    env["PATH"] = f"{bin_dir}:{Path(sys.executable).parent}:" + env.get("PATH", "")
     env["LIFECYCLE_SHIM_STATE"] = str(state)
     env["LIFECYCLE_SHIM_IMAGE"] = IMAGE_DIGEST
     env["LIFECYCLE_SHIM_IMAGE_REF"] = IMAGE_REF
@@ -803,8 +804,58 @@ class LifecycleShellContractTests(unittest.TestCase):
                 PROJECT, SCOPE, evidence, ["h-fingerprint-check1"]
             )
 
+    def test_real_driver_shim_wins_over_shared_interpreter_docker(self) -> None:
+        # CI /usr/bin topology: a poison docker executable beside a
+        # disposable Python entry must lose to the shim (old priority fails).
+        shared = self.tmp / "shared"
+        shared.mkdir(mode=0o700)
+        (shared / "python").symlink_to(Path(sys.executable))
+        poison = shared / "docker"
+        poison.write_text(
+            "#!/bin/sh\n"
+            'printf "poison docker must never run\\n"\n'
+            'touch "$LIFECYCLE_SHIM_STATE/poison-ran"\n'
+            "exit 0\n"
+        )
+        poison.chmod(0o755)
+        body = "print(1)"
+        scenario = (
+            'helper_run h-poison "slaif007ktest-h-poison" --network none '
+            "--read-only --entrypoint python slaif-agent-site-backend:local "
+            f"-c '{body}'\n"
+        )
+        with mock.patch.object(sys, "executable", str(shared / "python")):
+            driver, state, evidence, env = make_driver(
+                self.tmp, scenario, active=0, functions=("lifecycle", "helper_run")
+            )
+        proc = subprocess.run(
+            ["sh", str(driver)],
+            cwd=ROOT,
+            env=env,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertFalse((state / "poison-ran").exists())
+        argv = (state / "run-argv").read_text().splitlines()
+        self.assertEqual(
+            argv,
+            [
+                "--rm",
+                "--network",
+                "none",
+                "--read-only",
+                "--entrypoint",
+                "python",
+                "slaif-agent-site-backend:local",
+                "-c",
+                body,
+            ],
+        )
 
-def _fake_docker(cid, name, body_rc):
+
+def _fake_docker(cid, name, body_rc, mounts_text=MOUNTS_LINE):
     """Mock only the Docker boundary for in-process producer round-trips.
 
     A never-started container reports the zero time for BOTH StartedAt and
@@ -846,7 +897,7 @@ def _fake_docker(cid, name, body_rc):
                     ]
                 return 0, SEP.join(fields) + "\n"
             if template == V.CONTAINER_MOUNTS_TEMPLATE:
-                return 0, MOUNTS_LINE
+                return 0, mounts_text
             return 0, "\n"
         if verb == "rm":
             if argv[2] != cid:
@@ -876,9 +927,19 @@ class LifecycleProducerContractTests(unittest.TestCase):
         ev.mkdir(mode=0o700)
         return ev
 
-    def run_chain(self, ev, tag, name, cid, start_rc, body_rc=None, started=True):
+    def run_chain(
+        self,
+        ev,
+        tag,
+        name,
+        cid,
+        start_rc,
+        body_rc=None,
+        started=True,
+        mounts_text=MOUNTS_LINE,
+    ):
         fake, mark_started = _fake_docker(
-            cid, name, start_rc if body_rc is None else body_rc
+            cid, name, start_rc if body_rc is None else body_rc, mounts_text
         )
         with mock.patch.object(V, "_lifecycle_run", fake):
             V._lifecycle_helper_begin(ROOT, PROJECT, SCOPE, tag, name, ev)
@@ -1033,12 +1094,19 @@ class LifecycleProducerContractTests(unittest.TestCase):
         self.assertIn("evidence binding is missing", result.stderr)
 
     def test_mount_projection_requires_real_values_but_allows_tmpfs(self) -> None:
+        # The pinned CLI renders every row with its own LF plus exactly
+        # one formatter footer LF; fixtures carry that framing so the
+        # field/sentinel/bool oracles execute, not an earlier footer one.
         ok = V._lifecycle_project_mounts(
-            SEP + SEP + "/dest" + SEP + "tmpfs" + SEP + "true\n"
+            SEP + SEP + "/dest" + SEP + "tmpfs" + SEP + "true\n\n"
         )
         self.assertEqual(ok[0]["source"], "")
         self.assertIsNone(ok[0]["name"])
-        bad = (
+        row1 = SEP + "/src/secrets" + SEP + "/secrets" + SEP + "bind" + SEP + "true\n"
+        row2 = (
+            SEP + "named" + SEP + "/sb" + SEP + "/b" + SEP + "tmpfs" + SEP + "false\n"
+        )
+        field_bad = (
             SEP + TEMPLATE_SENTINEL + SEP + "/dest" + SEP + "tmpfs" + SEP + "true\n",
             "/src" + SEP + SEP + SEP + "tmpfs" + SEP + "true\n",
             "/src" + SEP + "/dest" + SEP + TEMPLATE_SENTINEL + SEP + "true\n",
@@ -1046,9 +1114,58 @@ class LifecycleProducerContractTests(unittest.TestCase):
             "/src" + SEP + "/dest" + SEP + "tmpfs" + SEP + "true\n",
             "/src" + SEP + "/dest" + SEP + "tmpfs" + SEP + "true" + SEP + "x\n",
         )
-        for line in bad:
+        for line in field_bad:
             with self.subTest(line=line), self.assertRaises(ValueError):
-                V._lifecycle_project_mounts(line)
+                V._lifecycle_project_mounts(line + "\n")
+        frame_bad = (
+            row1,
+            row1 + "\n\n",
+            row1 + "\n" + row2 + "\n",
+            "",
+        )
+        for frame in frame_bad:
+            with self.subTest(frame=frame), self.assertRaises(ValueError):
+                V._lifecycle_project_mounts(frame)
+        base = Path(tempfile.mkdtemp(prefix="lifecycle-mt-"))
+        try:
+            for label, mounts_text, want in (
+                ("zero", "\n", []),
+                (
+                    "two",
+                    row1 + row2 + "\n",
+                    [
+                        {
+                            "name": None,
+                            "source": "/src/secrets",
+                            "destination": "/secrets",
+                            "type": "bind",
+                            "rw": True,
+                        },
+                        {
+                            "name": "named",
+                            "source": "/sb",
+                            "destination": "/b",
+                            "type": "tmpfs",
+                            "rw": False,
+                        },
+                    ],
+                ),
+            ):
+                tag = f"mt-{label}"
+                name = f"slaif007ktest-{tag}"
+                cid = hashlib.sha256(f"mounts-{label}".encode()).hexdigest()
+                ev = self.mk_evidence(base, label)
+                self.run_chain(ev, tag, name, cid, 0, mounts_text=mounts_text)
+                V._lifecycle_helper_complete(
+                    ROOT, PROJECT, SCOPE, tag, name, cid, 0, 0, ev
+                )
+                meta = V._read_evidence_record(
+                    ev, V._lifecycle_helper_name(tag, "meta", cid)
+                )
+                self.assertEqual(meta["mounts"], want)
+                V._lifecycle_audit_helpers(PROJECT, SCOPE, ev, [tag])
+        finally:
+            shutil.rmtree(base)
 
     def test_container_and_state_projections_reject_unpinned_values(self) -> None:
         good = [
