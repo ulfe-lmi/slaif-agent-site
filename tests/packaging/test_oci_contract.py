@@ -66,6 +66,7 @@ class OciContractTests(unittest.TestCase):
         content = (ROOT / "services/backend/Dockerfile").read_text(encoding="utf-8")
         builder = content.split(" AS runtime", maxsplit=1)[0]
         self.assertIn("compileall -q -f /build/.venv/lib", builder)
+        self.assertIn("'zlib=1.4-r0'", builder)
         self.assertIn("uv sync --frozen --no-default-groups --no-editable", content)
         self.assertIn(
             "python:3.12.16-alpine3.23@sha256:"
@@ -77,6 +78,7 @@ class OciContractTests(unittest.TestCase):
         self.assertIn("pip-25.0.1.dist-info", content)
         self.assertIn("pip-25.0.1-py3-none-any.whl", content)
         runtime = content.split(" AS runtime", maxsplit=1)[1]
+        self.assertIn("'zlib=1.4-r0'", runtime)
         self.assertIn("USER 10001:10001", runtime)
         self.assertNotIn("uv sync", runtime)
         self.assertNotIn("tests", runtime)
@@ -91,6 +93,13 @@ class OciContractTests(unittest.TestCase):
         self.assertIn("libcrypto3=3.5.9-r0", content)
         self.assertIn("libcurl=8.23.0-r0", content)
         self.assertIn("libssl3=3.5.9-r0", content)
+        self.assertIn("zlib=1.4-r0", content)
+        self.assertIn(
+            "test \"$(awk '/^P:zlib$/{found=1} found && "
+            "/^V:/{print substr($0,3); exit}' /lib/apk/db/installed)"
+            "\" = \"1.4-r0\"",
+            content,
+        )
         self.assertIn("https://dl-cdn.alpinelinux.org/alpine/v3.23/main", content)
         self.assertNotIn("apk upgrade", content)
         self.assertNotIn("postgresql-", content)
@@ -120,6 +129,9 @@ class OciContractTests(unittest.TestCase):
             content,
         )
         runtime = content.split(" AS runtime", maxsplit=1)[1]
+        builder = content.split(" AS runtime", maxsplit=1)[0]
+        self.assertIn("'zlib=1.4-r0'", builder)
+        self.assertIn("'zlib=1.4-r0'", runtime)
         self.assertIn("NEXT_TELEMETRY_DISABLED=1", runtime)
         self.assertIn("/build/apps/web/.next/standalone", runtime)
         self.assertIn("USER 10001:10001", runtime)
@@ -210,9 +222,16 @@ class OciContractTests(unittest.TestCase):
         self.assertEqual(content.count('test "$(node --version)" = v24.22.1'), 2)
         self.assertIn("USER 10001:10001", content)
 
-    def test_unused_vulnerable_runtime_tools_are_removed(self) -> None:
+    def test_unused_vulnerable_runtime_tools_removed_and_zlib_pinned(self) -> None:
         nginx = (ROOT / "infra/nginx/Dockerfile").read_text(encoding="utf-8")
         self.assertIn("apk del curl", nginx)
+        self.assertIn("'zlib=1.4-r0'", nginx)
+        self.assertIn(
+            "test \"$(awk '/^P:zlib$/{found=1} found && "
+            "/^V:/{print substr($0,3); exit}' /lib/apk/db/installed)"
+            "\" = \"1.4-r0\"",
+            nginx,
+        )
         web = (ROOT / "apps/web/Dockerfile").read_text(encoding="utf-8")
         self.assertIn("find /usr/local/lib/node_modules/npm -depth -delete", web)
         self.assertIn("rm /usr/local/bin/npm /usr/local/bin/npx", web)
