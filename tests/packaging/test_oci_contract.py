@@ -97,7 +97,7 @@ class OciContractTests(unittest.TestCase):
         self.assertIn(
             "test \"$(awk '/^P:zlib$/{found=1} found && "
             "/^V:/{print substr($0,3); exit}' /lib/apk/db/installed)"
-            "\" = \"1.4-r0\"",
+            '" = "1.4-r0"',
             content,
         )
         self.assertIn("https://dl-cdn.alpinelinux.org/alpine/v3.23/main", content)
@@ -170,9 +170,9 @@ class OciContractTests(unittest.TestCase):
         runtime = content.split(" AS runtime", maxsplit=1)[1]
         self.assertNotIn("pnpm install", runtime)
         self.assertIn("rm -rf /ms-playwright ", runtime)
-        self.assertIn("BROWSER_WORKER_EXPECTED_CHROMIUM_VERSION=156.0.8078.80", runtime)
+        self.assertIn("BROWSER_WORKER_EXPECTED_CHROMIUM_VERSION=157.0.8103.50", runtime)
         self.assertIn(
-            "b711c720f774be355197f32edf37e0651418ba036d92446ee2da19ac017540a7",
+            "d17167bc092eb495a3b768c7467f27e35f625aa03834233a1663af67dcb668c9",
             content,
         )
         self.assertIn(
@@ -229,7 +229,7 @@ class OciContractTests(unittest.TestCase):
         self.assertIn(
             "test \"$(awk '/^P:zlib$/{found=1} found && "
             "/^V:/{print substr($0,3); exit}' /lib/apk/db/installed)"
-            "\" = \"1.4-r0\"",
+            '" = "1.4-r0"',
             nginx,
         )
         web = (ROOT / "apps/web/Dockerfile").read_text(encoding="utf-8")

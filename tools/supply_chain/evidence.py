@@ -39,7 +39,7 @@ IMAGE_PREFIXES = {
         "usr/local/lib/python3.12/ensurepip/",
         "usr/local/bin/",
     ),
-    "browser-worker": ("opt/slaif/", "ms-playwright/chromium-1706539/"),
+    "browser-worker": ("opt/slaif/", "ms-playwright/chromium-1717349/"),
     "nginx": ("etc/nginx/nginx.conf",),
     "postgres": ("usr/local/bin/docker-entrypoint.sh",),
     "web": ("opt/slaif/",),

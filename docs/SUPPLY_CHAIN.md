@@ -131,7 +131,7 @@ Grype scans that checksummed document; the index links both forms.
 
 The browser worker uses the digest-pinned official Playwright 1.62.1 Noble
 image, exact `playwright-core==1.62.1`, and Chrome for Testing
-`156.0.8078.80` at CfT revision `1706539`. The exact linux/amd64 archive is
+`157.0.8103.50` at CfT revision `1717349`. The exact linux/amd64 archive is
 SHA-256 verified before extraction by the bounded source-controlled parser.
 The base image's NodeSource nodejs 24.18.1 is purged and replaced with the
 SHA-256-verified, MIT-licensed official Node.js 24.22.1 archive, and its
@@ -143,7 +143,7 @@ Corepack including its library tree, pnpm, and pnpx from both /usr/bin and
 from both stages under a fail-closed simulated operation check, pre-removal
 version checks, and a post-removal dpkg record-state and path-absence check. Evidence requires the worker package and `playwright-core`,
 rejects Firefox/WebKit inventory, and hashes the retained
-`/ms-playwright/chromium-1706539` tree during both clean image builds.
+`/ms-playwright/chromium-1717349` tree during both clean image builds.
 The supply-chain policy binds the exact Node archive URL, SHA-256 and version
 literals in the worker Dockerfile and the exact Ubuntu override (fixed
 libbrotli1 install, nodejs and python3 removals); the fail-closed compose
@@ -227,10 +227,12 @@ findings in that older payload. The 152.0.7977.82 qualification and finding set
 remain historical evidence in
 [`supply-chain/browser-worker-critical-matrix.json`](../supply-chain/browser-worker-critical-matrix.json)
 while the active maintenance pin is Chrome for Testing
-`156.0.8078.80` at CfT revision `1706539` (083-9-b source update, its
-intermediate P1 six-image CI qualification recorded as candidate-10 at
-2026-10-30; the final F/SELF gates require fresh required checks and
-six-image CI re-qualification). The prior pin
+`157.0.8103.50` at CfT revision `1717349` (083-8-v security refresh).
+The prior pin `156.0.8078.80` at CfT revision `1706539` (083-9-b source
+update, its intermediate P1 six-image CI qualification recorded as
+candidate-10 at 2026-10-30; the final F/SELF gates require fresh required
+checks and six-image CI re-qualification) is dated historical evidence.
+The earlier pin
 `156.0.8078.47` had its fresh six-image qualification measured in 083-5-c at
 intermediate commit J2 `d161e9df4ade67a3bc83375a4124eb6e939b6608` on
 2026-10-25: zero unexcepted Critical in all six images, 19 inherited High
@@ -320,10 +322,12 @@ component or finding from evidence. Coding agents must not author an exception
 merely to make a gate green. The owner removed this exception after the official
 stable Chrome 152.0.7977.82 qualification; the later `153.0.8010.36`
 (078-u) and `155.0.8059.84` (083-3) maintenance qualifications remain
-historical evidence; the current pin is `156.0.8078.80` (083-9-b source
-update, its intermediate P1 six-image CI qualification recorded as
-candidate-10 at 2026-10-30; the final F/SELF gates require fresh required
-checks and six-image CI re-qualification), while the prior pin
+historical evidence; the current pin is `157.0.8103.50` at CfT revision
+`1717349` (083-8-v security refresh). The prior pin `156.0.8078.80`
+(083-9-b source update, its intermediate P1 six-image CI qualification
+recorded as candidate-10 at 2026-10-30; the final F/SELF gates require
+fresh required checks and six-image CI re-qualification) is dated
+historical evidence, while the earlier pin
 `156.0.8078.47` had its fresh six-image qualification
 measured in 083-5-c at intermediate commit J2
 (`d161e9df4ade67a3bc83375a4124eb6e939b6608`, 2026-10-25: zero unexcepted
