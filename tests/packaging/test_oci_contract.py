@@ -93,7 +93,21 @@ class OciContractTests(unittest.TestCase):
         self.assertIn("libcrypto3=3.5.9-r0", content)
         self.assertIn("libcurl=8.23.0-r0", content)
         self.assertIn("libssl3=3.5.9-r0", content)
+        self.assertIn("musl-utils=1.2.5-r24", content)
+        self.assertIn("musl=1.2.5-r24", content)
         self.assertIn("zlib=1.4-r0", content)
+        self.assertIn(
+            "test \"$(awk '/^P:musl-utils$/{found=1} found && "
+            "/^V:/{print substr($0,3); exit}' /lib/apk/db/installed)"
+            '" = "1.2.5-r24"',
+            content,
+        )
+        self.assertIn(
+            "test \"$(awk '/^P:musl$/{found=1} found && "
+            "/^V:/{print substr($0,3); exit}' /lib/apk/db/installed)"
+            '" = "1.2.5-r24"',
+            content,
+        )
         self.assertIn(
             "test \"$(awk '/^P:zlib$/{found=1} found && "
             "/^V:/{print substr($0,3); exit}' /lib/apk/db/installed)"
@@ -119,6 +133,25 @@ class OciContractTests(unittest.TestCase):
             "openssl=3.0.13-0ubuntu3.16",
         ):
             self.assertIn(f"'{package}'", content)
+        self.assertNotIn("apt-get update", content)
+        self.assertNotIn("apt-get install", content)
+        update = content.index("apt-get -o Acquire::Retries=0 update")
+        first = content.index("apt-get -o Acquire::Retries=0 install")
+        self.assertLess(update, first)
+        second = content.index("apt-get -o Acquire::Retries=0 install", first + 1)
+        bootstrap = content[first:second]
+        first_install = bootstrap.split("&&", 1)[0]
+        self.assertIn("'apt=2.8.4ubuntu0.1'", first_install)
+        self.assertIn("'libapt-pkg6.0t64=2.8.4ubuntu0.1'", first_install)
+        self.assertIn(
+            "test \"$(dpkg-query -W -f='${Version}' apt)\" = 2.8.4ubuntu0.1",
+            bootstrap,
+        )
+        self.assertIn(
+            "test \"$(dpkg-query -W -f='${Version}' libapt-pkg6.0t64)\" = "
+            "2.8.4ubuntu0.1",
+            bootstrap,
+        )
         self.assertIn("apachectl -t", content)
         self.assertIn('CMD ["apachectl", "-D", "FOREGROUND"]', content)
 
@@ -167,6 +200,7 @@ class OciContractTests(unittest.TestCase):
         self.assertIn("pnpm install --frozen-lockfile", content)
         self.assertNotRegex(content, r"(?:^|\n)RUN npm install")
         self.assertNotIn("playwright install", content.casefold())
+        builder = content.split(" AS runtime", maxsplit=1)[0]
         runtime = content.split(" AS runtime", maxsplit=1)[1]
         self.assertNotIn("pnpm install", runtime)
         self.assertIn("rm -rf /ms-playwright ", runtime)
@@ -181,6 +215,14 @@ class OciContractTests(unittest.TestCase):
         )
         self.assertIn("'libbrotli1=1.1.0-2ubuntu0.1'", content)
         self.assertIn("apt-get purge -y nodejs", content)
+        self.assertEqual(
+            content.count("apt-get purge -y nodejs -o Acquire::Retries=0"),
+            2,
+        )
+        self.assertEqual(
+            content.count("libpython3.12-minimal -o Acquire::Retries=0"),
+            1,
+        )
         self.assertEqual(content.count("apt-get -s purge -y"), 2)
         self.assertEqual(content.count('$1 == "Purg"'), 2)
         self.assertEqual(content.count("$1 ~ /^[A-Z][a-z][a-z][a-z]$/ { bad = 1 }"), 2)
@@ -218,6 +260,27 @@ class OciContractTests(unittest.TestCase):
             content.count('test "$(wc -l < /tmp/python3-leftover.txt)" -eq 0'),
             2,
         )
+        for stage_name, stage in (("builder", builder), ("runtime", runtime)):
+            with self.subTest(stage=stage_name):
+                self.assertNotIn("apt-get update", stage)
+                self.assertNotIn("apt-get install", stage)
+                update = stage.index("apt-get -o Acquire::Retries=0 update")
+                first = stage.index("apt-get -o Acquire::Retries=0 install")
+                self.assertLess(update, first)
+                second = stage.index("apt-get -o Acquire::Retries=0 install", first + 1)
+                bootstrap = stage[first:second]
+                first_install = bootstrap.split("&&", 1)[0]
+                self.assertIn("'apt=2.8.4ubuntu0.1'", first_install)
+                self.assertIn("'libapt-pkg6.0t64=2.8.4ubuntu0.1'", first_install)
+                self.assertIn(
+                    "test \"$(dpkg-query -W -f='${Version}' apt)\" = 2.8.4ubuntu0.1",
+                    bootstrap,
+                )
+                self.assertIn(
+                    "test \"$(dpkg-query -W -f='${Version}' libapt-pkg6.0t64)\" = "
+                    "2.8.4ubuntu0.1",
+                    bootstrap,
+                )
         self.assertNotIn("autoremove", content)
         self.assertEqual(content.count('test "$(node --version)" = v24.22.1'), 2)
         self.assertIn("USER 10001:10001", content)
@@ -226,6 +289,13 @@ class OciContractTests(unittest.TestCase):
         nginx = (ROOT / "infra/nginx/Dockerfile").read_text(encoding="utf-8")
         self.assertIn("apk del curl", nginx)
         self.assertIn("'zlib=1.4-r0'", nginx)
+        self.assertIn("'libexpat=2.10.0-r0'", nginx)
+        self.assertIn(
+            "test \"$(awk '/^P:libexpat$/{found=1} found && "
+            "/^V:/{print substr($0,3); exit}' /lib/apk/db/installed)"
+            '" = "2.10.0-r0"',
+            nginx,
+        )
         self.assertIn(
             "test \"$(awk '/^P:zlib$/{found=1} found && "
             "/^V:/{print substr($0,3); exit}' /lib/apk/db/installed)"

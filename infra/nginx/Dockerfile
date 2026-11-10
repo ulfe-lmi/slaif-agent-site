@@ -1,6 +1,7 @@
 # NGINX Open Source 1.30.6; two-clause BSD license; official multi-platform
 # image (Alpine 3.24). The overlay pins the exact OpenSSL fix versions and
-# the brotli-libs security fix from the base image's own v3.24 repositories.
+# the brotli-libs and libexpat security fix versions from the base image's
+# own v3.24 repositories.
 FROM nginx:1.30.6-alpine3.24@sha256:47928bf67eb62a1863cb08d9ecb52d3e704304ba614eaee17884204677702951
 ARG SOURCE_DATE_EPOCH=1704067200
 ARG SLAIF_IMAGE_CREATED=2024-01-01T00:00:00Z
@@ -17,10 +18,12 @@ ENV SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH}
 RUN apk --timeout 30 add --no-cache \
       'brotli-libs=1.2.1-r0' \
       'libcrypto3=3.5.9-r0' \
+      'libexpat=2.10.0-r0' \
       'libssl3=3.5.9-r0' \
       'zlib=1.4-r0' \
     && test "$(awk '/^P:brotli-libs$/{found=1} found && /^V:/{print substr($0,3); exit}' /lib/apk/db/installed)" = "1.2.1-r0" \
     && test "$(awk '/^P:libcrypto3$/{found=1} found && /^V:/{print substr($0,3); exit}' /lib/apk/db/installed)" = "3.5.9-r0" \
+    && test "$(awk '/^P:libexpat$/{found=1} found && /^V:/{print substr($0,3); exit}' /lib/apk/db/installed)" = "2.10.0-r0" \
     && test "$(awk '/^P:libssl3$/{found=1} found && /^V:/{print substr($0,3); exit}' /lib/apk/db/installed)" = "3.5.9-r0" \
     && test "$(awk '/^P:zlib$/{found=1} found && /^V:/{print substr($0,3); exit}' /lib/apk/db/installed)" = "1.4-r0" \
     && apk del curl

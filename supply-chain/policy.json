@@ -132,6 +132,7 @@
         "install": [
           "brotli-libs=1.2.1-r0",
           "libcrypto3=3.5.9-r0",
+          "libexpat=2.10.0-r0",
           "libssl3=3.5.9-r0",
           "zlib=1.4-r0"
         ],
@@ -143,6 +144,8 @@
           "libcrypto3=3.5.9-r0",
           "libcurl=8.23.0-r0",
           "libssl3=3.5.9-r0",
+          "musl-utils=1.2.5-r24",
+          "musl=1.2.5-r24",
           "zlib=1.4-r0"
         ],
         "remove": []
@@ -161,12 +164,18 @@
           "apache2-data=2.4.58-1ubuntu8.18",
           "apache2-utils=2.4.58-1ubuntu8.18",
           "apache2=2.4.58-1ubuntu8.18",
+          "apt=2.8.4ubuntu0.1",
+          "libapt-pkg6.0t64=2.8.4ubuntu0.1",
           "openssl=3.0.13-0ubuntu3.16"
         ],
         "remove": []
       },
       "browser-worker": {
-        "install": ["libbrotli1=1.1.0-2ubuntu0.1"],
+        "install": [
+          "apt=2.8.4ubuntu0.1",
+          "libapt-pkg6.0t64=2.8.4ubuntu0.1",
+          "libbrotli1=1.1.0-2ubuntu0.1"
+        ],
         "remove": [
           "libpython3-stdlib",
           "libpython3.12-minimal",

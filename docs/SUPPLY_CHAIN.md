@@ -136,7 +136,11 @@ SHA-256 verified before extraction by the bounded source-controlled parser.
 The base image's NodeSource nodejs 24.18.1 is purged and replaced with the
 SHA-256-verified, MIT-licensed official Node.js 24.22.1 archive, and its
 vulnerable libbrotli1 1.1.0-2build2 is replaced by the exact
-1.1.0-2ubuntu0.1 installed from the Noble repositories. Its runtime removes
+1.1.0-2ubuntu0.1 installed from the Noble repositories. In both stages the
+first Noble install is the protected signed APT bootstrap
+`apt=2.8.4ubuntu0.1` and `libapt-pkg6.0t64=2.8.4ubuntu0.1`, run with
+`Acquire::Retries=0` through that install, before any later download. Its
+runtime removes
 Firefox, WebKit, the duplicate Chromium headless shell, ffmpeg, npm, npx,
 Corepack including its library tree, pnpm, and pnpx from both /usr/bin and
 /usr/local, and the seven inherited Ubuntu Python 3.12 packages are purged
@@ -146,7 +150,8 @@ rejects Firefox/WebKit inventory, and hashes the retained
 `/ms-playwright/chromium-1717349` tree during both clean image builds.
 The supply-chain policy binds the exact Node archive URL, SHA-256 and version
 literals in the worker Dockerfile and the exact Ubuntu override (fixed
-libbrotli1 install, nodejs and python3 removals); the fail-closed compose
+apt/libapt-pkg bootstrap installs, libbrotli1 install, nodejs and python3
+removals); the fail-closed compose
 smoke guard
 checks the installed Node version, the CfT version, and the absence of the
 removed runtime tools and libraries, including the python3 binaries. The separate root E2E runner
@@ -187,9 +192,10 @@ The Apache adapter uses the official
 multi-platform image. Its deterministic Debian Trixie package overlay pins
 `libaprutil1-ldap`/`libaprutil1t64` 1.6.3-3+deb13u1 and OpenSSL
 3.5.7-1~deb13u2. The NGINX edge base moves to Alpine 3.24
-(`nginx:1.30.6-alpine3.24`), whose overlay pins `brotli-libs=1.2.1-r0` beside
-the exact OpenSSL fix packages from the base's own v3.24 repositories; the
-backend, PostgreSQL, and Web overlays retain their independently qualified
+(`nginx:1.30.6-alpine3.24`), whose overlay pins `brotli-libs=1.2.1-r0` and
+`libexpat=2.10.0-r0` beside the exact OpenSSL fix packages from the base's
+own v3.24 repositories; the backend, PostgreSQL, and Web overlays retain
+their independently qualified
 3.23 package sources. The Apache
 image is accepted only after two reproducible builds, parity, SBOM/license
 evidence, and a current Grype scan with zero unexcepted Critical findings.
@@ -198,15 +204,26 @@ For the current 077-o qualification, the earlier Trixie paragraph above is
 historical blocker evidence. The active Apache source is the immutable Ubuntu
 24.04 LTS image `ubuntu:24.04@sha256:33ceb71981b602c1a7443a53469e4dba065f7503eab3078a2d7a57a2ab987517`,
 with standard Ubuntu Apache 2.4 security packages and glibc 2.39-0ubuntu8.8.
-The normalized Apache application-file boundary is `/etc/apache2/` for this
-base-image layout.
+The first repository install in the image is the protected signed APT
+bootstrap `apt=2.8.4ubuntu0.1` and `libapt-pkg6.0t64=2.8.4ubuntu0.1`, run
+with `Acquire::Retries=0` through that install, before any later download
+from the Noble repositories. The normalized Apache application-file boundary
+is `/etc/apache2/` for this base-image layout.
 The PostgreSQL 18.6 Alpine 3.23 overlay keeps the official base and pins the
-standard-repository security packages `brotli-libs=1.2.1-r0` and
-`libcurl=8.23.0-r0` alongside the existing OpenSSL pins. The earlier
+standard-repository security packages `brotli-libs=1.2.1-r0`,
+`libcurl=8.23.0-r0`, `musl-utils=1.2.5-r24`, and `musl=1.2.5-r24` alongside
+the existing OpenSSL pins. The earlier
 `libcurl=8.22.0-r0` pin (introduced at `20c23890`) became unresolvable when
 the upstream v3.23/main index moved to 8.23.0-r0 on 2026-10-25; 8.23.0-r0 is
 installed through the same signed standard repository (archive SHA-256
 `d35e08ce3bafbcaf1a68512ac31483bd93e795ad5e8d8bfd76ada3106d81b569`).
+
+The 083-8-w source change adds these pins and the protected APT bootstrap to
+the four affected Dockerfiles and the policy install arrays. It is a source
+change: not a measured build, image, or scan result, and the qualified image
+evidence remains the separate runtime qualification gate. The four backend
+SQLite High findings from the current retained scans stay a separate explicit
+assessment and are neither fixed nor suppressed by this change.
 
 ## Vulnerability gate and database freshness
 

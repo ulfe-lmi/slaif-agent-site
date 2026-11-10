@@ -6,13 +6,21 @@ ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 \
     SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH}
 WORKDIR /build
 # Before any build step, the base image's NodeSource nodejs 24.18.1 is
-# purged and its vulnerable libbrotli1 1.1.0-2build2 is replaced by the
-# fixed 1.1.0-2ubuntu0.1 installed from the Noble repositories; Node.js
-# comes from the hash-pinned official 24.22.1 archive (CVE-2026-111497 fix).
+# purged; every APT invocation that can download packages before fixed
+# APT is installed uses the command-local -o Acquire::Retries=0, and the
+# first protected install fixes apt and libapt-pkg6.0t64 to 2.8.4ubuntu0.1
+# (CVE-2026-109518) before the vulnerable libbrotli1 1.1.0-2build2 is
+# replaced by the fixed 1.1.0-2ubuntu0.1; Node.js comes from the
+# hash-pinned official 24.22.1 archive (CVE-2026-111497 fix).
 RUN test "$TARGETARCH" = amd64 \
-    && DEBIAN_FRONTEND=noninteractive apt-get purge -y nodejs \
-    && apt-get update \
-    && apt-get install --no-install-recommends --yes 'libbrotli1=1.1.0-2ubuntu0.1' \
+    && DEBIAN_FRONTEND=noninteractive apt-get purge -y nodejs -o Acquire::Retries=0 \
+    && apt-get -o Acquire::Retries=0 update \
+    && apt-get -o Acquire::Retries=0 install --no-install-recommends --yes \
+      'apt=2.8.4ubuntu0.1' \
+      'libapt-pkg6.0t64=2.8.4ubuntu0.1' \
+    && test "$(dpkg-query -W -f='${Version}' apt)" = 2.8.4ubuntu0.1 \
+    && test "$(dpkg-query -W -f='${Version}' libapt-pkg6.0t64)" = 2.8.4ubuntu0.1 \
+    && apt-get -o Acquire::Retries=0 install --no-install-recommends --yes 'libbrotli1=1.1.0-2ubuntu0.1' \
     && test "$(dpkg-query -W -f='${Version}' libbrotli1)" = 1.1.0-2ubuntu0.1 \
     && curl --fail --location --retry 3 \
       --output /tmp/node-v24.22.1-linux-x64.tar.gz \
@@ -118,7 +126,7 @@ ENV BROWSER_WORKER_HOST=0.0.0.0 \
     SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH}
 WORKDIR /opt/slaif
 RUN test "$TARGETARCH" = amd64 \
-    && DEBIAN_FRONTEND=noninteractive apt-get purge -y nodejs
+    && DEBIAN_FRONTEND=noninteractive apt-get purge -y nodejs -o Acquire::Retries=0
 # 083-9-c: same fail-closed operation-row simulation, pre-check, exact
 # purge and known-record/path absence verification.
 RUN test "$TARGETARCH" = amd64 \
@@ -149,7 +157,7 @@ RUN test "$TARGETARCH" = amd64 \
 RUN test "$TARGETARCH" = amd64 \
     && DEBIAN_FRONTEND=noninteractive apt-get purge -y \
       python3 python3-minimal libpython3-stdlib \
-      python3.12 python3.12-minimal libpython3.12-stdlib libpython3.12-minimal
+      python3.12 python3.12-minimal libpython3.12-stdlib libpython3.12-minimal -o Acquire::Retries=0
 RUN set -e; \
     test "$TARGETARCH" = amd64; \
     LC_ALL=C dpkg-query -W -f='${Package} ${db:Status-Status}\n' > /tmp/python3-known.txt; \
@@ -158,8 +166,13 @@ RUN set -e; \
     test "$(wc -l < /tmp/python3-leftover.txt)" -eq 0; \
     rm /tmp/python3-known.txt /tmp/python3-leftover.txt
 RUN test "$TARGETARCH" = amd64 \
-    && apt-get update \
-    && apt-get install --no-install-recommends --yes 'libbrotli1=1.1.0-2ubuntu0.1' \
+    && apt-get -o Acquire::Retries=0 update \
+    && apt-get -o Acquire::Retries=0 install --no-install-recommends --yes \
+      'apt=2.8.4ubuntu0.1' \
+      'libapt-pkg6.0t64=2.8.4ubuntu0.1' \
+    && test "$(dpkg-query -W -f='${Version}' apt)" = 2.8.4ubuntu0.1 \
+    && test "$(dpkg-query -W -f='${Version}' libapt-pkg6.0t64)" = 2.8.4ubuntu0.1 \
+    && apt-get -o Acquire::Retries=0 install --no-install-recommends --yes 'libbrotli1=1.1.0-2ubuntu0.1' \
     && test "$(dpkg-query -W -f='${Version}' libbrotli1)" = 1.1.0-2ubuntu0.1 \
     && rm -rf /var/lib/apt/lists/*
 RUN test "$TARGETARCH" = amd64 \

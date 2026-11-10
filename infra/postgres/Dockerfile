@@ -1,6 +1,7 @@
 # PostgreSQL 18.6 official Alpine base; Alpine aports OpenSSL source commit
 # 2b4b2590f782b95276d31dcaaf41554b1a597a0b supplies the exact fixed packages,
-# and brotli-libs 1.2.1-r0 is the exact brotli security fix version.
+# brotli-libs 1.2.1-r0 is the exact brotli security fix version, and musl
+# with musl-utils 1.2.5-r24 are the exact musl security fix versions.
 FROM docker.io/library/postgres:18.6-alpine3.23@sha256:697c180dbf244d3ce4a8f4cbc0156cde840af055c1bf8b76aebe422a4822086f
 
 ARG SOURCE_DATE_EPOCH=1704067200
@@ -22,9 +23,13 @@ RUN apk add --no-cache \
       'libcrypto3=3.5.9-r0' \
       'libcurl=8.23.0-r0' \
       'libssl3=3.5.9-r0' \
+      'musl-utils=1.2.5-r24' \
+      'musl=1.2.5-r24' \
       'zlib=1.4-r0' \
     && test "$(awk '/^P:brotli-libs$/{found=1} found && /^V:/{print substr($0,3); exit}' /lib/apk/db/installed)" = "1.2.1-r0" \
     && test "$(awk '/^P:libcrypto3$/{found=1} found && /^V:/{print substr($0,3); exit}' /lib/apk/db/installed)" = "3.5.9-r0" \
     && test "$(awk '/^P:libcurl$/{found=1} found && /^V:/{print substr($0,3); exit}' /lib/apk/db/installed)" = "8.23.0-r0" \
     && test "$(awk '/^P:libssl3$/{found=1} found && /^V:/{print substr($0,3); exit}' /lib/apk/db/installed)" = "3.5.9-r0" \
+    && test "$(awk '/^P:musl-utils$/{found=1} found && /^V:/{print substr($0,3); exit}' /lib/apk/db/installed)" = "1.2.5-r24" \
+    && test "$(awk '/^P:musl$/{found=1} found && /^V:/{print substr($0,3); exit}' /lib/apk/db/installed)" = "1.2.5-r24" \
     && test "$(awk '/^P:zlib$/{found=1} found && /^V:/{print substr($0,3); exit}' /lib/apk/db/installed)" = "1.4-r0"
