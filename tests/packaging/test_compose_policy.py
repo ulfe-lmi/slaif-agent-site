@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import copy
 import importlib.util
 import unittest
@@ -334,6 +335,81 @@ class ComposePolicyTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
         self.assertNotIn("print(result.stdout", source)
         self.assertNotIn("print(result.stderr", source)
+        mismatch_wait = (
+            'self.mark("wrong-role", "await-role-mismatch")\n'
+            "        self._wait_readiness(ROLE_MISMATCH)"
+        )
+        restored_wait = (
+            'self.mark("wrong-role", "await-restored-ready")\n'
+            "        self._wait_readiness(None)"
+        )
+        self.assertIn(mismatch_wait, source)
+        self.assertIn(restored_wait, source)
+
+    def test_control_fixture_role_switch_commits_before_terminate(self) -> None:
+        source = (
+            Path(__file__).parents[2] / "tools/compose/control_readiness.py"
+        ).read_text(encoding="utf-8")
+        psql_calls: list[tuple[int, str]] = []
+        for node in ast.walk(ast.parse(source)):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "_psql"
+                and len(node.args) == 1
+                and isinstance(node.args[0], ast.Constant)
+                and isinstance(node.args[0].value, str)
+            ):
+                psql_calls.append((node.lineno, node.args[0].value))
+        psql_calls.sort(key=lambda item: item[0])
+        terminate = [
+            (lineno, value)
+            for lineno, value in psql_calls
+            if "pg_terminate_backend" in value
+        ]
+        self.assertEqual(len(terminate), 1)
+        self.assertNotIn("REVOKE", terminate[0][1])
+        self.assertNotIn("GRANT", terminate[0][1])
+        self.assertIn(
+            "WHERE usename = 'slaif_control_login' AND pid <> pg_backend_pid()",
+            terminate[0][1],
+        )
+        switch = [
+            lineno
+            for lineno, value in psql_calls
+            if 'REVOKE "slaif_control" FROM "slaif_control_login"' in value
+            and 'GRANT "slaif_reviewer" TO "slaif_control_login"' in value
+        ]
+        self.assertEqual(len(switch), 1)
+        self.assertLess(switch[0], terminate[0][0])
+
+    def test_control_fixture_wrong_role_waits_are_distinct_and_allowlisted(
+        self,
+    ) -> None:
+        for label in ("await-role-mismatch", "await-restored-ready"):
+            self.assertIn(label, CONTROL_FIXTURE.DIAGNOSTIC_OPERATIONS)
+        source = (
+            Path(__file__).parents[2] / "tools/compose/control_readiness.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn('self.mark("wrong-role", "await-role-mismatch")', source)
+        self.assertIn('self.mark("wrong-role", "await-restored-ready")', source)
+        negative = CONTROL_FIXTURE.failure_diagnostic(
+            "wrong-role", "await-role-mismatch", "timeout"
+        )
+        positive = CONTROL_FIXTURE.failure_diagnostic(
+            "wrong-role", "await-restored-ready", "timeout"
+        )
+        self.assertEqual(
+            negative,
+            "control-readiness-fixture: FAILED stage=wrong-role "
+            "operation=await-role-mismatch reason=timeout",
+        )
+        self.assertEqual(
+            positive,
+            "control-readiness-fixture: FAILED stage=wrong-role "
+            "operation=await-restored-ready reason=timeout",
+        )
+        self.assertNotEqual(negative, positive)
 
     def test_control_fixture_recreates_only_the_target_process(self) -> None:
         fixture = CONTROL_FIXTURE.ControlReadinessFixture(

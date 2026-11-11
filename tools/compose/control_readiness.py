@@ -53,6 +53,8 @@ DIAGNOSTIC_OPERATIONS = frozenset(
         "build-images",
         "start-fixture",
         "await-readiness",
+        "await-role-mismatch",
+        "await-restored-ready",
         "await-container",
         "assert-liveness",
         "assert-nginx",
@@ -61,6 +63,7 @@ DIAGNOSTIC_OPERATIONS = frozenset(
         "replace-file",
         "recreate-control",
         "change-role",
+        "terminate-sessions",
         "set-file-mode",
         "change-marker",
         "stop-postgres",
@@ -504,12 +507,17 @@ class ControlReadinessFixture:
         self.mark("wrong-role", "change-role")
         self._psql(
             'REVOKE "slaif_control" FROM "slaif_control_login"; '
-            'GRANT "slaif_reviewer" TO "slaif_control_login"; '
+            'GRANT "slaif_reviewer" TO "slaif_control_login";'
+        )
+        # Commit boundary: the role switch above must be fully
+        # committed before any session terminate races a probe.
+        self.mark("wrong-role", "terminate-sessions")
+        self._psql(
             "SELECT pg_catalog.pg_terminate_backend(pid) "
             "FROM pg_catalog.pg_stat_activity "
             "WHERE usename = 'slaif_control_login' AND pid <> pg_backend_pid();"
         )
-        self.mark("wrong-role", "await-readiness")
+        self.mark("wrong-role", "await-role-mismatch")
         self._wait_readiness(ROLE_MISMATCH)
         self.mark("wrong-role", "assert-liveness")
         self._assert_liveness()
@@ -520,7 +528,7 @@ class ControlReadinessFixture:
             'REVOKE "slaif_reviewer" FROM "slaif_control_login"; '
             'GRANT "slaif_control" TO "slaif_control_login";'
         )
-        self.mark("wrong-role", "await-readiness")
+        self.mark("wrong-role", "await-restored-ready")
         self._wait_readiness(None)
 
         print("control-readiness-stage: unreadable-secret", flush=True)
