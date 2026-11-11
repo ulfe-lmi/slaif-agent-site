@@ -395,12 +395,16 @@ component 24 + theme 9 + page-style 12, unchanged; group A 85 unchanged) on
 PostgreSQL 14-18; no existing selection, budget, matrix, or aggregator
 changed, and actual per-version Q and SELF results are reported evidence.
 The P7 composite-FK `dependencies()` characterization is scratch-only and
-outside the CI selection. No product source, migration, or product/runtime
-configuration changed in this increment; the only workflow change is the
-ordered fourth exact command of group B, and the only dependency change is
-the released asyncpg driver pin `0.31.0` -> `0.32.0` (round 083-8-f) with
-its exact lock, pin, metadata, notices, SBOM, and documentation
-reconciliation.
+outside the CI selection. No backend application source or migration
+changed in this increment. The only workflow change in the early rounds
+083-8-a through 083-8-f was the ordered fourth exact command of group B,
+and the only dependency change there was the released asyncpg driver pin
+`0.31.0` -> `0.32.0` (round 083-8-f) with its exact lock, pin, metadata,
+notices, SBOM, and documentation reconciliation. Later rounds changed
+only build, test, tooling, and documentation files: the opt-in compose
+smoke lifecycle and control-readiness evidence contract with its
+packaging checks, runtime image/browser/security pin repairs, and
+supply-bundle evidence tooling changes.
 
 The qualification subject is the generic whole-session COW promotion
 mechanism through the public `agentcow.postgres` 0.2.0 API on an owned
