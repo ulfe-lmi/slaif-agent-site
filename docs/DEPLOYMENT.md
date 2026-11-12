@@ -109,7 +109,7 @@ design rather than weaken this baseline.
 | Editor HTTP service | Backend | `10001:10001` | edge/database plus isolated Control/Editor secrets | no media volume |
 | Media HTTP service | Backend | `10001:10001` | edge/database plus isolated Media secret | private `media-data` only; initialized `0700` for UID 10001 |
 | Three Python workers | Backend | `10001:10001` | database | media volume on media-GC only |
-| `browser-worker` | Playwright 1.62.1 / Chrome for Testing 156.0.8078.80 (CfT revision 1706539) | `10001:10001` | browser only | read-only worker credential; writable private browser artifacts |
+| `browser-worker` | Playwright 1.62.1 / Chrome for Testing 157.0.8103.50 (CfT revision 1717349) | `10001:10001` | browser only | read-only worker credential; writable private browser artifacts |
 | `web` | Next.js | `10001:10001` | edge, application, browser | read-only `render-auth-secret` credential |
 | `nginx` | NGINX Open Source | `101:101` | edge only | none |
 
@@ -171,9 +171,9 @@ optional dependency is denied by pnpm policy, and the status surface sets
 unoptimized local images, so its LGPL libvips bundle is neither locked nor
 installed in product images. `@playwright/test==1.62.1` is an Apache-2.0
 test runner. The product worker declares exact Apache-2.0
-`playwright-core==1.62.1` and bakes only Chrome for Testing `156.0.8078.80`
-(CfT revision `1706539`). The exact amd64 archive SHA-256 is
-`b711c720f774be355197f32edf37e0651418ba036d92446ee2da19ac017540a7`.
+`playwright-core==1.62.1` and bakes only Chrome for Testing `157.0.8103.50`
+(CfT revision `1717349`). The exact amd64 archive SHA-256 is
+`d17167bc092eb495a3b768c7467f27e35f625aa03834233a1663af67dcb668c9`.
 Firefox, WebKit, the headless-shell duplicate, npm, and Corepack are removed
 from the runtime image. The product worker is currently qualified only on
 `linux/amd64`; an arm64 browser payload is not claimed.

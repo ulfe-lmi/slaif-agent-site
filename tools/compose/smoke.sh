@@ -16,6 +16,113 @@ if test "${2:-}" = --validate-project
 then
   exit 0
 fi
+LIFECYCLE_DIR=
+if test "${2:-}" = --lifecycle
+then
+  LIFECYCLE_DIR=${3-}
+fi
+LIFECYCLE_ACTIVE=0
+LIFECYCLE_SCOPE="$PROJECT"
+LIFECYCLE_MAIN_FLOW_STARTED=
+LIFECYCLE_MAIN_DONE=
+LIFECYCLE_PREDISPOSAL_DONE=
+LIFECYCLE_ABSENT_DONE=
+LIFECYCLE_CLEANUP_FAILURE=
+if test -n "$LIFECYCLE_DIR"
+then
+  case "$LIFECYCLE_DIR" in
+    /*) LIFECYCLE_ACTIVE=1 ;;
+    *) echo "compose-smoke: lifecycle evidence dir must be absolute" >&2; exit 2 ;;
+  esac
+fi
+
+lifecycle() {
+  # Fixed internal verification operations only. Capture-disabled (default)
+  # runs never invoke verify.py lifecycle; the default smoke behavior,
+  # helper arguments, stdout/stderr and exit semantics stay unchanged.
+  if test "$LIFECYCLE_ACTIVE" != 1
+  then
+    return 0
+  fi
+  test $# -ge 1
+  lifecycle_operation=$1
+  shift
+  python tools/compose/verify.py \
+    --root "$ROOT" --project "$PROJECT" \
+    --lifecycle-evidence "$LIFECYCLE_DIR" --scope "$LIFECYCLE_SCOPE" \
+    --lifecycle-operation "$lifecycle_operation" "$@"
+}
+
+lifecycle_negative() {
+  # Same fixed operations against the negative namespace; inert in the
+  # default mode where no lifecycle evidence is requested.
+  if test "$LIFECYCLE_ACTIVE" != 1
+  then
+    return 0
+  fi
+  test $# -ge 1
+  lifecycle_operation=$1
+  shift
+  python tools/compose/verify.py \
+    --root "$ROOT" --project "$NEGATIVE_PROJECT" \
+    --lifecycle-evidence "$LIFECYCLE_DIR" --scope "$LIFECYCLE_SCOPE" \
+    --lifecycle-operation "$lifecycle_operation" "$@"
+}
+
+helper_run() {
+  # Default mode: the exact original docker run invocation, argv-for-argv:
+  # the caller passes everything after `docker run --rm` and the original
+  # flag/image/command order is preserved. Capture mode: explicit
+  # create/disposal with a durable full-ID lifecycle; the body result (full
+  # 0..255 range, including a genuine 97) is only exposed to caller
+  # denial/value branches after the complete receipt chain has been parsed
+  # and validated by verify.py, which classifies an executed container
+  # terminal versus a docker-level start failure. Receipts are
+  # file-durable, so a helper invoked inside an if-condition or a command
+  # substitution still reaches the static caller-known audit list.
+  helper_tag=$1
+  helper_name=$2
+  shift 2
+  if test "$LIFECYCLE_ACTIVE" != 1
+  then
+    docker run --rm "$@"
+    return
+  fi
+  lifecycle helper-begin --tag "$helper_tag" --name "$helper_name" || exit 1
+  helper_create_rc=0
+  # Compose build stamps com.docker.compose.project/service/version onto the image;
+  # docker create copies image labels into the container Config.Labels. Override
+  # only the two reserved identity keys with empty values so the created helper
+  # carries no non-empty compose identity (frozen lifecycle guard stays strict).
+  helper_create_out=$(docker create --name "$helper_name" \
+    --label com.docker.compose.project= \
+    --label com.docker.compose.service= "$@") || helper_create_rc=$?
+  if test "$helper_create_rc" -ne 0
+  then
+    # A failed create stdout is never adopted as an owned ID and is never
+    # deleted; the failed-create receipt is the durable record.
+    lifecycle helper-created --tag "$helper_tag" --name "$helper_name" --create-rc "$helper_create_rc" || exit 1
+    echo "compose-smoke: helper create failed tag=$helper_tag" >&2
+    exit 1
+  fi
+  helper_id=$(printf '%s\n' "$helper_create_out" | sed -n '1p')
+  test "${#helper_id}" = 64 || exit 1
+  case "$helper_id" in
+    *[!0-9a-f]*)
+      echo "compose-smoke: helper create id malformed tag=$helper_tag" >&2
+      exit 1
+      ;;
+  esac
+  lifecycle helper-created --tag "$helper_tag" --name "$helper_name" --id "$helper_id" || exit 1
+  helper_start_rc=0
+  docker start -a "$helper_id" || helper_start_rc=$?
+  lifecycle helper-start --tag "$helper_tag" --id "$helper_id" --start-rc "$helper_start_rc" || exit 1
+  lifecycle helper-terminal --tag "$helper_tag" --id "$helper_id" || exit 1
+  lifecycle helper-remove --tag "$helper_tag" --id "$helper_id" || exit 1
+  lifecycle helper-complete --tag "$helper_tag" --name "$helper_name" \
+    --id "$helper_id" --start-rc "$helper_start_rc" --body-exit "$helper_start_rc" || exit 1
+  return "$helper_start_rc"
+}
 
 container_health() {
   docker inspect --format \
@@ -143,6 +250,39 @@ PY
 }
 
 cleanup() {
+  if test "$LIFECYCLE_ACTIVE" = 1 && test -n "$LIFECYCLE_MAIN_FLOW_STARTED" \
+    && test -z "$LIFECYCLE_PREDISPOSAL_DONE"
+  then
+    LIFECYCLE_PREDISPOSAL_DONE=1
+    # Terminal pre-disposal capture BEFORE the one owned disposal path.
+    # The initial (pre-flow) cleanup never reaches this block, so it
+    # consumes no terminal guard and writes no pre-disposal receipt.
+    # After the main flow completes, proof failure fails the smoke; on a
+    # mid-run failure the capture is best-effort, the original exit code
+    # is preserved, and each failed native is latched and reported.
+    if test -n "$LIFECYCLE_MAIN_DONE"
+    then
+      python tools/compose/verify.py --root "$ROOT" --project "$PROJECT" \
+        --lifecycle-evidence "$LIFECYCLE_DIR" --scope "$LIFECYCLE_SCOPE" \
+        --lifecycle-operation capture --phase pre-disposal \
+        || LIFECYCLE_CLEANUP_FAILURE=1
+      python tools/compose/verify.py --root "$ROOT" --project "$NEGATIVE_PROJECT" \
+        --lifecycle-evidence "$LIFECYCLE_DIR" --scope "$LIFECYCLE_SCOPE" \
+        --lifecycle-operation capture --phase negative \
+        || LIFECYCLE_CLEANUP_FAILURE=1
+    else
+      python tools/compose/verify.py --root "$ROOT" --project "$PROJECT" \
+        --lifecycle-evidence "$LIFECYCLE_DIR" --scope "$LIFECYCLE_SCOPE" \
+        --lifecycle-operation capture --phase pre-disposal \
+        || { LIFECYCLE_CLEANUP_FAILURE=1
+             echo "compose-smoke: lifecycle pre-disposal capture failed" >&2; }
+      python tools/compose/verify.py --root "$ROOT" --project "$NEGATIVE_PROJECT" \
+        --lifecycle-evidence "$LIFECYCLE_DIR" --scope "$LIFECYCLE_SCOPE" \
+        --lifecycle-operation capture --phase negative \
+        || { LIFECYCLE_CLEANUP_FAILURE=1
+             echo "compose-smoke: lifecycle negative capture failed" >&2; }
+    fi
+  fi
   test -z "$HEADER_FILE" || rm -f "$HEADER_FILE"
   test -z "$TOKEN_FILE" || rm -f "$TOKEN_FILE"
   test -z "$E2E_SECRET_FILE" || rm -f "$E2E_SECRET_FILE"
@@ -166,14 +306,80 @@ cleanup() {
   test -z "$FOREIGN_CAPABILITY_CONFIG_FILE" || rm -f "$FOREIGN_CAPABILITY_CONFIG_FILE"
   test -z "$FOREIGN_CAPABILITY_META_FILE" || rm -f "$FOREIGN_CAPABILITY_META_FILE"
   test -z "$PRE_OUTAGE_BODY_FILE" || rm -f "$PRE_OUTAGE_BODY_FILE"
+  negative_down_rc=0
   docker compose -p "$NEGATIVE_PROJECT" -f "$ROOT/compose.yaml" \
     -f "$ROOT/tests/packaging/compose.broken-bootstrap.yaml" \
-    down --volumes --remove-orphans >/dev/null 2>&1 || true
+    down --volumes --remove-orphans >/dev/null 2>&1 || negative_down_rc=$?
+  project_down_rc=0
   docker compose -p "$PROJECT" -f "$ROOT/compose.yaml" \
-    down --volumes --remove-orphans >/dev/null 2>&1 || true
+    down --volumes --remove-orphans >/dev/null 2>&1 || project_down_rc=$?
+  if test "$LIFECYCLE_ACTIVE" = 1 && test -n "$LIFECYCLE_MAIN_FLOW_STARTED" \
+    && test -z "$LIFECYCLE_ABSENT_DONE"
+  then
+    LIFECYCLE_ABSENT_DONE=1
+    if test -n "$LIFECYCLE_MAIN_DONE"
+    then
+      python tools/compose/verify.py --root "$ROOT" --project "$NEGATIVE_PROJECT" \
+        --lifecycle-evidence "$LIFECYCLE_DIR" --scope "$LIFECYCLE_SCOPE" \
+        --lifecycle-operation cleanup-absent --down-native "$negative_down_rc" \
+        || LIFECYCLE_CLEANUP_FAILURE=1
+      python tools/compose/verify.py --root "$ROOT" --project "$PROJECT" \
+        --lifecycle-evidence "$LIFECYCLE_DIR" --scope "$LIFECYCLE_SCOPE" \
+        --lifecycle-operation cleanup-absent --down-native "$project_down_rc" \
+        || LIFECYCLE_CLEANUP_FAILURE=1
+      if test -z "$LIFECYCLE_CLEANUP_FAILURE"
+      then
+        python tools/compose/verify.py --root "$ROOT" --project "$PROJECT" \
+          --lifecycle-evidence "$LIFECYCLE_DIR" --scope "$LIFECYCLE_SCOPE" \
+          --lifecycle-operation audit-capture --phase pre-disposal \
+          || LIFECYCLE_CLEANUP_FAILURE=1
+        python tools/compose/verify.py --root "$ROOT" --project "$NEGATIVE_PROJECT" \
+          --lifecycle-evidence "$LIFECYCLE_DIR" --scope "$LIFECYCLE_SCOPE" \
+          --lifecycle-operation audit-capture --phase negative \
+          || LIFECYCLE_CLEANUP_FAILURE=1
+      fi
+      if test -n "$LIFECYCLE_CLEANUP_FAILURE"
+      then
+        echo "compose-smoke: lifecycle terminal proof failed" >&2
+        exit 1
+      fi
+    else
+      python tools/compose/verify.py --root "$ROOT" --project "$NEGATIVE_PROJECT" \
+        --lifecycle-evidence "$LIFECYCLE_DIR" --scope "$LIFECYCLE_SCOPE" \
+        --lifecycle-operation cleanup-absent --down-native "$negative_down_rc" \
+        || { LIFECYCLE_CLEANUP_FAILURE=1
+             echo "compose-smoke: lifecycle negative absence proof failed" >&2; }
+      python tools/compose/verify.py --root "$ROOT" --project "$PROJECT" \
+        --lifecycle-evidence "$LIFECYCLE_DIR" --scope "$LIFECYCLE_SCOPE" \
+        --lifecycle-operation cleanup-absent --down-native "$project_down_rc" \
+        || { LIFECYCLE_CLEANUP_FAILURE=1
+             echo "compose-smoke: lifecycle project absence proof failed" >&2; }
+      if test -n "$LIFECYCLE_CLEANUP_FAILURE"
+      then
+        echo "compose-smoke: lifecycle terminal proof incomplete" >&2
+      fi
+    fi
+  fi
 }
-trap cleanup EXIT HUP INT TERM
-cleanup
+if test "$LIFECYCLE_ACTIVE" = 1
+then
+  # BEFORE any Docker mutation or any trap capable of disposal: prove BOTH
+  # normal and negative namespaces fresh via healthy native-checked anchored
+  # queries over all statuses and the actual rendered physical names,
+  # independent of labels. Only then is a disposal-capable trap armed.
+  python tools/compose/verify.py --root "$ROOT" --project "$PROJECT" \
+    --lifecycle-evidence "$LIFECYCLE_DIR" --scope "$LIFECYCLE_SCOPE" \
+    --lifecycle-operation preflight
+  python tools/compose/verify.py --root "$ROOT" --project "$NEGATIVE_PROJECT" \
+    --lifecycle-evidence "$LIFECYCLE_DIR" --scope "$LIFECYCLE_SCOPE" \
+    --lifecycle-operation preflight
+  trap cleanup EXIT HUP INT TERM
+  cleanup
+else
+  trap cleanup EXIT HUP INT TERM
+  cleanup
+fi
+LIFECYCLE_MAIN_FLOW_STARTED=1
 
 HEADER_FILE=$(mktemp)
 TOKEN_FILE=$(mktemp)
@@ -207,6 +413,7 @@ python tools/compose/verify.py --root "$ROOT"
 docker compose build --pull
 docker compose -p "$PROJECT" up --build --wait
 python tools/compose/verify.py --root "$ROOT" --project "$PROJECT"
+lifecycle capture --phase up
 
 # These non-authenticatable OIDC identities exist only in this disposable smoke
 # database. The fixed statement deliberately fails on a collision or any
@@ -257,8 +464,8 @@ echo "review-worker-media-boundary: OK dsn=0400:uid10001 root=0700:uid10001"
 docker inspect "${PROJECT}-browser-worker-1" | python -c \
   'import json,sys; value=json.load(sys.stdin)[0]; host=value["HostConfig"]; config=value["Config"]; assert config["User"]=="10001:10001" and host["ReadonlyRootfs"] is True; assert host["CapDrop"]==["ALL"] and host["CapAdd"]==["CAP_SYS_CHROOT"]; assert host["PidsLimit"]==256 and host["Memory"]==805306368 and host["ShmSize"]==134217728 and host["NanoCpus"]==1000000000; assert "no-new-privileges:true" in host["SecurityOpt"] and any(item.startswith("seccomp=") for item in host["SecurityOpt"]); assert host["NetworkMode"].endswith("_browser"); print("browser-worker-runtime-policy: OK uid=10001 readonly=yes caps=SYS_CHROOT limits=exact network=browser")'
 docker exec "${PROJECT}-browser-worker-1" sh -exc \
-  'test "$(find /ms-playwright -mindepth 1 -maxdepth 1 -type d | wc -l)" -eq 1; test -x /ms-playwright/chromium-1706539/chrome-linux64/chrome; test ! -e /usr/bin/npm; test ! -e /usr/bin/corepack; test ! -e /usr/bin/node; test ! -e /usr/local/bin/npm; test ! -e /usr/local/bin/npx; test ! -e /usr/local/bin/corepack; test ! -e /usr/local/bin/pnpm; test ! -e /usr/local/bin/pnpx; test ! -e /usr/local/lib/node_modules/npm; test ! -e /usr/local/lib/node_modules/corepack; test ! -e /usr/lib/node_modules/corepack; test ! -e /usr/bin/python3; test ! -e /usr/bin/python3.12; test ! -e /usr/local/bin/python3; test ! -e /usr/local/bin/python3.12; python_paths=$(find /usr /opt \( -name "python3*" -o -name "libpython3*" \) -print); test -z "$python_paths"; test "$(node --version)" = v24.22.1; /ms-playwright/chromium-1706539/chrome-linux64/chrome --version | grep -Eq "^Google Chrome for Testing 156[.]0[.]8078[.]80 *$"'
-echo "browser-worker-image-policy: OK playwright=1.62.1 cft_revision=1706539 chromium=156.0.8078.80 browsers=chromium-only package-manager=absent python3=absent"
+  'test "$(find /ms-playwright -mindepth 1 -maxdepth 1 -type d | wc -l)" -eq 1; test -x /ms-playwright/chromium-1717349/chrome-linux64/chrome; test ! -e /usr/bin/npm; test ! -e /usr/bin/corepack; test ! -e /usr/bin/node; test ! -e /usr/local/bin/npm; test ! -e /usr/local/bin/npx; test ! -e /usr/local/bin/corepack; test ! -e /usr/local/bin/pnpm; test ! -e /usr/local/bin/pnpx; test ! -e /usr/local/lib/node_modules/npm; test ! -e /usr/local/lib/node_modules/corepack; test ! -e /usr/lib/node_modules/corepack; test ! -e /usr/bin/python3; test ! -e /usr/bin/python3.12; test ! -e /usr/local/bin/python3; test ! -e /usr/local/bin/python3.12; python_paths=$(find /usr /opt \( -name "python3*" -o -name "libpython3*" \) -print); test -z "$python_paths"; test "$(node --version)" = v24.22.1; /ms-playwright/chromium-1717349/chrome-linux64/chrome --version | grep -Eq "^Google Chrome for Testing 157[.]0[.]8103[.]50 *$"'
+echo "browser-worker-image-policy: OK playwright=1.62.1 cft_revision=1717349 chromium=157.0.8103.50 browsers=chromium-only package-manager=absent python3=absent"
 
 curl --fail --show-error --silent http://localhost:8080/ | grep -q "Self-hosted human control"
 docker compose -p "$PROJECT" logs --no-color bootstrap 2>/dev/null \
@@ -639,11 +846,11 @@ fi
 docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif -v ON_ERROR_STOP=1 -c \
   "DROP ROLE slaif_smoke_unrelated" >/dev/null
 echo "database-login-policy: OK public-connect=denied exact-roles=11 direct-default-owner-drift=none unrelated-connect=denied"
-docker run --rm --network none --read-only --cap-drop ALL --cap-add DAC_READ_SEARCH \
+helper_run h-secret-policy "${PROJECT}-h-secret-policy" --network none --read-only --cap-drop ALL --cap-add DAC_READ_SEARCH \
   --user 0:0 --volume "${PROJECT}_local-secrets:/secrets:ro" \
   --entrypoint python slaif-agent-site-backend:local -c \
   "import os,pathlib,stat; root=pathlib.Path('/secrets'); root_info=root.stat(); assert stat.S_IMODE(root_info.st_mode)==0o710 and root_info.st_uid==0 and root_info.st_gid==10002; files=list(root.iterdir()); assert len(files)==25; assert all(stat.S_IMODE(p.stat().st_mode)==0o400 for p in files); assert (root/'postgres-password').stat().st_uid==999; assert (root/'.initialized-v1').stat().st_uid==0; assert all(p.stat().st_uid==10001 for p in files if p.name not in {'postgres-password','.initialized-v1'}); values=[p.read_bytes() for p in files if p.name=='postgres-password' or p.name.startswith('login-')]; assert len(values)==len(set(values))==12; print('secret-file-policy: OK')"
-if docker run --rm --network none --read-only --cap-drop ALL \
+if helper_run h-secret-neg "${PROJECT}-h-secret-neg" --network none --read-only --cap-drop ALL \
   --user 10003:10003 --volume "${PROJECT}_local-secrets:/secrets:ro" \
   --entrypoint python slaif-agent-site-backend:local -c \
   "import pathlib; pathlib.Path('/secrets/postgres-password').read_bytes()" \
@@ -653,12 +860,12 @@ then
   exit 1
 fi
 
-docker run --rm --network none --read-only --cap-drop ALL --cap-add DAC_READ_SEARCH \
+helper_run h-render-secret "${PROJECT}-h-render-secret" --network none --read-only --cap-drop ALL --cap-add DAC_READ_SEARCH \
   --user 0:0 --volume "${PROJECT}_local-secrets:/master:ro" \
   --volume "${PROJECT}_render-secret:/render:ro" \
   --entrypoint python slaif-agent-site-backend:local -c \
   "import pathlib,secrets,stat; root=pathlib.Path('/render'); files=list(root.iterdir()); assert len(files)==1 and files[0].name=='render-dsn'; info=root.stat(); file=files[0]; assert stat.S_IMODE(info.st_mode)==0o700 and info.st_uid==10001 and info.st_gid==10001; assert stat.S_IMODE(file.stat().st_mode)==0o400 and file.stat().st_uid==10001; assert secrets.compare_digest(file.read_bytes(), pathlib.Path('/master/service-public-dsn').read_bytes()); print('render-secret-policy: OK files=1 mode=0400 owner=10001')"
-if docker run --rm --network none --read-only --cap-drop ALL \
+if helper_run h-render-secret-neg "${PROJECT}-h-render-secret-neg" --network none --read-only --cap-drop ALL \
   --user 10003:10003 --volume "${PROJECT}_render-secret:/render:ro" \
   --entrypoint python slaif-agent-site-backend:local -c \
   "import pathlib; pathlib.Path('/render/render-dsn').read_bytes()" \
@@ -668,12 +875,12 @@ then
   exit 1
 fi
 
-docker run --rm --network none --read-only --cap-drop ALL --cap-add DAC_READ_SEARCH \
+helper_run h-render-preview-secret "${PROJECT}-h-render-preview-secret" --network none --read-only --cap-drop ALL --cap-add DAC_READ_SEARCH \
   --user 0:0 --volume "${PROJECT}_local-secrets:/master:ro" \
   --volume "${PROJECT}_render-preview-secret:/preview:ro" \
   --entrypoint python slaif-agent-site-backend:local -c \
   "import pathlib,secrets,stat; root=pathlib.Path('/preview'); files=list(root.iterdir()); assert len(files)==1 and files[0].name=='preview-dsn'; info=root.stat(); file=files[0]; assert stat.S_IMODE(info.st_mode)==0o700 and info.st_uid==10001 and info.st_gid==10001; assert stat.S_IMODE(file.stat().st_mode)==0o400 and file.stat().st_uid==10001; assert secrets.compare_digest(file.read_bytes(), pathlib.Path('/master/service-preview-dsn').read_bytes()); print('render-preview-secret-policy: OK files=1 mode=0400 owner=10001')"
-if docker run --rm --network none --read-only --cap-drop ALL \
+if helper_run h-render-preview-secret-neg "${PROJECT}-h-render-preview-secret-neg" --network none --read-only --cap-drop ALL \
   --user 10003:10003 --volume "${PROJECT}_render-preview-secret:/preview:ro" \
   --entrypoint python slaif-agent-site-backend:local -c \
   "import pathlib; pathlib.Path('/preview/preview-dsn').read_bytes()" \
@@ -683,11 +890,11 @@ then
   exit 1
 fi
 
-docker run --rm --network none --read-only --cap-drop ALL --cap-add DAC_READ_SEARCH \
+helper_run h-render-auth-secret "${PROJECT}-h-render-auth-secret" --network none --read-only --cap-drop ALL --cap-add DAC_READ_SEARCH \
   --user 0:0 --volume "${PROJECT}_render-auth-secret:/auth:ro" \
   --entrypoint python slaif-agent-site-backend:local -c \
   "import pathlib,stat; root=pathlib.Path('/auth'); files=list(root.iterdir()); assert len(files)==1 and files[0].name=='render-token'; info=root.stat(); file=files[0]; assert stat.S_IMODE(info.st_mode)==0o700 and info.st_uid==10001 and info.st_gid==10001; assert stat.S_IMODE(file.stat().st_mode)==0o400 and file.stat().st_uid==10001 and len(file.read_bytes())>=43; print('render-auth-secret-policy: OK files=1 mode=0400 owner=10001')"
-if docker run --rm --network none --read-only --cap-drop ALL \
+if helper_run h-render-auth-secret-neg "${PROJECT}-h-render-auth-secret-neg" --network none --read-only --cap-drop ALL \
   --user 10003:10003 --volume "${PROJECT}_render-auth-secret:/auth:ro" \
   --entrypoint python slaif-agent-site-backend:local -c \
   "import pathlib; pathlib.Path('/auth/render-token').read_bytes()" \
@@ -697,11 +904,11 @@ then
   exit 1
 fi
 
-docker run --rm --network none --read-only --cap-drop ALL --cap-add DAC_READ_SEARCH \
+helper_run h-browser-signing-secret "${PROJECT}-h-browser-signing-secret" --network none --read-only --cap-drop ALL --cap-add DAC_READ_SEARCH \
   --user 0:0 --volume "${PROJECT}_browser-signing-secret:/signing:ro" \
   --entrypoint python slaif-agent-site-backend:local -c \
   "import pathlib,re,stat; root=pathlib.Path('/signing'); files=list(root.iterdir()); assert len(files)==1 and files[0].name=='signing-key'; info=root.stat(); file=files[0]; assert stat.S_IMODE(info.st_mode)==0o700 and info.st_uid==10001 and info.st_gid==10001; assert stat.S_IMODE(file.stat().st_mode)==0o400 and file.stat().st_uid==10001; value=file.read_text('ascii'); assert re.fullmatch(r'sbk1:[0-9a-f]{16}:[A-Za-z0-9_-]{43}', value); print('browser-signing-secret-policy: OK files=1 mode=0400 owner=10001')"
-if docker run --rm --network none --read-only --cap-drop ALL \
+if helper_run h-browser-signing-secret-neg "${PROJECT}-h-browser-signing-secret-neg" --network none --read-only --cap-drop ALL \
   --user 10003:10003 --volume "${PROJECT}_browser-signing-secret:/signing:ro" \
   --entrypoint python slaif-agent-site-backend:local -c \
   "import pathlib; pathlib.Path('/signing/signing-key').read_bytes()" \
@@ -711,11 +918,11 @@ then
   exit 1
 fi
 
-docker run --rm --network none --read-only --cap-drop ALL --cap-add DAC_READ_SEARCH \
+helper_run h-browser-worker-secret "${PROJECT}-h-browser-worker-secret" --network none --read-only --cap-drop ALL --cap-add DAC_READ_SEARCH \
   --user 0:0 --volume "${PROJECT}_browser-worker-secret:/worker:ro" \
   --entrypoint python slaif-agent-site-backend:local -c \
   "import pathlib,re,stat; root=pathlib.Path('/worker'); files=list(root.iterdir()); assert len(files)==1 and files[0].name=='worker-token'; info=root.stat(); file=files[0]; assert stat.S_IMODE(info.st_mode)==0o700 and info.st_uid==10001 and info.st_gid==10001; assert stat.S_IMODE(file.stat().st_mode)==0o400 and file.stat().st_uid==10001 and file.stat().st_nlink==1; value=file.read_text('ascii'); assert re.fullmatch(r'sbws1:[0-9a-f]{16}:[A-Za-z0-9_-]{43}', value); print('browser-worker-secret-policy: OK files=1 mode=0400 owner=10001')"
-if docker run --rm --network none --read-only --cap-drop ALL \
+if helper_run h-browser-worker-secret-neg "${PROJECT}-h-browser-worker-secret-neg" --network none --read-only --cap-drop ALL \
   --user 10003:10003 --volume "${PROJECT}_browser-worker-secret:/worker:ro" \
   --entrypoint python slaif-agent-site-backend:local -c \
   "import pathlib; pathlib.Path('/worker/worker-token').read_bytes()" \
@@ -763,7 +970,7 @@ BROWSER_ARTIFACT_DB_KINDS=$(docker exec "${PROJECT}-postgres-1" psql -U postgres
 BROWSER_ARTIFACT_DB_STEMS=$(docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif -Atc \
   "SELECT COALESCE(string_agg('v1-' || replace(id::text, '-', '') || '-' || sha256, ',' ORDER BY 1), '') FROM control.browser_artifact")
 test -n "$BROWSER_ARTIFACT_FREEZE"
-BROWSER_ARTIFACT_BASELINE=$(docker run --rm --network none --read-only --cap-drop ALL --cap-add DAC_READ_SEARCH \
+BROWSER_ARTIFACT_BASELINE=$(helper_run h-artifact-baseline "${PROJECT}-h-artifact-baseline" --network none --read-only --cap-drop ALL --cap-add DAC_READ_SEARCH \
   --user 0:0 --volume "${PROJECT}_browser-artifacts:/artifacts:ro" \
   --entrypoint python slaif-agent-site-backend:local -c \
   "import pathlib,stat,sys; root=pathlib.Path('/artifacts'); info=root.stat(); files=sorted(root.iterdir()); n=len(files); assert stat.S_IMODE(info.st_mode)==0o700 and info.st_uid==10001 and info.st_gid==10001; assert n in (24,26) and n%2==0; assert sum(p.suffix=='.bin' for p in files)==n//2 and sum(p.suffix=='.json' for p in files)==n//2; assert all(p.is_file() and not p.is_symlink() and stat.S_IMODE(p.stat().st_mode)==0o600 and p.stat().st_uid==10001 and p.stat().st_nlink==1 for p in files); assert not any(marker in p.read_bytes() for p in files for marker in (b'sbp1.',b'sbws1:',b'sas2_')); st,rest=sys.argv[1].split(':'); freeze_arts,freeze_runs=rest.split('/'); assert freeze_runs=='1'; assert st in ('COMPLETED','CANCELLED'); opt=1 if st=='COMPLETED' else 0; assert int(freeze_arts)==opt; assert n==24+2*opt; kinds=dict(kv.split('=',1) for kv in sys.argv[2].split(',')) if sys.argv[2] else {}; assert set(kinds)=={'screenshot','structure-summary','console-summary','failed-request-summary','heading-summary'}; fixed={'structure-summary':'3','console-summary':'2','failed-request-summary':'2','heading-summary':'2'}; assert all(kinds[k]==v for k,v in fixed.items()); assert kinds['screenshot']==str(3+opt); assert sys.argv[3] and sum(int(v) for v in kinds.values())==len(sys.argv[3].split(',')); db_stems=set(sys.argv[3].split(',')) if sys.argv[3] else set(); stems={p.with_suffix('').name for p in files if p.suffix in ('.bin','.json')}; assert len(stems)==len(db_stems); assert stems==db_stems; assert n==2*len(stems); print(n)" \
@@ -771,12 +978,12 @@ BROWSER_ARTIFACT_BASELINE=$(docker run --rm --network none --read-only --cap-dro
 test -n "$BROWSER_ARTIFACT_BASELINE"
 echo "browser-artifact-root-policy: OK retained-files=$BROWSER_ARTIFACT_BASELINE retained-pairs=$((BROWSER_ARTIFACT_BASELINE / 2)) freeze-run=$BROWSER_ARTIFACT_FREEZE fixture-map=fixed12plus-state-bound-freeze mode=0600 owner=10001"
 
-docker run --rm --network none --read-only --cap-drop ALL --cap-add DAC_READ_SEARCH \
+helper_run h-media-secret "${PROJECT}-h-media-secret" --network none --read-only --cap-drop ALL --cap-add DAC_READ_SEARCH \
   --user 0:0 --volume "${PROJECT}_local-secrets:/master:ro" \
   --volume "${PROJECT}_media-secret:/media:ro" \
   --entrypoint python slaif-agent-site-backend:local -c \
   "import pathlib,secrets,stat; root=pathlib.Path('/media'); files=list(root.iterdir()); assert len(files)==1 and files[0].name=='media-dsn'; info=root.stat(); file=files[0]; assert stat.S_IMODE(info.st_mode)==0o700 and info.st_uid==10001 and info.st_gid==10001; assert stat.S_IMODE(file.stat().st_mode)==0o400 and file.stat().st_uid==10001; assert secrets.compare_digest(file.read_bytes(), pathlib.Path('/master/service-media-dsn').read_bytes()); print('media-secret-policy: OK files=1 mode=0400 owner=10001')"
-if docker run --rm --network none --read-only --cap-drop ALL \
+if helper_run h-media-secret-neg "${PROJECT}-h-media-secret-neg" --network none --read-only --cap-drop ALL \
   --user 10003:10003 --volume "${PROJECT}_media-secret:/media:ro" \
   --entrypoint python slaif-agent-site-backend:local -c \
   "import pathlib; pathlib.Path('/media/media-dsn').read_bytes()" \
@@ -1109,7 +1316,7 @@ do
     "$AGENT_RUN_FILE"
 done
 echo "browser-worker-public-separation: OK durable-runs=2 completed=2 db-artifacts=6"
-docker run --rm --network none --read-only --cap-drop ALL --cap-add DAC_READ_SEARCH \
+helper_run h-artifact-runtime "${PROJECT}-h-artifact-runtime" --network none --read-only --cap-drop ALL --cap-add DAC_READ_SEARCH \
   --user 0:0 --volume "${PROJECT}_browser-artifacts:/artifacts:ro" \
   --entrypoint python slaif-agent-site-backend:local -c \
   "import pathlib,stat,sys; baseline=int(sys.argv[1]); root=pathlib.Path('/artifacts'); files=sorted(root.iterdir()); assert len(files)==baseline+12 and sum(p.suffix=='.bin' for p in files)==baseline//2+6 and sum(p.suffix=='.json' for p in files)==baseline//2+6 and not any(p.name.startswith('.stage-') for p in files); assert all(p.is_file() and not p.is_symlink() and stat.S_IMODE(p.stat().st_mode)==0o600 and p.stat().st_uid==10001 and p.stat().st_nlink==1 for p in files); assert not any(marker in p.read_bytes() for p in files for marker in (b'sbp1.',b'sbws1:',b'sas2_')); print(f'browser-artifact-runtime-policy: OK files={len(files)} retained={baseline} new=12 mode=0600 links=1 credentials=absent')" \
@@ -1123,7 +1330,8 @@ fi
 docker exec "${PROJECT}-browser-worker-1" node -e \
   "const fs=require('fs');const self=String(process.pid);const found=fs.readdirSync('/proc').filter(v=>/^\\d+$/.test(v)&&v!==self).flatMap(v=>{try{const c=fs.readFileSync('/proc/'+v+'/cmdline').toString();return c.includes('/chrome')?[v+':'+c]:[]}catch{return []}});if(found.length){console.error('CHROME_FOUND',found);process.exit(1)};console.log('browser-worker-cleanup: OK chromium-children=0 temporary-profiles=0')"
 
-docker run --rm --network none --volume \
+helper_run h-worker-token-hide "${PROJECT}-h-worker-token-hide" \
+  --network none --volume \
   "${PROJECT}_browser-worker-secret:/worker" \
   --entrypoint sh slaif-agent-site-backend:local -c \
   'mv /worker/worker-token /worker/worker-token.hidden'
@@ -1145,7 +1353,8 @@ test "$agent_worker_status" = 503
 test "$browser_worker_status" = 503
 test "$(curl --silent --output /dev/null --write-out '%{http_code}' \
   http://localhost:8080/s/demo)" = 200
-docker run --rm --network none --volume \
+helper_run h-worker-token-restore "${PROJECT}-h-worker-token-restore" \
+  --network none --volume \
   "${PROJECT}_browser-worker-secret:/worker" \
   --entrypoint sh slaif-agent-site-backend:local -c \
   'mv /worker/worker-token.hidden /worker/worker-token'
@@ -1154,7 +1363,8 @@ wait_healthy agent-api
 wait_healthy browser-worker
 echo "browser-worker-secret-recovery: OK missing=not-ready canonical=available restored=healthy"
 
-docker run --rm --network none --volume \
+helper_run h-signing-key-hide "${PROJECT}-h-signing-key-hide" \
+  --network none --volume \
   "${PROJECT}_browser-signing-secret:/signing" \
   --entrypoint sh slaif-agent-site-backend:local -c \
   'mv /signing/signing-key /signing/signing-key.hidden'
@@ -1179,7 +1389,8 @@ try: urllib.request.urlopen(u,timeout=2)
 except urllib.error.HTTPError as e: print(e.code)")" = 503
 test "$(curl --silent --output /dev/null --write-out '%{http_code}' \
   http://localhost:8080/)" = 200
-docker run --rm --network none --volume \
+helper_run h-signing-key-restore "${PROJECT}-h-signing-key-restore" \
+  --network none --volume \
   "${PROJECT}_browser-signing-secret:/signing" \
   --entrypoint sh slaif-agent-site-backend:local -c \
   'mv /signing/signing-key.hidden /signing/signing-key'
@@ -1191,13 +1402,15 @@ echo "browser-signing-recovery: OK missing=not-ready canonical=available restore
 python tools/compose/control_readiness.py "$PROJECT" --existing
 
 fingerprint() {
-  docker run --rm --network none --read-only --cap-drop ALL --cap-add DAC_READ_SEARCH \
+  helper_run "$1" "${PROJECT}-$1" \
+    --network none --read-only --cap-drop ALL --cap-add DAC_READ_SEARCH \
     --user 0:0 --volume "${PROJECT}_local-secrets:/secrets:ro" \
     --entrypoint python slaif-agent-site-backend:local -c \
     "import hashlib,pathlib; h=hashlib.sha256(); [h.update(p.read_bytes()) for p in sorted(pathlib.Path('/secrets').iterdir())]; print(h.hexdigest())"
 }
 render_fingerprint() {
-  docker run --rm --network none --read-only --cap-drop ALL --cap-add DAC_READ_SEARCH \
+  helper_run "$1" "${PROJECT}-$1" \
+    --network none --read-only --cap-drop ALL --cap-add DAC_READ_SEARCH \
     --user 0:0 --volume "${PROJECT}_render-secret:/render:ro" \
     --entrypoint python slaif-agent-site-backend:local -c \
     "import hashlib,pathlib; print(hashlib.sha256(pathlib.Path('/render/render-dsn').read_bytes()).hexdigest())"
@@ -1214,14 +1427,14 @@ domain_fingerprint() {
   docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif -Atc \
     "SELECT md5(string_agg(row_to_json(snapshot)::text, E'\n' ORDER BY hostname, path_prefix)) FROM (SELECT site_id, hostname, path_prefix, is_primary FROM control.site_domain) snapshot"
 }
-before=$(fingerprint)
-render_before=$(render_fingerprint)
+before=$(fingerprint h-fingerprint-before)
+render_before=$(render_fingerprint h-render-fingerprint-before)
 sites_before=$(site_fingerprint)
 memberships_before=$(membership_fingerprint)
 domains_before=$(domain_fingerprint)
 docker compose -p "$PROJECT" stop
 docker compose -p "$PROJECT" up --wait
-after=$(fingerprint)
+after=$(fingerprint h-fingerprint-after)
 test "$before" = "$after"
 test "$(docker compose -p "$PROJECT" logs --no-color bootstrap 2>/dev/null | grep -c 'setup-token-secret:')" = 1
 test "$(membership_fingerprint)" = "$memberships_before"
@@ -1240,10 +1453,12 @@ docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif -Atc \
   | grep -q '^routes.test|/secondary|true$'
 echo "governance-restart: OK site=archived membership=inactive domain=primary fixtures=retained setup=closed"
 
-docker run --rm --network none --read-only --cap-drop ALL --cap-add DAC_OVERRIDE \
+helper_run h-render-dsn-corrupt "${PROJECT}-h-render-dsn-corrupt" \
+  --network none --read-only --cap-drop ALL --cap-add DAC_OVERRIDE \
   --user 0:0 --volume "${PROJECT}_render-secret:/render" \
   --entrypoint python slaif-agent-site-backend:local -c \
   "import pathlib; pathlib.Path('/render/render-dsn').write_bytes(b'corrupt-render-locator')"
+lifecycle capture --phase recreate-old
 docker compose -p "$PROJECT" up -d --force-recreate --no-deps render-api >/dev/null
 attempt=0
 while test "$attempt" -lt 40
@@ -1269,32 +1484,42 @@ do
 done
 test "$nginx_health" = unhealthy
 echo "render-locator-failure: correctly blocked render=unhealthy web=503 nginx=unhealthy"
-docker run --rm --network none --read-only --cap-drop ALL --cap-add DAC_OVERRIDE \
+lifecycle capture --phase recreate-new
+lifecycle recreate-diff --phase-old recreate-old --phase-new recreate-new --service render-api
+helper_run h-render-dsn-restore "${PROJECT}-h-render-dsn-restore" \
+  --network none --read-only --cap-drop ALL --cap-add DAC_OVERRIDE \
   --user 0:0 --volume "${PROJECT}_local-secrets:/master:ro" \
   --volume "${PROJECT}_render-secret:/render" \
   --entrypoint python slaif-agent-site-backend:local -c \
   "import pathlib; pathlib.Path('/render/render-dsn').write_bytes(pathlib.Path('/master/service-public-dsn').read_bytes())"
-docker run --rm --network none --read-only --cap-drop ALL --cap-add DAC_READ_SEARCH \
+helper_run h-render-dsn-compare "${PROJECT}-h-render-dsn-compare" --network none --read-only --cap-drop ALL --cap-add DAC_READ_SEARCH \
   --user 0:0 --volume "${PROJECT}_local-secrets:/master:ro" \
   --volume "${PROJECT}_render-secret:/render:ro" \
   --entrypoint python slaif-agent-site-backend:local -c \
   "import pathlib,secrets; assert secrets.compare_digest(pathlib.Path('/render/render-dsn').read_bytes(), pathlib.Path('/master/service-public-dsn').read_bytes())"
+lifecycle capture --phase recreate2-old
 docker compose -p "$PROJECT" up -d --force-recreate --no-deps render-api >/dev/null
 wait_healthy render-api
 docker compose -p "$PROJECT" restart web >/dev/null
 wait_healthy web
 docker compose -p "$PROJECT" restart nginx >/dev/null
 wait_healthy nginx
-test "$(render_fingerprint)" = "$render_before"
-test "$(fingerprint)" = "$before"
+check1_render=$(render_fingerprint h-render-fingerprint-check1)
+check1_secrets=$(fingerprint h-fingerprint-check1)
+test "$check1_render" = "$render_before"
+test "$check1_secrets" = "$before"
 test "$(site_fingerprint)" = "$sites_before"
 test "$(membership_fingerprint)" = "$memberships_before"
 test "$(domain_fingerprint)" = "$domains_before"
 test "$(docker compose -p "$PROJECT" logs --no-color bootstrap 2>/dev/null | grep -c 'setup-token-secret:')" = 1
 echo "render-locator-recovery: restored render=healthy web=healthy nginx=healthy"
+lifecycle capture --phase recreate2-new
+lifecycle recreate-diff --phase-old recreate2-old --phase-new recreate2-new --service render-api
 docker compose -p "$PROJECT" up --wait >/dev/null
-test "$(render_fingerprint)" = "$render_before"
-test "$(fingerprint)" = "$before"
+check2_render=$(render_fingerprint h-render-fingerprint-check2)
+check2_secrets=$(fingerprint h-fingerprint-check2)
+test "$check2_render" = "$render_before"
+test "$check2_secrets" = "$before"
 test "$(site_fingerprint)" = "$sites_before"
 test "$(membership_fingerprint)" = "$memberships_before"
 test "$(domain_fingerprint)" = "$domains_before"
@@ -1329,8 +1554,8 @@ then
 fi
 
 docker build -f infra/apache/Dockerfile -t slaif-agent-site-apache:test .
-docker run --rm slaif-agent-site-apache:test apachectl -t
-docker run --rm \
+helper_run h-apache "${PROJECT}-h-apache" slaif-agent-site-apache:test apachectl -t
+helper_run h-nginx "${PROJECT}-h-nginx" \
   --add-host control-api:127.0.0.1 \
   --add-host editor-api:127.0.0.1 \
   --add-host agent-api:127.0.0.1 \
@@ -1351,5 +1576,29 @@ then
   exit 1
 fi
 echo "browser-artifact-revoked: OK status=401 bytes=absent"
+lifecycle audit-preflight
+lifecycle_negative audit-preflight
+lifecycle audit-capture --phase up
+lifecycle audit-capture --phase recreate-old
+lifecycle audit-capture --phase recreate-new
+lifecycle audit-capture --phase recreate2-old
+lifecycle audit-capture --phase recreate2-new
+lifecycle audit-helpers \
+  --tag h-apache --tag h-artifact-baseline --tag h-artifact-runtime \
+  --tag h-browser-signing-secret --tag h-browser-signing-secret-neg \
+  --tag h-browser-worker-secret --tag h-browser-worker-secret-neg \
+  --tag h-fingerprint-after --tag h-fingerprint-before \
+  --tag h-fingerprint-check1 --tag h-fingerprint-check2 \
+  --tag h-media-secret --tag h-media-secret-neg --tag h-nginx \
+  --tag h-render-auth-secret --tag h-render-auth-secret-neg \
+  --tag h-render-dsn-compare --tag h-render-dsn-corrupt \
+  --tag h-render-dsn-restore --tag h-render-fingerprint-before \
+  --tag h-render-fingerprint-check1 --tag h-render-fingerprint-check2 \
+  --tag h-render-preview-secret --tag h-render-preview-secret-neg \
+  --tag h-render-secret --tag h-render-secret-neg --tag h-secret-neg \
+  --tag h-secret-policy --tag h-signing-key-hide \
+  --tag h-signing-key-restore --tag h-worker-token-hide \
+  --tag h-worker-token-restore
+LIFECYCLE_MAIN_DONE=1
 python -m unittest discover -s tests/packaging -p 'test_*.py'
 echo "compose-smoke: OK"

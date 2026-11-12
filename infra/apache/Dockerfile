@@ -12,12 +12,21 @@ LABEL org.opencontainers.image.title="SLAIF Agent-Site Apache edge" \
       org.opencontainers.image.revision="${SLAIF_IMAGE_REVISION}" \
       org.opencontainers.image.created="${SLAIF_IMAGE_CREATED}"
 ENV SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH}
-RUN apt-get update \
-    && apt-get install --no-install-recommends --yes \
-      'apache2=2.4.58-1ubuntu8.17' \
-      'apache2-bin=2.4.58-1ubuntu8.17' \
-      'apache2-data=2.4.58-1ubuntu8.17' \
-      'apache2-utils=2.4.58-1ubuntu8.17' \
+# 083-8-w: every APT invocation that can download packages uses the
+# command-local -o Acquire::Retries=0. The first protected install fixes
+# apt and libapt-pkg6.0t64 to 2.8.4ubuntu0.1 (CVE-2026-109518) before the
+# later Apache and OpenSSL package downloads.
+RUN apt-get -o Acquire::Retries=0 update \
+    && apt-get -o Acquire::Retries=0 install --no-install-recommends --yes \
+      'apt=2.8.4ubuntu0.1' \
+      'libapt-pkg6.0t64=2.8.4ubuntu0.1' \
+    && test "$(dpkg-query -W -f='${Version}' apt)" = 2.8.4ubuntu0.1 \
+    && test "$(dpkg-query -W -f='${Version}' libapt-pkg6.0t64)" = 2.8.4ubuntu0.1 \
+    && apt-get -o Acquire::Retries=0 install --no-install-recommends --yes \
+      'apache2=2.4.58-1ubuntu8.18' \
+      'apache2-bin=2.4.58-1ubuntu8.18' \
+      'apache2-data=2.4.58-1ubuntu8.18' \
+      'apache2-utils=2.4.58-1ubuntu8.18' \
       'openssl=3.0.13-0ubuntu3.16' \
     && a2dissite 000-default \
     && a2enmod deflate headers proxy proxy_http unique_id \

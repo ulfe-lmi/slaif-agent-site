@@ -3,7 +3,7 @@ FROM python:3.12.16-alpine3.23@sha256:a4ad86fc2eaa4f9a5c3153776c9fb56e502dbd8e23
 ARG SOURCE_DATE_EPOCH=1704067200
 # uv 0.12.5; Apache-2.0 OR MIT; multi-platform official image.
 COPY --from=ghcr.io/astral-sh/uv:0.12.5@sha256:e85be844203885286c60ffad8a858d48afb6c5a5c237ca0e67f12e74b8f174b1 /uv /uvx /bin/
-RUN apk --timeout 30 add --no-cache 'libcrypto3=3.5.9-r0' 'libssl3=3.5.9-r0'
+RUN apk --timeout 30 add --no-cache 'libcrypto3=3.5.9-r0' 'libssl3=3.5.9-r0' 'zlib=1.4-r0'
 
 ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \
@@ -34,7 +34,7 @@ LABEL org.opencontainers.image.title="SLAIF Agent-Site backend" \
       org.opencontainers.image.version="${SLAIF_IMAGE_VERSION}" \
       org.opencontainers.image.revision="${SLAIF_IMAGE_REVISION}" \
       org.opencontainers.image.created="${SLAIF_IMAGE_CREATED}"
-RUN apk --timeout 30 add --no-cache 'libcrypto3=3.5.9-r0' 'libssl3=3.5.9-r0' \
+RUN apk --timeout 30 add --no-cache 'libcrypto3=3.5.9-r0' 'libssl3=3.5.9-r0' 'zlib=1.4-r0' \
     && addgroup -g 10001 -S slaif \
     && adduser -u 10001 -S -D -H -h /nonexistent -s /sbin/nologin -G slaif slaif
 # 083-7-a: remove the measured unnecessary system pip installer copies from the

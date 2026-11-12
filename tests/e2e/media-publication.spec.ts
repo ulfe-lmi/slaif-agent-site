@@ -191,6 +191,33 @@ test("media-publication-core-human-agent-preview-finalize-public-hostile", async
       );
     }
   };
+  // Hermetic bounded-embed fixture: tools/compose/e2e.sh seeds the shared
+  // parity preview workspace before the preview project runs, and the
+  // preview project's editor path leaves its two bounded-embed components
+  // (youtube-nocookie video, openstreetmap map) in that workspace's COW
+  // overlay. This project renders the same workspace again, so intercept
+  // exactly those two canonical embed URLs with a controlled static
+  // response before any navigation. The edge CSP frame-src allowlist and
+  // the emitted iframe markup are still exercised; only the third-party
+  // response body is replaced, and the fixture marker keeps the
+  // interception observable.
+  const embedFixtureBody =
+    "<!doctype html><html><body>bounded embed fixture</body></html>";
+  const embedFixture = async (route: import("@playwright/test").Route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "text/html",
+      body: embedFixtureBody,
+    });
+  };
+  await page.route(
+    /^https:\/\/www\.youtube-nocookie\.com\/embed\/dQw4w9WgXcQ$/u,
+    embedFixture,
+  );
+  await page.route(
+    /^https:\/\/www\.openstreetmap\.org\/export\/embed\.html\?bbox=-12\.5,55,-12\.4,55\.1&layer=cyclemap$/u,
+    embedFixture,
+  );
 
   // ---------------------------------------------------------------- login
   consolePhase = "login";
@@ -781,6 +808,46 @@ asyncio.run(main())
     );
   } finally {
     await listParityContext.close();
+  }
+
+  // Observable interception: the shared workspace must still carry exactly
+  // the two bounded-embed components the preview project left behind.
+  // preview.spec.ts pins a positional src contract on its own AGENT
+  // workspace; this project renders the separate shared HUMAN workspace, so
+  // only exact fixture membership is asserted here (layout order is not the
+  // purpose of this media check). Scroll each expected lazy iframe into view
+  // so the browser commits it, then require the hermetic fixture marker
+  // inside the actual frame. A live third-party body, a failed interception,
+  // or missing/unexpected fixture state cannot satisfy this.
+  const expectedEmbedSrcs = [
+    "https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ",
+    "https://www.openstreetmap.org/export/embed.html?bbox=-12.5,55,-12.4,55.1&layer=cyclemap",
+  ];
+  const embedIframes = page.locator("iframe.sl-embed");
+  await expect(embedIframes).toHaveCount(2);
+  // Closed diagnostic classes derived only by exact equality to the two
+  // fixed canonical URLs; the sorted class pair rejects duplicates, missing,
+  // or unexpected iframe values without printing raw iframe URLs.
+  const embedClass = (src: string | null): "video" | "map" | "unexpected" =>
+    src === expectedEmbedSrcs[0]
+      ? "video"
+      : src === expectedEmbedSrcs[1]
+        ? "map"
+        : "unexpected";
+  expect(
+    [
+      await embedIframes.nth(0).getAttribute("src"),
+      await embedIframes.nth(1).getAttribute("src"),
+    ]
+      .map(embedClass)
+      .sort(),
+  ).toEqual(["map", "video"]);
+  for (const embedIndex of expectedEmbedSrcs.keys()) {
+    const embedIframe = embedIframes.nth(embedIndex);
+    await embedIframe.scrollIntoViewIfNeeded();
+    await expect(
+      embedIframe.contentFrame().getByText("bounded embed fixture"),
+    ).toHaveCount(1);
   }
 
   expectConsoleClean("preview-gallery");

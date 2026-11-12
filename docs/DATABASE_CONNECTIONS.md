@@ -139,8 +139,13 @@ pool, running SQL, binding a port, or mutating state.
 The pool is created only inside the package-local Control FastAPI lifespan,
 after ordinary service and Control settings validate. Importing modules or
 constructing the app has no connection side effect. Existing pinned
-`asyncpg==0.31.0` is used directly; there is no ORM, session registry, global
-pool, raw client dependency, or SQL endpoint.
+`asyncpg==0.32.0` is used directly; there is no ORM, session registry,
+global pool, raw client dependency, or SQL endpoint. In asyncpg 0.32,
+`min_size` is the maintained connection floor and `max_size` the hard cap:
+the pool replaces disconnected connections below the floor in the
+background, and the optional `init_size` (not set here) fixes how many
+connections are created at pool start. The configured values below are
+unchanged by the driver update.
 
 Defaults are deliberately bounded:
 

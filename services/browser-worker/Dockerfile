@@ -6,13 +6,21 @@ ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 \
     SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH}
 WORKDIR /build
 # Before any build step, the base image's NodeSource nodejs 24.18.1 is
-# purged and its vulnerable libbrotli1 1.1.0-2build2 is replaced by the
-# fixed 1.1.0-2ubuntu0.1 installed from the Noble repositories; Node.js
-# comes from the hash-pinned official 24.22.1 archive (CVE-2026-111497 fix).
+# purged; every APT invocation that can download packages before fixed
+# APT is installed uses the command-local -o Acquire::Retries=0, and the
+# first protected install fixes apt and libapt-pkg6.0t64 to 2.8.4ubuntu0.1
+# (CVE-2026-109518) before the vulnerable libbrotli1 1.1.0-2build2 is
+# replaced by the fixed 1.1.0-2ubuntu0.1; Node.js comes from the
+# hash-pinned official 24.22.1 archive (CVE-2026-111497 fix).
 RUN test "$TARGETARCH" = amd64 \
-    && DEBIAN_FRONTEND=noninteractive apt-get purge -y nodejs \
-    && apt-get update \
-    && apt-get install --no-install-recommends --yes 'libbrotli1=1.1.0-2ubuntu0.1' \
+    && DEBIAN_FRONTEND=noninteractive apt-get purge -y nodejs -o Acquire::Retries=0 \
+    && apt-get -o Acquire::Retries=0 update \
+    && apt-get -o Acquire::Retries=0 install --no-install-recommends --yes \
+      'apt=2.8.4ubuntu0.1' \
+      'libapt-pkg6.0t64=2.8.4ubuntu0.1' \
+    && test "$(dpkg-query -W -f='${Version}' apt)" = 2.8.4ubuntu0.1 \
+    && test "$(dpkg-query -W -f='${Version}' libapt-pkg6.0t64)" = 2.8.4ubuntu0.1 \
+    && apt-get -o Acquire::Retries=0 install --no-install-recommends --yes 'libbrotli1=1.1.0-2ubuntu0.1' \
     && test "$(dpkg-query -W -f='${Version}' libbrotli1)" = 1.1.0-2ubuntu0.1 \
     && curl --fail --location --retry 3 \
       --output /tmp/node-v24.22.1-linux-x64.tar.gz \
@@ -71,13 +79,13 @@ COPY services/browser-worker ./services/browser-worker
 RUN test "$TARGETARCH" = amd64 \
     && curl --fail --location --retry 3 \
       --output /tmp/chrome-for-testing.zip \
-      https://storage.googleapis.com/chrome-for-testing-public/156.0.8078.80/linux64/chrome-linux64.zip \
-    && echo 'b711c720f774be355197f32edf37e0651418ba036d92446ee2da19ac017540a7  /tmp/chrome-for-testing.zip' \
+      https://storage.googleapis.com/chrome-for-testing-public/157.0.8103.50/linux64/chrome-linux64.zip \
+    && echo 'd17167bc092eb495a3b768c7467f27e35f625aa03834233a1663af67dcb668c9  /tmp/chrome-for-testing.zip' \
       | sha256sum --check --strict \
     && node services/browser-worker/extract-zip.mjs \
       /tmp/chrome-for-testing.zip /chrome-for-testing \
     && test "$(/chrome-for-testing/chrome-linux64/chrome --version)" \
-      = 'Google Chrome for Testing 156.0.8078.80 ' \
+      = 'Google Chrome for Testing 157.0.8103.50 ' \
     && rm /tmp/chrome-for-testing.zip \
     && pnpm install --frozen-lockfile --filter @slaif-agent-site/browser-worker... \
     && pnpm --filter @slaif-agent-site/browser-tool-contracts build \
@@ -88,7 +96,7 @@ RUN test "$TARGETARCH" = amd64 \
       /output/node_modules/.package-map.json /output/node_modules/.pnpm/lock.yaml
 
 # The builder replaces the base browser payload with SHA-256-verified
-# Chrome for Testing 156.0.8078.80 (CfT revision 1706539). Compatible
+# Chrome for Testing 157.0.8103.50 (CfT revision 1717349). Compatible
 # Chromium libraries come from the exact Playwright Noble base; the base
 # image's vulnerable libbrotli1 1.1.0-2build2 is replaced by the fixed
 # 1.1.0-2ubuntu0.1 installed from the Noble repositories, and its
@@ -110,15 +118,15 @@ LABEL org.opencontainers.image.title="SLAIF Agent-Site browser worker" \
       org.opencontainers.image.created="${SLAIF_IMAGE_CREATED}"
 ENV BROWSER_WORKER_HOST=0.0.0.0 \
     BROWSER_WORKER_PORT=3100 \
-    BROWSER_WORKER_CHROMIUM_EXECUTABLE=/ms-playwright/chromium-1706539/chrome-linux64/chrome \
-    BROWSER_WORKER_EXPECTED_CHROMIUM_VERSION=156.0.8078.80 \
+    BROWSER_WORKER_CHROMIUM_EXECUTABLE=/ms-playwright/chromium-1717349/chrome-linux64/chrome \
+    BROWSER_WORKER_EXPECTED_CHROMIUM_VERSION=157.0.8103.50 \
     HOME=/tmp \
     NODE_ENV=production \
     PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
     SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH}
 WORKDIR /opt/slaif
 RUN test "$TARGETARCH" = amd64 \
-    && DEBIAN_FRONTEND=noninteractive apt-get purge -y nodejs
+    && DEBIAN_FRONTEND=noninteractive apt-get purge -y nodejs -o Acquire::Retries=0
 # 083-9-c: same fail-closed operation-row simulation, pre-check, exact
 # purge and known-record/path absence verification.
 RUN test "$TARGETARCH" = amd64 \
@@ -149,7 +157,7 @@ RUN test "$TARGETARCH" = amd64 \
 RUN test "$TARGETARCH" = amd64 \
     && DEBIAN_FRONTEND=noninteractive apt-get purge -y \
       python3 python3-minimal libpython3-stdlib \
-      python3.12 python3.12-minimal libpython3.12-stdlib libpython3.12-minimal
+      python3.12 python3.12-minimal libpython3.12-stdlib libpython3.12-minimal -o Acquire::Retries=0
 RUN set -e; \
     test "$TARGETARCH" = amd64; \
     LC_ALL=C dpkg-query -W -f='${Package} ${db:Status-Status}\n' > /tmp/python3-known.txt; \
@@ -158,8 +166,13 @@ RUN set -e; \
     test "$(wc -l < /tmp/python3-leftover.txt)" -eq 0; \
     rm /tmp/python3-known.txt /tmp/python3-leftover.txt
 RUN test "$TARGETARCH" = amd64 \
-    && apt-get update \
-    && apt-get install --no-install-recommends --yes 'libbrotli1=1.1.0-2ubuntu0.1' \
+    && apt-get -o Acquire::Retries=0 update \
+    && apt-get -o Acquire::Retries=0 install --no-install-recommends --yes \
+      'apt=2.8.4ubuntu0.1' \
+      'libapt-pkg6.0t64=2.8.4ubuntu0.1' \
+    && test "$(dpkg-query -W -f='${Version}' apt)" = 2.8.4ubuntu0.1 \
+    && test "$(dpkg-query -W -f='${Version}' libapt-pkg6.0t64)" = 2.8.4ubuntu0.1 \
+    && apt-get -o Acquire::Retries=0 install --no-install-recommends --yes 'libbrotli1=1.1.0-2ubuntu0.1' \
     && test "$(dpkg-query -W -f='${Version}' libbrotli1)" = 1.1.0-2ubuntu0.1 \
     && rm -rf /var/lib/apt/lists/*
 RUN test "$TARGETARCH" = amd64 \
@@ -177,7 +190,7 @@ RUN rm -rf /ms-playwright /usr/lib/node_modules/npm /usr/lib/node_modules/corepa
     && groupadd --gid 10001 slaif \
     && useradd --uid 10001 --gid 10001 --no-create-home --home-dir /nonexistent \
       --shell /usr/sbin/nologin slaif
-COPY --from=builder --chown=10001:10001 /chrome-for-testing/chrome-linux64 /ms-playwright/chromium-1706539/chrome-linux64
+COPY --from=builder --chown=10001:10001 /chrome-for-testing/chrome-linux64 /ms-playwright/chromium-1717349/chrome-linux64
 COPY --from=builder --chown=10001:10001 /output ./
 USER 10001:10001
 EXPOSE 3100

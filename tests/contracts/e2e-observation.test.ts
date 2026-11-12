@@ -37,7 +37,9 @@ const originFamilyVocabulary = new Set<ConsoleOriginFamily>([
   "other",
 ]);
 const messageFamilyVocabulary = new Set<ConsoleMessageFamily>([
-  "csp-permissions-policy",
+  "policy-refused",
+  "policy-csp",
+  "policy-permissions",
   "cors-mixed-content",
   "network-tls",
   "api-decode-runtime",
@@ -209,15 +211,27 @@ describe("safe E2E console diagnostics", () => {
     const cases = [
       [
         "Refused to apply content from https://evil.example/x because of CSP secret",
-        "csp-permissions-policy",
+        "policy-refused",
       ],
       [
         "Content Security Policy: Blocked 'script' loaded from secret origin",
-        "csp-permissions-policy",
+        "policy-csp",
       ],
       [
         "Permissions policy violation: secret-feature is not allowed in this context",
-        "csp-permissions-policy",
+        "policy-permissions",
+      ],
+      [
+        "Refused to connect to https://private.invalid/x?credential=secret",
+        "policy-refused",
+      ],
+      [
+        "Content Security Policy: report blocked for secret origin and token",
+        "policy-csp",
+      ],
+      [
+        "Permissions policy violation: camera denied in secret context",
+        "policy-permissions",
       ],
       [
         "Access to script at 'https://private.invalid/x' from origin 'secret' has been blocked by CORS policy: no token",
@@ -235,6 +249,10 @@ describe("safe E2E console diagnostics", () => {
       ["Uncaught (in promise) TypeError: secret reject", "api-decode-runtime"],
       // Non-standard lookalike prefixes stay other (exact predicates).
       ["Permissions-Policy: feature is not allowed in secret context", "other"],
+      ["content security policy blocked secret origin", "other"],
+      ["Refused  to load resource from secret host", "other"],
+      ["Permissions policy violation secret-feature denied", "other"],
+      ["Content Security Polices blocked secret origin", "other"],
       ["net::ERR_NAME_NOT_RESOLVED for secret host", "other"],
       ["TLS error 100 while connecting to secret.example", "other"],
       ["JSON.parse failed: unexpected token in secret payload", "other"],
@@ -265,6 +283,18 @@ describe("safe E2E console diagnostics", () => {
       ],
       ["Uncaught (in promise) TypeError: secret reject", "uncaught"],
       ["other browser error text with secret and len 79", "other-browser-error"],
+      [
+        "Refused to apply content from https://evil.example/x because of CSP secret",
+        "other-browser-error",
+      ],
+      [
+        "Content Security Policy: Blocked 'script' loaded from secret origin",
+        "other-browser-error",
+      ],
+      [
+        "Permissions policy violation: secret-feature is not allowed in this context",
+        "other-browser-error",
+      ],
     ];
     for (const [text, expected] of cases) {
       expect(classifyConsoleMessage(text)).toBe(expected);

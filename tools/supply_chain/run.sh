@@ -65,7 +65,8 @@ pull_exact_image() {
 
 cleanup() {
   for container in $created_containers; do
-    docker_run container rm --force "$container" >/dev/null 2>&1 || true
+    docker_run container rm --force --volumes "$container" >/dev/null 2>&1 \
+      || { rm_native=$?; echo "cleanup: container rm --force --volumes failed native=$rm_native: $container" >&2; }
   done
   for tag in $created_tags; do
     docker_run image rm --force "$tag" >/dev/null 2>&1 || true
@@ -200,11 +201,52 @@ export_rootfs() {
   attempt=$3
   destination=$4
   container="$run_identity-$image_name-$attempt"
-  docker_run container create --name "$container" "$reference" >/dev/null
-  created_containers="$created_containers $container"
-  docker_run container export "$container" > "$destination"
-  docker_run container rm "$container" >/dev/null
-  created_containers=$(printf '%s' "$created_containers" | sed "s/ $container//")
+  container_id=$(docker_run container create --name "$container" "$reference")
+  created_containers="$created_containers $container_id"
+  record="$evidence_directory/manifests/export-container-$image_name-$attempt.json"
+  cleanup_record="$evidence_directory/manifests/export-container-$image_name-$attempt.cleanup.txt"
+  inspect_raw="$temporary_root/export-inspect-$image_name-$attempt.json"
+  inspect_native=0
+  docker_run container inspect "$container_id" > "$inspect_raw" || inspect_native=$?
+  if [ "$inspect_native" -ne 0 ]; then
+    echo "export container inspect failed native=$inspect_native: $container_id" >&2
+    exit "$inspect_native"
+  fi
+  python -c '
+import json, sys
+data = json.load(open(sys.argv[1]))[0]
+payload = {
+    "id": data["Id"],
+    "name": data["Name"],
+    "image_id": data["Image"],
+    "image_reference": data["Config"]["Image"],
+    "created": data["Created"],
+    "mounts": [
+        {
+            "type": mount["Type"],
+            "name": mount.get("Name"),
+            "source": mount.get("Source"),
+            "destination": mount["Destination"],
+            "mode": mount.get("Mode"),
+            "rw": mount.get("RW"),
+        }
+        for mount in data.get("Mounts", [])
+    ],
+}
+print(json.dumps(payload, indent=2, sort_keys=True))' "$inspect_raw" > "$record"
+  docker_run container export "$container_id" > "$destination"
+  rm_native=0
+  docker_run container rm --volumes "$container_id" || rm_native=$?
+  {
+    echo "container_id: $container_id"
+    echo "container_name: $container"
+    echo "rm_volumes_native: $rm_native"
+  } >> "$cleanup_record"
+  if [ "$rm_native" -ne 0 ]; then
+    echo "export container removal failed native=$rm_native: $container_id" >&2
+    exit "$rm_native"
+  fi
+  created_containers=$(printf '%s' "$created_containers" | sed "s/ $container_id//")
 }
 
 generate_sbom() {

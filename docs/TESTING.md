@@ -370,3 +370,79 @@ preserve the first captured failure through all closes, report close
 failures with fixed-enum output only when the body passed, and never
 serialize an arbitrary non-Error thrown value. All original
 assertions, budgets, and retry configuration are unchanged.
+## Public whole-session promotion qualification (083/8)
+
+A new integration module
+(`services/backend/tests/integration/test_foundation_whole_session_qualification.py`,
+16 tests) is configured to qualify the generic whole-session COW promotion
+mechanism through the public `agentcow.postgres` 0.2.0 API on an owned
+disposable cluster: two whole mixed-FK deferred sessions with canonical
+absence and unchanged-seed oracles before approval plus in-scope
+`operations()` checks inside the reviewer body; empty/coalesced/net-zero
+sessions; row- and genuine schema-conflict refusal assertions; the deferred
+physical two-table cycle versus the non-deferred pre-promotion refusal and
+the SET-CONSTRAINTS-IMMEDIATE dangling-state refusal; and three
+terminal-window outcomes (escaped postcondition refusal, positive task
+cancellation, backend termination) each asserting the promotion rolls back
+with no leaked transaction, locks, or nonempty stale COW context (frozen
+0.2.0 semantics treat NULL and `''` as clean). The module creates its own
+disposable database/schema/roles per session, asserts in-window
+`idle in transaction` state and live locks on the exact reviewer backend,
+and checks the pools are reusable afterward under the same deferred mode.
+CI is configured to run it as the fourth exact pytest command of the
+Python integration job group B (existing three commands, 45 tests:
+component 24 + theme 9 + page-style 12, unchanged; group A 85 unchanged) on
+PostgreSQL 14-18; no existing selection, budget, matrix, or aggregator
+changed, and actual per-version Q and SELF results are reported evidence.
+The P7 composite-FK `dependencies()` characterization is scratch-only and
+outside the CI selection. No backend application source or migration
+changed in this increment. The only workflow change in the early rounds
+083-8-a through 083-8-f was the ordered fourth exact command of group B,
+and the only dependency change there was the released asyncpg driver pin
+`0.31.0` -> `0.32.0` (round 083-8-f) with its exact lock, pin, metadata,
+notices, SBOM, and documentation reconciliation. Later rounds changed
+only build, test, tooling, and documentation files: the opt-in compose
+smoke lifecycle and control-readiness evidence contract with its
+packaging checks, runtime image/browser/security pin repairs, and
+supply-bundle evidence tooling changes.
+
+The qualification subject is the generic whole-session COW promotion
+mechanism through the public `agentcow.postgres` 0.2.0 API on an owned
+disposable cluster; this increment does not implement or accept actual
+product publication, complete U/audit or causal closure, or MVP.
+Actual I_f results (per-version Q passes on PostgreSQL 14..18, the
+unfiltered backend integration run, and the I_f CI outcomes) carry into
+later rounds only under the increment's identity/scope gates, labeled
+as I_f evidence, and no later PASS is claimed before its own fresh
+run. The increment's remaining acceptance requirements are fresh
+LOCALWHOLE and LOCAL6 supply-chain evidence runs bound to the actual
+tested implementation SHA, each reported when and if executed.
+
+## Opt-in Compose smoke lifecycle evidence (083-8-k)
+
+`sh tools/compose/smoke.sh <project> --lifecycle <absolute-evidence-dir>`
+opts into the bounded lifecycle evidence contract; without the flag the
+smoke never invokes lifecycle operations and its default helper argv,
+stdout/stderr, and exit semantics are unchanged. Capture mode proves both
+namespaces fresh before any disposal-capable trap, durably records each
+helper container's full created ID before start, and never adopts a
+failed create's stdout as an owned ID. Body results are exposed to caller
+denial/value branches only after the complete receipt chain parses and
+validates, with an executed-container terminal state (any 0..255 exit,
+including a genuine 97 or 125/126/127) distinguished from a docker-level
+start failure by that authoritative state. Post-absence is proven with a
+matchable full-ID query, and each failed capture/cleanup/absence native is
+recorded independently. Metadata stays an allowlist (ID/name, immutable
+image digest plus reference, Created, minimal State, mount
+name/source/destination/type/RW with an empty tmpfs source accepted and
+the template sentinel rejected, scoped labels); Config.Env/Args/Cmd, full
+inspect output, secrets, DSNs, and artifact bytes are never retained.
+
+`tests/packaging/test_compose_smoke_contract.py` exercises the real
+verify.py producers/readers/auditors and the real smoke.sh helper and
+final callers with only the external Docker boundary mocked, including
+the full 0..255 producer round-trip, failed-create foreign-ID rejection,
+rm/absence-failure retention, and the real denial and value caller
+blocks. No product runtime run is executed by these tests; the fresh
+whole-session and LOCAL6 runs remain ordered later steps and nothing here
+is an acceptance or a future PASS claim.

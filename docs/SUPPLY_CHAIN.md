@@ -90,7 +90,7 @@ The gate proves the following bounded contracts:
   identical distributed path, mode, size, link-target, and content digests.
 - The browser worker compiles its frozen TypeScript source and declares exact
   `playwright-core==1.62.1`. Its normalized source/security-profile manifest,
-  deployed production package closure, and retained Chromium revision-1234
+  deployed production package closure, and retained Chromium revision-1717349
   runtime tree must reproduce exactly.
 - Every project image is built twice with the same exact inputs and without a
   Docker build cache. Normalized package inventories and application runtime
@@ -131,22 +131,27 @@ Grype scans that checksummed document; the index links both forms.
 
 The browser worker uses the digest-pinned official Playwright 1.62.1 Noble
 image, exact `playwright-core==1.62.1`, and Chrome for Testing
-`156.0.8078.80` at CfT revision `1706539`. The exact linux/amd64 archive is
+`157.0.8103.50` at CfT revision `1717349`. The exact linux/amd64 archive is
 SHA-256 verified before extraction by the bounded source-controlled parser.
 The base image's NodeSource nodejs 24.18.1 is purged and replaced with the
 SHA-256-verified, MIT-licensed official Node.js 24.22.1 archive, and its
 vulnerable libbrotli1 1.1.0-2build2 is replaced by the exact
-1.1.0-2ubuntu0.1 installed from the Noble repositories. Its runtime removes
+1.1.0-2ubuntu0.1 installed from the Noble repositories. In both stages the
+first Noble install is the protected signed APT bootstrap
+`apt=2.8.4ubuntu0.1` and `libapt-pkg6.0t64=2.8.4ubuntu0.1`, run with
+`Acquire::Retries=0` through that install, before any later download. Its
+runtime removes
 Firefox, WebKit, the duplicate Chromium headless shell, ffmpeg, npm, npx,
 Corepack including its library tree, pnpm, and pnpx from both /usr/bin and
 /usr/local, and the seven inherited Ubuntu Python 3.12 packages are purged
 from both stages under a fail-closed simulated operation check, pre-removal
 version checks, and a post-removal dpkg record-state and path-absence check. Evidence requires the worker package and `playwright-core`,
 rejects Firefox/WebKit inventory, and hashes the retained
-`/ms-playwright/chromium-1706539` tree during both clean image builds.
+`/ms-playwright/chromium-1717349` tree during both clean image builds.
 The supply-chain policy binds the exact Node archive URL, SHA-256 and version
 literals in the worker Dockerfile and the exact Ubuntu override (fixed
-libbrotli1 install, nodejs and python3 removals); the fail-closed compose
+apt/libapt-pkg bootstrap installs, libbrotli1 install, nodejs and python3
+removals); the fail-closed compose
 smoke guard
 checks the installed Node version, the CfT version, and the absence of the
 removed runtime tools and libraries, including the python3 binaries. The separate root E2E runner
@@ -187,9 +192,10 @@ The Apache adapter uses the official
 multi-platform image. Its deterministic Debian Trixie package overlay pins
 `libaprutil1-ldap`/`libaprutil1t64` 1.6.3-3+deb13u1 and OpenSSL
 3.5.7-1~deb13u2. The NGINX edge base moves to Alpine 3.24
-(`nginx:1.30.6-alpine3.24`), whose overlay pins `brotli-libs=1.2.1-r0` beside
-the exact OpenSSL fix packages from the base's own v3.24 repositories; the
-backend, PostgreSQL, and Web overlays retain their independently qualified
+(`nginx:1.30.6-alpine3.24`), whose overlay pins `brotli-libs=1.2.1-r0` and
+`libexpat=2.10.0-r0` beside the exact OpenSSL fix packages from the base's
+own v3.24 repositories; the backend, PostgreSQL, and Web overlays retain
+their independently qualified
 3.23 package sources. The Apache
 image is accepted only after two reproducible builds, parity, SBOM/license
 evidence, and a current Grype scan with zero unexcepted Critical findings.
@@ -198,15 +204,26 @@ For the current 077-o qualification, the earlier Trixie paragraph above is
 historical blocker evidence. The active Apache source is the immutable Ubuntu
 24.04 LTS image `ubuntu:24.04@sha256:33ceb71981b602c1a7443a53469e4dba065f7503eab3078a2d7a57a2ab987517`,
 with standard Ubuntu Apache 2.4 security packages and glibc 2.39-0ubuntu8.8.
-The normalized Apache application-file boundary is `/etc/apache2/` for this
-base-image layout.
+The first repository install in the image is the protected signed APT
+bootstrap `apt=2.8.4ubuntu0.1` and `libapt-pkg6.0t64=2.8.4ubuntu0.1`, run
+with `Acquire::Retries=0` through that install, before any later download
+from the Noble repositories. The normalized Apache application-file boundary
+is `/etc/apache2/` for this base-image layout.
 The PostgreSQL 18.6 Alpine 3.23 overlay keeps the official base and pins the
-standard-repository security packages `brotli-libs=1.2.1-r0` and
-`libcurl=8.23.0-r0` alongside the existing OpenSSL pins. The earlier
+standard-repository security packages `brotli-libs=1.2.1-r0`,
+`libcurl=8.23.0-r0`, `musl-utils=1.2.5-r24`, and `musl=1.2.5-r24` alongside
+the existing OpenSSL pins. The earlier
 `libcurl=8.22.0-r0` pin (introduced at `20c23890`) became unresolvable when
 the upstream v3.23/main index moved to 8.23.0-r0 on 2026-10-25; 8.23.0-r0 is
 installed through the same signed standard repository (archive SHA-256
 `d35e08ce3bafbcaf1a68512ac31483bd93e795ad5e8d8bfd76ada3106d81b569`).
+
+The 083-8-w source change adds these pins and the protected APT bootstrap to
+the four affected Dockerfiles and the policy install arrays. It is a source
+change: not a measured build, image, or scan result, and the qualified image
+evidence remains the separate runtime qualification gate. The four backend
+SQLite High findings from the current retained scans stay a separate explicit
+assessment and are neither fixed nor suppressed by this change.
 
 ## Vulnerability gate and database freshness
 
@@ -227,10 +244,12 @@ findings in that older payload. The 152.0.7977.82 qualification and finding set
 remain historical evidence in
 [`supply-chain/browser-worker-critical-matrix.json`](../supply-chain/browser-worker-critical-matrix.json)
 while the active maintenance pin is Chrome for Testing
-`156.0.8078.80` at CfT revision `1706539` (083-9-b source update, its
-intermediate P1 six-image CI qualification recorded as candidate-10 at
-2026-10-30; the final F/SELF gates require fresh required checks and
-six-image CI re-qualification). The prior pin
+`157.0.8103.50` at CfT revision `1717349` (083-8-v security refresh).
+The prior pin `156.0.8078.80` at CfT revision `1706539` (083-9-b source
+update, its intermediate P1 six-image CI qualification recorded as
+candidate-10 at 2026-10-30; the final F/SELF gates require fresh required
+checks and six-image CI re-qualification) is dated historical evidence.
+The earlier pin
 `156.0.8078.47` had its fresh six-image qualification measured in 083-5-c at
 intermediate commit J2 `d161e9df4ade67a3bc83375a4124eb6e939b6608` on
 2026-10-25: zero unexcepted Critical in all six images, 19 inherited High
@@ -320,10 +339,12 @@ component or finding from evidence. Coding agents must not author an exception
 merely to make a gate green. The owner removed this exception after the official
 stable Chrome 152.0.7977.82 qualification; the later `153.0.8010.36`
 (078-u) and `155.0.8059.84` (083-3) maintenance qualifications remain
-historical evidence; the current pin is `156.0.8078.80` (083-9-b source
-update, its intermediate P1 six-image CI qualification recorded as
-candidate-10 at 2026-10-30; the final F/SELF gates require fresh required
-checks and six-image CI re-qualification), while the prior pin
+historical evidence; the current pin is `157.0.8103.50` at CfT revision
+`1717349` (083-8-v security refresh). The prior pin `156.0.8078.80`
+(083-9-b source update, its intermediate P1 six-image CI qualification
+recorded as candidate-10 at 2026-10-30; the final F/SELF gates require
+fresh required checks and six-image CI re-qualification) is dated
+historical evidence, while the earlier pin
 `156.0.8078.47` had its fresh six-image qualification
 measured in 083-5-c at intermediate commit J2
 (`d161e9df4ade67a3bc83375a4124eb6e939b6608`, 2026-10-25: zero unexcepted
@@ -339,9 +360,10 @@ strategic scope.
 
 ## Backend installer remediation (083-7)
 
-PR #111 (083-7, in flight at `083-7-b`) remediates the measured certifi
-exposure in the frozen test lock and removes the unnecessary system
-installer copies from the backend runtime image.
+PR #111 (083/7, accepted and merged in `main` at
+`d18b6e4c9423f61de99b516be90619bf2ab5d3e0` on 2026-10-27) remediates the
+measured certifi exposure in the frozen test lock and removes the
+unnecessary system installer copies from the backend runtime image.
 
 - Lock: the transitive `certifi` is pinned to the exact patched `2026.10.19`
   (wheel sha256 `42d35340cc5b9ba78e818ddbff0c5b1c2b779de448a340fd1b989f5fa8670e1b`,
@@ -375,10 +397,16 @@ installer copies from the backend runtime image.
 Limits: `RUN rm` whiteouts remove effective merged-filesystem entries, but
 historical lower OCI layers still contain the bytes; scoped absence is not
 universal absence of every filesystem CA copy; OS and browser trust stores,
-other alerts, and any global-TLS or release claim are out of scope. The
-default-branch certifi Dependabot alert (#17) remains OPEN until its
-post-merge default-branch state is actually verified; it must not be
-dismissed or suppressed.
+other alerts, and any global-TLS or release claim are out of scope. Alert
+state (observed 2026-10-27): the default-branch Dependabot alert #17
+endpoint returns HTTP 410 with the alert explicitly withdrawn, while the
+global `GHSA-6q48-6c7w-9gw2` remains ACTIVE (updated 2026-10-26, severity
+critical, vulnerable range `>= 2019.03.09, < 2026.10.18`, first-patched
+metadata `2026.10.18`, official text recommending `2026.10.19`); the other
+thirteen open repository alerts carry no Critical. Alert withdrawal is not
+a fix: there is no fixed-by-merge proof, the advisory is not closed, no
+release claim is made, and reachability adjudication plus any future
+remediation remain with strategy.
 
 ## Limitations
 

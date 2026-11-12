@@ -164,19 +164,23 @@ export function classifyConsoleOriginFamily(
 // CSP/CORS and other new family hints can retain the old other class; the
 // len-79/HTTPS cause remains UNKNOWN.
 export type ConsoleMessageFamily =
-  | "csp-permissions-policy"
+  | "policy-refused"
+  | "policy-csp"
+  | "policy-permissions"
   | "cors-mixed-content"
   | "network-tls"
   | "api-decode-runtime"
   | "other";
 
 export function classifyConsoleMessageFamily(text: string): ConsoleMessageFamily {
-  if (
-    text.startsWith("Refused to ") ||
-    text.startsWith("Content Security Policy") ||
-    text.startsWith("Permissions policy violation:")
-  ) {
-    return "csp-permissions-policy";
+  if (text.startsWith("Refused to ")) {
+    return "policy-refused";
+  }
+  if (text.startsWith("Content Security Policy")) {
+    return "policy-csp";
+  }
+  if (text.startsWith("Permissions policy violation:")) {
+    return "policy-permissions";
   }
   if (
     (text.startsWith("Access to") &&
