@@ -243,6 +243,20 @@ SHIM = r"""#!/bin/sh
 state=$LIFECYCLE_SHIM_STATE
 cmd=$1
 shift
+label_out() {
+    # Compose identity label query: a create-time --label override
+    # (empty included) shadows the inherited image label; with
+    # neither present the previous always-empty rendering is kept.
+    if test -f "$state/containers/$1.label-$2"; then
+        cat "$state/containers/$1.label-$2"
+        return 0
+    fi
+    if test -f "$state/inherited-$2"; then
+        cat "$state/inherited-$2"
+        return 0
+    fi
+    exit 0
+}
 case "$cmd" in
 version)
     printf '28.0.0\n'
@@ -251,11 +265,32 @@ version)
 create)
     printf '%s\n' "$@" >"$state/create-argv"
     name=
+    label_project_seen=0
+    label_project_value=
+    label_service_seen=0
+    label_service_value=
     while test $# -gt 0; do
         case "$1" in
         --name)
             name=$2
             shift 2
+            ;;
+        --label)
+            # Create-time override for the reserved compose identity
+            # keys: an explicit value, empty included, shadows the
+            # inherited image label; other keys stay unmodeled.
+            label=$2
+            shift 2
+            case "${label%%=*}" in
+            com.docker.compose.project)
+                label_project_seen=1
+                label_project_value=${label#*=}
+                ;;
+            com.docker.compose.service)
+                label_service_seen=1
+                label_service_value=${label#*=}
+                ;;
+            esac
             ;;
         *)
             shift
@@ -269,6 +304,12 @@ create)
     id=$(printf 'container:%s' "$name" | sha256sum | cut -d' ' -f1)
     mkdir -p "$state/containers"
     printf '%s\n' "$name" >"$state/containers/$id"
+    if test "$label_project_seen" = 1; then
+        printf '%s\n' "$label_project_value" >"$state/containers/$id.label-project"
+    fi
+    if test "$label_service_seen" = 1; then
+        printf '%s\n' "$label_service_value" >"$state/containers/$id.label-service"
+    fi
     printf '%s\n' "$id"
     exit 0
     ;;
@@ -377,10 +418,10 @@ inspect)
         exit 0
         ;;
     *com.docker.compose.project*)
-        exit 0
+        label_out "$id" project
         ;;
     *com.docker.compose.service*)
-        exit 0
+        label_out "$id" service
         ;;
     *)
         exit 1
@@ -551,6 +592,10 @@ class LifecycleShellContractTests(unittest.TestCase):
             [
                 "--name",
                 "slaif007ktest-h-body97",
+                "--label",
+                "com.docker.compose.project=",
+                "--label",
+                "com.docker.compose.service=",
                 "--network",
                 "none",
                 "--read-only",
@@ -619,6 +664,71 @@ class LifecycleShellContractTests(unittest.TestCase):
         )
         self.assertEqual(len(argv), 17)
         self.assertEqual(list(evidence.iterdir()), [])
+
+    def test_capture_create_clears_inherited_compose_labels(self) -> None:
+        # A3 regression: compose build stamps nonempty project/service
+        # identity labels onto the backend image and docker create
+        # copies them into the container Config.Labels. Capture-mode
+        # create must override both keys with explicit empty values,
+        # or the real verifier rejects the inherited identity. This
+        # test is red on the current helper and green once capture
+        # create carries the explicit empty overrides.
+        name = "slaif007ktest-h-labelfix"
+        body = "print(1)"
+        scenario = (
+            'helper_run h-labelfix "slaif007ktest-h-labelfix" --network none '
+            "--read-only --entrypoint python slaif-agent-site-backend:local "
+            f"-c '{body}'\n"
+        )
+
+        def pre(state):
+            (state / "inherited-project").write_text(PROJECT + "\n")
+            (state / "inherited-service").write_text("secrets-init\n")
+
+        proc, state, evidence = self.drive(scenario, pre=pre)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        argv = (state / "create-argv").read_text().splitlines()
+        self.assertEqual(
+            argv,
+            [
+                "--name",
+                name,
+                "--label",
+                "com.docker.compose.project=",
+                "--label",
+                "com.docker.compose.service=",
+                "--network",
+                "none",
+                "--read-only",
+                "--entrypoint",
+                "python",
+                "slaif-agent-site-backend:local",
+                "-c",
+                body,
+            ],
+        )
+        cid = docker_id_for(name)
+        names = helper_receipts(evidence, "h-labelfix", cid)
+        for key, path in names.items():
+            self.assertTrue(path.is_file(), key)
+        complete = V._read_evidence_record(evidence, names["complete"].name)
+        self.assertEqual(
+            (
+                complete["start_rc"],
+                complete["body_exit"],
+                complete["rm_rc"],
+                complete["ps_rc"],
+            ),
+            (0, 0, 0, 0),
+        )
+        self.assertEqual(
+            V._read_evidence_record(evidence, names["removed"].name)["rm_rc"],
+            0,
+        )
+        absent = V._read_evidence_record(evidence, names["absent"].name)
+        self.assertEqual((absent["ps_rc"], absent["listed"]), (0, []))
+        self.assertFalse((state / "containers" / cid).exists())
+        V._lifecycle_audit_helpers(PROJECT, SCOPE, evidence, ["h-labelfix"])
 
     def test_failed_create_never_adopts_foreign_stdout(self) -> None:
         name = "slaif007ktest-h-createfail"
@@ -855,14 +965,17 @@ class LifecycleShellContractTests(unittest.TestCase):
         )
 
 
-def _fake_docker(cid, name, body_rc, mounts_text=MOUNTS_LINE):
+def _fake_docker(cid, name, body_rc, mounts_text=MOUNTS_LINE, labels=None):
     """Mock only the Docker boundary for in-process producer round-trips.
 
     A never-started container reports the zero time for BOTH StartedAt and
     FinishedAt, as the pinned engine does; an executed container reports the
-    body's own 0..255 native.
+    body's own 0..255 native. The compose identity label queries render the
+    passed per-key values (empty by default), so inherited-label rejection
+    and explicit-override clearing are modeled at the same boundary.
     """
     state = {"started": False, "removed": False}
+    labels = {} if labels is None else labels
 
     def fake(argv, root):
         verb = argv[1]
@@ -898,6 +1011,10 @@ def _fake_docker(cid, name, body_rc, mounts_text=MOUNTS_LINE):
                 return 0, SEP.join(fields) + "\n"
             if template == V.CONTAINER_MOUNTS_TEMPLATE:
                 return 0, mounts_text
+            if template == V.CONTAINER_PROJECT_LABEL_TEMPLATE:
+                return 0, labels.get("project", "") + "\n"
+            if template == V.CONTAINER_SERVICE_LABEL_TEMPLATE:
+                return 0, labels.get("service", "") + "\n"
             return 0, "\n"
         if verb == "rm":
             if argv[2] != cid:
@@ -937,9 +1054,14 @@ class LifecycleProducerContractTests(unittest.TestCase):
         body_rc=None,
         started=True,
         mounts_text=MOUNTS_LINE,
+        labels=None,
     ):
         fake, mark_started = _fake_docker(
-            cid, name, start_rc if body_rc is None else body_rc, mounts_text
+            cid,
+            name,
+            start_rc if body_rc is None else body_rc,
+            mounts_text,
+            labels,
         )
         with mock.patch.object(V, "_lifecycle_run", fake):
             V._lifecycle_helper_begin(ROOT, PROJECT, SCOPE, tag, name, ev)
@@ -1008,6 +1130,88 @@ class LifecycleProducerContractTests(unittest.TestCase):
                     ROOT, PROJECT, SCOPE, tag, name, cid, 97, 97, ev
                 )
             self.assertFalse((ev / V._lifecycle_helper_name(tag, "complete")).is_file())
+        finally:
+            shutil.rmtree(base)
+
+    def test_nonempty_identity_labels_are_rejected_at_created(self) -> None:
+        # The frozen verifier rejects an unexpected nonempty compose
+        # identity at created inspection: the created receipt stays
+        # durable, the meta capture is never written, for either key
+        # alone. Empty or absent labels stay accepted (project subcase:
+        # module PROJECT; service-only: secrets-init).
+        base = Path(tempfile.mkdtemp(prefix="lifecycle-rt-"))
+        try:
+            for key in ("project", "service"):
+                with self.subTest(key=key):
+                    tag = f"lbl-{key}"
+                    name = f"slaif007ktest-{tag}"
+                    cid = hashlib.sha256(f"labels-created-{key}".encode()).hexdigest()
+                    ev = self.mk_evidence(base, key)
+                    value = PROJECT if key == "project" else "secrets-init"
+                    fake, _ = _fake_docker(cid, name, 0, labels={key: value})
+                    with mock.patch.object(V, "_lifecycle_run", fake):
+                        V._lifecycle_helper_begin(ROOT, PROJECT, SCOPE, tag, name, ev)
+                        with self.assertRaisesRegex(
+                            ValueError,
+                            "lifecycle helper carries compose labels",
+                        ):
+                            V._lifecycle_helper_created(
+                                ROOT, PROJECT, SCOPE, tag, name, cid, 0, ev
+                            )
+                    self.assertTrue(
+                        (ev / V._lifecycle_helper_name(tag, "created", cid)).is_file()
+                    )
+                    self.assertFalse(
+                        (ev / V._lifecycle_helper_name(tag, "meta", cid)).is_file()
+                    )
+                    self.assertFalse(
+                        (ev / V._lifecycle_helper_name(tag, "complete")).is_file()
+                    )
+        finally:
+            shutil.rmtree(base)
+
+    def test_nonempty_identity_labels_are_rejected_at_terminal(self) -> None:
+        # The terminal inspection re-checks the identity independently
+        # of the created check: an unexpected nonempty project or
+        # service label observed at terminal aborts before the state
+        # receipt, for either key alone. The label store is flipped
+        # after the created check to drive that branch of the verifier
+        # (project subcase: module PROJECT; service-only: secrets-init).
+        base = Path(tempfile.mkdtemp(prefix="lifecycle-rt-"))
+        try:
+            for key in ("project", "service"):
+                with self.subTest(key=key):
+                    tag = f"ltl-{key}"
+                    name = f"slaif007ktest-{tag}"
+                    cid = hashlib.sha256(f"labels-terminal-{key}".encode()).hexdigest()
+                    ev = self.mk_evidence(base, key)
+                    labels: dict = {}
+                    fake, mark_started = _fake_docker(cid, name, 0, labels=labels)
+                    with mock.patch.object(V, "_lifecycle_run", fake):
+                        V._lifecycle_helper_begin(ROOT, PROJECT, SCOPE, tag, name, ev)
+                        V._lifecycle_helper_created(
+                            ROOT, PROJECT, SCOPE, tag, name, cid, 0, ev
+                        )
+                        mark_started()
+                        V._lifecycle_helper_start(ROOT, PROJECT, SCOPE, tag, cid, 0, ev)
+                        labels[key] = PROJECT if key == "project" else "secrets-init"
+                        with self.assertRaisesRegex(
+                            ValueError,
+                            "lifecycle helper carries compose labels",
+                        ):
+                            V._lifecycle_helper_terminal(
+                                ROOT, PROJECT, SCOPE, tag, cid, ev
+                            )
+                    self.assertTrue(
+                        (ev / V._lifecycle_helper_name(tag, "start", cid)).is_file()
+                    )
+                    for point in ("state", "removed", "absent"):
+                        self.assertFalse(
+                            (ev / V._lifecycle_helper_name(tag, point, cid)).is_file()
+                        )
+                    self.assertFalse(
+                        (ev / V._lifecycle_helper_name(tag, "complete")).is_file()
+                    )
         finally:
             shutil.rmtree(base)
 

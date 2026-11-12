@@ -90,7 +90,13 @@ helper_run() {
   fi
   lifecycle helper-begin --tag "$helper_tag" --name "$helper_name" || exit 1
   helper_create_rc=0
-  helper_create_out=$(docker create --name "$helper_name" "$@") || helper_create_rc=$?
+  # Compose build stamps com.docker.compose.project/service/version onto the image;
+  # docker create copies image labels into the container Config.Labels. Override
+  # only the two reserved identity keys with empty values so the created helper
+  # carries no non-empty compose identity (frozen lifecycle guard stays strict).
+  helper_create_out=$(docker create --name "$helper_name" \
+    --label com.docker.compose.project= \
+    --label com.docker.compose.service= "$@") || helper_create_rc=$?
   if test "$helper_create_rc" -ne 0
   then
     # A failed create stdout is never adopted as an owned ID and is never
