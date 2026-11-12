@@ -57,8 +57,8 @@ class FakeConnection:
         login: str = "slaif_control_login",
         roles: tuple[str, ...] = ("slaif_control",),
         readiness_row: tuple[object, ...] | None = (
-            "076_001",
-            "076_001",
+            "077_001",
+            "077_001",
             "EMPTY_SAFE",
             True,
             "agent-cow-postgresql",
@@ -351,15 +351,15 @@ async def test_new_connection_identity_and_exact_role_are_fail_closed(
             ControlDatabaseReason.MIGRATION_MISMATCH,
         ),
         (
-            ("076_001", "076_001", "PENDING", False, "agent-cow-postgresql", "0.2.0"),
+            ("077_001", "077_001", "PENDING", False, "agent-cow-postgresql", "0.2.0"),
             ControlDatabaseReason.UNSAFE_MARKER,
         ),
         (
-            ("076_001", "076_001", "EMPTY_SAFE", True, "other", "0.2.0"),
+            ("077_001", "077_001", "EMPTY_SAFE", True, "other", "0.2.0"),
             ControlDatabaseReason.FOUNDATION_MISMATCH,
         ),
         (
-            ("076_001", "076_001", "HARDENED", True, "agent-cow-postgresql", "0.1.0"),
+            ("077_001", "077_001", "HARDENED", True, "agent-cow-postgresql", "0.1.0"),
             ControlDatabaseReason.FOUNDATION_MISMATCH,
         ),
     ),

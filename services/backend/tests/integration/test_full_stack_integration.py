@@ -56,7 +56,6 @@ class TestFullStackWiring:
             "move_composition_node",
             "delete_composition_node",
             "list_composition",
-            "create_media",
             "list_media",
             "get_media",
             "update_media",

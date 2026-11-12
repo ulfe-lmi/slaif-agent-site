@@ -119,6 +119,7 @@ from slaif_agent_site.review_worker.snapshot import (
     build_snapshot_document,
     canonical_json,
 )
+from test_agent_mutations import _expected_head_override
 from test_real_human_accept import (
     _claim_accept,
     _enqueue_accept,
@@ -141,6 +142,8 @@ _AGGON2 = (
 
 def _dsn(database: AgentSiteDatabase, user: str, password: str) -> str:
     host = quote(str(database.connection_parameters["host"]), safe="[]:.")
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
     return (
         f"postgresql://{quote(user, safe='')}:{quote(password, safe='')}@"
         f"{host}:{database.connection_parameters['port']}/{database.name}"
@@ -790,6 +793,8 @@ async def _control_http(
 
     login, password = database.credentials["slaif_control"]
     host = quote(str(database.connection_parameters["host"]), safe="[]:.")
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
     settings = ControlDatabaseSettings(
         mode=ControlDatabaseMode.TEST,
         dsn=SecretStr(
@@ -1651,10 +1656,14 @@ async def test_075_001_round_trip_exact_restore_and_locked_materializer(
 ) -> None:
     """083/4 F + source reproduction.
 
-    The fixture database boots at the new head (076_001).  This test
-    downgrades to 074_001 (through 076_001 and 075_001), proves the
+    The test first reaches the released historical 076_001 stage
+    explicitly (the head when this contract was written; the current
+    077_001 head is never entered in this closed historical loop, and
+    the 077 ratchet refuses any downgrade traversing it).  From
+    076_001 the test downgrades to 074_001 (running the 076_001 and
+    075_001 downgrade bodies), proves the
     pre-fix materializer behavior at runtime, re-upgrades, and proves
-    the head materializer locks the site row, re-checks ACTIVE against
+    the 076_001 materializer locks the site row, re-checks ACTIVE against
     the locked row, and reports the locked canonical revision.  The
     074-era workspace is version-unknown after the round trip and must
     be refused by the v2 materializer (honest legacy behavior); the
@@ -1665,13 +1674,17 @@ async def test_075_001_round_trip_exact_restore_and_locked_materializer(
     database = agent_site_database
     dsn = database.settings.resolved_owner_dsn()
 
-    # The fixture provisions roles only; boot the intended 076_001 head
-    # through the existing product helpers (as _seed does) before
-    # inspecting the head state.
-    await upgrade(database.settings)
-    await reconcile(database.settings)
+    # The fixture provisions roles only; reach the released 076_001
+    # historical stage explicitly (the current head is 077_001) through
+    # the real migration, then run the real reconcile under the narrow
+    # TEST-only expected-head seam before inspecting the stage state.
+    await run_migration(
+        dsn, expected_database=database.name, operation="upgrade", revision="076_001"
+    )
+    with _expected_head_override("076_001"):
+        await reconcile(database.settings)
 
-    # --- 076_001 head state ---------------------------------------------
+    # --- 076_001 stage state ---------------------------------------------
     async with owner_connection(dsn, expected_database=database.name) as owner:
         def_head = await owner.fetchval(_FUNCTION_LOOKUP)
         acl_head = {str(row[0]): bool(row[1]) for row in await owner.fetch(_ACL_LOOKUP)}
@@ -1743,14 +1756,15 @@ async def test_075_001_round_trip_exact_restore_and_locked_materializer(
     finally:
         await blocker.close()
 
-    # --- re-upgrade to head: byte-exact round trip -----------------------
+    # --- re-upgrade to the 076_001 stage: byte-exact round trip ----------
     await run_migration(
         dsn,
         expected_database=database.name,
         operation="upgrade",
-        revision="head",
+        revision="076_001",
     )
-    await reconcile(database.settings)
+    with _expected_head_override("076_001"):
+        await reconcile(database.settings)
     async with owner_connection(dsn, expected_database=database.name) as owner:
         def_reup = await owner.fetchval(_FUNCTION_LOOKUP)
         acl_reup = {str(row[0]): bool(row[1]) for row in await owner.fetch(_ACL_LOOKUP)}
@@ -2577,8 +2591,9 @@ async def test_076_001_round_trip_retained_v2_and_exact_restore(
     """083/5 R9: the complete 075 -> 076 -> 075 -> 076 runtime roundtrip.
 
     S0 captures the true 075 catalog/ACL/OID state (after a real
-    downgrade of the fixture head) with a genuine legacy v1 snapshot
-    created through the real v1 materializer + v1 completion contract.
+    one-step downgrade from the released 076_001 stage) with a genuine
+    legacy v1 snapshot created through the real v1 materializer + v1
+    completion contract.
     The upgrade to 076 preserves the identity+grants of every
     non-replaced function exactly and carries the exact v2 bodies for
     the five replaced functions.  Reconcile applies the normal
@@ -2595,7 +2610,7 @@ async def test_076_001_round_trip_retained_v2_and_exact_restore(
     unchanged.  The retained-v2 fixture is kept INTACT: no retained v2
     history is deleted to let a downgrade pass.  The supported 075
     restore + 076 re-upgrade (byte-identical v1 row, working 075
-    constructors, exact reconciled head) is proven in the separate
+    constructors, exact reconciled 076_001 stage) is proven in the separate
     genuine v1-only disposable database roundtrip test.
     """
 
@@ -2616,10 +2631,13 @@ async def test_076_001_round_trip_retained_v2_and_exact_restore(
     assert _rt_diff_catalogs(tampered, probe) == ["f{t}"]
 
     # --- S0: the true 075 pre-upgrade baseline ---------------------------
-    # The fixture boots at the 076 head; the single-step downgrade
+    # The test reaches the released 076_001 historical stage explicitly
+    # (the current head is 077_001); the single-step downgrade from it
     # (no snapshot rows exist yet, so the retained-v2 guard is inert)
     # restores the exact 075 constructors before the baseline capture.
-    await upgrade(database.settings)
+    await run_migration(
+        dsn, expected_database=db_name, operation="upgrade", revision="076_001"
+    )
     await run_migration(
         dsn, expected_database=db_name, operation="downgrade", revision="075_001"
     )
@@ -2682,9 +2700,10 @@ async def test_076_001_round_trip_retained_v2_and_exact_restore(
         )
         assert v1_row_check[0] is True
 
-    # --- S1: upgrade to head, migration effect ONLY (no reconcile) ------
+    # --- S1: upgrade to the 076_001 stage, migration effect ONLY --------
+    # (no reconcile)
     await run_migration(
-        dsn, expected_database=db_name, operation="upgrade", revision="head"
+        dsn, expected_database=db_name, operation="upgrade", revision="076_001"
     )
     s1: dict[str, Any] = {}
     async with owner_connection(dsn, expected_database=db_name) as owner:
@@ -2812,7 +2831,10 @@ async def test_076_001_round_trip_retained_v2_and_exact_restore(
     }, f"keys={sorted(pinned_payload)}"
 
     # --- S2: reconcile = normal bootstrap hardening ----------------------
-    await reconcile(database.settings)
+    # Real reconcile against the released 076_001 stage under the narrow
+    # TEST-only expected-head seam (the current 077 graph refuses it).
+    with _expected_head_override("076_001"):
+        await reconcile(database.settings)
     s2: dict[str, Any] = {}
     async with owner_connection(dsn, expected_database=db_name) as owner:
         s2 = await _rt_capture_state(owner, seed)
@@ -2861,7 +2883,8 @@ async def test_076_001_round_trip_retained_v2_and_exact_restore(
     assert len(eff_rows) == len(_RT_EFFECTIVE_ROLES) * len(s2f)
     assert s2["marker"] is not None and s2["marker"]["readiness_state"] == "HARDENED"
 
-    # --- P2B: completion/context guards at head (FREEZING, real data) ----
+    # --- P2B: completion/context guards at the 076_001 stage ------------
+    # (FREEZING, real data)
     async with owner_connection(dsn, expected_database=db_name) as owner:
         site_b = await owner.fetchval(
             "INSERT INTO control.site (site_key, display_name,"
@@ -3035,7 +3058,7 @@ async def test_076_001_round_trip_retained_v2_and_exact_restore(
     # RC7: retained v2 history is never deleted to let a downgrade pass;
     # the supported 075 restore + 076 re-upgrade roundtrip runs in a
     # separate genuine v1-only disposable database.  This fixture ends
-    # with BOTH genuine retained rows at the reconciled 076 head.
+    # with BOTH genuine retained rows at the reconciled 076_001 stage.
     async with owner_connection(dsn, expected_database=db_name) as owner:
         assert (
             await owner.fetchval(
@@ -3076,7 +3099,7 @@ async def test_075_001_v1_only_downgrade_roundtrip_disposable(
     byte-identical; the downgrade restores the exact 075 catalog
     (identity incl. OID), the reconciled grant policy, the
     byte-identical v1 row and working 075 constructors; the re-upgrade
-    reproduces the reconciled head exactly.
+    reproduces the reconciled 076_001 stage exactly.
     """
 
     database = agent_site_database
@@ -3085,7 +3108,11 @@ async def test_075_001_v1_only_downgrade_roundtrip_disposable(
     expected = _rt_expected_bodies()
 
     # --- S0: the true 075 pre-upgrade baseline (no snapshot rows at all)
-    await upgrade(database.settings)
+    # Explicit released 076_001 stage first (the current head is
+    # 077_001), then the real one-step downgrade.
+    await run_migration(
+        dsn, expected_database=db_name, operation="upgrade", revision="076_001"
+    )
     await run_migration(
         dsn, expected_database=db_name, operation="downgrade", revision="075_001"
     )
@@ -3157,9 +3184,9 @@ async def test_075_001_v1_only_downgrade_roundtrip_disposable(
             == 0
         )
 
-    # --- S1: upgrade to head with the v1 row retained -------------------
+    # --- S1: upgrade to the 076_001 stage with the v1 row retained ------
     await run_migration(
-        dsn, expected_database=db_name, operation="upgrade", revision="head"
+        dsn, expected_database=db_name, operation="upgrade", revision="076_001"
     )
     s1: dict[str, Any] = {}
     async with owner_connection(dsn, expected_database=db_name) as owner:
@@ -3203,7 +3230,10 @@ async def test_075_001_v1_only_downgrade_roundtrip_disposable(
             assert head[k][f] == base[k][f], (k, f)
 
     # --- S2: reconcile = normal bootstrap hardening ----------------------
-    await reconcile(database.settings)
+    # Real reconcile against the released 076_001 stage under the narrow
+    # TEST-only expected-head seam (the current 077 graph refuses it).
+    with _expected_head_override("076_001"):
+        await reconcile(database.settings)
     s2: dict[str, Any] = {}
     async with owner_connection(dsn, expected_database=db_name) as owner:
         s2 = await _rt_capture_state(owner, seed)
@@ -3251,11 +3281,12 @@ async def test_075_001_v1_only_downgrade_roundtrip_disposable(
     assert inv65["editor_resolve_insert_path"] is not None
     assert inv65["agent_ws_create"] is not None
 
-    # --- P4: upgrade back to head + reconcile ----------------------------
+    # --- P4: upgrade back to the 076_001 stage + reconcile ---------------
     await run_migration(
-        dsn, expected_database=db_name, operation="upgrade", revision="head"
+        dsn, expected_database=db_name, operation="upgrade", revision="076_001"
     )
-    await reconcile(database.settings)
+    with _expected_head_override("076_001"):
+        await reconcile(database.settings)
     s4: dict[str, Any] = {}
     async with owner_connection(dsn, expected_database=db_name) as owner:
         s4 = await _rt_capture_state(owner, seed)
@@ -5571,8 +5602,10 @@ async def test_v1_stored_workflow_read_refusal_discard_recreation(
     the retained-evidence claim is nonvacuous.  A reversible
     test-local seam counts real MediaBoundary.finalize calls: ZERO
     after each refusal, exactly one (site/workspace-scoped) after the
-    successful reapplication (nonvacuous observer).  The upgrade to
-    the 076 head keeps the v1 row byte-identical.  The honest
+    successful reapplication (nonvacuous observer).  The final one-way
+    upgrade to the actual current head (076_001, then 077_001, which
+    adds no row or version family to the compared tables) keeps the
+    v1 row byte-identical.  The honest
     limited read (071 read model) reports the stored v1 facts
     without reinterpretation; the 076 v2-supported-format gate
     refuses the frozen render; the real accept is refused with the
@@ -5603,7 +5636,12 @@ async def test_v1_stored_workflow_read_refusal_discard_recreation(
     legacy_marker = "083/5 RC6 legacy marker"
 
     # --- meaningful site + genuine v1 under the real 075 contract -----
-    await upgrade(database.settings)
+    # Reach the released 076_001 historical stage explicitly (the
+    # current head is 077_001, whose ratchet refuses any downgrade
+    # traversing it), then run the real one-step 075 downgrade.
+    await run_migration(
+        dsn, expected_database=db_name, operation="upgrade", revision="076_001"
+    )
     await run_migration(
         dsn, expected_database=db_name, operation="downgrade", revision="075_001"
     )
@@ -5821,7 +5859,10 @@ async def test_v1_stored_workflow_read_refusal_discard_recreation(
     ws_v1_uuid = UUID(ws_v1)
     snap_v1 = UUID(str(v1_snap_id))
 
-    # --- upgrade to head: the v1 row stays byte-identical ---------------
+    # --- final one-way upgrade to the actual current head ---------------
+    # (076_001 then 077_001; 077 replaces/adds media functions only,
+    # with no table DDL, so the v1 row and the compared legacy rows
+    # keep identity, excluding exactly the 076-added columns below.)
     await run_migration(
         dsn, expected_database=db_name, operation="upgrade", revision="head"
     )
@@ -5854,10 +5895,11 @@ async def test_v1_stored_workflow_read_refusal_discard_recreation(
                 v1_freeze_job_id,
             )
         )
-    # The 076 upgrade adds exactly four preview_credential_* columns
-    # to browser_run and one version_facts column to workspace; only
-    # those 076-added columns are excluded, so every stored legacy
-    # fact must survive the upgrade unchanged.
+    # The 076_001 stage adds exactly four preview_credential_* columns
+    # to browser_run and one version_facts column to workspace; the
+    # 077_001 stage adds no table DDL; only those 076-added columns
+    # are excluded, so every stored legacy fact must survive the
+    # upgrade unchanged.
     for col in _RC6_076_BROWSER_RUN_COLUMNS:
         run_post.pop(col)
     ws_post.pop("version_facts")
@@ -6439,6 +6481,8 @@ def _rc1_agent_settings(
 ) -> AgentDatabaseSettings:
     login, password = database.credentials["slaif_agent_runtime"]
     host = quote(str(database.connection_parameters["host"]), safe="[]:.")
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
     return AgentDatabaseSettings(
         mode=AgentDatabaseMode.TEST,
         dsn=SecretStr(

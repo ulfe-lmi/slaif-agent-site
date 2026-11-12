@@ -245,10 +245,18 @@ MEDIA_CONTENT_FUNCTIONS = {
         "slaif_media_public_fetch",
         "p_site_id uuid, p_media_id uuid",
     ): "uuid, uuid",
+}
+# The publication-derived promotion helper (077_001): EXECUTE belongs to
+# the separately authorized reviewer transaction only (the review worker
+# login's effective role), never to an agent-facing or runtime process.
+# It is deliberately NOT part of MEDIA_CONTENT_FUNCTIONS so the media
+# service re-grant below cannot reach it, and the verifier excludes it
+# from the broad HARDENED content-model editor/control allowance.
+REVIEWER_CONTENT_FUNCTIONS = {
     (
-        "slaif_media_public_mark",
-        "p_site_id uuid, p_media_id uuid, p_workspace_id uuid, p_operation_id uuid",
-    ): "uuid, uuid, uuid, uuid",
+        "slaif_media_publicize_promoted",
+        "p_site_id uuid, p_media_ids uuid[]",
+    ): "uuid, uuid[]",
 }
 AGENT_CONTENT_FUNCTIONS = {
     (
@@ -727,6 +735,32 @@ FROZEN_REVIEW_READ_FUNCTIONS = (
     ),
     ("control", "slaif_media_bound_preview_read", "text, uuid"),
 )
+# 083/10-a: the 077_001 workspace-isolated media publication contract.
+# The reviewer-transaction publication helper is REQUIRED exactly when
+# the database head is at or after the introducing revision 077_001: a
+# coherent 075/076-phase head legitimately lacks it, while a current
+# head missing it must never validate as ready (the accept job's
+# in-transaction publication step has no durable fallback).  The grant
+# map carries the same identity, so a single source of truth for the
+# signature.
+MEDIA_PUBLICATION_HEAD = 77
+MEDIA_PUBLICATION_REQUIRED_FUNCTIONS = (
+    ("content", "slaif_media_publicize_promoted", "uuid, uuid[]"),
+)
+# 077_001 dropped the pre-transaction finalization marker.  At or below
+# the pre-077 head it remains the 068-era media content surface (EXECUTE
+# for slaif_media granted by the 068 migration), so the historical-phase
+# verifier classifies it exactly as the media content function it was;
+# at or after 077 it must be absent (a restored copy is unexpected
+# authority, and the general role loop refuses its grants).
+LEGACY_MEDIA_PUBLIC_MARK = (
+    "slaif_media_public_mark",
+    "p_site_id uuid, p_media_id uuid, p_workspace_id uuid, p_operation_id uuid",
+)
+# Types-only regprocedure signature (function + argument TYPES is the
+# catalog lookup/GRANT form; the named display above is the
+# classification identity).
+LEGACY_MEDIA_PUBLIC_MARK_SIGNATURE = "uuid, uuid, uuid, uuid"
 RENDER_METADATA_FUNCTIONS = {
     ("slaif_site_render_catalog", "p_site_id uuid"): "uuid",
 }
@@ -1111,6 +1145,23 @@ async def apply_product_privileges(
     if readiness_state is ReadinessState.PENDING:
         raise ValueError("cannot apply ready privileges for a pending state")
 
+    # The head marker conditions the 077 phase-aware grants below
+    # (worker content USAGE at or after 077; the 068 legacy marker
+    # re-grant strictly below it).  An unknown head never triggers the
+    # legacy re-grant and fails closed in the verifier.
+    try:
+        version = await connection.fetchval(
+            "SELECT version_num::text FROM control.alembic_version"
+        )
+    except asyncpg.PostgresError:
+        version = None
+    apply_head: int | None = None
+    if version is not None:
+        try:
+            apply_head = int(str(version).split("_", 1)[0])
+        except ValueError:
+            apply_head = None
+
     for schema in (*PRODUCT_SCHEMAS, "agentcow"):
         schema_identifier = quote_identifier(schema)
         await connection.execute(
@@ -1197,6 +1248,15 @@ async def apply_product_privileges(
         for role in READ_ROLES:
             await connection.execute(
                 f'GRANT USAGE ON SCHEMA "content" TO {quote_identifier(role)}'
+            )
+        # 077_001: the in-transaction publication helper is resolved by
+        # the worker's own effective role (NOINHERIT membership in the
+        # reviewer role carries no inherited USAGE), so the current head
+        # grants direct content schema USAGE: resolution only, no
+        # CREATE, no table access.
+        if apply_head is not None and apply_head >= MEDIA_PUBLICATION_HEAD:
+            await connection.execute(
+                'GRANT USAGE ON SCHEMA "content" TO "slaif_review_worker"'
             )
 
         # The worker's foundation reviewer surface (072_001): the same
@@ -1324,11 +1384,48 @@ async def apply_product_privileges(
             f'"content".{quote_identifier(name)}({signature}) '
             'TO "slaif_agent_runtime"'
         )
+    # 077_001 historical phase: the harden/reconcile revoke sweep removes
+    # the 068 publication marker's slaif_media EXECUTE.  Strictly below
+    # the 077 head (known phase) and only while the exact legacy object
+    # is present, restore that single grant; at or after 077 - or with an
+    # unknown head - the object must be absent and is never re-granted
+    # or recreated.
+    if apply_head is not None and apply_head < MEDIA_PUBLICATION_HEAD:
+        legacy_name = LEGACY_MEDIA_PUBLIC_MARK[0]
+        legacy_exists = await connection.fetchval(
+            "SELECT to_regprocedure($1)",
+            f"content.{quote_identifier(legacy_name)}"
+            f"({LEGACY_MEDIA_PUBLIC_MARK_SIGNATURE})",
+        )
+        if legacy_exists is not None:
+            await connection.execute(
+                "GRANT EXECUTE ON FUNCTION "
+                f'"content".{quote_identifier(legacy_name)}'
+                f"({LEGACY_MEDIA_PUBLIC_MARK_SIGNATURE}) "
+                'TO "slaif_media"'
+            )
     for (name, _identity), signature in MEDIA_CONTENT_FUNCTIONS.items():
         await connection.execute(
             "GRANT EXECUTE ON FUNCTION "
             f'"content".{quote_identifier(name)}({signature}) '
             'TO "slaif_media"'
+        )
+    for (name, _identity), signature in REVIEWER_CONTENT_FUNCTIONS.items():
+        # 083/10-a phase handling: the 077_001 publication helper exists
+        # only from that head forward, so the grant is existence-guarded
+        # (same pattern as the 076 read-surface and agent content maps)
+        # and a historical 075/076-phase database is not an error.  The
+        # verifier, not the grant, enforces the current-head
+        # requirement.
+        exists = await connection.fetchval(
+            "SELECT to_regprocedure($1)", f"content.{name}({signature})"
+        )
+        if exists is None:
+            continue
+        await connection.execute(
+            "GRANT EXECUTE ON FUNCTION "
+            f'"content".{quote_identifier(name)}({signature}) '
+            'TO "slaif_review_worker"'
         )
     await connection.execute(
         'GRANT USAGE ON SCHEMA "control" TO "slaif_editor_runtime"'
@@ -1571,6 +1668,36 @@ async def _schema_violations(
             if bool(can_use) != expected_usage:
                 usage_state = "missing-usage" if expected_usage else "usage"
                 violations.append(f"schema/{schema}/{role}/{usage_state}")
+    # 083/10-a: the 077_001 publication helper is EXECUTED by the worker's
+    # own effective role inside the reviewer transaction, and NOINHERIT
+    # membership in the reviewer role carries no inherited content USAGE.
+    # The membership-reachable check above cannot prove the SAME effective
+    # role resolves the schema, so at or after the 077 head (a missing
+    # marker fails closed) the worker must hold content USAGE directly.
+    # Historical 075/076 phases and non-HARDENED states are explicitly
+    # exempt; the forbidden reachable-role checks above are untouched.
+    try:
+        version = await connection.fetchval(
+            "SELECT version_num::text FROM control.alembic_version"
+        )
+    except asyncpg.PostgresError:
+        version = None
+    head_number: int | None = None
+    if version is not None:
+        try:
+            head_number = int(str(version).split("_", 1)[0])
+        except ValueError:
+            head_number = None
+    if readiness_state is ReadinessState.HARDENED and (
+        head_number is None or head_number >= MEDIA_PUBLICATION_HEAD
+    ):
+        worker_direct_use = await connection.fetchval(
+            "SELECT has_schema_privilege('slaif_review_worker', 'content', 'USAGE')"
+        )
+        if not worker_direct_use:
+            violations.append(
+                "schema/content/slaif_review_worker/effective-usage-missing"
+            )
     return violations
 
 
@@ -1781,6 +1908,22 @@ async def _function_violations(
     reviewer_exec = 0
     foundation_functions = 0
     control_function_counts = {identity: 0 for identity in CONTROL_FUNCTIONS}
+    # The head marker decides the phase-dependent classifications below
+    # (068 media surface vs 077 publication contract).  An absent marker
+    # fails closed: only the current surfaces classify, and the
+    # current-head required objects are still demanded.
+    try:
+        version = await connection.fetchval(
+            "SELECT version_num::text FROM control.alembic_version"
+        )
+    except asyncpg.PostgresError:
+        version = None
+    head_number: int | None = None
+    if version is not None:
+        try:
+            head_number = int(str(version).split("_", 1)[0])
+        except ValueError:
+            head_number = None
     for (
         schema,
         name,
@@ -1798,9 +1941,23 @@ async def _function_violations(
         is_agent_function = (
             schema == "control" and control_identity in AGENT_CONTROL_FUNCTIONS
         ) or (schema == "content" and control_identity in AGENT_CONTENT_FUNCTIONS)
+        # Historical phase: below 077 the dropped 068 publication marker is
+        # still the media content surface (slaif_media EXECUTE per 068 ACL);
+        # at or after 077 it is not classified media, so any restored copy
+        # with grants fails the role loop below.
         is_media_function = (
-            schema == "control" and control_identity in MEDIA_CONTROL_FUNCTIONS
-        ) or (schema == "content" and control_identity in MEDIA_CONTENT_FUNCTIONS)
+            (schema == "control" and control_identity in MEDIA_CONTROL_FUNCTIONS)
+            or (schema == "content" and control_identity in MEDIA_CONTENT_FUNCTIONS)
+            or (
+                schema == "content"
+                and control_identity == LEGACY_MEDIA_PUBLIC_MARK
+                and head_number is not None
+                and head_number < MEDIA_PUBLICATION_HEAD
+            )
+        )
+        is_reviewer_content_function = (
+            schema == "content" and control_identity in REVIEWER_CONTENT_FUNCTIONS
+        )
         is_human_editor_function = (
             schema == "control" and control_identity in HUMAN_EDITOR_FUNCTIONS
         )
@@ -1818,6 +1975,10 @@ async def _function_violations(
         ):
             violations.append(f"function/{schema}.{name}/unsafe-security-definer")
         elif is_media_function and (
+            not security_definer or "search_path=pg_catalog" not in config
+        ):
+            violations.append(f"function/{schema}.{name}/unsafe-security-definer")
+        elif is_reviewer_content_function and (
             not security_definer or "search_path=pg_catalog" not in config
         ):
             violations.append(f"function/{schema}.{name}/unsafe-security-definer")
@@ -1919,7 +2080,13 @@ async def _function_violations(
                 or (
                     readiness_state is ReadinessState.HARDENED
                     and is_content_model_function
+                    and control_identity not in REVIEWER_CONTENT_FUNCTIONS
                     and role in {"slaif_editor_runtime", "slaif_control"}
+                )
+                or (
+                    readiness_state is ReadinessState.HARDENED
+                    and is_reviewer_content_function
+                    and role == "slaif_review_worker"
                 )
                 or (is_review_worker_function and role == "slaif_review_worker")
             )
@@ -1936,6 +2103,13 @@ async def _function_violations(
             if render_content and not can_execute:
                 violations.append(f"function/{schema}.{name}/{role}/missing-execute")
             if is_media_function and role == "slaif_media" and not can_execute:
+                violations.append(f"function/{schema}.{name}/{role}/missing-execute")
+            if (
+                is_reviewer_content_function
+                and readiness_state is ReadinessState.HARDENED
+                and role == "slaif_review_worker"
+                and not can_execute
+            ):
                 violations.append(f"function/{schema}.{name}/{role}/missing-execute")
             if (
                 is_human_editor_function
@@ -1985,20 +2159,21 @@ async def _function_violations(
     # after the introducing head every required object must exist; a
     # historical 075-phase head is explicitly exempt, and an absent
     # head marker fails closed rather than silently becoming ready.
-    try:
-        version = await connection.fetchval(
-            "SELECT version_num::text FROM control.alembic_version"
-        )
-    except asyncpg.PostgresError:
-        version = None
-    head_number: int | None = None
-    if version is not None:
-        try:
-            head_number = int(str(version).split("_", 1)[0])
-        except ValueError:
-            head_number = None
+    # 083/10-a: the 077_001 media publication helper follows the same
+    # phase rule one revision later (a 076 head legitimately lacks it,
+    # a 077 head never validates ready without it).
+    # The head marker was read once at the top of this function (a missing
+    # marker stays None and fails closed in both loops).
     if head_number is None or head_number >= FROZEN_REVIEW_READ_HEAD:
         for schema, name, signature in FROZEN_REVIEW_READ_FUNCTIONS:
+            exists = await connection.fetchval(
+                "SELECT to_regprocedure($1)",
+                f"{schema}.{quote_identifier(name)}({signature})",
+            )
+            if exists is None:
+                violations.append(f"function/{schema}.{name}/missing-required-object")
+    if head_number is None or head_number >= MEDIA_PUBLICATION_HEAD:
+        for schema, name, signature in MEDIA_PUBLICATION_REQUIRED_FUNCTIONS:
             exists = await connection.fetchval(
                 "SELECT to_regprocedure($1)",
                 f"{schema}.{quote_identifier(name)}({signature})",
@@ -2046,9 +2221,13 @@ __all__ = [
     "CONTROL_FUNCTIONS",
     "CONTROL_READINESS_FUNCTION",
     "ContentObject",
+    "LEGACY_MEDIA_PUBLIC_MARK",
     "HUMAN_EDITOR_FUNCTIONS",
     "MEDIA_CONTENT_FUNCTIONS",
     "MEDIA_CONTROL_FUNCTIONS",
+    "MEDIA_PUBLICATION_HEAD",
+    "MEDIA_PUBLICATION_REQUIRED_FUNCTIONS",
+    "REVIEWER_CONTENT_FUNCTIONS",
     "PrivilegeValidation",
     "REVIEW_WORKER_FUNCTIONS",
     "apply_product_privileges",

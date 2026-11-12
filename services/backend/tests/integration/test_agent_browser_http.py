@@ -35,6 +35,8 @@ class TokenBinding:
 def _settings(database: AgentSiteDatabase) -> AgentDatabaseSettings:
     login, password = database.credentials["slaif_agent_runtime"]
     host = quote(str(database.connection_parameters["host"]), safe="[]:.")
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
     locator = (
         f"postgresql://{quote(login, safe='')}:{quote(password, safe='')}@"
         f"{host}:{database.connection_parameters['port']}/{database.name}"

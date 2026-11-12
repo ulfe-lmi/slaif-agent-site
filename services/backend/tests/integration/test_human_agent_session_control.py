@@ -41,6 +41,8 @@ from slaif_agent_site.human_authorization.catalog import (
 def _control_settings(database: AgentSiteDatabase) -> ControlDatabaseSettings:
     login, password = database.credentials["slaif_control"]
     host = quote(str(database.connection_parameters["host"]), safe="[]:.")
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
     return ControlDatabaseSettings(
         mode=ControlDatabaseMode.TEST,
         dsn=SecretStr(
@@ -58,6 +60,8 @@ def _control_settings(database: AgentSiteDatabase) -> ControlDatabaseSettings:
 def _agent_settings(database: AgentSiteDatabase) -> AgentDatabaseSettings:
     login, password = database.credentials["slaif_agent_runtime"]
     host = quote(str(database.connection_parameters["host"]), safe="[]:.")
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
     return AgentDatabaseSettings(
         mode=AgentDatabaseMode.TEST,
         dsn=SecretStr(
@@ -471,7 +475,15 @@ async def test_session_migrations_round_trip_through_037(
     agent_site_database: AgentSiteDatabase,
 ) -> None:
     database = agent_site_database
-    await upgrade(database.settings)
+    # Closed historical loop: the downgrade below crosses 037, so start
+    # at the released 076 head (the current 077 graph refuses the
+    # downgrade); the final re-upgrade lands the real head.
+    await run_migration(
+        database.settings.resolved_owner_dsn(),
+        expected_database=database.name,
+        operation="upgrade",
+        revision="076_001",
+    )
     await run_migration(
         database.settings.resolved_owner_dsn(),
         expected_database=database.name,
@@ -515,4 +527,5 @@ async def test_session_migrations_round_trip_through_037(
         revision="head",
     )
     await reconcile(database.settings)
-    assert (await status(database.settings)).revision == "076_001"
+    # Final one-way upgrade of this loop: real current head (077).
+    assert (await status(database.settings)).revision == "077_001"

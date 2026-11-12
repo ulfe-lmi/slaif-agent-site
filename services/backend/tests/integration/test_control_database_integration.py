@@ -29,6 +29,8 @@ def _control_settings(
 ) -> ControlDatabaseSettings:
     login, password = database.credentials[role]
     host = quote(str(database.connection_parameters["host"]), safe="[]:.")
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
     locator = (
         f"postgresql://{quote(login, safe='')}:{quote(password, safe='')}@"
         f"{host}:{database.connection_parameters['port']}/"
@@ -102,8 +104,10 @@ async def test_readiness_function_owner_security_grants_and_denial_matrix(
             row = await control.fetchrow(
                 "SELECT * FROM control.slaif_control_readiness()"
             )
-            assert row["schema_revision"] == "076_001"
-            assert row["marker_revision"] == "076_001"
+            # Current-head test: after upgrade to the real head the
+            # schema and marker are at the current 077 revision.
+            assert row["schema_revision"] == "077_001"
+            assert row["marker_revision"] == "077_001"
             assert row["readiness_state"] in ("HARDENED", "HARDENED")
             assert row["safe"] is True
             assert row["foundation_distribution"] == "agent-cow-postgresql"
@@ -154,9 +158,12 @@ async def test_control_pool_reports_exact_marker_migration_and_foundation_state(
         async with owner_connection(
             database.settings.resolved_owner_dsn(), expected_database=database.name
         ) as connection:
+            # Restore the CURRENT head marker (077) before injecting the
+            # foundation fault so the migration check passes and only
+            # FOUNDATION_MISMATCH is isolated.
             await connection.execute(
                 "UPDATE control.bootstrap_readiness "
-                "SET migration_revision = '076_001', "
+                "SET migration_revision = '077_001', "
                 "foundation_version = '0.0.0' WHERE singleton"
             )
         assert (await adapter.readiness()).reason == (

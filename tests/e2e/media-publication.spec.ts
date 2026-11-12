@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { deflateSync } from "node:zlib";
 
 import { expect, test } from "@playwright/test";
 
@@ -14,12 +15,6 @@ import {
 } from "./observation";
 import { login, observe, secrets } from "./support";
 
-// One 1x1 PNG: the store's signature sniffer classifies it as image/png.
-const TINY_PNG = Buffer.from(
-  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ" +
-    "AAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==",
-  "base64",
-);
 const MEDIA_ROOT_IN_CONTAINER = "/var/lib/slaif/media";
 
 function composeProject(): string {
@@ -48,6 +43,74 @@ function psql(project: string, sql: string): string {
 
 function sha256Hex(bytes: Buffer): string {
   return createHash("sha256").update(bytes).digest("hex");
+}
+
+// ---------------------------------------------------------------- PNG fixture
+// Bounded run-unique valid PNG generator: a 1x1 truecolor PNG (the store's
+// signature sniffer classifies it as image/png) whose single pixel is
+// derived from the run seed, so each run carries a fresh content hash.  The
+// full driver runs accept-lifecycle BEFORE this project, and that cycle
+// lawfully publishes the static 1x1 PNG shared by the sibling specs; the
+// sessionless public digest route is content-addressed across sites (068),
+// so a fixed constant would already hold public authorization by the time
+// this project runs and its pending-private 404 would be false.  A
+// run-unique valid PNG keeps that oracle honest without any product,
+// dependency or fixture-authority change.
+const PNG_CRC_TABLE = (() => {
+  const table = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    table[n] = c >>> 0;
+  }
+  return table;
+})();
+
+function pngCrc32(bytes: Buffer): number {
+  let crc = 0xffffffff;
+  for (const byte of bytes)
+    crc = (PNG_CRC_TABLE[(crc ^ byte) & 0xff] ?? 0) ^ (crc >>> 8);
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+function pngChunk(type: string, data: Buffer): Buffer {
+  const length = Buffer.alloc(4);
+  length.writeUInt32BE(data.length);
+  const body = Buffer.concat([Buffer.from(type, "ascii"), data]);
+  const crc = Buffer.alloc(4);
+  crc.writeUInt32BE(pngCrc32(body));
+  return Buffer.concat([length, body, crc]);
+}
+
+function makeRunUniquePng(seed: Buffer): Buffer {
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(1, 0); // width
+  ihdr.writeUInt32BE(1, 4); // height
+  ihdr[8] = 8; // bit depth
+  ihdr[9] = 2; // color type: truecolor
+  ihdr[10] = 0; // compression
+  ihdr[11] = 0; // filter
+  ihdr[12] = 0; // interlace
+  const raw = Buffer.from([
+    0,
+    (seed[0] ?? 0) & 0xff,
+    (seed[1] ?? 0) & 0xff,
+    (seed[2] ?? 0) & 0xff,
+  ]);
+  const idat = deflateSync(raw, { level: 9 });
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    pngChunk("IHDR", ihdr),
+    // Bounded ancillary tEXt chunk carrying the FULL run seed (keyword +
+    // NUL + UTF-8 text): the run identity is bound into the bytes without
+    // truncating it, and the 1x1 geometry stays valid for the renderer.
+    pngChunk(
+      "tEXt",
+      Buffer.concat([Buffer.from("Comment", "ascii"), Buffer.from([0]), seed]),
+    ),
+    pngChunk("IDAT", idat),
+    pngChunk("IEND", Buffer.alloc(0)),
+  ]);
 }
 
 function uploadForm(
@@ -81,6 +144,245 @@ function objectPath(digest: string, publicNamespace: boolean): string {
     ? `${MEDIA_ROOT_IN_CONTAINER}/public`
     : MEDIA_ROOT_IN_CONTAINER;
   return `${root}/sha256/${p1}/${p2}/${digest}`;
+}
+
+// --------------------------------------------------------------- real review
+// The product publication boundary is the real human freeze -> review ->
+// accept cycle through the control API and the real review worker: the
+// accept job promotes the frozen snapshot in ONE reviewer transaction and
+// publishes exactly the reviewed, referenced media closure (WORKSPACE_
+// ACCEPTED outbox media_manifest).  No direct finalizer call and no SQL
+// fixture promotion anywhere in this spec.
+
+async function adminCsrf(page: import("@playwright/test").Page): Promise<string> {
+  const cookie = (await page.context().cookies()).find(
+    (item) => item.name === "slaif_csrf",
+  );
+  if (!cookie?.value) throw new Error("csrf cookie missing");
+  return cookie.value;
+}
+
+async function controlFreeze(
+  page: import("@playwright/test").Page,
+  siteId: string,
+  workspaceId: string,
+): Promise<{ status: number; job_id: string }> {
+  const response = await page.request.post(
+    `/api/control/v1/sites/${siteId}/workspaces/${workspaceId}/freeze/`,
+    { headers: { "X-CSRF-Token": await adminCsrf(page) } },
+  );
+  const body = (await response.json().catch(() => ({}))) as {
+    job_id?: unknown;
+  };
+  return {
+    status: response.status(),
+    job_id: typeof body.job_id === "string" ? body.job_id : "",
+  };
+}
+
+async function workspaceStatus(
+  page: import("@playwright/test").Page,
+  siteId: string,
+  workspaceId: string,
+): Promise<string> {
+  const response = await page.request.get(
+    `/api/control/v1/sites/${siteId}/workspaces/${workspaceId}`,
+  );
+  expect(response.status()).toBe(200);
+  const body = (await response.json()) as { status: string };
+  return body.status;
+}
+
+/**
+ * The snapshot row and the FREEZING -> REVIEW transition commit in one
+ * transaction: poll until no consistent read sees FREEZING+snapshot and the
+ * workspace is REVIEW (same contract as accept-lifecycle.spec.ts).
+ */
+async function waitForReview(
+  page: import("@playwright/test").Page,
+  project: string,
+  siteId: string,
+  workspaceId: string,
+): Promise<void> {
+  const deadline = Date.now() + 240_000;
+  for (;;) {
+    expect(
+      Number(
+        psql(
+          project,
+          `SELECT count(*) FROM control.review_snapshot
+            WHERE workspace_id = '${workspaceId}'
+              AND EXISTS (SELECT 1 FROM control.workspace w
+                          WHERE w.id = '${workspaceId}'::uuid
+                            AND w.status = 'FREEZING')`,
+        ),
+      ),
+    ).toBe(0);
+    const status = await workspaceStatus(page, siteId, workspaceId);
+    if (status === "REVIEW") return;
+    expect(["ACTIVE", "FREEZING"]).toContain(status);
+    if (Date.now() > deadline) throw new Error(`timeout at status ${status}`);
+    await page.waitForTimeout(500);
+  }
+}
+
+async function reviewAcceptBody(
+  page: import("@playwright/test").Page,
+  siteId: string,
+  workspaceId: string,
+): Promise<{ snapshot_id: string; digest: string; acknowledge_summary: true }> {
+  const response = await page.request.get(
+    `/api/control/v1/sites/${siteId}/workspaces/${workspaceId}/review/`,
+  );
+  expect(response.status()).toBe(200);
+  const document = (await response.json()) as {
+    snapshot: { id: string; digest: string };
+  };
+  return {
+    snapshot_id: document.snapshot.id,
+    digest: document.snapshot.digest,
+    acknowledge_summary: true,
+  };
+}
+
+/**
+ * One real human freeze/accept cycle: freeze (202) -> REVIEW -> accept
+ * (202) -> the actual review worker terminal SUCCEEDED -> workspace
+ * ACCEPTED, canonical_revision +1, exactly one WORKSPACE_ACCEPTED outbox
+ * row whose media_manifest is the asserted published set (by media_id and
+ * digest).  Returns the snapshot id, the accept job id, the outbox payload
+ * digest and the new canonical revision.
+ */
+async function acceptCycle(
+  page: import("@playwright/test").Page,
+  project: string,
+  siteId: string,
+  workspaceId: string,
+  expectedManifest: Array<{ media_id: string; digest: string }>,
+): Promise<{
+  snapshot_id: string;
+  job_id: string;
+  digest: string;
+  canonical_revision: number;
+}> {
+  const beforeRevision = Number(
+    psql(
+      project,
+      "SELECT canonical_revision FROM control.site WHERE id = " + `'${siteId}'::uuid`,
+    ),
+  );
+  const freeze = await controlFreeze(page, siteId, workspaceId);
+  expect(freeze.status).toBe(202);
+  expect(freeze.job_id).toMatch(/^[0-9a-f-]{36}$/);
+  await waitForReview(page, project, siteId, workspaceId);
+  // The freeze job the control call enqueued must itself have succeeded
+  // (the snapshot is what the human review below accepts).
+  const freezeDeadline = Date.now() + 240_000;
+  for (;;) {
+    const freezeJob = psql(
+      project,
+      `SELECT status FROM control.review_job WHERE id = '${freeze.job_id}'::uuid`,
+    );
+    if (freezeJob === "SUCCEEDED") break;
+    if (freezeJob === "FAILED") {
+      throw new Error(
+        "freeze job FAILED: " +
+          psql(
+            project,
+            `SELECT COALESCE(error, '') FROM control.review_job
+               WHERE id = '${freeze.job_id}'::uuid`,
+          ),
+      );
+    }
+    if (Date.now() > freezeDeadline)
+      throw new Error(`freeze job stuck at ${freezeJob}`);
+    await page.waitForTimeout(500);
+  }
+  const body = await reviewAcceptBody(page, siteId, workspaceId);
+  const acceptResponse = await page.request.post(
+    `/api/control/v1/sites/${siteId}/workspaces/${workspaceId}/accept/`,
+    { headers: { "X-CSRF-Token": await adminCsrf(page) }, data: body },
+  );
+  expect(acceptResponse.status()).toBe(202);
+  const acceptJson = (await acceptResponse.json()) as { job_id: string };
+  const deadline = Date.now() + 300_000;
+  for (;;) {
+    const jobStatus = psql(
+      project,
+      `SELECT status FROM control.review_job
+         WHERE id = '${acceptJson.job_id}'::uuid`,
+    );
+    if (jobStatus === "SUCCEEDED") break;
+    if (jobStatus === "FAILED") {
+      throw new Error(
+        "accept job FAILED: " +
+          psql(
+            project,
+            `SELECT COALESCE(error, '') FROM control.review_job
+               WHERE id = '${acceptJson.job_id}'::uuid`,
+          ),
+      );
+    }
+    if (Date.now() > deadline) throw new Error(`accept job stuck at ${jobStatus}`);
+    await page.waitForTimeout(500);
+  }
+  expect(
+    psql(
+      project,
+      `SELECT status FROM control.workspace WHERE id = '${workspaceId}'::uuid`,
+    ),
+  ).toBe("ACCEPTED");
+  expect(
+    psql(
+      project,
+      "SELECT canonical_revision FROM control.site WHERE id = " + `'${siteId}'::uuid`,
+    ),
+  ).toBe(String(beforeRevision + 1));
+  const manifestRaw = psql(
+    project,
+    `SELECT COALESCE(payload::text, '') FROM control.cache_outbox
+      WHERE workspace_id = '${workspaceId}'::uuid
+        AND event_kind = 'WORKSPACE_ACCEPTED'`,
+  );
+  const outboxPayload = JSON.parse(manifestRaw || "{}") as {
+    digest: string;
+    base_site_revision: number;
+    new_canonical_revision: number;
+    media_manifest: Array<{
+      media_id: string;
+      digest: string;
+      public_key: string;
+    }>;
+  };
+  // The outbox digest is the human-reviewed snapshot digest itself.
+  expect(outboxPayload.digest).toBe(body.digest);
+  expect(outboxPayload.base_site_revision).toBe(beforeRevision);
+  expect(outboxPayload.new_canonical_revision).toBe(beforeRevision + 1);
+  expect(outboxPayload.media_manifest).toHaveLength(expectedManifest.length);
+  for (const expected of expectedManifest) {
+    const entry = outboxPayload.media_manifest.find(
+      (item) => item.media_id === expected.media_id,
+    );
+    expect(entry, `manifest entry for ${expected.media_id}`).toBeDefined();
+    expect(entry?.digest).toBe(expected.digest);
+    expect(entry?.public_key).toBe(
+      `public/sha256/${expected.digest.slice(0, 2)}/${expected.digest.slice(
+        2,
+        4,
+      )}/${expected.digest}`,
+    );
+  }
+  return {
+    snapshot_id: body.snapshot_id,
+    job_id: acceptJson.job_id,
+    digest: outboxPayload.digest,
+    canonical_revision: beforeRevision + 1,
+  };
+}
+
+/** Unauthenticated public digest read (the sessionless /media/public route). */
+function publicDigestPath(digest: string): string {
+  return `/media/public/sha256/${digest.slice(0, 2)}/${digest.slice(2, 4)}/${digest}`;
 }
 
 // Bounded failure-only console diagnostics: fixed phase/source/message enums,
@@ -331,13 +633,17 @@ test("media-publication-core-human-agent-preview-finalize-public-hostile", async
   const agentHeaders = { Authorization: `Bearer ${agentToken}` } as const;
 
   // ------------------------------------------------------------- agent upload
-  const tinyDigest = sha256Hex(TINY_PNG);
+  // Run-unique valid PNG (see generator): its digest holds no prior public
+  // authorization anywhere in this driver, so the pending-private 404 and
+  // the post-acceptance 200 are both real oracles.
+  const agentPngBytes = makeRunUniquePng(Buffer.from(`${tag}:${Date.now()}`, "utf8"));
+  const agentPngDigest = sha256Hex(agentPngBytes);
   const agentUpload = await page.request.post("/api/agent/v1/media/assets", {
     headers: {
       ...agentHeaders,
       "Idempotency-Key": `oap-079a-agent-upload-${tag}`,
     },
-    multipart: uploadForm(TINY_PNG, "agent-proof.png", "image/png", {
+    multipart: uploadForm(agentPngBytes, "agent-proof.png", "image/png", {
       alt_text: "E2E agent media proof",
     }),
   });
@@ -347,7 +653,7 @@ test("media-publication-core-human-agent-preview-finalize-public-hostile", async
   };
   const agentMediaId = requiredString(agentUploadBody.record?.id, "media id");
   expect(agentMediaId).toMatch(/^[0-9a-f-]{36}$/);
-  expect(agentUploadBody.record?.content_hash).toBe(tinyDigest);
+  expect(agentUploadBody.record?.content_hash).toBe(agentPngDigest);
 
   // Idempotent replay: same key + same bounded digest, same record.
   const agentReplay = await page.request.post("/api/agent/v1/media/assets", {
@@ -355,7 +661,7 @@ test("media-publication-core-human-agent-preview-finalize-public-hostile", async
       ...agentHeaders,
       "Idempotency-Key": `oap-079a-agent-upload-${tag}`,
     },
-    multipart: uploadForm(TINY_PNG, "agent-proof.png", "image/png", {
+    multipart: uploadForm(agentPngBytes, "agent-proof.png", "image/png", {
       alt_text: "E2E agent media proof",
     }),
   });
@@ -364,6 +670,64 @@ test("media-publication-core-human-agent-preview-finalize-public-hostile", async
     record?: Record<string, unknown>;
   };
   expect(agentReplayBody.record?.id).toBe(agentMediaId);
+
+  // ------------------------------------------------ agent hostile uploads
+  // These bounded negative/revocation oracles run BEFORE the agent
+  // workspace's real freeze/accept (cycle 1): the freeze itself revokes
+  // the capability, so a revoked capability could not afterwards serve as
+  // the intended 422/413/400 domain-rejection subject.
+  const svgUpload = await page.request.post("/api/agent/v1/media/assets", {
+    headers: {
+      ...agentHeaders,
+      "Idempotency-Key": `oap-079a-hostile-svg-${tag}`,
+    },
+    multipart: uploadForm(Buffer.from("<svg></svg>"), "x.svg", "image/svg+xml"),
+  });
+  expect(svgUpload.status()).toBe(422);
+  expect(((await svgUpload.json()) as { error: { code: string } }).error.code).toBe(
+    "DOMAIN_VALIDATION_FAILED",
+  );
+
+  // Oversized upload: edge body limit rejects before the service.
+  const oversized = Buffer.alloc(101 * 1024 * 1024, 0);
+  agentPngBytes.copy(oversized, 0);
+  const oversizedUpload = await page.request.post("/api/agent/v1/media/assets", {
+    headers: {
+      ...agentHeaders,
+      "Idempotency-Key": `oap-079a-hostile-oversized-${tag}`,
+    },
+    multipart: uploadForm(oversized, "large.png", "image/png"),
+  });
+  expect(oversizedUpload.status()).toBe(413);
+  oversized.fill(0);
+
+  // Missing idempotency key: 400 with the exact bounded key.
+  const missingKey = await page.request.post("/api/agent/v1/media/assets", {
+    headers: agentHeaders,
+    multipart: uploadForm(agentPngBytes, "agent-proof.png", "image/png"),
+  });
+  expect(missingKey.status()).toBe(400);
+  expect(((await missingKey.json()) as { error: { code: string } }).error.code).toBe(
+    "IDEMPOTENCY_KEY_REQUIRED",
+  );
+
+  // Revoked capability: the control-plane revoke is 200 with the bounded
+  // key, then the agent upload is refused with 401 (the explicit revoke
+  // precedes cycle 1 because the revoke requires an ACTIVE workspace and
+  // the freeze revokes the capability itself).
+  const revokeResponse = await page.request.post(
+    `/api/control/v1/sites/${parity.site_id}/workspaces/${agentWorkspaceId}/capabilities/${agentCapabilityId}/revoke`,
+    { headers: { "X-CSRF-Token": csrf! } },
+  );
+  expect(revokeResponse.status()).toBe(200);
+  const revokedUpload = await page.request.post("/api/agent/v1/media/assets", {
+    headers: agentHeaders,
+    multipart: uploadForm(agentPngBytes, "agent-proof.png", "image/png"),
+  });
+  expect(revokedUpload.status()).toBe(401);
+  expect(((await revokedUpload.json()) as { error: { code: string } }).error.code).toBe(
+    "AUTHENTICATION_REQUIRED",
+  );
 
   // Deterministic editor workspace resolution: the human editor resolves to
   // the latest ACTIVE HUMAN workspace of the user on the site. Control-API
@@ -405,12 +769,67 @@ test("media-publication-core-human-agent-preview-finalize-public-hostile", async
   expect(homePage).toBeDefined();
   const compositionPath = `/api/editor/v1/sites/${parity.site_id}/pages/${homePage!.id}/composition/components`;
 
+  // ------------------------------------------------- embed order normalization
+  // The preview project's editor path left its two bounded-embed components
+  // in this shared preview workspace's COW overlay without an explicit
+  // order_key (CreateCompositionNodeRequest default), so the overlay carries
+  // two key-0 top-level nodes.  Cycle 3's real acceptance must leave a valid
+  // coherent composition for the later hostile Agent tree validation
+  // (contiguous unique 0..n-1 per group), so the two nodes are repositioned
+  // through the existing lawful human Editor move endpoint before any
+  // preview render is captured.  No owner SQL, no product change.
+  const compositionListResponse = await page.request.get(
+    `/api/editor/v1/sites/${parity.site_id}/pages/${homePage!.id}/composition/`,
+  );
+  expect(compositionListResponse.status()).toBe(200);
+  const compositionNodes = (await compositionListResponse.json()) as Array<{
+    id: string;
+    component_type: string;
+    parent_id: string | null;
+    slot_key: string;
+    order_key: number;
+  }>;
+  const embedNodes = compositionNodes.filter(
+    (node) =>
+      node.parent_id === null &&
+      node.slot_key === "default" &&
+      (node.component_type === "VideoEmbed" || node.component_type === "MapBlock"),
+  );
+  expect(embedNodes).toHaveLength(2);
+  const videoEmbed = embedNodes.find((node) => node.component_type === "VideoEmbed");
+  const mapEmbed = embedNodes.find((node) => node.component_type === "MapBlock");
+  if (!videoEmbed || !mapEmbed) throw new Error("preview workspace embeds missing");
+  const moveEmbedTo = async (nodeId: string, key: number): Promise<void> => {
+    const response = await page.request.post(`${compositionPath}/${nodeId}/move`, {
+      headers: editorHeaders(`oap-079a-embed-move-${key}-${tag}`),
+      data: { new_order_key: key },
+    });
+    expect(response.status()).toBe(200);
+    const record = (await response.json()) as { order_key: number };
+    expect(record.order_key).toBe(key);
+  };
+  await moveEmbedTo(videoEmbed.id, 7);
+  await moveEmbedTo(mapEmbed.id, 8);
+
+  // The agent-uploaded Image node is placed in the AGENT workspace through
+  // the lawful delegator-human Editor envelope with the X-Editor-Workspace
+  // selection (the L1 agent capability has no component-structure:create,
+  // so the agent surface cannot create the node itself).  Explicit order
+  // keys keep the promoted canonical top-level group contiguous for the
+  // later hostile Agent composition writes: seeded base 0-5 (Heading,
+  // RichText, Section, CollectionList, CollectionGrid, CollectionDetail),
+  // agent Image 6 (agent workspace), repositioned preview embeds 7-8,
+  // human Image 9, Gallery 10, LogoGrid 11, DocumentList 12; the final
+  // canonical top-level group is contiguous 0..12.
   const imageCreate = await page.request.post(compositionPath, {
-    headers: editorHeaders(`oap-079a-image-agent-${tag}`),
+    headers: {
+      ...editorHeaders(`oap-079a-image-agent-${tag}`),
+      "X-Editor-Workspace": agentWorkspaceId,
+    },
     data: {
       component_type: "Image",
       slot_key: "default",
-      order_key: 20,
+      order_key: 6,
       props: { mediaId: agentMediaId, alt: "E2E agent media proof" },
     },
   });
@@ -427,7 +846,7 @@ test("media-publication-core-human-agent-preview-finalize-public-hostile", async
     data: {
       component_type: "Image",
       slot_key: "default",
-      order_key: 21,
+      order_key: 9,
       props: { mediaId: humanMediaId, alt: "Compose fixture image" },
     },
   });
@@ -442,6 +861,112 @@ test("media-publication-core-human-agent-preview-finalize-public-hostile", async
 
   // -------------------------------------------------------- preview render
   consolePhase = "preview-image";
+  // A4 actual NEW-pending private preview through the public edge: the
+  // delegator human previews the AGENT workspace while the upload is still
+  // pending (not canonical, not public): workspace-scoped 054 preview-chain
+  // URL and byte-identical authenticated fetch, with the sessionless public
+  // digest route and the canonical base both refusing it.
+  const agentPreviewPage = await page.goto(`/preview/${agentWorkspaceId}/s/parity/`);
+  expect(agentPreviewPage?.status()).toBe(200);
+  const agentPendingImage = page
+    .locator('img.sl-image[src^="/media/v1/sites/"]')
+    .first();
+  await expect(agentPendingImage).toBeVisible();
+  expect(await agentPendingImage.getAttribute("src")).toBe(
+    `/media/v1/sites/${parity.site_id}/workspaces/${agentWorkspaceId}/preview/assets/${agentMediaId}/content`,
+  );
+  expect(await agentPendingImage.getAttribute("alt")).toBe("E2E agent media proof");
+  const agentPreviewFetch = await page.request.get(
+    `/media/v1/sites/${parity.site_id}/workspaces/${agentWorkspaceId}/preview/assets/${agentMediaId}/content`,
+  );
+  expect(agentPreviewFetch.status()).toBe(200);
+  expect(agentPreviewFetch.headers()["cache-control"]).toBe("private, no-store");
+  expect((await agentPreviewFetch.body()).equals(agentPngBytes)).toBe(true);
+  // Run-unique digest: no prior canonical/public authorization exists for
+  // these bytes in this driver, so the pending-private 404 is a real oracle.
+  const agentPendingPublic = await page.request.get(publicDigestPath(agentPngDigest));
+  expect(agentPendingPublic.status()).toBe(404);
+  expect(
+    psql(
+      project,
+      `SELECT count(*) FROM content.media_asset_base
+        WHERE id = '${agentMediaId}'::uuid`,
+    ),
+  ).toBe("0");
+
+  // ------------------------------------- real human acceptance cycle 1 (agent)
+  // The product publication boundary: the real freeze/review/accept cycle
+  // for the AGENT workspace.  Its single reviewer transaction promotes the
+  // pending Image node + pending media row and publishes exactly the
+  // reviewed, referenced closure (the agent Image).
+  const cycle1 = await acceptCycle(page, project, parity.site_id, agentWorkspaceId, [
+    { media_id: agentMediaId, digest: agentPngDigest },
+  ]);
+  // Canonical promotion effects: the media row is public with a publish
+  // timestamp, and the pending overlay is gone.
+  expect(
+    psql(
+      project,
+      `SELECT public_status || '|' ||
+                (published_at IS NOT NULL) || '|' || content_hash
+         FROM content.media_asset_base
+        WHERE id = '${agentMediaId}'::uuid`,
+    ),
+  ).toBe(`public|t|${agentPngDigest}`);
+  expect(
+    psql(
+      project,
+      `SELECT count(*) FROM content.media_asset_changes
+        WHERE session_id = '${agentWorkspaceId}'::uuid`,
+    ),
+  ).toBe("0");
+  // The immutable frozen snapshot descriptor keeps its freeze-time facts
+  // (the media was private when reviewed) after acceptance.
+  expect(
+    psql(
+      project,
+      `SELECT ((payload::jsonb)->'media'->'${agentMediaId}'->>'public_status')
+           || '|' ||
+               ((payload::jsonb)->'media'->'${agentMediaId}'->>'content_hash')
+         FROM control.review_snapshot
+        WHERE id = '${cycle1.snapshot_id}'::uuid`,
+    ),
+  ).toBe(`private|${agentPngDigest}`);
+  // Frozen retained bytes: the review-snapshot byte route still serves the
+  // exact frozen PNG after the workspace is ACCEPTED.
+  const frozenAgent = await page.request.get(
+    `/media/v1/review/${cycle1.snapshot_id}/assets/${agentMediaId}/content`,
+  );
+  expect(frozenAgent.status()).toBe(200);
+  expect((await frozenAgent.body()).equals(agentPngBytes)).toBe(true);
+
+  // ------------------------------------------- unauthenticated public digest read
+  const anonymous = await browser.newContext();
+  try {
+    const agentPublicFetch = await anonymous.request.get(
+      publicDigestPath(agentPngDigest),
+    );
+    expect(agentPublicFetch.status()).toBe(200);
+    const publicHeaders = agentPublicFetch.headers();
+    expect(publicHeaders["content-type"]).toBe("image/png");
+    expect(publicHeaders["cache-control"]).toBe("public, max-age=31536000, immutable");
+    expect(publicHeaders["x-content-type-options"]).toBe("nosniff");
+    expect(publicHeaders["content-length"]).toBe(String(agentPngBytes.length));
+    expect((await agentPublicFetch.body()).equals(agentPngBytes)).toBe(true);
+    // Honesty: the human fixture upload is still pending in the preview
+    // workspace, so its digest is NOT public yet.
+    const humanPendingPublic = await anonymous.request.get(
+      publicDigestPath(fixtureDigest),
+    );
+    expect(humanPendingPublic.status()).toBe(404);
+  } finally {
+    await anonymous.close();
+  }
+
+  // ------------------------------------------- preview render (preview workspace)
+  // The agent image is now canonical (public); the preview renderer still
+  // emits the workspace-scoped 054 preview-chain URL for it, while the
+  // human fixture image is pending in this workspace.
   const previewPage = await page.goto(`/preview/${previewWorkspaceId}/s/parity/`);
   expect(previewPage?.status()).toBe(200);
   // R6: the preview renderer emits the workspace-scoped 054 preview-chain
@@ -471,111 +996,6 @@ test("media-publication-core-human-agent-preview-finalize-public-hostile", async
   expectConsoleClean("preview-image");
   consolePhase = "preview-gallery";
 
-  // --------------------------------------- direct finalization (083 boundary call)
-  const finalizationScript = `
-import asyncio, json
-from uuid import UUID
-from slaif_agent_site.media_service.config import MediaSettings
-from slaif_agent_site.media_service.database import MediaDatabase
-from slaif_agent_site.media_service.finalize import (
-    MediaFinalizationRepository,
-    finalize_media_for_promotion,
-)
-from slaif_agent_site.media_service.store import MediaStore
-
-async def main():
-    settings = MediaSettings.load()
-    database = MediaDatabase(settings)
-    await database.start()
-    try:
-        manifest = await finalize_media_for_promotion(
-            UUID(${JSON.stringify(parity.site_id)}),
-            UUID(${JSON.stringify(previewWorkspaceId)}),
-            [UUID(${JSON.stringify(humanMediaId)}), UUID(${JSON.stringify(agentMediaId)})],
-            store=MediaStore(settings.media_root),
-            repository=MediaFinalizationRepository(database),
-        )
-        print(json.dumps({"manifest": manifest.to_list()}))
-    finally:
-        await database.stop()
-
-asyncio.run(main())
-`;
-  const finalizationOutput = docker(project, [
-    "exec",
-    `${project}-media-service-1`,
-    "python",
-    "-c",
-    finalizationScript,
-  ]);
-  const manifest = (
-    JSON.parse(finalizationOutput.trim()) as {
-      manifest: Array<{ media_id: string; digest: string; public_key: string }>;
-    }
-  ).manifest;
-  const digestOf: Record<string, string> = {
-    [humanMediaId]: fixtureDigest,
-    [agentMediaId]: tinyDigest,
-  };
-  const publicKeyOf = (mediaId: string): string => {
-    const digest = digestOf[mediaId];
-    if (digest === undefined) throw new Error(`unknown media id: ${mediaId}`);
-    return `public/sha256/${digest.slice(0, 2)}/${digest.slice(2, 4)}/${digest}`;
-  };
-  expect(manifest).toEqual(
-    [humanMediaId, agentMediaId].sort().map((mediaId) => ({
-      media_id: mediaId,
-      digest: digestOf[mediaId],
-      public_key: publicKeyOf(mediaId),
-    })),
-  );
-
-  // ------------------------------------------- unauthenticated public digest read
-  const anonymous = await browser.newContext();
-  try {
-    const publicFetch = await anonymous.request.get(
-      `/media/public/sha256/${fixtureDigest.slice(0, 2)}/${fixtureDigest.slice(2, 4)}/${fixtureDigest}`,
-    );
-    expect(publicFetch.status()).toBe(200);
-    const publicHeaders = publicFetch.headers();
-    expect(publicHeaders["content-type"]).toBe("image/png");
-    expect(publicHeaders["cache-control"]).toBe("public, max-age=31536000, immutable");
-    expect(publicHeaders["x-content-type-options"]).toBe("nosniff");
-    expect(publicHeaders["content-length"]).toBe(String(fixtureBytes.length));
-    expect((await publicFetch.body()).equals(fixtureBytes)).toBe(true);
-    const tinyFetch = await anonymous.request.get(
-      `/media/public/sha256/${tinyDigest.slice(0, 2)}/${tinyDigest.slice(2, 4)}/${tinyDigest}`,
-    );
-    expect(tinyFetch.status()).toBe(200);
-    expect((await tinyFetch.body()).equals(TINY_PNG)).toBe(true);
-  } finally {
-    await anonymous.close();
-  }
-
-  // Fixture-level publication of the preview composition: the two Image
-  // nodes exist in the preview workspace overlay; move them into the base
-  // composition so the canonical (public) render carries the same
-  // composition. The product promotion boundary itself is the direct
-  // finalization call above (the exact call 083 makes); this is fixture
-  // state management, consistent with the psql seeding/audit/membership
-  // driving used elsewhere in this spec.
-  psql(
-    project,
-    `BEGIN;
-      INSERT INTO content.page_composition_base
-        (id, site_id, page_id, component_type, schema_version, parent_id,
-         slot_key, order_key, props)
-      SELECT c.id, c.site_id, c.page_id, c.component_type, c.schema_version,
-             c.parent_id, c.slot_key, c.order_key, c.props
-      FROM content.page_composition_changes c
-      WHERE c.session_id = '${previewWorkspaceId}'::uuid
-        AND c.component_type = 'Image' AND NOT c._cow_deleted;
-      DELETE FROM content.page_composition_changes
-      WHERE session_id = '${previewWorkspaceId}'::uuid
-        AND component_type = 'Image';
-      COMMIT;`,
-  );
-
   // ------------------------------------------------- canonical render + parity
   const anonymousPageContext = await browser.newContext();
   try {
@@ -587,7 +1007,7 @@ asyncio.run(main())
       .first();
     await expect(canonicalImage).toBeVisible();
     expect(await canonicalImage.getAttribute("src")).toBe(
-      `/media/public/sha256/${tinyDigest.slice(0, 2)}/${tinyDigest.slice(2, 4)}/${tinyDigest}`,
+      publicDigestPath(agentPngDigest),
     );
     const canonicalHtml = await canonicalPage.content();
     const previewHtml = await page.content();
@@ -605,7 +1025,7 @@ asyncio.run(main())
     };
     const canonicalAgentMarkup = imageMarkup(
       canonicalHtml,
-      `/media/public/sha256/${tinyDigest.slice(0, 2)}/${tinyDigest.slice(2, 4)}/${tinyDigest}`,
+      publicDigestPath(agentPngDigest),
     );
     const previewAgentMarkup = imageMarkup(
       previewHtml,
@@ -614,7 +1034,7 @@ asyncio.run(main())
     expect(
       previewAgentMarkup.replace(
         `/media/v1/sites/${parity.site_id}/workspaces/${previewWorkspaceId}/preview/assets/${agentMediaId}/content`,
-        `/media/public/sha256/${tinyDigest.slice(0, 2)}/${tinyDigest.slice(2, 4)}/${tinyDigest}`,
+        publicDigestPath(agentPngDigest),
       ),
     ).toBe(canonicalAgentMarkup);
   } finally {
@@ -646,7 +1066,7 @@ asyncio.run(main())
     data: {
       component_type: "Gallery",
       slot_key: "default",
-      order_key: 22,
+      order_key: 10,
       props: {
         title: "E2E gallery proof",
         columns: "3",
@@ -670,7 +1090,7 @@ asyncio.run(main())
     data: {
       component_type: "LogoGrid",
       slot_key: "default",
-      order_key: 23,
+      order_key: 11,
       props: {
         title: "E2E logo grid proof",
         items: [
@@ -722,93 +1142,10 @@ asyncio.run(main())
   await expect(logoGridSection).toBeVisible();
   await expect(logoGridAgentImage).toBeVisible();
   await page.setViewportSize({ width: 1280, height: 720 });
-
-  // Fixture-level publication of the list components into the base
-  // composition (same fixture pattern as the 079/1 Image move above).
-  // The 079/1 fixture moved the two Image nodes into base with explicit
-  // out-of-band order keys (20, 21), leaving gaps in the top-level group;
-  // the agent composition path (slaif_agent_component_tree_validate)
-  // requires contiguous canonical order keys before any agent write, so
-  // this move transaction normalizes the group to contiguous keys while
-  // preserving relative order.
-  psql(
-    project,
-    `BEGIN;
-      INSERT INTO content.page_composition_base
-        (id, site_id, page_id, component_type, schema_version, parent_id,
-         slot_key, order_key, props)
-      SELECT c.id, c.site_id, c.page_id, c.component_type, c.schema_version,
-             c.parent_id, c.slot_key, c.order_key, c.props
-      FROM content.page_composition_changes c
-      WHERE c.session_id = '${previewWorkspaceId}'::uuid
-        AND c.component_type IN ('Gallery','LogoGrid') AND NOT c._cow_deleted;
-      DELETE FROM content.page_composition_changes
-      WHERE session_id = '${previewWorkspaceId}'::uuid
-        AND component_type IN ('Gallery','LogoGrid');
-      UPDATE content.page_composition_base c
-      SET order_key = n.order_key
-      FROM (
-        SELECT id, row_number() OVER (ORDER BY order_key, id) - 1 AS order_key
-        FROM content.page_composition_base
-        WHERE site_id = '${parity.site_id}'::uuid
-          AND page_id = '${homePage!.id}'::uuid
-          AND parent_id IS NULL
-          AND slot_key = 'default'
-      ) n
-      WHERE c.id = n.id AND c.order_key <> n.order_key;
-      COMMIT;`,
-  );
-
-  // Canonical render + preview/public parity for the list components.
-  const listParityContext = await browser.newContext();
-  try {
-    const listCanonicalPage = await listParityContext.newPage();
-    const listCanonicalResponse = await listCanonicalPage.goto("/s/parity/");
-    expect(listCanonicalResponse?.status()).toBe(200);
-    const canonicalGalleryImage = listCanonicalPage
-      .locator('section.sl-gallery img.sl-image[src^="/media/public/sha256/"]')
-      .first();
-    await expect(canonicalGalleryImage).toBeVisible();
-    expect(await canonicalGalleryImage.getAttribute("src")).toBe(
-      `/media/public/sha256/${tinyDigest.slice(0, 2)}/${tinyDigest.slice(2, 4)}/${tinyDigest}`,
-    );
-    const canonicalLogoImage = listCanonicalPage
-      .locator(
-        'section.sl-logogrid img.sl-logogrid__logo[src^="/media/public/sha256/"]',
-      )
-      .first();
-    await expect(canonicalLogoImage).toBeVisible();
-    expect(await canonicalLogoImage.getAttribute("src")).toBe(
-      `/media/public/sha256/${tinyDigest.slice(0, 2)}/${tinyDigest.slice(2, 4)}/${tinyDigest}`,
-    );
-    const listCanonicalHtml = await listCanonicalPage.content();
-    const listPreviewHtml = await page.content();
-    const sectionMarkup = (html: string, section: string): string => {
-      const match = html.match(
-        new RegExp(`<section class="${section}[^"]*">[\\s\\S]*?</section>`),
-      );
-      if (!match) throw new Error(`section markup missing: ${section}`);
-      return match[0];
-    };
-    const previewToPublic = (markup: string): string =>
-      markup
-        .replaceAll(
-          `/media/v1/sites/${parity.site_id}/workspaces/${previewWorkspaceId}/preview/assets/${agentMediaId}/content`,
-          `/media/public/sha256/${tinyDigest.slice(0, 2)}/${tinyDigest.slice(2, 4)}/${tinyDigest}`,
-        )
-        .replaceAll(
-          `/media/v1/sites/${parity.site_id}/workspaces/${previewWorkspaceId}/preview/assets/${humanMediaId}/content`,
-          `/media/public/sha256/${fixtureDigest.slice(0, 2)}/${fixtureDigest.slice(2, 4)}/${fixtureDigest}`,
-        );
-    expect(previewToPublic(sectionMarkup(listPreviewHtml, "sl-gallery"))).toBe(
-      sectionMarkup(listCanonicalHtml, "sl-gallery"),
-    );
-    expect(previewToPublic(sectionMarkup(listPreviewHtml, "sl-logogrid"))).toBe(
-      sectionMarkup(listCanonicalHtml, "sl-logogrid"),
-    );
-  } finally {
-    await listParityContext.close();
-  }
+  // Capture the PRE-acceptance preview DOM: the list parity assertion
+  // compares it against the canonical render AFTER real acceptance
+  // cycle 3 promotes these nodes and publishes their media.
+  const listPreviewHtml = await page.content();
 
   // Observable interception: the shared workspace must still carry exactly
   // the two bounded-embed components the preview project left behind.
@@ -853,10 +1190,12 @@ asyncio.run(main())
   expectConsoleClean("preview-gallery");
   consolePhase = "preview-doclist";
 
-  // ------------------------------------------ agent hostile suite (079/2)
+  // ---------------------------------- hostile L2 workspace (079/2)
   // L2_SITE_EDITOR is the least-privilege preset adding
   // component-structure:create to L1's component-content-props:write; the
-  // L1 capability above cannot create components by design.
+  // L1 capability above cannot create components by design.  The hostile
+  // workspace is never frozen or accepted in this spec, so its capability
+  // stays lawful and ACTIVE for every Agent oracle below.
   const hostileWorkspaceResponse = await page.request.post(
     `/api/control/v1/sites/${parity.site_id}/workspaces/`,
     {
@@ -900,70 +1239,12 @@ asyncio.run(main())
   const hostileAgentHeaders = {
     Authorization: `Bearer ${hostileAgentToken}`,
   } as const;
+  // ------------------------------------------------- hostile data + helpers
+  // Bounded hostile payloads and the shared case helpers: the Editor
+  // oracles run BEFORE the real acceptances (while the preview workspace
+  // is still ACTIVE), the Agent oracles run AFTER them, when the hostile
+  // workspace's COW view sees the full canonical site media.
 
-  const agentGalleryCreate = await page.request.post(
-    `/api/agent/v1/pages/${homePage!.id}/components`,
-    {
-      headers: {
-        ...hostileAgentHeaders,
-        "Idempotency-Key": `oap-0792-agent-gallery-${tag}`,
-      },
-      data: {
-        component_type: "Gallery",
-        slot_key: "default",
-        props: {
-          title: "Agent gallery proof",
-          columns: "3",
-          items: [
-            { mediaId: agentMediaId, alt: "agent gallery item" },
-            { mediaId: humanMediaId, alt: "human gallery item" },
-          ],
-        },
-      },
-    },
-  );
-  expect(agentGalleryCreate.status()).toBe(201);
-  const agentGalleryCreateBody = (await agentGalleryCreate.json()) as {
-    record?: { id?: unknown; row_version?: unknown };
-  };
-  expect(agentGalleryCreateBody.record?.row_version).toBe(1);
-  expect(typeof agentGalleryCreateBody.record?.id).toBe("string");
-  const agentGalleryId = agentGalleryCreateBody.record?.id as string;
-  const agentLogoGridCreate = await page.request.post(
-    `/api/agent/v1/pages/${homePage!.id}/components`,
-    {
-      headers: {
-        ...hostileAgentHeaders,
-        "Idempotency-Key": `oap-0792-agent-logogrid-${tag}`,
-      },
-      data: {
-        component_type: "LogoGrid",
-        slot_key: "default",
-        props: {
-          items: [
-            { mediaId: agentMediaId, name: "agent logo" },
-            { mediaId: humanMediaId, name: "human logo" },
-          ],
-        },
-      },
-    },
-  );
-  expect(agentLogoGridCreate.status()).toBe(201);
-  const agentLogoGridCreateBody = (await agentLogoGridCreate.json()) as {
-    record?: { id?: unknown; row_version?: unknown };
-  };
-  expect(agentLogoGridCreateBody.record?.row_version).toBe(1);
-  const agentLogoGridId = agentLogoGridCreateBody.record?.id as string;
-
-  const agentListBefore = await page.request.get(
-    `/api/agent/v1/pages/${homePage!.id}/components`,
-    { headers: hostileAgentHeaders },
-  );
-  expect(agentListBefore.status()).toBe(200);
-  const agentListBeforeBody = (await agentListBefore.json()) as Array<{
-    id: string;
-    row_version: number;
-  }>;
   const rowVersionOf = (
     body: Array<{ id: string; row_version: number }>,
     id: string,
@@ -972,8 +1253,6 @@ asyncio.run(main())
     if (!record) throw new Error(`component missing from agent list: ${id}`);
     return record.row_version;
   };
-  expect(rowVersionOf(agentListBeforeBody, agentGalleryId)).toBe(1);
-  expect(rowVersionOf(agentListBeforeBody, agentLogoGridId)).toBe(1);
 
   const hostileGalleryItems = (count: number) =>
     Array.from({ length: count }, (_, index) => ({
@@ -986,6 +1265,14 @@ asyncio.run(main())
       name: `hostile logo ${index}`,
     }));
   const unknownMediaId = crypto.randomUUID();
+  // Bounded hostile DocumentList items (shared by the Editor and Agent
+  // oracles): eleven agent cases, ten of them from the exact R3 key list.
+  const doclistHostileItems = (count: number) =>
+    Array.from({ length: count }, (_, index) => ({
+      mediaId: pdfAgentMediaId,
+      label: `hostile pdf ${index}`,
+    }));
+
   const agentPatchCase = async (
     componentId: string,
     key: string,
@@ -1009,104 +1296,6 @@ asyncio.run(main())
     expect(body.error.code).toBe("DOMAIN_VALIDATION_FAILED");
     expect(body.error.details?.prop_error).toBe(expectedKey);
   };
-  await agentPatchCase(
-    agentGalleryId,
-    "out-of-range-max",
-    { items: hostileGalleryItems(13) },
-    "gallery.items-out-of-range",
-  );
-  await agentPatchCase(
-    agentGalleryId,
-    "out-of-range-empty",
-    { items: [] },
-    "gallery.items-out-of-range",
-  );
-  await agentPatchCase(
-    agentGalleryId,
-    "missing",
-    { items: [{ alt: "no reference" }] },
-    "gallery.item-missing",
-  );
-  await agentPatchCase(
-    agentGalleryId,
-    "missing-not-a-uuid",
-    { items: [{ mediaId: "not-a-uuid", alt: "bad reference" }] },
-    "gallery.item-missing",
-  );
-  await agentPatchCase(
-    agentGalleryId,
-    "foreign-demo",
-    { items: [{ mediaId: demoMediaId, alt: "foreign reference" }] },
-    "gallery.item-foreign-site",
-  );
-  await agentPatchCase(
-    agentGalleryId,
-    "foreign-unknown",
-    { items: [{ mediaId: unknownMediaId, alt: "unknown reference" }] },
-    "gallery.item-foreign-site",
-  );
-  await agentPatchCase(
-    agentGalleryId,
-    "not-image",
-    { items: [{ mediaId: NON_IMAGE_MEDIA_ID, alt: "not an image" }] },
-    "gallery.item-not-image",
-  );
-  await agentPatchCase(
-    agentLogoGridId,
-    "out-of-range-max",
-    { items: hostileLogoGridItems(25) },
-    "logogrid.items-out-of-range",
-  );
-  await agentPatchCase(
-    agentLogoGridId,
-    "out-of-range-min",
-    { items: [{ mediaId: agentMediaId, name: "only one" }] },
-    "logogrid.items-out-of-range",
-  );
-  await agentPatchCase(
-    agentLogoGridId,
-    "missing",
-    {
-      items: [{ mediaId: agentMediaId, name: "valid logo" }, { name: "no reference" }],
-    },
-    "logogrid.item-missing",
-  );
-  await agentPatchCase(
-    agentLogoGridId,
-    "foreign",
-    {
-      items: [
-        { mediaId: agentMediaId, name: "valid logo" },
-        { mediaId: demoMediaId, name: "foreign logo" },
-      ],
-    },
-    "logogrid.item-foreign-site",
-  );
-  await agentPatchCase(
-    agentLogoGridId,
-    "not-image",
-    {
-      items: [
-        { mediaId: agentMediaId, name: "valid logo" },
-        { mediaId: NON_IMAGE_MEDIA_ID, name: "not an image" },
-      ],
-    },
-    "logogrid.item-not-image",
-  );
-
-  // Tree and row versions unchanged after every rejection.
-  const agentListAfter = await page.request.get(
-    `/api/agent/v1/pages/${homePage!.id}/components`,
-    { headers: hostileAgentHeaders },
-  );
-  expect(agentListAfter.status()).toBe(200);
-  const agentListAfterBody = (await agentListAfter.json()) as Array<{
-    id: string;
-    row_version: number;
-  }>;
-  expect(agentListAfterBody).toHaveLength(agentListBeforeBody.length);
-  expect(rowVersionOf(agentListAfterBody, agentGalleryId)).toBe(1);
-  expect(rowVersionOf(agentListAfterBody, agentLogoGridId)).toBe(1);
 
   // Editor path rejects the same hostile media references with the exact
   // keys (POST shape bounds + PATCH wholesale-props validation).
@@ -1162,6 +1351,9 @@ asyncio.run(main())
       expect(body.error.details?.prop_error).toBe(expectedKey);
     }
   };
+  // Before any real acceptance: the preview workspace's own pending media
+  // is visible to its editor session, so every reference rejection below
+  // reaches the domain-validation layer.
   await editorPostCase(
     "gallery-out-of-range",
     "Gallery",
@@ -1324,7 +1516,7 @@ asyncio.run(main())
     const body = (await response.json()) as { error: { code: string } };
     expect(body.error.code).toBe("DOMAIN_VALIDATION_FAILED");
   };
-  await humanPdfReject("signature", TINY_PNG, "forged.pdf");
+  await humanPdfReject("signature", agentPngBytes, "forged.pdf");
   await humanPdfReject("too-large", pdfOversizedBytes, "oversized.pdf");
   await humanPdfReject("too-many-pages", pdf201Bytes, "201-pages.pdf");
   await humanPdfReject("undetermined", pdfUndeterminedBytes, "undetermined.pdf");
@@ -1413,14 +1605,56 @@ asyncio.run(main())
   };
   await agentPdfReject("too-many-pages", pdf201Bytes, "201-pages.pdf");
   await agentPdfReject("undetermined", pdfUndeterminedBytes, "undetermined.pdf");
+  // -------------------------------- real human acceptance cycle 2 (doc ws)
+  // The document workspace holds ONLY the unreferenced agent PDF upload:
+  // no pending composition node references it, so this real acceptance
+  // publishes NO NEW digest: the PDF is promoted canonical PRIVATE
+  // metadata under the 077 referenced-closure contract.  The expected
+  // manifest is nonetheless the site's FULL referenced media closure,
+  // not the newly uploaded set: cycle 1 already promoted the agent
+  // Image that references agentMediaId, so the manifest carries that
+  // existing public asset even though nothing new becomes public.  The
+  // acceptance also precedes the preview workspace's DocumentList
+  // reference to this PDF: under the fixed 077 A2 contract a
+  // cross-workspace pending lookup cannot resolve the PDF while it is
+  // still pending here, so it must already be canonical for that
+  // reference to be valid.
+  await acceptCycle(page, project, parity.site_id, docWorkspaceId, [
+    { media_id: agentMediaId, digest: agentPngDigest },
+  ]);
+  // Canonical promotion effects: private, no publish timestamp, overlay gone.
+  expect(
+    psql(
+      project,
+      `SELECT public_status || '|' ||
+                (published_at IS NOT NULL) || '|' || content_hash
+         FROM content.media_asset_base
+        WHERE id = '${pdfAgentMediaId}'::uuid`,
+    ),
+  ).toBe(`private|f|${pdfAgentDigest}`);
+  expect(
+    psql(
+      project,
+      `SELECT count(*) FROM content.media_asset_changes
+        WHERE session_id = '${docWorkspaceId}'::uuid`,
+    ),
+  ).toBe("0");
+  // The sessionless public route refuses the unreferenced digest.
+  const pdfAgentPendingPublic = await page.request.get(
+    publicDigestPath(pdfAgentDigest),
+  );
+  expect(pdfAgentPendingPublic.status()).toBe(404);
 
-  // Editor (human) composition: a DocumentList of the two real PDFs.
+  // Editor (human) composition: a DocumentList of the two real PDFs: the
+  // agent PDF is canonical (private) after the doc workspace acceptance
+  // above, and the human PDF is this workspace's own pending upload - both
+  // resolvable for this editor session under the 077 A2 contract.
   const doclistCreate = await page.request.post(compositionPath, {
     headers: editorHeaders(`oap-0793-editor-doclist-${tag}`),
     data: {
       component_type: "DocumentList",
       slot_key: "default",
-      order_key: 26,
+      order_key: 12,
       props: {
         title: "E2E document proof",
         items: [
@@ -1438,35 +1672,6 @@ asyncio.run(main())
   expect(doclistCreateBody.row_version).toBe(1);
   expect(typeof doclistCreateBody.id).toBe("string");
   const editorDoclistId = doclistCreateBody.id as string;
-  // Agent composition for the hostile suite (hostile L2 workspace owns this
-  // node, mirroring the 079/2 agent Gallery/LogoGrid pattern).
-  const agentDoclistCreate = await page.request.post(
-    `/api/agent/v1/pages/${homePage!.id}/components`,
-    {
-      headers: {
-        ...hostileAgentHeaders,
-        "Idempotency-Key": `oap-0793-agent-doclist-${tag}`,
-      },
-      data: {
-        component_type: "DocumentList",
-        slot_key: "default",
-        props: {
-          title: "Agent document proof",
-          items: [
-            { mediaId: pdfAgentMediaId, label: "agent pdf" },
-            { mediaId: pdfHumanMediaId, label: "human pdf" },
-          ],
-        },
-      },
-    },
-  );
-  expect(agentDoclistCreate.status()).toBe(201);
-  const agentDoclistCreateBody = (await agentDoclistCreate.json()) as {
-    record?: { id?: unknown; row_version?: unknown };
-  };
-  expect(agentDoclistCreateBody.record?.row_version).toBe(1);
-  expect(typeof agentDoclistCreateBody.record?.id).toBe("string");
-  const agentDoclistId = agentDoclistCreateBody.record?.id as string;
 
   // Preview render of the DocumentList at desktop, tablet, and phone.
   const doclistPreview = await page.goto(`/preview/${previewWorkspaceId}/s/parity/`);
@@ -1497,128 +1702,268 @@ asyncio.run(main())
   await page.setViewportSize({ width: 1280, height: 720 });
   const doclistPreviewHtml = await page.content();
 
-  // Direct finalization of the document-class assets (the exact 083
-  // boundary call 079/1 made, for this round's media ids).
-  const pdfFinalizationScript = `
-import asyncio, json
-from uuid import UUID
-from slaif_agent_site.media_service.config import MediaSettings
-from slaif_agent_site.media_service.database import MediaDatabase
-from slaif_agent_site.media_service.finalize import (
-    MediaFinalizationRepository,
-    finalize_media_for_promotion,
-)
-from slaif_agent_site.media_service.store import MediaStore
-
-async def main():
-    settings = MediaSettings.load()
-    database = MediaDatabase(settings)
-    await database.start()
-    try:
-        manifest = await finalize_media_for_promotion(
-            UUID(${JSON.stringify(parity.site_id)}),
-            UUID(${JSON.stringify(previewWorkspaceId)}),
-            [UUID(${JSON.stringify(pdfAgentMediaId)}), UUID(${JSON.stringify(pdfHumanMediaId)})],
-            store=MediaStore(settings.media_root),
-            repository=MediaFinalizationRepository(database),
-        )
-        print(json.dumps({"manifest": manifest.to_list()}))
-    finally:
-        await database.stop()
-
-asyncio.run(main())
-`;
-  const pdfFinalizationOutput = docker(project, [
-    "exec",
-    `${project}-media-service-1`,
-    "python",
-    "-c",
-    pdfFinalizationScript,
-  ]);
-  const pdfManifest = (
-    JSON.parse(pdfFinalizationOutput.trim()) as {
-      manifest: Array<{ media_id: string; digest: string; public_key: string }>;
-    }
-  ).manifest;
-  const pdfDigestOf: Record<string, string> = {
-    [pdfAgentMediaId]: pdfAgentDigest,
-    [pdfHumanMediaId]: pdfHumanDigest,
+  // Hostile foreign-mediaId component prop: bounded 422 with the exact
+  // prop key.  Runs while the preview workspace is still ACTIVE (before
+  // cycle 3 freezes it), so the denial reaches the editor's domain
+  // validation, not a terminal-workspace refusal.
+  const foreignImage = await page.request.post(compositionPath, {
+    headers: editorHeaders(`oap-079a-hostile-foreign-media-${tag}`),
+    data: {
+      component_type: "Image",
+      slot_key: "default",
+      order_key: 22,
+      props: { mediaId: demoMediaId, alt: "foreign reference" },
+    },
+  });
+  expect(foreignImage.status()).toBe(422);
+  const foreignImageBody = (await foreignImage.json()) as {
+    error: { code: string; details?: { prop_error?: string } };
   };
-  expect(pdfManifest).toEqual(
-    [pdfAgentMediaId, pdfHumanMediaId].sort().map((mediaId) => {
-      const digest = pdfDigestOf[mediaId];
-      if (digest === undefined) throw new Error(`unknown media id: ${mediaId}`);
-      return {
-        media_id: mediaId,
-        digest,
-        public_key: `public/sha256/${digest.slice(0, 2)}/${digest.slice(2, 4)}/${digest}`,
-      };
-    }),
-  );
+  expect(foreignImageBody.error.code).toBe("DOMAIN_VALIDATION_FAILED");
+  expect(foreignImageBody.error.details?.prop_error).toBe("COMPONENT_BINDING_INVALID");
 
-  // Unauthenticated public digest reads: byte-identical PDF bytes with the
-  // record's exact Content-Type and the immutable cache headers.
+  // Editor path rejects the same hostile document references with the
+  // exact keys, plus the catalog label bound (shape guard).  The agent
+  // PDF is canonical (private) after cycle 2, so the valid-PDF items in
+  // the mixed cases resolve for the preview workspace's editor session.
+  await editorPostCase(
+    "doclist-out-of-range",
+    "DocumentList",
+    27,
+    { title: "hostile documents", items: doclistHostileItems(13) },
+    "doclist.items-out-of-range",
+  );
+  await editorPostCase(
+    "doclist-empty",
+    "DocumentList",
+    27,
+    { items: [] },
+    "doclist.items-out-of-range",
+  );
+  await editorPostCase(
+    "doclist-missing",
+    "DocumentList",
+    27,
+    { items: [{ label: "no reference" }] },
+    "doclist.item-missing",
+  );
+  await editorPostCase(
+    "doclist-not-pdf",
+    "DocumentList",
+    27,
+    { items: [{ mediaId: humanMediaId, label: "png" }] },
+    "doclist.item-not-pdf",
+  );
+  await editorPatchCase(
+    editorDoclistId,
+    "doclist-foreign",
+    { items: [{ mediaId: demoMediaId, label: "foreign png" }] },
+    "doclist.item-foreign-site",
+  );
+  await editorPatchCase(
+    editorDoclistId,
+    "doclist-not-pdf-mixed",
+    {
+      items: [
+        { mediaId: pdfAgentMediaId, label: "valid pdf" },
+        { mediaId: agentMediaId, label: "png" },
+      ],
+    },
+    "doclist.item-not-pdf",
+  );
+  await editorPatchCase(
+    editorDoclistId,
+    "doclist-label-bound",
+    { items: [{ mediaId: pdfAgentMediaId, label: "x".repeat(121) }] },
+    null,
+  );
+  // R3 REQUIRED image-class regression negatives at composition (Editor
+  // surface): now that PDFs are uploadable, the image-class components
+  // reject PDF references with their exact existing keys (079/1 Image
+  // key: COMPONENT_BINDING_INVALID on the Editor surface).
+
+  // COMPONENT_BINDING_INVALID on the Editor surface).
+  await editorPostCase(
+    "gallery-pdf-item",
+    "Gallery",
+    28,
+    {
+      title: "hostile gallery pdf",
+      items: [{ mediaId: pdfHumanMediaId, alt: "pdf item" }],
+    },
+    "gallery.item-not-image",
+  );
+  await editorPostCase(
+    "logogrid-pdf-item",
+    "LogoGrid",
+    28,
+    {
+      items: [
+        { mediaId: pdfHumanMediaId, name: "pdf one" },
+        { mediaId: pdfAgentMediaId, name: "pdf two" },
+      ],
+    },
+    "logogrid.item-not-image",
+  );
+  await editorPostCase(
+    "image-pdf-binding",
+    "Image",
+    28,
+    { mediaId: pdfHumanMediaId, alt: "pdf as image" },
+    "COMPONENT_BINDING_INVALID",
+  );
+  // -------------------------------- real human acceptance cycle 3 (preview)
+  // The shared preview workspace: the repositioned embeds, the human Image
+  // (pending fixture PNG), the Gallery/LogoGrid and the DocumentList that
+  // references the canonical-private agent PDF plus the pending human PDF.
+  // ONE reviewer transaction promotes all pending nodes and publishes the
+  // reviewed referenced closure.  The manifest is the site's FULL closure:
+  // the existing agent PNG (already public since cycle 1, re-listed with no
+  // new digest) plus the fixture PNG and both PDFs, of which the agent PDF
+  // flips from canonical-private to public via the new reference.
+  const cycle3 = await acceptCycle(page, project, parity.site_id, previewWorkspaceId, [
+    { media_id: agentMediaId, digest: agentPngDigest },
+    { media_id: humanMediaId, digest: fixtureDigest },
+    { media_id: pdfAgentMediaId, digest: pdfAgentDigest },
+    { media_id: pdfHumanMediaId, digest: pdfHumanDigest },
+  ]);
+  // Canonical promotion effects: every referenced asset is public with a
+  // publish timestamp, and the preview workspace's pending overlay is gone.
+  expect(
+    psql(
+      project,
+      `SELECT public_status || '|' ||
+                (published_at IS NOT NULL) || '|' || content_hash
+         FROM content.media_asset_base
+        WHERE id = '${humanMediaId}'::uuid`,
+    ),
+  ).toBe(`public|t|${fixtureDigest}`);
+  expect(
+    psql(
+      project,
+      `SELECT public_status || '|' ||
+                (published_at IS NOT NULL) || '|' || content_hash
+         FROM content.media_asset_base
+        WHERE id = '${pdfHumanMediaId}'::uuid`,
+    ),
+  ).toBe(`public|t|${pdfHumanDigest}`);
+  expect(
+    psql(
+      project,
+      `SELECT public_status || '|' ||
+                (published_at IS NOT NULL) || '|' || content_hash
+         FROM content.media_asset_base
+        WHERE id = '${pdfAgentMediaId}'::uuid`,
+    ),
+  ).toBe(`public|t|${pdfAgentDigest}`);
+  expect(
+    psql(
+      project,
+      `SELECT count(*) FROM content.media_asset_changes
+        WHERE session_id = '${previewWorkspaceId}'::uuid`,
+    ),
+  ).toBe("0");
+  // Frozen retained bytes: the cycle-3 snapshot route still serves the
+  // exact frozen bytes for all three assets after the workspace is ACCEPTED.
+  const frozenHuman = await page.request.get(
+    `/media/v1/review/${cycle3.snapshot_id}/assets/${humanMediaId}/content`,
+  );
+  expect(frozenHuman.status()).toBe(200);
+  expect((await frozenHuman.body()).equals(fixtureBytes)).toBe(true);
+  const frozenPdfAgent = await page.request.get(
+    `/media/v1/review/${cycle3.snapshot_id}/assets/${pdfAgentMediaId}/content`,
+  );
+  expect(frozenPdfAgent.status()).toBe(200);
+  expect((await frozenPdfAgent.body()).equals(pdfAgentBytes)).toBe(true);
+  const frozenPdfHuman = await page.request.get(
+    `/media/v1/review/${cycle3.snapshot_id}/assets/${pdfHumanMediaId}/content`,
+  );
+  expect(frozenPdfHuman.status()).toBe(200);
+  expect((await frozenPdfHuman.body()).equals(pdfHumanBytes)).toBe(true);
+  // Unauthenticated public digest reads after the full closure published:
+  // byte-identical bytes, the record's exact Content-Type and the immutable
+  // cache headers.
   expectConsoleClean("preview-doclist");
   consolePhase = "final";
-
   const pdfAnonymous = await browser.newContext();
   try {
-    for (const [mediaId, bytes] of [
-      [pdfAgentMediaId, pdfAgentBytes],
-      [pdfHumanMediaId, pdfHumanBytes],
-    ] as const) {
-      const digest = pdfDigestOf[mediaId];
-      if (digest === undefined) throw new Error(`unknown media id: ${mediaId}`);
+    const publicCases = [
+      { digest: fixtureDigest, type: "image/png", bytes: fixtureBytes },
+      { digest: pdfAgentDigest, type: "application/pdf", bytes: pdfAgentBytes },
+      { digest: pdfHumanDigest, type: "application/pdf", bytes: pdfHumanBytes },
+    ] as const;
+    for (const entry of publicCases) {
       const publicFetch = await pdfAnonymous.request.get(
-        `/media/public/sha256/${digest.slice(0, 2)}/${digest.slice(2, 4)}/${digest}`,
+        publicDigestPath(entry.digest),
       );
       expect(publicFetch.status()).toBe(200);
       const publicHeaders = publicFetch.headers();
-      expect(publicHeaders["content-type"]).toBe("application/pdf");
+      expect(publicHeaders["content-type"]).toBe(entry.type);
       expect(publicHeaders["cache-control"]).toBe(
         "public, max-age=31536000, immutable",
       );
       expect(publicHeaders["x-content-type-options"]).toBe("nosniff");
-      expect(publicHeaders["content-length"]).toBe(String(bytes.length));
-      expect((await publicFetch.body()).equals(bytes)).toBe(true);
+      expect(publicHeaders["content-length"]).toBe(String(entry.bytes.length));
+      expect((await publicFetch.body()).equals(entry.bytes)).toBe(true);
     }
   } finally {
     await pdfAnonymous.close();
   }
-
-  // Fixture-level publication of the DocumentList into the base
-  // composition (same fixture pattern as the 079/1 / 079/2 moves, with the
-  // same contiguous order-key normalization).
-  psql(
-    project,
-    `BEGIN;
-      INSERT INTO content.page_composition_base
-        (id, site_id, page_id, component_type, schema_version, parent_id,
-         slot_key, order_key, props)
-      SELECT c.id, c.site_id, c.page_id, c.component_type, c.schema_version,
-             c.parent_id, c.slot_key, c.order_key, c.props
-      FROM content.page_composition_changes c
-      WHERE c.session_id = '${previewWorkspaceId}'::uuid
-        AND c.component_type = 'DocumentList' AND NOT c._cow_deleted;
-      DELETE FROM content.page_composition_changes
-      WHERE session_id = '${previewWorkspaceId}'::uuid
-        AND component_type = 'DocumentList';
-      UPDATE content.page_composition_base c
-      SET order_key = n.order_key
-      FROM (
-        SELECT id, row_number() OVER (ORDER BY order_key, id) - 1 AS order_key
-        FROM content.page_composition_base
-        WHERE site_id = '${parity.site_id}'::uuid
-          AND page_id = '${homePage!.id}'::uuid
-          AND parent_id IS NULL
-          AND slot_key = 'default'
-      ) n
-      WHERE c.id = n.id AND c.order_key <> n.order_key;
-      COMMIT;`,
-  );
+  // Canonical render + preview/public parity for the list components: the
+  // preview DOM was captured before the real acceptance (listPreviewHtml);
+  // the canonical render must carry the identical markup with the
+  // workspace-scoped preview byte URLs replaced by the public digest URLs.
+  const listParityContext = await browser.newContext();
+  try {
+    const listCanonicalPage = await listParityContext.newPage();
+    const listCanonicalResponse = await listCanonicalPage.goto("/s/parity/");
+    expect(listCanonicalResponse?.status()).toBe(200);
+    const canonicalGalleryImage = listCanonicalPage
+      .locator('section.sl-gallery img.sl-image[src^="/media/public/sha256/"]')
+      .first();
+    await expect(canonicalGalleryImage).toBeVisible();
+    expect(await canonicalGalleryImage.getAttribute("src")).toBe(
+      publicDigestPath(agentPngDigest),
+    );
+    const canonicalLogoImage = listCanonicalPage
+      .locator(
+        'section.sl-logogrid img.sl-logogrid__logo[src^="/media/public/sha256/"]',
+      )
+      .first();
+    await expect(canonicalLogoImage).toBeVisible();
+    expect(await canonicalLogoImage.getAttribute("src")).toBe(
+      publicDigestPath(agentPngDigest),
+    );
+    const listCanonicalHtml = await listCanonicalPage.content();
+    const sectionMarkup = (html: string, section: string): string => {
+      const match = html.match(
+        new RegExp(`<section class="${section}[^"]*">[\\s\\S]*?</section>`),
+      );
+      if (!match) throw new Error(`section markup missing: ${section}`);
+      return match[0];
+    };
+    const previewToPublic = (markup: string): string =>
+      markup
+        .replaceAll(
+          `/media/v1/sites/${parity.site_id}/workspaces/${previewWorkspaceId}/preview/assets/${agentMediaId}/content`,
+          publicDigestPath(agentPngDigest),
+        )
+        .replaceAll(
+          `/media/v1/sites/${parity.site_id}/workspaces/${previewWorkspaceId}/preview/assets/${humanMediaId}/content`,
+          publicDigestPath(fixtureDigest),
+        );
+    expect(previewToPublic(sectionMarkup(listPreviewHtml, "sl-gallery"))).toBe(
+      sectionMarkup(listCanonicalHtml, "sl-gallery"),
+    );
+    expect(previewToPublic(sectionMarkup(listPreviewHtml, "sl-logogrid"))).toBe(
+      sectionMarkup(listCanonicalHtml, "sl-logogrid"),
+    );
+  } finally {
+    await listParityContext.close();
+  }
 
   // Canonical render + preview/public parity for the DocumentList (the
-  // preview DOM was captured before the fixture move, exactly as the
+  // preview DOM was captured before the real acceptance, exactly as the
   // 079/1 / 079/2 parity checks did).
   const doclistCanonicalContext = await browser.newContext();
   try {
@@ -1657,13 +2002,225 @@ asyncio.run(main())
     await doclistCanonicalContext.close();
   }
 
-  // Hostile Agent PATCH suite against the agent DocumentList: eleven
-  // cases, ten of them from the exact R3 error-key list.
-  const doclistHostileItems = (count: number) =>
-    Array.from({ length: count }, (_, index) => ({
-      mediaId: pdfAgentMediaId,
-      label: `hostile pdf ${index}`,
-    }));
+  // Final canonical top-level group: exactly the contiguous 0..12 keys
+  // (seeded 0-5, agent Image 6, repositioned embeds 7-8, human Image 9,
+  // Gallery 10, LogoGrid 11, DocumentList 12) - the hostile Agent tree
+  // validation below requires exactly this shape.
+  expect(
+    psql(
+      project,
+      `SELECT string_agg(order_key::text, ',' ORDER BY order_key)
+         FROM content.page_composition_base
+        WHERE site_id = '${parity.site_id}'::uuid
+          AND page_id = '${homePage!.id}'::uuid
+          AND parent_id IS NULL
+          AND slot_key = 'default'`,
+    ),
+  ).toBe("0,1,2,3,4,5,6,7,8,9,10,11,12");
+
+  // ------------------------------------------ agent hostile suite (079/2+3)
+  // AFTER the real acceptances: the hostile workspace's Agent COW view sees
+  // the full canonical site media (agent upload public, fixture PNG public,
+  // both PDFs public, hostile note private), so every reference rejection
+  // reaches its intended domain-validation layer under a lawful ACTIVE
+  // capability context.  Agent creates append max(order_key)+1, keeping the
+  // hostile overlay contiguous on top of the canonical 0..12 group.
+
+  const agentGalleryCreate = await page.request.post(
+    `/api/agent/v1/pages/${homePage!.id}/components`,
+    {
+      headers: {
+        ...hostileAgentHeaders,
+        "Idempotency-Key": `oap-0792-agent-gallery-${tag}`,
+      },
+      data: {
+        component_type: "Gallery",
+        slot_key: "default",
+        props: {
+          title: "Agent gallery proof",
+          columns: "3",
+          items: [
+            { mediaId: agentMediaId, alt: "agent gallery item" },
+            { mediaId: humanMediaId, alt: "human gallery item" },
+          ],
+        },
+      },
+    },
+  );
+  expect(agentGalleryCreate.status()).toBe(201);
+  const agentGalleryCreateBody = (await agentGalleryCreate.json()) as {
+    record?: { id?: unknown; row_version?: unknown };
+  };
+  expect(agentGalleryCreateBody.record?.row_version).toBe(1);
+  expect(typeof agentGalleryCreateBody.record?.id).toBe("string");
+  const agentGalleryId = agentGalleryCreateBody.record?.id as string;
+  const agentLogoGridCreate = await page.request.post(
+    `/api/agent/v1/pages/${homePage!.id}/components`,
+    {
+      headers: {
+        ...hostileAgentHeaders,
+        "Idempotency-Key": `oap-0792-agent-logogrid-${tag}`,
+      },
+      data: {
+        component_type: "LogoGrid",
+        slot_key: "default",
+        props: {
+          items: [
+            { mediaId: agentMediaId, name: "agent logo" },
+            { mediaId: humanMediaId, name: "human logo" },
+          ],
+        },
+      },
+    },
+  );
+  expect(agentLogoGridCreate.status()).toBe(201);
+  const agentLogoGridCreateBody = (await agentLogoGridCreate.json()) as {
+    record?: { id?: unknown; row_version?: unknown };
+  };
+  expect(agentLogoGridCreateBody.record?.row_version).toBe(1);
+  const agentLogoGridId = agentLogoGridCreateBody.record?.id as string;
+
+  const agentListBefore = await page.request.get(
+    `/api/agent/v1/pages/${homePage!.id}/components`,
+    { headers: hostileAgentHeaders },
+  );
+  expect(agentListBefore.status()).toBe(200);
+  const agentListBeforeBody = (await agentListBefore.json()) as Array<{
+    id: string;
+    row_version: number;
+  }>;
+  expect(rowVersionOf(agentListBeforeBody, agentGalleryId)).toBe(1);
+  expect(rowVersionOf(agentListBeforeBody, agentLogoGridId)).toBe(1);
+
+  await agentPatchCase(
+    agentGalleryId,
+    "out-of-range-max",
+    { items: hostileGalleryItems(13) },
+    "gallery.items-out-of-range",
+  );
+  await agentPatchCase(
+    agentGalleryId,
+    "out-of-range-empty",
+    { items: [] },
+    "gallery.items-out-of-range",
+  );
+  await agentPatchCase(
+    agentGalleryId,
+    "missing",
+    { items: [{ alt: "no reference" }] },
+    "gallery.item-missing",
+  );
+  await agentPatchCase(
+    agentGalleryId,
+    "missing-not-a-uuid",
+    { items: [{ mediaId: "not-a-uuid", alt: "bad reference" }] },
+    "gallery.item-missing",
+  );
+  await agentPatchCase(
+    agentGalleryId,
+    "foreign-demo",
+    { items: [{ mediaId: demoMediaId, alt: "foreign reference" }] },
+    "gallery.item-foreign-site",
+  );
+  await agentPatchCase(
+    agentGalleryId,
+    "foreign-unknown",
+    { items: [{ mediaId: unknownMediaId, alt: "unknown reference" }] },
+    "gallery.item-foreign-site",
+  );
+  await agentPatchCase(
+    agentGalleryId,
+    "not-image",
+    { items: [{ mediaId: NON_IMAGE_MEDIA_ID, alt: "not an image" }] },
+    "gallery.item-not-image",
+  );
+  await agentPatchCase(
+    agentLogoGridId,
+    "out-of-range-max",
+    { items: hostileLogoGridItems(25) },
+    "logogrid.items-out-of-range",
+  );
+  await agentPatchCase(
+    agentLogoGridId,
+    "out-of-range-min",
+    { items: [{ mediaId: agentMediaId, name: "only one" }] },
+    "logogrid.items-out-of-range",
+  );
+  await agentPatchCase(
+    agentLogoGridId,
+    "missing",
+    {
+      items: [{ mediaId: agentMediaId, name: "valid logo" }, { name: "no reference" }],
+    },
+    "logogrid.item-missing",
+  );
+  await agentPatchCase(
+    agentLogoGridId,
+    "foreign",
+    {
+      items: [
+        { mediaId: agentMediaId, name: "valid logo" },
+        { mediaId: demoMediaId, name: "foreign logo" },
+      ],
+    },
+    "logogrid.item-foreign-site",
+  );
+  await agentPatchCase(
+    agentLogoGridId,
+    "not-image",
+    {
+      items: [
+        { mediaId: agentMediaId, name: "valid logo" },
+        { mediaId: NON_IMAGE_MEDIA_ID, name: "not an image" },
+      ],
+    },
+    "logogrid.item-not-image",
+  );
+  // Tree and row versions unchanged after every rejection.
+  // Tree and row versions unchanged after every rejection.
+  const agentListAfter = await page.request.get(
+    `/api/agent/v1/pages/${homePage!.id}/components`,
+    { headers: hostileAgentHeaders },
+  );
+  expect(agentListAfter.status()).toBe(200);
+  const agentListAfterBody = (await agentListAfter.json()) as Array<{
+    id: string;
+    row_version: number;
+  }>;
+  expect(agentListAfterBody).toHaveLength(agentListBeforeBody.length);
+  expect(rowVersionOf(agentListAfterBody, agentGalleryId)).toBe(1);
+  expect(rowVersionOf(agentListAfterBody, agentLogoGridId)).toBe(1);
+
+  // Agent composition for the hostile suite (hostile L2 workspace owns this
+  // node, mirroring the 079/2 agent Gallery/LogoGrid pattern).
+  const agentDoclistCreate = await page.request.post(
+    `/api/agent/v1/pages/${homePage!.id}/components`,
+    {
+      headers: {
+        ...hostileAgentHeaders,
+        "Idempotency-Key": `oap-0793-agent-doclist-${tag}`,
+      },
+      data: {
+        component_type: "DocumentList",
+        slot_key: "default",
+        props: {
+          title: "Agent document proof",
+          items: [
+            { mediaId: pdfAgentMediaId, label: "agent pdf" },
+            { mediaId: pdfHumanMediaId, label: "human pdf" },
+          ],
+        },
+      },
+    },
+  );
+  expect(agentDoclistCreate.status()).toBe(201);
+  const agentDoclistCreateBody = (await agentDoclistCreate.json()) as {
+    record?: { id?: unknown; row_version?: unknown };
+  };
+  expect(agentDoclistCreateBody.record?.row_version).toBe(1);
+  expect(typeof agentDoclistCreateBody.record?.id).toBe("string");
+  const agentDoclistId = agentDoclistCreateBody.record?.id as string;
+
   const agentDoclistBefore = await page.request.get(
     `/api/agent/v1/pages/${homePage!.id}/components`,
     { headers: hostileAgentHeaders },
@@ -1779,93 +2336,6 @@ asyncio.run(main())
   expect(rowVersionOf(agentDoclistAfterBody, agentGalleryId)).toBe(1);
   expect(rowVersionOf(agentDoclistAfterBody, agentLogoGridId)).toBe(1);
 
-  // Editor path rejects the same hostile document references with the
-  // exact keys, plus the catalog label bound (shape guard).
-  await editorPostCase(
-    "doclist-out-of-range",
-    "DocumentList",
-    27,
-    { title: "hostile documents", items: doclistHostileItems(13) },
-    "doclist.items-out-of-range",
-  );
-  await editorPostCase(
-    "doclist-empty",
-    "DocumentList",
-    27,
-    { items: [] },
-    "doclist.items-out-of-range",
-  );
-  await editorPostCase(
-    "doclist-missing",
-    "DocumentList",
-    27,
-    { items: [{ label: "no reference" }] },
-    "doclist.item-missing",
-  );
-  await editorPostCase(
-    "doclist-not-pdf",
-    "DocumentList",
-    27,
-    { items: [{ mediaId: humanMediaId, label: "png" }] },
-    "doclist.item-not-pdf",
-  );
-  await editorPatchCase(
-    editorDoclistId,
-    "doclist-foreign",
-    { items: [{ mediaId: demoMediaId, label: "foreign png" }] },
-    "doclist.item-foreign-site",
-  );
-  await editorPatchCase(
-    editorDoclistId,
-    "doclist-not-pdf-mixed",
-    {
-      items: [
-        { mediaId: pdfAgentMediaId, label: "valid pdf" },
-        { mediaId: agentMediaId, label: "png" },
-      ],
-    },
-    "doclist.item-not-pdf",
-  );
-  await editorPatchCase(
-    editorDoclistId,
-    "doclist-label-bound",
-    { items: [{ mediaId: pdfAgentMediaId, label: "x".repeat(121) }] },
-    null,
-  );
-
-  // R3 REQUIRED image-class regression negatives at composition: now that
-  // PDFs are uploadable, the image-class components reject PDF references
-  // with their exact existing keys (079/1 Image key:
-  // COMPONENT_BINDING_INVALID on the Editor surface).
-  await editorPostCase(
-    "gallery-pdf-item",
-    "Gallery",
-    28,
-    {
-      title: "hostile gallery pdf",
-      items: [{ mediaId: pdfHumanMediaId, alt: "pdf item" }],
-    },
-    "gallery.item-not-image",
-  );
-  await editorPostCase(
-    "logogrid-pdf-item",
-    "LogoGrid",
-    28,
-    {
-      items: [
-        { mediaId: pdfHumanMediaId, name: "pdf one" },
-        { mediaId: pdfAgentMediaId, name: "pdf two" },
-      ],
-    },
-    "logogrid.item-not-image",
-  );
-  await editorPostCase(
-    "image-pdf-binding",
-    "Image",
-    28,
-    { mediaId: pdfHumanMediaId, alt: "pdf as image" },
-    "COMPONENT_BINDING_INVALID",
-  );
   await agentPatchCase(
     agentGalleryId,
     "gallery-pdf-item",
@@ -1883,6 +2353,7 @@ asyncio.run(main())
     },
     "logogrid.item-not-image",
   );
+
   const agentImagePdfCreate = await page.request.post(
     `/api/agent/v1/pages/${homePage!.id}/components`,
     {
@@ -1931,7 +2402,7 @@ asyncio.run(main())
   expect(crossSite.status()).toBe(404);
   const crossSiteBody = (await crossSite.json()) as { error: { code: string } };
   expect(crossSiteBody.error.code).toBe("RESOURCE_NOT_FOUND");
-  expect(await crossSite.body()).not.toEqual(TINY_PNG);
+  expect(await crossSite.body()).not.toEqual(agentPngBytes);
 
   // 2-3. Forged and unknown digests: 404 (not 403) end to end.
   const forgedDigest = "0".repeat(64);
@@ -1967,59 +2438,6 @@ asyncio.run(main())
   );
   expect([404, 422]).toContain(traversal.status());
   expect(await traversal.body()).not.toEqual(fixtureBytes);
-
-  // 7. SVG upload: rejected by MIME policy, never sanitized or stored.
-  const svgUpload = await page.request.post("/api/agent/v1/media/assets", {
-    headers: {
-      ...agentHeaders,
-      "Idempotency-Key": `oap-079a-hostile-svg-${tag}`,
-    },
-    multipart: uploadForm(Buffer.from("<svg></svg>"), "x.svg", "image/svg+xml"),
-  });
-  expect(svgUpload.status()).toBe(422);
-  expect(((await svgUpload.json()) as { error: { code: string } }).error.code).toBe(
-    "DOMAIN_VALIDATION_FAILED",
-  );
-
-  // 8. Oversized upload: edge body limit rejects before the service.
-  const oversized = Buffer.alloc(101 * 1024 * 1024, 0);
-  TINY_PNG.copy(oversized, 0);
-  const oversizedUpload = await page.request.post("/api/agent/v1/media/assets", {
-    headers: {
-      ...agentHeaders,
-      "Idempotency-Key": `oap-079a-hostile-oversized-${tag}`,
-    },
-    multipart: uploadForm(oversized, "large.png", "image/png"),
-  });
-  expect(oversizedUpload.status()).toBe(413);
-  oversized.fill(0);
-
-  // 9. Missing idempotency key: 400 with the exact bounded key.
-  const missingKey = await page.request.post("/api/agent/v1/media/assets", {
-    headers: agentHeaders,
-    multipart: uploadForm(TINY_PNG, "agent-proof.png", "image/png"),
-  });
-  expect(missingKey.status()).toBe(400);
-  expect(((await missingKey.json()) as { error: { code: string } }).error.code).toBe(
-    "IDEMPOTENCY_KEY_REQUIRED",
-  );
-
-  // 10. Foreign-mediaId component prop: bounded 422 with the exact prop key.
-  const foreignImage = await page.request.post(compositionPath, {
-    headers: editorHeaders(`oap-079a-hostile-foreign-media-${tag}`),
-    data: {
-      component_type: "Image",
-      slot_key: "default",
-      order_key: 22,
-      props: { mediaId: demoMediaId, alt: "foreign reference" },
-    },
-  });
-  expect(foreignImage.status()).toBe(422);
-  const foreignImageBody = (await foreignImage.json()) as {
-    error: { code: string; details?: { prop_error?: string } };
-  };
-  expect(foreignImageBody.error.code).toBe("DOMAIN_VALIDATION_FAILED");
-  expect(foreignImageBody.error.details?.prop_error).toBe("COMPONENT_BINDING_INVALID");
 
   // 11. Corrupt public digest read: 503 while corrupted, 200 after restore.
   const publicObjectPath = objectPath(fixtureDigest, true);
@@ -2061,25 +2479,14 @@ asyncio.run(main())
     await restoredContext.close();
   }
 
-  // 12. Revoked capability: 401 with the bounded key.
-  const revokeResponse = await page.request.post(
-    `/api/control/v1/sites/${parity.site_id}/workspaces/${agentWorkspaceId}/capabilities/${agentCapabilityId}/revoke`,
-    { headers: { "X-CSRF-Token": csrf! } },
-  );
-  expect(revokeResponse.status()).toBe(200);
-  const revokedUpload = await page.request.post("/api/agent/v1/media/assets", {
-    headers: agentHeaders,
-    multipart: uploadForm(TINY_PNG, "agent-proof.png", "image/png"),
-  });
-  expect(revokedUpload.status()).toBe(401);
-  expect(((await revokedUpload.json()) as { error: { code: string } }).error.code).toBe(
-    "AUTHENTICATION_REQUIRED",
-  );
-
   // 13. Non-member preview denial: the compose local administrator IS the
   // platform administrator (platform-admin preview authority outlives any
   // membership toggle), so the denial is proven with a seeded local user
-  // that holds no site membership and no platform-administrator row.
+  // that holds no site membership and no platform-administrator row. The
+  // preview boundary serves ACTIVE workspaces only and the pinned preview
+  // workspace was ACCEPTED in cycle 3, so the denial and its control are
+  // proven against the hostile workspace, which this spec never freezes
+  // and therefore stays ACTIVE end to end.
   // Fixture credential: fake placeholder, compose stack is disposable.
   const DENIED_USERNAME = "oap079a.denied";
   const DENIED_PASSWORD = "oap-079a-denied-fixture-password";
@@ -2124,7 +2531,7 @@ asyncio.run(main())
     });
     expect(deniedLogin.status()).toBe(200);
     const nonMemberPreview = await deniedContext.request.get(
-      `/preview/${previewWorkspaceId}/s/parity/`,
+      `/preview/${hostileWorkspaceId}/s/parity/`,
     );
     expect(nonMemberPreview.status()).toBe(404);
     const nonMemberMedia = await deniedContext.request.get(
@@ -2137,7 +2544,7 @@ asyncio.run(main())
   // Control: the administrator (platform-administrator branch) keeps
   // preview authority, so the denial above is membership-based.
   const restoredPreview = await page.request.get(
-    `/preview/${previewWorkspaceId}/s/parity/`,
+    `/preview/${hostileWorkspaceId}/s/parity/`,
   );
   expect(restoredPreview.status()).toBe(200);
 
@@ -2165,7 +2572,7 @@ asyncio.run(main())
     },
   ]);
   const revokedSessionPreview = await page.request.get(
-    `/preview/${previewWorkspaceId}/s/parity/`,
+    `/preview/${hostileWorkspaceId}/s/parity/`,
   );
   expect(revokedSessionPreview.status()).toBe(404);
   const revokedSessionMedia = await page.request.get(
@@ -2199,13 +2606,24 @@ asyncio.run(main())
   // preview project also legitimately creates editor components on this
   // shared parity fixture page (its own audit rows), while the order
   // requires exact COW audit rows for this spec's reference mutation.
+  // Each row is bound to the workspace its node was actually created
+  // through: the agent Image via the X-Editor-Workspace selection (agent
+  // workspace), the human Image via headerless resolution to the pinned
+  // ACTIVE HUMAN preview workspace.
   const editorAuditCheck = psql(
     project,
     `SELECT count(*) = 2
        AND count(*) FILTER (WHERE response_status = 201) = 2
        AND count(*) FILTER (
-             WHERE action = 'POST /api/editor/v1/sites/${parity.site_id}/pages/${homePage!.id}/composition/components'
-               AND workspace_id = '${previewWorkspaceId}'::uuid) = 2
+             WHERE resource_id = '${imageComponentId}'::uuid
+               AND action = 'POST /api/editor/v1/sites/${parity.site_id}/pages/${homePage!.id}/composition/components'
+               AND workspace_id = '${agentWorkspaceId}'::uuid
+               AND site_id = '${parity.site_id}'::uuid) = 1
+       AND count(*) FILTER (
+             WHERE resource_id = '${humanComponentId}'::uuid
+               AND action = 'POST /api/editor/v1/sites/${parity.site_id}/pages/${homePage!.id}/composition/components'
+               AND workspace_id = '${previewWorkspaceId}'::uuid
+               AND site_id = '${parity.site_id}'::uuid) = 1
       FROM audit.human_editor_mutation
       WHERE action LIKE 'POST /api/editor/v1/sites/${parity.site_id}/pages/${homePage!.id}/composition/components%'
         AND resource_id IN ('${imageComponentId}'::uuid, '${humanComponentId}'::uuid);`,
@@ -2243,10 +2661,15 @@ asyncio.run(main())
   }
   const publicStatusCheck = psql(
     project,
-    `SELECT count(*) = 2
-       AND count(*) FILTER (WHERE published_at IS NOT NULL) = 2
+    `SELECT count(*) = 4
+       AND count(*) FILTER (WHERE published_at IS NOT NULL) = 4
       FROM content.media_asset
-      WHERE id IN ('${humanMediaId}'::uuid, '${agentMediaId}'::uuid)
+      WHERE id IN (
+            '${humanMediaId}'::uuid,
+            '${agentMediaId}'::uuid,
+            '${pdfHumanMediaId}'::uuid,
+            '${pdfAgentMediaId}'::uuid
+          )
         AND public_status = 'public';`,
   );
   expect(publicStatusCheck).toBe("t");

@@ -96,6 +96,8 @@ def _dsn(
     *, parameters: dict[str, str | int], database: str, user: str, password: str
 ) -> str:
     host = quote(str(parameters["host"]), safe="[]:.")
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
     return (
         f"postgresql://{quote(user, safe='')}:{quote(password, safe='')}@"
         f"{host}:{parameters['port']}/{quote(database, safe='')}"

@@ -18,18 +18,24 @@ The accept job is the only promotion path in the product.  Its sequence:
    by a re-materialized digest mismatch; the materializer sets a
    transaction-local COW context GUC, so it runs in this separate
    transaction, never inside the reviewer transaction);
-4. media finalization FIRST (before the commit) through the lazily
-   built media boundary (``store_unavailable``/
+4. media byte preparation FIRST (before the commit) through the lazily
+   built media boundary: each referenced media is resolved in the
+   workspace's COW context (pending assets included), digest-verified
+   and idempotently copied to the public namespace — byte preparation
+   only, no database status mutation (``store_unavailable``/
    ``repository_unavailable`` are retryable; an unresolvable media
    reference is a validation failure);
 5. ONE ``asyncpg_cow_reviewer`` transaction, all-or-nothing: advisory
    lock, ``PROMOTING`` re-check, the authoritative drift gate on the
    locked site row, the operation-watermark closure check through the
    foundation, ``commit_session(conflict_policy='error')``, the
-   canonical revision increment, the ``audit.promotion`` row, the
-   workspace ``ACCEPTED`` transition, the job ``SUCCEEDED`` terminal,
-   and the ``control.cache_outbox`` row.  Any failure (including a
-   ``CowConflictError``) rolls back ALL of it.
+   in-transaction publication mark (the least-authority
+   ``content.slaif_media_publicize_promoted`` helper over exactly the
+   promoted, base-referenced media), the canonical revision increment,
+   the ``audit.promotion`` row, the workspace ``ACCEPTED`` transition,
+   the job ``SUCCEEDED`` terminal, and the ``control.cache_outbox``
+   row.  Any failure (including a ``CowConflictError`` or a unique
+   constraint conflict) rolls back ALL of it.
 
 Terminal failure classes (all with the job terminal FAILED and the
 workspace returned to a human-actionable state): drift -> ``REVIEW`` +
@@ -65,8 +71,10 @@ from ..media_service.database import MediaDatabase
 from ..media_service.finalize import (
     FinalizationError,
     FinalizationManifest,
+    FinalizationRepositoryError,
     MediaFinalizationRepository,
     finalize_media_for_promotion,
+    publicize_promoted_media,
 )
 from ..media_service.store import MediaStore
 from . import snapshot as snapshot_module
@@ -394,15 +402,16 @@ async def _verify_snapshot(
             raise AcceptJobError(
                 "SNAPSHOT_VALIDATION_FAILED", kind="validation"
             ) from None
-    # Crash-replay idempotency (R3.10): media finalization (step 4,
-    # before the commit) marks the snapshot's referenced media public
-    # directly on the canonical base. A job re-claimed after a crash
-    # therefore observes exactly that private -> public flip. Normalize
-    # the re-materialized doc back to the freeze-time status for the
-    # snapshot-referenced media set before the digest comparison so the
-    # replay re-validates and commits exactly once; media outside the
-    # set keep their observed status, and every other drift still fails
-    # closed.
+    # Crash-replay idempotency (R3.10, retained legacy compatibility):
+    # a job interrupted BETWEEN the pre-077 pre-transaction mark and the
+    # promotion transaction persisted a private -> public flip on the
+    # canonical base that the new in-transaction mark never creates.
+    # For such retained pre-077 state a re-claim observes exactly that
+    # flip, so the re-materialized doc is normalized back to the
+    # freeze-time status for the snapshot-referenced media set before
+    # the digest comparison and the replay re-validates and commits
+    # exactly once; media outside the set keep their observed status,
+    # and every other drift still fails closed.
     frozen_status_by_id: dict[str, str] = {}
     if isinstance(media_references, list):
         for reference in media_references:
@@ -659,6 +668,29 @@ async def run_accept_job(
                 except CowConflictError as error:
                     raise AcceptJobError(
                         _conflict_code(error.conflicts), kind="conflict"
+                    ) from None
+                except asyncpg.UniqueViolationError:
+                    # A session row collides with a canonical row on a
+                    # unique key (two workspaces proposed the same media
+                    # hash; the first promotion committed it).  This is
+                    # deterministic: a retry can never repair it, so the
+                    # job terminates as a typed conflict.  The whole
+                    # transaction rolls back: no partial canonical
+                    # effect, no revision/audit/outbox.
+                    raise AcceptJobError(
+                        "UNIQUE_CONSTRAINT_CONFLICT", kind="conflict"
+                    ) from None
+                try:
+                    await publicize_promoted_media(
+                        site_id, facts["media_ids"], native=reviewer.native
+                    )
+                except FinalizationRepositoryError:
+                    # The promoted base state diverged from the frozen
+                    # media closure (missing or unreferenced row).
+                    # Deterministic: terminal validation refusal, same
+                    # transaction rollback.
+                    raise AcceptJobError(
+                        "SNAPSHOT_VALIDATION_FAILED", kind="validation"
                     ) from None
                 new_revision = await reviewer.native.fetchval(
                     "UPDATE control.site SET canonical_revision = "

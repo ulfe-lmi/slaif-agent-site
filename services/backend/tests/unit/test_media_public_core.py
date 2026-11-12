@@ -5,10 +5,24 @@ the record boundary is stubbed exactly at the narrow repository surface
 the finalization primitive orchestrates over, and the HTTP matrices run
 the real routes against a real on-disk store with a stub record
 database.
+
+The publication boundary is two phases, mirrored here:
+
+- Phase 1 (``finalize_media_for_promotion``): workspace-context record
+  resolution plus digest-verified, idempotent public byte preparation.
+  It performs NO database status mutation; the stubbed repository
+  verifies the actual (site, media, workspace) fetch arguments.
+- Phase 2 (``publicize_promoted_media``): the in-transaction
+  least-authority native call.  A fake native establishes orchestration
+  and error mapping only (exact SQL, arguments, P0002/P0003 mapping,
+  unrelated-failure and cancellation propagation); it is NOT proof of
+  atomic rollback or publication - the real reviewer-transaction
+  behavior is the primary's real-worker evidence, never these tests.
 """
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import os
 from datetime import UTC, datetime
@@ -16,6 +30,7 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
 
+import asyncpg
 import pytest
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
@@ -39,9 +54,11 @@ from slaif_agent_site.media_service.database import (
     MediaRecord,
 )
 from slaif_agent_site.media_service.finalize import (
+    MEDIA_PUBLICIZE_SQL,
     FinalizationError,
     FinalizationRepositoryError,
     finalize_media_for_promotion,
+    publicize_promoted_media,
 )
 from slaif_agent_site.media_service.store import (
     MediaStore,
@@ -98,31 +115,56 @@ def _record(
 
 
 class FakeRepository:
-    """The narrow record boundary the primitive orchestrates over."""
+    """The narrow record boundary the primitive orchestrates over.
+
+    Records are keyed by (site, media, workspace): a row exists only in
+    the workspace's own COW context, which is exactly what phase 1 must
+    resolve.  Every fetch is captured so tests can assert the ACTUAL
+    (site_id, media_id, workspace_id) arguments.  There is deliberately
+    no mark surface: phase 1 performs no database status mutation.
+    """
 
     def __init__(
         self,
-        records: dict[tuple[UUID, UUID], MediaRecord],
+        records: dict[tuple[UUID, UUID, UUID], MediaRecord],
         *,
         fetch_failures: dict[UUID, str] | None = None,
-        mark_failures: dict[UUID, str] | None = None,
     ) -> None:
         self._records = records
         self._fetch_failures = fetch_failures or {}
-        self._mark_failures = mark_failures or {}
-        self.marked: list[tuple[UUID, UUID, UUID]] = []
+        self.fetched: list[tuple[UUID, UUID, UUID]] = []
 
-    async def fetch_media(self, site_id: UUID, media_id: UUID) -> MediaRecord | None:
+    async def fetch_media(
+        self, site_id: UUID, media_id: UUID, workspace_id: UUID
+    ) -> MediaRecord | None:
+        self.fetched.append((site_id, media_id, workspace_id))
         if media_id in self._fetch_failures:
             raise FinalizationRepositoryError(self._fetch_failures[media_id])
-        return self._records.get((site_id, media_id))
+        return self._records.get((site_id, media_id, workspace_id))
 
-    async def mark_public(
-        self, site_id: UUID, media_id: UUID, workspace_id: UUID
-    ) -> None:
-        if media_id in self._mark_failures:
-            raise FinalizationRepositoryError(self._mark_failures[media_id])
-        self.marked.append((site_id, media_id, workspace_id))
+
+class FakeNative:
+    """Reviewer-connection stand-in recording the exact native call.
+
+    Establishes orchestration/error mapping only (SQL text, argument
+    order, sqlstate mapping, propagation); never atomicity or real
+    transaction behavior.
+    """
+
+    def __init__(self, *, error: BaseException | None = None) -> None:
+        self.error = error
+        self.calls: list[tuple[str, tuple[Any, ...]]] = []
+
+    async def execute(self, sql: str, *args: Any) -> None:
+        self.calls.append((sql, args))
+        if self.error is not None:
+            raise self.error
+
+
+def _postgres_error(sqlstate: str) -> asyncpg.PostgresError:
+    error = asyncpg.PostgresError(f"synthetic {sqlstate}")
+    error.sqlstate = sqlstate
+    return error
 
 
 # --- R1: public namespace store behavior -------------------------------
@@ -208,7 +250,7 @@ async def test_finalization_happy_path_mixed_and_deterministic(
     second_digest = _digest(JPEG)
     repository = FakeRepository(
         {
-            (site_id, first): _record(
+            (site_id, first, workspace_id): _record(
                 first,
                 site_id,
                 payload=PNG,
@@ -216,7 +258,7 @@ async def test_finalization_happy_path_mixed_and_deterministic(
                 storage_key=first_key,
                 public_status="public",
             ),
-            (site_id, second): _record(
+            (site_id, second, workspace_id): _record(
                 second,
                 site_id,
                 payload=JPEG,
@@ -248,7 +290,9 @@ async def test_finalization_happy_path_mixed_and_deterministic(
             "public_key": _public_key(second_digest),
         },
     ]
-    assert repository.marked == [
+    # The ACTUAL workspace-scoped fetch arguments: deduplicated, sorted,
+    # each resolved in the passed workspace context.
+    assert repository.fetched == [
         (site_id, first, workspace_id),
         (site_id, second, workspace_id),
     ]
@@ -271,14 +315,14 @@ async def test_finalization_store_failure_manifest_exact(
     first_digest = _digest(PNG)
     repository = FakeRepository(
         {
-            (site_id, first): _record(
+            (site_id, first, workspace_id): _record(
                 first,
                 site_id,
                 payload=PNG,
                 mime_type="image/png",
                 storage_key=first_key,
             ),
-            (site_id, second): _record(
+            (site_id, second, workspace_id): _record(
                 second,
                 site_id,
                 payload=JPEG,
@@ -305,10 +349,15 @@ async def test_finalization_store_failure_manifest_exact(
             "public_key": _public_key(first_digest),
         }
     ]
-    assert repository.marked == [(site_id, first, workspace_id)]
+    # Both records were resolved workspace-scoped; no status mutation
+    # exists for phase 1 to assert.
+    assert repository.fetched == [
+        (site_id, first, workspace_id),
+        (site_id, second, workspace_id),
+    ]
 
 
-async def test_finalization_mark_failure_includes_published_bytes(
+async def test_finalization_repository_failure_includes_published_bytes(
     tmp_path: Path,
 ) -> None:
     site_id = uuid4()
@@ -317,27 +366,20 @@ async def test_finalization_mark_failure_includes_published_bytes(
     second = UUID(int=2)
     store = MediaStore(tmp_path / "media")
     first_key = _publish(store, PNG, "image/png")
-    second_key = _publish(store, JPEG, "image/jpeg")
     first_digest = _digest(PNG)
-    second_digest = _digest(JPEG)
+    # The second asset is never resolved: its fetch fails at the record
+    # boundary, so no second object or record is even needed.
     repository = FakeRepository(
         {
-            (site_id, first): _record(
+            (site_id, first, workspace_id): _record(
                 first,
                 site_id,
                 payload=PNG,
                 mime_type="image/png",
                 storage_key=first_key,
             ),
-            (site_id, second): _record(
-                second,
-                site_id,
-                payload=JPEG,
-                mime_type="image/jpeg",
-                storage_key=second_key,
-            ),
         },
-        mark_failures={second: "media_not_workspace_referenced"},
+        fetch_failures={second: "repository_unavailable"},
     )
     with pytest.raises(FinalizationError) as excinfo:
         await finalize_media_for_promotion(
@@ -348,20 +390,22 @@ async def test_finalization_mark_failure_includes_published_bytes(
             repository=repository,
         )
     error = excinfo.value
-    assert error.reason == "media_not_workspace_referenced"
-    # The second asset's bytes WERE made public before the mark failed, so
-    # the manifest must list both, in deterministic order.
+    assert error.reason == "repository_unavailable"
+    # Exactly the bytes made public survive in the manifest: the first
+    # asset.  The second was never resolved, so it is neither verified
+    # nor prepared - and phase 1 mutated no database status at all.
     assert error.manifest.to_list() == [
         {
             "media_id": str(first),
             "digest": first_digest,
             "public_key": _public_key(first_digest),
-        },
-        {
-            "media_id": str(second),
-            "digest": second_digest,
-            "public_key": _public_key(second_digest),
-        },
+        }
+    ]
+    # Both resolutions were attempted in the passed workspace context;
+    # the second's boundary failure left it neither verified nor prepared.
+    assert repository.fetched == [
+        (site_id, first, workspace_id),
+        (site_id, second, workspace_id),
     ]
 
 
@@ -392,6 +436,95 @@ async def test_finalization_not_found_and_repository_errors(tmp_path: Path) -> N
             ),
         )
     assert excinfo.value.reason == "repository_unavailable"
+
+
+async def test_finalization_workspace_scoping_is_record_boundary(
+    tmp_path: Path,
+) -> None:
+    site_id = uuid4()
+    media_id = UUID(int=1)
+    other_workspace = uuid4()
+    store = MediaStore(tmp_path / "media")
+    key = _publish(store, PNG, "image/png")
+    # The record exists only in the workspace's own COW context.
+    repository = FakeRepository(
+        {
+            (site_id, media_id, other_workspace): _record(
+                media_id,
+                site_id,
+                payload=PNG,
+                mime_type="image/png",
+                storage_key=key,
+            ),
+        }
+    )
+    with pytest.raises(FinalizationError) as excinfo:
+        await finalize_media_for_promotion(
+            site_id,
+            uuid4(),
+            [media_id],
+            store=store,
+            repository=repository,
+        )
+    assert excinfo.value.reason == "media_not_found"
+    assert excinfo.value.manifest.to_list() == []
+    # The fetch itself carried the passed workspace id.
+    assert len(repository.fetched) == 1
+    assert repository.fetched[0][0] == site_id
+    assert repository.fetched[0][1] == media_id
+
+
+# --- R2b: phase 2 reviewer-transaction native call ----------------------
+
+
+async def test_publicize_promoted_media_passes_site_and_ids_to_native() -> None:
+    site_id = uuid4()
+    first = UUID(int=1)
+    second = UUID(int=2)
+    native = FakeNative()
+    await publicize_promoted_media(site_id, [second, first], native=native)
+    assert native.calls == [
+        (
+            "SELECT content.slaif_media_publicize_promoted($1,$2)",
+            (site_id, [second, first]),
+        )
+    ]
+    assert native.calls[0][0] == MEDIA_PUBLICIZE_SQL
+
+
+async def test_publicize_promoted_media_maps_p0002_to_media_not_found() -> None:
+    native = FakeNative(error=_postgres_error("P0002"))
+    with pytest.raises(FinalizationRepositoryError) as excinfo:
+        await publicize_promoted_media(uuid4(), [UUID(int=1)], native=native)
+    assert excinfo.value.reason == "media_not_found"
+    assert len(native.calls) == 1
+
+
+async def test_publicize_promoted_media_maps_p0003_to_not_referenced() -> None:
+    native = FakeNative(error=_postgres_error("P0003"))
+    with pytest.raises(FinalizationRepositoryError) as excinfo:
+        await publicize_promoted_media(uuid4(), [UUID(int=1)], native=native)
+    assert excinfo.value.reason == "media_not_workspace_referenced"
+
+
+async def test_publicize_promoted_media_reraises_unrelated_postgres_error() -> None:
+    unrelated = _postgres_error("42501")
+    native = FakeNative(error=unrelated)
+    with pytest.raises(asyncpg.PostgresError) as excinfo:
+        await publicize_promoted_media(uuid4(), [UUID(int=1)], native=native)
+    assert excinfo.value is unrelated
+
+
+async def test_publicize_promoted_media_reraises_non_postgres_error() -> None:
+    native = FakeNative(error=RuntimeError("connection lost"))
+    with pytest.raises(RuntimeError, match="connection lost"):
+        await publicize_promoted_media(uuid4(), [UUID(int=1)], native=native)
+
+
+async def test_publicize_promoted_media_propagates_cancellation() -> None:
+    native = FakeNative(error=asyncio.CancelledError())
+    with pytest.raises(asyncio.CancelledError):
+        await publicize_promoted_media(uuid4(), [UUID(int=1)], native=native)
 
 
 # --- R3/R4: public digest route + preview authorization matrix ---------

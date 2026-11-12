@@ -45,6 +45,8 @@ ORPHAN_PNG = b"\x89PNG\r\n\x1a\norphan-after-db-failure"
 def _locator(database: AgentSiteDatabase, role: str) -> str:
     login, password = database.credentials[role]
     host = quote(str(database.connection_parameters["host"]), safe="[]:.")
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
     return (
         f"postgresql://{quote(login, safe='')}:{quote(password, safe='')}@"
         f"{host}:{database.connection_parameters['port']}/{database.name}"
@@ -268,16 +270,19 @@ async def test_media_ordinary_rbac_isolation_editor_delete_and_orphan(
                 record_a = uploaded.json()["record"]
                 media_a = UUID(record_a["id"])
 
-                # Site-scoped media (068): an authorized member of the same
-                # site reads the record from a different workspace — media
-                # is content-addressed and immutable, so visibility is
-                # site-scoped, not workspace-scoped.
+                # Workspace-isolated pending media (077): the just-uploaded
+                # asset is a pending change of workspace A only.  An
+                # authorized member of the same site reading from a
+                # different workspace must not see it before human
+                # promotion (site-scoped canonical visibility applies to
+                # promoted base rows, not to another workspace's pending
+                # change rows).
                 foreign_workspace = await media_client.get(
                     f"/v1/sites/{ids['site_a']}/assets/{media_a}/content",
                     headers={"cookie": _cookie(session_b)},
                 )
-                assert foreign_workspace.status_code == 200
-                assert foreign_workspace.content == PNG
+                assert foreign_workspace.status_code == 404
+                assert str(media_a) not in foreign_workspace.text
 
                 second_site = await media_client.post(
                     f"/v1/sites/{ids['site_b']}/assets",
@@ -312,6 +317,13 @@ async def test_media_ordinary_rbac_isolation_editor_delete_and_orphan(
                 assert patch.json()["content_hash"] == record_a["content_hash"]
                 assert patch.json()["storage_key"] == record_a["storage_key"]
 
+                # A3: the editorial PATCH is a workspace-pending update of
+                # the same change row; it must not leak to workspace B.
+                patched_foreign = await media_client.get(
+                    f"/v1/sites/{ids['site_a']}/assets/{media_a}/content",
+                    headers={"cookie": _cookie(session_b)},
+                )
+                assert patched_foreign.status_code == 404
                 editor_b = await editor_client.get(
                     f"/api/editor/v1/sites/{ids['site_b']}/media/{media_b}",
                     headers={"cookie": _cookie(session_b)},
