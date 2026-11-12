@@ -90,7 +90,7 @@ The gate proves the following bounded contracts:
   identical distributed path, mode, size, link-target, and content digests.
 - The browser worker compiles its frozen TypeScript source and declares exact
   `playwright-core==1.62.1`. Its normalized source/security-profile manifest,
-  deployed production package closure, and retained Chromium revision-1234
+  deployed production package closure, and retained Chromium revision-1717349
   runtime tree must reproduce exactly.
 - Every project image is built twice with the same exact inputs and without a
   Docker build cache. Normalized package inventories and application runtime
