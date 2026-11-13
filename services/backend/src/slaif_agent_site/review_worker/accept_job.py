@@ -74,6 +74,7 @@ from ..media_service.finalize import (
     FinalizationRepositoryError,
     MediaFinalizationRepository,
     finalize_media_for_promotion,
+    log_bounded_db_failure,
     publicize_promoted_media,
 )
 from ..media_service.store import MediaStore
@@ -152,6 +153,13 @@ class MediaBoundary:
                 selected = self._settings or MediaSettings.load()
                 database = MediaDatabase(selected)
                 await database.start()
+                failed_reason = database.last_failure_reason
+                if failed_reason is not None:
+                    LOGGER.warning(
+                        "slaif-diag: review-job phase=media-db-start "
+                        "outcome=failed reason=%s",
+                        failed_reason,
+                    )
                 self._database = database
                 self._store = MediaStore(
                     selected.media_root,
@@ -246,7 +254,8 @@ async def _read_pipeline_state(
                 "WHERE w.id = $1",
                 workspace_id,
             )
-    except (asyncpg.PostgresError, TimeoutError, OSError):
+    except (asyncpg.PostgresError, TimeoutError, OSError) as error:
+        log_bounded_db_failure("pipeline-read", error)
         return None, None
     if row is None:
         return None, "SITE_MISSING"
@@ -371,6 +380,7 @@ async def _verify_snapshot(
             )
         if stable_code is not None:
             raise AcceptJobError(stable_code, kind="validation") from None
+        log_bounded_db_failure("verify-snapshot", error)
         raise
     # asyncpg 0.31.0 returns jsonb as str: decode the materialized doc
     # here so the replay normalization below sees the media dict (the
@@ -541,9 +551,17 @@ async def run_accept_job(
     def _at_budget() -> bool:
         return attempt_count >= max_attempts
 
-    async def _retryable_or_budget() -> JobResult:
+    async def _retryable_or_budget(reason: str) -> JobResult:
         """Retryable failure: re-queue under budget, terminate at budget."""
 
+        LOGGER.warning(
+            "slaif-diag: review-job phase=retry outcome=%s reason=%s "
+            "attempt=%s max_attempts=%s",
+            "budget" if _at_budget() else "requeue",
+            reason,
+            attempt_count,
+            max_attempts,
+        )
         if _at_budget():
             budget_code = "REVIEW_JOB_STALE_AT_BUDGET"
             await _set_workspace_status(pool, workspace_id, "PROMOTING", "REVIEW")
@@ -577,7 +595,8 @@ async def run_accept_job(
                     "WHERE id = $1 AND status = 'ACCEPT_QUEUED'",
                     workspace_id,
                 )
-        except (asyncpg.PostgresError, TimeoutError, OSError):
+        except (asyncpg.PostgresError, TimeoutError, OSError) as error:
+            log_bounded_db_failure("status-promoting", error)
             return JobResult("ROLLED_BACK")
         if result != "UPDATE 1":
             await _mark_terminal(pool, job_id, "FAILED", "STATE_DRIFT")
@@ -609,17 +628,24 @@ async def run_accept_job(
     except FinalizationError as error:
         if error.reason in _RETRYABLE_FINALIZATION_REASONS:
             LOGGER.warning(
-                "accept media finalization retryable: job=%s reason=%s",
+                "slaif-diag: review-job phase=finalization outcome=failed "
+                "job=%s reason=%s",
                 job_id,
                 error.reason,
             )
-            return await _retryable_or_budget()
+            return await _retryable_or_budget(error.reason)
         await _set_workspace_status(pool, workspace_id, "PROMOTING", "REVIEW")
         await _mark_terminal(pool, job_id, "FAILED", "SNAPSHOT_VALIDATION_FAILED")
         return JobResult("FAILED", "SNAPSHOT_VALIDATION_FAILED")
     except MediaDatabaseConfigurationError:
-        return await _retryable_or_budget()
-    except (asyncpg.PostgresError, TimeoutError, OSError):
+        LOGGER.warning(
+            "slaif-diag: review-job phase=media-config outcome=failed "
+            "reason=configuration_invalid"
+        )
+        return await _retryable_or_budget("media_config_invalid")
+    except (asyncpg.PostgresError, TimeoutError, OSError) as error:
+        # Bounded diagnostic: class + SQLSTATE only, never the message.
+        log_bounded_db_failure("media-finalize", error)
         return JobResult("ROLLED_BACK")
     facts["media_manifest"] = manifest.to_list()
 
@@ -754,10 +780,16 @@ async def run_accept_job(
             await _set_workspace_status(pool, workspace_id, "PROMOTING", "CONFLICTED")
         await _mark_terminal(pool, job_id, "FAILED", error.code)
         return JobResult("FAILED", error.code)
-    except (asyncpg.PostgresError, TimeoutError, OSError):
+    except (asyncpg.PostgresError, TimeoutError, OSError) as error:
         # Transient failure inside the reviewer transaction: the scope
         # rolled back everything; the job stays CLAIMED for recovery.
-        return await _retryable_or_budget()
+        # Bounded diagnostic: class + SQLSTATE only, never the message.
+        log_bounded_db_failure("reviewer-tx", error)
+        return await _retryable_or_budget(
+            "postgres_transient"
+            if isinstance(error, asyncpg.PostgresError)
+            else "io_transient"
+        )
 
 
 __all__ = [

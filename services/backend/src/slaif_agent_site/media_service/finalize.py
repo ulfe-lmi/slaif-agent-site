@@ -30,7 +30,9 @@ connection need.
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol
@@ -42,6 +44,98 @@ from slaif_agent_site.agent_state.foundation import asyncpg_cow_session
 
 from .database import MediaDatabase, MediaRecord, _record
 from .store import MediaStore, MediaStoreError
+
+LOGGER = logging.getLogger(__name__)
+
+# Closed allowlist of the stable MediaStoreError reason tokens (the
+# exact constants the store raises); any other value is logged as
+# store_error. No exception message is ever forwarded.
+_STORE_REASON_TOKENS = frozenset(
+    {
+        "media-pdf-too-large",
+        "media_missing",
+        "media_signature_mismatch",
+        "storage_corrupt",
+        "storage_unavailable",
+        "unsupported_media",
+    }
+)
+_SQLSTATE_ALPHABET = frozenset("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ")
+_IDENTIFIER_SHAPE = re.compile(r"[A-Za-z_][A-Za-z0-9_$]{0,62}\Z")
+_CLASS_NAME_SHAPE = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,63}\Z")
+
+
+def _bounded_sqlstate(error: asyncpg.PostgresError) -> str:
+    sqlstate = error.sqlstate
+    if (
+        not isinstance(sqlstate, str)
+        or len(sqlstate) != 5
+        or not _SQLSTATE_ALPHABET.issuperset(sqlstate)
+    ):
+        return "-"
+    return sqlstate
+
+
+def _bounded_class_name(error: BaseException) -> str:
+    # A class name is code-identifiable; anything outside the closed
+    # identifier shape (which no real class produces) is emitted as the
+    # fixed token unknown rather than forwarded.
+    name = type(error).__name__
+    if not _CLASS_NAME_SHAPE.fullmatch(name):
+        return "unknown"
+    return name
+
+
+def _bounded_constraint(error: BaseException) -> str:
+    # The pinned asyncpg public field is constraint_name (error field
+    # 'n'); the value is a trusted identifier or omitted.
+    constraint = getattr(error, "constraint_name", None)
+    if isinstance(constraint, str) and _IDENTIFIER_SHAPE.fullmatch(constraint):
+        return constraint
+    return "-"
+
+
+def log_bounded_db_failure(phase: str, error: BaseException) -> None:
+    """Bounded worker diagnostic for a database-side failure.
+
+    Emits only the exception class name and, for PostgreSQL errors, the
+    five-character SQLSTATE from the closed alphabet. Never the
+    exception message: it can carry server detail, SQL text, or
+    connection strings.
+    """
+
+    if isinstance(error, asyncpg.PostgresError):
+        LOGGER.warning(
+            "slaif-diag: review-job phase=%s outcome=failed class=%s sqlstate=%s",
+            phase,
+            _bounded_class_name(error),
+            _bounded_sqlstate(error),
+        )
+    else:
+        LOGGER.warning(
+            "slaif-diag: review-job phase=%s outcome=failed class=%s",
+            phase,
+            _bounded_class_name(error),
+        )
+
+
+def log_bounded_fetch_failure(error: BaseException) -> None:
+    """Bounded worker diagnostic for the finalization COW fetch failure."""
+
+    if isinstance(error, asyncpg.PostgresError):
+        LOGGER.warning(
+            "slaif-diag: review-job phase=fetch outcome=failed class=%s "
+            "sqlstate=%s constraint=%s",
+            _bounded_class_name(error),
+            _bounded_sqlstate(error),
+            _bounded_constraint(error),
+        )
+    else:
+        LOGGER.warning(
+            "slaif-diag: review-job phase=fetch outcome=failed class=%s",
+            _bounded_class_name(error),
+        )
+
 
 MEDIA_PUBLIC_FETCH_SQL = "SELECT * FROM content.slaif_media_public_fetch($1,$2)"
 MEDIA_PUBLICIZE_SQL = "SELECT content.slaif_media_publicize_promoted($1,$2)"
@@ -128,9 +222,29 @@ class MediaFinalizationRepository:
                 )
         except asyncio.CancelledError:
             raise
-        except Exception:
+        except Exception as error:
+            # Bounded worker diagnostic (class/SQLSTATE/constraint only,
+            # never the message); the stable reason mapping is unchanged.
+            log_bounded_fetch_failure(error)
             raise FinalizationRepositoryError("repository_unavailable") from None
         return None if row is None else _record(row)
+
+
+def _log_store_failure(phase: str, error: MediaStoreError) -> None:
+    """Bounded worker diagnostic: the stable store reason only, no paths.
+
+    The message is consulted only for closed-set membership; it is
+    never forwarded.
+    """
+
+    reason = str(error)
+    if reason not in _STORE_REASON_TOKENS:
+        reason = "store_error"
+    LOGGER.warning(
+        "slaif-diag: review-job phase=%s outcome=failed reason=%s",
+        phase,
+        reason,
+    )
 
 
 async def finalize_media_for_promotion(
@@ -172,7 +286,8 @@ async def finalize_media_for_promotion(
                 record.content_hash,
                 record.size_bytes,
             )
-        except MediaStoreError:
+        except MediaStoreError as error:
+            _log_store_failure("open_verified", error)
             raise _failure("store_unavailable") from None
         finally:
             if descriptor is not None:
@@ -184,7 +299,8 @@ async def finalize_media_for_promotion(
                 record.content_hash,
                 record.size_bytes,
             )
-        except MediaStoreError:
+        except MediaStoreError as error:
+            _log_store_failure("publish_public", error)
             raise _failure("store_unavailable") from None
         manifest.append(
             FinalizedMedia(

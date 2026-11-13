@@ -15,8 +15,22 @@ cleanup() {
 }
 trap cleanup EXIT HUP INT TERM
 
+collect_worker_diag() {
+  # Bounded sanitized collection for the CI log on any stage failure.
+  # The container stdout+stderr are merged into the sanitizer (never
+  # emitted raw): it re-emits ONLY the fixed bounded fields of lines
+  # whose JSON message starts with the exact diagnostic prefix, and
+  # drops everything else - markers embedded in other JSON fields or
+  # unrelated messages, non-JSON/malformed lines, unknown keys, and
+  # out-of-shape values. Capped at 60 sanitized lines.
+  docker logs --tail 400 "${PROJECT}-review-worker-1" 2>&1 \
+    | node "$ROOT/tools/compose/diag-sanitize.mjs" \
+    | head -n 60 || true
+}
+
 fail() {
   echo "compose-e2e: FAILED stage=$1 reason=$2" >&2
+  collect_worker_diag
   exit 1
 }
 

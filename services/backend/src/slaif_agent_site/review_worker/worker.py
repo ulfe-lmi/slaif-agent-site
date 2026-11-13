@@ -10,6 +10,7 @@ from typing import Any
 
 import asyncpg
 
+from ..media_service.finalize import log_bounded_db_failure
 from .accept_job import shutdown_media_boundary
 from .config import ReviewWorkerConfigurationError, ReviewWorkerSettings
 from .freeze_job import JobResult, run_job
@@ -126,7 +127,11 @@ async def _worker_loop(
                 result: JobResult
                 try:
                     result = await run_job(pool, settings, job)
-                except Exception:
+                except Exception as error:
+                    # Bounded diagnostic only (closed class/job fields);
+                    # the existing exception log and ROLLED_BACK control
+                    # flow are unchanged.
+                    log_bounded_db_failure("worker-crash", error)
                     LOGGER.exception(
                         "review job crashed without a terminal record",
                         extra={"event_fields": {"job_id": str(job["id"])}},
