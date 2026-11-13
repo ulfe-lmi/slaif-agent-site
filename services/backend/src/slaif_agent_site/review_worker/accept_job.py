@@ -675,7 +675,17 @@ async def run_accept_job(
                 )
                 if int(revision) != facts["base_site_revision"]:
                     raise AcceptJobError("SITE_REVISION_CHANGED", kind="drift")
+                LOGGER.warning(
+                    "slaif-diag: review-job phase=reviewer-step step=operations "
+                    "outcome=start job=%s",
+                    job_id,
+                )
                 operations = await reviewer.operations(workspace_id, schema="content")
+                LOGGER.warning(
+                    "slaif-diag: review-job phase=reviewer-step step=dependencies "
+                    "outcome=start job=%s",
+                    job_id,
+                )
                 dependencies = await reviewer.dependencies(
                     workspace_id, schema="content"
                 )
@@ -685,6 +695,11 @@ async def run_accept_job(
                         "SNAPSHOT_VALIDATION_FAILED", kind="validation"
                     )
                 try:
+                    LOGGER.warning(
+                        "slaif-diag: review-job phase=reviewer-step "
+                        "step=commit-session outcome=start job=%s",
+                        job_id,
+                    )
                     result = await reviewer.commit_session(
                         workspace_id,
                         schema="content",
@@ -707,6 +722,11 @@ async def run_accept_job(
                         "UNIQUE_CONSTRAINT_CONFLICT", kind="conflict"
                     ) from None
                 try:
+                    LOGGER.warning(
+                        "slaif-diag: review-job phase=reviewer-step step=publicize "
+                        "outcome=start job=%s",
+                        job_id,
+                    )
                     await publicize_promoted_media(
                         site_id, facts["media_ids"], native=reviewer.native
                     )
@@ -718,11 +738,21 @@ async def run_accept_job(
                     raise AcceptJobError(
                         "SNAPSHOT_VALIDATION_FAILED", kind="validation"
                     ) from None
+                LOGGER.warning(
+                    "slaif-diag: review-job phase=reviewer-step step=revision "
+                    "outcome=start job=%s",
+                    job_id,
+                )
                 new_revision = await reviewer.native.fetchval(
                     "UPDATE control.site SET canonical_revision = "
                     "canonical_revision + 1 WHERE id = $1 RETURNING "
                     "canonical_revision",
                     site_id,
+                )
+                LOGGER.warning(
+                    "slaif-diag: review-job phase=reviewer-step step=audit "
+                    "outcome=start job=%s",
+                    job_id,
                 )
                 await reviewer.native.execute(
                     "INSERT INTO audit.promotion "
@@ -743,6 +773,11 @@ async def run_accept_job(
                     ),
                     actor_user_account_id,
                 )
+                LOGGER.warning(
+                    "slaif-diag: review-job phase=reviewer-step "
+                    "step=workspace-terminal outcome=start job=%s",
+                    job_id,
+                )
                 updated = await reviewer.native.execute(
                     "UPDATE control.workspace SET status = 'ACCEPTED', "
                     "accepted_at = now() WHERE id = $1 AND status = 'PROMOTING'",
@@ -750,8 +785,18 @@ async def run_accept_job(
                 )
                 if updated != "UPDATE 1":
                     raise AcceptJobError("STATE_DRIFT", kind="state")
+                LOGGER.warning(
+                    "slaif-diag: review-job phase=reviewer-step step=job-terminal "
+                    "outcome=start job=%s",
+                    job_id,
+                )
                 await reviewer.native.fetchval(
                     "SELECT control.slaif_review_job_terminal($1, 'SUCCEEDED', NULL)",
+                    job_id,
+                )
+                LOGGER.warning(
+                    "slaif-diag: review-job phase=reviewer-step step=outbox "
+                    "outcome=start job=%s",
                     job_id,
                 )
                 await reviewer.native.execute(

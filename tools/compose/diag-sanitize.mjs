@@ -26,9 +26,21 @@ const PHASES = new Set([
   "status-promoting",
   "verify-snapshot",
   "media-finalize",
+  "reviewer-step",
   "worker-crash",
 ]);
-const OUTCOMES = new Set(["failed", "requeue", "budget"]);
+const OUTCOMES = new Set(["failed", "requeue", "budget", "start"]);
+const STEPS = new Set([
+  "operations",
+  "dependencies",
+  "commit-session",
+  "publicize",
+  "revision",
+  "audit",
+  "workspace-terminal",
+  "job-terminal",
+  "outbox",
+]);
 const REASONS = new Set([
   "storage_corrupt",
   "media_missing",
@@ -76,6 +88,9 @@ function normalizeField(token, seen) {
       break;
     case "constraint":
       ok = value === "-" || IDENT_SHAPE.test(value);
+      break;
+    case "step":
+      ok = STEPS.has(value);
       break;
     case "reason":
       ok = REASONS.has(value);
