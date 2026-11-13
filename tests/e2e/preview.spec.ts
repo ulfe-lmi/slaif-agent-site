@@ -460,77 +460,85 @@ test("renderer theme tokens preserve local precedence and semantic contrast", as
 }) => {
   const response = await page.goto("/s/parity/");
   expect(response?.status()).toBe(200);
-  await page.evaluate(() => {
-    const surface = document.querySelector("main.renderer-surface");
-    if (!(surface instanceof HTMLElement)) throw new Error("theme-surface-missing");
-    const probe = document.createElement("div");
-    probe.id = "theme-token-evidence";
-    probe.innerHTML = `
-      <div id="theme-grid" class="renderer-grid renderer-grid--2 renderer-gap--none renderer-gap--mobile-sm">grid</div>
-      <a id="theme-primary" class="renderer-button renderer-button--primary" href="/">Primary</a>
-      <a id="theme-secondary" class="renderer-button renderer-button--secondary" href="/">Secondary</a>
-      <a id="theme-ghost" class="renderer-button renderer-button--ghost" href="/">Ghost</a>
-    `;
-    surface.append(probe);
-  });
+  // Injected fixture children did not survive to later page tasks in CI
+  // (observed missing-theme-primary); React-managed child replacement
+  // remains a source hypothesis, not a proven runtime cause. Each consuming
+  // evaluate below therefore removes any stale fixture and re-creates the
+  // complete probe in the same task as its mutation and style reads:
+  // deterministic ownership/readiness without sleep, networkidle, retry or
+  // skip.
+  const themeProbeMarkup = `
+    <div id="theme-grid" class="renderer-grid renderer-grid--2 renderer-gap--none renderer-gap--mobile-sm">grid</div>
+    <a id="theme-primary" class="renderer-button renderer-button--primary" href="/">Primary</a>
+    <a id="theme-secondary" class="renderer-button renderer-button--secondary" href="/">Secondary</a>
+    <a id="theme-ghost" class="renderer-button renderer-button--ghost" href="/">Ghost</a>
+  `;
   await page.setViewportSize({ width: 1280, height: 800 });
 
   const paletteEvidence = async (palette: "ocean" | "meadow" | "ember") =>
-    page.evaluate((nextPalette) => {
-      const surface = document.querySelector("main.renderer-surface");
-      if (!(surface instanceof HTMLElement)) throw new Error("theme-surface-missing");
-      for (const token of ["ocean", "meadow", "ember"])
-        surface.classList.remove(`renderer-theme-palette--${token}`);
-      surface.classList.add(`renderer-theme-palette--${nextPalette}`);
-      const rootStyle = getComputedStyle(surface);
-      const rgb = (value: string): [number, number, number] => {
-        const match = value.match(
-          /^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)(?:\s*,\s*[\d.]+)?\s*\)$/,
-        );
-        if (!match) throw new Error(`non-solid-color:${value}`);
-        return [Number(match[1]), Number(match[2]), Number(match[3])];
-      };
-      const luminance = (value: string) => {
-        const channels = rgb(value).map((channel) => {
-          const normalized = channel / 255;
-          return normalized <= 0.03928
-            ? normalized / 12.92
-            : ((normalized + 0.055) / 1.055) ** 2.4;
-        });
-        return 0.2126 * channels[0]! + 0.7152 * channels[1]! + 0.0722 * channels[2]!;
-      };
-      const contrast = (foreground: string, background: string) => {
-        const foregroundLuminance = luminance(foreground);
-        const backgroundLuminance = luminance(background);
-        return (
-          (Math.max(foregroundLuminance, backgroundLuminance) + 0.05) /
-          (Math.min(foregroundLuminance, backgroundLuminance) + 0.05)
-        );
-      };
-      const role = (id: string) => {
-        const element = document.getElementById(id);
-        if (!(element instanceof HTMLElement)) throw new Error(`missing-${id}`);
-        const style = getComputedStyle(element);
-        const background = style.backgroundColor.startsWith("rgba(0, 0, 0, 0)")
-          ? rootStyle.backgroundColor
-          : style.backgroundColor;
-        return {
-          background,
-          color: style.color,
-          contrast: contrast(style.color, background),
+    page.evaluate(
+      ({ palette: nextPalette, markup }) => {
+        const surface = document.querySelector("main.renderer-surface");
+        if (!(surface instanceof HTMLElement)) throw new Error("theme-surface-missing");
+        document.getElementById("theme-token-evidence")?.remove();
+        const probe = document.createElement("div");
+        probe.id = "theme-token-evidence";
+        probe.innerHTML = markup;
+        surface.append(probe);
+        for (const token of ["ocean", "meadow", "ember"])
+          surface.classList.remove(`renderer-theme-palette--${token}`);
+        surface.classList.add(`renderer-theme-palette--${nextPalette}`);
+        const rootStyle = getComputedStyle(surface);
+        const rgb = (value: string): [number, number, number] => {
+          const match = value.match(
+            /^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)(?:\s*,\s*[\d.]+)?\s*\)$/,
+          );
+          if (!match) throw new Error(`non-solid-color:${value}`);
+          return [Number(match[1]), Number(match[2]), Number(match[3])];
         };
-      };
-      return {
-        palette: nextPalette,
-        background: rootStyle.backgroundColor,
-        color: rootStyle.color,
-        roles: {
-          primary: role("theme-primary"),
-          secondary: role("theme-secondary"),
-          ghost: role("theme-ghost"),
-        },
-      };
-    }, palette);
+        const luminance = (value: string) => {
+          const channels = rgb(value).map((channel) => {
+            const normalized = channel / 255;
+            return normalized <= 0.03928
+              ? normalized / 12.92
+              : ((normalized + 0.055) / 1.055) ** 2.4;
+          });
+          return 0.2126 * channels[0]! + 0.7152 * channels[1]! + 0.0722 * channels[2]!;
+        };
+        const contrast = (foreground: string, background: string) => {
+          const foregroundLuminance = luminance(foreground);
+          const backgroundLuminance = luminance(background);
+          return (
+            (Math.max(foregroundLuminance, backgroundLuminance) + 0.05) /
+            (Math.min(foregroundLuminance, backgroundLuminance) + 0.05)
+          );
+        };
+        const role = (id: string) => {
+          const element = document.getElementById(id);
+          if (!(element instanceof HTMLElement)) throw new Error(`missing-${id}`);
+          const style = getComputedStyle(element);
+          const background = style.backgroundColor.startsWith("rgba(0, 0, 0, 0)")
+            ? rootStyle.backgroundColor
+            : style.backgroundColor;
+          return {
+            background,
+            color: style.color,
+            contrast: contrast(style.color, background),
+          };
+        };
+        return {
+          palette: nextPalette,
+          background: rootStyle.backgroundColor,
+          color: rootStyle.color,
+          roles: {
+            primary: role("theme-primary"),
+            secondary: role("theme-secondary"),
+            ghost: role("theme-ghost"),
+          },
+        };
+      },
+      { palette, markup: themeProbeMarkup },
+    );
 
   const expected = {
     ocean: { background: "rgb(11, 28, 34)", color: "rgb(244, 247, 248)" },
@@ -546,10 +554,16 @@ test("renderer theme tokens preserve local precedence and semantic contrast", as
     expect(evidence.roles.ghost.contrast).toBeGreaterThanOrEqual(4.5);
   }
 
-  const configured = await page.evaluate(() => {
+  const configured = await page.evaluate((markup: string) => {
     const surface = document.querySelector("main.renderer-surface");
+    if (!(surface instanceof HTMLElement)) throw new Error("theme-surface-missing");
+    document.getElementById("theme-token-evidence")?.remove();
+    const probe = document.createElement("div");
+    probe.id = "theme-token-evidence";
+    probe.innerHTML = markup;
+    surface.append(probe);
     const grid = document.getElementById("theme-grid");
-    if (!(surface instanceof HTMLElement) || !(grid instanceof HTMLElement))
+    if (!(grid instanceof HTMLElement))
       throw new Error("theme-computed-elements-missing");
     surface.className = [
       "renderer-surface",
@@ -573,7 +587,7 @@ test("renderer theme tokens preserve local precedence and semantic contrast", as
       paddingTop: rootStyle.paddingTop,
       gridGap: gridStyle.gap,
     };
-  });
+  }, themeProbeMarkup);
   expect(configured.family).toContain("Georgia");
   expect(configured.fontSize).toBe("17px");
   expect(configured.fontWeight).toBe("700");
@@ -584,11 +598,18 @@ test("renderer theme tokens preserve local precedence and semantic contrast", as
   await page.setViewportSize({ width: 390, height: 800 });
   await expect
     .poll(() =>
-      page.evaluate(() => {
+      page.evaluate((markup: string) => {
+        const surface = document.querySelector("main.renderer-surface");
+        if (!(surface instanceof HTMLElement)) throw new Error("theme-surface-missing");
+        document.getElementById("theme-token-evidence")?.remove();
+        const probe = document.createElement("div");
+        probe.id = "theme-token-evidence";
+        probe.innerHTML = markup;
+        surface.append(probe);
         const grid = document.getElementById("theme-grid");
         if (!(grid instanceof HTMLElement)) throw new Error("theme-grid-missing");
         return getComputedStyle(grid).gap;
-      }),
+      }, themeProbeMarkup),
     )
     .toBe("8px");
 
