@@ -114,9 +114,9 @@ promotion, publication, and final MVP claims.
 > runs with durable private artifact retrieval. Review snapshots, promotion,
 > publication, and public media finalization remain separate work.
 
-The supply-chain policy pins Chrome for Testing `157.0.8103.50` at CfT
-revision `1717349` (083-8-v security refresh of the 083-9-b maintenance
-update pin `156.0.8078.80`; that pin maintained the 083-5-c security
+The supply-chain policy pins Chrome for Testing `157.0.8103.78` at CfT
+revision `1717349` (083-10-a security refresh of the 083-8-v security refresh
+pin `157.0.8103.50` of the 083-9-b maintenance update pin `156.0.8078.80`; that pin maintained the 083-5-c security
 closure pin `156.0.8078.47`, which replaced the vulnerable `155.0.8059.84` payload). The 078-t built and scanned the six images, but its
 apparent zero-Critical result
 was unqualified because Syft omitted the Chrome 153 identity from the Grype
