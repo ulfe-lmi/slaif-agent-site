@@ -1114,10 +1114,13 @@ docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif -Atc \
   | grep -q '^1:1:[3-9][0-9]*:\(COMPLETED\|FAILED\|TIMED_OUT\|CANCELLED\)$'
 echo "agent-browser-http: OK create=202 dispatcher=QUEUED-to-terminal restart=durable"
 
-# Bind two additional durable QUEUED runs to the existing real COW preview
-# fixture. The trusted Agent-side client mints each opaque preview credential
-# only in process memory, verifies the signed worker result, and never prints or
-# writes either credential.
+# Bind two additional durable QUEUED runs to the dedicated still-ACTIVE smoke
+# browser workspace (0340, seeded by e2e.sh). The shared preview workspace is
+# terminal-ACCEPTED after the media-publication cycles, and a closed
+# workspace's capabilities no longer authenticate; the smoke runs therefore
+# must not bind it. The trusted Agent-side client mints each opaque preview
+# credential only in process memory, verifies the signed worker result, and
+# never prints or writes either credential.
 python - "$AGENT_CAPABILITY_CONFIG_FILE" "$AGENT_CAPABILITY_META_FILE" <<'PY'
 import hashlib
 import pathlib
@@ -1159,11 +1162,11 @@ docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif \
      (id,workspace_id,public_id,secret_digest,scopes,expires_at)
    VALUES
      ('15000000-0000-4000-8000-000000000004',
-      '12000000-0000-4000-8000-000000000301','$worker_capability_public',
+      '12000000-0000-4000-8000-000000000340','$worker_capability_public',
       '$worker_capability_digest','[\"preview:inspect\"]'::jsonb,
       CURRENT_TIMESTAMP + interval '1 hour'),
      ('15000000-0000-4000-8000-000000000005',
-      '12000000-0000-4000-8000-000000000301','$foreign_capability_public',
+      '12000000-0000-4000-8000-000000000340','$foreign_capability_public',
       '$foreign_capability_digest','[\"preview:inspect\"]'::jsonb,
       CURRENT_TIMESTAMP + interval '1 hour');" >/dev/null
 worker_run_ids=

@@ -241,6 +241,24 @@ docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif \
       'https://example.test/compose-target',301,NULL);
    COMMIT;" >/dev/null
 
+# Dedicated ACTIVE workspace for the downstream smoke agent-browser phase.
+# The shared preview workspace above is consumed by the media-publication
+# E2E cycles and ends terminal-ACCEPTED, and a closed workspace's
+# capabilities no longer authenticate; the smoke browser runs therefore bind
+# this separate still-ACTIVE workspace (same site, no pending content).
+docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif \
+  -v ON_ERROR_STOP=1 -c \
+  "BEGIN;
+   INSERT INTO control.workspace
+     (id, site_id, created_by, actor_type, title, delegation_preset,
+      version_facts, status, expires_at)
+   VALUES ('12000000-0000-4000-8000-000000000340'::uuid, '$site_id'::uuid,
+           '$admin_id'::uuid, 'HUMAN', 'Compose smoke browser fixture',
+           'L4_SITE_ARCHITECT',
+           '{\"catalog\":\"catalog-v1\",\"composition_schema\":\"site-composition/v1\",\"content_model\":\"content-model/v1\",\"design_system\":\"design-system/v1\",\"puck\":\"0.20.2\",\"renderer\":\"renderer-v1\"}'::jsonb,
+           'ACTIVE', CURRENT_TIMESTAMP + interval '1 hour');
+   COMMIT;" >/dev/null
+
 if ! SLAIF_E2E_SECRET_FILE="$SECRET_FILE" \
   SLAIF_E2E_PREVIEW_WORKSPACE_ID="$workspace_id" \
   SLAIF_E2E_OUTPUT_DIR="$OUTPUT_DIR" \
