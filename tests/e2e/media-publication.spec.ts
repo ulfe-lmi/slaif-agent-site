@@ -180,6 +180,15 @@ async function controlFreeze(
   };
 }
 
+/**
+ * Positive AGENT-workspace HTTP oracle: the human control detail read
+ * (038 `slaif_human_agent_workspace_get`) is explicitly scoped to
+ * `actor_type='AGENT'`, so this endpoint is valid for agent workspaces
+ * only — a 404 for an AGENT workspace is a genuine failure and must not
+ * be swallowed.  HUMAN workspaces have no generic authorized HTTP status
+ * read; `waitForReview` observes their status through the test fixture
+ * SQL instead.
+ */
 async function workspaceStatus(
   page: import("@playwright/test").Page,
   siteId: string,
@@ -203,6 +212,7 @@ async function waitForReview(
   project: string,
   siteId: string,
   workspaceId: string,
+  actorType: "AGENT" | "HUMAN",
 ): Promise<void> {
   const deadline = Date.now() + 240_000;
   for (;;) {
@@ -218,7 +228,14 @@ async function waitForReview(
         ),
       ),
     ).toBe(0);
-    const status = await workspaceStatus(page, siteId, workspaceId);
+    const status =
+      actorType === "AGENT"
+        ? await workspaceStatus(page, siteId, workspaceId)
+        : psql(
+            project,
+            `SELECT status FROM control.workspace
+               WHERE id = '${workspaceId}'::uuid`,
+          );
     if (status === "REVIEW") return;
     expect(["ACTIVE", "FREEZING"]).toContain(status);
     if (Date.now() > deadline) throw new Error(`timeout at status ${status}`);
@@ -259,6 +276,7 @@ async function acceptCycle(
   siteId: string,
   workspaceId: string,
   expectedManifest: Array<{ media_id: string; digest: string }>,
+  actorType: "AGENT" | "HUMAN",
 ): Promise<{
   snapshot_id: string;
   job_id: string;
@@ -274,7 +292,7 @@ async function acceptCycle(
   const freeze = await controlFreeze(page, siteId, workspaceId);
   expect(freeze.status).toBe(202);
   expect(freeze.job_id).toMatch(/^[0-9a-f-]{36}$/);
-  await waitForReview(page, project, siteId, workspaceId);
+  await waitForReview(page, project, siteId, workspaceId, actorType);
   // The freeze job the control call enqueued must itself have succeeded
   // (the snapshot is what the human review below accepts).
   const freezeDeadline = Date.now() + 240_000;
@@ -899,9 +917,14 @@ test("media-publication-core-human-agent-preview-finalize-public-hostile", async
   // for the AGENT workspace.  Its single reviewer transaction promotes the
   // pending Image node + pending media row and publishes exactly the
   // reviewed, referenced closure (the agent Image).
-  const cycle1 = await acceptCycle(page, project, parity.site_id, agentWorkspaceId, [
-    { media_id: agentMediaId, digest: agentPngDigest },
-  ]);
+  const cycle1 = await acceptCycle(
+    page,
+    project,
+    parity.site_id,
+    agentWorkspaceId,
+    [{ media_id: agentMediaId, digest: agentPngDigest }],
+    "AGENT",
+  );
   // Canonical promotion effects: the media row is public with a publish
   // timestamp, and the pending overlay is gone.
   expect(
@@ -1620,9 +1643,14 @@ test("media-publication-core-human-agent-preview-finalize-public-hostile", async
   // cross-workspace pending lookup cannot resolve the PDF while it is
   // still pending here, so it must already be canonical for that
   // reference to be valid.
-  await acceptCycle(page, project, parity.site_id, docWorkspaceId, [
-    { media_id: agentMediaId, digest: agentPngDigest },
-  ]);
+  await acceptCycle(
+    page,
+    project,
+    parity.site_id,
+    docWorkspaceId,
+    [{ media_id: agentMediaId, digest: agentPngDigest }],
+    "AGENT",
+  );
   // Canonical promotion effects: private, no publish timestamp, overlay gone.
   expect(
     psql(
@@ -1823,12 +1851,23 @@ test("media-publication-core-human-agent-preview-finalize-public-hostile", async
   // the existing agent PNG (already public since cycle 1, re-listed with no
   // new digest) plus the fixture PNG and both PDFs, of which the agent PDF
   // flips from canonical-private to public via the new reference.
-  const cycle3 = await acceptCycle(page, project, parity.site_id, previewWorkspaceId, [
-    { media_id: agentMediaId, digest: agentPngDigest },
-    { media_id: humanMediaId, digest: fixtureDigest },
-    { media_id: pdfAgentMediaId, digest: pdfAgentDigest },
-    { media_id: pdfHumanMediaId, digest: pdfHumanDigest },
-  ]);
+  // The shared parity preview workspace is HUMAN (driver-seeded
+  // actor_type='HUMAN'), so its status is observed via the test fixture
+  // SQL inside the cycle; the freeze/review/accept HTTP calls below are
+  // actor-agnostic and remain the real product boundary.
+  const cycle3 = await acceptCycle(
+    page,
+    project,
+    parity.site_id,
+    previewWorkspaceId,
+    [
+      { media_id: agentMediaId, digest: agentPngDigest },
+      { media_id: humanMediaId, digest: fixtureDigest },
+      { media_id: pdfAgentMediaId, digest: pdfAgentDigest },
+      { media_id: pdfHumanMediaId, digest: pdfHumanDigest },
+    ],
+    "HUMAN",
+  );
   // Canonical promotion effects: every referenced asset is public with a
   // publish timestamp, and the preview workspace's pending overlay is gone.
   expect(
