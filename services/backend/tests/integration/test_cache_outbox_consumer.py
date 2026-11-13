@@ -57,6 +57,7 @@ from slaif_agent_site.review_worker.outbox_consumer import (
     evaluate_outbox_row,
     outbox_round_due,
 )
+from test_agent_mutations import _reconcile_historical
 from test_real_human_accept import (
     _age_heartbeat,
     _claim_accept,
@@ -305,10 +306,16 @@ async def test_074_001_round_trip_proves_073_001_state(
         # The 074_001 objects do not exist at the baseline.
         assert baseline[1] == () and baseline[3] == ()
 
+    # Intermediate re-upgrade followed by the downgrade below: stays at
+    # the released 076 head under the expected-head seam, not the current
+    # 077 graph (the 077 ratchet would refuse that downgrade).
     await run_migration(
-        dsn, expected_database=database.name, operation="upgrade", revision="head"
+        dsn,
+        expected_database=database.name,
+        operation="upgrade",
+        revision="076_001",
     )
-    await reconcile(database.settings)
+    await _reconcile_historical(database, "076_001")
     async with owner_connection(dsn, expected_database=database.name) as owner:
         assert (
             await owner.fetchval("SELECT version_num FROM control.alembic_version")
@@ -371,7 +378,9 @@ async def test_074_001_round_trip_proves_073_001_state(
         downgraded = await _cache_outbox_surface(owner)
     assert downgraded == baseline
 
-    # Re-upgrade: the head state is restored exactly.
+    # Final one-way re-upgrade: lands the real current head (077) with the
+    # normal reconcile.  The 077 revision adds no cache_outbox object, so
+    # the query-proven outbox surface still equals the 076-era capture.
     await run_migration(
         dsn, expected_database=database.name, operation="upgrade", revision="head"
     )
@@ -379,7 +388,7 @@ async def test_074_001_round_trip_proves_073_001_state(
     async with owner_connection(dsn, expected_database=database.name) as owner:
         assert (
             await owner.fetchval("SELECT version_num FROM control.alembic_version")
-            == "076_001"
+            == "077_001"
         )
         restored = await _cache_outbox_surface(owner)
     assert restored == upgraded

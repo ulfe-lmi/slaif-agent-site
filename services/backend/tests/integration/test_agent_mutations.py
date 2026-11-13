@@ -7,7 +7,8 @@ import contextlib
 import hashlib
 import json
 import time
-from collections.abc import Mapping
+import unittest.mock
+from collections.abc import Iterator, Mapping
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
@@ -36,6 +37,7 @@ from slaif_agent_site.agent_state.mutations import (
     mutation_digest,
 )
 from slaif_agent_site.agent_state.reads import execute_agent_read
+from slaif_agent_site.bootstrap import service as bootstrap_service
 from slaif_agent_site.bootstrap.service import reconcile, status, upgrade
 from slaif_agent_site.config import ServiceSettings
 from slaif_agent_site.content_model.component_catalog import catalog_document
@@ -98,6 +100,8 @@ async def asyncpg_cow_session(*args: Any, **kwargs: Any) -> Any:
 def _agent_settings(database: AgentSiteDatabase) -> AgentDatabaseSettings:
     login, password = database.credentials["slaif_agent_runtime"]
     host = quote(str(database.connection_parameters["host"]), safe="[]:.")
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
     locator = (
         f"postgresql://{quote(login, safe='')}:{quote(password, safe='')}@"
         f"{host}:{database.connection_parameters['port']}/{database.name}"
@@ -114,9 +118,55 @@ def _agent_settings(database: AgentSiteDatabase) -> AgentDatabaseSettings:
     )
 
 
-async def _seed(database: AgentSiteDatabase) -> tuple[str, dict[str, UUID]]:
-    await upgrade(database.settings)
-    await reconcile(database.settings)
+@contextlib.contextmanager
+def _expected_head_override(expected_head: str) -> Iterator[None]:
+    """TEST-ONLY expected-head seam for released historical databases.
+
+    The current 077-graph reconcile deliberately refuses heads below 077.
+    The historical round-trip tests below exercise the REAL production
+    reconcile (readiness marker, deploy, harden, apply, verify) against
+    the released 076 head; this override supplies only the expected head
+    and is restored immediately, even on failure.  No production gate,
+    migration or privilege change.
+    """
+    # Scoped standard patch on the SAME bootstrap.service module attribute
+    # that reconcile/upgrade resolve at runtime; the patch context restores
+    # it on exit (even on failure), without depending on the production
+    # module's __all__ re-export surface.
+    with unittest.mock.patch.object(
+        bootstrap_service, "migration_heads", lambda: (expected_head,)
+    ):
+        yield
+
+
+async def _reconcile_historical(
+    database: AgentSiteDatabase, historical_head: str
+) -> None:
+    """Real reconcile against the released historical head (see seam)."""
+    with _expected_head_override(historical_head):
+        await reconcile(database.settings)
+
+
+async def _seed(
+    database: AgentSiteDatabase,
+    *,
+    historical_head: str | None = None,
+) -> tuple[str, dict[str, UUID]]:
+    if historical_head is None:
+        # DEFAULT current-head behavior (all unrelated tests).
+        await upgrade(database.settings)
+        await reconcile(database.settings)
+    else:
+        # Released historical head: real migrations to that revision plus
+        # the real reconcile under the narrow expected-head seam.
+        await run_migration(
+            database.settings.resolved_owner_dsn(),
+            expected_database=database.name,
+            operation="upgrade",
+            revision=historical_head,
+        )
+        with _expected_head_override(historical_head):
+            await reconcile(database.settings)
     async with owner_connection(
         database.settings.resolved_owner_dsn(),
         expected_database=database.name,
@@ -2046,7 +2096,7 @@ async def test_agent_049_downgrade_rejects_page_data_atomically(
     agent_site_database: AgentSiteDatabase,
 ) -> None:
     database = agent_site_database
-    _token, seeded = await _seed(database)
+    _token, seeded = await _seed(database, historical_head="076_001")
     page_id = uuid4()
     async with owner_connection(
         database.settings.resolved_owner_dsn(), expected_database=database.name
@@ -2104,7 +2154,7 @@ async def test_agent_redirect_051_migration_round_trip_preserves_data_and_privil
     agent_site_database: AgentSiteDatabase,
 ) -> None:
     database = agent_site_database
-    _token, seeded = await _seed(database)
+    _token, seeded = await _seed(database, historical_head="076_001")
     redirect_id = uuid4()
     async with owner_connection(
         database.settings.resolved_owner_dsn(), expected_database=database.name
@@ -2145,9 +2195,9 @@ async def test_agent_redirect_051_migration_round_trip_preserves_data_and_privil
         database.settings.resolved_owner_dsn(),
         expected_database=database.name,
         operation="upgrade",
-        revision="head",
+        revision="076_001",
     )
-    await reconcile(database.settings)
+    await _reconcile_historical(database, "076_001")
     async with owner_connection(
         database.settings.resolved_owner_dsn(), expected_database=database.name
     ) as owner:
@@ -2202,7 +2252,7 @@ async def test_agent_057_navigation_route_migration_round_trip_preserves_privile
     """Verify the navigation repair is reversible and role-confined."""
 
     database = agent_site_database
-    _token, _seeded = await _seed(database)
+    _token, _seeded = await _seed(database, historical_head="076_001")
     await _disable_content_cow(database)
     await run_migration(
         database.settings.resolved_owner_dsn(),
@@ -2277,7 +2327,7 @@ async def test_agent_058_internal_navigation_migration_round_trip_preserves_priv
     """Verify the internal-route repair reverses without leaking grants."""
 
     database = agent_site_database
-    _token, _seeded = await _seed(database)
+    _token, _seeded = await _seed(database, historical_head="076_001")
     await _disable_content_cow(database)
     await run_migration(
         database.settings.resolved_owner_dsn(),
@@ -2354,7 +2404,7 @@ async def test_agent_059_locale_neutral_render_round_trip_preserves_privileges(
     """Verify the locale-neutral Render correction is reversible and bounded."""
 
     database = agent_site_database
-    _token, _seeded = await _seed(database)
+    _token, _seeded = await _seed(database, historical_head="076_001")
     await _disable_content_cow(database)
     await run_migration(
         database.settings.resolved_owner_dsn(),
@@ -2458,7 +2508,7 @@ async def test_agent_060_component_migration_round_trip_restores_audit_contract(
     agent_site_database: AgentSiteDatabase,
 ) -> None:
     database = agent_site_database
-    _token, _seeded = await _seed(database)
+    _token, _seeded = await _seed(database, historical_head="076_001")
     await _disable_content_cow(database)
     signature = (
         "control.slaif_agent_idempotency_complete("
@@ -2492,9 +2542,9 @@ async def test_agent_060_component_migration_round_trip_restores_audit_contract(
         database.settings.resolved_owner_dsn(),
         expected_database=database.name,
         operation="upgrade",
-        revision="head",
+        revision="076_001",
     )
-    await reconcile(database.settings)
+    await _reconcile_historical(database, "076_001")
     async with owner_connection(
         database.settings.resolved_owner_dsn(), expected_database=database.name
     ) as owner:
@@ -2529,7 +2579,7 @@ async def test_agent_062_component_authority_migration_downgrade_round_trip(
     agent_site_database: AgentSiteDatabase,
 ) -> None:
     database = agent_site_database
-    _token, _seeded = await _seed(database)
+    _token, _seeded = await _seed(database, historical_head="076_001")
     await run_migration(
         database.settings.resolved_owner_dsn(),
         expected_database=database.name,
@@ -2565,7 +2615,7 @@ async def test_agent_062_component_authority_migration_downgrade_round_trip(
         database.settings.resolved_owner_dsn(),
         expected_database=database.name,
         operation="upgrade",
-        revision="head",
+        revision="076_001",
     )
     assert (await status(database.settings)).revision == "076_001"
 
@@ -2575,7 +2625,7 @@ async def test_agent_063_component_audit_migration_preserves_data_on_downgrade(
     agent_site_database: AgentSiteDatabase,
 ) -> None:
     database = agent_site_database
-    _token, seeded = await _seed(database)
+    _token, seeded = await _seed(database, historical_head="076_001")
     page_id = uuid4()
     component_id = uuid4()
     async with owner_connection(
@@ -2636,7 +2686,7 @@ async def test_agent_063_component_audit_migration_preserves_data_on_downgrade(
         database.settings.resolved_owner_dsn(),
         expected_database=database.name,
         operation="upgrade",
-        revision="head",
+        revision="076_001",
     )
     async with owner_connection(
         database.settings.resolved_owner_dsn(), expected_database=database.name
@@ -2664,7 +2714,7 @@ async def test_agent_064_component_downgrade_guards_and_round_trips_contract(
     agent_site_database: AgentSiteDatabase,
 ) -> None:
     database = agent_site_database
-    _token, seeded = await _seed(database)
+    _token, seeded = await _seed(database, historical_head="076_001")
     page_id = uuid4()
     scalar_component_id = uuid4()
     responsive_component_id = uuid4()
@@ -2751,7 +2801,7 @@ async def test_agent_064_component_downgrade_guards_and_round_trips_contract(
         database.settings.resolved_owner_dsn(),
         expected_database=database.name,
         operation="upgrade",
-        revision="head",
+        revision="076_001",
     )
     async with owner_connection(
         database.settings.resolved_owner_dsn(), expected_database=database.name
@@ -2788,7 +2838,7 @@ async def test_agent_064_component_downgrade_guards_and_round_trips_contract(
         database.settings.resolved_owner_dsn(),
         expected_database=database.name,
         operation="upgrade",
-        revision="head",
+        revision="076_001",
     )
     async with owner_connection(
         database.settings.resolved_owner_dsn(), expected_database=database.name
@@ -2852,7 +2902,7 @@ async def test_agent_049_plain_page_data_downgrade_and_upgrade_preserves_data(
     agent_site_database: AgentSiteDatabase,
 ) -> None:
     database = agent_site_database
-    _token, seeded = await _seed(database)
+    _token, seeded = await _seed(database, historical_head="076_001")
     page_id = uuid4()
     async with owner_connection(
         database.settings.resolved_owner_dsn(), expected_database=database.name
@@ -2888,9 +2938,9 @@ async def test_agent_049_plain_page_data_downgrade_and_upgrade_preserves_data(
         database.settings.resolved_owner_dsn(),
         expected_database=database.name,
         operation="upgrade",
-        revision="head",
+        revision="076_001",
     )
-    await reconcile(database.settings)
+    await _reconcile_historical(database, "076_001")
     async with owner_connection(
         database.settings.resolved_owner_dsn(), expected_database=database.name
     ) as owner:
@@ -10627,7 +10677,7 @@ async def test_agent_046_047_migration_round_trip_preserves_contract_and_state(
     agent_site_database: AgentSiteDatabase,
 ) -> None:
     database = agent_site_database
-    _token, seeded = await _seed(database)
+    _token, seeded = await _seed(database, historical_head="076_001")
     scopes = [
         "site:read",
         "content-model:create",
@@ -10750,9 +10800,9 @@ async def test_agent_046_047_migration_round_trip_preserves_contract_and_state(
             database.settings.resolved_owner_dsn(),
             expected_database=database.name,
             operation="upgrade",
-            revision="head",
+            revision="076_001",
         )
-        await reconcile(database.settings)
+        await _reconcile_historical(database, "076_001")
         async with owner_connection(
             database.settings.resolved_owner_dsn(), expected_database=database.name
         ) as owner:
@@ -10801,7 +10851,7 @@ async def test_agent_048_data_bearing_round_trip_preserves_relations_views_and_a
     """A 048 workspace survives a real 048 -> 047 -> 048 transition."""
 
     database = agent_site_database
-    _token, seeded = await _seed(database)
+    _token, seeded = await _seed(database, historical_head="076_001")
     scopes = [
         "content-model:create",
         "content-model:read",
@@ -11085,9 +11135,9 @@ async def test_agent_048_data_bearing_round_trip_preserves_relations_views_and_a
             database.settings.resolved_owner_dsn(),
             expected_database=database.name,
             operation="upgrade",
-            revision="head",
+            revision="076_001",
         )
-        await reconcile(database.settings)
+        await _reconcile_historical(database, "076_001")
         final_status = await status(database.settings)
         assert final_status.revision == "076_001"
         assert final_status.state.value == "HARDENED"
@@ -14890,7 +14940,7 @@ async def test_content_type_create_resource_limits_are_db_serialized(
     agent_site_database: AgentSiteDatabase,
 ) -> None:
     database = agent_site_database
-    _token, seeded = await _seed(database)
+    _token, seeded = await _seed(database, historical_head="076_001")
     scopes = ["site:read", "content-model:create", "content-model:read"]
     _, other_workspace = await _workspace_capability(
         database, seeded, scopes, "Resource Isolation Workspace"
@@ -17749,7 +17799,7 @@ async def test_semantic_audit_contract_is_strict_and_reversible(
     agent_site_database: AgentSiteDatabase,
 ) -> None:
     database = agent_site_database
-    _token, seeded = await _seed(database)
+    _token, seeded = await _seed(database, historical_head="076_001")
     scopes = [
         "site:read",
         "content-model:create",
@@ -18251,9 +18301,9 @@ async def test_semantic_audit_contract_is_strict_and_reversible(
             database.settings.resolved_owner_dsn(),
             expected_database=database.name,
             operation="upgrade",
-            revision="head",
+            revision="076_001",
         )
-        await reconcile(database.settings)
+        await _reconcile_historical(database, "076_001")
         async with owner_connection(
             database.settings.resolved_owner_dsn(), expected_database=database.name
         ) as owner:
@@ -19309,7 +19359,7 @@ async def test_agent_065_theme_data_round_trip_preserves_legacy_state(
         database.settings.resolved_owner_dsn(),
         expected_database=database.name,
         operation="upgrade",
-        revision="head",
+        revision="076_001",
     )
     async with owner_connection(
         database.settings.resolved_owner_dsn(), expected_database=database.name
@@ -19388,7 +19438,7 @@ async def test_agent_065_theme_data_round_trip_preserves_legacy_state(
         database.settings.resolved_owner_dsn(),
         expected_database=database.name,
         operation="upgrade",
-        revision="head",
+        revision="076_001",
     )
     async with owner_connection(
         database.settings.resolved_owner_dsn(), expected_database=database.name

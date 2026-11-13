@@ -11,10 +11,11 @@ from slaif_agent_site.agent_state.foundation import (
     disable_cow_schema,
     enable_cow_schema,
 )
-from slaif_agent_site.bootstrap.service import reconcile, upgrade
+from slaif_agent_site.bootstrap.service import upgrade
 from slaif_agent_site.db.connections import owner_connection
 from slaif_agent_site.db.executor import AsyncpgExecutor
 from slaif_agent_site.db.migrations import run_migration
+from test_agent_mutations import _reconcile_historical
 
 
 @pytest.mark.asyncio
@@ -22,8 +23,16 @@ async def test_editable_domain_migration_round_trip_restores_field_contract(
     agent_site_database: AgentSiteDatabase,
 ) -> None:
     database = agent_site_database
-    await upgrade(database.settings)
-    await reconcile(database.settings)
+    # Closed historical loop: the downgrade below crosses 039, so start
+    # at the released 076 head (the current 077 graph refuses the
+    # downgrade); the final re-upgrade lands the real head.
+    await run_migration(
+        database.settings.resolved_owner_dsn(),
+        expected_database=database.name,
+        operation="upgrade",
+        revision="076_001",
+    )
+    await _reconcile_historical(database, "076_001")
     async with owner_connection(
         database.settings.resolved_owner_dsn(), expected_database=database.name
     ) as owner:
@@ -88,7 +97,14 @@ async def test_collection_contract_downgrades_from_head_to_040_and_back(
     agent_site_database: AgentSiteDatabase,
 ) -> None:
     database = agent_site_database
-    await upgrade(database.settings)
+    # Closed historical loop: the downgrade below crosses 040, so start
+    # at the released 076 head; the final re-upgrade lands the real head.
+    await run_migration(
+        database.settings.resolved_owner_dsn(),
+        expected_database=database.name,
+        operation="upgrade",
+        revision="076_001",
+    )
     await run_migration(
         database.settings.resolved_owner_dsn(),
         expected_database=database.name,
@@ -118,8 +134,15 @@ async def test_055_downgrade_restores_054_functions_grants_and_data(
     """Prove 054↔055 restores the exact lock/helper contract and rows."""
 
     database = agent_site_database
-    await upgrade(database.settings)
-    await reconcile(database.settings)
+    # Closed historical loop: the downgrade below crosses 054, so start
+    # at the released 076 head; the final re-upgrade lands the real head.
+    await run_migration(
+        database.settings.resolved_owner_dsn(),
+        expected_database=database.name,
+        operation="upgrade",
+        revision="076_001",
+    )
+    await _reconcile_historical(database, "076_001")
     async with owner_connection(
         database.settings.resolved_owner_dsn(), expected_database=database.name
     ) as owner:
@@ -213,8 +236,15 @@ async def test_site_data_substrate_downgrades_from_head_to_041_and_back(
     agent_site_database: AgentSiteDatabase,
 ) -> None:
     database = agent_site_database
-    await upgrade(database.settings)
-    await reconcile(database.settings)
+    # Closed historical loop: the downgrade below crosses 041, so start
+    # at the released 076 head; the final re-upgrade lands the real head.
+    await run_migration(
+        database.settings.resolved_owner_dsn(),
+        expected_database=database.name,
+        operation="upgrade",
+        revision="076_001",
+    )
+    await _reconcile_historical(database, "076_001")
     async with owner_connection(
         database.settings.resolved_owner_dsn(), expected_database=database.name
     ) as owner:
@@ -271,7 +301,15 @@ async def test_upgrade_rebuilds_enabled_cow_without_pending_workspace_operations
 ) -> None:
     """The production path tears down empty COW views before 040-042."""
     database = agent_site_database
-    await upgrade(database.settings)
+    # Closed historical loop: the downgrade below crosses 041, so start
+    # at the released 076 head; the final operator upgrade below is the
+    # real production path to the current head.
+    await run_migration(
+        database.settings.resolved_owner_dsn(),
+        expected_database=database.name,
+        operation="upgrade",
+        revision="076_001",
+    )
     await run_migration(
         database.settings.resolved_owner_dsn(),
         expected_database=database.name,
@@ -304,7 +342,7 @@ async def test_upgrade_rebuilds_enabled_cow_without_pending_workspace_operations
             await owner.fetchval(
                 "SELECT version_num::text FROM control.alembic_version"
             )
-            == "076_001"
+            == "077_001"
         )
         assert await owner.fetchval("SELECT to_regclass('content.page') IS NOT NULL")
         assert await owner.fetchval("SELECT to_regclass('content.page_base') IS NULL")

@@ -208,14 +208,18 @@ browser sweep remains a later combined acceptance round.
 
 ## Private human Media API
 
-The edge-routed Media service owns immutable bytes and human workspace metadata
-references. The former metadata-only Editor `POST .../media/register` route is
-removed; no route claims an upload before validated bytes exist.
+The edge-routed Media service owns immutable bytes and workspace-scoped
+metadata references (HUMAN session or bound AGENT capability). The former
+metadata-only Editor `POST .../media/register` route is removed; no route
+claims an upload before validated bytes exist.
 
 | Public route | Success | Contract |
 | --- | --- | --- |
 | `POST /media/v1/sites/{site_id}/assets` | 201 | exactly one filename-bearing multipart part named `file`, bounded `alt_text`, optional bounded JSON `metadata`, CSRF-bound human session, `media:upload`, and `Idempotency-Key` |
 | `GET /media/v1/sites/{site_id}/assets/{media_id}/content` | 200 | authenticated human session, `media:read`, workspace-aware metadata lookup, immutable byte stream |
+| `GET /media/v1/sites/{site_id}/workspaces/{workspace_id}/preview/assets/{media_id}/content` | 200 | authorized ACTIVE preview byte read in the selected workspace; private, no-store, digest-gated |
+| `GET /media/v1/review/{snapshot_id}/assets/{media_id}/content` | 200 | frozen review byte read bound to one immutable `review-snapshot/v2`; private, digest-gated |
+| `GET /media/public/sha256/{prefix1}/{prefix2}/{digest}` | 200 | sessionless content-addressed read of a reviewer-published asset only; absent or unpublished digests are a uniform 404 |
 
 Uploads stream into private staging, SHA-256 hash and signature-sniff against
 the declared MIME, then publish under a digest-only key before the metadata
@@ -224,16 +228,34 @@ exact media idempotency/HUMAN-audit envelope. A database failure after object
 publication may leave an unreferenced private object for later Media GC; it is
 not public or described as transactionally rolled back.
 
-Only PNG and JPEG are enabled in this slice. SVG, empty/unknown/spoofed
+PNG, JPEG, and (for the publication path) PDF are enabled; the initial
+human-upload slice was PNG/JPEG only. SVG, empty/unknown/spoofed
 content, traversal names, oversized/truncated bodies, foreign sites, and
 missing/corrupt/symlink objects fail closed. Missing/invalid idempotency is
 400, authentication is 401, CSRF/permission failures are non-leaking 403/404,
 malformed content is 422, edge/application size failures are 413, and only
-storage/database failures are 503. Byte responses are private,
-no-store, `nosniff`, digest ETagged, exact-length, and never expose a path or
-anonymous URL. Metadata reference deletion remains a workspace tombstone and
-never unlinks bytes. Agent upload, public media, thumbnails, GC, transcoding,
-object storage, and publication are later work.
+storage/database failures are 503. Private byte responses are
+private, no-store, `nosniff`, digest ETagged, exact-length, and never expose
+a path or anonymous URL; the public digest route is the only anonymous byte
+surface and carries the public immutable cache contract. The human metadata
+PATCH is a pending COW metadata update and the reference deletion is a
+workspace tombstone (both through the Editor mutation routes); neither
+unlinks immutable bytes. Agent upload and capability-bound private reads use
+the Agent semantic API. Publication is
+reviewer-transaction-derived: pre-commit byte preparation copies the
+promoted asset's bytes into the verified public namespace before the
+transaction (idempotent for an already-published digest); if acceptance
+aborts, a newly copied digest lacking committed canonical public
+authorization is an unserved orphan, whereas an already-public digest
+retains its existing authorization. Inside the single reviewer promotion
+transaction the promoted media is marked public only when it is referenced by
+the promoted base state (page composition or a same-site media/document field
+reference, compared by UUID identity). A public file with no canonical public
+authorization is never served; a previously unpublished digest becomes
+publicly readable only after a committed acceptance, and existing canonical
+assets keep their prior public authorization while workspace edits or
+deletion are pending. Thumbnails, GC, transcoding, and object storage are
+later work.
 
 Puck 0.20.2 requires runtime inline styling for parts of its editor UI. The
 authenticated editor surface therefore receives the minimum required
@@ -569,8 +591,9 @@ HTML, query strings, storage, logs, or artifacts. Public catch-all pages and
 component implementation. Only an exact matched site root without a page may
 use the routing shell; deeper unknown, unpublished, or deleted routes are 404.
 Preview responses are additionally private, no-store, and `noindex`. Public
-rendering does not emit a media URL until public media finalization exists;
-trusted image nodes use an honest non-broken placeholder meanwhile.
+rendering emits a media URL only for media published through the reviewer
+transaction (see the Media API above); private or pending assets render with
+an honest non-broken placeholder.
 
 The review route reads exactly one COMPLETE `review-snapshot/v2` by snapshot
 ID and requires exactly one `x-slaif-human-session` header; the browser

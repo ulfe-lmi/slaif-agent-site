@@ -106,9 +106,25 @@ named owner-defined session, workspace, COW metadata, idempotency, and audit
 functions. Upload bytes are streamed to private digest-only storage after
 signature validation; the client MIME and filename never select a filesystem
 path. Authorized reads require metadata visible in the caller's active HUMAN
-workspace and never serve the volume through NGINX/Apache. SVG and anonymous
-media are disabled, and a database failure after private object publication
-leaves only an unreferenced orphan for later Media GC.
+workspace (human session) or the bound AGENT workspace (capability); pending
+workspace writes are isolated from other workspaces and from the canonical
+state until promotion, and frozen/active preview reads are private,
+workspace/snapshot-bound, and digest-gated. The only public media surface is
+the sessionless content-addressed digest route, which serves only media the
+reviewer transaction has marked public atomically with promotion. Pre-commit
+byte preparation is idempotent: if acceptance aborts, a newly copied digest
+lacking committed canonical public authorization is an unserved orphan,
+whereas an already-public digest retains its existing authorization, and a
+database failure after private object publication leaves only an
+unreferenced orphan for later Media GC. The reviewer-only in-transaction
+helper (`slaif_media_publicize_promoted`, EXECUTE to `slaif_review_worker`
+only, direct content-schema USAGE for resolution only) is a mechanism of the
+review transaction, not a publication authority for the media, human,
+editor, or agent processes. SVG is disabled, and private, staging, and
+artifact reads are never served anonymously; approved public digest reads
+are intentionally anonymous (content-addressed and digest-gated). The
+immutable storage directories are never exposed as static directories;
+authorized Media service byte responses are proxied through the edge.
 
 Media workspace assertions acquire the same transaction-scoped advisory lock
 used by human/editor mutation envelopes before checking mutable membership,
@@ -195,8 +211,8 @@ credential is attached only to the first exact document request and stripped
 from assets, redirects, results, logs, and artifacts.
 
 The current maintenance pin is the official Chrome for Testing
-`157.0.8103.50` archive at CfT revision `1717349`, verified by SHA-256
-`d17167bc092eb495a3b768c7467f27e35f625aa03834233a1663af67dcb668c9` and kept
+`157.0.8103.78` archive at CfT revision `1717349`, verified by SHA-256
+`9223832977a13db3646201b1341c1f9cf08afa3ceae92540116d7b0c062364fb` and kept
 separate from the Playwright bundle-directory label. The Playwright package and
 base image remain at the exact qualified `1.62.1` versions.
 The 083-9-c round remediates CVE-2026-115557: the backend base moves to the

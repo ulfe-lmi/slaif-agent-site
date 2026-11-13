@@ -26,6 +26,7 @@ from test_agent_mutations import (
     _capability_with_scopes,
     _disable_content_cow,
     _hold_agent_structure_lock,
+    _reconcile_historical,
     _seed,
     _set_resource_constraints,
     _wait_for_page_structure_waiters,
@@ -632,7 +633,10 @@ async def test_page_style_066_round_trip_preserves_legacy_data_and_blocks_loss(
     agent_site_database: AgentSiteDatabase,
 ) -> None:
     database = agent_site_database
-    _unused_token, seeded = await _seed(database)
+    # Closed historical loop: the 065 downgrade and both later (refused)
+    # downgrade attempts sit below the 077 ratchet, so seed the released
+    # 076 head; the intermediate re-upgrade below stays at 076 too.
+    _unused_token, seeded = await _seed(database, historical_head="076_001")
     legacy_page_id = uuid4()
     async with owner_connection(
         database.settings.resolved_owner_dsn(), expected_database=database.name
@@ -679,13 +683,16 @@ async def test_page_style_066_round_trip_preserves_legacy_data_and_blocks_loss(
             == before
         )
 
+    # Intermediate re-upgrade followed by the later (refused) downgrade
+    # attempts: stays at the released 076 head under the expected-head
+    # seam, not the current 077 graph.
     await run_migration(
         database.settings.resolved_owner_dsn(),
         expected_database=database.name,
         operation="upgrade",
-        revision="head",
+        revision="076_001",
     )
-    await reconcile(database.settings)
+    await _reconcile_historical(database, "076_001")
     async with owner_connection(
         database.settings.resolved_owner_dsn(), expected_database=database.name
     ) as owner:
@@ -877,6 +884,8 @@ async def test_page_style_fresh_065_baseline_restores_exactly_through_066(
             )
         ) == ("fresh-page", "Fresh page", "DRAFT", "en-US", 1)
 
+    # Final one-way upgrade of this loop: lands the real current head
+    # (077) with the normal reconcile.
     await run_migration(
         database.settings.resolved_owner_dsn(),
         expected_database=database.name,
@@ -891,7 +900,7 @@ async def test_page_style_fresh_065_baseline_restores_exactly_through_066(
             await owner.fetchval(
                 "SELECT version_num::text FROM control.alembic_version"
             )
-            == "076_001"
+            == "077_001"
         )
         round_trip = await owner.fetchrow(
             "SELECT slug,title,status,locale,row_version,style_overrides::text "
@@ -914,7 +923,10 @@ async def test_page_style_downgrade_rejects_style_audit_without_data_loss(
     agent_site_database: AgentSiteDatabase,
 ) -> None:
     database = agent_site_database
-    _unused_token, seeded = await _seed(database)
+    # Closed historical loop: the refused downgrade below targets 065, so
+    # the seed must reach the released 076 head and the refusal must be
+    # the old style-audit guard, not the 077 ratchet.
+    _unused_token, seeded = await _seed(database, historical_head="076_001")
     token = await _capability_with_scopes(
         database,
         seeded,

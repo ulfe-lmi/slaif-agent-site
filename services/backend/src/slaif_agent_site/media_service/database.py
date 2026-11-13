@@ -192,6 +192,16 @@ class MediaDatabase:
         except Exception:
             return ProbeResult.unavailable("connection_unavailable")
 
+    @property
+    def last_failure_reason(self) -> str | None:
+        """Bounded non-sensitive start-failure reason (None when started).
+
+        One of the fixed start outcomes: connection_unavailable,
+        identity_mismatch, timeout, configuration_invalid, shutdown.
+        Used only for bounded worker diagnostics, never for control flow.
+        """
+        return None if self._pool is not None else self._reason
+
     def cow_pool(self) -> Any:
         if self._pool is None:
             raise RuntimeError("media database unavailable")

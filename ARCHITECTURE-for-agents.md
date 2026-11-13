@@ -10,7 +10,7 @@
 
 **License:** Apache-2.0
 
-**Foundation:** PyPI `agent-cow-postgresql==0.2.0`, MIT, imports
+**Foundation:** PyPI `agent-cow-postgresql==0.2.1`, MIT, imports
 `agentcow`/`agentcow.postgres`
 
 This is the default architecture specification for AI agents. It preserves the
@@ -23,6 +23,14 @@ load `ARCHITECTURE.md`.** If this edition is absent, insufficient, ambiguous,
 or conflicts with another governing document, stop the affected work and
 escalate; do not open the full source without that direct instruction and do not
 invent or weaken architecture.
+
+**Foundation maintenance note (prospective, 2026-11-13):** the current
+foundation pin `agent-cow-postgresql==0.2.1` is a qualified corrective patch
+recorded in
+`oap/strategic-instructions/FOUNDATION-021-QUALIFIED-SOURCE-CORRECTION-2026-11-13.md`.
+It supersedes only the baseline version/artifact values stated in this compact
+edition; the original human `ARCHITECTURE.md` Revision 2.1, its source
+SHA-256 above, and all historical records remain unchanged.
 
 ## 1. Product contract, goals, non-goals
 
@@ -78,7 +86,7 @@ for PostgreSQL backup/PITR.
 | Area | Normative decision |
 |---|---|
 | Repository | New monorepo `slaif-agent-site`; internal Agent-State, separate foundation |
-| Foundation | PyPI `agent-cow-postgresql==0.2.0`; exact registry artifact hashes in committed `uv.lock`; GitHub only source/provenance/issues |
+| Foundation | PyPI `agent-cow-postgresql==0.2.1`; exact registry artifact hashes in committed `uv.lock`; GitHub only source/provenance/issues |
 | Database/isolation | Ordinary self-hosted PostgreSQL; logical per-workspace COW |
 | Edge | NGINX OSS default/reference; Apache HTTP Server 2.4 supported adapter; no product semantics at edge |
 | Web/editor | One self-hosted Next.js/React/TypeScript app; Puck behind product adapter/schema; Tailwind OSS, shadcn/ui source, Radix |

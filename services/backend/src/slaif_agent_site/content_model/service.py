@@ -504,34 +504,6 @@ class MediaMixin:
     _fetchrow: Any
     _fetch: Any
 
-    async def create_media(
-        self,
-        site_id: UUID,
-        uploaded_by: UUID | None,
-        filename: str,
-        mime_type: str,
-        size_bytes: int,
-        content_hash: str,
-        storage_key: str,
-        alt_text: str,
-        metadata: dict[str, Any],
-    ) -> Any:
-        row = await self._fetchrow(
-            MD_CREATE_SQL,
-            site_id,
-            uploaded_by,
-            filename,
-            mime_type,
-            size_bytes,
-            content_hash,
-            storage_key,
-            alt_text,
-            json.dumps(metadata, sort_keys=True),
-        )
-        if row is None:
-            raise ContentModelServiceError(ContentModelServiceReason.CONFLICT)
-        return _md(row)
-
     async def list_media(self, site_id: UUID) -> tuple[Any, ...]:
         rows = await self._fetch(MD_LIST_SQL, site_id)
         return tuple(_md(row) for row in rows)
@@ -1855,7 +1827,8 @@ def _cmp(row: Any) -> Any:
     )
 
 
-MD_CREATE_SQL = "SELECT * FROM content.slaif_media_create($1,$2,$3,$4,$5,$6,$7,$8,$9)"
+# 077_001 dropped the unwired legacy canonical creator
+# content.slaif_media_create; no SQL constant remains for it.
 MD_LIST_SQL = "SELECT * FROM content.slaif_media_list($1)"
 MD_GET_SQL = "SELECT * FROM content.slaif_media_get($1)"
 MD_UPDATE_SQL = "SELECT * FROM content.slaif_media_update($1,$2,$3)"

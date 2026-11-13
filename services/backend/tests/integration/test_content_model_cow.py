@@ -24,6 +24,8 @@ from slaif_agent_site.db.executor import AsyncpgExecutor
 def _owner_dsn(database: AgentSiteDatabase) -> str:
     parameters = database.connection_parameters
     host = quote(str(parameters["host"]), safe="[]:.")
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
     login, password = database.credentials["slaif_owner"]
     return (
         f"postgresql://{quote(login, safe='')}:{quote(password, safe='')}@"

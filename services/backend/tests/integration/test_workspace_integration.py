@@ -29,7 +29,6 @@ class TestWorkspaceContentIntegration:
             "list_pages",
             "add_composition_node",
             "list_composition",
-            "create_media",
             "list_media",
         ):
             assert hasattr(ContentModelService, method), f"missing: {method}"

@@ -86,9 +86,11 @@ When convenience conflicts with a boundary, boundary wins.
 - Backend: FastAPI+asyncpg+typed domain/contracts.
 - DB: self-hosted PostgreSQL; `control`, `content`, `audit`, `agentcow`; explicit
   least-privilege roles.
-- Foundation: PyPI `agent-cow-postgresql==0.2.0`; exact registry artifacts/hashes
-  in `uv.lock`; `uv sync --frozen`; public APIs only; preserve MIT/upstream
-  attribution. GitHub is provenance/source, never production dependency.
+- Foundation: PyPI `agent-cow-postgresql==0.2.1` (corrective 0.2.1 patch under
+  the 2026-11-13 prospective qualification amendment; prior baseline 0.2.0);
+  exact registry artifacts/hashes in `uv.lock`; `uv sync --frozen`; public
+  APIs only; preserve MIT/upstream attribution. GitHub is provenance/source,
+  never production dependency.
 - Queue: transactional PostgreSQL jobs; no required Redis/RabbitMQ/Kafka.
 - Media: immutable `MediaStore`; local default, shared self-hosted backend at scale.
 - Browser: separately sandboxed Playwright for visual feedback+E2E.

@@ -71,6 +71,7 @@ from slaif_agent_site.review_worker.config import (
 )
 from slaif_agent_site.review_worker.discard_job import run_discard_job
 from slaif_agent_site.review_worker.freeze_job import run_freeze_job
+from test_agent_mutations import _reconcile_historical
 
 _AGGON2 = (
     "$argon2id$v=19$m=65536,t=3,p=4$"
@@ -124,6 +125,8 @@ _DISCARD_MIGRATION_PATH = (
 
 def _dsn(database: AgentSiteDatabase, user: str, password: str) -> str:
     host = quote(str(database.connection_parameters["host"]), safe="[]:.")
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
     return (
         f"postgresql://{quote(user, safe='')}:{quote(password, safe='')}"
         f"@{host}:{database.connection_parameters['port']}/{database.name}"
@@ -729,8 +732,16 @@ async def test_discard_migration_round_trip(
 
     database = agent_site_database
     dsn = database.settings.resolved_owner_dsn()
-    await upgrade(database.settings)
-    await reconcile(database.settings)
+    # Closed historical loop: the downgrade below crosses 072, so start
+    # at the released 076 head (the current 077 graph refuses the
+    # downgrade); the final re-upgrade lands the real head.
+    await run_migration(
+        dsn,
+        expected_database=database.name,
+        operation="upgrade",
+        revision="076_001",
+    )
+    await _reconcile_historical(database, "076_001")
 
     async with owner_connection(dsn, expected_database=database.name) as owner:
         assert (
@@ -823,14 +834,16 @@ async def test_discard_migration_round_trip(
             == 0
         )
 
-    # Re-upgrade to the head.
+    # Final one-way re-upgrade to the head: lands the real current head
+    # (077) with the normal reconcile.
     await run_migration(
         dsn, expected_database=database.name, operation="upgrade", revision="head"
     )
+    await reconcile(database.settings)
     async with owner_connection(dsn, expected_database=database.name) as owner:
         assert (
             await owner.fetchval("SELECT version_num FROM control.alembic_version")
-            == "076_001"
+            == "077_001"
         )
         assert (
             await owner.fetchval(

@@ -62,6 +62,13 @@ _DOWNGRADE_RETAINED_V2 = (
     "re-validated or rendered under the restored v1 contract; resolve the "
     "retained v2 snapshots through a supported path and retry"
 )
+_DOWNGRADE_MEDIA_ISOLATION = (
+    "bootstrap downgrade refused: the workspace-isolated media contract "
+    "(migration 077_001) has no supported downgrade below it; restoring "
+    "the pre-077 base-writing media functions and grants would "
+    "reintroduce the unsafe canonical media write path"
+)
+_MEDIA_ISOLATION_REVISIONS = frozenset({"077_001"})
 
 
 class BootstrapStateError(RuntimeError):
@@ -529,6 +536,24 @@ async def _assert_no_retained_v2_snapshots(connection: Any) -> None:
         raise BootstrapStateError(_DOWNGRADE_RETAINED_V2)
 
 
+async def _assert_no_media_isolation_downgrade(revision: str) -> None:
+    """Operator-path preflight for the workspace-isolated media refusal.
+
+    A downgrade that would traverse 077_001 back to the pre-077 media
+    contract would have to restore the dropped base-writing media
+    functions and their editor/control/media publication grants - the
+    exact unsafe canonical media write path that revision removes.  The
+    refusal therefore happens here, before the readiness PENDING marker
+    is committed, before the content COW disable, and before any
+    migration step: canonical media rows, retained snapshots and the
+    safe authority set are left exactly as found.  The 077_001 Alembic
+    downgrade body is the second line of defense for direct migration
+    invocations.
+    """
+    if revision in _MEDIA_ISOLATION_REVISIONS:
+        raise BootstrapStateError(_DOWNGRADE_MEDIA_ISOLATION)
+
+
 async def downgrade(settings: BootstrapSettings) -> None:
     async with owner_connection(
         settings.resolved_owner_dsn(), expected_database=settings.expected_database
@@ -537,6 +562,7 @@ async def downgrade(settings: BootstrapSettings) -> None:
         revision = await connection.fetchval(
             "SELECT version_num::text FROM control.alembic_version"
         )
+        await _assert_no_media_isolation_downgrade(revision)
         await _assert_downgrade_compatible(connection, executor, revision)
         await _assert_no_retained_v2_snapshots(connection)
         cow_status = await get_cow_status(executor, schema="content")
@@ -743,7 +769,9 @@ async def reconcile(
                     "slaif_composition_node_move(uuid,uuid,text,integer)",
                     "slaif_composition_node_delete(uuid)",
                     "slaif_composition_list(uuid)",
-                    "slaif_media_create(uuid,uuid,text,text,bigint,text,text,text,jsonb)",
+                    # 077_001 dropped the unwired legacy canonical creator
+                    # slaif_media_create: it must not be re-granted here,
+                    # and its absence is the durable confinement.
                     "slaif_media_list(uuid)",
                     "slaif_media_get(uuid)",
                     "slaif_media_update(uuid,text,jsonb)",

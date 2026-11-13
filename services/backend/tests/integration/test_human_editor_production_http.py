@@ -43,6 +43,8 @@ EDITOR_PASSWORD = "fake-production-editor-password-068-d"
 
 def _dsn(database: AgentSiteDatabase, login: str, password: str) -> SecretStr:
     host = quote(str(database.connection_parameters["host"]), safe="[]:.")
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
     return SecretStr(
         f"postgresql://{quote(login, safe='')}:{quote(password, safe='')}@"
         f"{host}:{database.connection_parameters['port']}/{database.name}"

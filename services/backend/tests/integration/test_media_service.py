@@ -79,6 +79,8 @@ CANONICAL_PNG = b"\x89PNG\r\n\x1a\ncanonical-fixture"
 def _locator(database: AgentSiteDatabase, role: str) -> str:
     login, password = database.credentials[role]
     host = quote(str(database.connection_parameters["host"]), safe="[]:.")
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
     return (
         f"postgresql://{quote(login, safe='')}:{quote(password, safe='')}@"
         f"{host}:{database.connection_parameters['port']}/{database.name}"
@@ -450,17 +452,25 @@ async def test_media_upload_store_read_dedupe_and_canonical_fallback(
                     database.settings.resolved_owner_dsn(),
                     expected_database=database.name,
                 ) as owner:
-                    # Site-scoped base-write media record (068 media
-                    # publication core): the upload lands in
-                    # media_asset_base directly — media is
-                    # content-addressed and immutable, so the COW overlay
-                    # stays empty and the record is visible to every
-                    # authorized session of the site.
+                    # 077 workspace isolation: the fresh upload is a
+                    # PENDING COW change row for the requesting
+                    # workspace only.  Media is content-addressed and
+                    # immutable, but nothing canonical or site-visible
+                    # is written until a real review acceptance.
                     assert (
                         await owner.fetchval(
                             "SELECT count(*) FROM content.media_asset_base "
                             "WHERE id = $1",
                             media_id,
+                        )
+                        == 0
+                    )
+                    assert (
+                        await owner.fetchval(
+                            "SELECT count(*) FROM content.media_asset_changes "
+                            "WHERE id = $1 AND session_id = $2",
+                            media_id,
+                            workspace_id,
                         )
                         == 1
                     )
@@ -553,6 +563,8 @@ def _agent_settings(
 ) -> AgentDatabaseSettings:
     login, password = database.credentials["slaif_agent_runtime"]
     host = quote(str(database.connection_parameters["host"]), safe="[]:.")
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
     return AgentDatabaseSettings(
         mode=AgentDatabaseMode.TEST,
         dsn=SecretStr(
@@ -734,7 +746,8 @@ async def test_private_media_bytes_human_preview_bound_worker_frozen_review(
     """R2 actual private bytes: Agent IMAGE + DOCUMENT, three real readers.
 
     The Agent uploads one PNG and one PDF through the real Agent HTTP API
-    (media:upload; site-scoped immutable base rows, not public).  The
+    (media:upload; 077 pending COW rows in the agent workspace only —
+    not canonical, not site-visible, not public).  The
     exact bytes must be readable BEFORE freeze by (a) the authorized
     human active preview (full 054 chain, no session touch) and (b) the
     actual confined bound worker (real 036 consume and 076 binding
@@ -1112,15 +1125,19 @@ async def test_private_media_bytes_human_preview_bound_worker_frozen_review(
                         preview.headers["x-robots-tag"]
                         == "noindex, nofollow, noarchive"
                     )
-                    # Positive control: the other creator previews their
-                    # own workspace (base rows are site-scoped).
-                    control_read = await media_client.get(
+                    # 077 isolation: the OTHER creator's own workspace
+                    # does NOT see the pending asset — it is not in the
+                    # canonical base and not in that workspace's overlay.
+                    # (The positive own-workspace preview is the exact-
+                    # bytes loop above.)
+                    other_creator_read = await media_client.get(
                         f"/v1/sites/{site_id}/workspaces/{workspace2_id}"
                         f"/preview/assets/{png_id}/content",
                         headers=session_cookie(session2_public, session2_secret),
                     )
-                    assert control_read.status_code == 200, control_read.text
-                    assert control_read.content == PNG_BYTES
+                    assert other_creator_read.status_code == 404, (
+                        other_creator_read.text
+                    )
                     # Human preview negative matrix.
                     no_cookie = await media_client.get(
                         f"{preview_url}/{png_id}/content"
@@ -1948,8 +1965,10 @@ async def test_private_media_bytes_human_preview_bound_worker_frozen_review(
         async with owner_connection(
             owner_dsn, expected_database=database.name
         ) as owner:
-            # Site-scoped base media rows (including the UNREFERENCED
-            # orphan) survive the workspace discard.
+            # 077 workspace isolation: none of the three uploads ever
+            # reached the canonical base (they were pending in the
+            # agent workspace only), and the real discard removed the
+            # pending overlay rows: the metadata is gone from both.
             assert (
                 await owner.fetchval(
                     "SELECT count(*) FROM content.media_asset_base"
@@ -1957,19 +1976,34 @@ async def test_private_media_bytes_human_preview_bound_worker_frozen_review(
                     site_id,
                     [png_hash, pdf_hash, orphan_hash],
                 )
-                == 3
+                == 0
             )
-            # (G4) Final retained orphan metadata: the base row
-            # survives the discard and stays private.
+            assert (
+                await owner.fetchval(
+                    "SELECT count(*) FROM content.media_asset_changes"
+                    " WHERE session_id=$1 AND id = ANY($2::uuid[])",
+                    workspace_id,
+                    [png_id, pdf_id, orphan_id],
+                )
+                == 0
+            )
+            # (G4) Final retained orphan state: the pending metadata is
+            # absent from the CURRENT canonical/workspace lookup
+            # (unserved, no public authorization); the historical
+            # snapshot descriptor (Phase 5) and the selected frozen
+            # bytes (served exact above in Phase 8) deliberately
+            # remain authorized.
             orphan_final = await owner.fetchrow(
                 "SELECT site_id, content_hash, public_status"
                 " FROM content.media_asset WHERE id=$1",
                 orphan_id,
             )
-            assert orphan_final is not None
-            assert orphan_final["site_id"] == site_id
-            assert orphan_final["content_hash"] == orphan_hash
-            assert orphan_final["public_status"] == "private"
+            assert orphan_final is None
+            # Honest no-GC observation: the discard removed pending
+            # metadata only; the immutable private object bytes are
+            # still present (no byte reclamation is claimed).
+            orphan_key = f"sha256/{orphan_hash[:2]}/{orphan_hash[2:4]}/{orphan_hash}"
+            assert store.object_path(orphan_key).is_file()
             # No effects: the read surfaces touched nothing.
             after_last_seen = await owner.fetchval(
                 "SELECT array_agg(last_seen_at ORDER BY id::text) FROM "

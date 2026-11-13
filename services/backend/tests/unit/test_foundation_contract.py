@@ -21,12 +21,12 @@ from slaif_agent_site.agent_state import foundation
 from slaif_agent_site.db.migrations import migration_heads, migration_history
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[4]
-FOUNDATION_VERSION = "0.2.0"
+FOUNDATION_VERSION = "0.2.1"
 FOUNDATION_WHEEL_SHA256 = (
-    "c469d24700fabb93a58f464d3539a32e936097f93035a95f193062859546f5b1"
+    "315f5172506076f59bc84d607c0e4494b888bd126d875a61515ae5278824952f"
 )
 FOUNDATION_SDIST_SHA256 = (
-    "eae8d434d2fc03c4faa08b44b4863fc8f8efb44ee33eaad3adc22e7eb96a062c"
+    "6556d567eaa1f449e0f729d01aae1eb2b645e8f76e22e333cebdd04e1a5331f6"
 )
 ALEMBIC_VERSION = "1.19.1"
 ALEMBIC_WHEEL_SHA256 = (
@@ -159,6 +159,7 @@ NEW_PACKAGE_FILES = {
     "slaif_agent_site/db/alembic/versions/074_001_cache_outbox_consumer.py",
     "slaif_agent_site/db/alembic/versions/075_001_freeze_revision_coherence.py",
     "slaif_agent_site/db/alembic/versions/076_001_faithful_frozen_review.py",
+    "slaif_agent_site/db/alembic/versions/077_001_workspace_isolated_media.py",
     "slaif_agent_site/db/connections.py",
     "slaif_agent_site/db/executor.py",
     "slaif_agent_site/db/migrations.py",
@@ -454,7 +455,7 @@ def test_python_and_package_metadata_ranges_are_coherent() -> None:
     assert project["license"] == "Apache-2.0"
     assert project["readme"] == "README.md"
     assert project["dependencies"] == [
-        "agent-cow-postgresql==0.2.0",
+        "agent-cow-postgresql==0.2.1",
         "alembic==1.19.1",
         "argon2-cffi==25.1.0",
         "asyncpg==0.32.0",
@@ -621,7 +622,7 @@ def test_built_distributions_have_bounded_contents_and_metadata(
     assert metadata["License-Expression"] == "Apache-2.0"
     assert SpecifierSet(metadata["Requires-Python"]) == SpecifierSet(">=3.12,<3.15")
     assert metadata.get_all("Requires-Dist") == [
-        "agent-cow-postgresql==0.2.0",
+        "agent-cow-postgresql==0.2.1",
         "alembic==1.19.1",
         "argon2-cffi==25.1.0",
         "asyncpg==0.32.0",
@@ -640,8 +641,9 @@ def test_locked_foundation_artifact_hash_constants_are_sha256() -> None:
 
 
 def test_alembic_graph_and_offline_sql_need_no_locator_or_network() -> None:
-    assert migration_heads() == ("076_001",)
+    assert migration_heads() == ("077_001",)
     assert migration_history() == (
+        "077_001",
         "076_001",
         "075_001",
         "074_001",

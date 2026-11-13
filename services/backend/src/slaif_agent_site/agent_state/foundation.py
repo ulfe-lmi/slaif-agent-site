@@ -28,7 +28,7 @@ from agentcow.postgres import (  # noqa: F401, I001
 )
 
 FOUNDATION_DISTRIBUTION = "agent-cow-postgresql"
-FOUNDATION_VERSION = "0.2.0"
+FOUNDATION_VERSION = "0.2.1"
 
 QUALIFIED_PUBLIC_API = (
     "CowConflict",

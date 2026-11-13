@@ -787,7 +787,7 @@ class RepositoryPolicyTestCase(unittest.TestCase):
         )
 
     def test_foundation_exact_registry_requirement_is_allowed(self) -> None:
-        self.write("requirements.txt", "agent-cow-postgresql==0.2.0\n")
+        self.write("requirements.txt", "agent-cow-postgresql==0.2.1\n")
 
         self.assertEqual(self.errors_from("check_foundation_dependencies"), [])
 
@@ -838,7 +838,7 @@ class RepositoryPolicyTestCase(unittest.TestCase):
 
     def test_foundation_pyproject_rejects_version_and_source_override(self) -> None:
         self.write_foundation_project(
-            dependency="agent-cow-postgresql>=0.2.0",
+            dependency="agent-cow-postgresql>=0.2.1",
             source_override=(
                 "\n[tool.uv.sources]\n"
                 'agent-cow-postgresql = { git = "https://example.test/repository" }\n'
@@ -848,7 +848,7 @@ class RepositoryPolicyTestCase(unittest.TestCase):
         errors = self.errors_from("check_foundation_dependencies")
 
         self.assertTrue(
-            any("exactly 'agent-cow-postgresql==0.2.0'" in error for error in errors)
+            any("exactly 'agent-cow-postgresql==0.2.1'" in error for error in errors)
         )
         self.assertTrue(
             any("source override is forbidden" in error for error in errors)

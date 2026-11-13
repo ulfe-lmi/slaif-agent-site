@@ -645,6 +645,8 @@ async def test_human_agent_editor_idempotency_audit_and_lock_serialization(
 def _control_settings(database: AgentSiteDatabase) -> Any:
     login, password = database.credentials["slaif_control"]
     host = quote(str(database.connection_parameters["host"]), safe="[]:.")
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
     return ControlDatabaseSettings(
         mode=ControlDatabaseMode.TEST,
         dsn=SecretStr(
@@ -663,6 +665,8 @@ def _control_settings(database: AgentSiteDatabase) -> Any:
 def _editor_db_settings(database: AgentSiteDatabase) -> Any:
     login, password = database.credentials["slaif_editor_runtime"]
     host = quote(str(database.connection_parameters["host"]), safe="[]:.")
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
     return EditorDatabaseSettings(
         mode=EditorDatabaseMode.TEST,
         dsn=SecretStr(

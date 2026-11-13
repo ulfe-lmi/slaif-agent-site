@@ -262,7 +262,7 @@ CI SBOM evidence bundle.
 | `word-wrap` | `1.2.5` | npm / development | `MIT` | <https://github.com/jonschlinkert/word-wrap> | — |
 | `yocto-queue` | `0.1.0` | npm / development | `MIT` | <https://github.com/sindresorhus/yocto-queue#readme> | — |
 | `zustand` | `5.0.15` | npm / production | `MIT` | <https://github.com/pmndrs/zustand> | — |
-| `agent-cow-postgresql` | `0.2.0` | PyPI / production | `MIT` | <https://github.com/jpers1/agent-cow-postgresql> | MIT foundation derived from agent-cow-python; retain upstream and downstream attribution. |
+| `agent-cow-postgresql` | `0.2.1` | PyPI / production | `MIT` | <https://github.com/jpers1/agent-cow-postgresql> | MIT foundation derived from agent-cow-python; retain upstream and downstream attribution. |
 | `alembic` | `1.19.1` | PyPI / production | `MIT` | <https://github.com/sqlalchemy/alembic/> | — |
 | `annotated-doc` | `0.0.5` | PyPI / production | `MIT` | <https://github.com/fastapi/annotated-doc> | — |
 | `annotated-types` | `0.8.0` | PyPI / production | `MIT` | <https://github.com/annotated-types/annotated-types> | — |

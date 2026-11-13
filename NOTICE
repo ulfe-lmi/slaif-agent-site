@@ -16,7 +16,7 @@ unauthorized endorsement.
 
 Foundation attribution
 
-This project depends on the MIT-licensed agent-cow-postgresql 0.2.0 PyPI
+This project depends on the MIT-licensed agent-cow-postgresql 0.2.1 PyPI
 distribution, maintained at https://github.com/jpers1/agent-cow-postgresql.
 That project is a PostgreSQL-focused downstream fork of Trail's MIT-licensed
 agent-cow-python project at https://github.com/trail-ml/agent-cow-python. The

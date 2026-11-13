@@ -79,13 +79,13 @@ COPY services/browser-worker ./services/browser-worker
 RUN test "$TARGETARCH" = amd64 \
     && curl --fail --location --retry 3 \
       --output /tmp/chrome-for-testing.zip \
-      https://storage.googleapis.com/chrome-for-testing-public/157.0.8103.50/linux64/chrome-linux64.zip \
-    && echo 'd17167bc092eb495a3b768c7467f27e35f625aa03834233a1663af67dcb668c9  /tmp/chrome-for-testing.zip' \
+      https://storage.googleapis.com/chrome-for-testing-public/157.0.8103.78/linux64/chrome-linux64.zip \
+    && echo '9223832977a13db3646201b1341c1f9cf08afa3ceae92540116d7b0c062364fb  /tmp/chrome-for-testing.zip' \
       | sha256sum --check --strict \
     && node services/browser-worker/extract-zip.mjs \
       /tmp/chrome-for-testing.zip /chrome-for-testing \
     && test "$(/chrome-for-testing/chrome-linux64/chrome --version)" \
-      = 'Google Chrome for Testing 157.0.8103.50 ' \
+      = 'Google Chrome for Testing 157.0.8103.78 ' \
     && rm /tmp/chrome-for-testing.zip \
     && pnpm install --frozen-lockfile --filter @slaif-agent-site/browser-worker... \
     && pnpm --filter @slaif-agent-site/browser-tool-contracts build \
@@ -96,7 +96,7 @@ RUN test "$TARGETARCH" = amd64 \
       /output/node_modules/.package-map.json /output/node_modules/.pnpm/lock.yaml
 
 # The builder replaces the base browser payload with SHA-256-verified
-# Chrome for Testing 157.0.8103.50 (CfT revision 1717349). Compatible
+# Chrome for Testing 157.0.8103.78 (CfT revision 1717349). Compatible
 # Chromium libraries come from the exact Playwright Noble base; the base
 # image's vulnerable libbrotli1 1.1.0-2build2 is replaced by the fixed
 # 1.1.0-2ubuntu0.1 installed from the Noble repositories, and its
@@ -119,7 +119,7 @@ LABEL org.opencontainers.image.title="SLAIF Agent-Site browser worker" \
 ENV BROWSER_WORKER_HOST=0.0.0.0 \
     BROWSER_WORKER_PORT=3100 \
     BROWSER_WORKER_CHROMIUM_EXECUTABLE=/ms-playwright/chromium-1717349/chrome-linux64/chrome \
-    BROWSER_WORKER_EXPECTED_CHROMIUM_VERSION=157.0.8103.50 \
+    BROWSER_WORKER_EXPECTED_CHROMIUM_VERSION=157.0.8103.78 \
     HOME=/tmp \
     NODE_ENV=production \
     PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \

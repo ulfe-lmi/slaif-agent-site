@@ -94,7 +94,7 @@ promotion, publication, and final MVP claims.
 > **Pre-alpha / bounded deployable product.** This
 > repository contains the normative architecture, coding-agent governance,
 > reproducible Python/TypeScript toolchains, the qualified
-> `agent-cow-postgresql==0.2.0` dependency, ten backend process boundaries,
+> `agent-cow-postgresql==0.2.1` dependency, ten backend process boundaries,
 > exact PostgreSQL roles/local login principals, and an owner-only
 > Alembic/bootstrap path. It also enforces frozen dependency/license/source
 > policy, deterministic notices and application artifacts, exact OCI
@@ -114,9 +114,9 @@ promotion, publication, and final MVP claims.
 > runs with durable private artifact retrieval. Review snapshots, promotion,
 > publication, and public media finalization remain separate work.
 
-The supply-chain policy pins Chrome for Testing `157.0.8103.50` at CfT
-revision `1717349` (083-8-v security refresh of the 083-9-b maintenance
-update pin `156.0.8078.80`; that pin maintained the 083-5-c security
+The supply-chain policy pins Chrome for Testing `157.0.8103.78` at CfT
+revision `1717349` (083-10-a security refresh of the 083-8-v security refresh
+pin `157.0.8103.50` of the 083-9-b maintenance update pin `156.0.8078.80`; that pin maintained the 083-5-c security
 closure pin `156.0.8078.47`, which replaced the vulnerable `155.0.8059.84` payload). The 078-t built and scanned the six images, but its
 apparent zero-Critical result
 was unqualified because Syft omitted the Chrome 153 identity from the Grype
@@ -164,7 +164,7 @@ The design has three distinct layers:
 | --- | --- |
 | **SLAIF Agent-Site** | Identity, sites, configurable content models, Puck, semantic APIs/MCP, rendering, browser tools, media, administration, and operations. |
 | **SLAIF Agent-State** | Site-bound workspaces, capabilities, delegation, audit, immutable review snapshots, conflict-safe promotion/discard, expiry, and cleanup. |
-| **`agent-cow-postgresql`** | Generic PostgreSQL logical copy-on-write mechanics, integrated as the PyPI dependency `agent-cow-postgresql==0.2.0`, frozen with registry artifact hashes and never installed from Git/VCS in production. |
+| **`agent-cow-postgresql`** | Generic PostgreSQL logical copy-on-write mechanics, integrated as the PyPI dependency `agent-cow-postgresql==0.2.1`, frozen with registry artifact hashes and never installed from Git/VCS in production. |
 
 ```mermaid
 flowchart LR
@@ -282,7 +282,7 @@ remain queued. See the
 | Objective-082/2 human review surface (merged) | Read-only human review surface (082/2): one trusted SECURITY DEFINER read-model surface projecting the 082/1 immutable freeze snapshot into a deterministic JSON document, a session-gated noindex/no-store `/review/{workspace_id}/` snapshot renderer, an admin review page with digest, semantic timeline, bounded resource diff, R3 summaries, validation report, and frozen browser evidence and no accept/discard/promote/Puck affordances, uniform 404 gating for every failure mode, private staging media retrieval through the documented minimal 072 extension, and real NGINX/browser E2E at three viewports, accepted and merged in PR #98 on 2026-10-05 at `f754e075364b56571307a41abc4b9dcf3f6f6af0`; GitHub is authoritative for live acceptance and merge state. |
 | Objective-083/1 real human accept (merged) | Real human accept (083/1): the 082/1 frozen review snapshot is promoted to canonical by exactly one durable ACCEPT job applied in ONE all-or-nothing reviewer transaction (promotion audit row, exactly one WORKSPACE_ACCEPTED outbox event with the media manifest, stable CONFLICTED terminal on canonical drift, no partial visibility), the review worker as the sole reviewer authority, and the gated accept control with confirmation on the admin review page, accepted and merged in PR #99 on 2026-10-05 at `22f38c783d062a9c5352f7bdde8607d9ac299f26`; GitHub is authoritative for live acceptance and merge state. |
 | Objective-083/2 real human discard (merged) | Real discard, the conflict remedy (083/2): a REVIEW or CONFLICTED frozen workspace is discarded by the site's human reviewer through an idempotent enqueue (a duplicate discard returns the same job) and one all-or-nothing reviewer-transaction DISCARD job (guarded DISCARDED terminal with the immutable snapshot never exposed, retryable failures replay under the attempt budget and at budget return the workspace to its origin status, and no canonical visibility), the admin review-page discard control with typed confirmation and terminal-state rendering, and real NGINX/browser E2E including the post-accept discard sequence, accepted and merged in PR #101 on 2026-10-06 at `214909f3adf86b8dd4b9fa4a3b1ea9fca78faa2c`; GitHub is authoritative for live acceptance and merge state. |
-| Planned product work | Outbox consumer and public media finalization (083/3, in flight at `083-3-a`), approved-source and responsive-sweep orchestration, reconstruction, and remaining hardening. |
+| Planned product work | Increment 083/8 (public whole-session promotion qualification) is accepted and merged in PR #112 at `d888b37f` on 2026-11-12 and increment 083/9 (Node, Brotli, Chrome, and Python runtime security prerequisite) is accepted and merged in PR #113 at `40cd1721` on 2026-11-02; increment 083/10 (workspace-isolated media: pending media metadata/references in workspace COW with reviewer-transaction publication) is in flight at `083-10-a`; the objective-083 remainder (including the D5 immutable manifest), approved-source and responsive-sweep orchestration, reconstruction, and remaining hardening stay open. |
 
 See [Architecture Section 50](ARCHITECTURE.md#50-implementation-phases) for
 the normative phase plan.

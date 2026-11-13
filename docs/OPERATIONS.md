@@ -227,6 +227,19 @@ roundtrip on such a database, which also restores the exact 075 constructor
 catalog (function identity including OIDs, the reconciled grant policy, and
 working 075 constructors) before any v2 workspace can be created again.
 
+The `077_001` downgrade (workspace-isolated media) is an unconditional
+fail-closed refusal: `MEDIA_WORKSPACE_ISOLATION_DOWNGRADE_UNSUPPORTED`
+(P0001) is raised before any restoration, because the pre-077 media functions
+wrote `media_asset_base` directly and restoring them would silently reinstate
+the unsafe canonical media write path and its publication grants. The
+bootstrap operator path refuses this rollback even earlier (before the PENDING
+marker, the content COW disable, and any migration step); the migration body is
+the second line of defense for direct migration invocations. No database at
+this head has a supported downgrade below 077, and deleting retained snapshots
+does not enable one. The 076 retained-`review-snapshot/v2` refusal above is the
+historical 076 guard, enforced for databases operating at 076; it does not
+qualify the 077 refusal.
+
 ### Upstream health
 
 Use `docker compose ps` to identify an unhealthy process, then inspect that

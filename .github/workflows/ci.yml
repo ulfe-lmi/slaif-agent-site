@@ -221,11 +221,13 @@ jobs:
     # EXACT page-style command, unchanged argv/order/selection (current
     # selection 24+9+12=45), then the appended public whole-session
     # promotion qualification command (Q; exact module path, no -k
-    # selection). B is now 45+Q. Own disposable PostgreSQL service; no
+    # selection), then the appended workspace media/role/freeze/
+    # promotion/rollback command (M; ten exact module paths, no -k
+    # selection). B is now 45+Q+M. Own disposable PostgreSQL service; no
     # DB fixture is shared across runners.
     name: Foundation PG Group B PostgreSQL ${{ matrix.postgresql }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -283,6 +285,19 @@ jobs:
         run: >-
           uv run --frozen pytest
           services/backend/tests/integration/test_foundation_whole_session_qualification.py
+      - name: Run workspace media, role, freeze, promotion, and rollback regressions
+        run: >-
+          uv run --frozen pytest
+          services/backend/tests/integration/test_media_workspace_isolation.py
+          services/backend/tests/integration/test_media_workspace_existing_assets.py
+          services/backend/tests/integration/test_media_workspace_privileges.py
+          services/backend/tests/integration/test_media_service.py
+          services/backend/tests/integration/test_media_security_lifecycle.py
+          services/backend/tests/integration/test_real_human_accept.py
+          services/backend/tests/integration/test_real_human_discard.py
+          services/backend/tests/integration/test_freeze_review_snapshot.py
+          services/backend/tests/integration/test_human_agent_editor_workspace.py
+          services/backend/tests/integration/test_media_workspace_migration_preservation.py
 
   foundation-postgresql:
     # D1 fail-closed required gate: the five exact required names

@@ -86,7 +86,7 @@ publish only after human review.
 
 - Agent-Site is product; Agent-State is workspace/capability/review/promotion
   subsystem; `agent-cow-postgresql` is generic COW foundation.
-- Foundation comes only from PyPI as `agent-cow-postgresql==0.2.0`, with registry
+- Foundation comes only from PyPI as `agent-cow-postgresql==0.2.1`, with registry
   artifact hashes frozen in `uv.lock`; GitHub is source/provenance, never a
   production dependency.
 - Agent-only authority cannot write canonical content, publish, manage users,

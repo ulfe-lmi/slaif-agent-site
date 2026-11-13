@@ -79,6 +79,42 @@ also covers the exact filename-bearing `file` part, Viewer upload denial,
 revoked session, revoked/expired workspace, and archived-site outcomes with
 no idempotency/audit residue.
 
+Media workspace isolation adds fresh-pending oracles on both channels: a
+pending upload is readable with exact bytes in its own workspace while a
+same-site second workspace, the canonical base, and the sessionless public
+route for that previously unpublished digest all stay
+404/empty - pending metadata cannot revoke a digest that is already
+legitimately public; a lawful human Editor PATCH/DELETE on an
+agent-uploaded asset in its AGENT workspace is visible only to that workspace,
+with the preserved agent `MEDIA_UPLOADED` audit row and exactly the two
+`HUMAN_EDITOR` mutation audit rows; existing canonical assets keep their prior
+public authorization through pending edits, and same-hash dedupe keeps stable
+ids. The real review-worker regressions cover the grant matrix, freeze/accept/
+replay idempotency, NEW pending same-hash typed conflict with full rollback,
+failure after BOTH the promotion and the in-transaction mark (exact pending-row
+preservation, promoted composition absent from the base, and an actual public
+read proving the orphan is not served before recovery and serves exact bytes
+after it), typed media-closure publication including non-canonical UUID
+spellings, and the 077 privilege module (worker-only helper denials,
+missing-helper readiness refusal, effective schema-USAGE usability with its
+negative, and coherent historical 076 then 077 phase), and the
+migration preservation module (a genuine 076->077 normal-operator upgrade
+path with nonempty media plus a retained `review-snapshot/v2`, and the
+unconditional 077 downgrade refusal; the fresh current-head install is
+covered by the existing fresh-install/privilege/bootstrap cases). The ten
+selected regression modules run unfiltered in each PostgreSQL 14..18 Group B
+child of the existing CI matrix (five Group B executions) alongside the
+older media selections; all ten actual Group A/Group B required CI children
+remain required, but only the Group B children run the ten selected regression
+modules (several pre-existed; the new item is their unfiltered Group B
+selection). The `media-publication` spec has its own Compose project selection;
+the full existing `freeze-review-snapshot` project (which selects both the
+freeze-review-snapshot and frozen-review-parity specs) is what supplies all
+SIX stable target/engine pairings (three engine families) - not six
+distinct engine families, and not each media file running sixfold. This is
+source scope; pass counts are reported per that selection rather than as a
+six-engine claim.
+
 The Media store unit suite additionally runs two independent store instances
 in separate threads, pauses the winner after final-link visibility and before
 staging unlink, proves the loser waits and reuses the one-link object, proves a
@@ -417,6 +453,12 @@ as I_f evidence, and no later PASS is claimed before its own fresh
 run. The increment's remaining acceptance requirements are fresh
 LOCALWHOLE and LOCAL6 supply-chain evidence runs bound to the actual
 tested implementation SHA, each reported when and if executed.
+
+Under the 2026-11-13 qualified-source correction, the foundation pin and this
+qualification module's frozen anchors advance from 0.2.0 to 0.2.1 in the
+current 083-10-a source; the recorded 0.2.0 results above remain the 083/8
+evidence and are not relabeled, and actual 0.2.1 results are reported when the
+fresh current runs execute.
 
 ## Opt-in Compose smoke lifecycle evidence (083-8-k)
 

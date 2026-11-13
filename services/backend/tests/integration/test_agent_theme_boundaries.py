@@ -591,7 +591,10 @@ async def test_theme_downgrade_rejects_pending_cow_without_data_loss(
     agent_site_database: AgentSiteDatabase,
 ) -> None:
     database = agent_site_database
-    _unused_token, seeded = await _seed(database)
+    # Closed historical loop: the downgrade attempt below targets 064, so
+    # the seed must reach the released 076 head; the refusal must be the
+    # old theme PENDING_COW guard, not the current 077 ratchet.
+    _unused_token, seeded = await _seed(database, historical_head="076_001")
     token = await _capability_with_scopes(
         database, seeded, ["site:read", "theme:read", "theme-tokens:write"]
     )

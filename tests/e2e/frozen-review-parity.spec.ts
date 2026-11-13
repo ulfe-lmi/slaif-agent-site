@@ -177,7 +177,7 @@ function psql(project: string, sql: string): string {
  * (review_worker/worker.py), then calls the existing public
  * foundation operation-inspection API
  * (slaif_agent_site.agent_state.foundation.get_session_operations,
- * qualified agent-cow-postgresql 0.2.0).  No worker loop, no
+ * qualified agent-cow-postgresql 0.2.1).  No worker loop, no
  * promotion or discard call, no private FOUNDATION table or
  * undocumented SQL: the only SQL statements are the catalog identity
  * checks (current_database/session_user/current_user/pg_roles/
@@ -2295,6 +2295,52 @@ test("frozen-review-parity-six-stable-pairings", async () => {
     );
     expect(previewPdf.status()).toBe(200);
     expect(Buffer.from(await previewPdf.body()).equals(pdfBytes)).toBe(true);
+    // A4 pending-asset binding BEFORE freeze (read-only app-owned
+    // observation, the same trusted-inspection pattern as the G7
+    // pending-operation proof): the two just-uploaded assets are
+    // PENDING - absent from the canonical base and present as exactly
+    // two change rows in W1's own media COW changes (one row per
+    // upload; this fixture performs exactly these two media writes).
+    expect(
+      psql(
+        project,
+        `SELECT count(*) FROM content.media_asset_base
+          WHERE id IN ('${pngMediaId}'::uuid, '${pdfMediaId}'::uuid)`,
+      ),
+      "A4 pending assets absent from canonical base",
+    ).toBe("0");
+    expect(
+      psql(
+        project,
+        `SELECT count(*) FROM content.media_asset_changes
+          WHERE session_id = '${workspaceId}'::uuid`,
+      ),
+      "A4 W1 pending media change rows exact",
+    ).toBe("2");
+    // The adjacent own-preview 200 exact-byte reads above are the
+    // positive control: W1's session reads both pending private
+    // bytes before freeze.  The pending-public denial below is
+    // asserted on the RUN-UNIQUE PDF digest only (that digest is
+    // bound to this run's PDF and is public nowhere): the shared
+    // TINY_PNG bytes may legitimately already carry a public
+    // authorization from an earlier same-Compose spec run (the 068
+    // digest authorizer is site-agnostic by hash), and that
+    // pre-existing authorization is preserved - never revoked and
+    // never re-asserted as new here.
+    const anonPendingDigest = await browsers.chromium.newContext({
+      baseURL: ORIGIN,
+    });
+    try {
+      const pendingPdfPublic = await anonPendingDigest.request.get(
+        `/media/public/sha256/${pdfDigest.slice(0, 2)}/${pdfDigest.slice(2, 4)}/${pdfDigest}`,
+      );
+      expect(
+        pendingPdfPublic.status(),
+        "A4 pending private PDF digest unserved publicly",
+      ).toBe(404);
+    } finally {
+      await anonPendingDigest.close();
+    }
 
     // ----------------------------------------------- confined worker run
     // BEFORE freeze, the actual deployed confined browser worker
@@ -2514,6 +2560,21 @@ test("frozen-review-parity-six-stable-pairings", async () => {
           FROM control.review_snapshot WHERE id = '${snapshotId}'`,
       ),
     ).toBe("t");
+    // A4: the frozen descriptors retain the PENDING private status for
+    // both assets - freezing a pending workspace never flips its
+    // private media public (publication happens only inside a real
+    // accept job).  With the digest binding above and the full stored-
+    // row equality below, this pins the exact frozen media state.
+    expect(
+      psql(
+        project,
+        `SELECT (payload->'media'->'${pngMediaId}'->>'public_status') = 'private'
+          AND (payload->'media'->'${pdfMediaId}'->>'public_status') = 'private'
+          FROM control.review_snapshot WHERE id = '${snapshotId}'`,
+      ),
+      "A4 frozen descriptors retain private status",
+    ).toBe("t");
+
     // RC2 browser-evidence sibling binding: the stored v2 snapshot
     // carries the NONEMPTY browser_evidence of the SAME completed run
     // on the SAME workspace (the 076 completion gate admits only
@@ -2701,6 +2762,32 @@ test("frozen-review-parity-six-stable-pairings", async () => {
     );
     expect(w2Cap.status(), "W2 capability").toBe(201);
     const w2Token = ((await w2Cap.json()) as { token: string }).token;
+    // A4 cross-workspace preview isolation: the actual authorized
+    // workspace read proves W2 is ACTIVE right now (just created,
+    // capability minted, no edits yet - the terminal-state 404 shadow
+    // is excluded by this live status), and the SAME authorized
+    // human session cannot preview W1's pending private assets through
+    // W2's workspace-scoped read.  The uniform 404 is workspace-scoped
+    // absence, not an authority denial: the assets are absent from
+    // the canonical base (pre-freeze proof above) and their change
+    // rows belong to W1's COW session.
+    const w2StateDoc = await api.get(
+      `/api/control/v1/sites/${siteId}/workspaces/${w2Id}`,
+    );
+    expect(w2StateDoc.status(), "A4 W2 workspace read").toBe(200);
+    expect(
+      ((await w2StateDoc.json()) as { status: string }).status,
+      "A4 W2 actually ACTIVE before its freeze",
+    ).toBe("ACTIVE");
+    const w2PngPreview = await api.get(
+      `/media/v1/sites/${siteId}/workspaces/${w2Id}/preview/assets/${pngMediaId}/content`,
+    );
+    expect(w2PngPreview.status(), "A4 W2 active cannot preview W1 PNG").toBe(404);
+    const w2PdfPreview = await api.get(
+      `/media/v1/sites/${siteId}/workspaces/${w2Id}/preview/assets/${pdfMediaId}/content`,
+    );
+    expect(w2PdfPreview.status(), "A4 W2 active cannot preview W1 PDF").toBe(404);
+
     // ADJ-4 (documented 083/1 known foundation limitation): the
     // composite page_base (site_id, locale) FK breaks the foundation
     // get_cow_dependencies closure walk, so an ACCEPT session must be
@@ -2798,6 +2885,36 @@ test("frozen-review-parity-six-stable-pairings", async () => {
         throw new Error(`W2 accept timeout at ${w2Terminal}`);
       await new Promise((resolve) => setTimeout(resolve, 500));
     }
+    // A4 frozen-snapshot substitution: W2's REAL snapshot cannot serve
+    // W1's pending media ids through the frozen byte route (uniform
+    // 404 - the stored frozen media map does not contain them), while
+    // W1's own frozen bytes still deliver the exact original content
+    // after the unrelated real W2 publication.
+    const w2SubstitutePng = await api.get(
+      `/media/v1/review/${w2SnapshotId}/assets/${pngMediaId}/content`,
+    );
+    expect(w2SubstitutePng.status(), "A4 W2 snapshot cannot serve W1 PNG").toBe(404);
+    const w2SubstitutePdf = await api.get(
+      `/media/v1/review/${w2SnapshotId}/assets/${pdfMediaId}/content`,
+    );
+    expect(w2SubstitutePdf.status(), "A4 W2 snapshot cannot serve W1 PDF").toBe(404);
+    const w1RetainedPng = await api.get(
+      `/media/v1/review/${snapshotId}/assets/${pngMediaId}/content`,
+    );
+    expect(w1RetainedPng.status(), "A4 W1 frozen PNG still served").toBe(200);
+    expect(
+      Buffer.from(await w1RetainedPng.body()).equals(TINY_PNG),
+      "A4 W1 frozen PNG bytes exact after W2",
+    ).toBe(true);
+    const w1RetainedPdf = await api.get(
+      `/media/v1/review/${snapshotId}/assets/${pdfMediaId}/content`,
+    );
+    expect(w1RetainedPdf.status(), "A4 W1 frozen PDF still served").toBe(200);
+    expect(
+      Buffer.from(await w1RetainedPdf.body()).equals(pdfBytes),
+      "A4 W1 frozen PDF bytes exact after W2",
+    ).toBe(true);
+
     const revisionAfter = Number(
       psql(
         project,
@@ -3002,6 +3119,25 @@ test("frozen-review-parity-six-stable-pairings", async () => {
       "W1 post-terminal pdf bytes exact",
     ).toBe(true);
     await rc3Context.close();
+    // A4 after-proof: the run-unique pending PDF digest is STILL not
+    // publicly served after the real W1 terminal discard + pending
+    // cleanup (same anonymous content-addressed public edge route,
+    // no cookie); the adjacent G6 post-terminal exact-byte reads are
+    // the retention control for the same assets.
+    const anonPostDigest = await browsers.chromium.newContext({
+      baseURL: ORIGIN,
+    });
+    try {
+      const postPdfPublic = await anonPostDigest.request.get(
+        `/media/public/sha256/${pdfDigest.slice(0, 2)}/${pdfDigest.slice(2, 4)}/${pdfDigest}`,
+      );
+      expect(
+        postPdfPublic.status(),
+        "A4 pending private PDF digest still unserved after discard",
+      ).toBe(404);
+    } finally {
+      await anonPostDigest.close();
+    }
 
     // ------------------------------------- cross-surface parity + matrix
     // Every engine/target+route fingerprint must be identical between

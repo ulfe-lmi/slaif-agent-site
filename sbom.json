@@ -96,8 +96,8 @@
     {
       "type": "library",
       "name": "agent-cow-postgresql",
-      "version": "0.2.0",
-      "purl": "pkg:pypi/agent-cow-postgresql@0.2.0"
+      "version": "0.2.1",
+      "purl": "pkg:pypi/agent-cow-postgresql@0.2.1"
     },
     {
       "type": "library",
@@ -156,8 +156,8 @@
     {
       "type": "library",
       "name": "certifi",
-      "version": "2026.7.22",
-      "purl": "pkg:pypi/certifi@2026.7.22"
+      "version": "2026.10.19",
+      "purl": "pkg:pypi/certifi@2026.10.19"
     },
     {
       "type": "library",
@@ -246,8 +246,8 @@
     {
       "type": "library",
       "name": "next",
-      "version": "16.3.8",
-      "purl": "pkg:npm/next@16.3.8"
+      "version": "16.4.1",
+      "purl": "pkg:npm/next@16.4.1"
     },
     {
       "type": "library",

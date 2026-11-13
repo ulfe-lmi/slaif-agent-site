@@ -15,8 +15,22 @@ cleanup() {
 }
 trap cleanup EXIT HUP INT TERM
 
+collect_worker_diag() {
+  # Bounded sanitized collection for the CI log on any stage failure.
+  # The container stdout+stderr are merged into the sanitizer (never
+  # emitted raw): it re-emits ONLY the fixed bounded fields of lines
+  # whose JSON message starts with the exact diagnostic prefix, and
+  # drops everything else - markers embedded in other JSON fields or
+  # unrelated messages, non-JSON/malformed lines, unknown keys, and
+  # out-of-shape values. Capped at 60 sanitized lines.
+  docker logs --tail 400 "${PROJECT}-review-worker-1" 2>&1 \
+    | node "$ROOT/tools/compose/diag-sanitize.mjs" \
+    | head -n 60 || true
+}
+
 fail() {
   echo "compose-e2e: FAILED stage=$1 reason=$2" >&2
+  collect_worker_diag
   exit 1
 }
 
@@ -58,14 +72,19 @@ docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif \
    COMMIT;" >/dev/null
 site_id=$parity_site_id
 test -n "$site_id" || fail preview-fixture-site
+# The preview workspace carries the current 076 constructor version facts
+# at creation: the freeze materializer refuses unpinned ('{}') workspaces
+# with REVIEW_WORKSPACE_VERSION_UNKNOWN.
 docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif \
   -v ON_ERROR_STOP=1 -c \
   "BEGIN;
    INSERT INTO control.workspace
-     (id, site_id, created_by, actor_type, title, delegation_preset, status, expires_at)
+     (id, site_id, created_by, actor_type, title, delegation_preset,
+      version_facts, status, expires_at)
    VALUES ('$workspace_id'::uuid, '$site_id'::uuid, '$admin_id'::uuid,
-           'HUMAN', 'Compose preview fixture', 'L4_SITE_ARCHITECT', 'ACTIVE',
-           CURRENT_TIMESTAMP + interval '1 hour');
+           'HUMAN', 'Compose preview fixture', 'L4_SITE_ARCHITECT',
+           '{\"catalog\":\"catalog-v1\",\"composition_schema\":\"site-composition/v1\",\"content_model\":\"content-model/v1\",\"design_system\":\"design-system/v1\",\"puck\":\"0.20.2\",\"renderer\":\"renderer-v1\"}'::jsonb,
+           'ACTIVE', CURRENT_TIMESTAMP + interval '1 hour');
    SET LOCAL app.session_id = '$workspace_id';
    SET LOCAL app.operation_id = '12000000-0000-4000-8000-000000000302';
    INSERT INTO content.site_locale_base
@@ -303,3 +322,26 @@ then
   fail browser media-publication-contract
 fi
 echo "compose-e2e: OK projects=19 setup=1 governance=1 preview=1 preview-filtering=1 stable-devices=6 agent-sessions=2 agent-workspace-puck=2 freeze-review-snapshot=1 review-surface=1 accept-lifecycle=1 discard-lifecycle=1 media-publication=1 artifacts=disabled"
+
+# Dedicated ACTIVE workspace for the downstream smoke agent-browser phase,
+# created only AFTER every browser project succeeded. The shared preview
+# workspace above is consumed by the media-publication cycles and ends
+# terminal-ACCEPTED, and a closed workspace's capabilities no longer
+# authenticate, so the smoke browser runs bind this separate still-ACTIVE
+# workspace (same site, no pending content). It must NOT exist while the
+# projects run: control.slaif_human_editor_workspace_resolve selects the
+# latest ACTIVE HUMAN workspace by created_at DESC, id DESC, and the E2E
+# fixtures assert that the pinned preview workspace is the only HUMAN
+# workspace on the parity site.
+docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif \
+  -v ON_ERROR_STOP=1 -c \
+  "BEGIN;
+   INSERT INTO control.workspace
+     (id, site_id, created_by, actor_type, title, delegation_preset,
+      version_facts, status, expires_at)
+   VALUES ('12000000-0000-4000-8000-000000000340'::uuid, '$site_id'::uuid,
+           '$admin_id'::uuid, 'HUMAN', 'Compose smoke browser fixture',
+           'L4_SITE_ARCHITECT',
+           '{\"catalog\":\"catalog-v1\",\"composition_schema\":\"site-composition/v1\",\"content_model\":\"content-model/v1\",\"design_system\":\"design-system/v1\",\"puck\":\"0.20.2\",\"renderer\":\"renderer-v1\"}'::jsonb,
+           'ACTIVE', CURRENT_TIMESTAMP + interval '1 hour');
+   COMMIT;" >/dev/null

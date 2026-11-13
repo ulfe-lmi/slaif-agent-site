@@ -723,7 +723,10 @@ async def test_global_region_downgrade_refuses_region_data_and_audit(
     agent_site_database: AgentSiteDatabase,
 ) -> None:
     database = agent_site_database
-    _unused_token, seeded = await _seed(database)
+    # Closed historical loop: every downgrade attempt below targets 066,
+    # so the seed must reach the released 076 head; the refusals must be
+    # the old region guards, not the current 077 downgrade ratchet.
+    _unused_token, seeded = await _seed(database, historical_head="076_001")
     token = await _capability_with_scopes(database, seeded, WRITE_SCOPES)
     footer_id = _region_id(seeded["site_id"], "footer")
     async with _agent_client(database) as client:

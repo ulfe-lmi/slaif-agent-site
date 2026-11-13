@@ -37,6 +37,8 @@ _UNDERSCORE_SECRETS = tuple(
 def _control_settings(database: AgentSiteDatabase) -> ControlDatabaseSettings:
     login, password = database.credentials["slaif_control"]
     host = quote(str(database.connection_parameters["host"]), safe="[]:.")
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
     return ControlDatabaseSettings(
         mode=ControlDatabaseMode.TEST,
         dsn=SecretStr(

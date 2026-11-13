@@ -110,6 +110,8 @@ _LONG_LIVED_ROLES = (
 
 def _dsn(database: AgentSiteDatabase, user: str, password: str) -> str:
     host = quote(str(database.connection_parameters["host"]), safe="[]:.")
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
     return (
         f"postgresql://{quote(user, safe='')}:{quote(password, safe='')}@"
         f"{host}:{database.connection_parameters['port']}/{database.name}"
@@ -471,6 +473,8 @@ async def _control_http(
 
     login, password = database.credentials["slaif_control"]
     host = quote(str(database.connection_parameters["host"]), safe="[]:.")
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
     settings = ControlDatabaseSettings(
         mode=ControlDatabaseMode.TEST,
         dsn=SecretStr(

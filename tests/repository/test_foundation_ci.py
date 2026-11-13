@@ -6,7 +6,9 @@ Proves, from the workflow source without any YAML parser dependency:
   split 85 (generic + 19-file bootstrap/privilege) and 45 (component +
   theme + page-style) per version; group B additionally appends the
   public whole-session promotion qualification module as a fourth exact
-  pytest command (Q; no -k selection), making B 45+Q;
+  pytest command (Q; no -k selection), making B 45+Q, and then the
+  workspace media/role/freeze/promotion/rollback command (M; ten exact
+  module paths, no -k selection), making B 45+Q+M;
 - the five exact required names are supplied by an aggregator that
   depends on BOTH child job IDs with JOB-level always();
 - the ACTUAL extracted aggregate script is fail-closed: only the
@@ -76,6 +78,21 @@ PAGE_STYLE = (
 WHOLE_SESSION = (
     "uv run --frozen pytest "
     "services/backend/tests/integration/test_foundation_whole_session_qualification.py"
+)
+_MEDIA = [
+    "test_media_workspace_isolation.py",
+    "test_media_workspace_existing_assets.py",
+    "test_media_workspace_privileges.py",
+    "test_media_service.py",
+    "test_media_security_lifecycle.py",
+    "test_real_human_accept.py",
+    "test_real_human_discard.py",
+    "test_freeze_review_snapshot.py",
+    "test_human_agent_editor_workspace.py",
+    "test_media_workspace_migration_preservation.py",
+]
+MEDIA = "uv run --frozen pytest " + " ".join(
+    f"services/backend/tests/integration/{name}" for name in _MEDIA
 )
 
 
@@ -187,7 +204,14 @@ def _assert_required_names(text: str) -> None:
 def _assert_exact_commands(text: str) -> None:
     job_a, job_b, _gate = _foundation_blocks(text)
     assert _run_values(job_a) == [SYNC, GENERIC, BOOTSTRAP]
-    assert _run_values(job_b) == [SYNC, COMPONENT, THEME, PAGE_STYLE, WHOLE_SESSION]
+    assert _run_values(job_b) == [
+        SYNC,
+        COMPONENT,
+        THEME,
+        PAGE_STYLE,
+        WHOLE_SESSION,
+        MEDIA,
+    ]
 
 
 def _assert_complete_matrices(text: str) -> None:
@@ -236,8 +260,13 @@ class FoundationCiSplitTestCase(unittest.TestCase):
             self.assertIn("fail-fast: false", block)
 
     def test_child_isolation_setup_and_unchanged_toolchain(self) -> None:
+        # 083-10-a bounded budget correction: Group B additionally runs the
+        # ten unfiltered workspace media regression modules (M) on top of
+        # its unchanged 45+Q selection, so its child budget is 30 minutes;
+        # Group A keeps the original 15.
+        self.assertIn("timeout-minutes: 15", self.job_a)
+        self.assertIn("timeout-minutes: 30", self.job_b)
         for block in (self.job_a, self.job_b):
-            self.assertIn("timeout-minutes: 15", block)
             self.assertIn("image: postgres:${{ matrix.postgresql }}", block)
             self.assertIn("POSTGRES_DB: qualification", block)
             self.assertIn("POSTGRES_USER: postgres", block)
@@ -255,11 +284,11 @@ class FoundationCiSplitTestCase(unittest.TestCase):
             self.assertIn(SETUP_PYTHON, block)
             self.assertIn(SETUP_UV, block)
 
-    def test_exact_five_commands_split_85_plus_45_plus_q(self) -> None:
+    def test_exact_commands_split_85_plus_45_plus_q_plus_m(self) -> None:
         self.assertEqual(_run_values(self.job_a), [SYNC, GENERIC, BOOTSTRAP])
         self.assertEqual(
             _run_values(self.job_b),
-            [SYNC, COMPONENT, THEME, PAGE_STYLE, WHOLE_SESSION],
+            [SYNC, COMPONENT, THEME, PAGE_STYLE, WHOLE_SESSION, MEDIA],
         )
 
     def test_aggregator_depends_on_both_child_jobs_with_job_level_always(self) -> None:
@@ -283,11 +312,13 @@ class FoundationCiSplitTestCase(unittest.TestCase):
         self.assertNotIn("retries:", self.text)
         timeouts = re.findall(r"^    timeout-minutes: (\d+)$", self.text, re.M)
         # Exact original multiset (10,15,15,15,45,60,10,15,10) plus exactly
-        # one new 5-minute aggregator and one additional 15-minute child:
-        # no timeout raised, no cap removed.
+        # one new 5-minute aggregator and one additional 15-minute child,
+        # with the 083-10-a bounded correction replacing Group B's 15 by 30
+        # for the expanded 45+Q+M selection: no other timeout raised, no
+        # cap removed.
         self.assertEqual(
             sorted(timeouts),
-            ["10", "10", "10", "15", "15", "15", "15", "15", "45", "5", "60"],
+            ["10", "10", "10", "15", "15", "15", "15", "30", "45", "5", "60"],
             timeouts,
         )
         self.assertIn("    timeout-minutes: 5", self.job_gate)
@@ -366,6 +397,30 @@ class FoundationCiSplitTestCase(unittest.TestCase):
         needle = (
             "          services/backend/tests/integration/"
             "test_foundation_whole_session_qualification.py"
+        )
+        self.assertEqual(self.text.count(needle), 1)
+        mutated = self.text.replace(needle, needle + " -k component", 1)
+        self.assertNotEqual(mutated, self.text)
+        with self.assertRaises(AssertionError):
+            _assert_exact_commands(mutated)
+
+    def test_mutation_omitted_media_module_command_fails(self) -> None:
+        _assert_exact_commands(self.text)
+        needle = (
+            "\n          services/backend/tests/integration/"
+            "test_media_workspace_isolation.py"
+        )
+        self.assertEqual(self.text.count(needle), 1)
+        mutated = self.text.replace(needle, "", 1)
+        self.assertNotEqual(mutated, self.text)
+        with self.assertRaises(AssertionError):
+            _assert_exact_commands(mutated)
+
+    def test_mutation_media_selection_added_fails(self) -> None:
+        _assert_exact_commands(self.text)
+        needle = (
+            "          services/backend/tests/integration/"
+            "test_human_agent_editor_workspace.py"
         )
         self.assertEqual(self.text.count(needle), 1)
         mutated = self.text.replace(needle, needle + " -k component", 1)

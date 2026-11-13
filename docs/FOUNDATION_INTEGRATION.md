@@ -1,7 +1,7 @@
 # PostgreSQL foundation integration
 
 SLAIF Agent-Site adopts the non-yanked PyPI release
-`agent-cow-postgresql==0.2.0` as its generic PostgreSQL copy-on-write
+`agent-cow-postgresql==0.2.1` as its generic PostgreSQL copy-on-write
 foundation. This document records the qualified dependency and bootstrap
 boundary; the runnable
 Agent-Site service itself (APIs, rendering, Compose stack) is documented by
@@ -18,16 +18,16 @@ URL, a local path, or an editable checkout.
 | Item | Qualified value |
 | --- | --- |
 | Distribution | `agent-cow-postgresql` |
-| Version | `0.2.0` |
+| Version | `0.2.1` |
 | Python declared by foundation | `>=3.10,<3.15` |
 | Agent-Site Python range | `>=3.12,<3.15` |
 | Downstream Python CI | 3.12, 3.13, 3.14 |
 | Downstream PostgreSQL CI | 14, 15, 16, 17, 18 |
 | License | MIT |
-| Wheel | `agent_cow_postgresql-0.2.0-py3-none-any.whl` |
-| Wheel SHA-256 | `c469d24700fabb93a58f464d3539a32e936097f93035a95f193062859546f5b1` |
-| Source distribution | `agent_cow_postgresql-0.2.0.tar.gz` |
-| Source SHA-256 | `eae8d434d2fc03c4faa08b44b4863fc8f8efb44ee33eaad3adc22e7eb96a062c` |
+| Wheel | `agent_cow_postgresql-0.2.1-py3-none-any.whl` |
+| Wheel SHA-256 | `315f5172506076f59bc84d607c0e4494b888bd126d875a61515ae5278824952f` |
+| Source distribution | `agent_cow_postgresql-0.2.1.tar.gz` |
+| Source SHA-256 | `6556d567eaa1f449e0f729d01aae1eb2b645e8f76e22e333cebdd04e1a5331f6` |
 
 The separately qualified migration substrate is also registry-only and locked:
 

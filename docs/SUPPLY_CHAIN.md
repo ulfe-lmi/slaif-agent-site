@@ -131,7 +131,7 @@ Grype scans that checksummed document; the index links both forms.
 
 The browser worker uses the digest-pinned official Playwright 1.62.1 Noble
 image, exact `playwright-core==1.62.1`, and Chrome for Testing
-`157.0.8103.50` at CfT revision `1717349`. The exact linux/amd64 archive is
+`157.0.8103.78` at CfT revision `1717349`. The exact linux/amd64 archive is
 SHA-256 verified before extraction by the bounded source-controlled parser.
 The base image's NodeSource nodejs 24.18.1 is purged and replaced with the
 SHA-256-verified, MIT-licensed official Node.js 24.22.1 archive, and its
@@ -244,7 +244,7 @@ findings in that older payload. The 152.0.7977.82 qualification and finding set
 remain historical evidence in
 [`supply-chain/browser-worker-critical-matrix.json`](../supply-chain/browser-worker-critical-matrix.json)
 while the active maintenance pin is Chrome for Testing
-`157.0.8103.50` at CfT revision `1717349` (083-8-v security refresh).
+`157.0.8103.78` at CfT revision `1717349` (083-10-a security refresh of the 083-8-v pin).
 The prior pin `156.0.8078.80` at CfT revision `1706539` (083-9-b source
 update, its intermediate P1 six-image CI qualification recorded as
 candidate-10 at 2026-10-30; the final F/SELF gates require fresh required
@@ -339,8 +339,8 @@ component or finding from evidence. Coding agents must not author an exception
 merely to make a gate green. The owner removed this exception after the official
 stable Chrome 152.0.7977.82 qualification; the later `153.0.8010.36`
 (078-u) and `155.0.8059.84` (083-3) maintenance qualifications remain
-historical evidence; the current pin is `157.0.8103.50` at CfT revision
-`1717349` (083-8-v security refresh). The prior pin `156.0.8078.80`
+historical evidence; the current pin is `157.0.8103.78` at CfT revision
+`1717349` (083-10-a security refresh of the 083-8-v pin). The prior pin `156.0.8078.80`
 (083-9-b source update, its intermediate P1 six-image CI qualification
 recorded as candidate-10 at 2026-10-30; the final F/SELF gates require
 fresh required checks and six-image CI re-qualification) is dated

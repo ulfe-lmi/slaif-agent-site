@@ -464,8 +464,8 @@ echo "review-worker-media-boundary: OK dsn=0400:uid10001 root=0700:uid10001"
 docker inspect "${PROJECT}-browser-worker-1" | python -c \
   'import json,sys; value=json.load(sys.stdin)[0]; host=value["HostConfig"]; config=value["Config"]; assert config["User"]=="10001:10001" and host["ReadonlyRootfs"] is True; assert host["CapDrop"]==["ALL"] and host["CapAdd"]==["CAP_SYS_CHROOT"]; assert host["PidsLimit"]==256 and host["Memory"]==805306368 and host["ShmSize"]==134217728 and host["NanoCpus"]==1000000000; assert "no-new-privileges:true" in host["SecurityOpt"] and any(item.startswith("seccomp=") for item in host["SecurityOpt"]); assert host["NetworkMode"].endswith("_browser"); print("browser-worker-runtime-policy: OK uid=10001 readonly=yes caps=SYS_CHROOT limits=exact network=browser")'
 docker exec "${PROJECT}-browser-worker-1" sh -exc \
-  'test "$(find /ms-playwright -mindepth 1 -maxdepth 1 -type d | wc -l)" -eq 1; test -x /ms-playwright/chromium-1717349/chrome-linux64/chrome; test ! -e /usr/bin/npm; test ! -e /usr/bin/corepack; test ! -e /usr/bin/node; test ! -e /usr/local/bin/npm; test ! -e /usr/local/bin/npx; test ! -e /usr/local/bin/corepack; test ! -e /usr/local/bin/pnpm; test ! -e /usr/local/bin/pnpx; test ! -e /usr/local/lib/node_modules/npm; test ! -e /usr/local/lib/node_modules/corepack; test ! -e /usr/lib/node_modules/corepack; test ! -e /usr/bin/python3; test ! -e /usr/bin/python3.12; test ! -e /usr/local/bin/python3; test ! -e /usr/local/bin/python3.12; python_paths=$(find /usr /opt \( -name "python3*" -o -name "libpython3*" \) -print); test -z "$python_paths"; test "$(node --version)" = v24.22.1; /ms-playwright/chromium-1717349/chrome-linux64/chrome --version | grep -Eq "^Google Chrome for Testing 157[.]0[.]8103[.]50 *$"'
-echo "browser-worker-image-policy: OK playwright=1.62.1 cft_revision=1717349 chromium=157.0.8103.50 browsers=chromium-only package-manager=absent python3=absent"
+  'test "$(find /ms-playwright -mindepth 1 -maxdepth 1 -type d | wc -l)" -eq 1; test -x /ms-playwright/chromium-1717349/chrome-linux64/chrome; test ! -e /usr/bin/npm; test ! -e /usr/bin/corepack; test ! -e /usr/bin/node; test ! -e /usr/local/bin/npm; test ! -e /usr/local/bin/npx; test ! -e /usr/local/bin/corepack; test ! -e /usr/local/bin/pnpm; test ! -e /usr/local/bin/pnpx; test ! -e /usr/local/lib/node_modules/npm; test ! -e /usr/local/lib/node_modules/corepack; test ! -e /usr/lib/node_modules/corepack; test ! -e /usr/bin/python3; test ! -e /usr/bin/python3.12; test ! -e /usr/local/bin/python3; test ! -e /usr/local/bin/python3.12; python_paths=$(find /usr /opt \( -name "python3*" -o -name "libpython3*" \) -print); test -z "$python_paths"; test "$(node --version)" = v24.22.1; /ms-playwright/chromium-1717349/chrome-linux64/chrome --version | grep -Eq "^Google Chrome for Testing 157[.]0[.]8103[.]78 *$"'
+echo "browser-worker-image-policy: OK playwright=1.62.1 cft_revision=1717349 chromium=157.0.8103.78 browsers=chromium-only package-manager=absent python3=absent"
 
 curl --fail --show-error --silent http://localhost:8080/ | grep -q "Self-hosted human control"
 docker compose -p "$PROJECT" logs --no-color bootstrap 2>/dev/null \
@@ -1114,10 +1114,13 @@ docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif -Atc \
   | grep -q '^1:1:[3-9][0-9]*:\(COMPLETED\|FAILED\|TIMED_OUT\|CANCELLED\)$'
 echo "agent-browser-http: OK create=202 dispatcher=QUEUED-to-terminal restart=durable"
 
-# Bind two additional durable QUEUED runs to the existing real COW preview
-# fixture. The trusted Agent-side client mints each opaque preview credential
-# only in process memory, verifies the signed worker result, and never prints or
-# writes either credential.
+# Bind two additional durable QUEUED runs to the dedicated still-ACTIVE smoke
+# browser workspace (0340, seeded by e2e.sh). The shared preview workspace is
+# terminal-ACCEPTED after the media-publication cycles, and a closed
+# workspace's capabilities no longer authenticate; the smoke runs therefore
+# must not bind it. The trusted Agent-side client mints each opaque preview
+# credential only in process memory, verifies the signed worker result, and
+# never prints or writes either credential.
 python - "$AGENT_CAPABILITY_CONFIG_FILE" "$AGENT_CAPABILITY_META_FILE" <<'PY'
 import hashlib
 import pathlib
@@ -1159,11 +1162,11 @@ docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif \
      (id,workspace_id,public_id,secret_digest,scopes,expires_at)
    VALUES
      ('15000000-0000-4000-8000-000000000004',
-      '12000000-0000-4000-8000-000000000301','$worker_capability_public',
+      '12000000-0000-4000-8000-000000000340','$worker_capability_public',
       '$worker_capability_digest','[\"preview:inspect\"]'::jsonb,
       CURRENT_TIMESTAMP + interval '1 hour'),
      ('15000000-0000-4000-8000-000000000005',
-      '12000000-0000-4000-8000-000000000301','$foreign_capability_public',
+      '12000000-0000-4000-8000-000000000340','$foreign_capability_public',
       '$foreign_capability_digest','[\"preview:inspect\"]'::jsonb,
       CURRENT_TIMESTAMP + interval '1 hour');" >/dev/null
 worker_run_ids=

@@ -50,7 +50,7 @@
     "pkg:npm/%40playwright/test@1.62.1": "Apache-2.0 test automation; the separately declared playwright-core runtime drives only the confined product Chromium worker.",
     "pkg:npm/playwright-core@1.62.1": "Apache-2.0 exact product runtime for the confined Chromium worker; no hosted browser or telemetry service.",
     "pkg:npm/caniuse-lite@1.0.30001809": "CC-BY-4.0 browser compatibility data; retain attribution and source link.",
-    "pkg:pypi/agent-cow-postgresql@0.2.0": "MIT foundation derived from agent-cow-python; retain upstream and downstream attribution."
+    "pkg:pypi/agent-cow-postgresql@0.2.1": "MIT foundation derived from agent-cow-python; retain upstream and downstream attribution."
   },
   "license_metadata_reviews": {
     "pkg:pypi/certifi@2026.10.19": {
@@ -76,9 +76,9 @@
     "foundation": {
       "distribution": "agent-cow-postgresql",
       "import": "agentcow.postgres",
-      "version": "0.2.0",
-      "wheel_sha256": "c469d24700fabb93a58f464d3539a32e936097f93035a95f193062859546f5b1",
-      "sdist_sha256": "eae8d434d2fc03c4faa08b44b4863fc8f8efb44ee33eaad3adc22e7eb96a062c"
+      "version": "0.2.1",
+      "wheel_sha256": "315f5172506076f59bc84d607c0e4494b888bd126d875a61515ae5278824952f",
+      "sdist_sha256": "6556d567eaa1f449e0f729d01aae1eb2b645e8f76e22e333cebdd04e1a5331f6"
     },
     "denied_hosted_package_prefixes": [
       "@aws-sdk/",
@@ -160,10 +160,10 @@
     "images": {
       "apache": {
         "install": [
-          "apache2-bin=2.4.58-1ubuntu8.18",
-          "apache2-data=2.4.58-1ubuntu8.18",
-          "apache2-utils=2.4.58-1ubuntu8.18",
-          "apache2=2.4.58-1ubuntu8.18",
+          "apache2-bin=2.4.58-1ubuntu8.19",
+          "apache2-data=2.4.58-1ubuntu8.19",
+          "apache2-utils=2.4.58-1ubuntu8.19",
+          "apache2=2.4.58-1ubuntu8.19",
           "apt=2.8.4ubuntu0.1",
           "libapt-pkg6.0t64=2.8.4ubuntu0.1",
           "openssl=3.0.13-0ubuntu3.16"
@@ -194,10 +194,10 @@
     "node_version": "24.22.1",
     "playwright_core_version": "1.62.1",
     "chromium_revision": "1717349",
-    "chromium_version": "157.0.8103.50",
+    "chromium_version": "157.0.8103.78",
     "chromium_executable": "/ms-playwright/chromium-1717349/chrome-linux64/chrome",
-    "chromium_archive_url": "https://storage.googleapis.com/chrome-for-testing-public/157.0.8103.50/linux64/chrome-linux64.zip",
-    "chromium_archive_sha256": "d17167bc092eb495a3b768c7467f27e35f625aa03834233a1663af67dcb668c9",
+    "chromium_archive_url": "https://storage.googleapis.com/chrome-for-testing-public/157.0.8103.78/linux64/chrome-linux64.zip",
+    "chromium_archive_sha256": "9223832977a13db3646201b1341c1f9cf08afa3ceae92540116d7b0c062364fb",
     "node_archive_url": "https://nodejs.org/dist/v24.22.1/node-v24.22.1-linux-x64.tar.gz",
     "node_archive_sha256": "eb6728e77c576a35162c122c45ccadf224d89ff00abc8dae46cc2897c6002d7c",
     "platform": "linux/amd64",
