@@ -126,10 +126,10 @@ class OciContractTests(unittest.TestCase):
             content,
         )
         for package in (
-            "apache2=2.4.58-1ubuntu8.18",
-            "apache2-bin=2.4.58-1ubuntu8.18",
-            "apache2-data=2.4.58-1ubuntu8.18",
-            "apache2-utils=2.4.58-1ubuntu8.18",
+            "apache2=2.4.58-1ubuntu8.19",
+            "apache2-bin=2.4.58-1ubuntu8.19",
+            "apache2-data=2.4.58-1ubuntu8.19",
+            "apache2-utils=2.4.58-1ubuntu8.19",
             "openssl=3.0.13-0ubuntu3.16",
         ):
             self.assertIn(f"'{package}'", content)

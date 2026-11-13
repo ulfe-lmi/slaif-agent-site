@@ -23,10 +23,10 @@ RUN apt-get -o Acquire::Retries=0 update \
     && test "$(dpkg-query -W -f='${Version}' apt)" = 2.8.4ubuntu0.1 \
     && test "$(dpkg-query -W -f='${Version}' libapt-pkg6.0t64)" = 2.8.4ubuntu0.1 \
     && apt-get -o Acquire::Retries=0 install --no-install-recommends --yes \
-      'apache2=2.4.58-1ubuntu8.18' \
-      'apache2-bin=2.4.58-1ubuntu8.18' \
-      'apache2-data=2.4.58-1ubuntu8.18' \
-      'apache2-utils=2.4.58-1ubuntu8.18' \
+      'apache2=2.4.58-1ubuntu8.19' \
+      'apache2-bin=2.4.58-1ubuntu8.19' \
+      'apache2-data=2.4.58-1ubuntu8.19' \
+      'apache2-utils=2.4.58-1ubuntu8.19' \
       'openssl=3.0.13-0ubuntu3.16' \
     && a2dissite 000-default \
     && a2enmod deflate headers proxy proxy_http unique_id \

@@ -908,7 +908,8 @@ test("media-publication-core-human-agent-preview-finalize-public-hostile", async
     psql(
       project,
       `SELECT public_status || '|' ||
-                (published_at IS NOT NULL) || '|' || content_hash
+                CASE WHEN published_at IS NOT NULL THEN 't' ELSE 'f' END
+                     || '|' || content_hash
          FROM content.media_asset_base
         WHERE id = '${agentMediaId}'::uuid`,
     ),
@@ -1627,7 +1628,8 @@ test("media-publication-core-human-agent-preview-finalize-public-hostile", async
     psql(
       project,
       `SELECT public_status || '|' ||
-                (published_at IS NOT NULL) || '|' || content_hash
+                CASE WHEN published_at IS NOT NULL THEN 't' ELSE 'f' END
+                     || '|' || content_hash
          FROM content.media_asset_base
         WHERE id = '${pdfAgentMediaId}'::uuid`,
     ),
@@ -1833,7 +1835,8 @@ test("media-publication-core-human-agent-preview-finalize-public-hostile", async
     psql(
       project,
       `SELECT public_status || '|' ||
-                (published_at IS NOT NULL) || '|' || content_hash
+                CASE WHEN published_at IS NOT NULL THEN 't' ELSE 'f' END
+                     || '|' || content_hash
          FROM content.media_asset_base
         WHERE id = '${humanMediaId}'::uuid`,
     ),
@@ -1842,7 +1845,8 @@ test("media-publication-core-human-agent-preview-finalize-public-hostile", async
     psql(
       project,
       `SELECT public_status || '|' ||
-                (published_at IS NOT NULL) || '|' || content_hash
+                CASE WHEN published_at IS NOT NULL THEN 't' ELSE 'f' END
+                     || '|' || content_hash
          FROM content.media_asset_base
         WHERE id = '${pdfHumanMediaId}'::uuid`,
     ),
@@ -1851,7 +1855,8 @@ test("media-publication-core-human-agent-preview-finalize-public-hostile", async
     psql(
       project,
       `SELECT public_status || '|' ||
-                (published_at IS NOT NULL) || '|' || content_hash
+                CASE WHEN published_at IS NOT NULL THEN 't' ELSE 'f' END
+                     || '|' || content_hash
          FROM content.media_asset_base
         WHERE id = '${pdfAgentMediaId}'::uuid`,
     ),
