@@ -62,7 +62,7 @@ class FakeConnection:
             "EMPTY_SAFE",
             True,
             "agent-cow-postgresql",
-            "0.2.0",
+            "0.2.1",
         ),
         setup_lock_row: tuple[object, ...] | None = None,
         setup_complete_row: tuple[object, ...] | None = None,
@@ -351,11 +351,11 @@ async def test_new_connection_identity_and_exact_role_are_fail_closed(
             ControlDatabaseReason.MIGRATION_MISMATCH,
         ),
         (
-            ("077_001", "077_001", "PENDING", False, "agent-cow-postgresql", "0.2.0"),
+            ("077_001", "077_001", "PENDING", False, "agent-cow-postgresql", "0.2.1"),
             ControlDatabaseReason.UNSAFE_MARKER,
         ),
         (
-            ("077_001", "077_001", "EMPTY_SAFE", True, "other", "0.2.0"),
+            ("077_001", "077_001", "EMPTY_SAFE", True, "other", "0.2.1"),
             ControlDatabaseReason.FOUNDATION_MISMATCH,
         ),
         (

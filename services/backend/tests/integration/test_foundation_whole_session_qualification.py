@@ -1,6 +1,6 @@
 """Public whole-session promotion qualification for the frozen foundation.
 
-Qualifies, through the public agent-cow-postgresql 0.2.0 API only, whether a
+Qualifies, through the public agent-cow-postgresql 0.2.1 API only, whether a
 whole mixed-FK COW session can be committed after promotion has made
 uncommitted effects, and rolled back completely when the terminal window
 fails. This is GENERIC MECHANISM PROOF on an owned disposable cluster:
@@ -67,7 +67,7 @@ escaped refusal or a cancel may legally leave the healthy pooled backend
 alive and idle, or the pool may have replaced it; only an
 "idle in transaction" state or a live lock for the window pid would be a
 leak, while the termination outcome expects the backend to be gone.
-Frozen 0.2.0 context cleanness is public semantics, not literal
+Frozen 0.2.1 context cleanness is public semantics, not literal
 representation: safe_session._normalize_context normalizes both None and
 '' to clean, so the leak assertion rejects only nonempty stale app.*
 settings.
@@ -144,11 +144,11 @@ COW_TABLES = (
 )
 EXCLUDED_TABLES = frozenset({"site", "txn_probe"})
 
-# Frozen P1 anchors (registry pypi.org; retained wheel 106280B).
-WHEEL_SHA256 = "c469d24700fabb93a58f464d3539a32e936097f93035a95f193062859546f5b1"
-WHEEL_SIZE = 106280
-SDIST_SHA256 = "eae8d434d2fc03c4faa08b44b4863fc8f8efb44ee33eaad3adc22e7eb96a062c"
-SDIST_SIZE = 107970
+# Frozen P1 anchors (registry pypi.org; retained wheel 108551B).
+WHEEL_SHA256 = "315f5172506076f59bc84d607c0e4494b888bd126d875a61515ae5278824952f"
+WHEEL_SIZE = 108551
+SDIST_SHA256 = "6556d567eaa1f449e0f729d01aae1eb2b645e8f76e22e333cebdd04e1a5331f6"
+SDIST_SIZE = 110560
 REPO_ROOT = Path(__file__).resolve().parents[4]
 
 ORACLE_COLUMNS = {
@@ -682,12 +682,12 @@ async def _seeded_controls(db: WholeSessionDatabase) -> dict[str, Any]:
 
 
 def test_p1_frozen_020_anchors_are_public_and_uv_lock_pinned() -> None:
-    assert FOUNDATION_VERSION == "0.2.0"
+    assert FOUNDATION_VERSION == "0.2.1"
     assert importlib.metadata.version(FOUNDATION_DISTRIBUTION) == FOUNDATION_VERSION
     metadata = importlib.metadata.metadata(FOUNDATION_DISTRIBUTION)
     assert metadata["Name"] == "agent-cow-postgresql"
-    assert metadata["Version"] == "0.2.0"
-    # The installed 0.2.0 distribution exposes MIT as the SPDX license
+    assert metadata["Version"] == "0.2.1"
+    # The installed 0.2.1 distribution exposes MIT as the SPDX license
     # expression; the legacy `License` field is unset (honestly recorded).
     assert metadata.get("License-Expression") == "MIT"
     assert metadata.get("License") is None
@@ -701,7 +701,7 @@ def test_p1_frozen_020_anchors_are_public_and_uv_lock_pinned() -> None:
         (REPO_ROOT / "uv.lock").read_text(encoding="utf-8"),
         FOUNDATION_DISTRIBUTION,
     )
-    assert 'version = "0.2.0"' in block
+    assert 'version = "0.2.1"' in block
     assert 'source = { registry = "https://pypi.org/simple" }' in block
     assert f'hash = "sha256:{WHEEL_SHA256}", size = {WHEEL_SIZE}' in block
     assert f'hash = "sha256:{SDIST_SHA256}", size = {SDIST_SIZE}' in block
@@ -1780,7 +1780,7 @@ async def _p6_restored(
         )
         == 1
     )
-    # No COW GUC leaks on fresh pooled connections. Frozen 0.2.0 public
+    # No COW GUC leaks on fresh pooled connections. Frozen 0.2.1 public
     # semantics (safe_session._normalize_context, values or None; SQL side
     # NULLIF(current_setting(..., true), '')) treat BOTH NULL and empty
     # string as clean, so only a nonempty stale value is a leak:

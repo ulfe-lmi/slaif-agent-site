@@ -111,7 +111,7 @@ async def test_readiness_function_owner_security_grants_and_denial_matrix(
             assert row["readiness_state"] in ("HARDENED", "HARDENED")
             assert row["safe"] is True
             assert row["foundation_distribution"] == "agent-cow-postgresql"
-            assert row["foundation_version"] == "0.2.0"
+            assert row["foundation_version"] == "0.2.1"
             with pytest.raises(asyncpg.InsufficientPrivilegeError):
                 await control.fetch("SELECT * FROM control.bootstrap_readiness")
         for role, pool in pools.items():
@@ -175,7 +175,7 @@ async def test_control_pool_reports_exact_marker_migration_and_foundation_state(
         ) as connection:
             await connection.execute(
                 "UPDATE control.bootstrap_readiness SET "
-                "foundation_version = '0.2.0', readiness_state = 'PENDING', "
+                "foundation_version = '0.2.1', readiness_state = 'PENDING', "
                 "content_object_count = 0, content_object_fingerprint = NULL, "
                 "foundation_object_count = 0, foundation_object_fingerprint = NULL, "
                 "foundation_hardened = FALSE, "

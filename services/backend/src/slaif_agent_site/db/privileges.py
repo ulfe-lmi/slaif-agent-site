@@ -22,7 +22,7 @@ from .roles import (
 PRODUCT_SCHEMAS = ("control", "content", "audit")
 READ_ROLES = ("slaif_public_reader", "slaif_preview_reader")
 # The foundation's controlled reviewer function surface (agent-cow-
-# postgresql 0.2.0 hardening set): the exact agentcow EXECUTEs the
+# postgresql 0.2.1 hardening set): the exact agentcow EXECUTEs the
 # reviewer role receives. Every function is SECURITY DEFINER owned by
 # the setup owner, so no table grants accompany the surface.
 FOUNDATION_REVIEWER_FUNCTIONS = (

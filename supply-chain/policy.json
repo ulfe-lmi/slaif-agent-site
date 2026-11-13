@@ -50,7 +50,7 @@
     "pkg:npm/%40playwright/test@1.62.1": "Apache-2.0 test automation; the separately declared playwright-core runtime drives only the confined product Chromium worker.",
     "pkg:npm/playwright-core@1.62.1": "Apache-2.0 exact product runtime for the confined Chromium worker; no hosted browser or telemetry service.",
     "pkg:npm/caniuse-lite@1.0.30001809": "CC-BY-4.0 browser compatibility data; retain attribution and source link.",
-    "pkg:pypi/agent-cow-postgresql@0.2.0": "MIT foundation derived from agent-cow-python; retain upstream and downstream attribution."
+    "pkg:pypi/agent-cow-postgresql@0.2.1": "MIT foundation derived from agent-cow-python; retain upstream and downstream attribution."
   },
   "license_metadata_reviews": {
     "pkg:pypi/certifi@2026.10.19": {
@@ -76,9 +76,9 @@
     "foundation": {
       "distribution": "agent-cow-postgresql",
       "import": "agentcow.postgres",
-      "version": "0.2.0",
-      "wheel_sha256": "c469d24700fabb93a58f464d3539a32e936097f93035a95f193062859546f5b1",
-      "sdist_sha256": "eae8d434d2fc03c4faa08b44b4863fc8f8efb44ee33eaad3adc22e7eb96a062c"
+      "version": "0.2.1",
+      "wheel_sha256": "315f5172506076f59bc84d607c0e4494b888bd126d875a61515ae5278824952f",
+      "sdist_sha256": "6556d567eaa1f449e0f729d01aae1eb2b645e8f76e22e333cebdd04e1a5331f6"
     },
     "denied_hosted_package_prefixes": [
       "@aws-sdk/",

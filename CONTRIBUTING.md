@@ -149,7 +149,7 @@ required hosted or account-bound services. The integrated
 version with hashes in `uv.lock`; Git, direct-URL, local-path, or editable forms
 are forbidden for normal builds.
 
-The current direct runtime set is exact: `agent-cow-postgresql==0.2.0`,
+The current direct runtime set is exact: `agent-cow-postgresql==0.2.1`,
 `alembic==1.19.1`, `asyncpg==0.32.0`, `fastapi==0.141.1`,
 `pydantic==2.13.4`, `pydantic-settings==2.15.0`,
 `sqlalchemy==2.0.52`, and `uvicorn==0.52.3`, without standard/cloud extras.

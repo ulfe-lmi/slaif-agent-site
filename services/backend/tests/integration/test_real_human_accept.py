@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -33,7 +34,10 @@ from conftest import AgentSiteDatabase
 from pydantic import SecretStr
 from slaif_agent_site.agent_state import promotion as promotion_module
 from slaif_agent_site.agent_state.capability import generate_capability_token
-from slaif_agent_site.agent_state.foundation import asyncpg_cow_session
+from slaif_agent_site.agent_state.foundation import (
+    asyncpg_cow_reviewer,
+    asyncpg_cow_session,
+)
 from slaif_agent_site.bootstrap.service import reconcile, upgrade
 from slaif_agent_site.config import EnvironmentMode, ServiceSettings
 from slaif_agent_site.control_api.app import create_app as create_control_app
@@ -43,6 +47,9 @@ from slaif_agent_site.control_api.config import (
 )
 from slaif_agent_site.control_api.database import ControlDatabase
 from slaif_agent_site.db.connections import owner_connection
+from slaif_agent_site.db.roles import quote_identifier
+from slaif_agent_site.editor_api.app import create_app as create_editor_app
+from slaif_agent_site.editor_api.database import EditorDatabase
 from slaif_agent_site.human_authorization import (
     HumanAuthorizationService,
     MembershipChange,
@@ -62,6 +69,18 @@ from slaif_agent_site.review_worker.config import (
     ReviewWorkerSettings,
 )
 from slaif_agent_site.review_worker.freeze_job import run_freeze_job
+from test_human_editor_production_http import (
+    CONTROL_LOGIN,
+    CONTROL_PASSWORD,
+    CONTROL_ROLE,
+    EDITOR_LOGIN,
+    EDITOR_PASSWORD,
+    EDITOR_ROLE,
+    _assert_private,
+    _cookie,
+    _editor_settings,
+    _mutation_headers,
+)
 
 _AGGON2 = (
     "$argon2id$v=19$m=65536,t=3,p=4$"
@@ -3307,3 +3326,287 @@ async def test_accept_worker_stored_digest_cotamper_refused(
     finally:
         await boundary.stop()
         await pool.close()
+
+
+@pytest.mark.asyncio
+async def test_accept_worker_human_page_edit_mixed_composite_fk(
+    agent_site_database: AgentSiteDatabase, tmp_path: Path
+) -> None:
+    """A real human Editor page title edit carries the mixed UUID/TEXT
+    composite FK content.page (site_id, locale) -> content.site_locale
+    (site_id, tag).
+
+    While the edit is still PENDING, the public reviewer context the
+    accept worker uses (asyncpg_cow_reviewer -> operations/dependencies)
+    returns the normal pending graph: exactly the one pending operation
+    recorded for the human mutation, and no dependencies.  The
+    0.2.0 dependency getter failed at EXECUTE with SQLSTATE 42883 on
+    that same pending mixed-composite-FK page (retained narrower
+    getter probe, not rerun).  The canonical title is still the
+    original while the edit is pending; the real freeze/accept worker
+    then promotes the canonical title with the exact revision,
+    promotion audit and outbox facts, and the accepted title is
+    visible through the human Editor HTTP read path.
+    """
+    database = agent_site_database
+    media_root = tmp_path / "media"
+    owner_pool = await database.role_pool("slaif_owner")
+    site_id = uuid4()
+    human_id = uuid4()
+    page_id = uuid4()
+    site_key = f"human-fk-accept-{uuid4().hex[:12]}"
+    fixed_logins = (
+        (CONTROL_LOGIN, CONTROL_PASSWORD, CONTROL_ROLE),
+        (EDITOR_LOGIN, EDITOR_PASSWORD, EDITOR_ROLE),
+    )
+    pool: asyncpg.Pool[Any] | None = None
+    boundary: MediaBoundary | None = None
+    created_logins: list[str] = []
+    try:
+        await upgrade(database.settings)
+        async with owner_pool.acquire() as owner:
+            await owner.execute(
+                "INSERT INTO control.user_account "
+                "(id, identity_kind, oidc_issuer, oidc_subject, display_name) "
+                "VALUES ($1, 'OIDC', 'https://human-fk-accept.test', $2, "
+                "'Human FK Accept Human')",
+                human_id,
+                str(human_id),
+            )
+            await owner.execute(
+                "INSERT INTO control.platform_administrator (user_account_id) "
+                "VALUES ($1)",
+                human_id,
+            )
+            await owner.execute(
+                "INSERT INTO control.site "
+                "(id, site_key, display_name, default_locale, "
+                "component_catalog_version) VALUES ($1, $2, 'Human FK Accept', "
+                "'en', 'catalog-v1')",
+                site_id,
+                site_key,
+            )
+            await owner.execute(
+                "INSERT INTO content.page "
+                "(id, site_id, slug, title, status, locale) "
+                "VALUES ($1, $2, 'canonical', 'Canonical title', 'DRAFT', 'en')",
+                page_id,
+                site_id,
+            )
+        await reconcile(database.settings)
+
+        for login, password, role in fixed_logins:
+            password_literal = await database.administrator.fetchval(
+                "SELECT pg_catalog.quote_literal($1::text)", password
+            )
+            await database.administrator.execute(
+                f"CREATE ROLE {quote_identifier(login)} LOGIN PASSWORD "
+                f"{password_literal} "
+                "NOSUPERUSER NOCREATEDB NOCREATEROLE INHERIT "
+                "NOREPLICATION NOBYPASSRLS"
+            )
+            created_logins.append(login)
+            await database.administrator.execute(
+                f"GRANT {quote_identifier(role)} TO {quote_identifier(login)}"
+            )
+
+        settings = _worker_settings(database)
+        control = ControlDatabase(_control_settings(database))
+        editor = EditorDatabase(_editor_settings(database))
+        app = create_editor_app(
+            settings=ServiceSettings(mode=EnvironmentMode.TEST),
+            database=control,
+            editor_database=editor,
+        )
+        async with app.router.lifespan_context(app):
+            issued = await control.human_session_service().create(human_id)
+            session = issued.token.get_secret_value()
+            csrf = issued.csrf_token.get_secret_value()
+            pages_path = f"/api/editor/v1/sites/{site_id}/pages/"
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app),
+                base_url="http://public-editor.test",
+            ) as client:
+                update = await client.patch(
+                    f"{pages_path}{page_id}",
+                    headers=_mutation_headers(session, csrf, "human-page-fk-title"),
+                    json={
+                        "title": "Human FK regression title",
+                        "expected_row_version": 1,
+                    },
+                )
+                assert update.status_code == 200
+                _assert_private(update)
+                assert update.json()["title"] == "Human FK regression title"
+
+            async with owner_pool.acquire() as owner:
+                workspace_row = await owner.fetchrow(
+                    "SELECT id, delegator_id, created_by FROM control.workspace "
+                    "WHERE site_id = $1",
+                    site_id,
+                )
+                base_revision = await owner.fetchval(
+                    "SELECT canonical_revision FROM control.site WHERE id = $1",
+                    site_id,
+                )
+                mutation_rows = await owner.fetch(
+                    "SELECT * FROM audit.human_editor_mutation "
+                    "WHERE site_id = $1 ORDER BY occurred_at",
+                    site_id,
+                )
+                canonical_title = await owner.fetchval(
+                    "SELECT title FROM content.page_base WHERE id = $1",
+                    page_id,
+                )
+            assert workspace_row is not None
+            workspace_id = UUID(str(workspace_row["id"]))
+            # A HUMAN editor workspace has no delegator: the creator is
+            # the actor the freeze/accept functions authorize.
+            creator_id = UUID(str(workspace_row["created_by"]))
+            assert workspace_row["delegator_id"] is None
+            assert str(creator_id) == str(human_id)
+            assert base_revision == 0
+            # COW isolation: the pending edit does not touch canonical.
+            assert canonical_title == "Canonical title"
+            # The Editor boundary recorded exactly the successful PATCH.
+            assert len(mutation_rows) == 1
+            mutation = mutation_rows[0]
+            operation_id = UUID(str(mutation["operation_id"]))
+            assert str(mutation["human_user_id"]) == str(human_id)
+            assert str(mutation["workspace_id"]) == str(workspace_id)
+            assert str(mutation["site_id"]) == str(site_id)
+            assert mutation["action"] == (f"PATCH {pages_path}{page_id}")
+            assert mutation["resource_type"] == "editor.sites"
+            assert str(mutation["resource_id"]) == str(page_id)
+            assert re.fullmatch(r"[0-9a-f]{64}", mutation["request_digest"])
+            assert mutation["response_status"] == 200
+            assert mutation["occurred_at"] is not None
+
+            ids = {
+                "workspace_id": workspace_id,
+                "site_id": site_id,
+                "delegator_id": creator_id,
+            }
+
+            pool = await _worker_pool(database)
+            boundary = MediaBoundary(settings=_media_settings(database, media_root))
+            try:
+                # The public reviewer context the accept worker uses,
+                # exercised while the mixed-composite-FK page edit is
+                # still PENDING.
+                async with pool.acquire() as connection:
+                    async with asyncpg_cow_reviewer(connection) as reviewer:
+                        operations = await reviewer.operations(
+                            workspace_id, schema="content"
+                        )
+                        dependencies = await reviewer.dependencies(
+                            workspace_id, schema="content"
+                        )
+                assert operations == [operation_id]
+                assert dependencies == []
+
+                snapshot_id = await _freeze_workspace(database, ids, pool)
+                async with owner_pool.acquire() as owner:
+                    stored_digest = await owner.fetchval(
+                        "SELECT digest::text FROM control.review_snapshot "
+                        "WHERE id = $1",
+                        snapshot_id,
+                    )
+                assert stored_digest is not None
+
+                rows = await _enqueue_accept(database, workspace_id, creator_id)
+                job_id = UUID(str(rows[0]["job_id"]))
+                job = await _claim_accept(database, "accept-human-page-fk-1")
+                assert str(job["id"]) == str(job_id)
+                result = await run_accept_job(pool, settings, job, media=boundary)
+                assert result.status == "SUCCEEDED", result.error
+
+                async with owner_pool.acquire() as owner:
+                    revision = await owner.fetchval(
+                        "SELECT canonical_revision FROM control.site WHERE id = $1",
+                        site_id,
+                    )
+                    workspace = await owner.fetchrow(
+                        "SELECT status, accepted_at FROM control.workspace "
+                        "WHERE id = $1",
+                        workspace_id,
+                    )
+                    job_row = await owner.fetchrow(
+                        "SELECT status, error FROM control.review_job WHERE id = $1",
+                        job_id,
+                    )
+                    audit_rows = await owner.fetch(
+                        "SELECT * FROM audit.promotion ORDER BY id"
+                    )
+                    outbox_rows = await owner.fetch(
+                        "SELECT * FROM control.cache_outbox ORDER BY id"
+                    )
+                    promoted_title = await owner.fetchval(
+                        "SELECT title FROM content.page_base WHERE id = $1",
+                        page_id,
+                    )
+
+                assert revision == base_revision + 1
+                assert str(workspace["status"]) == "ACCEPTED"
+                assert workspace["accepted_at"] is not None
+                assert job_row["status"] == "SUCCEEDED"
+                assert job_row["error"] is None
+                assert promoted_title == "Human FK regression title"
+
+                # Exactly one promotion audit row with the exact fields.
+                assert len(audit_rows) == 1
+                audit = audit_rows[0]
+                assert str(audit["site_id"]) == str(site_id)
+                assert str(audit["workspace_id"]) == str(workspace_id)
+                assert str(audit["snapshot_id"]) == str(snapshot_id)
+                assert str(audit["job_id"]) == str(job_id)
+                assert str(audit["digest"]) == stored_digest
+                assert audit["base_site_revision"] == base_revision
+                assert audit["new_canonical_revision"] == base_revision + 1
+                assert audit["committed_operations"] == 1
+                assert str(audit["actor_user_account_id"]) == str(human_id)
+                assert audit["created_at"] is not None
+
+                # Exactly one unconsumed outbox row; no media was touched.
+                assert len(outbox_rows) == 1
+                outbox = outbox_rows[0]
+                assert str(outbox["site_id"]) == str(site_id)
+                assert str(outbox["workspace_id"]) == str(workspace_id)
+                assert outbox["event_kind"] == "WORKSPACE_ACCEPTED"
+                assert json.loads(outbox["payload"]) == {
+                    "snapshot_id": str(snapshot_id),
+                    "digest": stored_digest,
+                    "base_site_revision": base_revision,
+                    "new_canonical_revision": base_revision + 1,
+                    "media_manifest": [],
+                }
+
+                # The canonical read through the human Editor HTTP path
+                # shows the accepted title.
+                async with httpx.AsyncClient(
+                    transport=httpx.ASGITransport(app=app),
+                    base_url="http://public-editor.test",
+                ) as client:
+                    read = await client.get(
+                        f"{pages_path}{page_id}",
+                        headers={"cookie": _cookie(session, csrf)},
+                    )
+                    assert read.status_code == 200
+                    _assert_private(read)
+                    assert read.json()["title"] == "Human FK regression title"
+            finally:
+                if boundary is not None:
+                    await boundary.stop()
+                if pool is not None:
+                    await pool.close()
+    finally:
+        await owner_pool.close()
+        for login, _, role in fixed_logins:
+            if login not in created_logins:
+                continue
+            await database.administrator.execute(
+                f"REVOKE {quote_identifier(role)} FROM {quote_identifier(login)}"
+            )
+            await database.administrator.execute(
+                f"DROP ROLE IF EXISTS {quote_identifier(login)}"
+            )

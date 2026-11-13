@@ -454,6 +454,12 @@ run. The increment's remaining acceptance requirements are fresh
 LOCALWHOLE and LOCAL6 supply-chain evidence runs bound to the actual
 tested implementation SHA, each reported when and if executed.
 
+Under the 2026-11-13 qualified-source correction, the foundation pin and this
+qualification module's frozen anchors advance from 0.2.0 to 0.2.1 in the
+current 083-10-a source; the recorded 0.2.0 results above remain the 083/8
+evidence and are not relabeled, and actual 0.2.1 results are reported when the
+fresh current runs execute.
+
 ## Opt-in Compose smoke lifecycle evidence (083-8-k)
 
 `sh tools/compose/smoke.sh <project> --lifecycle <absolute-evidence-dir>`

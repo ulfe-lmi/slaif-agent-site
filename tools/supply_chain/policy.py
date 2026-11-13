@@ -235,7 +235,7 @@ def validate_policy(policy: dict[str, Any]) -> None:
     if (
         foundation["distribution"] != "agent-cow-postgresql"
         or foundation["import"] != "agentcow.postgres"
-        or foundation["version"] != "0.2.0"
+        or foundation["version"] != "0.2.1"
         or not SHA256.fullmatch(str(foundation["wheel_sha256"]))
         or not SHA256.fullmatch(str(foundation["sdist_sha256"]))
     ):

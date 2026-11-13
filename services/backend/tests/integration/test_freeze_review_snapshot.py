@@ -5488,7 +5488,7 @@ async def _rc6_establish_075_runtime(dsn: SecretStr, db_name: str) -> None:
     keep refusing 075 before and after this setup.
 
     The recipe executes, on the exact frozen PyPI
-    agent-cow-postgresql 0.2.0 public interfaces only (no private
+    agent-cow-postgresql 0.2.1 public interfaces only (no private
     foundation tables/SQL): deploy foundation functions -> revoke
     PUBLIC foundation access -> enable COW on content (deferred FKs,
     no unsafe canonical writes) -> nonempty foundation + content

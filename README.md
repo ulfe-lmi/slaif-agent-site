@@ -94,7 +94,7 @@ promotion, publication, and final MVP claims.
 > **Pre-alpha / bounded deployable product.** This
 > repository contains the normative architecture, coding-agent governance,
 > reproducible Python/TypeScript toolchains, the qualified
-> `agent-cow-postgresql==0.2.0` dependency, ten backend process boundaries,
+> `agent-cow-postgresql==0.2.1` dependency, ten backend process boundaries,
 > exact PostgreSQL roles/local login principals, and an owner-only
 > Alembic/bootstrap path. It also enforces frozen dependency/license/source
 > policy, deterministic notices and application artifacts, exact OCI
@@ -164,7 +164,7 @@ The design has three distinct layers:
 | --- | --- |
 | **SLAIF Agent-Site** | Identity, sites, configurable content models, Puck, semantic APIs/MCP, rendering, browser tools, media, administration, and operations. |
 | **SLAIF Agent-State** | Site-bound workspaces, capabilities, delegation, audit, immutable review snapshots, conflict-safe promotion/discard, expiry, and cleanup. |
-| **`agent-cow-postgresql`** | Generic PostgreSQL logical copy-on-write mechanics, integrated as the PyPI dependency `agent-cow-postgresql==0.2.0`, frozen with registry artifact hashes and never installed from Git/VCS in production. |
+| **`agent-cow-postgresql`** | Generic PostgreSQL logical copy-on-write mechanics, integrated as the PyPI dependency `agent-cow-postgresql==0.2.1`, frozen with registry artifact hashes and never installed from Git/VCS in production. |
 
 ```mermaid
 flowchart LR

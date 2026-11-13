@@ -8,11 +8,11 @@ resolution-markers = [
 
 [[package]]
 name = "agent-cow-postgresql"
-version = "0.2.0"
+version = "0.2.1"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/9d/8a/12ab11db290a00e3d5c9d5c096e3a40ac1d3b731f5eb9aba9e4f760ca97f/agent_cow_postgresql-0.2.0.tar.gz", hash = "sha256:eae8d434d2fc03c4faa08b44b4863fc8f8efb44ee33eaad3adc22e7eb96a062c", size = 107970, upload-time = "2026-08-16T14:24:45.565Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/c4/ea/89a0ed7e04863213c915dfb304ab5815076ae9b3922ad22b4aa4a753db39/agent_cow_postgresql-0.2.1.tar.gz", hash = "sha256:6556d567eaa1f449e0f729d01aae1eb2b645e8f76e22e333cebdd04e1a5331f6", size = 110560, upload-time = "2026-11-13T07:05:37.176Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/71/80/c16b27ee22112ce51c4198a67f07513a1c73bd5231f94356da563419d9f0/agent_cow_postgresql-0.2.0-py3-none-any.whl", hash = "sha256:c469d24700fabb93a58f464d3539a32e936097f93035a95f193062859546f5b1", size = 106280, upload-time = "2026-08-16T14:24:44.015Z" },
+    { url = "https://files.pythonhosted.org/packages/f0/0b/c40319d3002faaabe8fb4ea614b451be2d5e7c6a9e7d378b62ec85701076/agent_cow_postgresql-0.2.1-py3-none-any.whl", hash = "sha256:315f5172506076f59bc84d607c0e4494b888bd126d875a61515ae5278824952f", size = 108551, upload-time = "2026-11-13T07:05:35.535Z" },
 ]
 
 [[package]]
@@ -816,7 +816,7 @@ test = [
 
 [package.metadata]
 requires-dist = [
-    { name = "agent-cow-postgresql", specifier = "==0.2.0" },
+    { name = "agent-cow-postgresql", specifier = "==0.2.1" },
     { name = "alembic", specifier = "==1.19.1" },
     { name = "argon2-cffi", specifier = "==25.1.0" },
     { name = "asyncpg", specifier = "==0.32.0" },

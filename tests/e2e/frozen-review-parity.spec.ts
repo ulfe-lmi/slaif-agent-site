@@ -177,7 +177,7 @@ function psql(project: string, sql: string): string {
  * (review_worker/worker.py), then calls the existing public
  * foundation operation-inspection API
  * (slaif_agent_site.agent_state.foundation.get_session_operations,
- * qualified agent-cow-postgresql 0.2.0).  No worker loop, no
+ * qualified agent-cow-postgresql 0.2.1).  No worker loop, no
  * promotion or discard call, no private FOUNDATION table or
  * undocumented SQL: the only SQL statements are the catalog identity
  * checks (current_database/session_user/current_user/pg_roles/

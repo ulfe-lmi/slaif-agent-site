@@ -24,18 +24,18 @@ from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
 LOGO_SHA256 = "0760613aca18ace80d559686e98ec640f9f85caa163c5338c28e73b57b9c7a08"
-FOUNDATION_VERSION = "0.2.0"
+FOUNDATION_VERSION = "0.2.1"
 FOUNDATION_REGISTRY = "https://pypi.org/simple"
-FOUNDATION_WHEEL = "agent_cow_postgresql-0.2.0-py3-none-any.whl"
+FOUNDATION_WHEEL = "agent_cow_postgresql-0.2.1-py3-none-any.whl"
 FOUNDATION_WHEEL_SHA256 = (
-    "c469d24700fabb93a58f464d3539a32e936097f93035a95f193062859546f5b1"
+    "315f5172506076f59bc84d607c0e4494b888bd126d875a61515ae5278824952f"
 )
-FOUNDATION_SDIST = "agent_cow_postgresql-0.2.0.tar.gz"
+FOUNDATION_SDIST = "agent_cow_postgresql-0.2.1.tar.gz"
 FOUNDATION_SDIST_SHA256 = (
-    "eae8d434d2fc03c4faa08b44b4863fc8f8efb44ee33eaad3adc22e7eb96a062c"
+    "6556d567eaa1f449e0f729d01aae1eb2b645e8f76e22e333cebdd04e1a5331f6"
 )
 PYTHON_RUNTIME_DEPENDENCIES = [
-    "agent-cow-postgresql==0.2.0",
+    "agent-cow-postgresql==0.2.1",
     "alembic==1.19.1",
     "argon2-cffi==25.1.0",
     "asyncpg==0.32.0",
@@ -46,7 +46,7 @@ PYTHON_RUNTIME_DEPENDENCIES = [
     "uvicorn==0.52.3",
 ]
 PYTHON_DIRECT_VERSIONS = {
-    "agent-cow-postgresql": "0.2.0",
+    "agent-cow-postgresql": "0.2.1",
     "alembic": "1.19.1",
     "argon2-cffi": "25.1.0",
     "asyncpg": "0.32.0",
