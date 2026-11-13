@@ -20,16 +20,18 @@ Coverage (bounded A7 slice; full A7 preservation stays primary's):
    set = EXECUTE-success probe, not a publication proof); every ordinary
    non-owner/non-worker role is refused with SQLSTATE 42501; the dropped
    creator/mark are absent.
-2. drop the helper on a current 077 head: actual current-head privilege
-   validation refuses (missing-required-object) and the real reconcile
-   readiness path raises.
+2. drop the helper at the current head (078): actual current-head
+   privilege validation refuses (missing-required-object) and the real
+   reconcile readiness path raises.
 3. an ACTUAL 076-phase database (existing migration harness stopped at
    076_001; lawful setup/harden fixture seams in the reconcile order):
    the current-graph reconcile head gate still refuses it (deliberately
    NOT weakened), the phase-aware apply re-grants the 068 public_mark
    slaif_media EXECUTE at the historical head and the verifier is
-   coherent, and the real upgrade() to 077 plus reconcile() reaches ready.
-4. effective content USAGE negative: at the ready 077 head, revoking ONLY
+   coherent, and the real upgrade() to the current head (078_001) plus
+   reconcile() reaches ready.
+4. effective content USAGE negative: at the ready current head (078_001),
+   revoking ONLY
    the worker's direct schema USAGE makes the real worker probe fail
    42501 and the current verifier flag exactly
    schema/content/slaif_review_worker/effective-usage-missing (the
@@ -155,8 +157,8 @@ async def test_077_fresh_hardened_reviewer_only_publicize(
 ) -> None:
     database = agent_site_database
     await upgrade(database.settings)
-    await reconcile(database.settings)  # harden + apply + verify => ready at 077
-    assert await _head(database) == "077_001"
+    await reconcile(database.settings)  # harden + apply + verify (ready at 078 head)
+    assert await _head(database) == "078_001"
 
     # the legacy creator/mark were dropped by 077 (exact identities)
     assert await _function_shape(database, _CREATOR_IDENTITY) is None
@@ -164,7 +166,7 @@ async def test_077_fresh_hardened_reviewer_only_publicize(
 
     # grant shape: owner slaif_owner, no PUBLIC execute, worker only
     shape = await _function_shape(database, _PUBLICIZE_IDENTITY)
-    assert shape is not None, "publication helper missing at 077 head"
+    assert shape is not None, "publication helper missing at the current head"
     assert shape["owner_r"] == "slaif_owner"
     assert shape["public_exec"] is False
     # REQUIRE the worker EXECUTE; allow only the known owner + worker
@@ -234,7 +236,7 @@ async def test_077_missing_helper_refuses_current_head(
 
 
 @pytest.mark.asyncio
-async def test_076_historical_phase_coherent_then_upgrades_to_077(
+async def test_076_historical_phase_coherent_then_upgrades_to_078(
     agent_site_database: AgentSiteDatabase,
 ) -> None:
     database = agent_site_database
@@ -250,7 +252,7 @@ async def test_076_historical_phase_coherent_then_upgrades_to_077(
         "068 public_mark must exist at the 076 phase"
     )
 
-    # the current 077-graph reconcile head gate is deliberately preserved:
+    # the current 078-graph reconcile head gate is deliberately preserved:
     # a 076 database is refused until it is upgraded (no gate weakening)
     with pytest.raises(BootstrapStateError) as gate:
         await reconcile(database.settings)
@@ -292,10 +294,10 @@ async def test_076_historical_phase_coherent_then_upgrades_to_077(
     assert not [v for v in violations if "slaif_media" in v]
     assert not [v for v in violations if "publicize" in v]
 
-    # the real upgrade path then reaches a ready 077 head
+    # the real upgrade path then reaches the ready current head (078_001)
     await upgrade(database.settings)
     await reconcile(database.settings)
-    assert await _head(database) == "077_001"
+    assert await _head(database) == "078_001"
     assert await _function_shape(database, _PUBLICIZE_IDENTITY) is not None
     assert await _function_shape(database, _LEGACY_MARK_IDENTITY) is None
     assert await _function_shape(database, _CREATOR_IDENTITY) is None

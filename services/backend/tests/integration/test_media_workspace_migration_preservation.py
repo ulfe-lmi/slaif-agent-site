@@ -19,8 +19,15 @@ normal physical 076 -> 077 upgrade, which must preserve:
 The positive 076 -> 077 stage runs the ACTUAL production operator
 upgrade (bootstrap.service.upgrade), whose admission preflight refuses
 any workspace with pending COW operations - which is exactly why the
-supported discard lifecycle runs first - then the normal reconcile
-(actual head 077_001, valid normal hardening/roles).  After it, the
+supported discard lifecycle runs first - plus its real COW disable.
+083-11-a: the current Alembic head is 078_001, so a TEST-ONLY target
+adapter (delegating to the real run_migration, restored immediately
+on context exit) pins this one operator invocation to the EXPLICIT
+released 077_001 revision, and the expected-head seam keeps the
+reconciled marker/graph at the fixture stage: a historical fixture
+pin, not a production 077 target feature.  The real 077_001 Alembic
+body runs; the 077 -> 078 operator path is proven separately by
+083-11-a C6 and the current-head bootstrap tests.  After it, the
 actual supported downgrade refusal from 077 is exercised through BOTH
 paths: the bootstrap operator path (typed BootstrapStateError before
 any PENDING marker / COW disable / migration effect) and the documented
@@ -46,19 +53,24 @@ Provenance and limits:
   A8 proofs stay with PRIMARY;
 - the initial 076 stage uses the already-reviewed narrow TEST-only
   expected-head metadata seam (test_agent_mutations._expected_head_
-  override); the normal current 077 production gate stays unchanged for
-  the real upgrade/reconcile.
+  override) for its reconcile; the closed 077 stage adds the same seam
+  for its post-upgrade reconcile plus the TEST-ONLY delegated
+  run_migration target pin described above (scoped, restored); the
+  normal current 078 production gate is exercised unchanged by the
+  current-head bootstrap tests and 083-11-a C6.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
+import unittest.mock
 from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
+import slaif_agent_site.bootstrap.service as bootstrap_service
 from conftest import AgentSiteDatabase, AsyncpgExecutor
 from slaif_agent_site.agent_state.foundation import (
     asyncpg_cow_session,
@@ -299,6 +311,23 @@ def _exception_sqlstates(error: BaseException) -> list[str]:
     return sqlstates
 
 
+async def _run_migration_pin_077(*args: Any, **kwargs: Any) -> None:
+    """TEST-ONLY historical target pin for the closed 077 stage.
+
+    Delegates to the REAL slaif_agent_site.db.migrations.run_migration
+    unchanged, except that the operator upgrade() invocation's Alembic
+    target ``revision="head"`` (currently 078_001) is pinned to the
+    EXPLICIT released 077_001 revision for this fixture stage.  The real
+    admission preflight, COW disable and 077_001 Alembic body are all
+    untouched.  Historical fixture only: not a production 077 target
+    feature; the mock.patch scope restores the original immediately on
+    context exit (even on failure).
+    """
+    if kwargs.get("operation") == "upgrade" and kwargs.get("revision") == "head":
+        kwargs = {**kwargs, "revision": "077_001"}
+    await run_migration(*args, **kwargs)
+
+
 @pytest.mark.asyncio
 async def test_077_media_and_v2_snapshot_preservation_and_downgrade_refusal(
     agent_site_database: AgentSiteDatabase,
@@ -309,7 +338,7 @@ async def test_077_media_and_v2_snapshot_preservation_and_downgrade_refusal(
     db_name = database.name
     store = MediaStore(tmp_path / "media")
 
-    # --- released 076_001 stage (the current head is 077_001) -----------
+    # --- released 076_001 stage (the current head is 078_001) -----------
     await run_migration(
         dsn, expected_database=db_name, operation="upgrade", revision="076_001"
     )
@@ -491,13 +520,23 @@ async def test_077_media_and_v2_snapshot_preservation_and_downgrade_refusal(
         assert workspace_row["status"] == "DISCARDED"
         assert workspace_row["discarded_at"] is not None
 
-        # --- ACTUAL normal operator upgrade + real current reconcile ---
+        # --- ACTUAL normal operator upgrade, target pinned to 077 -----
         # bootstrap.service.upgrade proves the production operator
         # admission path end to end: the pending-COW preflight (empty
-        # after the real discard above), the COW disable, then the head
-        # migration.
-        await upgrade(database.settings)
-        await reconcile(database.settings)
+        # after the real discard above), the COW disable, then the
+        # migration.  083-11-a: the current Alembic head is 078_001, so
+        # the TEST-ONLY target adapter pins this one operator call's
+        # revision="head" to the EXPLICIT released 077_001 (delegating
+        # to the real run_migration); the expected-head seam keeps the
+        # reconciled marker/graph at the fixture stage.  The 077 -> 078
+        # operator path is proven separately by 083-11-a C6 and the
+        # current-head bootstrap tests.
+        with unittest.mock.patch.object(
+            bootstrap_service, "run_migration", _run_migration_pin_077
+        ):
+            await upgrade(database.settings)
+        with _expected_head_override("077_001"):
+            await reconcile(database.settings)
         post = await _state_oracle(
             database,
             site_id=site_id,

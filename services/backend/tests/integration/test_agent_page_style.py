@@ -634,8 +634,8 @@ async def test_page_style_066_round_trip_preserves_legacy_data_and_blocks_loss(
 ) -> None:
     database = agent_site_database
     # Closed historical loop: the 065 downgrade and both later (refused)
-    # downgrade attempts sit below the 077 ratchet, so seed the released
-    # 076 head; the intermediate re-upgrade below stays at 076 too.
+    # downgrade attempts sit below the current 078/077 ratchets, so seed
+    # the released 076 head; the intermediate re-upgrade stays at 076 too.
     _unused_token, seeded = await _seed(database, historical_head="076_001")
     legacy_page_id = uuid4()
     async with owner_connection(
@@ -685,7 +685,7 @@ async def test_page_style_066_round_trip_preserves_legacy_data_and_blocks_loss(
 
     # Intermediate re-upgrade followed by the later (refused) downgrade
     # attempts: stays at the released 076 head under the expected-head
-    # seam, not the current 077 graph.
+    # seam, not the current 078 graph.
     await run_migration(
         database.settings.resolved_owner_dsn(),
         expected_database=database.name,
@@ -885,7 +885,7 @@ async def test_page_style_fresh_065_baseline_restores_exactly_through_066(
         ) == ("fresh-page", "Fresh page", "DRAFT", "en-US", 1)
 
     # Final one-way upgrade of this loop: lands the real current head
-    # (077) with the normal reconcile.
+    # (078) with the normal reconcile.
     await run_migration(
         database.settings.resolved_owner_dsn(),
         expected_database=database.name,
@@ -900,7 +900,7 @@ async def test_page_style_fresh_065_baseline_restores_exactly_through_066(
             await owner.fetchval(
                 "SELECT version_num::text FROM control.alembic_version"
             )
-            == "077_001"
+            == "078_001"
         )
         round_trip = await owner.fetchrow(
             "SELECT slug,title,status,locale,row_version,style_overrides::text "

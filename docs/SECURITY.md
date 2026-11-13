@@ -227,3 +227,41 @@ server-named, mode `0600`, single-link, SHA-256-addressed, exclusively staged,
 fsynced, and published without replacement. Sidecar metadata contains exact
 non-secret bindings and no absolute path. Retrieval revalidates metadata,
 owner/mode/link count/size/digest/expiry and is internal only.
+
+The trusted mutation completion provenance boundary (revision `078_001`,
+increment 083-11-a) records one durable completion identity per newly
+completed editorial mutation, in the same transaction as its COW mutation,
+family audit, and idempotency completion. The `mutation-completion/v1`
+journal is keyed by the trusted operation ID and carries the family
+(`agent`, `human_editor`, or `media`; a lawful HUMAN edit inside an AGENT
+workspace is `human_editor`, not a fourth family), site, workspace, the
+actual capability or human principal (a row check binds agent rows to a
+capability with no human and human_editor/media rows to a human with no
+capability), a bounded opaque SHA-256 request identity and digest, the
+primary resource attribution, and the honest disposition. Raw client key
+bytes, tokens, cookies, private URLs, and response bodies never enter the
+record; response bodies and row values stay where they are already
+retained, and the primary resource attribution is not a full changed-row
+footprint, a causal graph, or a promotion receipt. The journal table is
+owner-only and the owner-only completion helper grants EXECUTE to no
+runtime role: no runtime role gains journal SELECT or DML, forged family
+or principal selection, or canonical, reviewer, or schema authority; the
+ten online control, editor, agent, reviewer, review-worker, public-reader,
+preview-reader, scheduler, media, and GC roles are all denied, and PUBLIC
+has no access. Replays
+return the stored original result and create no new completion; the same
+operation cannot complete again under another family or identity, while
+repeated edits of the same resource by different operations or families
+remain legal. Read access stays narrowly trusted with no new HTTP API, and
+completions recorded before the migration are not backfilled and are not
+retroactively made eligible: the absence of historical provenance is
+unknown, not proof of no effect or corruption. While the durable journal
+exists, downgrade is refused before effects for any head retaining the
+078 provenance (current or later, journal empty or not): the operator path
+refuses before the readiness PENDING marker, before the content COW
+disable, and before any migration step, and the 078_001 Alembic downgrade
+body is an unconditional explicit refusal for direct migration
+invocations. The 077_001 media-isolation downgrade guard and its Alembic
+body remain the historical line of defense, and downgrade never deletes
+durable completion, audit, or idempotency history or restores the
+pre-removal media authority.

@@ -488,3 +488,80 @@ rm/absence-failure retention, and the real denial and value caller
 blocks. No product runtime run is executed by these tests; the fresh
 whole-session and LOCAL6 runs remain ordered later steps and nothing here
 is an acceptance or a future PASS claim.
+
+## Trusted mutation completion provenance (083-11-a)
+
+The trusted mutation completion provenance increment (083-11-a, revision
+`078_001`) adds bounded regression coverage across all three audit
+families and all six deployed completion variants: the agent 13-argument semantic completion,
+the agent 10-argument explicit no-effect completion, the agent 10-argument
+legacy completion (no current Python caller; the deployed trusted boundary
+is proven at runtime through the exact runtime SQL constants and the real
+COW envelope), the HUMAN editor completions for HUMAN and for AGENT
+workspaces, and the human media upload completion. The focused PostgreSQL
+proofs use real HTTP or the real runtime COW context, real fixture roles,
+and the public `agentcow.postgres` API on the disposable cluster: a
+separate agent write, a HUMAN editor write in a HUMAN workspace, a HUMAN
+editor write in an AGENT workspace, and a human media upload each leave
+exactly one trusted completion with the correct family, principal,
+reservation, and family-audit relationship; an agent upload followed by a
+lawful human PATCH/DELETE of the same asset in its AGENT workspace leaves
+three distinct completions on the same resource (agent, human_editor,
+human_editor) with no fourth family and no resource-uniqueness rule, and
+the actual multirow navigation move (three row position/version changes)
+leaves one operation completion whose primary resource is not claimed as
+a full row footprint.
+
+The semantics proofs distinguish the explicit trusted no-effect decision
+from ordinary completion: an ordinary zero-COW-row media dedupe completes
+as `completed` with no fabricated COW operation, while only the explicit
+agent no-effect path is journaled `no_effect`; same-payload/key replays
+retain the original body, operation, and completion without a new journal
+identity, a changed payload/key remains the current conflict, and failed
+or rolled-back requests leave no new completion. The global identity
+proofs cover cross-family same-operation duplicate refusals (including a
+trusted historical fixture of a pre-078 completed ledger without a journal
+row that must block a new other-family completion), a concurrent
+same-operation race with real observed overlap that leaves exactly one
+winner journal identity while the loser adds zero rows and rolls back its
+own effects without forcing one SQLSTATE across isolation or constraint
+paths, direct role denials of journal SELECT/INSERT/UPDATE/DELETE/TRUNCATE
+and helper EXECUTE for every online role, and completion-context
+mismatches (missing or wrong session/operation, site/workspace/principal/
+reservation) that roll back all COW, family audit, reservation, and
+journal effects. The failure and retention proofs inject a late failure at
+the completion boundary inside the actual mutation transaction and
+exercise real cancellation and owned-connection loss, asserting rollback
+of COW pending changes, idempotency, family audit, and journal plus pool
+cleanup, with no production test-control endpoint and no mocked
+foundation.
+
+Fresh install and the QUIESCENT 077-to-078 operator upgrade (with its
+existing no-pending COW precondition satisfied) preserve canonical and
+pending data, old family audit/idempotency/replay, and retained snapshots
+byte-for-byte, with no historical completion backfilled; a separate
+PENDING-work case proves the normal refusal preserves pending, canonical,
+and history state unchanged — the upgrade never accepts pending work.
+The real accept and discard paths leave new completion facts intact after
+pending cleanup and replay.
+The 077 media-isolation downgrade refusal stays a real historical proof at
+the released 077, and the 078 completion-provenance downgrade is refused
+by the operator before the readiness PENDING marker, the content COW
+disable, and any migration step whenever the journal table exists (current
+or later head, journal empty or not), with the 078_001 Alembic downgrade
+body as the unconditional defense for direct migration invocations. The
+new regression modules (completion semantics, completion authority,
+producer families, late failure, and upgrade preservation) run unfiltered
+in the existing PostgreSQL 14..18 Group B children alongside the existing
+selections; the producer-families module also carries the integrated
+legacy 10-argument agent boundary cases, and the mixed-workspace media
+cases remain in the existing isolation module.  No existing selection,
+budget, matrix, aggregator, or required check identity changes, and no
+permanent sixth CI module or workflow redesign is introduced. The increment adds no snapshot format,
+review manifest, exact-U promotion, history UI, SDK, dependency, browser,
+GC, or lifecycle change; the qualified baseline (PyPI
+`agent-cow-postgresql` 0.2.1, Chrome for Testing 157.0.8103.78,
+Playwright 1.62.1) is unchanged. Full PostgreSQL 14..18 matrix
+qualification is required and is reported as the repository CI executes
+the full children; acceptance state is tracked in the OAP ledgers, and
+nothing here claims D5, MVP, or product completion.

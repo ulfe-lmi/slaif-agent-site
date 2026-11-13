@@ -308,7 +308,7 @@ async def test_074_001_round_trip_proves_073_001_state(
 
     # Intermediate re-upgrade followed by the downgrade below: stays at
     # the released 076 head under the expected-head seam, not the current
-    # 077 graph (the 077 ratchet would refuse that downgrade).
+    # 078 graph (the 078 and 077 ratchets refuse that downgrade).
     await run_migration(
         dsn,
         expected_database=database.name,
@@ -378,9 +378,10 @@ async def test_074_001_round_trip_proves_073_001_state(
         downgraded = await _cache_outbox_surface(owner)
     assert downgraded == baseline
 
-    # Final one-way re-upgrade: lands the real current head (077) with the
-    # normal reconcile.  The 077 revision adds no cache_outbox object, so
-    # the query-proven outbox surface still equals the 076-era capture.
+    # Final one-way re-upgrade: lands the real current head (078) with the
+    # normal reconcile.  The 077 and 078 revisions add no cache_outbox
+    # object, so the query-proven outbox surface still equals the
+    # 076-era capture.
     await run_migration(
         dsn, expected_database=database.name, operation="upgrade", revision="head"
     )
@@ -388,7 +389,7 @@ async def test_074_001_round_trip_proves_073_001_state(
     async with owner_connection(dsn, expected_database=database.name) as owner:
         assert (
             await owner.fetchval("SELECT version_num FROM control.alembic_version")
-            == "077_001"
+            == "078_001"
         )
         restored = await _cache_outbox_surface(owner)
     assert restored == upgraded

@@ -240,6 +240,23 @@ does not enable one. The 076 retained-`review-snapshot/v2` refusal above is the
 historical 076 guard, enforced for databases operating at 076; it does not
 qualify the 077 refusal.
 
+The `078_001` downgrade (trusted mutation completion provenance) is an
+unconditional fail-closed refusal: the bootstrap operator path refuses it
+BEFORE the readiness PENDING marker, BEFORE the content COW disable, and
+before any migration step, as long as the durable `audit.mutation_completion`
+journal exists (the current head or any later head retaining the 078
+provenance, journal empty or not) — restoring the pre-078 completion bodies
+would leave 078-era completion history uninterpretable and the explicit
+no-effect decisions unrecoverable. The `078_001` Alembic downgrade body
+(`TRUSTED_MUTATION_COMPLETIONS_DOWNGRADE_UNSUPPORTED`, P0001) is the second
+line of defense for direct migration invocations. The 077_001
+media-isolation downgrade guard above is the historical line of defense for
+databases operating at 077; it does not qualify the 078 refusal. No
+database at this head or above has a supported downgrade that removes the
+completion provenance, and downgrade never deletes durable completion,
+family audit, or idempotency history. The operator upgrade path keeps its
+existing no-pending COW precondition.
+
 ### Upstream health
 
 Use `docker compose ps` to identify an unhealthy process, then inspect that

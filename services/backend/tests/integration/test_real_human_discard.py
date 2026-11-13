@@ -733,7 +733,7 @@ async def test_discard_migration_round_trip(
     database = agent_site_database
     dsn = database.settings.resolved_owner_dsn()
     # Closed historical loop: the downgrade below crosses 072, so start
-    # at the released 076 head (the current 077 graph refuses the
+    # at the released 076 head (the current 078 graph refuses the
     # downgrade); the final re-upgrade lands the real head.
     await run_migration(
         dsn,
@@ -835,7 +835,7 @@ async def test_discard_migration_round_trip(
         )
 
     # Final one-way re-upgrade to the head: lands the real current head
-    # (077) with the normal reconcile.
+    # (078) with the normal reconcile.
     await run_migration(
         dsn, expected_database=database.name, operation="upgrade", revision="head"
     )
@@ -843,7 +843,7 @@ async def test_discard_migration_round_trip(
     async with owner_connection(dsn, expected_database=database.name) as owner:
         assert (
             await owner.fetchval("SELECT version_num FROM control.alembic_version")
-            == "077_001"
+            == "078_001"
         )
         assert (
             await owner.fetchval(

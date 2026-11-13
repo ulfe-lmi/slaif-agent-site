@@ -8,7 +8,9 @@ Proves, from the workflow source without any YAML parser dependency:
   public whole-session promotion qualification module as a fourth exact
   pytest command (Q; no -k selection), making B 45+Q, and then the
   workspace media/role/freeze/promotion/rollback command (M; ten exact
-  module paths, no -k selection), making B 45+Q+M;
+  module paths, no -k selection), making B 45+Q+M, and then the
+  trusted mutation-completion command (TC; five exact module paths,
+  no -k selection), making B 45+Q+M+TC;
 - the five exact required names are supplied by an aggregator that
   depends on BOTH child job IDs with JOB-level always();
 - the ACTUAL extracted aggregate script is fail-closed: only the
@@ -93,6 +95,16 @@ _MEDIA = [
 ]
 MEDIA = "uv run --frozen pytest " + " ".join(
     f"services/backend/tests/integration/{name}" for name in _MEDIA
+)
+_COMPLETION = [
+    "test_mutation_completion_semantics.py",
+    "test_mutation_completion_authority.py",
+    "test_trusted_completion_late_failure.py",
+    "test_trusted_completion_upgrade_preservation.py",
+    "test_trusted_completion_producer_families.py",
+]
+COMPLETION = "uv run --frozen pytest " + " ".join(
+    f"services/backend/tests/integration/{name}" for name in _COMPLETION
 )
 
 
@@ -211,6 +223,7 @@ def _assert_exact_commands(text: str) -> None:
         PAGE_STYLE,
         WHOLE_SESSION,
         MEDIA,
+        COMPLETION,
     ]
 
 
@@ -284,11 +297,11 @@ class FoundationCiSplitTestCase(unittest.TestCase):
             self.assertIn(SETUP_PYTHON, block)
             self.assertIn(SETUP_UV, block)
 
-    def test_exact_commands_split_85_plus_45_plus_q_plus_m(self) -> None:
+    def test_exact_commands_split_85_plus_45_plus_q_plus_m_plus_tc(self) -> None:
         self.assertEqual(_run_values(self.job_a), [SYNC, GENERIC, BOOTSTRAP])
         self.assertEqual(
             _run_values(self.job_b),
-            [SYNC, COMPONENT, THEME, PAGE_STYLE, WHOLE_SESSION, MEDIA],
+            [SYNC, COMPONENT, THEME, PAGE_STYLE, WHOLE_SESSION, MEDIA, COMPLETION],
         )
 
     def test_aggregator_depends_on_both_child_jobs_with_job_level_always(self) -> None:
@@ -421,6 +434,42 @@ class FoundationCiSplitTestCase(unittest.TestCase):
         needle = (
             "          services/backend/tests/integration/"
             "test_human_agent_editor_workspace.py"
+        )
+        self.assertEqual(self.text.count(needle), 1)
+        mutated = self.text.replace(needle, needle + " -k component", 1)
+        self.assertNotEqual(mutated, self.text)
+        with self.assertRaises(AssertionError):
+            _assert_exact_commands(mutated)
+
+    def test_mutation_omitted_completion_module_command_fails(self) -> None:
+        _assert_exact_commands(self.text)
+        needle = (
+            "\n          services/backend/tests/integration/"
+            "test_mutation_completion_semantics.py"
+        )
+        self.assertEqual(self.text.count(needle), 1)
+        mutated = self.text.replace(needle, "", 1)
+        self.assertNotEqual(mutated, self.text)
+        with self.assertRaises(AssertionError):
+            _assert_exact_commands(mutated)
+
+    def test_mutation_omitted_producer_families_command_fails(self) -> None:
+        _assert_exact_commands(self.text)
+        needle = (
+            "\n          services/backend/tests/integration/"
+            "test_trusted_completion_producer_families.py"
+        )
+        self.assertEqual(self.text.count(needle), 1)
+        mutated = self.text.replace(needle, "", 1)
+        self.assertNotEqual(mutated, self.text)
+        with self.assertRaises(AssertionError):
+            _assert_exact_commands(mutated)
+
+    def test_mutation_completion_selection_added_fails(self) -> None:
+        _assert_exact_commands(self.text)
+        needle = (
+            "          services/backend/tests/integration/"
+            "test_trusted_completion_upgrade_preservation.py"
         )
         self.assertEqual(self.text.count(needle), 1)
         mutated = self.text.replace(needle, needle + " -k component", 1)

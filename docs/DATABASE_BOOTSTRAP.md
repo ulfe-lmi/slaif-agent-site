@@ -157,7 +157,7 @@ grants, validation, and final marker publication share a transaction, so an
 injected failure rolls them back. A repeat repairs safely and a successful
 repeat does not add objects or change migration head.
 
-The marker records the current Alembic head revision (077_001 at this
+The marker records the current Alembic head revision (078_001 at this
 writing), distribution `agent-cow-postgresql`, version `0.2.1`,
 state-specific evidence flags, generic
 content/foundation object counts and SHA-256 fingerprints, overall safety, and
