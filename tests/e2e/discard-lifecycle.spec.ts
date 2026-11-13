@@ -499,20 +499,27 @@ test.describe("discard lifecycle (083/2)", () => {
           WHERE site_id = '${siteId}'::uuid AND title = '083 discard lifecycle home'`,
       ),
     ).toBe("0");
-    // The workspace media is not public (no finalization in 083/2). The
-    // asset row is private, and no media row of the dedicated site was
-    // ever published. (A content-addressed public-fetch 404 is not a
-    // valid shared-stack negative: a byte-identical hash published by
-    // another site resolves publicly by design — the negative is pinned
-    // hermetically at the asset-row and site level instead.)
+    // Under 077 the upload was pending COW data only: after the real
+    // discard the canonical base holds NO row for the asset and the
+    // workspace's pending media change is gone, and no media row of the
+    // dedicated site was ever published. (A content-addressed public-
+    // fetch 404 is not a valid shared-stack negative: a byte-identical
+    // hash published by another site resolves publicly by design — the
+    // negative is pinned hermetically at the row and site level instead.)
     expect(
       psql(
         project,
-        `SELECT public_status::text || '|' ||
-            CASE WHEN published_at IS NULL THEN 't' ELSE 'f' END
-           FROM content.media_asset_base WHERE id = '${mediaId}'::uuid`,
+        `SELECT count(*) FROM content.media_asset_base
+          WHERE id = '${mediaId}'::uuid`,
       ),
-    ).toBe("private|t");
+    ).toBe("0");
+    expect(
+      psql(
+        project,
+        `SELECT count(*) FROM content.media_asset_changes
+          WHERE session_id = '${workspaceId}'::uuid`,
+      ),
+    ).toBe("0");
     expect(
       psql(
         project,
@@ -841,15 +848,24 @@ test.describe("discard lifecycle (083/2)", () => {
     expect(mediaAFetchAfter.headers()["cache-control"]).toBe(
       "public, max-age=31536000, immutable",
     );
-    // B's media was never finalized: private, no published_at.
+    // B's media was never finalized: under 077 it existed only as B's
+    // pending COW data, so after B's real discard no canonical base row
+    // exists and B's pending media change is gone, while A's accepted
+    // canonical media and public bytes stay untouched (asserted above).
     expect(
       psql(
         project,
-        `SELECT public_status::text || '|' ||
-            CASE WHEN published_at IS NULL THEN 't' ELSE 'f' END
-           FROM content.media_asset_base WHERE id = '${mediaB}'::uuid`,
+        `SELECT count(*) FROM content.media_asset_base
+          WHERE id = '${mediaB}'::uuid`,
       ),
-    ).toBe("private|t");
+    ).toBe("0");
+    expect(
+      psql(
+        project,
+        `SELECT count(*) FROM content.media_asset_changes
+          WHERE session_id = '${workspaceB}'::uuid`,
+      ),
+    ).toBe("0");
 
     expect(stopObserving()).toEqual([]);
   });
