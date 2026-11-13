@@ -10,6 +10,8 @@
 // raw log line, traceback, SQL text, DSN, cookie, token or payload.
 // Stdin-only; no dependencies, no files, no network.
 
+import process from "node:process";
+
 const PREFIX = "slaif-diag: review-job ";
 const PHASES = new Set([
   "fetch",
@@ -58,7 +60,7 @@ function normalizeField(token, seen) {
   const key = token.slice(0, eq);
   const value = token.slice(eq + 1);
   if (seen.has(key)) return null;
-  let ok = false;
+  let ok;
   switch (key) {
     case "phase":
       ok = PHASES.has(value);
