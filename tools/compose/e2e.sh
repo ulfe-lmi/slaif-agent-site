@@ -58,14 +58,19 @@ docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif \
    COMMIT;" >/dev/null
 site_id=$parity_site_id
 test -n "$site_id" || fail preview-fixture-site
+# The preview workspace carries the current 076 constructor version facts
+# at creation: the freeze materializer refuses unpinned ('{}') workspaces
+# with REVIEW_WORKSPACE_VERSION_UNKNOWN.
 docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif \
   -v ON_ERROR_STOP=1 -c \
   "BEGIN;
    INSERT INTO control.workspace
-     (id, site_id, created_by, actor_type, title, delegation_preset, status, expires_at)
+     (id, site_id, created_by, actor_type, title, delegation_preset,
+      version_facts, status, expires_at)
    VALUES ('$workspace_id'::uuid, '$site_id'::uuid, '$admin_id'::uuid,
-           'HUMAN', 'Compose preview fixture', 'L4_SITE_ARCHITECT', 'ACTIVE',
-           CURRENT_TIMESTAMP + interval '1 hour');
+           'HUMAN', 'Compose preview fixture', 'L4_SITE_ARCHITECT',
+           '{\"catalog\":\"catalog-v1\",\"composition_schema\":\"site-composition/v1\",\"content_model\":\"content-model/v1\",\"design_system\":\"design-system/v1\",\"puck\":\"0.20.2\",\"renderer\":\"renderer-v1\"}'::jsonb,
+           'ACTIVE', CURRENT_TIMESTAMP + interval '1 hour');
    SET LOCAL app.session_id = '$workspace_id';
    SET LOCAL app.operation_id = '12000000-0000-4000-8000-000000000302';
    INSERT INTO content.site_locale_base

@@ -213,6 +213,7 @@ async function waitForReview(
   siteId: string,
   workspaceId: string,
   actorType: "AGENT" | "HUMAN",
+  freezeJobId: string,
 ): Promise<void> {
   const deadline = Date.now() + 240_000;
   for (;;) {
@@ -228,6 +229,23 @@ async function waitForReview(
         ),
       ),
     ).toBe(0);
+    // A freeze job that terminates FAILED leaves the workspace FREEZING;
+    // surface its actual terminal error instead of a bare status timeout.
+    const freezeJobStatus = psql(
+      project,
+      `SELECT status FROM control.review_job
+         WHERE id = '${freezeJobId}'::uuid`,
+    );
+    if (freezeJobStatus === "FAILED") {
+      throw new Error(
+        "freeze job FAILED: " +
+          psql(
+            project,
+            `SELECT COALESCE(error, '') FROM control.review_job
+               WHERE id = '${freezeJobId}'::uuid`,
+          ),
+      );
+    }
     const status =
       actorType === "AGENT"
         ? await workspaceStatus(page, siteId, workspaceId)
@@ -292,7 +310,7 @@ async function acceptCycle(
   const freeze = await controlFreeze(page, siteId, workspaceId);
   expect(freeze.status).toBe(202);
   expect(freeze.job_id).toMatch(/^[0-9a-f-]{36}$/);
-  await waitForReview(page, project, siteId, workspaceId, actorType);
+  await waitForReview(page, project, siteId, workspaceId, actorType, freeze.job_id);
   // The freeze job the control call enqueued must itself have succeeded
   // (the snapshot is what the human review below accepts).
   const freezeDeadline = Date.now() + 240_000;
