@@ -580,12 +580,13 @@ test("review-surface-review-render-and-summary", async ({ page }) => {
     page.getByRole("heading", { name: "Versions", exact: true }),
   ).toBeVisible();
 
-  // Semantic timeline: exactly the seven fixture operations, in the
+  // Semantic timeline: exactly the eight fixture operations, in the
   // deterministic read-model order (asserted as a multiset).
   const timelineRows = page.locator("table.review-table tbody tr");
-  // Media registration writes the immutable site-level base store (no
-  // workspace COW change row), so the fixture yields seven operations.
-  expect(await timelineRows.count()).toBe(7);
+  // Under 077 the media upload is a genuine pending COW change row
+  // (media_asset_changes in the workspace session), so the fixture yields
+  // eight operations.
+  expect(await timelineRows.count()).toBe(8);
   const operationTypes: string[] = [];
   for (let index = 0; index < (await timelineRows.count()); index += 1) {
     operationTypes.push(
@@ -601,6 +602,7 @@ test("review-surface-review-render-and-summary", async ({ page }) => {
     "content_types:upsert",
     "content_types:upsert, fields:upsert",
     "items:upsert",
+    "media_assets:upsert",
     "pages:upsert",
     "translations:upsert",
   ]);
@@ -645,11 +647,15 @@ test("review-surface-review-render-and-summary", async ({ page }) => {
     diffRoot.getByRole("heading", { name: "Fields (added 1, modified 0, deleted 0)" }),
   ).toBeVisible();
   await expect(diffRoot.getByText("headline").first()).toBeVisible();
-  // Media registration leaves no workspace COW change rows, so the
-  // media family card must be absent from the resource diff.
-  expect(await diffRoot.getByRole("heading", { name: /^Media assets/ }).count()).toBe(
-    0,
-  );
+  // The pending media upload is a genuine COW change row, so the media
+  // family card shows exactly the single added fixture asset (id is the
+  // first jsonb key of the bounded 256-char row preview).
+  await expect(
+    diffRoot.getByRole("heading", {
+      name: "Media assets (added 1, modified 0, deleted 0)",
+    }),
+  ).toBeVisible();
+  await expect(diffRoot.getByText(`"id":"${mediaId}"`)).toBeVisible();
   await expect(
     diffRoot.getByText("Field-level diff is bounded to one level"),
   ).toBeVisible();
