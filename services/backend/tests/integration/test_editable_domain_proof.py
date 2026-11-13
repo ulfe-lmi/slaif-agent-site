@@ -24,7 +24,7 @@ async def test_editable_domain_migration_round_trip_restores_field_contract(
 ) -> None:
     database = agent_site_database
     # Closed historical loop: the downgrade below crosses 039, so start
-    # at the released 076 head (the current 077 graph refuses the
+    # at the released 076 head (the current 078 graph refuses the
     # downgrade); the final re-upgrade lands the real head.
     await run_migration(
         database.settings.resolved_owner_dsn(),
@@ -342,7 +342,7 @@ async def test_upgrade_rebuilds_enabled_cow_without_pending_workspace_operations
             await owner.fetchval(
                 "SELECT version_num::text FROM control.alembic_version"
             )
-            == "077_001"
+            == "078_001"
         )
         assert await owner.fetchval("SELECT to_regclass('content.page') IS NOT NULL")
         assert await owner.fetchval("SELECT to_regclass('content.page_base') IS NULL")

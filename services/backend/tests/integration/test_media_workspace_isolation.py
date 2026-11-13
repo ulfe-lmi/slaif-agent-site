@@ -39,10 +39,21 @@ and the A6..A8 evidence stay in the companion modules.
 
 The Control pool uses its real start/stop lifetime; media/agent pools are
 owned by their app lifespans, as in the proven fixtures.
+
+The 078_001 extension (private candidate) adds owner-only trusted
+completion-journal assertions (``audit.mutation_completion`` plus the
+existing raw-key idempotency ledgers and family audit tables) to the
+three tests below: the successful human upload, the successful agent
+upload, and the mixed AGENT-workspace upload plus human PATCH/DELETE,
+which must produce THREE distinct completed operations on the SAME
+asset - agent + human_editor + human_editor - with no fourth family and
+no resource-uniqueness rule; the denied non-delegator attempt must add
+no completion.  Every pre-existing oracle is unchanged.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -170,6 +181,33 @@ async def test_media_workspace_isolation_human_upload(
                     f"observed {canonical}"
                 )
                 assert public.status_code == 404
+
+                # 078_001: the successful upload left exactly one honest
+                # completed completion identity in the trusted journal.
+                operation_id = UUID(uploaded.json()["operation_id"])
+                rows = await _completion_rows(database, operation_ids=(operation_id,))
+                assert len(rows) == 1, rows
+                reservation = await _reservation(
+                    database, "media_idempotency", operation_id
+                )
+                assert reservation is not None
+                assert reservation["idempotency_key"] == "isolation-human-upload"
+                assert reservation["status_code"] == 201
+                audit_rows = await _family_audit_rows(database, "media", operation_id)
+                assert len(audit_rows) == 1, audit_rows
+                assert audit_rows[0]["request_digest"] == reservation["request_digest"]
+                _assert_completion(
+                    rows[0],
+                    family="media",
+                    site_id=ids["site_a"],
+                    workspace_id=ids["workspace_a"],
+                    principal=ids["user_a"],
+                    capability_id=None,
+                    key="isolation-human-upload",
+                    digest=reservation["request_digest"],
+                    resource_type="media_asset",
+                    resource_id=asset_id,
+                )
     finally:
         await control.stop()
 
@@ -342,6 +380,51 @@ async def test_media_workspace_isolation_agent_upload(
                         f"observed {canonical}"
                     )
                     assert public.status_code == 404
+
+                    # 078_001: the agent upload left exactly one honest
+                    # completed completion identity bound to the capability.
+                    upload_audit = await _agent_media_upload_audit(
+                        database, ids["site_a"], ids["agent_workspace"]
+                    )
+                    assert len(upload_audit) == 1, upload_audit
+                    operation_id = upload_audit[0]["operation_id"]
+                    capability_id = await _workspace_capability_id(
+                        database, ids["agent_workspace"]
+                    )
+                    rows = await _completion_rows(
+                        database, operation_ids=(operation_id,)
+                    )
+                    assert len(rows) == 1, rows
+                    reservation = await _reservation(
+                        database, "agent_idempotency", operation_id
+                    )
+                    assert reservation is not None
+                    assert reservation["idempotency_key"] == "isolation-agent-upload"
+                    assert reservation["status_code"] == 201
+                    assert (
+                        reservation["request_digest"]
+                        == upload_audit[0]["request_digest"]
+                    )
+                    audit_rows = await _family_audit_rows(
+                        database, "agent", operation_id
+                    )
+                    assert len(audit_rows) == 1, audit_rows
+                    assert (
+                        audit_rows[0]["request_digest"]
+                        == upload_audit[0]["request_digest"]
+                    )
+                    _assert_completion(
+                        rows[0],
+                        family="agent",
+                        site_id=ids["site_a"],
+                        workspace_id=ids["agent_workspace"],
+                        principal=None,
+                        capability_id=capability_id,
+                        key="isolation-agent-upload",
+                        digest=upload_audit[0]["request_digest"],
+                        resource_type="media_asset",
+                        resource_id=asset_id,
+                    )
     finally:
         await control.stop()
 
@@ -389,6 +472,124 @@ async def _agent_media_upload_audit(
             workspace_id,
         )
     return await _audit_dicts(rows)
+
+
+_FAMILY_AUDIT_TABLES = {
+    "agent": "audit.agent_mutation",
+    "human_editor": "audit.human_editor_mutation",
+    "media": "audit.media_mutation",
+}
+
+_COMPLETION_LEDGERS = (
+    "agent_idempotency",
+    "human_editor_idempotency",
+    "media_idempotency",
+)
+
+
+async def _family_audit_rows(
+    database: AgentSiteDatabase, family: str, operation_id: UUID
+) -> list[dict[str, Any]]:
+    """Owner-only read of the family audit rows for one operation."""
+    table = _FAMILY_AUDIT_TABLES[family]
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        rows = await owner.fetch(
+            "SELECT operation_id, request_digest, response_status "
+            f"FROM {table} WHERE operation_id = $1 ORDER BY operation_id",
+            operation_id,
+        )
+    return await _audit_dicts(rows)
+
+
+async def _completion_rows(
+    database: AgentSiteDatabase,
+    *,
+    workspace_id: UUID | None = None,
+    operation_ids: tuple[UUID, ...] | None = None,
+) -> list[dict[str, Any]]:
+    """Owner-only read of the trusted 078_001 completion journal."""
+    columns = (
+        "SELECT operation_id, family, site_id, workspace_id, capability_id, "
+        "human_user_id, request_identity, request_digest, resource_type, "
+        "resource_id, disposition, schema_version FROM audit.mutation_completion"
+    )
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        if operation_ids is not None:
+            rows = await owner.fetch(
+                columns + " WHERE operation_id = ANY($1::uuid[]) ORDER BY family, "
+                "operation_id",
+                list(operation_ids),
+            )
+        else:
+            assert workspace_id is not None
+            rows = await owner.fetch(
+                columns + " WHERE workspace_id = $1 ORDER BY family, operation_id",
+                workspace_id,
+            )
+    return await _audit_dicts(rows)
+
+
+async def _reservation(
+    database: AgentSiteDatabase, ledger: str, operation_id: UUID
+) -> dict[str, Any] | None:
+    """Owner-only read of the existing raw-key idempotency ledger row."""
+    assert ledger in _COMPLETION_LEDGERS
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        row = await owner.fetchrow(
+            f"SELECT idempotency_key, request_digest, status_code "
+            f"FROM control.{ledger} WHERE operation_id = $1",
+            operation_id,
+        )
+    return {key: row[key] for key in row.keys()} if row is not None else None
+
+
+def _assert_completion(
+    row: dict[str, Any],
+    *,
+    family: str,
+    site_id: UUID,
+    workspace_id: UUID,
+    principal: UUID | None,
+    capability_id: UUID | None,
+    key: str,
+    digest: str,
+    resource_type: str,
+    resource_id: UUID,
+) -> None:
+    """One honest, durable, completed completion identity (078_001)."""
+    assert row is not None, f"missing completion journal row (family={family})"
+    assert row["family"] == family, row
+    assert row["site_id"] == site_id, row
+    assert row["workspace_id"] == workspace_id, row
+    assert row["capability_id"] == capability_id, row
+    assert row["human_user_id"] == principal, row
+    assert row["request_identity"] == hashlib.sha256(key.encode("utf-8")).hexdigest(), (
+        row
+    )
+    assert row["request_digest"] == digest, row
+    assert row["resource_type"] == resource_type, row
+    assert row["resource_id"] == resource_id, row
+    assert row["disposition"] == "completed", row
+    assert row["schema_version"] == "mutation-completion/v1", row
+
+
+async def _workspace_capability_id(
+    database: AgentSiteDatabase, workspace_id: UUID
+) -> UUID:
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        capability_id: UUID = await owner.fetchval(
+            "SELECT id FROM control.capability WHERE workspace_id = $1",
+            workspace_id,
+        )
+        return capability_id
 
 
 @pytest.mark.asyncio
@@ -480,6 +681,43 @@ async def test_media_human_editor_on_agent_workspace_patch_delete(
                     assert upload_row["http_method"] == "POST"
                     assert upload_row["quota_kind"] == "upload"
 
+                    # 078_001: the agent upload is journaled as a completed
+                    # AGENT-family completion on the uploaded asset.
+                    upload_operation = upload_row["operation_id"]
+                    agent_capability_id = await _workspace_capability_id(
+                        database, ids["agent_workspace"]
+                    )
+                    rows = await _completion_rows(
+                        database, operation_ids=(upload_operation,)
+                    )
+                    assert len(rows) == 1, rows
+                    reservation = await _reservation(
+                        database, "agent_idempotency", upload_operation
+                    )
+                    assert reservation is not None
+                    assert reservation["idempotency_key"] == "a3-agent-upload"
+                    assert reservation["status_code"] == 201
+                    assert reservation["request_digest"] == upload_row["request_digest"]
+                    audit_rows = await _family_audit_rows(
+                        database, "agent", upload_operation
+                    )
+                    assert len(audit_rows) == 1, audit_rows
+                    assert (
+                        audit_rows[0]["request_digest"] == upload_row["request_digest"]
+                    )
+                    _assert_completion(
+                        rows[0],
+                        family="agent",
+                        site_id=ids["site_a"],
+                        workspace_id=ids["agent_workspace"],
+                        principal=None,
+                        capability_id=agent_capability_id,
+                        key="a3-agent-upload",
+                        digest=upload_row["request_digest"],
+                        resource_type="media_asset",
+                        resource_id=asset_id,
+                    )
+
                     # Lawful delegator human Editor PATCH in the AGENT ws.
                     patch_action = (
                         f"PATCH /api/editor/v1/sites/{ids['site_a']}/media/{asset_id}"
@@ -518,6 +756,27 @@ async def test_media_human_editor_on_agent_workspace_patch_delete(
                         headers=_headers(session_a, "a3-own-ws-read"),
                     )
                     assert own_ws_read.status_code == 404
+                    # Capture the full journal state immediately before the
+                    # denied request: exactly the two lawful completions
+                    # (agent upload + human patch) on the shared asset.
+                    pre_denied_audit = await _human_editor_audit(
+                        database, ids["site_a"], ids["agent_workspace"]
+                    )
+                    assert len(pre_denied_audit) == 1, pre_denied_audit
+                    pre_denied_patch_op = pre_denied_audit[0]["operation_id"]
+                    pre_denied_rows = await _completion_rows(
+                        database, workspace_id=ids["agent_workspace"]
+                    )
+                    assert len(pre_denied_rows) == 2, pre_denied_rows
+                    assert {row["operation_id"] for row in pre_denied_rows} == {
+                        upload_operation,
+                        pre_denied_patch_op,
+                    }
+                    assert {row["family"] for row in pre_denied_rows} == {
+                        "agent",
+                        "human_editor",
+                    }
+
                     denied = await editor_client.patch(
                         f"/api/editor/v1/sites/{ids['site_a']}/media/{asset_id}",
                         headers=_human_editor_headers(
@@ -531,6 +790,16 @@ async def test_media_human_editor_on_agent_workspace_patch_delete(
                         headers={"cookie": _cookie(session_b)},
                     )
                     assert b_content.status_code == 404
+
+                    # The denied non-delegator attempt completed nothing:
+                    # the journal is identical to the pre-denial snapshot
+                    # (agent upload plus the lawful human patch).
+                    assert (
+                        await _completion_rows(
+                            database, workspace_id=ids["agent_workspace"]
+                        )
+                        == pre_denied_rows
+                    )
 
                     assert (await _canonical(database, content_hash))["rows"] == 0
                     patch_rows = await _human_editor_audit(
@@ -596,3 +865,111 @@ async def test_media_human_editor_on_agent_workspace_patch_delete(
                         database, ids["site_a"], ids["agent_workspace"]
                     )
                     assert unchanged == upload_audit
+
+                    # 078_001: the upload plus the two lawful human edits
+                    # are THREE distinct completed operations on the SAME
+                    # asset - agent + human_editor + human_editor - with no
+                    # fourth family and no resource-uniqueness rule.
+                    patch_operation = patch_row["operation_id"]
+                    delete_operation = delete_row["operation_id"]
+                    assert (
+                        len(
+                            {
+                                upload_operation,
+                                patch_operation,
+                                delete_operation,
+                            }
+                        )
+                        == 3
+                    )
+                    rows = await _completion_rows(
+                        database,
+                        operation_ids=(
+                            upload_operation,
+                            patch_operation,
+                            delete_operation,
+                        ),
+                    )
+                    assert len(rows) == 3, rows
+                    assert {row["family"] for row in rows} == {
+                        "agent",
+                        "human_editor",
+                    }, rows
+                    assert {row["resource_id"] for row in rows} == {asset_id}, rows
+                    human_rows = {
+                        row["operation_id"]: row
+                        for row in rows
+                        if row["family"] == "human_editor"
+                    }
+                    assert set(human_rows) == {patch_operation, delete_operation}
+                    _assert_completion(
+                        human_rows[patch_operation],
+                        family="human_editor",
+                        site_id=ids["site_a"],
+                        workspace_id=ids["agent_workspace"],
+                        principal=ids["user_a"],
+                        capability_id=None,
+                        key="a3-human-patch",
+                        digest=patch_row["request_digest"],
+                        resource_type="editor.sites",
+                        resource_id=asset_id,
+                    )
+                    _assert_completion(
+                        human_rows[delete_operation],
+                        family="human_editor",
+                        site_id=ids["site_a"],
+                        workspace_id=ids["agent_workspace"],
+                        principal=ids["user_a"],
+                        capability_id=None,
+                        key="a3-human-delete",
+                        digest=delete_row["request_digest"],
+                        resource_type="editor.sites",
+                        resource_id=asset_id,
+                    )
+                    for operation, ledger, status, audit_digest in (
+                        (
+                            upload_operation,
+                            "agent_idempotency",
+                            201,
+                            unchanged[0]["request_digest"],
+                        ),
+                        (
+                            patch_operation,
+                            "human_editor_idempotency",
+                            200,
+                            patch_row["request_digest"],
+                        ),
+                        (
+                            delete_operation,
+                            "human_editor_idempotency",
+                            204,
+                            delete_row["request_digest"],
+                        ),
+                    ):
+                        reservation = await _reservation(database, ledger, operation)
+                        assert reservation is not None, operation
+                        assert reservation["status_code"] == status, (
+                            operation,
+                            reservation,
+                        )
+                        assert reservation["request_digest"] == audit_digest, (
+                            operation,
+                            reservation,
+                        )
+                    for family, operation in (
+                        ("agent", upload_operation),
+                        ("human_editor", patch_operation),
+                        ("human_editor", delete_operation),
+                    ):
+                        audit_rows = await _family_audit_rows(
+                            database, family, operation
+                        )
+                        assert len(audit_rows) == 1, audit_rows
+                    assert (
+                        len(
+                            await _completion_rows(
+                                database, workspace_id=ids["agent_workspace"]
+                            )
+                        )
+                        == 3
+                    )

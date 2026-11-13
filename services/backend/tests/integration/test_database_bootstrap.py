@@ -465,14 +465,16 @@ async def _prepare_hardened_database(database: AgentSiteDatabase) -> None:
 async def _reconcile_at_expected_head(database: AgentSiteDatabase, head: str) -> Any:
     """Real bootstrap reconcile under a scoped expected-graph-head seam.
 
-    083/10-a historical fixture seam: for the duration of this one
-    reconcile call, 076_001 is presented as the expected graph head, so
-    the REAL deploy/enable/harden/apply/verify and readiness marker
-    writes run for the historical phase.  The scoped patch restores the
-    normal graph immediately on context exit (even on failure); it does
-    not alter the production migration_heads implementation, the database
-    revision, or any refusal gate, and it is not proof that the current
-    077 application accepts 076 in production.
+    083/10-a historical fixture seam (083-11-a: generalized from the
+    076_001 stage to any released historical head): for the duration of
+    this one reconcile call, the given head is presented as the expected
+    graph head, so the REAL deploy/enable/harden/apply/verify and
+    readiness marker writes run for the historical phase.  The scoped
+    patch restores the normal graph immediately on context exit (even on
+    failure); it does not alter the production migration_heads
+    implementation, the database revision, or any refusal gate, and it
+    is not proof that the current application accepts a historical head
+    in production.
     """
     with unittest.mock.patch.object(
         bootstrap_service, "migration_heads", lambda: (head,)
@@ -496,7 +498,9 @@ async def _prepare_hardened_database_at_076(database: AgentSiteDatabase) -> None
     083/10-a: the current 077_001 media head has no supported downgrade,
     so the historical downgrade guards and the compatible round trip run
     from the last supported head (released migrations + real reconcile
-    through the scoped seam above).
+    through the scoped seam above).  083-11-a: the current head is now
+    078_001; 076_001 remains the last supported downgrade head, so this
+    staging is unchanged.
     """
     await run_migration(
         database.settings.resolved_owner_dsn(),
@@ -507,6 +511,28 @@ async def _prepare_hardened_database_at_076(database: AgentSiteDatabase) -> None
     await _create_qualification_table(database)
     result = await _reconcile_at_expected_head(database, "076_001")
     await _assert_revision(database, "076_001")
+    _assert_hardened(result)
+
+
+async def _prepare_hardened_database_at_077(database: AgentSiteDatabase) -> None:
+    """Boot an actual 077_001 head to the real ready phase.
+
+    083-11-a: the closed 077 media refusal proofs run from the released
+    077_001 stage (released migration + real reconcile through the
+    scoped seam above): at the current 078_001 head the new
+    completion-provenance preflight would refuse first and mask the 077
+    media guard.  The 077 -> 078 operator path is proven separately
+    (083-11-a C6 and the current-head bootstrap tests).
+    """
+    await run_migration(
+        database.settings.resolved_owner_dsn(),
+        expected_database=database.name,
+        operation="upgrade",
+        revision="077_001",
+    )
+    await _create_qualification_table(database)
+    result = await _reconcile_at_expected_head(database, "077_001")
+    await _assert_revision(database, "077_001")
     _assert_hardened(result)
 
 
@@ -685,8 +711,9 @@ async def test_bootstrap_downgrade_049_preflight_is_atomic(
 ) -> None:
     database = agent_site_database
     # 083/10-a: exercised from the last supported head (076_001); the
-    # current 077_001 head is refused earlier by the media-isolation
-    # guard, which has its own dedicated tests.
+    # current 078_001 head is refused earlier by the completion-
+    # provenance guard (the 077_001 head by the media-isolation guard),
+    # both of which have their own dedicated tests.
     await _prepare_hardened_database_at_076(database)
     await _create_049_only_state(database, state_kind)
     disable_calls = 0
@@ -813,10 +840,14 @@ async def test_bootstrap_downgrade_077_media_isolation_refuses_before_effects(
     without reinstating the unsafe canonical media write path, so the
     refusal leaves canonical media, retained snapshots and the safe
     authority set exactly as found.
+
+    083-11-a: run from the released 077_001 stage: at the current
+    078_001 head the new completion-provenance preflight would refuse
+    first and mask this 077 media guard.
     """
 
     database = agent_site_database
-    await _prepare_hardened_database(database)
+    await _prepare_hardened_database_at_077(database)
     disable_calls = 0
 
     async def forbidden_disable(*_args: Any, **_kwargs: Any) -> None:
@@ -844,10 +875,14 @@ async def test_077_media_isolation_direct_downgrade_refuses_without_effects(
     unconditional refusal before any restoration: the version marker, the
     enabled media COW, the reviewer publication helper and the dropped
     legacy helpers are all left exactly as found.
+
+    083-11-a: run from the released 077_001 stage, where the direct
+    downgrade's first step is the 077_001 body's P0001 ratchet (at the
+    current 078_001 head the 078_001 ratchet would refuse first).
     """
 
     database = agent_site_database
-    await _prepare_hardened_database(database)
+    await _prepare_hardened_database_at_077(database)
     with pytest.raises(sqlalchemy_exc.DBAPIError) as exc_info:
         await run_migration(
             database.settings.resolved_owner_dsn(),
@@ -901,7 +936,7 @@ async def test_bootstrap_downgrade_compatible_path_rehardens_after_round_trip(
 
     The compatible downgrade/re-harden round trip is therefore exercised
     from the last supported head (076_001, real ready phase); the
-    re-upgrade lands on the current 077_001 head and the qualification
+    re-upgrade lands on the current 078_001 head and the qualification
     table still survives the base round trip as a user table.
     """
     database = agent_site_database
@@ -932,8 +967,9 @@ async def test_bootstrap_downgrade_failure_after_disable_fails_readiness_closed(
 ) -> None:
     database = agent_site_database
     # 083/10-a: the post-disable failure path is exercised from the last
-    # supported head (076_001); the current 077_001 head is refused by
-    # the media-isolation preflight before any disable step.
+    # supported head (076_001); the current 078_001 head is refused by
+    # the completion-provenance preflight (the 077_001 head by the
+    # media-isolation preflight) before any disable step.
     await _prepare_hardened_database_at_076(database)
 
     async def failed_migration(*_args: Any, **_kwargs: Any) -> None:
@@ -962,7 +998,7 @@ async def test_clean_migration_current_repeat_downgrade_and_rebuild(
     database = agent_site_database
     await upgrade(database.settings)
     first = await status(database.settings)
-    assert first.revision == "077_001"
+    assert first.revision == "078_001"
     _assert_pending(first, deployed=False)
 
     async with owner_connection(
@@ -1067,9 +1103,11 @@ async def test_clean_migration_current_repeat_downgrade_and_rebuild(
         )
     assert repeated_foundation_inventory == foundation_inventory
 
-    # 083/10-a: the current 077_001 media head has no supported
-    # downgrade: the operator path refuses before any base-state
-    # teardown, and the clean-migration state is left exactly as found.
+    # 083-11-a: the current 078_001 head has no supported downgrade:
+    # the operator completion-provenance preflight refuses before any
+    # base-state teardown (the 077_001 media refusal is proven from the
+    # released 077 stage above), and the clean-migration state is left
+    # exactly as found.
     async with owner_connection(
         database.settings.resolved_owner_dsn(), expected_database=database.name
     ) as connection:
@@ -1081,7 +1119,9 @@ async def test_clean_migration_current_repeat_downgrade_and_rebuild(
             "foundation_privileges_validated, product_privileges_validated, "
             "safe, updated_at FROM control.bootstrap_readiness WHERE singleton"
         )
-    with pytest.raises(BootstrapStateError, match="workspace-isolated media contract"):
+    with pytest.raises(
+        BootstrapStateError, match="trusted mutation completion provenance"
+    ):
         await downgrade(database.settings)
     async with owner_connection(
         database.settings.resolved_owner_dsn(), expected_database=database.name
@@ -1090,7 +1130,7 @@ async def test_clean_migration_current_repeat_downgrade_and_rebuild(
             await connection.fetchval(
                 "SELECT version_num::text FROM control.alembic_version"
             )
-            == "077_001"
+            == "078_001"
         )
         assert await connection.fetchval(
             "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_namespace "
@@ -1110,7 +1150,7 @@ async def test_clean_migration_current_repeat_downgrade_and_rebuild(
 
     await upgrade(database.settings)
     rebuilt = await status(database.settings)
-    assert rebuilt.revision == "077_001"
+    assert rebuilt.revision == "078_001"
     rebuilt_empty = await reconcile(database.settings)
     _assert_empty_safe(rebuilt_empty)
 
@@ -1125,7 +1165,7 @@ async def test_bootstrap_076_clean_downgrade_to_base_and_current_rebuild(
     ratchet that teardown is reachable only from the last supported
     head: this boots a clean 076_001 database (real reconcile through
     the scoped seam), downgrades to base, asserts the full
-    cleanup/rebuild state, then re-upgrades to the current 077_001
+    cleanup/rebuild state, then re-upgrades to the current 078_001
     head and reconciles it safe.
     """
     database = agent_site_database
@@ -1170,7 +1210,7 @@ async def test_bootstrap_076_clean_downgrade_to_base_and_current_rebuild(
 
     await upgrade(database.settings)
     rebuilt = await status(database.settings)
-    assert rebuilt.revision == "077_001"
+    assert rebuilt.revision == "078_001"
     _assert_pending(rebuilt, deployed=False)
     rebuilt_empty = await reconcile(database.settings)
     _assert_empty_safe(rebuilt_empty)
@@ -1535,20 +1575,20 @@ async def test_cli_secret_file_empty_bootstrap_current_and_validate(
     assert upgraded.stdout == "upgrade: OK\n"
     current = invoke("current")
     assert current.returncode == 0
-    assert current.stdout == ("current: revision=077_001 state=PENDING safe=false\n")
+    assert current.stdout == ("current: revision=078_001 state=PENDING safe=false\n")
     bootstrapped = invoke("bootstrap")
     assert bootstrapped.returncode == 0
     assert bootstrapped.stdout == (
-        "bootstrap: OK revision=077_001 state=HARDENED safe=true\n"
+        "bootstrap: OK revision=078_001 state=HARDENED safe=true\n"
     )
     validated = invoke("validate")
     assert validated.returncode == 0
     assert validated.stdout == (
-        "validate: OK revision=077_001 state=HARDENED safe=true\n"
+        "validate: OK revision=078_001 state=HARDENED safe=true\n"
     )
     ready = invoke("current")
     assert ready.returncode == 0
-    assert ready.stdout == ("current: revision=077_001 state=HARDENED safe=true\n")
+    assert ready.stdout == ("current: revision=078_001 state=HARDENED safe=true\n")
     output = "".join(
         process.stdout + process.stderr
         for process in (upgraded, current, bootstrapped, validated, ready)

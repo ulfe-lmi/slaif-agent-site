@@ -476,7 +476,7 @@ async def test_session_migrations_round_trip_through_037(
 ) -> None:
     database = agent_site_database
     # Closed historical loop: the downgrade below crosses 037, so start
-    # at the released 076 head (the current 077 graph refuses the
+    # at the released 076 head (the current 078 graph refuses the
     # downgrade); the final re-upgrade lands the real head.
     await run_migration(
         database.settings.resolved_owner_dsn(),
@@ -527,5 +527,5 @@ async def test_session_migrations_round_trip_through_037(
         revision="head",
     )
     await reconcile(database.settings)
-    # Final one-way upgrade of this loop: real current head (077).
-    assert (await status(database.settings)).revision == "077_001"
+    # Final one-way upgrade of this loop: real current head (078).
+    assert (await status(database.settings)).revision == "078_001"

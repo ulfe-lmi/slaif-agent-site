@@ -69,6 +69,13 @@ _DOWNGRADE_MEDIA_ISOLATION = (
     "reintroduce the unsafe canonical media write path"
 )
 _MEDIA_ISOLATION_REVISIONS = frozenset({"077_001"})
+_DOWNGRADE_COMPLETION_PROVENANCE = (
+    "bootstrap downgrade refused: the trusted mutation completion "
+    "provenance (migration 078_001) has no supported downgrade below it; "
+    "restoring the pre-078 completion bodies would leave 078-era "
+    "completion history uninterpretable and the explicit no-effect "
+    "decisions unrecoverable"
+)
 
 
 class BootstrapStateError(RuntimeError):
@@ -554,6 +561,33 @@ async def _assert_no_media_isolation_downgrade(revision: str) -> None:
         raise BootstrapStateError(_DOWNGRADE_MEDIA_ISOLATION)
 
 
+async def _assert_no_completion_provenance_downgrade(
+    connection: Any,
+) -> None:
+    """Operator-path preflight for the trusted completion provenance refusal.
+
+    The operator always downgrades to base, so ANY head retaining the
+    078_001 trusted completion provenance - the current head or a later
+    one - must refuse before effects: restoring the pre-078 completion
+    bodies would leave the 078-era ``audit.mutation_completion`` history
+    uninterpretable, including explicit no-effect dispositions that no
+    restored body can re-derive, and the 078_001 Alembic ratchet is
+    unconditional even for an empty journal.  The check reads product
+    catalog metadata only (table presence, like the retained-v2
+    preflight); the refusal happens before the readiness PENDING marker
+    is committed, before the content COW disable, and before any
+    migration step, so readiness, COW state, grants, canonical and
+    pending rows, family audit history and idempotency ledgers are left
+    exactly as found.  The 078_001 Alembic downgrade body is the second
+    line of defense for direct migration invocations.
+    """
+    if await connection.fetchval(
+        "SELECT to_regclass('audit.mutation_completion') IS NULL"
+    ):
+        return
+    raise BootstrapStateError(_DOWNGRADE_COMPLETION_PROVENANCE)
+
+
 async def downgrade(settings: BootstrapSettings) -> None:
     async with owner_connection(
         settings.resolved_owner_dsn(), expected_database=settings.expected_database
@@ -562,6 +596,7 @@ async def downgrade(settings: BootstrapSettings) -> None:
         revision = await connection.fetchval(
             "SELECT version_num::text FROM control.alembic_version"
         )
+        await _assert_no_completion_provenance_downgrade(connection)
         await _assert_no_media_isolation_downgrade(revision)
         await _assert_downgrade_compatible(connection, executor, revision)
         await _assert_no_retained_v2_snapshots(connection)
