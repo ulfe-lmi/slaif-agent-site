@@ -29,8 +29,9 @@ const PHASES = new Set([
   "reviewer-step",
   "worker-crash",
 ]);
-const OUTCOMES = new Set(["failed", "requeue", "budget", "start"]);
+const OUTCOMES = new Set(["failed", "requeue", "budget"]);
 const STEPS = new Set([
+  "entry",
   "operations",
   "dependencies",
   "commit-session",
@@ -40,6 +41,7 @@ const STEPS = new Set([
   "workspace-terminal",
   "job-terminal",
   "outbox",
+  "transaction-exit",
 ]);
 const REASONS = new Set([
   "storage_corrupt",

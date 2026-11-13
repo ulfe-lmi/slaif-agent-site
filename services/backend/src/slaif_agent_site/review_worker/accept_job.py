@@ -650,6 +650,7 @@ async def run_accept_job(
     facts["media_manifest"] = manifest.to_list()
 
     # Step 5: the promotion transaction (one reviewer scope, all-or-nothing).
+    reviewer_step = "entry"
     try:
         async with pool.acquire() as connection:
             async with asyncpg_cow_reviewer(connection) as reviewer:
@@ -675,17 +676,9 @@ async def run_accept_job(
                 )
                 if int(revision) != facts["base_site_revision"]:
                     raise AcceptJobError("SITE_REVISION_CHANGED", kind="drift")
-                LOGGER.warning(
-                    "slaif-diag: review-job phase=reviewer-step step=operations "
-                    "outcome=start job=%s",
-                    job_id,
-                )
+                reviewer_step = "operations"
                 operations = await reviewer.operations(workspace_id, schema="content")
-                LOGGER.warning(
-                    "slaif-diag: review-job phase=reviewer-step step=dependencies "
-                    "outcome=start job=%s",
-                    job_id,
-                )
+                reviewer_step = "dependencies"
                 dependencies = await reviewer.dependencies(
                     workspace_id, schema="content"
                 )
@@ -695,11 +688,7 @@ async def run_accept_job(
                         "SNAPSHOT_VALIDATION_FAILED", kind="validation"
                     )
                 try:
-                    LOGGER.warning(
-                        "slaif-diag: review-job phase=reviewer-step "
-                        "step=commit-session outcome=start job=%s",
-                        job_id,
-                    )
+                    reviewer_step = "commit-session"
                     result = await reviewer.commit_session(
                         workspace_id,
                         schema="content",
@@ -722,11 +711,7 @@ async def run_accept_job(
                         "UNIQUE_CONSTRAINT_CONFLICT", kind="conflict"
                     ) from None
                 try:
-                    LOGGER.warning(
-                        "slaif-diag: review-job phase=reviewer-step step=publicize "
-                        "outcome=start job=%s",
-                        job_id,
-                    )
+                    reviewer_step = "publicize"
                     await publicize_promoted_media(
                         site_id, facts["media_ids"], native=reviewer.native
                     )
@@ -738,22 +723,14 @@ async def run_accept_job(
                     raise AcceptJobError(
                         "SNAPSHOT_VALIDATION_FAILED", kind="validation"
                     ) from None
-                LOGGER.warning(
-                    "slaif-diag: review-job phase=reviewer-step step=revision "
-                    "outcome=start job=%s",
-                    job_id,
-                )
+                reviewer_step = "revision"
                 new_revision = await reviewer.native.fetchval(
                     "UPDATE control.site SET canonical_revision = "
                     "canonical_revision + 1 WHERE id = $1 RETURNING "
                     "canonical_revision",
                     site_id,
                 )
-                LOGGER.warning(
-                    "slaif-diag: review-job phase=reviewer-step step=audit "
-                    "outcome=start job=%s",
-                    job_id,
-                )
+                reviewer_step = "audit"
                 await reviewer.native.execute(
                     "INSERT INTO audit.promotion "
                     "(site_id, workspace_id, snapshot_id, job_id, digest, "
@@ -773,11 +750,7 @@ async def run_accept_job(
                     ),
                     actor_user_account_id,
                 )
-                LOGGER.warning(
-                    "slaif-diag: review-job phase=reviewer-step "
-                    "step=workspace-terminal outcome=start job=%s",
-                    job_id,
-                )
+                reviewer_step = "workspace-terminal"
                 updated = await reviewer.native.execute(
                     "UPDATE control.workspace SET status = 'ACCEPTED', "
                     "accepted_at = now() WHERE id = $1 AND status = 'PROMOTING'",
@@ -785,20 +758,12 @@ async def run_accept_job(
                 )
                 if updated != "UPDATE 1":
                     raise AcceptJobError("STATE_DRIFT", kind="state")
-                LOGGER.warning(
-                    "slaif-diag: review-job phase=reviewer-step step=job-terminal "
-                    "outcome=start job=%s",
-                    job_id,
-                )
+                reviewer_step = "job-terminal"
                 await reviewer.native.fetchval(
                     "SELECT control.slaif_review_job_terminal($1, 'SUCCEEDED', NULL)",
                     job_id,
                 )
-                LOGGER.warning(
-                    "slaif-diag: review-job phase=reviewer-step step=outbox "
-                    "outcome=start job=%s",
-                    job_id,
-                )
+                reviewer_step = "outbox"
                 await reviewer.native.execute(
                     "INSERT INTO control.cache_outbox "
                     "(site_id, workspace_id, event_kind, payload) "
@@ -817,6 +782,7 @@ async def run_accept_job(
                         separators=(",", ":"),
                     ),
                 )
+                reviewer_step = "transaction-exit"
         return JobResult("SUCCEEDED")
     except AcceptJobError as error:
         if error.kind == "drift" or error.kind == "validation":
@@ -828,8 +794,14 @@ async def run_accept_job(
     except (asyncpg.PostgresError, TimeoutError, OSError) as error:
         # Transient failure inside the reviewer transaction: the scope
         # rolled back everything; the job stays CLAIMED for recovery.
-        # Bounded diagnostic: class + SQLSTATE only, never the message.
+        # Bounded diagnostic: closed step state + class + SQLSTATE only,
+        # never the message.
         log_bounded_db_failure("reviewer-tx", error)
+        LOGGER.warning(
+            "slaif-diag: review-job phase=reviewer-step step=%s outcome=failed job=%s",
+            reviewer_step,
+            job_id,
+        )
         return await _retryable_or_budget(
             "postgres_transient"
             if isinstance(error, asyncpg.PostgresError)
