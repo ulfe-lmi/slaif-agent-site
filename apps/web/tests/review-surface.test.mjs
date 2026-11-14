@@ -120,6 +120,9 @@ const document = (overrides = {}) => ({
     agent_session_browser: { versions: {}, review_jobs: [] },
   },
   normalized_state: state(),
+  // 083/12: every review document carries the immutable companion
+  // manifest key (null for a historical companion-less snapshot).
+  manifest: null,
   ...overrides,
 });
 
@@ -528,6 +531,27 @@ test("selectReviewView: unknown stored state versions refuse uniformly", () => {
 
 test("the structural gate accepts the trusted shape and rejects corruption", () => {
   assert.equal(isReviewDocument(document()), true);
+  // 083/12: the companion manifest: a full object is admitted, a
+  // malformed object is refused, and the key must be present.
+  const manifest = {
+    schema_version: "reviewed-operations/v1",
+    manifest_id: "manifest-1",
+    manifest_digest: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    snapshot_digest: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    site_id: SITE_ID,
+    workspace_id: WORKSPACE_ID,
+    operation_ids: ["op-1"],
+    dependency_pairs: [],
+    completion_identities: [],
+  };
+  assert.equal(isReviewDocument({ ...document(), manifest }), true);
+  assert.equal(
+    isReviewDocument({ ...document(), manifest: { ...manifest, manifest_digest: 7 } }),
+    false,
+  );
+  const withoutManifest = { ...document() };
+  delete withoutManifest.manifest;
+  assert.equal(isReviewDocument(withoutManifest), false);
   assert.equal(isReviewDocument({ ...document(), drift: {} }), false);
   assert.equal(
     isReviewDocument({

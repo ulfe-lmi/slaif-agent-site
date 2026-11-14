@@ -37,15 +37,24 @@ import httpx
 import pytest
 from conftest import AgentSiteDatabase
 from pydantic import SecretStr
+from slaif_agent_site.agent_api.models import AgentCapabilityContext
 from slaif_agent_site.agent_state import promotion as promotion_module
 from slaif_agent_site.agent_state.capability import generate_capability_token
 from slaif_agent_site.agent_state.foundation import (
     asyncpg_cow_reviewer,
-    asyncpg_cow_session,
     get_session_operations,
+)
+from slaif_agent_site.agent_state.mutations import (
+    execute_agent_mutation,
+    mutation_digest,
 )
 from slaif_agent_site.bootstrap.service import reconcile, upgrade
 from slaif_agent_site.config import EnvironmentMode, ServiceSettings
+from slaif_agent_site.content_model.composition_models import (
+    AgentCreateCompositionNodeRequest,
+    AgentUpdateCompositionNodeRequest,
+)
+from slaif_agent_site.content_model.page_models import UpdatePageRequest
 from slaif_agent_site.control_api.app import create_app as create_control_app
 from slaif_agent_site.control_api.config import (
     ControlDatabaseMode,
@@ -72,6 +81,11 @@ from slaif_agent_site.review_worker.config import (
 from slaif_agent_site.review_worker.discard_job import run_discard_job
 from slaif_agent_site.review_worker.freeze_job import run_freeze_job
 from test_agent_mutations import _reconcile_historical
+from test_real_human_accept import (
+    _accept_approval,
+    _CowPoolAdapter,
+    _enqueue_accept,
+)
 
 _AGGON2 = (
     "$argon2id$v=19$m=65536,t=3,p=4$"
@@ -425,7 +439,11 @@ async def _apply_cow_operations(
     *,
     with_page_dml: bool = True,
 ) -> None:
-    """Real agent COW operations: an update + a create (+ real page DML).
+    """Real agent COW operations through the product mutation executor.
+
+    An update + a create (+ real page DML), each with its real 078
+    completion journal row - the 083/12 companion-manifest identity
+    binding reads exactly those rows.
 
     The page title update is the ADJ-4 limitation case (a composite
     ``page_base (site_id, locale)`` foreign key that the foundation's
@@ -437,73 +455,126 @@ async def _apply_cow_operations(
     page-DML session (the known foundation limitation).
     """
 
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        capability = await owner.fetchrow(
+            "SELECT created_at, expires_at, scopes FROM control.capability "
+            "WHERE id = $1",
+            ids["capability_id"],
+        )
+        delegator_id = await owner.fetchval(
+            "SELECT delegator_id FROM control.workspace WHERE id = $1",
+            ids["workspace_id"],
+        )
+    assert capability is not None
+    context = AgentCapabilityContext(
+        capability_id=ids["capability_id"],
+        site_id=ids["site_id"],
+        workspace_id=ids["workspace_id"],
+        delegator_id=UUID(str(delegator_id)),
+        scopes=frozenset(str(scope) for scope in capability["scopes"]),
+        created_at=capability["created_at"],
+        expires_at=capability["expires_at"],
+    )
     agent_pool = await database.role_pool("slaif_agent_runtime")
     try:
-        # Operation 1: the component update (its own COW session scope).
-        async with asyncpg_cow_session(
-            agent_pool,
-            session_id=ids["workspace_id"],
-            operation_id=uuid4(),
-        ) as cow:
-            await cow.native.execute(
-                "SELECT set_config('app.capability_id', $1, true)",
-                str(ids["capability_id"]),
-            )
-            updated = await cow.native.fetchrow(
-                "SELECT * FROM content.slaif_agent_component_update("
-                " $1, $2, $3::jsonb, $4)",
+        # Operation 1: the component update (its own COW transaction with
+        # the real reservation, COW write, audit and completion journal).
+        await execute_agent_mutation(
+            database=_CowPoolAdapter(agent_pool),
+            context=context,
+            key=f"083-12-discard-cow-update-{uuid4()}",
+            digest=mutation_digest(
+                method="PATCH",
+                path=f"/sites/{ids['site_id']}/components/{ids['heading_id']}",
+                body={"props": {"level": 2, "text": "Discarded heading"}},
+            ),
+            mutate=lambda service: service.update_component_for_site(
                 ids["site_id"],
                 ids["heading_id"],
-                json.dumps({"level": 2, "text": "Discarded heading"}),
-                1,
-            )
-            assert updated is not None
-        # Operation 2: the component create (a separate COW session
-        # scope, so the workspace carries multiple operations).
-        async with asyncpg_cow_session(
-            agent_pool,
-            session_id=ids["workspace_id"],
-            operation_id=uuid4(),
-        ) as cow:
-            await cow.native.execute(
-                "SELECT set_config('app.capability_id', $1, true)",
-                str(ids["capability_id"]),
-            )
-            created = await cow.native.fetchrow(
-                "SELECT * FROM content.slaif_agent_component_create("
-                " $1, $2, 'Heading', $3, 'default', NULL, NULL, $4::jsonb)",
+                AgentUpdateCompositionNodeRequest(
+                    props={"level": 2, "text": "Discarded heading"},
+                    expected_row_version=1,
+                ),
+            ),
+            resource_type="composition_node",
+            status_code=200,
+            quota_kind="mutation",
+            action="COMPONENT_UPDATED",
+            method="PATCH",
+        )
+        # Operation 2: the component create (a separate COW transaction,
+        # so the workspace carries multiple operations).
+        create_body = {
+            "component_type": "Heading",
+            "parent_id": str(ids["section_id"]),
+            "slot_key": "default",
+            "props": {"level": 3, "text": "New discarded node"},
+        }
+        created = await execute_agent_mutation(
+            database=_CowPoolAdapter(agent_pool),
+            context=context,
+            key=f"083-12-discard-cow-create-{uuid4()}",
+            digest=mutation_digest(
+                method="POST",
+                path=(f"/sites/{ids['site_id']}/pages/{ids['page_id']}/components"),
+                body=create_body,
+            ),
+            mutate=lambda service: service.add_component_for_site(
                 ids["site_id"],
                 ids["page_id"],
-                ids["section_id"],
-                json.dumps({"level": 3, "text": "New discarded node"}),
-            )
-            assert created is not None
-            ids["created_heading_id"] = UUID(str(created["id"]))
+                AgentCreateCompositionNodeRequest(
+                    component_type="Heading",
+                    parent_id=str(ids["section_id"]),
+                    slot_key="default",
+                    props={"level": 3, "text": "New discarded node"},
+                ),
+            ),
+            resource_type="composition_node",
+            status_code=201,
+            quota_kind="mutation",
+            action="COMPONENT_CREATED",
+            method="POST",
+        )
+        assert created.operation_id is not None
+        ids["created_heading_id"] = UUID(str(created.record["id"]))
         if not with_page_dml:
             return
         # Operation 3: real page DML (a title change) in its own scope.
-        async with asyncpg_cow_session(
-            agent_pool,
-            session_id=ids["workspace_id"],
-            operation_id=uuid4(),
-        ) as cow:
-            await cow.native.execute(
-                "SELECT set_config('app.capability_id', $1, true)",
-                str(ids["capability_id"]),
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            row_version = int(
+                await owner.fetchval(
+                    "SELECT row_version FROM content.page WHERE id = $1",
+                    ids["page_id"],
+                )
             )
-            row_version = await cow.native.fetchval(
-                "SELECT row_version FROM content.page WHERE id = $1",
-                ids["page_id"],
-            )
-            page_row = await cow.native.fetchrow(
-                "SELECT * FROM content.slaif_agent_page_update("
-                " $1, $2, NULL, 'Discarded Home', NULL, NULL, NULL, false, $3)",
+        page_body = {"title": "Discarded Home"}
+        updated_page = await execute_agent_mutation(
+            database=_CowPoolAdapter(agent_pool),
+            context=context,
+            key=f"083-12-discard-page-update-{uuid4()}",
+            digest=mutation_digest(
+                method="PATCH",
+                path=f"/sites/{ids['site_id']}/pages/{ids['page_id']}",
+                body=page_body,
+            ),
+            mutate=lambda service: service.update_page_for_site(
                 ids["site_id"],
                 ids["page_id"],
-                row_version,
-            )
-            assert page_row is not None
-            assert str(page_row["title"]) == "Discarded Home"
+                UpdatePageRequest(
+                    title="Discarded Home", expected_row_version=row_version
+                ),
+            ),
+            resource_type="page",
+            status_code=200,
+            quota_kind="mutation",
+            action="PAGE_UPDATED",
+            method="PATCH",
+        )
+        assert str(updated_page.record["title"]) == "Discarded Home"
     finally:
         await agent_pool.close()
 
@@ -835,7 +906,7 @@ async def test_discard_migration_round_trip(
         )
 
     # Final one-way re-upgrade to the head: lands the real current head
-    # (078) with the normal reconcile.
+    # (079) with the normal reconcile.
     await run_migration(
         dsn, expected_database=database.name, operation="upgrade", revision="head"
     )
@@ -843,7 +914,7 @@ async def test_discard_migration_round_trip(
     async with owner_connection(dsn, expected_database=database.name) as owner:
         assert (
             await owner.fetchval("SELECT version_num FROM control.alembic_version")
-            == "078_001"
+            == "079_001"
         )
         assert (
             await owner.fetchval(
@@ -1504,11 +1575,17 @@ async def test_discard_worker_conflicted_origin(
     boundary = MediaBoundary(settings=_media_settings(database, media_root))
     try:
         await _freeze_workspace(database, ids, pool)
-        accept_rows = await _control_call(
+        # 083/12: the accept approval is the bound snapshot + companion.
+        snapshot_id, snapshot_digest, manifest_digest = await _accept_approval(
+            database, ids["workspace_id"]
+        )
+        accept_rows = await _enqueue_accept(
             database,
-            "SELECT * FROM control.slaif_workspace_accept($1, $2)",
             ids["workspace_id"],
             ids["delegator_id"],
+            snapshot_id=snapshot_id,
+            snapshot_digest=snapshot_digest,
+            manifest_digest=manifest_digest,
         )
         assert len(accept_rows) == 1
         accept_job_id = UUID(str(accept_rows[0]["job_id"]))
@@ -1834,8 +1911,11 @@ async def test_kind_aware_claim_discard_fifo(
             ids["site_id"],
             ids["delegator_id"],
         )
+        accept_snapshot_id: UUID | None = None
         for workspace in (accept_ws, discard_ws):
             snapshot = uuid4()
+            if workspace == accept_ws:
+                accept_snapshot_id = UUID(str(snapshot))
             await owner.execute(
                 "INSERT INTO control.review_snapshot (id, workspace_id, site_id,"
                 " status, revision_watermark, versions, normalized_state,"
@@ -1852,6 +1932,21 @@ async def test_kind_aware_claim_discard_fifo(
                 snapshot,
                 workspace,
             )
+            # 083/12: the synthetic COMPLETE snapshot carries its
+            # companion manifest (trusted fixture rows; the empty
+            # session's empty U is the exact prospective state).
+            await owner.execute(
+                "INSERT INTO control.review_operation_manifest ("
+                " snapshot_id, site_id, workspace_id, schema_version, "
+                " snapshot_digest, manifest_digest, operation_ids, "
+                " dependency_pairs, completion_identities) "
+                "VALUES ($1, $2, $3, 'reviewed-operations/v1', "
+                " repeat('ef', 32), repeat('cd', 32), "
+                "'{}'::uuid[], '[]'::jsonb, '[]'::jsonb)",
+                snapshot,
+                ids["site_id"],
+                workspace,
+            )
     # Enqueue in FIFO order: FREEZE, ACCEPT, DISCARD.
     freeze_rows = await _control_call(
         database,
@@ -1862,11 +1957,13 @@ async def test_kind_aware_claim_discard_fifo(
     )
     assert len(freeze_rows) == 1
     freeze_job_id = UUID(str(freeze_rows[0]["job_id"]))
-    accept_rows = await _control_call(
+    accept_rows = await _enqueue_accept(
         database,
-        "SELECT * FROM control.slaif_workspace_accept($1, $2)",
         UUID(str(accept_ws)),
         ids["delegator_id"],
+        snapshot_id=UUID(str(accept_snapshot_id)),
+        snapshot_digest="ef" * 32,
+        manifest_digest="cd" * 32,
     )
     assert len(accept_rows) == 1
     accept_job_id = UUID(str(accept_rows[0]["job_id"]))

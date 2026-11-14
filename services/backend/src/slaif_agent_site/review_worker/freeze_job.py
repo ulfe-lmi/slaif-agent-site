@@ -32,7 +32,12 @@ from uuid import UUID
 
 import asyncpg
 
-from . import snapshot
+from ..agent_state.foundation import (
+    get_operation_dependencies,
+    get_session_operations,
+)
+from ..db.executor import AsyncpgExecutor
+from . import operation_manifest, snapshot
 from .config import ReviewWorkerSettings
 
 LOGGER = logging.getLogger(__name__)
@@ -42,6 +47,7 @@ _PHASE_ERROR_CODES = {
     "recheck": "STATE_DRIFT",
     "evidence": "SNAPSHOT_MATERIALIZE_FAILED",
     "materialize": "SNAPSHOT_MATERIALIZE_FAILED",
+    "operations": "SNAPSHOT_COMPLETE_FAILED",
     "complete": "SNAPSHOT_COMPLETE_FAILED",
 }
 _DOMAIN_ERROR_CODES = {
@@ -72,6 +78,19 @@ _DOMAIN_ERROR_CODES = {
     "SNAPSHOT_MEDIA_REFERENCES_MISMATCH": "SNAPSHOT_COMPLETE_FAILED",
     "SNAPSHOT_BROWSER_EVIDENCE_UNRESOLVED": "SNAPSHOT_COMPLETE_FAILED",
     "SNAPSHOT_SITE_MISMATCH": "SNAPSHOT_COMPLETE_FAILED",
+    # 083/12 companion-manifest contract failures (trusted completion
+    # function, typed SQLSTATE P0001/P0002 refusals).
+    "MANIFEST_INPUT_INVALID": "SNAPSHOT_COMPLETE_FAILED",
+    "MANIFEST_OVER_BUDGET": "SNAPSHOT_COMPLETE_FAILED",
+    "MANIFEST_OPERATION_INVALID": "SNAPSHOT_COMPLETE_FAILED",
+    "MANIFEST_DUPLICATE_OPERATION": "SNAPSHOT_COMPLETE_FAILED",
+    "MANIFEST_DEPENDENCY_INVALID": "SNAPSHOT_COMPLETE_FAILED",
+    "MANIFEST_DEPENDENCY_ENDPOINT": "SNAPSHOT_COMPLETE_FAILED",
+    "MANIFEST_IDENTITY_INVALID": "SNAPSHOT_COMPLETE_FAILED",
+    "MANIFEST_IDENTITY_COUNT": "SNAPSHOT_COMPLETE_FAILED",
+    "MANIFEST_IDENTITY_MISMATCH": "SNAPSHOT_COMPLETE_FAILED",
+    "MANIFEST_JOURNAL_MISSING": "SNAPSHOT_COMPLETE_FAILED",
+    "MANIFEST_BINDING_MISMATCH": "SNAPSHOT_COMPLETE_FAILED",
 }
 
 
@@ -182,7 +201,8 @@ async def run_freeze_job(
     try:
         async with pool.acquire() as connection:
             row = await connection.fetchrow(
-                "SELECT w.status AS workspace_status, s.status AS site_status "
+                "SELECT w.status AS workspace_status, s.status AS site_status, "
+                "s.id AS site_id "
                 "FROM control.workspace AS w "
                 "JOIN control.site AS s ON s.id = w.site_id "
                 "WHERE w.id = $1",
@@ -197,6 +217,7 @@ async def run_freeze_job(
     ):
         await _mark_terminal(pool, job_id, "FAILED", "STATE_DRIFT")
         return JobResult("FAILED", "STATE_DRIFT")
+    site_id = UUID(str(row["site_id"]))
 
     for _drain_attempt in range(drain_attempts):
         phase = "drain"
@@ -239,16 +260,60 @@ async def run_freeze_job(
                         browser_evidence=evidence,
                         cancelled_runs=cancelled,
                     )
-                    # Step 6: atomic snapshot insert + REVIEW transition.
-                    # The row is serialized in the PG-canonical form so
-                    # Decimal values (exact raw numeric retention) bind
-                    # losslessly and the stored jsonb canonical text
-                    # reproduces the digest byte-for-byte.
+                    # Step 5b: capture the actual public foundation
+                    # session state in the SAME locked transaction -
+                    # the full operation universe U, the actual
+                    # foundation dependency pairs, and the bounded
+                    # trusted 078 completion identities of exactly U
+                    # (narrow owner projection) - and build the
+                    # reviewed-operations/v1 companion envelope.  The
+                    # trusted completion function re-validates every
+                    # invariant independently and recomputes the
+                    # manifest digest over the stored canonical
+                    # content; this capture is the honest input, not
+                    # the security boundary.
+                    phase = "operations"
+                    executor = AsyncpgExecutor(connection)
+                    operations = await get_session_operations(
+                        executor, workspace_id, schema="content"
+                    )
+                    dependencies = await get_operation_dependencies(
+                        executor, workspace_id, schema="content"
+                    )
+                    identities_doc = await connection.fetchval(
+                        "SELECT control.slaif_review_operation_identities($1, $2, $3)",
+                        workspace_id,
+                        site_id,
+                        operations,
+                    )
+                    if isinstance(identities_doc, (bytes, bytearray)):
+                        identities_doc = identities_doc.decode("utf-8")
+                    if isinstance(identities_doc, str):
+                        identities_doc = json.loads(identities_doc)
+                    if not isinstance(identities_doc, list):
+                        raise operation_manifest.SnapshotManifestError(
+                            "MANIFEST_IDENTITY_INVALID", reason="projection"
+                        )
+                    manifest = operation_manifest.build_operation_manifest(
+                        workspace_id=workspace_id,
+                        site_id=site_id,
+                        operations=list(operations),
+                        dependencies=list(dependencies),
+                        completion_identities=identities_doc,
+                    )
+                    # Step 6: atomic snapshot + companion insert and
+                    # REVIEW transition.  The row is serialized in the
+                    # PG-canonical form so Decimal values (exact raw
+                    # numeric retention) bind losslessly and the
+                    # stored jsonb canonical text reproduces the digest
+                    # byte-for-byte.
                     phase = "complete"
                     await connection.fetchval(
-                        "SELECT control.slaif_review_snapshot_complete($1, $2)",
+                        "SELECT control.slaif_review_snapshot_complete_with_manifest("
+                        "$1, $2, $3)",
                         workspace_id,
                         snapshot.canonical_json(row_doc),
+                        manifest,
                     )
                     # Step 7: job SUCCEEDED, same transaction.
                     await connection.fetchval(
@@ -256,6 +321,16 @@ async def run_freeze_job(
                         "$1, 'SUCCEEDED', NULL)",
                         job_id,
                     )
+        except operation_manifest.SnapshotManifestError as error:
+            code = error.code
+            LOGGER.exception(
+                "freeze job failed: job=%s workspace=%s code=%s",
+                job_id,
+                workspace_id,
+                code,
+            )
+            await _mark_terminal(pool, job_id, "FAILED", code)
+            return JobResult("FAILED", code)
         except snapshot.SnapshotBuildError as error:
             code = error.code
             LOGGER.exception(

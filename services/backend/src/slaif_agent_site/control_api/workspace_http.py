@@ -268,12 +268,19 @@ async def freeze_workspace(
 
 
 class AcceptWorkspaceRequest(BaseModel):
-    """Strict accept body (R2.3): the exact three fields, nothing else."""
+    """Strict accept body: the exact four fields, nothing else.
+
+    083/12: the approval names BOTH digests - the domain snapshot
+    digest (``digest``) and the companion manifest digest
+    (``manifest_digest``) - so the durable job payload carries the
+    complete immutable approval.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     snapshot_id: UUID
     digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    manifest_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
     acknowledge_summary: bool
 
     @field_validator("acknowledge_summary", mode="before")
@@ -366,6 +373,7 @@ async def accept_workspace(
             site_id,
             body.snapshot_id,
             body.digest,
+            body.manifest_digest,
             authority.session.user_account_id,
         )
     except Exception as exc:

@@ -76,6 +76,12 @@ _DOWNGRADE_COMPLETION_PROVENANCE = (
     "completion history uninterpretable and the explicit no-effect "
     "decisions unrecoverable"
 )
+_DOWNGRADE_REVIEWED_OPERATION_BINDING = (
+    "bootstrap downgrade refused: the reviewed operation binding "
+    "(migration 079_001) has no supported downgrade below it; restoring "
+    "the pre-079 accept entry points and the companion-less completion "
+    "would leave 079-era manifest and receipt history uninterpretable"
+)
 
 
 class BootstrapStateError(RuntimeError):
@@ -588,6 +594,36 @@ async def _assert_no_completion_provenance_downgrade(
     raise BootstrapStateError(_DOWNGRADE_COMPLETION_PROVENANCE)
 
 
+async def _assert_no_reviewed_operation_binding_downgrade(
+    connection: Any,
+) -> None:
+    """Operator-path preflight for the reviewed-operation-binding refusal.
+
+    The operator always downgrades to base, so ANY head retaining the
+    079_001 reviewed operation binding - the current head or a later
+    one - must refuse before effects: restoring the pre-079 accept
+    entry points (digest-less approval and the actorless inner enqueue)
+    and the companion-less completion EXECUTE would leave the 079-era
+    ``control.review_operation_manifest`` rows and the 079-era
+    ``audit.promotion`` receipts (applied operation IDs plus both
+    approval digests) uninterpretable, and the restored entry points
+    could approve a snapshot whose companion was already revoked.  The
+    check reads product catalog metadata only (companion table presence
+    plus 079-era receipt rows, like the retained-v2 preflight); the
+    refusal happens before the readiness PENDING marker is committed,
+    before the content COW disable, and before any migration step, so
+    readiness, COW state, grants, canonical and pending rows, manifest,
+    snapshot and audit history are left exactly as found.  The 079_001
+    Alembic downgrade body is the second line of defense for direct
+    migration invocations.
+    """
+    if await connection.fetchval(
+        "SELECT to_regclass('control.review_operation_manifest') IS NULL"
+    ):
+        return
+    raise BootstrapStateError(_DOWNGRADE_REVIEWED_OPERATION_BINDING)
+
+
 async def downgrade(settings: BootstrapSettings) -> None:
     async with owner_connection(
         settings.resolved_owner_dsn(), expected_database=settings.expected_database
@@ -596,6 +632,7 @@ async def downgrade(settings: BootstrapSettings) -> None:
         revision = await connection.fetchval(
             "SELECT version_num::text FROM control.alembic_version"
         )
+        await _assert_no_reviewed_operation_binding_downgrade(connection)
         await _assert_no_completion_provenance_downgrade(connection)
         await _assert_no_media_isolation_downgrade(revision)
         await _assert_downgrade_compatible(connection, executor, revision)

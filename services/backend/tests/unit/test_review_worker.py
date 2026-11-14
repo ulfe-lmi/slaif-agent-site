@@ -966,11 +966,13 @@ class _VerifySnapshotPool:
         stored_row: dict[str, Any],
         materializer_doc: dict[str, Any] | None,
         materialize_must_not_run: bool,
+        manifest_doc: dict[str, Any] | None = None,
     ) -> None:
         self.current_revision = current_revision
         self.stored_row = stored_row
         self.materializer_doc = materializer_doc
         self.materialize_must_not_run = materialize_must_not_run
+        self.manifest_doc = manifest_doc
         self.calls: list[str] = []
         self.materializer_calls = 0
 
@@ -998,6 +1000,13 @@ class _VerifySnapshotPool:
                 if "FROM control.workspace" in sql and "FOR UPDATE" in sql:
                     outer.calls.append("workspace-lock")
                     return "PROMOTING"
+                if "slaif_review_operation_manifest_read" in sql:
+                    outer.calls.append("manifest-read")
+                    return (
+                        json.dumps(outer.manifest_doc)
+                        if outer.manifest_doc is not None
+                        else None
+                    )
                 if "slaif_review_workspace_state" in sql:
                     outer.calls.append("materializer")
                     outer.materializer_calls += 1
@@ -1036,6 +1045,26 @@ def _stored_row_from_doc(
     }
 
 
+def _manifest_doc_for(
+    *,
+    workspace_id: uuid.UUID,
+    site_id: uuid.UUID,
+    digest: str,
+    manifest_digest: str | None = None,
+) -> dict[str, Any]:
+    return {
+        "schema_version": "reviewed-operations/v1",
+        "manifest_id": str(uuid.uuid4()),
+        "manifest_digest": manifest_digest or "ab" * 32,
+        "snapshot_digest": digest,
+        "site_id": str(site_id),
+        "workspace_id": str(workspace_id),
+        "operation_ids": [],
+        "dependency_pairs": [],
+        "completion_identities": [],
+    }
+
+
 def _coherence_doc(
     *, workspace_id: uuid.UUID, site_id: uuid.UUID, base: int
 ) -> dict[str, Any]:
@@ -1059,11 +1088,15 @@ async def test_verify_snapshot_drift_reported_before_rematerialization() -> None
     current = 5
     doc = _coherence_doc(workspace_id=workspace_id, site_id=site_id, base=current - 2)
     stored = _stored_row_from_doc(doc, workspace_id=workspace_id, site_id=site_id)
+    manifest = _manifest_doc_for(
+        workspace_id=workspace_id, site_id=site_id, digest=str(stored["digest"])
+    )
     pool = _VerifySnapshotPool(
         current_revision=current,
         stored_row=stored,
         materializer_doc=doc,
         materialize_must_not_run=True,
+        manifest_doc=manifest,
     )
     with pytest.raises(accept_job_module.AcceptJobError) as excinfo:
         await accept_job_module._verify_snapshot(
@@ -1073,6 +1106,8 @@ async def test_verify_snapshot_drift_reported_before_rematerialization() -> None
             snapshot_id=uuid.uuid4(),
             claimant="unit-test",
             lock_timeout_seconds=1.0,
+            snapshot_digest=str(stored["digest"]),
+            manifest_digest=str(manifest["manifest_digest"]),
         )
     # The post-freeze publication is drift, not a digest error, and the
     # re-materialization never ran.
@@ -1093,11 +1128,15 @@ async def test_verify_snapshot_matching_revision_rematerializes() -> None:
     current = 5
     doc = _coherence_doc(workspace_id=workspace_id, site_id=site_id, base=current)
     stored = _stored_row_from_doc(doc, workspace_id=workspace_id, site_id=site_id)
+    manifest = _manifest_doc_for(
+        workspace_id=workspace_id, site_id=site_id, digest=str(stored["digest"])
+    )
     pool = _VerifySnapshotPool(
         current_revision=current,
         stored_row=stored,
         materializer_doc=doc,
         materialize_must_not_run=False,
+        manifest_doc=manifest,
     )
     facts = await accept_job_module._verify_snapshot(
         pool,
@@ -1106,10 +1145,15 @@ async def test_verify_snapshot_matching_revision_rematerializes() -> None:
         snapshot_id=uuid.uuid4(),
         claimant="unit-test",
         lock_timeout_seconds=1.0,
+        snapshot_digest=str(stored["digest"]),
+        manifest_digest=str(manifest["manifest_digest"]),
     )
     assert facts["base_site_revision"] == current
     assert facts["digest"] == stored["digest"]
     assert facts["media_ids"] == []
+    assert facts["approved_operations"] == frozenset()
+    assert facts["manifest_digest"] == manifest["manifest_digest"]
+    assert facts["manifest_id"] == manifest["manifest_id"]
     assert pool.materializer_calls == 1
     # The locked current-revision read precedes the re-materialization.
     assert pool.calls.index("site-lock") < pool.calls.index("materializer")
@@ -1140,7 +1184,11 @@ async def test_verify_snapshot_binding_mismatch_is_validation() -> None:
             snapshot_id=uuid.uuid4(),
             claimant="unit-test",
             lock_timeout_seconds=1.0,
+            snapshot_digest=str(stored["digest"]),
+            manifest_digest="ab" * 32,
         )
     assert excinfo.value.code == "SNAPSHOT_VALIDATION_FAILED"
     assert excinfo.value.kind == "validation"
     assert pool.materializer_calls == 0
+    # The stored-binding refusal precedes the companion read.
+    assert "manifest-read" not in pool.calls

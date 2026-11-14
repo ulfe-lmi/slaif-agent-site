@@ -885,7 +885,7 @@ async def test_page_style_fresh_065_baseline_restores_exactly_through_066(
         ) == ("fresh-page", "Fresh page", "DRAFT", "en-US", 1)
 
     # Final one-way upgrade of this loop: lands the real current head
-    # (078) with the normal reconcile.
+    # (079) with the normal reconcile.
     await run_migration(
         database.settings.resolved_owner_dsn(),
         expected_database=database.name,
@@ -900,7 +900,7 @@ async def test_page_style_fresh_065_baseline_restores_exactly_through_066(
             await owner.fetchval(
                 "SELECT version_num::text FROM control.alembic_version"
             )
-            == "078_001"
+            == "079_001"
         )
         round_trip = await owner.fetchrow(
             "SELECT slug,title,status,locale,row_version,style_overrides::text "

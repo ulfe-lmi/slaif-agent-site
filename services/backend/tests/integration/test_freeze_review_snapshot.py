@@ -26,18 +26,23 @@ from slaif_agent_site.agent_api.config import (
     AgentDatabaseMode,
     AgentDatabaseSettings,
 )
+from slaif_agent_site.agent_api.models import AgentCapabilityContext
 from slaif_agent_site.agent_state.capability import generate_capability_token
 from slaif_agent_site.agent_state.foundation import (
     FOUNDATION_DISTRIBUTION,
     FOUNDATION_VERSION,
     asyncpg_cow_reviewer,
-    asyncpg_cow_session,
     deploy_cow_functions,
     enable_cow_schema,
     get_cow_status,
+    get_operation_dependencies,
     get_session_operations,
     harden_cow_schema,
     validate_cow_schema_privileges,
+)
+from slaif_agent_site.agent_state.mutations import (
+    execute_agent_mutation,
+    mutation_digest,
 )
 from slaif_agent_site.agent_state.workspace_models import DelegationPreset
 from slaif_agent_site.bootstrap.service import (
@@ -50,6 +55,10 @@ from slaif_agent_site.config import EnvironmentMode, ServiceSettings
 from slaif_agent_site.content_model.canonical import (
     canonical_digest,
     parse_snapshot_text,
+)
+from slaif_agent_site.content_model.composition_models import (
+    AgentCreateCompositionNodeRequest,
+    AgentUpdateCompositionNodeRequest,
 )
 from slaif_agent_site.content_model.design_system import (
     CATALOG_VERSION,
@@ -114,6 +123,9 @@ from slaif_agent_site.review_worker.config import (
 )
 from slaif_agent_site.review_worker.discard_job import run_discard_job
 from slaif_agent_site.review_worker.freeze_job import run_freeze_job
+from slaif_agent_site.review_worker.operation_manifest import (
+    build_operation_manifest,
+)
 from slaif_agent_site.review_worker.snapshot import (
     PUCK_VERSION_PIN,
     build_snapshot_document,
@@ -121,8 +133,11 @@ from slaif_agent_site.review_worker.snapshot import (
 )
 from test_agent_mutations import _expected_head_override
 from test_real_human_accept import (
+    _accept_approval,
     _claim_accept,
+    _CowPoolAdapter,
     _enqueue_accept,
+    _enqueue_bound_accept,
     _media_settings,
     _seed_site,
 )
@@ -647,11 +662,40 @@ async def test_forced_validation_failure_leaves_freezing(
         )
         row = build_snapshot_document(doc, created_by="tamper-worker")
         row["digest"] = "0" * 64
+        # 083/12: the trusted completion is companion-bound; the
+        # manifest is the real capture over the session's exact
+        # prospective state (this op-free workspace carries the empty
+        # U).
+        executor = AsyncpgExecutor(worker)
+        operations = await get_session_operations(
+            executor, seeded["workspace_id"], schema="content"
+        )
+        dependencies = await get_operation_dependencies(
+            executor, seeded["workspace_id"], schema="content"
+        )
+        identities_doc = await worker.fetchval(
+            "SELECT control.slaif_review_operation_identities($1,$2,$3)",
+            seeded["workspace_id"],
+            seeded["site_id"],
+            operations,
+        )
+        if isinstance(identities_doc, (bytes, bytearray)):
+            identities_doc = identities_doc.decode("utf-8")
+        if isinstance(identities_doc, str):
+            identities_doc = json.loads(identities_doc)
+        manifest = build_operation_manifest(
+            workspace_id=seeded["workspace_id"],
+            site_id=seeded["site_id"],
+            operations=list(operations),
+            dependencies=list(dependencies),
+            completion_identities=identities_doc,
+        )
         with pytest.raises(asyncpg.PostgresError) as excinfo:
             await worker.fetchval(
-                "SELECT control.slaif_review_snapshot_complete($1,$2)",
+                "SELECT control.slaif_review_snapshot_complete_with_manifest($1,$2,$3)",
                 seeded["workspace_id"],
                 canonical_json(row),
+                manifest,
             )
         assert "SNAPSHOT_DIGEST_MISMATCH" in excinfo.value.message
         assert excinfo.value.sqlstate == "P0002"
@@ -1181,6 +1225,39 @@ async def _create_workspace(
     return UUID(str(workspace_id)), UUID(str(capability_id))
 
 
+async def _cow_context(
+    database: AgentSiteDatabase,
+    *,
+    workspace_id: UUID,
+    capability_id: UUID,
+    site_id: UUID,
+) -> AgentCapabilityContext:
+    """The actual capability context of one fixture capability."""
+
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        capability = await owner.fetchrow(
+            "SELECT created_at, expires_at, scopes FROM control.capability "
+            "WHERE id = $1",
+            capability_id,
+        )
+        delegator_id = await owner.fetchval(
+            "SELECT delegator_id FROM control.workspace WHERE id = $1",
+            workspace_id,
+        )
+    assert capability is not None
+    return AgentCapabilityContext(
+        capability_id=capability_id,
+        site_id=site_id,
+        workspace_id=workspace_id,
+        delegator_id=UUID(str(delegator_id)),
+        scopes=frozenset(str(scope) for scope in capability["scopes"]),
+        created_at=capability["created_at"],
+        expires_at=capability["expires_at"],
+    )
+
+
 async def _cow_create(
     database: AgentSiteDatabase,
     *,
@@ -1191,29 +1268,55 @@ async def _cow_create(
     parent_id: UUID,
     text: str,
 ) -> UUID:
-    """One real agent COW create operation on the given workspace."""
+    """One real agent COW create operation on the given workspace.
 
+    Runs through the product mutation executor so the pending operation
+    carries its real 078 completion journal row - the 083/12
+    companion-manifest identity binding reads exactly that row."""
+
+    context = await _cow_context(
+        database,
+        workspace_id=workspace_id,
+        capability_id=capability_id,
+        site_id=site_id,
+    )
+    body = {
+        "component_type": "Heading",
+        "parent_id": str(parent_id),
+        "slot_key": "default",
+        "props": {"level": 3, "text": text},
+    }
     agent_pool = await database.role_pool("slaif_agent_runtime")
     try:
-        async with asyncpg_cow_session(
-            agent_pool, session_id=workspace_id, operation_id=uuid4()
-        ) as cow:
-            await cow.native.execute(
-                "SELECT set_config('app.capability_id', $1, true)",
-                str(capability_id),
-            )
-            created = await cow.native.fetchrow(
-                "SELECT * FROM content.slaif_agent_component_create("
-                " $1, $2, 'Heading', $3, 'default', NULL, NULL, $4::jsonb)",
+        result = await execute_agent_mutation(
+            database=_CowPoolAdapter(agent_pool),
+            context=context,
+            key=f"083-12-freeze-cow-create-{uuid4()}",
+            digest=mutation_digest(
+                method="POST",
+                path=f"/sites/{site_id}/pages/{page_id}/components",
+                body=body,
+            ),
+            mutate=lambda service: service.add_component_for_site(
                 site_id,
                 page_id,
-                parent_id,
-                json.dumps({"level": 3, "text": text}),
-            )
-            assert created is not None
-            return UUID(str(created["id"]))
+                AgentCreateCompositionNodeRequest(
+                    component_type="Heading",
+                    parent_id=str(parent_id),
+                    slot_key="default",
+                    props={"level": 3, "text": text},
+                ),
+            ),
+            resource_type="composition_node",
+            status_code=201,
+            quota_kind="mutation",
+            action="COMPONENT_CREATED",
+            method="POST",
+        )
     finally:
         await agent_pool.close()
+    assert result.operation_id is not None
+    return UUID(str(result.record["id"]))
 
 
 async def _cow_update(
@@ -1225,26 +1328,42 @@ async def _cow_update(
     component_id: UUID,
     props: dict[str, Any],
 ) -> None:
-    """One real agent COW update operation on the given workspace."""
+    """One real agent COW update operation on the given workspace.
 
+    Product mutation executor with the historical row-version-1
+    contract; the completion journal row binds the 083/12 manifest."""
+
+    context = await _cow_context(
+        database,
+        workspace_id=workspace_id,
+        capability_id=capability_id,
+        site_id=site_id,
+    )
     agent_pool = await database.role_pool("slaif_agent_runtime")
     try:
-        async with asyncpg_cow_session(
-            agent_pool, session_id=workspace_id, operation_id=uuid4()
-        ) as cow:
-            await cow.native.execute(
-                "SELECT set_config('app.capability_id', $1, true)",
-                str(capability_id),
-            )
-            updated = await cow.native.fetchrow(
-                "SELECT * FROM content.slaif_agent_component_update("
-                " $1, $2, $3::jsonb, $4)",
+        await execute_agent_mutation(
+            database=_CowPoolAdapter(agent_pool),
+            context=context,
+            key=f"083-12-freeze-cow-update-{uuid4()}",
+            digest=mutation_digest(
+                method="PATCH",
+                path=f"/sites/{site_id}/components/{component_id}",
+                body={"props": props},
+            ),
+            mutate=lambda service: service.update_component_for_site(
                 site_id,
                 component_id,
-                json.dumps(props),
-                1,
-            )
-            assert updated is not None
+                AgentUpdateCompositionNodeRequest(
+                    props=props,
+                    expected_row_version=1,
+                ),
+            ),
+            resource_type="composition_node",
+            status_code=200,
+            quota_kind="mutation",
+            action="COMPONENT_UPDATED",
+            method="PATCH",
+        )
     finally:
         await agent_pool.close()
 
@@ -1341,7 +1460,7 @@ async def _accept_claim_run(
     """
 
     if job_id is None:
-        rows = await _enqueue_accept(database, workspace_id, delegator_id)
+        rows = await _enqueue_bound_accept(database, workspace_id, delegator_id)
         job_id = UUID(str(rows[0]["job_id"]))
     job = await _claim_accept(database, claimant)
     assert str(job["id"]) == str(job_id)
@@ -2023,9 +2142,37 @@ for (name, _identity), sig in PRIV.HUMAN_EDITOR_FUNCTIONS.items():
     )
 
 
-def _rt_expected_grants(name: str, sig: str) -> list[str]:
+# 083/12: at a released pre-079 head (the 072..078 phase) the
+# phase-aware 079 grant map restores exactly the 072 grants: the
+# digest-less accept pair to the control role and the standalone
+# snapshot completion to the review worker (the pre-079 freeze worker
+# invoked it directly); at the current head the old pair is revoked
+# and only the dual-digest surface is granted.  The round-trip grant
+# oracle is therefore stage-exact.
+_RT_PRE_079_STAGE_GRANTS_AT_076: dict[tuple[str, str], set[str]] = {
+    ("slaif_workspace_accept", _rt_norm_sig("{uuid,uuid}")): {"slaif_control"},
+    (
+        "slaif_human_agent_workspace_accept",
+        _rt_norm_sig("{uuid,uuid,uuid,text,uuid}"),
+    ): {"slaif_control"},
+    (
+        "slaif_review_snapshot_complete",
+        _rt_norm_sig("{uuid,jsonb}"),
+    ): {"slaif_review_worker"},
+}
+
+
+def _rt_expected_grants(name: str, sig: str, *, stage_076: bool = False) -> list[str]:
     roles = sorted(_RT_POLICY_ROLES.get((name, _rt_norm_sig(sig)), set()))
-    return ["slaif_owner:EXECUTE"] + [f"{r}:EXECUTE" for r in roles]
+    expected = ["slaif_owner:EXECUTE"] + [f"{r}:EXECUTE" for r in roles]
+    if stage_076:
+        for role in sorted(
+            _RT_PRE_079_STAGE_GRANTS_AT_076.get((name, _rt_norm_sig(sig)), set())
+        ):
+            grant = f"{role}:EXECUTE"
+            if grant not in expected:
+                expected.append(grant)
+    return expected
 
 
 def _rt_sha(text: str) -> str:
@@ -2844,10 +2991,12 @@ async def test_076_001_round_trip_retained_v2_and_exact_restore(
             assert head[k][f] == s2f[k][f], (k, f)
     for k in s2f:
         name, sig = _rt_split_key(k)
-        assert sorted(s2f[k]["grants"]) == sorted(_rt_expected_grants(name, sig)), (
+        assert sorted(s2f[k]["grants"]) == sorted(
+            _rt_expected_grants(name, sig, stage_076=True)
+        ), (
             k,
             s2f[k]["grants"],
-            _rt_expected_grants(name, sig),
+            _rt_expected_grants(name, sig, stage_076=True),
         )
     eff_role_rows = ", ".join(f"(${i})" for i in range(1, len(_RT_EFFECTIVE_ROLES) + 1))
     async with owner_connection(dsn, expected_database=db_name) as eff:
@@ -2867,7 +3016,10 @@ async def test_076_001_round_trip_retained_v2_and_exact_restore(
         name_sig = oid_to_key.get(row["oid"])
         assert name_sig is not None, f"unknown oid {row['oid']}"
         name, sig = _rt_split_key(name_sig)
-        roles = _RT_POLICY_ROLES.get((name, _rt_norm_sig(sig)), set())
+        policy_key = (name, _rt_norm_sig(sig))
+        roles = _RT_POLICY_ROLES.get(
+            policy_key, set()
+        ) | _RT_PRE_079_STAGE_GRANTS_AT_076.get(policy_key, set())
         expect = row["role"] in roles or row["role"] == "slaif_owner"
         assert bool(row["has"]) == expect, (name_sig, row["role"], row["has"])
         observed_roles.add(row["role"])
@@ -3244,10 +3396,12 @@ async def test_075_001_v1_only_downgrade_roundtrip_disposable(
             assert head[k][f] == s2f[k][f], (k, f)
     for k in s2f:
         name, sig = _rt_split_key(k)
-        assert sorted(s2f[k]["grants"]) == sorted(_rt_expected_grants(name, sig)), (
+        assert sorted(s2f[k]["grants"]) == sorted(
+            _rt_expected_grants(name, sig, stage_076=True)
+        ), (
             k,
             s2f[k]["grants"],
-            _rt_expected_grants(name, sig),
+            _rt_expected_grants(name, sig, stage_076=True),
         )
     assert s2["marker"] is not None and s2["marker"]["readiness_state"] == "HARDENED"
 
@@ -3723,7 +3877,7 @@ async def test_same_site_accept_freeze_serialization_both_orderings(
             delegator_id=delegator_id,
             claimant="083-4-f4",
         )
-        rows = await _enqueue_accept(database, ws3, delegator_id)
+        rows = await _enqueue_bound_accept(database, ws3, delegator_id)
         job3_accept = UUID(str(rows[0]["job_id"]))
         job3_claimed = await _claim_accept_job(
             database, claimant="083-4-a3", expected_job_id=job3_accept
@@ -3855,7 +4009,7 @@ async def test_same_site_accept_freeze_serialization_both_orderings(
         # finalization, before the final reviewer transaction.
         pausing_boundary = _PausingMediaBoundary(boundary)
         _barrier, entered = pausing_boundary.arm()
-        rows = await _enqueue_accept(database, ws5, delegator_id)
+        rows = await _enqueue_bound_accept(database, ws5, delegator_id)
         job5_accept = UUID(str(rows[0]["job_id"]))
         accept_task = asyncio.create_task(
             _accept_claim_run(
@@ -5993,39 +6147,60 @@ async def test_v1_stored_workflow_read_refusal_discard_recreation(
             )
         assert authorize_row is None or authorize_row[0] is None
 
-        # Real accept of the v1 snapshot: refused with the stable
-        # compatibility code BEFORE any effect (each asserted).
+        # Real accept of the v1 snapshot: refused BEFORE any effect
+        # (each asserted).  083/12 moves the stable refusal forward to
+        # the exact-approval enqueue boundary: a v1 snapshot can never
+        # carry the companion manifest, so the typed owner-internal
+        # refusal is REVIEW_MANIFEST_NOT_FOUND and the control entry
+        # point keeps its uniform silent no-row refusal (no oracle).
         baseline = await effect_baseline()
-        accept_rows = await _control_call(
+        async with owner_connection(dsn, expected_database=db_name) as owner:
+            v1_digest = str(
+                await owner.fetchval(
+                    "SELECT digest::text FROM control.review_snapshot WHERE id = $1",
+                    snap_v1,
+                )
+            )
+            with pytest.raises(asyncpg.PostgresError) as v1_refusal:
+                await owner.fetch(
+                    "SELECT * FROM control.slaif_workspace_accept($1,$2,$3,$4,$5)",
+                    ws_v1_uuid,
+                    snap_v1,
+                    v1_digest,
+                    "ab" * 32,
+                    user_id,
+                )
+        assert v1_refusal.value.sqlstate == "P0002"
+        assert v1_refusal.value.message == "REVIEW_MANIFEST_NOT_FOUND"
+        v1_human_rows = await _control_call(
             database,
-            "SELECT * FROM control.slaif_workspace_accept($1,$2)",
+            "SELECT * FROM control.slaif_human_agent_workspace_accept("
+            "$1,$2,$3,$4,$5,$6)",
             ws_v1_uuid,
+            site_id,
+            snap_v1,
+            v1_digest,
+            "ab" * 32,
             user_id,
         )
-        assert len(accept_rows) == 1
-        v1_job_id = UUID(str(accept_rows[0]["job_id"]))
-        v1_job = await _claim_accept(database, claimant="083-5-rc6-v1")
-        assert str(v1_job["id"]) == str(v1_job_id)
-        v1_result = await run_accept_job(
-            pool, _worker_settings(database), v1_job, media=counting
-        )
-        assert v1_result.status == "FAILED"
-        assert v1_result.error == "SNAPSHOT_COMPATIBILITY_REFUSED"
+        assert v1_human_rows == []
         async with owner_connection(dsn, expected_database=db_name) as owner:
             ws_row = await owner.fetchrow(
                 "SELECT status, accepted_at FROM control.workspace WHERE id = $1",
                 ws_v1_uuid,
             )
-            job_row = await owner.fetchrow(
-                "SELECT status, error FROM control.review_job WHERE id = $1",
-                v1_job_id,
+            v1_job_count = int(
+                await owner.fetchval(
+                    "SELECT count(*) FROM control.review_job"
+                    " WHERE workspace_id = $1 AND job_kind = 'ACCEPT'",
+                    ws_v1_uuid,
+                )
             )
         after = await effect_baseline()
         assert after == baseline
         assert str(ws_row["status"]) == "REVIEW"
         assert ws_row["accepted_at"] is None
-        assert str(job_row["status"]) == "FAILED"
-        assert str(job_row["error"]) == "SNAPSHOT_COMPATIBILITY_REFUSED"
+        assert v1_job_count == 0
         # The refusal happened BEFORE media finalization: zero real
         # finalize calls (the successful reapplication below must
         # produce exactly one, so the observer is nonvacuous).
@@ -6068,10 +6243,15 @@ async def test_v1_stored_workflow_read_refusal_discard_recreation(
                 await owner.fetchval(_RT_SNAPSHOT_ROW_BYTES, ws_v1)
             )
             assert retained_row["browser_evidence"] == [{"id": str(legacy_run_id)}]
-            # Retained history: both terminal job rows survive.
-            retained_accept = await owner.fetchrow(
-                "SELECT status, error FROM control.review_job WHERE id = $1",
-                v1_job_id,
+            # Retained history: the terminal discard job row survives,
+            # and no ACCEPT job row exists (the 083/12 v1 refusal
+            # happened at enqueue, so none was ever created).
+            retained_accept_count = int(
+                await owner.fetchval(
+                    "SELECT count(*) FROM control.review_job"
+                    " WHERE workspace_id = $1 AND job_kind = 'ACCEPT'",
+                    ws_v1_uuid,
+                )
             )
             retained_discard = await owner.fetchrow(
                 "SELECT status, error FROM control.review_job WHERE id = $1",
@@ -6101,8 +6281,7 @@ async def test_v1_stored_workflow_read_refusal_discard_recreation(
         for col in _RC6_076_BROWSER_RUN_COLUMNS:
             retained_run.pop(col)
         assert retained_run == run_pre
-        assert str(retained_accept["status"]) == "FAILED"
-        assert str(retained_accept["error"]) == "SNAPSHOT_COMPATIBILITY_REFUSED"
+        assert retained_accept_count == 0
         assert str(retained_discard["status"]) == "SUCCEEDED"
         assert retained_discard["error"] is None
 
@@ -6173,23 +6352,37 @@ async def test_v1_stored_workflow_read_refusal_discard_recreation(
         )
         unknown_read: dict[str, Any] = json.loads(unknown_read_rows[0][0])
         assert unknown_read["snapshot"]["state_version"] == "review-snapshot/v9"
-        unknown_rows = await _control_call(
+        # 083/12: the unknown stored format is refused BEFORE any
+        # effect, now at the exact-approval enqueue boundary - the
+        # trusted fixture snapshot row carries no companion manifest,
+        # so the owner-internal enqueue is a typed stable refusal and
+        # the control entry point its uniform silent no-row refusal
+        # (never a v1/live fallback, never a crash or retryable
+        # transient).
+        async with owner_connection(dsn, expected_database=db_name) as owner:
+            with pytest.raises(asyncpg.PostgresError) as unknown_refusal:
+                await owner.fetch(
+                    "SELECT * FROM control.slaif_workspace_accept($1,$2,$3,$4,$5)",
+                    ws3,
+                    unknown_snap_id,
+                    unknown_digest,
+                    "ab" * 32,
+                    user_id,
+                )
+        assert unknown_refusal.value.sqlstate == "P0002"
+        assert unknown_refusal.value.message == "REVIEW_MANIFEST_NOT_FOUND"
+        unknown_human_rows = await _control_call(
             database,
-            "SELECT * FROM control.slaif_workspace_accept($1,$2)",
+            "SELECT * FROM control.slaif_human_agent_workspace_accept("
+            "$1,$2,$3,$4,$5,$6)",
             ws3,
+            site_id,
+            unknown_snap_id,
+            unknown_digest,
+            "ab" * 32,
             user_id,
         )
-        assert len(unknown_rows) == 1
-        unknown_job_id = UUID(str(unknown_rows[0]["job_id"]))
-        unknown_job = await _claim_accept(database, claimant="083-5-rc6-u1")
-        assert str(unknown_job["id"]) == str(unknown_job_id)
-        unknown_result = await run_accept_job(
-            pool, _worker_settings(database), unknown_job, media=counting
-        )
-        assert unknown_result.status == "FAILED"
-        # Stable pre-effect validation refusal (never a v1/live
-        # fallback, never a crash or retryable transient).
-        assert unknown_result.error == "SNAPSHOT_VALIDATION_FAILED"
+        assert unknown_human_rows == []
         # Still zero real finalize calls after the second refusal.
         assert counting.finalize_calls == []
         unknown_after = await effect_baseline()
@@ -6199,14 +6392,16 @@ async def test_v1_stored_workflow_read_refusal_discard_recreation(
                 "SELECT status, accepted_at FROM control.workspace WHERE id = $1",
                 ws3,
             )
-            unknown_job_row = await owner.fetchrow(
-                "SELECT status, error FROM control.review_job WHERE id=$1",
-                unknown_job_id,
+            unknown_job_count = int(
+                await owner.fetchval(
+                    "SELECT count(*) FROM control.review_job"
+                    " WHERE workspace_id = $1 AND job_kind = 'ACCEPT'",
+                    ws3,
+                )
             )
         assert str(unknown_ws["status"]) == "REVIEW"
         assert unknown_ws["accepted_at"] is None
-        assert str(unknown_job_row["status"]) == "FAILED"
-        assert str(unknown_job_row["error"]) == "SNAPSHOT_VALIDATION_FAILED"
+        assert unknown_job_count == 0
 
         # Supported fresh recreation/reapplication: a new supported v2
         # workspace REAPPLIES the same legacy desired change and is
@@ -9627,12 +9822,20 @@ async def test_rc1_numeric_approval_composition_only_workspace(
         assert media_references == []
         # Real accept: the only promotion path; re-materializes and
         # re-validates the stored digest/versions through the exact
-        # 082/1 path under qualified reviewer authority.
-        accept_rows = await _control_call(
+        # 082/1 path under qualified reviewer authority.  083/12: the
+        # approval is the bound snapshot + companion digests.
+        (
+            accept_snapshot_id,
+            accept_snapshot_digest,
+            accept_manifest_digest,
+        ) = await _accept_approval(database, seeded["workspace_id"])
+        accept_rows = await _enqueue_accept(
             database,
-            "SELECT * FROM control.slaif_workspace_accept($1,$2)",
             seeded["workspace_id"],
             seeded["delegator_id"],
+            snapshot_id=accept_snapshot_id,
+            snapshot_digest=accept_snapshot_digest,
+            manifest_digest=accept_manifest_digest,
         )
         assert len(accept_rows) == 1
         accept_job_id = UUID(str(accept_rows[0]["job_id"]))

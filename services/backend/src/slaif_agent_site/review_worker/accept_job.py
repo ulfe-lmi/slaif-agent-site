@@ -56,6 +56,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from typing import Any
 from uuid import UUID
 
@@ -99,6 +100,20 @@ _CONFLICT_KINDS = frozenset(
 # BEFORE any replay, media finalization or canonical effect.
 # Anything not recognized here stays a true transient (lock,
 # timeout, connection) and remains retryable ROLLED_BACK.
+# 083/12: the trusted whole-workspace provenance refusal (typed
+# SQLSTATE P0001/P0003 messages from the definer check).  Any of these
+# means the reviewer transaction must refuse BEFORE publication; any
+# other error stays a true transient and remains retryable.
+_PROVENANCE_REFUSALS = frozenset(
+    {
+        "PROVENANCE_INPUT_INVALID",
+        "PROVENANCE_MISSING",
+        "PROVENANCE_RESERVATION_MISMATCH",
+        "PROVENANCE_EVENT_MISMATCH",
+        "PROVENANCE_CONFLICT",
+    }
+)
+_DIGEST_64_RE = re.compile(r"^[0-9a-f]{64}$")
 _STABLE_MATERIALIZER_FAILURES = {
     "REVIEW_WORKSPACE_VERSION_UNKNOWN": "SNAPSHOT_COMPATIBILITY_REFUSED",
     "SNAPSHOT_WORKSPACE_VERSIONS_UNSUPPORTED": "SNAPSHOT_COMPATIBILITY_REFUSED",
@@ -262,6 +277,14 @@ async def _read_pipeline_state(
     return str(row["workspace_status"]), str(row["site_status"])
 
 
+def _decode_jsonb(value: Any) -> Any:
+    if isinstance(value, (bytes, bytearray)):
+        value = value.decode("utf-8")
+    if isinstance(value, str):
+        return json.loads(value)
+    return value
+
+
 async def _verify_snapshot(
     pool: Any,
     *,
@@ -270,6 +293,8 @@ async def _verify_snapshot(
     snapshot_id: UUID,
     claimant: str,
     lock_timeout_seconds: float,
+    snapshot_digest: str,
+    manifest_digest: str,
 ) -> dict[str, Any]:
     """Locked preflight + re-materialization re-validation (step 3).
 
@@ -331,6 +356,57 @@ async def _verify_snapshot(
                     raise AcceptJobError(
                         "SNAPSHOT_VALIDATION_FAILED", kind="validation"
                     )
+                # 083/12: the companion manifest must exist for this
+                # snapshot (a historical companion-less snapshot can
+                # never be approved at or after 079) and must carry
+                # exactly the approved digests and the exact
+                # site/workspace binding.
+                manifest_doc = await connection.fetchval(
+                    "SELECT control.slaif_review_operation_manifest_read($1)",
+                    snapshot_id,
+                )
+                try:
+                    manifest_doc = _decode_jsonb(manifest_doc)
+                except ValueError:
+                    raise AcceptJobError(
+                        "SNAPSHOT_VALIDATION_FAILED", kind="validation"
+                    ) from None
+                if not isinstance(manifest_doc, dict):
+                    raise AcceptJobError(
+                        "SNAPSHOT_VALIDATION_FAILED", kind="validation"
+                    )
+                if (
+                    manifest_doc.get("manifest_digest") != manifest_digest
+                    or manifest_doc.get("snapshot_digest") != str(stored["digest"])
+                    or manifest_doc.get("site_id") != str(site_id)
+                    or manifest_doc.get("workspace_id") != str(workspace_id)
+                ):
+                    raise AcceptJobError(
+                        "SNAPSHOT_VALIDATION_FAILED", kind="validation"
+                    )
+                approved_operation_ids = manifest_doc.get("operation_ids")
+                approved_pairs = manifest_doc.get("dependency_pairs")
+                if not isinstance(approved_operation_ids, list) or not isinstance(
+                    approved_pairs, list
+                ):
+                    raise AcceptJobError(
+                        "SNAPSHOT_VALIDATION_FAILED", kind="validation"
+                    )
+                try:
+                    approved_operations = [
+                        UUID(str(operation)) for operation in approved_operation_ids
+                    ]
+                    approved_pair_set = {
+                        (UUID(str(pair[0])), UUID(str(pair[1])))
+                        for pair in approved_pairs
+                        if isinstance(pair, (list, tuple)) and len(pair) == 2
+                    }
+                    if len(approved_operations) != len(set(approved_operations)):
+                        raise ValueError("duplicate operation")
+                except ValueError:
+                    raise AcceptJobError(
+                        "SNAPSHOT_VALIDATION_FAILED", kind="validation"
+                    ) from None
                 preflight_normalized = stored["normalized_state"]
                 if isinstance(preflight_normalized, (bytes, bytearray)):
                     preflight_normalized = preflight_normalized.decode("utf-8")
@@ -515,6 +591,10 @@ async def _verify_snapshot(
         "base_site_revision": stored_base_revision,
         "media_ids": media_ids,
         "media_manifest": None,
+        "manifest_id": str(manifest_doc["manifest_id"]),
+        "manifest_digest": manifest_digest,
+        "approved_operations": frozenset(approved_operations),
+        "approved_pairs": approved_pair_set,
     }
 
 
@@ -544,6 +624,16 @@ async def run_accept_job(
     try:
         snapshot_id = _payload_uuid(payload, "snapshot_id")
         actor_user_account_id = _payload_uuid(payload, "actor_user_account_id")
+        # 083/12: the durable job payload carries the exact approval -
+        # the domain snapshot digest PLUS the companion manifest
+        # digest (both 64-hex).  A pre-079 payload (digest-less
+        # approval) fails closed: it can never name the companion.
+        snapshot_digest = str(payload["snapshot_digest"])
+        manifest_digest = str(payload["manifest_digest"])
+        if not _DIGEST_64_RE.fullmatch(snapshot_digest) or not _DIGEST_64_RE.fullmatch(
+            manifest_digest
+        ):
+            raise ValueError("digest shape")
     except (KeyError, TypeError, ValueError):
         await _mark_terminal(pool, job_id, "FAILED", "SNAPSHOT_VALIDATION_FAILED")
         return JobResult("FAILED", "SNAPSHOT_VALIDATION_FAILED")
@@ -611,6 +701,8 @@ async def run_accept_job(
             snapshot_id=snapshot_id,
             claimant=claimant,
             lock_timeout_seconds=settings.drain_lock_timeout_seconds,
+            snapshot_digest=snapshot_digest,
+            manifest_digest=manifest_digest,
         )
     except AcceptJobError as error:
         if error.kind == "drift":
@@ -676,17 +768,87 @@ async def run_accept_job(
                 )
                 if int(revision) != facts["base_site_revision"]:
                     raise AcceptJobError("SITE_REVISION_CHANGED", kind="drift")
+                # 083/12 binding step: the workspace must still point
+                # at exactly the approved snapshot, and the companion
+                # re-read under the locked workspace must carry exactly
+                # the approved digests and binding (defense in depth
+                # over the step-3 verification; the manifest is
+                # immutable per snapshot, so a disagreement is
+                # approval corruption, not drift to retry).
+                reviewer_step = "binding"
+                bound_snapshot_id = await reviewer.native.fetchval(
+                    "SELECT review_snapshot_id FROM control.workspace WHERE id = $1",
+                    workspace_id,
+                )
+                if bound_snapshot_id is None or str(bound_snapshot_id) != str(
+                    facts["snapshot_id"]
+                ):
+                    raise AcceptJobError("STATE_DRIFT", kind="state")
+                manifest_live = await reviewer.native.fetchval(
+                    "SELECT control.slaif_review_operation_manifest_read($1)",
+                    facts["snapshot_id"],
+                )
+                try:
+                    manifest_live = _decode_jsonb(manifest_live)
+                except ValueError:
+                    manifest_live = None
+                if (
+                    not isinstance(manifest_live, dict)
+                    or manifest_live.get("manifest_digest") != facts["manifest_digest"]
+                    or manifest_live.get("snapshot_digest") != facts["digest"]
+                    or manifest_live.get("site_id") != str(site_id)
+                    or manifest_live.get("workspace_id") != str(workspace_id)
+                ):
+                    raise AcceptJobError(
+                        "SNAPSHOT_VALIDATION_FAILED", kind="validation"
+                    )
+                approved_operations = facts["approved_operations"]
                 reviewer_step = "operations"
                 operations = await reviewer.operations(workspace_id, schema="content")
+                if len(operations) != len(set(operations)):
+                    raise AcceptJobError(
+                        "SNAPSHOT_VALIDATION_FAILED", kind="validation"
+                    )
+                if set(operations) != approved_operations:
+                    raise AcceptJobError(
+                        "SNAPSHOT_VALIDATION_FAILED", kind="validation"
+                    )
                 reviewer_step = "dependencies"
                 dependencies = await reviewer.dependencies(
                     workspace_id, schema="content"
                 )
-                operation_set = set(operations)
-                if any(parent not in operation_set for parent, _child in dependencies):
+                if len(dependencies) != len(set(dependencies)) or any(
+                    parent not in approved_operations
+                    or child not in approved_operations
+                    for parent, child in dependencies
+                ):
                     raise AcceptJobError(
                         "SNAPSHOT_VALIDATION_FAILED", kind="validation"
                     )
+                if set(dependencies) != facts["approved_pairs"]:
+                    raise AcceptJobError(
+                        "SNAPSHOT_VALIDATION_FAILED", kind="validation"
+                    )
+                # 083/12 provenance step: the trusted whole-workspace
+                # check (every U member's 078 journal binding, the
+                # family reservation and event relation, and no
+                # conflicting prospective facts) must pass in this
+                # same transaction before any publication.
+                reviewer_step = "provenance"
+                try:
+                    await reviewer.native.fetchval(
+                        "SELECT control.slaif_review_operation_provenance($1, $2, $3)",
+                        workspace_id,
+                        site_id,
+                        sorted(approved_operations, key=str),
+                    )
+                except asyncpg.PostgresError as error:
+                    message = (error.message or "").strip()
+                    if message in _PROVENANCE_REFUSALS:
+                        raise AcceptJobError(
+                            "PROVENANCE_VERIFICATION_FAILED", kind="validation"
+                        ) from None
+                    raise
                 try:
                     reviewer_step = "commit-session"
                     result = await reviewer.commit_session(
@@ -710,6 +872,28 @@ async def run_accept_job(
                     raise AcceptJobError(
                         "UNIQUE_CONSTRAINT_CONFLICT", kind="conflict"
                     ) from None
+                # 083/12 applied-identity check: the real commit must
+                # have applied EXACTLY the approved operation universe
+                # to exactly this session, with no pending remainder -
+                # re-inspected through the public session getter in
+                # this same transaction after the real commit and
+                # before any business (revision/audit) effect.
+                reviewer_step = "applied"
+                committed_operations = tuple(result.committed_operations)
+                if (
+                    len(committed_operations) != len(set(committed_operations))
+                    or set(committed_operations) != approved_operations
+                    or result.session_id != workspace_id
+                    or result.schema != "content"
+                    or result.has_pending_operations
+                ):
+                    raise AcceptJobError(
+                        "SNAPSHOT_VALIDATION_FAILED", kind="validation"
+                    )
+                if await reviewer.operations(workspace_id, schema="content") != []:
+                    raise AcceptJobError(
+                        "SNAPSHOT_VALIDATION_FAILED", kind="validation"
+                    )
                 try:
                     reviewer_step = "publicize"
                     await publicize_promoted_media(
@@ -735,8 +919,9 @@ async def run_accept_job(
                     "INSERT INTO audit.promotion "
                     "(site_id, workspace_id, snapshot_id, job_id, digest, "
                     "base_site_revision, new_canonical_revision, "
-                    "committed_operations, versions, actor_user_account_id) "
-                    "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
+                    "committed_operations, versions, actor_user_account_id, "
+                    "applied_operation_ids, manifest_id, manifest_digest) "
+                    "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)",
                     site_id,
                     workspace_id,
                     facts["snapshot_id"],
@@ -749,6 +934,9 @@ async def run_accept_job(
                         facts["versions"], sort_keys=True, separators=(",", ":")
                     ),
                     actor_user_account_id,
+                    [str(operation) for operation in sorted(approved_operations)],
+                    UUID(facts["manifest_id"]),
+                    facts["manifest_digest"],
                 )
                 reviewer_step = "workspace-terminal"
                 updated = await reviewer.native.execute(
@@ -807,6 +995,25 @@ async def run_accept_job(
             if isinstance(error, asyncpg.PostgresError)
             else "io_transient"
         )
+    except asyncpg.InterfaceError as error:
+        # The pool has already auto-released the owned holder: the
+        # public foundation's dead-connection cleanup raised an
+        # interface error while EXITING the reviewer scope (the body's
+        # original driver connection failure is preserved in the
+        # exception context).  A live pooled connection never raises
+        # here - the scope never releases the holder itself, so an
+        # interface error at scope exit proves the backend is gone and
+        # PostgreSQL rolled that backend's uncommitted promotion at
+        # backend shutdown.  The outcome is exactly the transient
+        # rollback + re-queue; the original failure is not turned
+        # into a success or a terminal code.
+        log_bounded_db_failure("reviewer-tx", error)
+        LOGGER.warning(
+            "slaif-diag: review-job phase=reviewer-step step=%s outcome=failed job=%s",
+            reviewer_step,
+            job_id,
+        )
+        return await _retryable_or_budget("io_transient")
 
 
 __all__ = [

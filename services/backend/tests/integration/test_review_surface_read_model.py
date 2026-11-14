@@ -161,9 +161,25 @@ async def _read_model(
     if isinstance(document, (str, bytes)):
         parsed: Any = json.loads(document)
         assert isinstance(parsed, dict)
-        return parsed
-    assert isinstance(document, dict)
-    result: dict[str, Any] = dict(document)
+        result: dict[str, Any] = dict(parsed)
+    else:
+        assert isinstance(document, dict)
+        result = dict(document)
+    # 083/12: the review document carries the immutable companion
+    # manifest (NULL for a historical companion-less snapshot) - mirror
+    # the exact product assembly so the DB oracle equals the wire
+    # document.
+    snapshot_section = result.get("snapshot")
+    if isinstance(snapshot_section, dict) and "id" in snapshot_section:
+        manifest_rows = await _control_call(
+            database,
+            "SELECT * FROM control.slaif_review_operation_manifest_read($1)",
+            snapshot_section["id"],
+        )
+        manifest_value: Any = manifest_rows[0][0] if manifest_rows else None
+        if isinstance(manifest_value, (str, bytes)):
+            manifest_value = json.loads(manifest_value)
+        result["manifest"] = manifest_value
     return result
 
 
@@ -529,7 +545,7 @@ async def test_read_model_document_shape_and_frozen_content(
     # Deterministic: byte-for-byte identical documents.
     assert json.dumps(first, sort_keys=True) == json.dumps(second, sort_keys=True)
 
-    # Exact top-level document shape (the R1 contract).
+    # Exact top-level document shape (the R1 contract; 083/12 adds
     assert set(first) == {
         "snapshot",
         "drift",
@@ -540,6 +556,7 @@ async def test_read_model_document_shape_and_frozen_content(
         "evidence",
         "metadata",
         "normalized_state",
+        "manifest",
     }
     assert set(first["snapshot"]) == {
         "id",

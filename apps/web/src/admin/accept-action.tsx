@@ -45,6 +45,8 @@ export function AcceptAction({
   const status = document.metadata.workspace.status;
   const snapshot = document.snapshot;
   const digest = snapshot.digest;
+  const manifest = document.manifest;
+  const manifestDigest = manifest !== null ? manifest.manifest_digest : null;
   const [ack, setAck] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -100,12 +102,16 @@ export function AcceptAction({
 
   const submit = useCallback(async () => {
     if (!ack || submitting) return;
+    // A historical companion-less snapshot can no longer be accepted
+    // at this head; the dialog only renders when the manifest exists.
+    if (manifestDigest === null) return;
     setSubmitting(true);
     setError(null);
     try {
       await acceptWorkspace(siteId, workspaceId, {
         snapshot_id: snapshot.id,
         digest,
+        manifest_digest: manifestDigest,
         acknowledge_summary: true,
       });
       // The observed state replaces the dialog subtree (CspModal is
@@ -119,12 +125,22 @@ export function AcceptAction({
     } finally {
       setSubmitting(false);
     }
-  }, [ack, submitting, siteId, workspaceId, snapshot.id, digest, pollWorkspace]);
+  }, [
+    ack,
+    submitting,
+    siteId,
+    workspaceId,
+    snapshot.id,
+    digest,
+    manifestDigest,
+    pollWorkspace,
+  ]);
 
   const canAccept =
     status === "REVIEW" &&
     snapshot.status === "COMPLETE" &&
-    document.drift.equal === true;
+    document.drift.equal === true &&
+    manifest !== null;
 
   if (canAccept) {
     const polling = observed !== null;
@@ -154,6 +170,12 @@ export function AcceptAction({
             <>
               <p>
                 Snapshot digest: <code title={digest}>{shortDigest(digest)}</code>
+              </p>
+              <p>
+                Manifest digest:{" "}
+                <code title={manifestDigest ?? undefined}>
+                  {manifestDigest !== null ? shortDigest(manifestDigest) : "\u2014"}
+                </code>
               </p>
               <label className="review-accept-ack">
                 <input
