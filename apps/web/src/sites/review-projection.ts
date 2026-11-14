@@ -156,6 +156,21 @@ export type ReviewDocument = Readonly<{
     }>;
   }>;
   normalized_state: ReviewState;
+  /** 083/12: the immutable reviewed-operations companion manifest.
+   *  `null` for a historical companion-less snapshot, which can no
+   *  longer be accepted at this head (discard / re-freeze remains the
+   *  path). */
+  manifest: Readonly<{
+    schema_version: string;
+    manifest_id: string;
+    manifest_digest: string;
+    snapshot_digest: string;
+    site_id: string;
+    workspace_id: string;
+    operation_ids: readonly string[];
+    dependency_pairs: readonly (readonly [string, string])[];
+    completion_identities: readonly unknown[];
+  }> | null;
 }>;
 
 export type ReviewProjectionResult =
@@ -1132,6 +1147,26 @@ export function isReviewDocument(value: unknown): value is ReviewDocument {
   }
   for (const version of Object.values(metadataSession["versions"])) {
     if (!isString(version)) return false;
+  }
+  // 083/12: the immutable companion manifest must be present on every
+  // document from this head (null for a historical companion-less
+  // snapshot, which can no longer be accepted).
+  if (!("manifest" in value)) return false;
+  const manifest = value["manifest"];
+  if (
+    manifest !== null &&
+    (!isRecord(manifest) ||
+      !isString(manifest["schema_version"]) ||
+      !isString(manifest["manifest_id"]) ||
+      !isString(manifest["manifest_digest"]) ||
+      !isString(manifest["snapshot_digest"]) ||
+      !isString(manifest["site_id"]) ||
+      !isString(manifest["workspace_id"]) ||
+      !Array.isArray(manifest["operation_ids"]) ||
+      !Array.isArray(manifest["dependency_pairs"]) ||
+      !Array.isArray(manifest["completion_identities"]))
+  ) {
+    return false;
   }
   const state = value["normalized_state"];
   return isRecord(state) && parseReviewState(state) !== null;

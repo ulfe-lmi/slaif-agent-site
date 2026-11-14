@@ -565,3 +565,60 @@ Playwright 1.62.1) is unchanged. Full PostgreSQL 14..18 matrix
 qualification is required and is reported as the repository CI executes
 the full children; acceptance state is tracked in the OAP ledgers, and
 nothing here claims D5, MVP, or product completion.
+
+## Reviewed whole-session operation binding (083/12)
+
+The reviewed-operation binding increment (083/12, revision `079_001`)
+adds bounded regression coverage for the reviewed-operations/v1
+companion manifest: a real freeze atomically stores the manifest with
+the snapshot (the exact public operation IDs, the actual foundation
+dependency pairs, and one verified provenance record per pending set
+U member — the trusted 078 completion identity for journaled
+mutation operations, or the typed trusted-internal record for
+operations confined to the trusted-internal COW tables, proven by a
+real freeze/accept whose public U mixes both forms and a typed
+refusal of a forged internal record relabeling a mutation-table
+operation), and the real accept requires the explicit
+dual-digest approval (snapshot digest plus manifest digest bound to the
+snapshot ID) that the reviewer transaction re-verifies against the live
+companion, the durable journal, and the workspace before publication.
+The focused PostgreSQL proofs use the real HTTP, runtime pool, and
+worker paths on the disposable cluster: freeze and accept for the Agent,
+HUMAN Editor, HUMAN-on-AGENT, and human Media families; a
+mixed-family same-resource superseding chain ending net-zero; an actual
+multirow navigation move with one completion; dedupe,
+explicit-no-effect, and empty-U behavior; replay and
+repeated/superseding writes; two same-site workspaces with isolated
+pending sets; and digest determinism for the same format and inputs.
+The negative proofs cover wrong, stale, and missing digest denials;
+malformed, over-budget, and legacy-ineligible manifest rejections;
+whole-workspace orphan and conflicting prospective provenance
+detection with legitimate outside-U dedupe staying legal; direct role
+denials of manifest DML, reads, and helper EXECUTE for unentitled
+roles; and the non-bypassability of the old 072 accept signatures
+(owner-internal inner enqueue with no role EXECUTE, typed legacy
+refusals, and the real worker payload defense).
+
+Fresh install at 079, the QUIESCENT 078-to-079 operator upgrade (the
+078-era journal, family, snapshot, and canonical history preserved
+byte-for-byte, with the companion-less historical snapshot still
+readable through a NULL manifest projection), the pending-work
+refusals from real 078 and 077 heads, and both the operator and
+direct-Alembic 079 downgrade refusals are proven before any effect.
+The historical 077-to-078 upgrade proof keeps its retained review
+history genuine (a v2 built by the real trusted materializer and the
+released 077-era completion definer under the real freeze job
+lifecycle, plus the faithful 075-contract v1 document), because the
+current freeze worker carries the 079 companion step and cannot run at
+the released 077 head. The new module (reviewed operation binding)
+runs unfiltered in the existing PostgreSQL 14..18 Group B children
+alongside the existing selections; no existing selection, budget,
+matrix, aggregator, or required check identity changes, and the policy
+suite pins the exact module lists with omission negatives. The
+increment adds no row-history API, all-semantic causal graph,
+selective UI, dependency, or lifecycle change; the qualified baseline
+(PyPI `agent-cow-postgresql` 0.2.1, Chrome for Testing 157.0.8103.78,
+Playwright 1.62.1) is unchanged. Full PostgreSQL 14..18 matrix
+qualification is required and is reported as the repository CI
+executes the full children; acceptance state is tracked in the OAP
+ledgers, and nothing here claims D5, MVP, or product completion.

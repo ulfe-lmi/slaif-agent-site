@@ -265,3 +265,42 @@ invocations. The 077_001 media-isolation downgrade guard and its Alembic
 body remain the historical line of defense, and downgrade never deletes
 durable completion, audit, or idempotency history or restores the
 pre-removal media authority.
+
+The reviewed-operation binding boundary (revision `079_001`, increment
+083/12) closes the approval bypass. Each new review snapshot carries an
+immutable reviewed-operations/v1 companion manifest — the exact public
+operation IDs, the actual foundation dependency pairs, and one
+verified provenance record for every member of the pending set U:
+the trusted 078 completion identity for journaled mutation
+operations, or the typed trusted-internal record (operation, bound
+internal resource types, disposition) for operations whose
+surviving COW change rows are confined to the trusted-internal
+tables (proposed side effects, which carry no 078 completion and no
+public API) — stored atomically with the snapshot by the trusted
+completion function, and
+the human accept entry point requires an explicit approval binding the
+snapshot ID to both the stored snapshot digest and the manifest digest.
+The reviewer transaction re-verifies the binding against the live
+companion, the durable journal, and the workspace state before
+publication: wrong, stale, or missing digests are typed refusals, the
+old 072 accept signatures cannot enqueue (the inner transport is
+owner-internal with no role EXECUTE, and the legacy call paths are
+dropped or typed refusals), and the real worker payload is defended in
+depth. The companion table is owner-only, and the narrow projections
+grant EXECUTE only to the roles that need them (the read projection to
+control and review-worker, the identity, provenance, and
+companion-completion functions to review-worker); no runtime role
+gains companion or journal table SELECT or DML, and the standalone
+companion-less completion loses its last online EXECUTE so no online
+role can create a companion-less snapshot again. The manifest is a
+bounded approval receipt, not a full semantic graph, row history, or
+causal record; a companion-less historical snapshot remains readable
+but can no longer be accepted at this head (discard and re-freeze is
+the path). While the durable binding exists, downgrade is refused
+before effects for any head retaining it (current or later): the
+operator path refuses before the readiness PENDING marker, before the
+content COW disable, and before any migration step, and the 079_001
+Alembic downgrade body is an unconditional explicit refusal for direct
+migration invocations. The 078 and 077 downgrade guards remain earlier
+lines of defense, and downgrade never deletes durable completion,
+manifest, audit, or idempotency history.

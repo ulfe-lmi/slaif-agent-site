@@ -224,7 +224,7 @@ jobs:
     # selection), then the appended workspace media/role/freeze/
     # promotion/rollback command (M; ten exact module paths, no -k
     # selection), then the appended trusted mutation-completion command
-    # (TC; five exact module paths, no -k selection). B is now 45+Q+M+TC.
+    # (TC; six exact module paths, no -k selection). B is now 45+Q+M+TC.
     # Own disposable PostgreSQL service; no DB fixture is shared across
     # runners.
     name: Foundation PG Group B PostgreSQL ${{ matrix.postgresql }}
@@ -308,6 +308,8 @@ jobs:
           services/backend/tests/integration/test_trusted_completion_late_failure.py
           services/backend/tests/integration/test_trusted_completion_upgrade_preservation.py
           services/backend/tests/integration/test_trusted_completion_producer_families.py
+          services/backend/tests/integration/test_reviewed_operation_binding.py
+          services/backend/tests/integration/test_reviewed_operation_binding_authority.py
 
   foundation-postgresql:
     # D1 fail-closed required gate: the five exact required names

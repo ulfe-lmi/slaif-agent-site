@@ -655,10 +655,6 @@ REVIEW_WORKER_FUNCTIONS = {
         "p_job_id uuid, p_status text, p_error text",
     ): "uuid, text, text",
     (
-        "slaif_review_snapshot_complete",
-        "p_workspace_id uuid, p_row jsonb",
-    ): "uuid, jsonb",
-    (
         "slaif_review_workspace_state",
         "p_workspace_id uuid",
     ): "uuid",
@@ -747,6 +743,75 @@ MEDIA_PUBLICATION_HEAD = 77
 MEDIA_PUBLICATION_REQUIRED_FUNCTIONS = (
     ("content", "slaif_media_publicize_promoted", "uuid, uuid[]"),
 )
+# 083/12-a: the 079_001 reviewed-operation binding surface.
+# The old accept entry points exist exactly in the 072..078 phase
+# (digest-less approval, inner enqueue grantable to slaif_control);
+# the dual-digest entry points and the companion surface exist at
+# or after 079.  The head marker conditions both directions: an
+# unknown head validates the current surface only and fails closed
+# on the restored old one; a coherent historical 072..078 head
+# validates the old surface exactly as 072 granted it.
+REVIEWED_OPERATION_BINDING_HEAD = 79
+_OLD_INNER_ACCEPT = (
+    "slaif_workspace_accept",
+    "p_workspace_id uuid, p_actor_user_account_id uuid",
+)
+_OLD_HUMAN_ACCEPT = (
+    "slaif_human_agent_workspace_accept",
+    "p_workspace_id uuid, p_site_id uuid, p_snapshot_id uuid, "
+    "p_digest text, p_user_id uuid",
+)
+_NEW_INNER_ACCEPT = (
+    "slaif_workspace_accept",
+    "p_workspace_id uuid, p_snapshot_id uuid, p_snapshot_digest text, "
+    "p_manifest_digest text, p_actor_user_account_id uuid",
+)
+_NEW_HUMAN_ACCEPT = (
+    "slaif_human_agent_workspace_accept",
+    "p_workspace_id uuid, p_site_id uuid, p_snapshot_id uuid, "
+    "p_snapshot_digest text, p_manifest_digest text, p_user_id uuid",
+)
+# The 072..078 standalone completion remains deployed at 079 (the
+# companion completion reaches it as definer); its worker EXECUTE is
+# strictly below the 079 head only.
+_OLD_STANDALONE_COMPLETE = (
+    "slaif_review_snapshot_complete",
+    "p_workspace_id uuid, p_row jsonb",
+)
+_MANIFEST_READ_IDENTITY = (
+    "slaif_review_operation_manifest_read",
+    "p_snapshot_id uuid",
+)
+# Grant (type) signatures for the phase-bound accept entry points.
+REVIEWED_OPERATION_BINDING_OLD_ACCEPT_FUNCTIONS = {
+    _OLD_INNER_ACCEPT: "uuid, uuid",
+    _OLD_HUMAN_ACCEPT: "uuid, uuid, uuid, text, uuid",
+}
+REVIEWED_OPERATION_BINDING_NEW_ACCEPT_FUNCTIONS = {
+    _NEW_INNER_ACCEPT: "uuid, uuid, text, text, uuid",
+    _NEW_HUMAN_ACCEPT: "uuid, uuid, uuid, text, text, uuid",
+}
+REVIEWED_OPERATION_BINDING_CONTROL_FUNCTIONS = {
+    _NEW_HUMAN_ACCEPT: "uuid, uuid, uuid, text, text, uuid",
+}
+REVIEWED_OPERATION_BINDING_WORKER_FUNCTIONS = {
+    (
+        "slaif_review_snapshot_complete_with_manifest",
+        "p_workspace_id uuid, p_row jsonb, p_manifest jsonb",
+    ): "uuid, jsonb, jsonb",
+    (
+        "slaif_review_operation_provenance",
+        "p_workspace_id uuid, p_site_id uuid, p_operation_ids uuid[]",
+    ): "uuid, uuid, uuid[]",
+    (
+        "slaif_review_operation_identities",
+        "p_workspace_id uuid, p_site_id uuid, p_operation_ids uuid[]",
+    ): "uuid, uuid, uuid[]",
+    (
+        "slaif_review_operation_manifest_read",
+        "p_snapshot_id uuid",
+    ): "uuid",
+}
 # 077_001 dropped the pre-transaction finalization marker.  At or below
 # the pre-077 head it remains the 068-era media content surface (EXECUTE
 # for slaif_media granted by the 068 migration), so the historical-phase
@@ -944,15 +1009,6 @@ CONTROL_FUNCTIONS = {
         "slaif_review_read_model",
         "p_workspace_id uuid, p_site_id uuid, p_user_account_id uuid",
     ): "uuid, uuid, uuid",
-    (
-        "slaif_workspace_accept",
-        "p_workspace_id uuid, p_actor_user_account_id uuid",
-    ): "uuid, uuid",
-    (
-        "slaif_human_agent_workspace_accept",
-        "p_workspace_id uuid, p_site_id uuid, p_snapshot_id uuid, "
-        "p_digest text, p_user_id uuid",
-    ): "uuid, uuid, uuid, text, uuid",
     (
         "slaif_workspace_discard",
         "p_workspace_id uuid, p_actor_user_account_id uuid",
@@ -1447,6 +1503,56 @@ async def apply_product_privileges(
             f'"control".{quote_identifier(name)}({signature}) '
             'TO "slaif_review_worker"'
         )
+    # 083/12-a phase handling (079_001 re-emitted the accept entry
+    # points; 072 history is immutable): a known head strictly below
+    # 079 restores exactly the 072 grants - the digest-less accept
+    # pair to the control role and the standalone completion to the
+    # worker; at or after 079, or with an unknown head, the new
+    # dual-digest surface is granted and the old pair is never
+    # re-granted (the verifier refuses the old surface there).  The
+    # new inner enqueue keeps no role EXECUTE (owner-internal), and
+    # the standalone completion stays definer-reachable only.
+    if apply_head is not None and apply_head < REVIEWED_OPERATION_BINDING_HEAD:
+        for identity, signature in (
+            (_OLD_INNER_ACCEPT, "uuid, uuid"),
+            (_OLD_HUMAN_ACCEPT, "uuid, uuid, uuid, text, uuid"),
+            (_OLD_STANDALONE_COMPLETE, "uuid, jsonb"),
+        ):
+            role = (
+                "slaif_review_worker"
+                if identity == _OLD_STANDALONE_COMPLETE
+                else CONTROL_ROLE
+            )
+            await connection.execute(
+                "GRANT EXECUTE ON FUNCTION "
+                f'"control".{quote_identifier(identity[0])}({signature}) '
+                f"TO {quote_identifier(role)}"
+            )
+    else:
+        for (
+            name,
+            _identity,
+        ), signature in REVIEWED_OPERATION_BINDING_CONTROL_FUNCTIONS.items():
+            await connection.execute(
+                "GRANT EXECUTE ON FUNCTION "
+                f'"control".{quote_identifier(name)}({signature}) '
+                f"TO {quote_identifier(CONTROL_ROLE)}"
+            )
+        for (
+            name,
+            _identity,
+        ), signature in REVIEWED_OPERATION_BINDING_WORKER_FUNCTIONS.items():
+            await connection.execute(
+                "GRANT EXECUTE ON FUNCTION "
+                f'"control".{quote_identifier(name)}({signature}) '
+                'TO "slaif_review_worker"'
+            )
+        # The read projection also serves the human review document.
+        await connection.execute(
+            "GRANT EXECUTE ON FUNCTION "
+            f'"control".{quote_identifier(_MANIFEST_READ_IDENTITY[0])}(uuid) '
+            f"TO {quote_identifier(CONTROL_ROLE)}"
+        )
     await connection.execute('GRANT USAGE ON SCHEMA "control" TO "slaif_public_reader"')
     for (name, _identity), signature in PUBLIC_RESOLVER_FUNCTIONS.items():
         await connection.execute(
@@ -1924,6 +2030,23 @@ async def _function_violations(
             head_number = int(str(version).split("_", 1)[0])
         except ValueError:
             head_number = None
+    # 083/12-a: the accept surface is phase-bound.  The old digest-less
+    # pair is valid exactly at a known 072..078 head; the new
+    # dual-digest pair (plus the companion surface) is valid at or
+    # after 079, and an unknown head validates the new surface only.
+    # The unexpected-object and exactly-once requirements both follow
+    # from the phase counts below.
+    reviewed_binding_old_phase = (
+        head_number is not None and head_number < REVIEWED_OPERATION_BINDING_HEAD
+    )
+    old_accept_counts = {
+        _OLD_INNER_ACCEPT: 0,
+        _OLD_HUMAN_ACCEPT: 0,
+    }
+    new_accept_counts = {
+        _NEW_INNER_ACCEPT: 0,
+        _NEW_HUMAN_ACCEPT: 0,
+    }
     for (
         schema,
         name,
@@ -1964,8 +2087,26 @@ async def _function_violations(
         is_review_worker_function = (
             schema == "control" and control_identity in REVIEW_WORKER_FUNCTIONS
         )
+        is_old_accept_function = (
+            schema == "control" and control_identity in old_accept_counts
+        )
+        is_new_accept_function = (
+            schema == "control" and control_identity in new_accept_counts
+        )
+        is_old_standalone_complete = (
+            schema == "control" and control_identity == _OLD_STANDALONE_COMPLETE
+        )
+        is_new_review_worker_function = (
+            schema == "control"
+            and control_identity in REVIEWED_OPERATION_BINDING_WORKER_FUNCTIONS
+            and not reviewed_binding_old_phase
+        )
         if schema == FOUNDATION_SCHEMA:
             foundation_functions += 1
+        elif is_old_accept_function:
+            old_accept_counts[control_identity] += 1
+        elif is_new_accept_function:
+            new_accept_counts[control_identity] += 1
         elif is_control_function:
             control_function_counts[control_identity] += 1
             if not security_definer or "search_path=pg_catalog" not in config:
@@ -1986,9 +2127,16 @@ async def _function_violations(
             not security_definer or "search_path=pg_catalog" not in config
         ):
             violations.append(f"function/{schema}.{name}/unsafe-security-definer")
-        elif is_review_worker_function and (
-            not security_definer or "search_path=pg_catalog" not in config
-        ):
+        elif (
+            is_review_worker_function
+            or (is_old_standalone_complete and reviewed_binding_old_phase)
+        ) and (not security_definer or "search_path=pg_catalog" not in config):
+            violations.append(f"function/{schema}.{name}/unsafe-security-definer")
+        elif (
+            (is_old_accept_function and reviewed_binding_old_phase)
+            or (is_new_accept_function and not reviewed_binding_old_phase)
+            or is_new_review_worker_function
+        ) and (not security_definer or "search_path=pg_catalog" not in config):
             violations.append(f"function/{schema}.{name}/unsafe-security-definer")
         elif (
             schema == "control"
@@ -2089,6 +2237,28 @@ async def _function_violations(
                     and role == "slaif_review_worker"
                 )
                 or (is_review_worker_function and role == "slaif_review_worker")
+                or (
+                    is_old_accept_function
+                    and reviewed_binding_old_phase
+                    and role == CONTROL_ROLE
+                )
+                or (
+                    is_old_standalone_complete
+                    and reviewed_binding_old_phase
+                    and role == "slaif_review_worker"
+                )
+                or (
+                    is_new_accept_function
+                    and not reviewed_binding_old_phase
+                    and control_identity == _NEW_HUMAN_ACCEPT
+                    and role == CONTROL_ROLE
+                )
+                or (is_new_review_worker_function and role == "slaif_review_worker")
+                or (
+                    is_new_review_worker_function
+                    and control_identity == _MANIFEST_READ_IDENTITY
+                    and role == CONTROL_ROLE
+                )
             )
             if can_execute and not allowed:
                 violations.append(f"function/{schema}.{name}/{role}/execute")
@@ -2125,6 +2295,41 @@ async def _function_violations(
             if (
                 is_review_worker_function
                 and role == "slaif_review_worker"
+                and not can_execute
+            ):
+                violations.append(f"function/{schema}.{name}/{role}/missing-execute")
+            if (
+                is_old_accept_function
+                and reviewed_binding_old_phase
+                and role == CONTROL_ROLE
+                and not can_execute
+            ):
+                violations.append(f"function/{schema}.{name}/{role}/missing-execute")
+            if (
+                is_old_standalone_complete
+                and reviewed_binding_old_phase
+                and role == "slaif_review_worker"
+                and not can_execute
+            ):
+                violations.append(f"function/{schema}.{name}/{role}/missing-execute")
+            if (
+                is_new_accept_function
+                and not reviewed_binding_old_phase
+                and control_identity == _NEW_HUMAN_ACCEPT
+                and role == CONTROL_ROLE
+                and not can_execute
+            ):
+                violations.append(f"function/{schema}.{name}/{role}/missing-execute")
+            if (
+                is_new_review_worker_function
+                and role == "slaif_review_worker"
+                and not can_execute
+            ):
+                violations.append(f"function/{schema}.{name}/{role}/missing-execute")
+            if (
+                is_new_review_worker_function
+                and control_identity == _MANIFEST_READ_IDENTITY
+                and role == CONTROL_ROLE
                 and not can_execute
             ):
                 violations.append(f"function/{schema}.{name}/{role}/missing-execute")
@@ -2180,6 +2385,60 @@ async def _function_violations(
             )
             if exists is None:
                 violations.append(f"function/{schema}.{name}/missing-required-object")
+    # 083/12-a: the phase-bound accept surface counts exactly once in
+    # its own phase; a foreign-phase object is an unexpected-object
+    # violation in both directions.
+    if reviewed_binding_old_phase:
+        phase_accept_counts = old_accept_counts
+        other_accept_counts = new_accept_counts
+        unexpected_label = "unexpected-new-accept-object"
+    else:
+        phase_accept_counts = new_accept_counts
+        other_accept_counts = old_accept_counts
+        unexpected_label = "unexpected-old-accept-object"
+    for (name, arguments), count in phase_accept_counts.items():
+        if count != 1:
+            violations.append(f"function/control/{name}({arguments})/count:{count}")
+    for (name, arguments), count in other_accept_counts.items():
+        if count != 0:
+            violations.append(
+                f"function/control/{name}({arguments})/{unexpected_label}"
+            )
+    # The phase-bound required objects: the valid-phase accept pair and
+    # the companion surface at or after 079, plus the standalone
+    # completion which remains deployed in every phase.
+    if head_number is None or head_number >= REVIEWED_OPERATION_BINDING_HEAD:
+        required_accept = REVIEWED_OPERATION_BINDING_NEW_ACCEPT_FUNCTIONS
+        required_extra = {
+            **REVIEWED_OPERATION_BINDING_WORKER_FUNCTIONS,
+            _OLD_STANDALONE_COMPLETE: "uuid, jsonb",
+        }
+    else:
+        required_accept = REVIEWED_OPERATION_BINDING_OLD_ACCEPT_FUNCTIONS
+        required_extra = {_OLD_STANDALONE_COMPLETE: "uuid, jsonb"}
+    for (name, _identity), signature in (
+        *required_accept.items(),
+        *required_extra.items(),
+    ):
+        exists = await connection.fetchval(
+            "SELECT to_regprocedure($1)",
+            f"control.{quote_identifier(name)}({signature})",
+        )
+        if exists is None:
+            violations.append(f"function/control/{name}/missing-required-object")
+    if reviewed_binding_old_phase:
+        for (
+            name,
+            _identity,
+        ), signature in REVIEWED_OPERATION_BINDING_WORKER_FUNCTIONS.items():
+            exists = await connection.fetchval(
+                "SELECT to_regprocedure($1)",
+                f"control.{quote_identifier(name)}({signature})",
+            )
+            if exists is not None:
+                violations.append(
+                    f"function/control/{name}/unexpected-reviewed-binding-object"
+                )
     return violations
 
 
@@ -2227,6 +2486,11 @@ __all__ = [
     "MEDIA_CONTROL_FUNCTIONS",
     "MEDIA_PUBLICATION_HEAD",
     "MEDIA_PUBLICATION_REQUIRED_FUNCTIONS",
+    "REVIEWED_OPERATION_BINDING_CONTROL_FUNCTIONS",
+    "REVIEWED_OPERATION_BINDING_HEAD",
+    "REVIEWED_OPERATION_BINDING_NEW_ACCEPT_FUNCTIONS",
+    "REVIEWED_OPERATION_BINDING_OLD_ACCEPT_FUNCTIONS",
+    "REVIEWED_OPERATION_BINDING_WORKER_FUNCTIONS",
     "REVIEWER_CONTENT_FUNCTIONS",
     "PrivilegeValidation",
     "REVIEW_WORKER_FUNCTIONS",

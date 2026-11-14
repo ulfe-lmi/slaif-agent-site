@@ -306,6 +306,7 @@ async function acceptBody(
 ): Promise<{
   snapshot_id: string;
   digest: string;
+  manifest_digest: string;
   acknowledge_summary: true;
 }> {
   const response = await page.request.get(
@@ -314,10 +315,12 @@ async function acceptBody(
   expect(response.status()).toBe(200);
   const document = (await response.json()) as {
     snapshot: { id: string; digest: string };
+    manifest: { manifest_digest: string };
   };
   return {
     snapshot_id: document.snapshot.id,
     digest: digestOverride ?? document.snapshot.digest,
+    manifest_digest: document.manifest.manifest_digest,
     acknowledge_summary: true,
   };
 }
@@ -644,6 +647,24 @@ test.describe("accept lifecycle (083/1)", () => {
       snapshot_id: crypto.randomUUID(),
     });
     expect(unknownSnapshot.status).toBe(404);
+    // wrong manifest digest -> the SAME uniform 404 class (no oracle):
+    // the immutable companion must carry the exact named digest.
+    const wrongManifestDigest = (
+      "0".repeat(32) + body.manifest_digest.slice(32)
+    ).replace(/0/g, () => "f");
+    expect(wrongManifestDigest).not.toBe(body.manifest_digest);
+    const wrongManifest = await postAccept(page, siteId, workspaceId, {
+      ...body,
+      manifest_digest: wrongManifestDigest,
+    });
+    expect(wrongManifest.status).toBe(404);
+    // missing manifest digest -> the strict-body 422 class.
+    const manifestMissing = await postAccept(page, siteId, workspaceId, {
+      snapshot_id: body.snapshot_id,
+      digest: body.digest,
+      acknowledge_summary: true,
+    });
+    expect(manifestMissing.status).toBe(422);
     expect(await workspaceStatus(page, siteId, workspaceId)).toBe("REVIEW");
 
     // Agent capability token on the control accept route: uniform denial
@@ -661,16 +682,19 @@ test.describe("accept lifecycle (083/1)", () => {
     expect(agentPost.status()).toBe(401);
     expect(await workspaceStatus(page, siteId, workspaceId)).toBe("REVIEW");
 
-    // Strict body: acknowledge_summary=false / missing are rejected.
+    // Strict body: acknowledge_summary=false / missing are rejected
+    // (both digests present, so the ack field is the single variable).
     const ackFalse = await postAccept(page, siteId, workspaceId, {
       snapshot_id: body.snapshot_id,
       digest: body.digest,
+      manifest_digest: body.manifest_digest,
       acknowledge_summary: false,
     });
     expect(ackFalse.status).toBe(422);
     const ackMissing = await postAccept(page, siteId, workspaceId, {
       snapshot_id: body.snapshot_id,
       digest: body.digest,
+      manifest_digest: body.manifest_digest,
     });
     expect(ackMissing.status).toBe(422);
     expect(await workspaceStatus(page, siteId, workspaceId)).toBe("REVIEW");
