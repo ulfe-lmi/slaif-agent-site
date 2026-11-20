@@ -79,6 +79,7 @@ from ..media_service.finalize import (
     publicize_promoted_media,
 )
 from ..media_service.store import MediaStore
+from . import operation_manifest
 from . import snapshot as snapshot_module
 from .config import ReviewWorkerSettings
 from .freeze_job import JobResult, _lock_timeout_literal, _mark_terminal
@@ -356,6 +357,15 @@ async def _verify_snapshot(
                     raise AcceptJobError(
                         "SNAPSHOT_VALIDATION_FAILED", kind="validation"
                     )
+                # 083/12-b: the durable human approval must name this
+                # snapshot's EXACT stored domain digest.  The passed
+                # approval digest is compared explicitly - it is never
+                # silently filled from (or re-derived against) current
+                # state.
+                if snapshot_digest != str(stored["digest"]):
+                    raise AcceptJobError(
+                        "SNAPSHOT_VALIDATION_FAILED", kind="validation"
+                    )
                 # 083/12: the companion manifest must exist for this
                 # snapshot (a historical companion-less snapshot can
                 # never be approved at or after 079) and must carry
@@ -376,7 +386,9 @@ async def _verify_snapshot(
                         "SNAPSHOT_VALIDATION_FAILED", kind="validation"
                     )
                 if (
-                    manifest_doc.get("manifest_digest") != manifest_digest
+                    manifest_doc.get("schema_version")
+                    != operation_manifest.MANIFEST_SCHEMA_VERSION
+                    or manifest_doc.get("manifest_digest") != manifest_digest
                     or manifest_doc.get("snapshot_digest") != str(stored["digest"])
                     or manifest_doc.get("site_id") != str(site_id)
                     or manifest_doc.get("workspace_id") != str(workspace_id)
@@ -392,6 +404,18 @@ async def _verify_snapshot(
                     raise AcceptJobError(
                         "SNAPSHOT_VALIDATION_FAILED", kind="validation"
                     )
+                # 083/12-b: malformed or filtered-away dependency
+                # entries are refused, never silently skipped: every
+                # entry must be exactly two UUID strings.
+                if any(
+                    not isinstance(pair, (list, tuple))
+                    or len(pair) != 2
+                    or not all(isinstance(endpoint, str) for endpoint in pair)
+                    for pair in approved_pairs
+                ):
+                    raise AcceptJobError(
+                        "SNAPSHOT_VALIDATION_FAILED", kind="validation"
+                    )
                 try:
                     approved_operations = [
                         UUID(str(operation)) for operation in approved_operation_ids
@@ -399,7 +423,6 @@ async def _verify_snapshot(
                     approved_pair_set = {
                         (UUID(str(pair[0])), UUID(str(pair[1])))
                         for pair in approved_pairs
-                        if isinstance(pair, (list, tuple)) and len(pair) == 2
                     }
                     if len(approved_operations) != len(set(approved_operations)):
                         raise ValueError("duplicate operation")
@@ -598,6 +621,29 @@ async def _verify_snapshot(
     }
 
 
+async def _restore_workspace_from_refusal(pool: Any, workspace_id: UUID) -> None:
+    """A pre-pipeline refusal leaves the pipeline state behind.
+
+    The durable approval is checked before the step-1/step-2
+    transitions, so a refused job must not leave the workspace stuck
+    in ACCEPT_QUEUED/PROMOTING: return it to the human-actionable
+    REVIEW exactly like the later validation-refusal paths (a no-op
+    when the workspace is already elsewhere).
+    """
+    try:
+        async with pool.acquire() as connection:
+            await connection.execute(
+                "UPDATE control.workspace SET status = 'REVIEW' "
+                "WHERE id = $1 AND status IN ('ACCEPT_QUEUED', 'PROMOTING')",
+                workspace_id,
+            )
+    except (asyncpg.PostgresError, TimeoutError, OSError):
+        LOGGER.warning(
+            "accept workspace refusal restoration deferred",
+            extra={"event_fields": {"workspace_id": str(workspace_id)}},
+        )
+
+
 async def run_accept_job(
     pool: Any,
     settings: ReviewWorkerSettings,
@@ -619,6 +665,7 @@ async def run_accept_job(
     elif isinstance(payload, str):
         payload = json.loads(payload)
     if not isinstance(payload, dict):
+        await _restore_workspace_from_refusal(pool, workspace_id)
         await _mark_terminal(pool, job_id, "FAILED", "SNAPSHOT_VALIDATION_FAILED")
         return JobResult("FAILED", "SNAPSHOT_VALIDATION_FAILED")
     try:
@@ -635,6 +682,11 @@ async def run_accept_job(
         ):
             raise ValueError("digest shape")
     except (KeyError, TypeError, ValueError):
+        # 083/12-b: a malformed durable approval (missing/JSON-null/
+        # non-64-hex digest) is a validation refusal, not a transient:
+        # the workspace returns to REVIEW before the terminal mark,
+        # never left stuck in ACCEPT_QUEUED.
+        await _restore_workspace_from_refusal(pool, workspace_id)
         await _mark_terminal(pool, job_id, "FAILED", "SNAPSHOT_VALIDATION_FAILED")
         return JobResult("FAILED", "SNAPSHOT_VALIDATION_FAILED")
 
@@ -794,6 +846,8 @@ async def run_accept_job(
                     manifest_live = None
                 if (
                     not isinstance(manifest_live, dict)
+                    or manifest_live.get("schema_version")
+                    != operation_manifest.MANIFEST_SCHEMA_VERSION
                     or manifest_live.get("manifest_digest") != facts["manifest_digest"]
                     or manifest_live.get("snapshot_digest") != facts["digest"]
                     or manifest_live.get("site_id") != str(site_id)

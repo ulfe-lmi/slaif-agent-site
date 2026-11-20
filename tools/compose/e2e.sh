@@ -85,8 +85,6 @@ docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif \
            'HUMAN', 'Compose preview fixture', 'L4_SITE_ARCHITECT',
            '{\"catalog\":\"catalog-v1\",\"composition_schema\":\"site-composition/v1\",\"content_model\":\"content-model/v1\",\"design_system\":\"design-system/v1\",\"puck\":\"0.20.2\",\"renderer\":\"renderer-v1\"}'::jsonb,
            'ACTIVE', CURRENT_TIMESTAMP + interval '1 hour');
-   SET LOCAL app.session_id = '$workspace_id';
-   SET LOCAL app.operation_id = '12000000-0000-4000-8000-000000000302';
    INSERT INTO content.site_locale_base
      (id,site_id,tag,enabled,is_default,position,metadata)
    VALUES
@@ -110,15 +108,6 @@ docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif \
      ('12000000-0000-4000-8000-000000000333'::uuid,'$site_id'::uuid,
       '12000000-0000-4000-8000-000000000330'::uuid,'RichText','1',NULL,'default',1,
       '{\"content\":{\"type\":\"paragraph\",\"children\":[{\"text\":\"Parity canonical text.\"}]}}'::jsonb);
-   UPDATE content.page
-   SET title = 'Compose preview overlay'
-   WHERE site_id = '$site_id'::uuid AND slug = 'home' AND locale = 'en';
-   UPDATE content.page_composition
-   SET props = '{\"text\":\"Compose overlay heading\",\"level\":2}'::jsonb
-   WHERE site_id = '$site_id'::uuid
-     AND page_id = (SELECT id FROM content.page_base
-                    WHERE site_id = '$site_id'::uuid AND slug = 'home' AND locale = 'en')
-     AND component_type = 'Heading' AND order_key = 0;
    INSERT INTO content.content_type_base
      (id,site_id,key,labels,slug_pattern,status,definition_version,settings)
    VALUES
@@ -229,17 +218,176 @@ docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif \
      ('$site_id'::uuid,'/compose-canonical-308','/',308,NULL),
      ('$site_id'::uuid,'/compose-canonical-external',
       'https://example.test/compose-target',301,NULL);
-   INSERT INTO content.redirect(site_id,source_route,target,status_code,locale)
-   VALUES
-     ('$site_id'::uuid,'/compose-redirect','/',301,NULL),
-     ('$site_id'::uuid,'/compose-redirect-301','/',301,NULL),
-     ('$site_id'::uuid,'/compose-redirect-302','/',302,NULL),
-     ('$site_id'::uuid,'/compose-redirect-303','/',303,NULL),
-     ('$site_id'::uuid,'/compose-redirect-307','/',307,NULL),
-     ('$site_id'::uuid,'/compose-redirect-308','/',308,NULL),
-     ('$site_id'::uuid,'/compose-redirect-external',
-      'https://example.test/compose-target',301,NULL);
-   COMMIT;" >/dev/null
+    COMMIT;" >/dev/null
+
+# ---------------------------------------------------------------------------
+# Preview overlay as genuine trusted human-editor completion operations.
+# The historical seed wrote the overlay (page title, heading props, seven
+# redirects) as raw COW view writes under one pinned, unqualified fixture
+# operation: nine pending changes with no 078 completion facts, which the
+# 079 reviewed-operation binding lawfully refuses to freeze.  The overlay is
+# now written through the same trusted definer envelope the editor HTTP
+# path executes per request:
+#   BEGIN;
+#   SET LOCAL app.session_id  = <preview workspace>;
+#   SET LOCAL app.operation_id = <server-generated uuid, never pinned>;
+#   control.slaif_human_editor_workspace_assert(...);
+#   control.slaif_human_editor_idempotency_begin(...);
+#   content.slaif_page_update / slaif_composition_node_update /
+#   slaif_redirect_create (the real supported mutation functions);
+#   control.slaif_human_editor_idempotency_complete(...)
+#     (writes the 078 trusted journal + family audit row);
+#   COMMIT;
+# The definer functions enforce the real session/workspace/permission/COW
+# context checks; the request digest is the real sha256(method NUL path
+# NUL body) the editor HTTP layer computes; the completion records the row
+# the mutation actually wrote, including the server-generated redirect id.
+preview_editor_session_id=$(docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif \
+  -Atc "SELECT (control.slaif_create_human_session(
+     gen_random_uuid(),
+     'sas2_' || substr(md5('compose-e2e-preview-editor'), 1, 32),
+     sha256(convert_to('compose-e2e-preview-editor-secret', 'UTF8')),
+     sha256(convert_to('compose-e2e-preview-editor-csrf', 'UTF8')),
+     '$admin_id'::uuid, 3600, 14400, 3600)).session_id")
+test -n "$preview_editor_session_id" || fail preview-fixture-session
+
+preview_overlay_op() {
+  # $1 idempotency key; $2 HTTP method; $3 real editor API path;
+  # $4 request body JSON (exactly what the editor digest covers);
+  # $5 permission key; $6 mutation selector (page|composition|redirect);
+  # $7..$9 mutation arguments.
+  preview_op_id=$(docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif \
+    -Atc "SELECT gen_random_uuid()")
+  preview_op_digest=$(docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif \
+    -Atc "SELECT encode(sha256(convert_to('$2', 'UTF8') || decode('00', 'hex') || convert_to('$3', 'UTF8') || decode('00', 'hex') || convert_to('$4', 'UTF8')), 'hex')")
+  case "$6" in
+    page)
+      preview_mutation_sql="SELECT * INTO r FROM content.slaif_page_update(
+          '$7', NULL, '$8', NULL, NULL);
+      IF r.id IS NULL THEN
+        RAISE EXCEPTION 'preview overlay fixture: page update missing';
+      END IF;"
+      preview_complete_sql="PERFORM control.slaif_human_editor_idempotency_complete(
+          '$workspace_id','$admin_id','$site_id','$preview_editor_session_id','$5',
+          '$1','$preview_op_digest','$preview_op_id',200,
+          jsonb_build_object('id',r.id,'site_id',r.site_id,'slug',r.slug,
+                             'title',r.title,'status',r.status,'locale',r.locale,
+                             'parent_id',r.parent_id,'row_version',r.row_version),
+          '$2 $3','editor.sites',r.id);"
+      ;;
+    composition)
+      preview_mutation_sql="SELECT * INTO r FROM content.slaif_composition_node_update(
+          '$7','$8'::jsonb,NULL,NULL);
+      IF r.id IS NULL THEN
+        RAISE EXCEPTION 'preview overlay fixture: composition update missing';
+      END IF;"
+      preview_complete_sql="PERFORM control.slaif_human_editor_idempotency_complete(
+          '$workspace_id','$admin_id','$site_id','$preview_editor_session_id','$5',
+          '$1','$preview_op_digest','$preview_op_id',200,
+          jsonb_build_object('id',r.id,'site_id',r.site_id,'page_id',r.page_id,
+                             'component_type',r.component_type,
+                             'schema_version',r.schema_version,'parent_id',r.parent_id,
+                             'slot_key',r.slot_key,'order_key',r.order_key,
+                             'props',r.props),
+          '$2 $3','editor.sites',r.id);"
+      ;;
+    redirect)
+      preview_mutation_sql="SELECT * INTO r FROM content.slaif_redirect_create(
+          '$site_id'::uuid,'$7','$8',$9,NULL);
+      SELECT * INTO r FROM content.redirect
+       WHERE site_id = '$site_id'::uuid AND source_route = '$7'
+         AND locale IS NULL
+       ORDER BY id DESC LIMIT 1;
+      IF r.id IS NULL THEN
+        RAISE EXCEPTION 'preview overlay fixture: redirect create missing for %',
+          '$7';
+      END IF;"
+      preview_complete_sql="PERFORM control.slaif_human_editor_idempotency_complete(
+          '$workspace_id','$admin_id','$site_id','$preview_editor_session_id','$5',
+          '$1','$preview_op_digest','$preview_op_id',200,
+          jsonb_build_object('id',r.id,'site_id',r.site_id,
+                             'source_route',r.source_route,'target',r.target,
+                             'status_code',r.status_code,'locale',r.locale,
+                             'row_version',r.row_version),
+          '$2 $3','editor.sites',r.id);"
+      ;;
+  esac
+  if ! docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif \
+      -v ON_ERROR_STOP=1 -c "
+     BEGIN;
+     SET LOCAL app.session_id = '$workspace_id';
+     SET LOCAL app.operation_id = '$preview_op_id';
+     DO \$pv\$
+     DECLARE r record;
+     BEGIN
+       PERFORM control.slaif_human_editor_workspace_assert(
+           '$workspace_id','$admin_id','$site_id','$preview_editor_session_id','$5',true);
+       IF (SELECT state FROM control.slaif_human_editor_idempotency_begin(
+              '$workspace_id','$admin_id','$site_id','$preview_editor_session_id','$5',
+              '$1','$preview_op_digest','$preview_op_id')) IS DISTINCT FROM 'STARTED' THEN
+         RAISE EXCEPTION 'preview overlay fixture: % envelope not started', '$1';
+       END IF;
+       $preview_mutation_sql
+       $preview_complete_sql
+       IF (SELECT count(*) FROM audit.mutation_completion mc
+            WHERE mc.operation_id = '$preview_op_id'
+              AND mc.family = 'human_editor'
+              AND mc.disposition = 'completed') <> 1 THEN
+         RAISE EXCEPTION 'preview overlay fixture: % trusted completion missing',
+           '$1';
+       END IF;
+     END
+     \$pv\$;
+     COMMIT;" >"$OUTPUT_DIR/overlay-$1.log" 2>&1
+  then
+    sed "s/^/compose-e2e: overlay-op $1: /" "$OUTPUT_DIR/overlay-$1.log" >&2
+    fail preview-overlay-envelope "$1"
+  fi
+}
+
+preview_overlay_op \
+  compose-page-overlay \
+  PATCH \
+  "/api/editor/v1/sites/$site_id/pages/12000000-0000-4000-8000-000000000330" \
+  '{\"slug\":null,\"title\":\"Compose preview overlay\",\"status\":null,\"expected_row_version\":null}' \
+  page:write \
+  page \
+  12000000-0000-4000-8000-000000000330 \
+  "Compose preview overlay"
+preview_overlay_op \
+  compose-props-overlay \
+  PATCH \
+  "/api/editor/v1/sites/$site_id/pages/12000000-0000-4000-8000-000000000330/composition/components/12000000-0000-4000-8000-000000000331" \
+  '{\"props\":{\"text\":\"Compose overlay heading\",\"level\":2},\"slot_key\":null,\"order_key\":null}' \
+  component-content-props:write \
+  composition \
+  12000000-0000-4000-8000-000000000331 \
+  '{\"text\":\"Compose overlay heading\",\"level\":2}'
+preview_overlay_redirect_n=1
+while read -r preview_redirect_source preview_redirect_target preview_redirect_status
+do
+  [ -n "$preview_redirect_source" ] || continue
+  preview_overlay_op \
+    "compose-redirect-$preview_overlay_redirect_n" \
+    POST \
+    "/api/editor/v1/sites/$site_id/redirects" \
+    "{\"source_route\":\"$preview_redirect_source\",\"target\":\"$preview_redirect_target\",\"status_code\":$preview_redirect_status,\"locale\":null}" \
+    redirect:create \
+    redirect \
+    "$preview_redirect_source" \
+    "$preview_redirect_target" \
+    "$preview_redirect_status"
+  preview_overlay_redirect_n=$((preview_overlay_redirect_n + 1))
+done <<'PREVIEW_OVERLAY_REDIRECTS'
+/compose-redirect / 301
+/compose-redirect-301 / 301
+/compose-redirect-302 / 302
+/compose-redirect-303 / 303
+/compose-redirect-307 / 307
+/compose-redirect-308 / 308
+/compose-redirect-external https://example.test/compose-target 301
+PREVIEW_OVERLAY_REDIRECTS
+test "$preview_overlay_redirect_n" = 8 || fail preview-overlay-redirect-count
 
 if ! SLAIF_E2E_SECRET_FILE="$SECRET_FILE" \
   SLAIF_E2E_PREVIEW_WORKSPACE_ID="$workspace_id" \

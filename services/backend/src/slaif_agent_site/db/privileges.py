@@ -1314,6 +1314,19 @@ async def apply_product_privileges(
             await connection.execute(
                 'GRANT USAGE ON SCHEMA "content" TO "slaif_review_worker"'
             )
+        # 079_001: the Control-only trusted proposed-side-effect producer
+        # (content.slaif_proposed_side_effect_create) is invoked by the
+        # Control process through the public COW session, and PostgreSQL
+        # requires schema USAGE to resolve a qualified function call.
+        # The 079 head therefore grants direct content schema USAGE to
+        # the control role: resolution only, no CREATE, no
+        # table/sequence grants.  The EXECUTE surface is unchanged
+        # (explicit per-function grants, still policed by
+        # _function_violations); no content data becomes reachable.
+        if apply_head is not None and apply_head >= REVIEWED_OPERATION_BINDING_HEAD:
+            await connection.execute(
+                'GRANT USAGE ON SCHEMA "content" TO "slaif_control"'
+            )
 
         # The worker's foundation reviewer surface (072_001): the same
         # agentcow USAGE + controlled function EXECUTEs the hardening
@@ -1700,6 +1713,24 @@ async def _schema_violations(
     connection: asyncpg.Connection[Any], *, readiness_state: ReadinessState
 ) -> list[str]:
     violations: list[str] = []
+    # The expectation sets below are head-aware: a grant introduced by a
+    # specific migration must not be demanded on databases below that
+    # head (a HARDENED 076-era database never received the 079 content
+    # USAGE for the control role, for example).  A missing/unreadable
+    # version row fails closed to "at or above head", mirroring the
+    # 083/10-a worker direct-usage check at the end of this function.
+    try:
+        version = await connection.fetchval(
+            "SELECT version_num::text FROM control.alembic_version"
+        )
+    except asyncpg.PostgresError:
+        version = None
+    head_number: int | None = None
+    if version is not None:
+        try:
+            head_number = int(str(version).split("_", 1)[0])
+        except ValueError:
+            head_number = None
     schemas = await connection.fetch(
         "SELECT namespace_.nspname::text, owner.rolname::text, "
         "EXISTS (SELECT 1 FROM aclexplode(COALESCE(namespace_.nspacl, "
@@ -1765,6 +1796,22 @@ async def _schema_violations(
                             )
                         )
                         or (
+                            # 079_001: at or after the reviewed-operation-
+                            # binding head the Control process resolves the
+                            # public COW session's qualified trusted
+                            # producer call and holds content USAGE directly
+                            # (head-gated grant in apply_product_privileges).
+                            # Historical HARDENED heads below 079 never
+                            # received the grant and must not be demanded
+                            # to have it.
+                            schema == "content"
+                            and role == "slaif_control"
+                            and (
+                                head_number is None
+                                or head_number >= REVIEWED_OPERATION_BINDING_HEAD
+                            )
+                        )
+                        or (
                             schema == FOUNDATION_SCHEMA
                             and role in (*REVIEWER_ROLES, "slaif_review_worker")
                         )
@@ -1782,18 +1829,6 @@ async def _schema_violations(
     # marker fails closed) the worker must hold content USAGE directly.
     # Historical 075/076 phases and non-HARDENED states are explicitly
     # exempt; the forbidden reachable-role checks above are untouched.
-    try:
-        version = await connection.fetchval(
-            "SELECT version_num::text FROM control.alembic_version"
-        )
-    except asyncpg.PostgresError:
-        version = None
-    head_number: int | None = None
-    if version is not None:
-        try:
-            head_number = int(str(version).split("_", 1)[0])
-        except ValueError:
-            head_number = None
     if readiness_state is ReadinessState.HARDENED and (
         head_number is None or head_number >= MEDIA_PUBLICATION_HEAD
     ):

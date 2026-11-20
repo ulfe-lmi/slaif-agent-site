@@ -79,6 +79,7 @@ from conftest import AgentSiteDatabase
 from slaif_agent_site.agent_api.models import AgentCapabilityContext
 from slaif_agent_site.agent_state.capability import generate_capability_token
 from slaif_agent_site.agent_state.foundation import (
+    asyncpg_cow_session,
     get_operation_dependencies,
     get_session_operations,
 )
@@ -918,12 +919,15 @@ async def test_freeze_failure_leaves_no_partial_state(
 ) -> None:
     """C3: a real freeze whose captured U carries a trusted journal
     negative fixture (one 078 completion row removed by the owner
-    fixture, labeled) fails closed through the REAL worker definer:
-    typed stable job code, no snapshot row, no companion row, workspace
-    FREEZING (070/078 semantics), the pending session and the remaining
-    journal history intact.  The legal recovery is then proven for
-    real: the exact victim row is restored and a re-enqueued freeze on
-    the FREEZING workspace with no live job completes to REVIEW."""
+    fixture, labeled) fails closed through the REAL worker provenance
+    phase in the locked freeze transaction: the U member has neither a
+    078 journal row nor a trusted producer record, so the typed stable
+    job code is PROVENANCE_VERIFICATION_FAILED with no snapshot row,
+    no companion row, workspace FREEZING (070/078 semantics), the
+    pending session and the remaining journal history intact.  The
+    legal recovery is then proven for real: the exact victim row is
+    restored and a re-enqueued freeze on the FREEZING workspace with
+    no live job completes to REVIEW."""
     database = agent_site_database
     media_root = tmp_path / "media"
     ids = await _seed_site(database, media_root=media_root, with_ops=True)
@@ -970,7 +974,9 @@ async def test_freeze_failure_leaves_no_partial_state(
             pool, _worker_settings(database), dict(claimed[0])
         )
         assert result.status == "FAILED", (result.status, result.error)
-        assert str(result.error).startswith("MANIFEST_"), result.error
+        # The whole-workspace provenance phase refuses the U member
+        # with no 078 journal row and no trusted producer record.
+        assert str(result.error) == "PROVENANCE_VERIFICATION_FAILED", result.error
 
         async with _owner(database) as owner:
             snapshot_rows = await owner.fetchval(
@@ -1269,6 +1275,164 @@ async def test_accept_denies_legacy_and_cross_workspace_manifest_digest(
         assert (await _workspace_state(database, ws1)) == ("REVIEW", snapshot1)
     finally:
         await control.stop()
+
+
+@pytest.mark.asyncio
+async def test_accept_refuses_tampered_durable_approval(
+    agent_site_database: AgentSiteDatabase, tmp_path: Path
+) -> None:
+    """B4: the durable approval is compared EXACTLY against stored
+    state in the real reviewer preflight/transaction.  Labeled trusted
+    negative fixtures tamper (a) the live job payload's snapshot
+    digest, (b) the same payload digest to JSON null, and (c) the
+    STORED manifest's dependency_pairs with a filtered-away entry.
+    Each real worker run is a typed SNAPSHOT_VALIDATION_FAILED with no
+    silent fill, no silent filter and no publication effect: the
+    workspace returns to REVIEW, canonical/pending/revision/receipts
+    are untouched and the job is terminal FAILED."""
+    database = agent_site_database
+    media_root = tmp_path / "media"
+    ids = await _seed_site(database, media_root=media_root, with_ops=True)
+    ws, site = ids["workspace_id"], ids["site_id"]
+    pool = await _worker_pool(database)
+    boundary = MediaBoundary(settings=_media_settings(database, media_root))
+    try:
+        pending = await _public_u(database, ws)
+        assert len(pending) == 2
+        snapshot_id = await _freeze_workspace(database, ids, pool)
+        async with _owner(database) as owner:
+            revision_before = await owner.fetchval(
+                "SELECT canonical_revision FROM control.site WHERE id = $1",
+                site,
+            )
+            manifest_digest_before = await owner.fetchval(
+                "SELECT manifest_digest FROM control.review_operation_manifest"
+                " WHERE snapshot_id = $1",
+                snapshot_id,
+            )
+            pairs_before = await owner.fetchval(
+                "SELECT dependency_pairs::text"
+                " FROM control.review_operation_manifest"
+                " WHERE snapshot_id = $1",
+                snapshot_id,
+            )
+
+        async def _assert_no_publication() -> None:
+            status, bound = await _workspace_state(database, ws)
+            assert status == "REVIEW" and bound == snapshot_id, (
+                "a refused accept must return the workspace to REVIEW"
+            )
+            async with _owner(database) as owner:
+                assert (
+                    await owner.fetchval(
+                        "SELECT canonical_revision FROM control.site WHERE id = $1",
+                        site,
+                    )
+                    == revision_before
+                ), "a refused accept must not bump the canonical revision"
+                assert (
+                    await owner.fetchval("SELECT count(*) FROM audit.promotion") == 0
+                ), "a refused accept must write no promotion receipt"
+                assert (
+                    await owner.fetchval(
+                        "SELECT manifest_digest"
+                        " FROM control.review_operation_manifest"
+                        " WHERE snapshot_id = $1",
+                        snapshot_id,
+                    )
+                    == manifest_digest_before
+                ), "a refused accept must not rewrite the companion"
+            assert await _public_u(database, ws) == pending, (
+                "a refused accept must not touch the pending universe"
+            )
+
+        async def _run_refused_accept(
+            label: str,
+            payload_tamper: str | None = None,
+            manifest_tamper: str | None = None,
+        ) -> None:
+            rows = await _enqueue_bound_accept(database, ws, ids["delegator_id"])
+            assert len(rows) == 1
+            job_id = UUID(str(rows[0]["job_id"]))
+            async with _owner(database) as owner:
+                if manifest_tamper is not None:
+                    # TRUSTED NEGATIVE FIXTURE (labeled): stored
+                    # companion content corruption (a filtered-away
+                    # dependency entry: one UUID string, not a pair).
+                    await owner.execute(
+                        manifest_tamper,
+                        snapshot_id,
+                        json.dumps([[str(uuid4())]]),
+                    )
+                if payload_tamper is not None:
+                    # TRUSTED NEGATIVE FIXTURE (labeled): the live job
+                    # payload no longer carries the exact durable
+                    # approval.
+                    await owner.execute(payload_tamper, job_id)
+            claimed = await _claim_accept(database, f"binding-b4-{label}")
+            assert claimed["job_kind"] == "ACCEPT"
+            assert str(claimed["id"]) == str(job_id)
+            result = await run_accept_job(
+                pool, _worker_settings(database), claimed, media=boundary
+            )
+            assert result.status == "FAILED", (label, result.status, result.error)
+            assert result.error == "SNAPSHOT_VALIDATION_FAILED", (
+                label,
+                result.error,
+            )
+            async with _owner(database) as owner:
+                job_row = await owner.fetchrow(
+                    "SELECT status, error FROM control.review_job WHERE id = $1",
+                    job_id,
+                )
+            assert job_row["status"] == "FAILED"
+            assert str(job_row["error"]) == "SNAPSHOT_VALIDATION_FAILED"
+            await _assert_no_publication()
+
+        # (a) a WRONG stored domain digest in the durable approval:
+        # the explicit comparison refuses - never a silent fill.
+        await _run_refused_accept(
+            "wrong-digest",
+            payload_tamper=(
+                "UPDATE control.review_job"
+                " SET payload = jsonb_set(payload, '{snapshot_digest}',"
+                " to_jsonb(repeat('0', 64))) WHERE id = $1"
+            ),
+        )
+        # (b) a NULL domain digest in the durable approval: the
+        # missing digest fails closed exactly like a wrong one.
+        await _run_refused_accept(
+            "null-digest",
+            payload_tamper=(
+                "UPDATE control.review_job"
+                " SET payload = jsonb_set(payload, '{snapshot_digest}',"
+                " 'null'::jsonb) WHERE id = $1"
+            ),
+        )
+        # (c) a filtered-away dependency entry in the STORED companion:
+        # refused, never silently skipped (the pre-083/12-b behavior
+        # would have dropped it and compared the remainder).
+        await _run_refused_accept(
+            "malformed-pair",
+            manifest_tamper=(
+                "UPDATE control.review_operation_manifest"
+                " SET dependency_pairs = dependency_pairs"
+                " || $2::jsonb WHERE snapshot_id = $1"
+            ),
+        )
+        # Restore the labeled fixture (the companion digest is
+        # content-derived, so the restored bytes reproduce it).
+        async with _owner(database) as owner:
+            await owner.execute(
+                "UPDATE control.review_operation_manifest"
+                " SET dependency_pairs = $2::jsonb"
+                " WHERE snapshot_id = $1",
+                snapshot_id,
+                pairs_before,
+            )
+    finally:
+        await boundary.stop()
+        await pool.close()
 
 
 @pytest.mark.asyncio
@@ -2236,48 +2400,79 @@ async def test_mixed_family_superseding_netzero_multirow_freeze_accept(
 
 async def _seed_proposal_cow_operation(
     database: AgentSiteDatabase, site_id: UUID, workspace_id: UUID
-) -> tuple[UUID, dict[str, Any]]:
-    """Honest fixture boundary for the trusted-internal form.
+) -> tuple[UUID, list[dict[str, Any]], str]:
+    """The real Control-login / public CowSession producer path (B2).
 
     The proposed side effect carries no public API and no 078
     completion (external effects remain proposed/suppressed until
-    publication).  The owner fixture binds the workspace COW session
-    exactly as the foundation write trigger requires (app.session_id
-    + app.operation_id) and invokes the existing trusted constructor;
-    the row identity is read back through the existing product list
-    contract - no foundation-table coupling, no invented surface.
-    Returns the COW operation id (the app.operation_id the change row
-    carries) and the listed row.
+    publication).  Connect as the REAL fixture Control login (session
+    user = that login, INHERIT member of slaif_control, no SET ROLE),
+    open the public 0.2.1 foundation COW session on that connection
+    (the server selects the operation id) and invoke the trusted
+    constructor whose EXECUTE is granted to slaif_control only.  The
+    definer writes the owner-internal prospective completion record in
+    the SAME transaction as each COW insert.  Two constructor calls in
+    one real operation exercise the multi-resource coherence rule.
+    The row identity is read back through the existing product list
+    contract (owner read; no foundation-table coupling).  Returns
+    (operation_id, listed rows, principal login).
     """
-    proposal_operation_id = uuid4()
-    payload = {"scope": "binding-trusted-internal-fixture"}
-    async with _owner(database) as owner:
-        await owner.execute(
-            "SELECT set_config('app.session_id', $1::text, false),"
-            " set_config('app.operation_id', $2::text, false)",
-            str(workspace_id),
-            str(proposal_operation_id),
+    login, password = database.credentials["slaif_control"]
+    connection = await asyncpg.connect(
+        **{
+            key: value
+            for key, value in database.connection_parameters.items()
+            if key != "database"
+        },
+        database=database.name,
+        user=login,
+        password=password,
+    )
+    try:
+        payloads = (
+            {"scope": "binding-producer-a"},
+            {"scope": "binding-producer-b"},
         )
-        try:
+        async with asyncpg_cow_session(connection, session_id=workspace_id) as session:
+            operation_id = session.operation_id
+            created_rows: list[dict[str, Any]] = []
+            for payload in payloads:
+                created = await session.native.fetch(
+                    "SELECT * FROM content.slaif_proposed_side_effect_create"
+                    "($1, $2, 'cache_purge', $3::jsonb)",
+                    site_id,
+                    workspace_id,
+                    json.dumps(payload),
+                )
+                created_rows.append(dict(created[0]))
+        # The public U member is the server-selected operation id (the
+        # real session context, never a test-pinned UUID).
+        pending_after = await _public_u(database, workspace_id)
+        assert operation_id in pending_after, (
+            f"server operation {operation_id} must be pending"
+        )
+        async with _owner(database) as owner:
+            # The COW view shows pending change rows only under the
+            # workspace session context; the product list contract is
+            # read back exactly that way (owner read, no
+            # foundation-table coupling).
             await owner.execute(
-                "SELECT content.slaif_proposed_side_effect_create($1,$2,"
-                " 'cache_purge',$3::jsonb)",
-                site_id,
-                workspace_id,
-                json.dumps(payload),
+                "SELECT set_config('app.session_id', $1::text, false)",
+                str(workspace_id),
             )
-            listed = await owner.fetch(
-                "SELECT * FROM content.slaif_proposed_side_effect_list($1,$2)",
-                site_id,
-                workspace_id,
-            )
-        finally:
-            await owner.execute(
-                "SELECT set_config('app.session_id', '', false),"
-                " set_config('app.operation_id', '', false)"
-            )
+            try:
+                listed = await owner.fetch(
+                    "SELECT * FROM content.slaif_proposed_side_effect_list($1,$2)",
+                    site_id,
+                    workspace_id,
+                )
+            finally:
+                await owner.execute("SELECT set_config('app.session_id', '', false)")
+    finally:
+        await connection.close()
+    expected_ids = {row["id"] for row in created_rows}
     matching = [
-        row
+        dict(row)
         for row in listed
         if row["kind"] == "cache_purge"
         and (
@@ -2285,10 +2480,12 @@ async def _seed_proposal_cow_operation(
             if isinstance(row["payload"], dict)
             else json.loads(row["payload"])
         )
-        == payload
+        in payloads
     ]
-    assert len(matching) == 1, [dict(row) for row in listed]
-    return proposal_operation_id, dict(matching[0])
+    assert len(matching) == 2 and {row["id"] for row in matching} == expected_ids, [
+        dict(row) for row in listed
+    ]
+    return operation_id, matching, login
 
 
 @pytest.mark.asyncio
@@ -2297,13 +2494,15 @@ async def test_freeze_accept_with_trusted_internal_proposal_operation(
 ) -> None:
     """C2/C3: a real freeze of a workspace whose public U mixes BOTH
     verified provenance forms - two 078-journaled mutation operations
-    and one trusted-internal proposed-side-effect operation (labeled
-    fixture, no public proposal API) - stores exactly one companion
-    carrying the nine-field and the three-field records, recomputes
-    its digest over the stored bytes, and the real accept worker
-    promotes the whole session with ONE exact receipt covering ALL
-    THREE applied operations; the internal row materializes to the
-    committed base with its identity retained."""
+    and one trusted proposed-side-effect operation created through
+    the REAL Control login and the public 0.2.1 COW session (server-
+    selected operation, definer-written prospective completion
+    record) - stores exactly one companion carrying the nine-field
+    and the versioned producer records, recomputes its digest over
+    the stored bytes, and the real accept worker promotes the whole
+    session with ONE exact receipt covering ALL THREE applied
+    operations; the producer rows materialize to the committed base
+    with their identity retained."""
     database = agent_site_database
     media_root = tmp_path / "media"
     ids = await _seed_site(database, media_root=media_root, with_ops=True)
@@ -2311,19 +2510,39 @@ async def test_freeze_accept_with_trusted_internal_proposal_operation(
     pool = await _worker_pool(database)
     boundary = MediaBoundary(settings=_media_settings(database, media_root))
     try:
-        proposal_op, proposal_row = await _seed_proposal_cow_operation(
+        proposal_op, proposal_rows, principal = await _seed_proposal_cow_operation(
             database, site, ws
         )
-        payload = {"scope": "binding-trusted-internal-fixture"}
+        producer_resource_ids = sorted(str(row["id"]) for row in proposal_rows)
         pending = await _public_u(database, ws)
         # The proposal COW operation is a public U member (the
-        # foundation getter unions the trusted-internal changes rows)
-        # on top of the two mutation operations.
+        # foundation getter enumerates its two changes rows under the
+        # one server-selected operation) on top of the two mutation
+        # operations.
         assert len(pending) == 3, [str(o) for o in pending]
         assert str(proposal_op) in {str(o) for o in pending}
         assert str(proposal_op) not in {
             str(r["operation_id"]) for r in await _journal_rows(database, ws)
         }
+        # The definer wrote the prospective completion rows in the
+        # same transactions as the COW inserts: one consistent
+        # binding, exactly the two created resources.
+        async with _owner(database) as owner:
+            producer_rows = list(
+                await owner.fetch(
+                    "SELECT * FROM control.proposed_effect_completion"
+                    " WHERE operation_id = $1 ORDER BY resource_id::text",
+                    proposal_op,
+                )
+            )
+        assert len(producer_rows) == 2
+        for producer_row in producer_rows:
+            assert str(producer_row["site_id"]) == str(site)
+            assert str(producer_row["workspace_id"]) == str(ws)
+            assert producer_row["producer"] == "slaif_proposed_side_effect_create"
+            assert producer_row["principal_type"] == "service"
+            assert producer_row["principal_id"] == principal
+        assert [str(r["resource_id"]) for r in producer_rows] == producer_resource_ids
 
         snapshot_id = await _freeze_workspace(database, ids, pool)
         async with _owner(database) as owner:
@@ -2353,12 +2572,17 @@ async def test_freeze_accept_with_trusted_internal_proposal_operation(
         assert len(stored_identities) == 3
         by_op = {rec["operation_id"]: rec for rec in stored_identities}
         assert set(by_op) == {str(o) for o in pending}, sorted(by_op)
-        # The trusted-internal record: exactly the three-field typed
-        # form, nothing more (no forgeable metadata).
+        # The versioned trusted producer record: derived field-for-
+        # field from the actual prospective completion rows (the
+        # honest service principal, the exact sorted resource set;
+        # no forgeable metadata).
         assert by_op[str(proposal_op)] == {
             "operation_id": str(proposal_op),
-            "resource_types": ["proposed_side_effect"],
-            "disposition": "trusted_internal",
+            "record_version": "proposed-effect/v1",
+            "producer": "slaif_proposed_side_effect_create",
+            "principal_type": "service",
+            "principal_id": principal,
+            "resource_ids": producer_resource_ids,
         }
         # The two mutation records: field-for-field the actual 078
         # journal rows.
@@ -2422,6 +2646,11 @@ async def test_freeze_accept_with_trusted_internal_proposal_operation(
                 site,
                 ws,
             )
+            retained = await owner.fetchval(
+                "SELECT count(*) FROM control.proposed_effect_completion"
+                " WHERE operation_id = $1",
+                proposal_op,
+            )
         # One exact receipt for the whole session: ALL THREE applied
         # operations, including the trusted-internal one.
         assert len(audit) == 1
@@ -2437,21 +2666,19 @@ async def test_freeze_accept_with_trusted_internal_proposal_operation(
         assert str(workspace["status"]) == "ACCEPTED"
         assert workspace["accepted_at"] is not None
         assert len(outbox) == 1
+        # The prospective completion facts are retained history
+        # (the product-owned ledger is never rewritten by promotion).
+        assert retained == 2
         # The trusted-internal row materialized to the committed base
         # with its identity retained (commit upserts by row id).
-        matching_after = [
-            r
-            for r in listed_after
-            if r["kind"] == "cache_purge"
-            and (
-                r["payload"]
-                if isinstance(r["payload"], dict)
-                else json.loads(r["payload"])
-            )
-            == payload
+        # Both producer rows materialized to the committed base with
+        # their identities retained (commit upserts by row id).
+        after_ids = {str(r["id"]) for r in listed_after if r["kind"] == "cache_purge"}
+        assert after_ids == {row_id for row_id in producer_resource_ids}, [
+            dict(r) for r in listed_after
         ]
-        assert len(matching_after) == 1, [dict(r) for r in listed_after]
-        assert str(matching_after[0]["id"]) == str(proposal_row["id"])
+        # The prospective completion facts are retained history
+        # (the product-owned ledger is never rewritten by promotion).
         # The public pending universe is empty through the real getter.
         assert await _public_u(database, ws) == []
     finally:
@@ -2463,17 +2690,24 @@ async def test_freeze_accept_with_trusted_internal_proposal_operation(
 async def test_writer_refuses_forged_internal_record_for_mutation_operation(
     agent_site_database: AgentSiteDatabase, tmp_path: Path
 ) -> None:
-    """C4: the trusted completion writer refuses a FORGED
-    trusted-internal record.  The real freeze is enqueued and claimed
-    first (workspace genuinely FREEZING, no live run), and the
-    worker-shaped row is built through the same definer + Python
-    builder path the worker uses in its locked transaction.  One
-    078-journaled mutation operation is relabeled trusted-internal:
-    it carries mutation-table COW rows, so the definer's typed
-    internal verification raises the stable PROVENANCE_CONFLICT
-    (P0003) before any snapshot/companion write.  No partial state
-    survives, and the legitimate real freeze job then completes to
-    REVIEW with the exact un-forged companion."""
+    """C4: the trusted completion writer refuses FORGED trusted
+    producer records.  The real freeze is enqueued and claimed first
+    (workspace genuinely FREEZING, no live run), the public U mixes
+    both verified provenance forms (two 078-journaled mutation
+    operations plus one REAL producer operation created through the
+    Control login / public COW session), and the worker-shaped row is
+    built through the same definer + Python builder path the worker
+    uses in its locked transaction.  Four labeled forgeries:
+    (a) a 6-key producer record for a 078-journaled mutation op (no
+        producer rows exist for it) - MANIFEST_IDENTITY_MISMATCH;
+    (b) the real producer op with a FORGED service principal -
+        MANIFEST_IDENTITY_MISMATCH;
+    (c) the real producer op claiming an EXTRA resource with no row -
+        MANIFEST_IDENTITY_MISMATCH;
+    (d) owner-forged producer rows for a journaled op (BOTH provenance
+        forms on one U member) - PROVENANCE_CONFLICT.
+    No partial state survives, and the legitimate real freeze job then
+    completes to REVIEW with the exact un-forged companion."""
     database = agent_site_database
     media_root = tmp_path / "media"
     ids = await _seed_site(database, media_root=media_root, with_ops=True)
@@ -2481,8 +2715,14 @@ async def test_writer_refuses_forged_internal_record_for_mutation_operation(
     pool = await _worker_pool(database)
     boundary = MediaBoundary(settings=_media_settings(database, media_root))
     try:
+        # The REAL producer operation (Control login + public COW
+        # session; the server selects the operation id).
+        producer_op, producer_rows, principal = await _seed_proposal_cow_operation(
+            database, site, ws
+        )
         pending = await _public_u(database, ws)
-        assert len(pending) == 2
+        assert len(pending) == 3
+        assert str(producer_op) in {str(o) for o in pending}
         rows = await _control_call(
             database,
             "SELECT * FROM control.slaif_human_agent_workspace_freeze($1,$2,$3)",
@@ -2525,68 +2765,172 @@ async def test_writer_refuses_forged_internal_record_for_mutation_operation(
                 site,
                 operations,
             )
+            # The journaled operations' resource bindings (for the
+            # forged 6-key shape).
+            journal_rows = {
+                str(j["operation_id"]): dict(j)
+                for j in await owner.fetch(
+                    "SELECT * FROM audit.mutation_completion WHERE workspace_id = $1",
+                    ws,
+                )
+            }
         if isinstance(identities_doc, (bytes, bytearray)):
             identities_doc = identities_doc.decode("utf-8")
         if isinstance(identities_doc, str):
             identities_doc = json.loads(identities_doc)
         identities = list(identities_doc)
-        assert len(identities) == 2
-        # FORGE: relabel one 078-journaled mutation operation as
-        # trusted-internal (it actually carries mutation-table COW
-        # rows; no trusted-internal row exists for it).
-        victim = str(operations[0])
-        forged = [
+        assert len(identities) == 3
+        by_op = {identity["operation_id"]: identity for identity in identities}
+        producer_identity = by_op[str(producer_op)]
+        assert set(producer_identity) == {
+            "operation_id",
+            "record_version",
+            "producer",
+            "principal_type",
+            "principal_id",
+            "resource_ids",
+        }
+        journaled_ops = [str(op) for op in operations if str(op) != str(producer_op)]
+        assert len(journaled_ops) == 2
+
+        def _manifest_with(
+            completion_identities: list[dict[str, Any]],
+        ) -> str:
+            return build_operation_manifest(
+                workspace_id=ws,
+                site_id=site,
+                operations=list(operations),
+                dependencies=list(dependencies),
+                completion_identities=completion_identities,
+            )
+
+        async def _refuse(
+            completion_identities: list[dict[str, Any]],
+            expected_message: str,
+            expected_sqlstate: str,
+        ) -> None:
+            manifest = _manifest_with(completion_identities)
+            with pytest.raises(asyncpg.PostgresError) as refusal:
+                async with _owner(database) as owner:
+                    await owner.fetchval(
+                        "SELECT control.slaif_review_snapshot_complete_with_manifest"
+                        "($1, $2, $3)",
+                        ws,
+                        canonical_json(row_doc),
+                        manifest,
+                    )
+            assert refusal.value.sqlstate == expected_sqlstate, (
+                expected_message,
+                refusal.value.sqlstate,
+            )
+            assert expected_message in refusal.value.message, (
+                expected_message,
+                refusal.value.message,
+            )
+            # No partial review state from the refused writer call.
+            async with _owner(database) as owner:
+                snapshot_rows = await owner.fetchval(
+                    "SELECT count(*) FROM control.review_snapshot"
+                    " WHERE workspace_id = $1",
+                    ws,
+                )
+                manifest_rows = await owner.fetchval(
+                    "SELECT count(*) FROM control.review_operation_manifest"
+                    " WHERE workspace_id = $1",
+                    ws,
+                )
+                workspace_row = await owner.fetchrow(
+                    "SELECT status, review_snapshot_id FROM control.workspace"
+                    " WHERE id = $1",
+                    ws,
+                )
+            assert snapshot_rows == 0
+            assert manifest_rows == 0
+            assert workspace_row["review_snapshot_id"] is None
+            assert str(workspace_row["status"]) == "FREEZING"
+
+        # (a) FORGE: relabel one 078-journaled mutation operation with
+        # a 6-key producer record (no producer rows exist for it, so
+        # the field-for-field binding is fail-closed).
+        victim = journaled_ops[0]
+        victim_journal = journal_rows[victim]
+        forged_a = [
             {
                 "operation_id": victim,
-                "resource_types": ["proposed_side_effect"],
-                "disposition": "trusted_internal",
+                "record_version": "proposed-effect/v1",
+                "producer": "slaif_proposed_side_effect_create",
+                "principal_type": "service",
+                "principal_id": "forged_principal_a",
+                "resource_ids": [str(victim_journal["resource_id"])],
             }
             if identity["operation_id"] == victim
             else identity
             for identity in identities
         ]
-        manifest = build_operation_manifest(
-            workspace_id=ws,
-            site_id=site,
-            operations=list(operations),
-            dependencies=list(dependencies),
-            completion_identities=forged,
-        )
-        with pytest.raises(asyncpg.PostgresError) as refusal:
-            async with _owner(database) as owner:
-                await owner.fetchval(
-                    "SELECT control.slaif_review_snapshot_complete_with_manifest"
-                    "($1, $2, $3)",
-                    ws,
-                    canonical_json(row_doc),
-                    manifest,
-                )
-        assert refusal.value.sqlstate == "P0003"
-        assert refusal.value.message == "PROVENANCE_CONFLICT"
-        # No partial review state from the refused writer call.
+        await _refuse(forged_a, "MANIFEST_IDENTITY_MISMATCH", "P0001")
+
+        # (b) FORGE: the real producer operation with a forged service
+        # principal (the rows bind one other principal).
+        forged_b = [
+            {
+                **identity,
+                "principal_id": "forged_principal_b",
+            }
+            if identity["operation_id"] == str(producer_op)
+            else identity
+            for identity in identities
+        ]
+        await _refuse(forged_b, "MANIFEST_IDENTITY_MISMATCH", "P0001")
+
+        # (c) FORGE: the real producer operation claiming an extra
+        # resource with no prospective row.  The forged list keeps the
+        # trusted canonical (sorted) form so the Python builder accepts
+        # it and the refusal comes from the writer's field-for-field
+        # binding, not client-side shape validation.
+        forged_c = [
+            {
+                **identity,
+                "resource_ids": sorted(identity["resource_ids"] + [str(uuid4())]),
+            }
+            if identity["operation_id"] == str(producer_op)
+            else identity
+            for identity in identities
+        ]
+        await _refuse(forged_c, "MANIFEST_IDENTITY_MISMATCH", "P0001")
+
+        # (d) FORGED FACT: owner-inserted producer rows for a
+        # 078-journaled mutation operation (labeled trusted negative
+        # fixture): BOTH provenance forms on one U member is
+        # conflicting provenance - the writer's exclusivity check
+        # refuses before any snapshot/companion write.
+        second_victim = journaled_ops[1]
+        second_journal = journal_rows[second_victim]
         async with _owner(database) as owner:
-            snapshot_rows = await owner.fetchval(
-                "SELECT count(*) FROM control.review_snapshot WHERE workspace_id = $1",
+            await owner.execute(
+                "INSERT INTO control.proposed_effect_completion "
+                "(operation_id, site_id, workspace_id, resource_id, "
+                " producer, principal_type, principal_id) VALUES "
+                "($1, $2, $3, $4, 'slaif_proposed_side_effect_create', "
+                " 'service', 'forged_principal_d')",
+                second_victim,
+                site,
                 ws,
+                second_journal["resource_id"],
             )
-            manifest_rows = await owner.fetchval(
-                "SELECT count(*) FROM control.review_operation_manifest"
-                " WHERE workspace_id = $1",
-                ws,
-            )
-            workspace_row = await owner.fetchrow(
-                "SELECT status, review_snapshot_id FROM control.workspace"
-                " WHERE id = $1",
-                ws,
-            )
-        assert snapshot_rows == 0
-        assert manifest_rows == 0
-        assert workspace_row["review_snapshot_id"] is None
-        assert str(workspace_row["status"]) == "FREEZING"
+        try:
+            await _refuse(identities, "PROVENANCE_CONFLICT", "P0003")
+        finally:
+            async with _owner(database) as owner:
+                await owner.execute(
+                    "DELETE FROM control.proposed_effect_completion"
+                    " WHERE operation_id = $1",
+                    second_victim,
+                )
         # The pending session is untouched.
         assert await _public_u(database, ws) == pending
         # Legitimate recovery: the real claimed freeze job completes
-        # to REVIEW with the exact un-forged companion.
+        # to REVIEW with the exact un-forged companion (both provenance
+        # forms genuine).
         result = await run_freeze_job(
             pool, _worker_settings(database), dict(claimed[0])
         )
@@ -2606,12 +2950,14 @@ async def test_writer_refuses_forged_internal_record_for_mutation_operation(
         assert row is not None
         assert [str(o) for o in row["operation_ids"]] == sorted(str(o) for o in pending)
         stored_identities = _jsonb(row["completion_identities"])
-        assert len(stored_identities) == 2
-        # The stored companion carries ONLY the genuine nine-field
-        # records (this workspace has no trusted-internal operations).
-        assert all(
-            set(rec)
-            == {
+        assert len(stored_identities) == 3
+        stored_by_op = {rec["operation_id"]: rec for rec in stored_identities}
+        # The stored companion carries the genuine nine-field records
+        # for the two mutation operations and the genuine versioned
+        # producer record for the real producer operation.
+        for op_text in journaled_ops:
+            rec = stored_by_op[op_text]
+            assert set(rec) == {
                 "operation_id",
                 "family",
                 "principal_type",
@@ -2621,12 +2967,15 @@ async def test_writer_refuses_forged_internal_record_for_mutation_operation(
                 "resource_type",
                 "resource_id",
                 "disposition",
-            }
-            for rec in stored_identities
-        ), stored_identities
-        assert sorted(rec["operation_id"] for rec in stored_identities) == sorted(
-            identity["operation_id"] for identity in identities
-        )
+            }, rec
+        assert stored_by_op[str(producer_op)] == {
+            "operation_id": str(producer_op),
+            "record_version": "proposed-effect/v1",
+            "producer": "slaif_proposed_side_effect_create",
+            "principal_type": "service",
+            "principal_id": principal,
+            "resource_ids": sorted(str(r["id"]) for r in producer_rows),
+        }
         canonical = {
             "schema_version": "reviewed-operations/v1",
             "snapshot_id": str(bound),

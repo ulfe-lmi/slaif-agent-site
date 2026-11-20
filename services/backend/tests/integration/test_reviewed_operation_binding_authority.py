@@ -32,12 +32,14 @@ from __future__ import annotations
 import hashlib
 import importlib
 import json
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID, uuid4
 
 import asyncpg
 import pytest
 from conftest import AgentSiteDatabase
+from slaif_agent_site.agent_state.capability import generate_capability_token
 from slaif_agent_site.agent_state.foundation import (
     asyncpg_cow_reviewer,
     get_operation_dependencies,
@@ -54,6 +56,7 @@ from test_mutation_completion_authority import (
     _JOURNAL_TABLE,
     _M078,
 )
+from test_mutation_completion_semantics import _THEME_READ_SCOPES
 from test_real_human_accept import (
     _WORKER_KINDS,
     _dsn,
@@ -376,6 +379,38 @@ async def _seed_r2_site(
     return seeded, token, workspace_id, capability_id
 
 
+async def _workspace_scoped_token(
+    database: AgentSiteDatabase,
+    scopes: list[str],
+    workspace_id: UUID,
+) -> str:
+    """Real capability bound to the explicitly given workspace.
+
+    ``_capability_with_scopes`` binds to the seeded HUMAN workspace;
+    the whole-workspace provenance scan is workspace-local, so the
+    no_effect fixture must live in the SAME workspace as the
+    provenance call under test.
+    """
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(),
+        expected_database=database.name,
+    ) as owner:
+        token, public_id, digest = generate_capability_token()
+        await owner.execute(
+            """
+            INSERT INTO control.capability (
+                workspace_id, public_id, secret_digest, scopes, expires_at
+            ) VALUES ($1, $2, $3, $4::jsonb, $5)
+            """,
+            workspace_id,
+            public_id,
+            digest,
+            json.dumps(scopes),
+            datetime.now(UTC) + timedelta(minutes=30),
+        )
+    return token
+
+
 # ----------------------------------------------------------------------
 # 1. Companion table + journal boundary at the 079 head
 # ----------------------------------------------------------------------
@@ -385,10 +420,11 @@ async def _seed_r2_site(
 async def test_manifest_table_and_journal_denied_at_079_head(
     agent_site_database: AgentSiteDatabase,
 ) -> None:
-    """Owner-only companion table; 078 journal boundary unchanged at 079."""
+    """Owner-only companion + producer tables; journal boundary unchanged."""
     database = agent_site_database
     await _assert_079_head(database)
     assert len(_ROLES) == 10
+    producer_table = _M079._PRODUCER_TABLE
     table_probes = (
         (
             "SELECT",
@@ -414,6 +450,28 @@ async def test_manifest_table_and_journal_denied_at_079_head(
             f"DELETE FROM {_MANIFEST_TABLE} WHERE id = gen_random_uuid()",
         ),
         ("TRUNCATE", f"TRUNCATE {_MANIFEST_TABLE}"),
+        (
+            "PRODUCER SELECT",
+            f"SELECT count(*) FROM {producer_table}",
+        ),
+        (
+            "PRODUCER INSERT",
+            f"INSERT INTO {producer_table} "
+            "(operation_id, site_id, workspace_id, resource_id, producer,"
+            " principal_type, principal_id) VALUES (gen_random_uuid(),"
+            " gen_random_uuid(), gen_random_uuid(), gen_random_uuid(),"
+            " 'slaif_proposed_side_effect_create', 'service', 'probe')",
+        ),
+        (
+            "PRODUCER UPDATE",
+            f"UPDATE {producer_table} SET principal_id = 'probe'"
+            " WHERE operation_id = gen_random_uuid()",
+        ),
+        (
+            "PRODUCER DELETE",
+            f"DELETE FROM {producer_table} WHERE operation_id = gen_random_uuid()",
+        ),
+        ("PRODUCER TRUNCATE", f"TRUNCATE {producer_table}"),
     )
     journal_probes = (
         (
@@ -450,11 +508,25 @@ async def test_manifest_table_and_journal_denied_at_079_head(
                 " WHERE a.grantee = 0 AND a.privilege_type = $1)"
                 " FROM pg_class p JOIN pg_namespace n"
                 " ON n.oid = p.relnamespace"
-                " WHERE n.nspname = 'control'"
-                " AND p.relname = 'review_operation_manifest'",
+                " WHERE n.nspname = 'control' AND p.relname = $2",
                 privilege,
+                "review_operation_manifest",
             )
             assert public_granted is False, (privilege, "PUBLIC table grant")
+            producer_public = await owner.fetchval(
+                "SELECT EXISTS ("
+                "SELECT 1 FROM aclexplode(p.relacl) a"
+                " WHERE a.grantee = 0 AND a.privilege_type = $1)"
+                " FROM pg_class p JOIN pg_namespace n"
+                " ON n.oid = p.relnamespace"
+                " WHERE n.nspname = 'control' AND p.relname = $2",
+                privilege,
+                "proposed_effect_completion",
+            )
+            assert producer_public is False, (
+                privilege,
+                "PUBLIC producer-table grant",
+            )
     # Trusted owner reads the actual outcome.
     async with await _owner(database) as owner:
         assert (
@@ -467,6 +539,9 @@ async def test_manifest_table_and_journal_denied_at_079_head(
         )
         assert await owner.fetchval(f"SELECT count(*) FROM {_MANIFEST_TABLE}") == 0, (
             "denied probes must leave the companion table empty"
+        )
+        assert await owner.fetchval(f"SELECT count(*) FROM {producer_table}") == 0, (
+            "denied probes must leave the producer table empty"
         )
         assert await owner.fetchval(f"SELECT count(*) FROM {_JOURNAL_TABLE}") == 0
 
@@ -782,8 +857,10 @@ async def test_r2_discarded_history_provenance(
             "disposition",
         }
         # TRUSTED NEGATIVE FIXTURE (labeled): MISMATCH A's family-event
-        # counterpart (its journal is retained).  The whole-workspace
-        # scan must refuse even though A is outside U.
+        # counterpart (its journal is retained).  A completed journal
+        # row whose required same-family counterpart is missing or
+        # binding-disagreed is a broken event relation - the
+        # whole-workspace scan must refuse even though A is outside U.
         async with await _owner(database) as owner:
             original_resource = await owner.fetchval(
                 "SELECT resource_id FROM audit.agent_mutation WHERE operation_id = $1",
@@ -797,8 +874,8 @@ async def test_r2_discarded_history_provenance(
         try:
             with pytest.raises(asyncpg.PostgresError) as err:
                 await _run_provenance(worker, workspace_id, site_id, [op_b])
-            assert err.value.sqlstate == "P0003"
-            assert "PROVENANCE_CONFLICT" in err.value.message
+            assert err.value.sqlstate == "P0001"
+            assert "PROVENANCE_EVENT_MISMATCH" in err.value.message
         finally:
             async with await _owner(database) as owner:
                 await owner.execute(
@@ -837,14 +914,37 @@ async def test_r2_discarded_history_provenance(
                     original_digest,
                     workspace_id,
                 )
-        # Boundary pin (honest): DELETING A's same-family counterpart
-        # while retaining its journal is UNKNOWN history by design, not
-        # a conflict - the provenance never demands a nonexistent fact.
+        # TRUSTED NEGATIVE FIXTURE (labeled): DELETE A's same-family
+        # counterpart while retaining its genuine 078 journal.  A is a
+        # KNOWN prospective completed record (the journal survives), so
+        # the missing event is an ORPHAN - never unknown legacy
+        # history: the whole-workspace scan must refuse even though A
+        # is outside U.
         async with await _owner(database) as owner:
+            a_event = await owner.fetchrow(
+                "SELECT * FROM audit.agent_mutation WHERE operation_id = $1",
+                op_a,
+            )
+            assert a_event is not None
             await owner.execute(
                 "DELETE FROM audit.agent_mutation WHERE operation_id = $1",
                 op_a,
             )
+        try:
+            with pytest.raises(asyncpg.PostgresError) as err:
+                await _run_provenance(worker, workspace_id, site_id, [op_b])
+            assert err.value.sqlstate == "P0001"
+            assert "PROVENANCE_EVENT_MISMATCH" in err.value.message
+        finally:
+            async with await _owner(database) as owner:
+                await owner.execute(
+                    "INSERT INTO audit.agent_mutation ({}) VALUES ({})".format(
+                        ", ".join(a_event.keys()),
+                        ", ".join(f"${i}" for i in range(1, len(a_event) + 1)),
+                    ),
+                    *a_event.values(),
+                )
+        # Restored: the legal case passes again.
         await _run_provenance(worker, workspace_id, site_id, [op_b])
         # Boundary pin (honest): a lone pre-078 completed reservation
         # with NO journal row anywhere in the site is old UNKNOWN
@@ -866,6 +966,157 @@ async def test_r2_discarded_history_provenance(
                 op_old,
                 uuid4(),
             )
+        await _run_provenance(worker, workspace_id, site_id, [op_b])
+        # Genuine no_effect OUTSIDE U (real HTTP): an explicit agent
+        # no-effect carries a 078 journal row with disposition
+        # no_effect, NO COW pending row and NO family event - the
+        # whole-workspace scan must accept the legal contract.
+        # Bound to the AGENT workspace under test: the whole-workspace
+        # provenance scan is workspace-local, so the no_effect journal
+        # row must sit in THIS workspace to be scanned (legal
+        # acceptance and forged-event refusal alike).
+        theme_token = await _workspace_scoped_token(
+            database, _THEME_READ_SCOPES, workspace_id
+        )
+        op_ne: UUID
+        async with _agent_client(database) as client:
+            no_effect = await client.patch(
+                "/api/agent/v1/theme",
+                headers={
+                    "Authorization": f"Bearer {theme_token}",
+                    "Idempotency-Key": "r2-no-effect-key",
+                },
+                json={"expected_row_version": 1, "palette": {"preset": "ocean"}},
+            )
+            assert no_effect.status_code == 200, no_effect.text
+            body = no_effect.json()
+            assert body["action"] is None
+            op_ne = UUID(body["operation_id"])
+        async with await _owner(database) as owner:
+            ne_journal = await owner.fetchrow(_JOURNAL_ROW_SQL, op_ne)
+            assert ne_journal is not None, "no_effect must be journaled"
+            assert ne_journal["disposition"] == "no_effect"
+            assert ne_journal["family"] == "agent"
+            assert (
+                await owner.fetchval(
+                    "SELECT count(*) FROM audit.agent_mutation WHERE operation_id = $1",
+                    op_ne,
+                )
+                == 0
+            ), "no_effect must carry no family event"
+            ne_operations, _ne_deps = await _public_universe(database, workspace_id)
+            assert op_ne not in set(ne_operations), (
+                "no_effect writes no COW row and stays out of U"
+            )
+        await _run_provenance(worker, workspace_id, site_id, [op_b])
+        # TRUSTED NEGATIVE FIXTURE (labeled): a family event for the
+        # no_effect operation contradicts the contract (no_effect
+        # completes the reservation without a mutation audit row).
+        async with await _owner(database) as owner:
+            ne_full = await owner.fetchrow(
+                "SELECT * FROM audit.mutation_completion WHERE operation_id = $1",
+                op_ne,
+            )
+            assert ne_full is not None
+            await owner.execute(
+                "INSERT INTO audit.agent_mutation "
+                "(operation_id, capability_id, workspace_id, site_id, "
+                " resource_type, resource_id, request_digest, "
+                " response_status) "
+                "VALUES ($1,$2,$3,$4,$5,$6,$7,200)",
+                ne_full["operation_id"],
+                ne_full["capability_id"],
+                ne_full["workspace_id"],
+                ne_full["site_id"],
+                ne_full["resource_type"],
+                ne_full["resource_id"],
+                ne_full["request_digest"],
+            )
+        try:
+            with pytest.raises(asyncpg.PostgresError) as err:
+                await _run_provenance(worker, workspace_id, site_id, [op_b])
+            assert err.value.sqlstate == "P0001"
+            assert "PROVENANCE_EVENT_MISMATCH" in err.value.message
+        finally:
+            async with await _owner(database) as owner:
+                await owner.execute(
+                    "DELETE FROM audit.agent_mutation WHERE operation_id = $1",
+                    op_ne,
+                )
+        await _run_provenance(worker, workspace_id, site_id, [op_b])
+        # TRUSTED NEGATIVE FIXTURE (labeled): a no_effect completion
+        # for an operation INSIDE U is impossible through the real
+        # flow (no_effect writes no COW row); a no_effect journal row
+        # inside the live universe is corrupted provenance and must
+        # fail closed.  Swap B's completed journal (labeled; the
+        # reservation stays coherent) and restore it after.
+        async with await _owner(database) as owner:
+            b_full = await owner.fetchrow(
+                "SELECT * FROM audit.mutation_completion WHERE operation_id = $1",
+                op_b,
+            )
+            b_event = await owner.fetchrow(
+                "SELECT * FROM audit.agent_mutation WHERE operation_id = $1",
+                op_b,
+            )
+            assert b_full is not None and b_event is not None
+            await owner.execute(
+                "DELETE FROM audit.mutation_completion WHERE operation_id = $1",
+                op_b,
+            )
+            await owner.execute(
+                "DELETE FROM audit.agent_mutation WHERE operation_id = $1",
+                op_b,
+            )
+            await owner.execute(
+                "INSERT INTO audit.mutation_completion "
+                "(operation_id, family, site_id, workspace_id,"
+                " capability_id, human_user_id, request_identity,"
+                " request_digest, resource_type, resource_id,"
+                " disposition, schema_version, occurred_at)"
+                " VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)",
+                b_full["operation_id"],
+                b_full["family"],
+                b_full["site_id"],
+                b_full["workspace_id"],
+                b_full["capability_id"],
+                b_full["human_user_id"],
+                b_full["request_identity"],
+                b_full["request_digest"],
+                b_full["resource_type"],
+                b_full["resource_id"],
+                "no_effect",
+                b_full["schema_version"],
+                b_full["occurred_at"],
+            )
+        try:
+            with pytest.raises(asyncpg.PostgresError) as err:
+                await _run_provenance(worker, workspace_id, site_id, [op_b])
+            assert err.value.sqlstate == "P0001"
+            assert "PROVENANCE_EVENT_MISMATCH" in err.value.message
+        finally:
+            async with await _owner(database) as owner:
+                await owner.execute(
+                    "DELETE FROM audit.mutation_completion WHERE operation_id = $1",
+                    op_b,
+                )
+                await owner.execute(
+                    "INSERT INTO audit.mutation_completion "
+                    "(operation_id, family, site_id, workspace_id,"
+                    " capability_id, human_user_id, request_identity,"
+                    " request_digest, resource_type, resource_id,"
+                    " disposition, schema_version, occurred_at)"
+                    " VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)",
+                    *tuple(b_full.values()),
+                )
+                await owner.execute(
+                    "INSERT INTO audit.agent_mutation ({}) VALUES ({})".format(
+                        ", ".join(b_event.keys()),
+                        ", ".join(f"${i}" for i in range(1, len(b_event) + 1)),
+                    ),
+                    *b_event.values(),
+                )
+        # Restored: the legal case passes again.
         await _run_provenance(worker, workspace_id, site_id, [op_b])
         # A missing journal row INSIDE U fails closed.
         with pytest.raises(asyncpg.PostgresError) as err:

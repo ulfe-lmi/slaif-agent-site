@@ -508,7 +508,11 @@ async def test_fixed_production_logins_run_public_editor_http_chain(
                 EDITOR_LOGIN,
             )
             assert [tuple(row) for row in grants] == [
-                (CONTROL_LOGIN, False, False),
+                # 079_001: the control role holds direct content USAGE
+                # for resolution only (the public COW session's
+                # qualified trusted producer call); the INHERIT login
+                # inherits it, with no content table SELECT.
+                (CONTROL_LOGIN, True, False),
                 (EDITOR_LOGIN, True, False),
             ]
     finally:

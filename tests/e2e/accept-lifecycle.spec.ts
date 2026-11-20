@@ -384,6 +384,92 @@ test.describe("accept lifecycle (083/1)", () => {
       1,
     );
 
+    // ------------------------------------------------- B6 companion-less
+    // Labeled trusted negative fixture (spec-owned row): removing the
+    // immutable reviewed-operations companion turns this into a
+    // historical companion-less snapshot.  The review surface must then
+    // explain the ineligibility with the existing discard /
+    // fresh-workspace guidance and render NO accept control (the hidden
+    // control alone does not meet R4).  The exact row bytes are restored
+    // afterwards; the real accept below proves the restore.
+    const manifestRow = psql(
+      project,
+      `SELECT id, snapshot_id, site_id, workspace_id, schema_version,
+              snapshot_digest, manifest_digest,
+              array_to_string(operation_ids, ','),
+              encode(convert_to(dependency_pairs::text, 'UTF8'), 'hex'),
+              encode(convert_to(completion_identities::text, 'UTF8'), 'hex'),
+              created_at
+         FROM control.review_operation_manifest
+        WHERE workspace_id = '${workspaceId}'`,
+    );
+    const manifestFields = manifestRow.split("\t");
+    expect(manifestFields.length).toBe(11);
+    const [
+      companionId,
+      companionSnapshotId,
+      companionSiteId,
+      companionWorkspaceId,
+      companionSchemaVersion,
+      companionSnapshotDigest,
+      companionManifestDigest,
+      companionOperationIds,
+      companionDependencyPairsHex,
+      companionIdentitiesHex,
+      companionCreatedAt,
+    ] = manifestFields;
+    expect(companionId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(companionWorkspaceId).toBe(workspaceId);
+    expect(companionManifestDigest).toMatch(/^[0-9a-f]{64}$/);
+    psql(
+      project,
+      `DELETE FROM control.review_operation_manifest WHERE id = '${companionId}'`,
+    );
+    await page.reload();
+    await expect(
+      page.getByText("This frozen snapshot has no reviewed-operations companion", {
+        exact: false,
+      }),
+    ).toBeVisible();
+    await expect(
+      page.getByText(
+        "create a fresh workspace, re-apply the changes, and freeze again",
+        { exact: false },
+      ),
+    ).toBeVisible();
+    expect(await acceptButton.count()).toBe(0);
+    // The existing discard remedy stays available (honest guidance).
+    expect(await page.getByRole("button", { name: /discard|publish/i }).count()).toBe(
+      1,
+    );
+    // Restore the spec-owned companion row byte-exactly.
+    psql(
+      project,
+      `INSERT INTO control.review_operation_manifest
+         (id, snapshot_id, site_id, workspace_id, schema_version,
+          snapshot_digest, manifest_digest, operation_ids,
+          dependency_pairs, completion_identities, created_at)
+       VALUES ('${companionId}', '${companionSnapshotId}',
+               '${companionSiteId}', '${companionWorkspaceId}',
+               '${companionSchemaVersion}', '${companionSnapshotDigest}',
+               '${companionManifestDigest}',
+               ('{' || '${companionOperationIds}' || '}')::uuid[],
+               convert_from(decode('${companionDependencyPairsHex}', 'hex'),
+                            'UTF8')::jsonb,
+               convert_from(decode('${companionIdentitiesHex}', 'hex'),
+                            'UTF8')::jsonb,
+               '${companionCreatedAt}'::timestamptz)`,
+    );
+    expect(
+      psql(
+        project,
+        `SELECT manifest_digest FROM control.review_operation_manifest
+          WHERE id = '${companionId}'`,
+      ),
+    ).toBe(companionManifestDigest);
+    await page.reload();
+    await expect(acceptButton).toBeVisible();
+
     // Confirmation requires the acknowledgement (default unchecked).
     await acceptButton.click();
     const dialog = page.getByRole("dialog");

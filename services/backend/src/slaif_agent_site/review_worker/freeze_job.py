@@ -48,11 +48,20 @@ _PHASE_ERROR_CODES = {
     "evidence": "SNAPSHOT_MATERIALIZE_FAILED",
     "materialize": "SNAPSHOT_MATERIALIZE_FAILED",
     "operations": "SNAPSHOT_COMPLETE_FAILED",
+    "provenance": "SNAPSHOT_COMPLETE_FAILED",
     "complete": "SNAPSHOT_COMPLETE_FAILED",
 }
 _DOMAIN_ERROR_CODES = {
     "REVIEW_WORKSPACE_NOT_FOUND": "STATE_DRIFT",
     "REVIEW_SITE_NOT_ACTIVE": "STATE_DRIFT",
+    # 083/12-b whole-workspace provenance refusals (trusted definer
+    # check, typed SQLSTATE P0001/P0003 messages): a stable terminal
+    # refusal - retry can never heal corrupted provenance.
+    "PROVENANCE_INPUT_INVALID": "PROVENANCE_VERIFICATION_FAILED",
+    "PROVENANCE_MISSING": "PROVENANCE_VERIFICATION_FAILED",
+    "PROVENANCE_RESERVATION_MISMATCH": "PROVENANCE_VERIFICATION_FAILED",
+    "PROVENANCE_EVENT_MISMATCH": "PROVENANCE_VERIFICATION_FAILED",
+    "PROVENANCE_CONFLICT": "PROVENANCE_VERIFICATION_FAILED",
     # Materializer (v2) semantic failures: the frozen capture itself is
     # invalid/unsupported/over budget.
     "REVIEW_SNAPSHOT_OVER_BUDGET": "SNAPSHOT_OVER_BUDGET",
@@ -279,6 +288,22 @@ async def run_freeze_job(
                     )
                     dependencies = await get_operation_dependencies(
                         executor, workspace_id, schema="content"
+                    )
+                    # 083/12-b: the COMPLETE whole-workspace provenance
+                    # check in this SAME locked freeze transaction,
+                    # under the lock, BEFORE any U identity is used
+                    # (independent of the U filtering): every journal /
+                    # reservation / event / producer fact of the
+                    # workspace must be coherent, or the freeze is a
+                    # stable terminal refusal with no partial state.
+                    # The trusted completion definer re-enforces the
+                    # same check independently.
+                    phase = "provenance"
+                    await connection.fetchval(
+                        "SELECT control.slaif_review_operation_provenance($1, $2, $3)",
+                        workspace_id,
+                        site_id,
+                        list(operations),
                     )
                     identities_doc = await connection.fetchval(
                         "SELECT control.slaif_review_operation_identities($1, $2, $3)",

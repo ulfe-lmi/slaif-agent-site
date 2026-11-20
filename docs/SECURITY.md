@@ -271,13 +271,18 @@ The reviewed-operation binding boundary (revision `079_001`, increment
 immutable reviewed-operations/v1 companion manifest — the exact public
 operation IDs, the actual foundation dependency pairs, and one
 verified provenance record for every member of the pending set U:
-the trusted 078 completion identity for journaled mutation
-operations, or the typed trusted-internal record (operation, bound
-internal resource types, disposition) for operations whose
-surviving COW change rows are confined to the trusted-internal
-tables (proposed side effects, which carry no 078 completion and no
-public API) — stored atomically with the snapshot by the trusted
-completion function, and
+the trusted 078 completion identity for ordinary journaled mutation
+operations (Agent, HUMAN Editor, Media), or the versioned
+`proposed-effect/v1` trusted producer record for the Control-only
+proposed-side-effect producer — a product-owned prospective
+completion row (`control.proposed_effect_completion`) that the real
+trusted producer writes in the same transaction as its COW insert,
+binding the server COW operation, the stored site/workspace, the
+constant producer name, the service principal (a fact the caller
+cannot select), and the exact created resource ids; the record is
+derived field-for-field from that row and is never inferred from
+private COW change-row membership — stored atomically with the
+snapshot by the trusted completion function, and
 the human accept entry point requires an explicit approval binding the
 snapshot ID to both the stored snapshot digest and the manifest digest.
 The reviewer transaction re-verifies the binding against the live
@@ -292,7 +297,12 @@ control and review-worker, the identity, provenance, and
 companion-completion functions to review-worker); no runtime role
 gains companion or journal table SELECT or DML, and the standalone
 companion-less completion loses its last online EXECUTE so no online
-role can create a companion-less snapshot again. The manifest is a
+role can create a companion-less snapshot again. At and after this
+head the control role additionally holds direct content-schema USAGE
+for resolution only, so the Control process can resolve the public
+COW session's qualified trusted producer call; the privilege
+reconciliation demands that usage only at or after the 079 head, and
+no content table, sequence, or CREATE grant is added. The manifest is a
 bounded approval receipt, not a full semantic graph, row history, or
 causal record; a companion-less historical snapshot remains readable
 but can no longer be accepted at this head (discard and re-freeze is
