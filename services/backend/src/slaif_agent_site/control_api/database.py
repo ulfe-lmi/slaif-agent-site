@@ -87,7 +87,10 @@ HUMAN_AGENT_WORKSPACE_FREEZE_SQL = (
     "SELECT * FROM control.slaif_human_agent_workspace_freeze($1,$2,$3)"
 )
 HUMAN_AGENT_WORKSPACE_ACCEPT_SQL = (
-    "SELECT * FROM control.slaif_human_agent_workspace_accept($1,$2,$3,$4,$5)"
+    "SELECT * FROM control.slaif_human_agent_workspace_accept($1,$2,$3,$4,$5,$6)"
+)
+HUMAN_AGENT_WORKSPACE_MANIFEST_READ_SQL = (
+    "SELECT control.slaif_review_operation_manifest_read($1)"
 )
 HUMAN_AGENT_WORKSPACE_DISCARD_SQL = (
     "SELECT * FROM control.slaif_human_agent_workspace_discard($1,$2,$3)"
@@ -574,6 +577,20 @@ class ControlDatabase:
         )
         return rows[0] if rows else None
 
+    async def human_agent_workspace_manifest_read(self, snapshot_id: Any) -> Any:
+        """The immutable companion manifest for one snapshot (NULL legacy)."""
+        rows = await self._human_agent_call(
+            HUMAN_AGENT_WORKSPACE_MANIFEST_READ_SQL, snapshot_id
+        )
+        if not rows:
+            return None
+        document = rows[0][0]
+        if isinstance(document, (str, bytes)):
+            if isinstance(document, bytes):
+                document = document.decode("utf-8")
+            return json.loads(document)
+        return document
+
     async def human_agent_workspace_discard(self, *arguments: Any) -> Any:
         rows = await self._human_agent_call(
             HUMAN_AGENT_WORKSPACE_DISCARD_SQL, *arguments
@@ -594,8 +611,18 @@ class ControlDatabase:
             return None
         document = rows[0][0]
         if isinstance(document, (str, bytes)):
-            return cast("dict[str, Any]", json.loads(document))
-        return cast("dict[str, Any]", document)
+            document = cast("dict[str, Any]", json.loads(document))
+        else:
+            document = cast("dict[str, Any]", document)
+        # 083/12: the review document carries the immutable companion
+        # manifest (NULL for a historical companion-less snapshot) so
+        # the human approval can name both digests.
+        snapshot_section = document.get("snapshot")
+        if isinstance(snapshot_section, dict) and "id" in snapshot_section:
+            document["manifest"] = await self.human_agent_workspace_manifest_read(
+                snapshot_section["id"]
+            )
+        return document
 
     async def human_agent_workspace_create_idempotent(self, *arguments: Any) -> Any:
         rows = await self._human_agent_call(

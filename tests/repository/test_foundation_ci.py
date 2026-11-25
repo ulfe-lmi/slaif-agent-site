@@ -9,7 +9,7 @@ Proves, from the workflow source without any YAML parser dependency:
   pytest command (Q; no -k selection), making B 45+Q, and then the
   workspace media/role/freeze/promotion/rollback command (M; ten exact
   module paths, no -k selection), making B 45+Q+M, and then the
-  trusted mutation-completion command (TC; five exact module paths,
+  trusted mutation-completion command (TC; seven exact module paths,
   no -k selection), making B 45+Q+M+TC;
 - the five exact required names are supplied by an aggregator that
   depends on BOTH child job IDs with JOB-level always();
@@ -102,6 +102,8 @@ _COMPLETION = [
     "test_trusted_completion_late_failure.py",
     "test_trusted_completion_upgrade_preservation.py",
     "test_trusted_completion_producer_families.py",
+    "test_reviewed_operation_binding.py",
+    "test_reviewed_operation_binding_authority.py",
 ]
 COMPLETION = "uv run --frozen pytest " + " ".join(
     f"services/backend/tests/integration/{name}" for name in _COMPLETION
@@ -458,6 +460,18 @@ class FoundationCiSplitTestCase(unittest.TestCase):
         needle = (
             "\n          services/backend/tests/integration/"
             "test_trusted_completion_producer_families.py"
+        )
+        self.assertEqual(self.text.count(needle), 1)
+        mutated = self.text.replace(needle, "", 1)
+        self.assertNotEqual(mutated, self.text)
+        with self.assertRaises(AssertionError):
+            _assert_exact_commands(mutated)
+
+    def test_mutation_omitted_reviewed_operation_binding_command_fails(self) -> None:
+        _assert_exact_commands(self.text)
+        needle = (
+            "\n          services/backend/tests/integration/"
+            "test_reviewed_operation_binding.py"
         )
         self.assertEqual(self.text.count(needle), 1)
         mutated = self.text.replace(needle, "", 1)

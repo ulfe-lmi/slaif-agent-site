@@ -745,6 +745,7 @@ export async function acceptWorkspace(
   body: {
     snapshot_id: string;
     digest: string;
+    manifest_digest: string;
     acknowledge_summary: true;
   },
 ): Promise<AcceptWorkspaceResult> {

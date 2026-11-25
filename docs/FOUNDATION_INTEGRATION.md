@@ -67,7 +67,8 @@ wrapping, the following documented `agentcow.postgres` surface:
   `get_operation_dependencies`, and `get_cow_conflicts`;
 - typed session/reviewer surfaces and results: `CowSession`, `CowReviewer`,
   `PromotionResult`, `DiscardResult`, `CowConflict`, `CowConflictError`,
-  `CowPostgresConfig`, and `CowPrivilegeValidation`.
+  `CowPostgresConfig`, `CowPrivilegeValidation`, and
+  `CowPromotionStateError`.
 
 Whole-session and selective promotion/discard are methods on the public
 `CowReviewer` scope. The adapter does not change its transaction ownership or

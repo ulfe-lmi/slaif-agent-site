@@ -8,11 +8,16 @@ import { CspModal } from "./csp-modal";
 
 /**
  * 083/1 real human accept (R4). The control is present ONLY when the read
- * model reports status='REVIEW' with a COMPLETE snapshot and no canonical
- * drift; the server-side checks (R3.2.4) remain the authority.  The
+ * model reports status='REVIEW' with a COMPLETE snapshot, no canonical
+ * drift, and the immutable reviewed-operations companion manifest (the
+ * 083/12 binding); the server-side checks remain the authority.  A
+ * historical companion-less snapshot (frozen before the binding) renders
+ * an explicit ineligibility explanation with the existing
+ * discard / fresh-workspace guidance instead of a hidden control.  The
  * confirmation dialog requires the summary acknowledgement; after the 202
  * the existing workspace read route is polled and the transient/terminal
- * states render with stable human-facing text.  No discard control exists.
+ * states render with stable human-facing text.  No discard control exists
+ * here (the sibling DiscardAction carries the remedy).
  */
 
 const POLL_INTERVAL_MS = 2000;
@@ -45,6 +50,8 @@ export function AcceptAction({
   const status = document.metadata.workspace.status;
   const snapshot = document.snapshot;
   const digest = snapshot.digest;
+  const manifest = document.manifest;
+  const manifestDigest = manifest !== null ? manifest.manifest_digest : null;
   const [ack, setAck] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -100,12 +107,16 @@ export function AcceptAction({
 
   const submit = useCallback(async () => {
     if (!ack || submitting) return;
+    // A historical companion-less snapshot can no longer be accepted
+    // at this head; the dialog only renders when the manifest exists.
+    if (manifestDigest === null) return;
     setSubmitting(true);
     setError(null);
     try {
       await acceptWorkspace(siteId, workspaceId, {
         snapshot_id: snapshot.id,
         digest,
+        manifest_digest: manifestDigest,
         acknowledge_summary: true,
       });
       // The observed state replaces the dialog subtree (CspModal is
@@ -119,12 +130,47 @@ export function AcceptAction({
     } finally {
       setSubmitting(false);
     }
-  }, [ack, submitting, siteId, workspaceId, snapshot.id, digest, pollWorkspace]);
+  }, [
+    ack,
+    submitting,
+    siteId,
+    workspaceId,
+    snapshot.id,
+    digest,
+    manifestDigest,
+    pollWorkspace,
+  ]);
 
   const canAccept =
     status === "REVIEW" &&
     snapshot.status === "COMPLETE" &&
-    document.drift.equal === true;
+    document.drift.equal === true &&
+    manifest !== null;
+
+  // Historical companion-less snapshot: frozen before the
+  // reviewed-operation binding this head requires.  The accept control is
+  // lawfully absent; explain the ineligibility and the existing remedies
+  // (the sibling discard control, or a fresh workspace that is frozen
+  // again) without promising a re-freeze of this terminal-in-place
+  // workspace.
+  if (
+    status === "REVIEW" &&
+    snapshot.status === "COMPLETE" &&
+    document.drift.equal === true &&
+    manifest === null
+  ) {
+    return (
+      <StatusPanel>
+        <span role="status">
+          This frozen snapshot has no reviewed-operations companion: it was frozen
+          before the reviewed-operation binding this deployment requires, so it cannot
+          be accepted here. The frozen content stays available for inspection above. To
+          move forward, use the discard control below to drop this review, or create a
+          fresh workspace, re-apply the changes, and freeze again.
+        </span>
+      </StatusPanel>
+    );
+  }
 
   if (canAccept) {
     const polling = observed !== null;
@@ -154,6 +200,12 @@ export function AcceptAction({
             <>
               <p>
                 Snapshot digest: <code title={digest}>{shortDigest(digest)}</code>
+              </p>
+              <p>
+                Manifest digest:{" "}
+                <code title={manifestDigest ?? undefined}>
+                  {manifestDigest !== null ? shortDigest(manifestDigest) : "\u2014"}
+                </code>
               </p>
               <label className="review-accept-ack">
                 <input

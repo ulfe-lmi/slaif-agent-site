@@ -20,7 +20,7 @@ Coverage (bounded A7 slice; full A7 preservation stays primary's):
    set = EXECUTE-success probe, not a publication proof); every ordinary
    non-owner/non-worker role is refused with SQLSTATE 42501; the dropped
    creator/mark are absent.
-2. drop the helper at the current head (078): actual current-head
+2. drop the helper at the current head (079): actual current-head
    privilege validation refuses (missing-required-object) and the real
    reconcile readiness path raises.
 3. an ACTUAL 076-phase database (existing migration harness stopped at
@@ -157,8 +157,8 @@ async def test_077_fresh_hardened_reviewer_only_publicize(
 ) -> None:
     database = agent_site_database
     await upgrade(database.settings)
-    await reconcile(database.settings)  # harden + apply + verify (ready at 078 head)
-    assert await _head(database) == "078_001"
+    await reconcile(database.settings)  # harden + apply + verify (ready at 079 head)
+    assert await _head(database) == "079_001"
 
     # the legacy creator/mark were dropped by 077 (exact identities)
     assert await _function_shape(database, _CREATOR_IDENTITY) is None
@@ -294,10 +294,10 @@ async def test_076_historical_phase_coherent_then_upgrades_to_078(
     assert not [v for v in violations if "slaif_media" in v]
     assert not [v for v in violations if "publicize" in v]
 
-    # the real upgrade path then reaches the ready current head (078_001)
+    # the real upgrade path then reaches the ready current head (079_001)
     await upgrade(database.settings)
     await reconcile(database.settings)
-    assert await _head(database) == "078_001"
+    assert await _head(database) == "079_001"
     assert await _function_shape(database, _PUBLICIZE_IDENTITY) is not None
     assert await _function_shape(database, _LEGACY_MARK_IDENTITY) is None
     assert await _function_shape(database, _CREATOR_IDENTITY) is None

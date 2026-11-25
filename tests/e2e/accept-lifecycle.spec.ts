@@ -306,6 +306,7 @@ async function acceptBody(
 ): Promise<{
   snapshot_id: string;
   digest: string;
+  manifest_digest: string;
   acknowledge_summary: true;
 }> {
   const response = await page.request.get(
@@ -314,10 +315,12 @@ async function acceptBody(
   expect(response.status()).toBe(200);
   const document = (await response.json()) as {
     snapshot: { id: string; digest: string };
+    manifest: { manifest_digest: string };
   };
   return {
     snapshot_id: document.snapshot.id,
     digest: digestOverride ?? document.snapshot.digest,
+    manifest_digest: document.manifest.manifest_digest,
     acknowledge_summary: true,
   };
 }
@@ -380,6 +383,92 @@ test.describe("accept lifecycle (083/1)", () => {
     expect(await page.getByRole("button", { name: /discard|publish/i }).count()).toBe(
       1,
     );
+
+    // ------------------------------------------------- B6 companion-less
+    // Labeled trusted negative fixture (spec-owned row): removing the
+    // immutable reviewed-operations companion turns this into a
+    // historical companion-less snapshot.  The review surface must then
+    // explain the ineligibility with the existing discard /
+    // fresh-workspace guidance and render NO accept control (the hidden
+    // control alone does not meet R4).  The exact row bytes are restored
+    // afterwards; the real accept below proves the restore.
+    const manifestRow = psql(
+      project,
+      `SELECT id, snapshot_id, site_id, workspace_id, schema_version,
+              snapshot_digest, manifest_digest,
+              array_to_string(operation_ids, ','),
+              encode(convert_to(dependency_pairs::text, 'UTF8'), 'hex'),
+              encode(convert_to(completion_identities::text, 'UTF8'), 'hex'),
+              created_at
+         FROM control.review_operation_manifest
+        WHERE workspace_id = '${workspaceId}'`,
+    );
+    const manifestFields = manifestRow.split("|");
+    expect(manifestFields.length).toBe(11);
+    const [
+      companionId,
+      companionSnapshotId,
+      companionSiteId,
+      companionWorkspaceId,
+      companionSchemaVersion,
+      companionSnapshotDigest,
+      companionManifestDigest,
+      companionOperationIds,
+      companionDependencyPairsHex,
+      companionIdentitiesHex,
+      companionCreatedAt,
+    ] = manifestFields;
+    expect(companionId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(companionWorkspaceId).toBe(workspaceId);
+    expect(companionManifestDigest).toMatch(/^[0-9a-f]{64}$/);
+    psql(
+      project,
+      `DELETE FROM control.review_operation_manifest WHERE id = '${companionId}'`,
+    );
+    await page.reload();
+    await expect(
+      page.getByText("This frozen snapshot has no reviewed-operations companion", {
+        exact: false,
+      }),
+    ).toBeVisible();
+    await expect(
+      page.getByText(
+        "create a fresh workspace, re-apply the changes, and freeze again",
+        { exact: false },
+      ),
+    ).toBeVisible();
+    expect(await acceptButton.count()).toBe(0);
+    // The existing discard remedy stays available (honest guidance).
+    expect(await page.getByRole("button", { name: /discard|publish/i }).count()).toBe(
+      1,
+    );
+    // Restore the spec-owned companion row byte-exactly.
+    psql(
+      project,
+      `INSERT INTO control.review_operation_manifest
+         (id, snapshot_id, site_id, workspace_id, schema_version,
+          snapshot_digest, manifest_digest, operation_ids,
+          dependency_pairs, completion_identities, created_at)
+       VALUES ('${companionId}', '${companionSnapshotId}',
+               '${companionSiteId}', '${companionWorkspaceId}',
+               '${companionSchemaVersion}', '${companionSnapshotDigest}',
+               '${companionManifestDigest}',
+               ('{' || '${companionOperationIds}' || '}')::uuid[],
+               convert_from(decode('${companionDependencyPairsHex}', 'hex'),
+                            'UTF8')::jsonb,
+               convert_from(decode('${companionIdentitiesHex}', 'hex'),
+                            'UTF8')::jsonb,
+               '${companionCreatedAt}'::timestamptz)`,
+    );
+    expect(
+      psql(
+        project,
+        `SELECT manifest_digest FROM control.review_operation_manifest
+          WHERE id = '${companionId}'`,
+      ),
+    ).toBe(companionManifestDigest);
+    await page.reload();
+    await expect(acceptButton).toBeVisible();
 
     // Confirmation requires the acknowledgement (default unchecked).
     await acceptButton.click();
@@ -644,6 +733,24 @@ test.describe("accept lifecycle (083/1)", () => {
       snapshot_id: crypto.randomUUID(),
     });
     expect(unknownSnapshot.status).toBe(404);
+    // wrong manifest digest -> the SAME uniform 404 class (no oracle):
+    // the immutable companion must carry the exact named digest.
+    const wrongManifestDigest = (
+      "0".repeat(32) + body.manifest_digest.slice(32)
+    ).replace(/0/g, () => "f");
+    expect(wrongManifestDigest).not.toBe(body.manifest_digest);
+    const wrongManifest = await postAccept(page, siteId, workspaceId, {
+      ...body,
+      manifest_digest: wrongManifestDigest,
+    });
+    expect(wrongManifest.status).toBe(404);
+    // missing manifest digest -> the strict-body 422 class.
+    const manifestMissing = await postAccept(page, siteId, workspaceId, {
+      snapshot_id: body.snapshot_id,
+      digest: body.digest,
+      acknowledge_summary: true,
+    });
+    expect(manifestMissing.status).toBe(422);
     expect(await workspaceStatus(page, siteId, workspaceId)).toBe("REVIEW");
 
     // Agent capability token on the control accept route: uniform denial
@@ -661,16 +768,19 @@ test.describe("accept lifecycle (083/1)", () => {
     expect(agentPost.status()).toBe(401);
     expect(await workspaceStatus(page, siteId, workspaceId)).toBe("REVIEW");
 
-    // Strict body: acknowledge_summary=false / missing are rejected.
+    // Strict body: acknowledge_summary=false / missing are rejected
+    // (both digests present, so the ack field is the single variable).
     const ackFalse = await postAccept(page, siteId, workspaceId, {
       snapshot_id: body.snapshot_id,
       digest: body.digest,
+      manifest_digest: body.manifest_digest,
       acknowledge_summary: false,
     });
     expect(ackFalse.status).toBe(422);
     const ackMissing = await postAccept(page, siteId, workspaceId, {
       snapshot_id: body.snapshot_id,
       digest: body.digest,
+      manifest_digest: body.manifest_digest,
     });
     expect(ackMissing.status).toBe(422);
     expect(await workspaceStatus(page, siteId, workspaceId)).toBe("REVIEW");

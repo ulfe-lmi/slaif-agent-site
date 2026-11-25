@@ -3,8 +3,9 @@
 The A7 preservation slice of 083-10-a: a real released 076_001 baseline
 carries NONEMPTY canonical media (meaningful metadata + verified immutable
 bytes in the private and public store namespaces) and a GENUINE COMPLETE
-review-snapshot/v2 captured by the actual freeze worker over a meaningful
-site/composition/media.  The pending COW work is cleared by the REAL
+review-snapshot/v2 captured under the real freeze enqueue/claim job
+lifecycle through the released 076-era completion boundary over a
+meaningful site/composition/media.  The pending COW work is cleared by the REAL
 supported discard lifecycle (snapshot/media/evidence retained) BEFORE the
 normal physical 076 -> 077 upgrade, which must preserve:
 
@@ -41,10 +42,14 @@ Provenance and limits:
   OWNER fixture through the real store staging/publish interface plus one
   owner INSERT (bootstrap-grade setup data); the seed is never
   reviewer-publication proof;
-- the v2 snapshot is real worker-generated (real freeze constructor,
-  claim, run_freeze_job; real digest verified through the product
-  canonical-digest function; nonempty selected media closure) - no
-  hand-inserted snapshot rows or f*64 placeholder hashes;
+- the v2 snapshot is genuine at the released 076 completion boundary:
+  real freeze enqueue + worker claim, then the real trusted
+  materializer and the 076 head's own v2 completion definer in the
+  claimed freeze job's transaction (the CURRENT freeze worker carries
+  the 079 companion step and cannot run at the released 076 head);
+  real digest verified through the product canonical-digest function;
+  nonempty selected media closure - no hand-inserted snapshot rows or
+  f*64 placeholder hashes;
 - the pending COW edits (one Heading + two canonical Image references)
   are real agent COW operations through the public agentcow session +
   the real product component function;
@@ -72,9 +77,13 @@ from uuid import UUID, uuid4
 import pytest
 import slaif_agent_site.bootstrap.service as bootstrap_service
 from conftest import AgentSiteDatabase, AsyncpgExecutor
+from slaif_agent_site.agent_api.models import AgentCapabilityContext
 from slaif_agent_site.agent_state.foundation import (
-    asyncpg_cow_session,
     get_session_operations,
+)
+from slaif_agent_site.agent_state.mutations import (
+    execute_agent_mutation,
+    mutation_digest,
 )
 from slaif_agent_site.bootstrap.service import (
     BootstrapStateError,
@@ -82,22 +91,27 @@ from slaif_agent_site.bootstrap.service import (
     reconcile,
     upgrade,
 )
+from slaif_agent_site.content_model.composition_models import (
+    AgentCreateCompositionNodeRequest,
+)
 from slaif_agent_site.db.connections import owner_connection
 from slaif_agent_site.db.migrations import run_migration
 from slaif_agent_site.media_service.store import MediaStore, StagedMedia
+from slaif_agent_site.review_worker import snapshot
 from slaif_agent_site.review_worker.discard_job import run_discard_job
 from test_agent_mutations import _expected_head_override
 from test_freeze_review_snapshot import (
     _control_call,
     _create_workspace,
     _digest_is_valid,
-    _freeze_claim_run,
+    _freeze_enqueue_claim,
     _rt_seed_baseline,
     _snapshot_row,
     _worker_call,
     _worker_pool,
     _worker_settings,
 )
+from test_real_human_accept import _CowPoolAdapter
 
 _PRIVATE_PNG = b"\x89PNG\r\n\x1a\na7-preserve-canonical-private"
 _PUBLIC_PNG = b"\x89PNG\r\n\x1a\na7-preserve-canonical-public"
@@ -221,30 +235,71 @@ async def _cow_component_create(
     component_type: str,
     props: dict[str, Any],
 ) -> UUID:
-    """One real agent COW component create on the given workspace."""
+    """One real agent COW component create on the given workspace.
 
+    Product mutation executor: the pending operation carries its real
+    078 completion journal row, which the 083/12 companion-manifest
+    identity binding reads."""
+
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        capability = await owner.fetchrow(
+            "SELECT created_at, expires_at, scopes FROM control.capability "
+            "WHERE id = $1",
+            capability_id,
+        )
+        delegator_id = await owner.fetchval(
+            "SELECT delegator_id FROM control.workspace WHERE id = $1",
+            workspace_id,
+        )
+    assert capability is not None
+    context = AgentCapabilityContext(
+        capability_id=capability_id,
+        site_id=site_id,
+        workspace_id=workspace_id,
+        delegator_id=UUID(str(delegator_id)),
+        scopes=frozenset(str(scope) for scope in capability["scopes"]),
+        created_at=capability["created_at"],
+        expires_at=capability["expires_at"],
+    )
+    body = {
+        "component_type": component_type,
+        "parent_id": str(parent_id),
+        "slot_key": "default",
+        "props": dict(props),
+    }
     agent_pool = await database.role_pool("slaif_agent_runtime")
     try:
-        async with asyncpg_cow_session(
-            agent_pool, session_id=workspace_id, operation_id=uuid4()
-        ) as cow:
-            await cow.native.execute(
-                "SELECT set_config('app.capability_id', $1, true)",
-                str(capability_id),
-            )
-            created = await cow.native.fetchrow(
-                "SELECT * FROM content.slaif_agent_component_create("
-                " $1, $2, $3, $4, 'default', NULL, NULL, $5::jsonb)",
+        result = await execute_agent_mutation(
+            database=_CowPoolAdapter(agent_pool),
+            context=context,
+            key=f"083-12-preserve-cow-create-{uuid4()}",
+            digest=mutation_digest(
+                method="POST",
+                path=f"/sites/{site_id}/pages/{page_id}/components",
+                body=body,
+            ),
+            mutate=lambda service: service.add_component_for_site(
                 site_id,
                 page_id,
-                component_type,
-                parent_id,
-                json.dumps(props),
-            )
-            assert created is not None
-            return UUID(str(created["id"]))
+                AgentCreateCompositionNodeRequest(
+                    component_type=component_type,
+                    parent_id=str(parent_id),
+                    slot_key="default",
+                    props=dict(props),
+                ),
+            ),
+            resource_type="composition_node",
+            status_code=201,
+            quota_kind="mutation",
+            action="COMPONENT_CREATED",
+            method="POST",
+        )
     finally:
         await agent_pool.close()
+    assert result.operation_id is not None
+    return UUID(str(result.record["id"]))
 
 
 async def _content_operations(database: AgentSiteDatabase, workspace_id: UUID) -> Any:
@@ -440,16 +495,52 @@ async def test_077_media_and_v2_snapshot_preservation_and_downgrade_refusal(
 
     pool = await _worker_pool(database)
     try:
-        # --- GENUINE COMPLETE v2 snapshot from the real freeze worker ---
-        freeze_result, _freeze_job = await _freeze_claim_run(
+        # --- GENUINE COMPLETE v2 snapshot at the released 076 boundary ---
+        # Real freeze enqueue + worker claim (workspace FREEZING, job
+        # CLAIMED), then the exact 076-era worker transaction through
+        # the real trusted materializer and the 076 head's own v2
+        # completion definer. The CURRENT worker cannot run here: its
+        # completion call is the 079 companion-manifest variant, which
+        # the released 076 head does not deploy.
+        freeze_job_id, _freeze_job = await _freeze_enqueue_claim(
             database,
             workspace_id=ws,
             site_id=site_id,
             delegator_id=user_id,
-            pool=pool,
             claimant="a7-preserve-freeze",
         )
-        assert freeze_result.status == "SUCCEEDED", freeze_result.error
+        async with pool.acquire() as connection:
+            async with connection.transaction():
+                await connection.execute(
+                    "SELECT pg_advisory_xact_lock(hashtextextended($1, 280))",
+                    str(ws),
+                )
+                assert (
+                    await connection.fetchval(
+                        "SELECT status FROM control.workspace WHERE id = $1",
+                        ws,
+                    )
+                    == "FREEZING"
+                )
+                doc = await connection.fetchval(
+                    "SELECT control.slaif_review_workspace_state($1)",
+                    ws,
+                )
+                row_doc = snapshot.build_snapshot_document(
+                    doc,
+                    created_by="a7-preserve-freeze",
+                    browser_evidence=[],
+                    cancelled_runs=[],
+                )
+                await connection.fetchval(
+                    "SELECT control.slaif_review_snapshot_complete($1, $2)",
+                    ws,
+                    snapshot.canonical_json(row_doc),
+                )
+                await connection.fetchval(
+                    "SELECT control.slaif_review_job_terminal($1, 'SUCCEEDED', NULL)",
+                    freeze_job_id,
+                )
         snap = await _snapshot_row(database, ws)
         assert snap is not None
         assert str(snap["status"]) == "COMPLETE"

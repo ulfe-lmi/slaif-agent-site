@@ -20,7 +20,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -32,14 +35,26 @@ import httpx
 import pytest
 from conftest import AgentSiteDatabase
 from pydantic import SecretStr
+from slaif_agent_site.agent_api.models import AgentCapabilityContext
 from slaif_agent_site.agent_state import promotion as promotion_module
 from slaif_agent_site.agent_state.capability import generate_capability_token
 from slaif_agent_site.agent_state.foundation import (
+    CowPromotionStateError,
     asyncpg_cow_reviewer,
-    asyncpg_cow_session,
+    get_operation_dependencies,
+    get_session_operations,
+)
+from slaif_agent_site.agent_state.mutations import (
+    AgentCowContentModelService,
+    execute_agent_mutation,
+    mutation_digest,
 )
 from slaif_agent_site.bootstrap.service import reconcile, upgrade
 from slaif_agent_site.config import EnvironmentMode, ServiceSettings
+from slaif_agent_site.content_model.composition_models import (
+    AgentCreateCompositionNodeRequest,
+    AgentUpdateCompositionNodeRequest,
+)
 from slaif_agent_site.control_api.app import create_app as create_control_app
 from slaif_agent_site.control_api.config import (
     ControlDatabaseMode,
@@ -47,6 +62,7 @@ from slaif_agent_site.control_api.config import (
 )
 from slaif_agent_site.control_api.database import ControlDatabase
 from slaif_agent_site.db.connections import owner_connection
+from slaif_agent_site.db.executor import AsyncpgExecutor
 from slaif_agent_site.db.roles import quote_identifier
 from slaif_agent_site.editor_api.app import create_app as create_editor_app
 from slaif_agent_site.editor_api.database import EditorDatabase
@@ -63,6 +79,7 @@ from slaif_agent_site.media_service.finalize import (
     finalize_media_for_promotion,
 )
 from slaif_agent_site.media_service.store import MediaStore, StagedMedia
+from slaif_agent_site.review_worker import accept_job as accept_job_module
 from slaif_agent_site.review_worker.accept_job import MediaBoundary, run_accept_job
 from slaif_agent_site.review_worker.config import (
     ReviewWorkerDatabaseMode,
@@ -339,6 +356,7 @@ async def _seed_site(
         "site_id": UUID(str(site_id)),
         "workspace_id": UUID(str(workspace_id)),
         "capability_id": UUID(str(capability_id)),
+        "scopes": scopes,
         "page_id": page_id,
         "section_id": section_id,
         "heading_id": heading_id,
@@ -351,53 +369,114 @@ async def _seed_site(
     return ids
 
 
+class _CowPoolAdapter:
+    """Minimal database surface for ``execute_agent_mutation``: the
+    fixture's real ``slaif_agent_runtime`` COW role pool, unwrapped."""
+
+    def __init__(self, pool: asyncpg.Pool[Any]) -> None:
+        self._pool = pool
+
+    def cow_pool(self) -> asyncpg.Pool[Any]:
+        return self._pool
+
+
 async def _apply_cow_operations(
     database: AgentSiteDatabase, ids: dict[str, Any]
 ) -> None:
-    """Real agent COW operations: an update + a create (two operations)."""
+    """Real agent COW operations through the product mutation executor
+    (an update + a create: two operations, each with its real 078
+    completion journal row - the manifest identity binding reads it)."""
 
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        capability = await owner.fetchrow(
+            "SELECT created_at, expires_at FROM control.capability WHERE id = $1",
+            ids["capability_id"],
+        )
+    assert capability is not None
+    context = AgentCapabilityContext(
+        capability_id=ids["capability_id"],
+        site_id=ids["site_id"],
+        workspace_id=ids["workspace_id"],
+        delegator_id=ids["delegator_id"],
+        scopes=frozenset(ids["scopes"]),
+        created_at=capability["created_at"],
+        expires_at=capability["expires_at"],
+    )
     agent_pool = await database.role_pool("slaif_agent_runtime")
+
+    async def update_heading(
+        service: AgentCowContentModelService,
+    ) -> Any:
+        return await service.update_component_for_site(
+            ids["site_id"],
+            ids["heading_id"],
+            AgentUpdateCompositionNodeRequest(
+                props={"level": 2, "text": "Promoted heading"},
+                expected_row_version=1,
+            ),
+        )
+
+    async def create_heading(
+        service: AgentCowContentModelService,
+    ) -> Any:
+        return await service.add_component_for_site(
+            ids["site_id"],
+            ids["page_id"],
+            AgentCreateCompositionNodeRequest(
+                component_type="Heading",
+                parent_id=str(ids["section_id"]),
+                slot_key="default",
+                props={"level": 3, "text": "New promoted node"},
+            ),
+        )
+
     try:
-        # Operation 1: the update (its own COW session scope).
-        async with asyncpg_cow_session(
-            agent_pool,
-            session_id=ids["workspace_id"],
-            operation_id=uuid4(),
-        ) as cow:
-            await cow.native.execute(
-                "SELECT set_config('app.capability_id', $1, true)",
-                str(ids["capability_id"]),
-            )
-            updated = await cow.native.fetchrow(
-                "SELECT * FROM content.slaif_agent_component_update("
-                " $1, $2, $3::jsonb, $4)",
-                ids["site_id"],
-                ids["heading_id"],
-                json.dumps({"level": 2, "text": "Promoted heading"}),
-                1,
-            )
-            assert updated is not None
-        # Operation 2: the create (a separate COW session scope, so the
+        # Operation 1: the update (its own COW transaction with the real
+        # reservation, COW write, audit and completion journal).
+        updated = await execute_agent_mutation(
+            database=_CowPoolAdapter(agent_pool),
+            context=context,
+            key="083-12-accept-int-update-heading",
+            digest=mutation_digest(
+                method="PATCH",
+                path=f"/sites/{ids['site_id']}/components/{ids['heading_id']}",
+                body={"level": 2, "text": "Promoted heading"},
+            ),
+            mutate=update_heading,
+            resource_type="composition_node",
+            status_code=200,
+            quota_kind="mutation",
+            action="COMPONENT_UPDATED",
+            method="PATCH",
+        )
+        assert updated.operation_id is not None
+        # Operation 2: the create (a separate COW transaction, so the
         # workspace carries exactly two operations).
-        async with asyncpg_cow_session(
-            agent_pool,
-            session_id=ids["workspace_id"],
-            operation_id=uuid4(),
-        ) as cow:
-            await cow.native.execute(
-                "SELECT set_config('app.capability_id', $1, true)",
-                str(ids["capability_id"]),
-            )
-            created = await cow.native.fetchrow(
-                "SELECT * FROM content.slaif_agent_component_create("
-                " $1, $2, 'Heading', $3, 'default', NULL, NULL, $4::jsonb)",
-                ids["site_id"],
-                ids["page_id"],
-                ids["section_id"],
-                json.dumps({"level": 3, "text": "New promoted node"}),
-            )
-            assert created is not None
-            ids["created_heading_id"] = UUID(str(created["id"]))
+        created = await execute_agent_mutation(
+            database=_CowPoolAdapter(agent_pool),
+            context=context,
+            key="083-12-accept-int-create-heading",
+            digest=mutation_digest(
+                method="POST",
+                path=(f"/sites/{ids['site_id']}/pages/{ids['page_id']}/components"),
+                body={
+                    "component_type": "Heading",
+                    "parent_id": str(ids["section_id"]),
+                    "slot_key": "default",
+                    "props": {"level": 3, "text": "New promoted node"},
+                },
+            ),
+            mutate=create_heading,
+            resource_type="composition_node",
+            status_code=201,
+            quota_kind="mutation",
+            action="COMPONENT_CREATED",
+            method="POST",
+        )
+        assert created.operation_id is not None
+        ids["created_heading_id"] = UUID(str(created.record["id"]))
     finally:
         await agent_pool.close()
 
@@ -499,17 +578,183 @@ async def _seed_review_state(
             status,
             ids["workspace_id"],
         )
+        # 083/12: the seeded COMPLETE snapshot carries the companion a
+        # real freeze would have created, built from the ACTUAL public
+        # session state (no invented operations).
+        operations, dependencies, identities = await _capture_session(
+            owner, ids["workspace_id"], ids["site_id"]
+        )
+        await _seed_companion(
+            owner,
+            workspace_id=ids["workspace_id"],
+            site_id=ids["site_id"],
+            snapshot_id=snapshot_id,
+            digest=digest,
+            operations=operations,
+            dependencies=dependencies,
+            identities=identities,
+        )
     return snapshot_id
 
 
+async def _capture_session(
+    owner: Any, workspace_id: UUID, site_id: UUID
+) -> tuple[list[UUID], list[tuple[UUID, UUID]], list[dict[str, str]]]:
+    """The actual public foundation session state (083/12 R1 input)."""
+    executor = AsyncpgExecutor(owner)
+    operations = await get_session_operations(executor, workspace_id, schema="content")
+    dependencies = await get_operation_dependencies(
+        executor, workspace_id, schema="content"
+    )
+    doc = await owner.fetchval(
+        "SELECT control.slaif_review_operation_identities($1, $2, $3)",
+        workspace_id,
+        site_id,
+        operations,
+    )
+    if isinstance(doc, str):
+        doc = json.loads(doc)
+    return list(operations), list(dependencies), list(doc or [])
+
+
+async def _seed_companion(
+    owner: Any,
+    *,
+    workspace_id: UUID,
+    site_id: UUID,
+    snapshot_id: UUID,
+    digest: str,
+    operations: list[UUID],
+    dependencies: list[tuple[UUID, UUID]],
+    identities: list[dict[str, str]],
+) -> tuple[UUID, str]:
+    """Trusted OWNER fixture: one companion row in the exact form the
+    trusted completion function stores (canonical arrays + the product's
+    own canonical digest expression).  Returns (manifest_id, digest)."""
+    manifest_id = uuid4()
+    canonical = {
+        "schema_version": "reviewed-operations/v1",
+        "snapshot_id": str(snapshot_id),
+        "snapshot_digest": digest,
+        "site_id": str(site_id),
+        "workspace_id": str(workspace_id),
+        "operation_ids": sorted(str(operation) for operation in operations),
+        "dependency_pairs": sorted(
+            {
+                [str(depends_on), str(operation_id)]
+                for depends_on, operation_id in dependencies
+            }
+        ),
+        "completion_identities": sorted(
+            identities, key=lambda item: item["operation_id"]
+        ),
+    }
+    manifest_digest = await owner.fetchval(
+        "SELECT encode(sha256(convert_to("
+        "control.slaif_canonical_jsonb_text($1::jsonb), 'UTF8')), 'hex')",
+        json.dumps(canonical),
+    )
+    await owner.execute(
+        "INSERT INTO control.review_operation_manifest "
+        "(id, snapshot_id, site_id, workspace_id, schema_version, "
+        " snapshot_digest, manifest_digest, operation_ids, "
+        " dependency_pairs, completion_identities) "
+        "VALUES ($1,$2,$3,$4,'reviewed-operations/v1',$5,$6,$7::uuid[],"
+        "$8::jsonb,$9::jsonb)",
+        manifest_id,
+        snapshot_id,
+        site_id,
+        workspace_id,
+        digest,
+        manifest_digest,
+        canonical["operation_ids"],
+        json.dumps(canonical["dependency_pairs"]),
+        json.dumps(canonical["completion_identities"]),
+    )
+    return manifest_id, str(manifest_digest)
+
+
+async def _read_manifest(
+    database: AgentSiteDatabase, snapshot_id: UUID
+) -> dict[str, Any] | None:
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        raw: Any = await owner.fetchval(
+            "SELECT control.slaif_review_operation_manifest_read($1)", snapshot_id
+        )
+    if isinstance(raw, str):
+        raw = json.loads(raw)
+    if raw is None:
+        return None
+    assert isinstance(raw, dict)
+    return raw
+
+
+async def _accept_approval(
+    database: AgentSiteDatabase, workspace_id: UUID
+) -> tuple[UUID, str, str]:
+    """(snapshot_id, snapshot_digest, manifest_digest) of the bound
+    REVIEW snapshot + its companion (the exact 083/12 approval)."""
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        snapshot_id = await owner.fetchval(
+            "SELECT review_snapshot_id FROM control.workspace WHERE id = $1",
+            workspace_id,
+        )
+        stored_digest = await owner.fetchval(
+            "SELECT digest::text FROM control.review_snapshot WHERE id = $1",
+            snapshot_id,
+        )
+    manifest = await _read_manifest(database, snapshot_id)
+    assert manifest is not None
+    return UUID(str(snapshot_id)), str(stored_digest), str(manifest["manifest_digest"])
+
+
 async def _enqueue_accept(
+    database: AgentSiteDatabase,
+    workspace_id: UUID,
+    actor: UUID,
+    *,
+    snapshot_id: UUID,
+    snapshot_digest: str,
+    manifest_digest: str,
+) -> list[Any]:
+    # 083/12: the inner enqueue is owner-internal (no role EXECUTE
+    # grants), so the whitebox stable-code tests exercise it as the
+    # owner fixture; the slaif_control path is the 6-argument human
+    # entry point (route tests).
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        return list(
+            await owner.fetch(
+                "SELECT * FROM control.slaif_workspace_accept($1, $2, $3, $4, $5)",
+                workspace_id,
+                snapshot_id,
+                snapshot_digest,
+                manifest_digest,
+                actor,
+            )
+        )
+
+
+async def _enqueue_bound_accept(
     database: AgentSiteDatabase, workspace_id: UUID, actor: UUID
 ) -> list[Any]:
-    return await _control_call(
+    """Enqueue with the exact approval of the bound snapshot +
+    companion (the normal freeze -> accept flow)."""
+    snapshot_id, snapshot_digest, manifest_digest = await _accept_approval(
+        database, workspace_id
+    )
+    return await _enqueue_accept(
         database,
-        "SELECT * FROM control.slaif_workspace_accept($1, $2)",
         workspace_id,
         actor,
+        snapshot_id=snapshot_id,
+        snapshot_digest=snapshot_digest,
+        manifest_digest=manifest_digest,
     )
 
 
@@ -667,19 +912,70 @@ async def test_reviewer_grant_matrix(agent_site_database: AgentSiteDatabase) -> 
                 role,
             )
             assert claim_execute is (role == "slaif_review_worker")
+            # 083/12: the 072 digest-less accept pair is dropped at 079;
+            # the new inner enqueue is owner-internal (NO role EXECUTE -
+            # this is what closes the actorless enqueue bypass) and the
+            # new human entry point keeps the control grant.
+            old_inner_exists = await owner.fetchval(
+                "SELECT to_regprocedure("
+                "'control.slaif_workspace_accept(uuid, uuid)') IS NOT NULL"
+            )
+            old_human_exists = await owner.fetchval(
+                "SELECT to_regprocedure("
+                "'control.slaif_human_agent_workspace_accept(uuid, uuid,"
+                " uuid, text, uuid)') IS NOT NULL"
+            )
+            assert old_inner_exists is False
+            assert old_human_exists is False
             accept_execute = await owner.fetchval(
                 "SELECT has_function_privilege($1,"
-                " 'control.slaif_workspace_accept(uuid, uuid)', 'EXECUTE')",
+                " 'control.slaif_workspace_accept(uuid, uuid, text, text,"
+                " uuid)', 'EXECUTE')",
                 role,
             )
-            assert accept_execute is (role == "slaif_control")
+            assert accept_execute is False, role
             human_accept_execute = await owner.fetchval(
                 "SELECT has_function_privilege($1,"
                 " 'control.slaif_human_agent_workspace_accept(uuid, uuid,"
-                " uuid, text, uuid)', 'EXECUTE')",
+                " uuid, text, text, uuid)', 'EXECUTE')",
                 role,
             )
-            assert human_accept_execute is (role == "slaif_control")
+            assert human_accept_execute is (role == "slaif_control"), role
+            # The 079 companion surface: the worker holds the identity
+            # projection, the provenance check and the companion
+            # completion; the read projection serves control + worker.
+            # The standalone completion keeps NO online EXECUTE anymore.
+            for function, expected in (
+                (
+                    "control.slaif_review_operation_identities(uuid, uuid, uuid[])",
+                    "slaif_review_worker",
+                ),
+                (
+                    "control.slaif_review_operation_provenance(uuid, uuid, uuid[])",
+                    "slaif_review_worker",
+                ),
+                (
+                    "control.slaif_review_snapshot_complete_with_manifest("
+                    "uuid, jsonb, jsonb)",
+                    "slaif_review_worker",
+                ),
+                (
+                    "control.slaif_review_operation_manifest_read(uuid)",
+                    "slaif_control,slaif_review_worker",
+                ),
+                ("control.slaif_review_snapshot_complete(uuid, jsonb)", None),
+            ):
+                holders = {
+                    str(row["rolname"])
+                    for row in await owner.fetch(
+                        "SELECT r.rolname FROM pg_roles r"
+                        " WHERE r.rolname LIKE 'slaif%' AND r.rolname <> 'slaif_owner'"
+                        " AND has_function_privilege(r.rolname, $1, 'EXECUTE')",
+                        function,
+                    )
+                }
+                expected_set = set(expected.split(",")) if expected else set()
+                assert holders == expected_set, (function, holders)
 
         # The exact R1.6 additions on the worker (SELECTs pre-date 072_001).
         assert (
@@ -847,8 +1143,19 @@ async def test_accept_enqueue_idempotency_and_stable_codes(
     workspace_id = ids["workspace_id"]
     actor = ids["delegator_id"]
     snapshot_id = await _seed_review_state(database, ids)
+    manifest = await _read_manifest(database, snapshot_id)
+    assert manifest is not None
+    snapshot_digest = "ab" * 32
+    manifest_digest = str(manifest["manifest_digest"])
 
-    rows = await _enqueue_accept(database, workspace_id, actor)
+    rows = await _enqueue_accept(
+        database,
+        workspace_id,
+        actor,
+        snapshot_id=snapshot_id,
+        snapshot_digest=snapshot_digest,
+        manifest_digest=manifest_digest,
+    )
     assert len(rows) == 1
     job_id = UUID(str(rows[0]["job_id"]))
     # The enqueue returns the JOB status (R1.3: (job_id, status)); the
@@ -863,20 +1170,52 @@ async def test_accept_enqueue_idempotency_and_stable_codes(
         payload = await owner.fetchval(
             "SELECT payload FROM control.review_job WHERE id = $1", job_id
         )
+    # The durable payload carries the EXACT approval (083/12): both
+    # digests plus the identity trio, nothing else.
     assert json.loads(payload) == {
         "snapshot_id": str(snapshot_id),
         "site_id": str(ids["site_id"]),
         "actor_user_account_id": str(actor),
+        "snapshot_digest": snapshot_digest,
+        "manifest_digest": manifest_digest,
     }
 
-    # Idempotent while QUEUED.
-    again = await _enqueue_accept(database, workspace_id, actor)
+    # Idempotent while QUEUED (the same exact approval replays).
+    again = await _enqueue_accept(
+        database,
+        workspace_id,
+        actor,
+        snapshot_id=snapshot_id,
+        snapshot_digest=snapshot_digest,
+        manifest_digest=manifest_digest,
+    )
     assert str(again[0]["job_id"]) == str(job_id)
+
+    # A DIFFERENT approval on the same live job is a typed refusal
+    # (R4: never a 202 replay, never a silent fill).
+    with pytest.raises(asyncpg.PostgresError) as mismatch:
+        await _enqueue_accept(
+            database,
+            workspace_id,
+            actor,
+            snapshot_id=snapshot_id,
+            snapshot_digest=snapshot_digest,
+            manifest_digest="cd" * 32,
+        )
+    assert mismatch.value.sqlstate == "P0003"
+    assert "ACCEPT_LIVE_JOB_MISMATCH" in str(mismatch.value)
 
     # Idempotent while CLAIMED.
     claimed = await _claim(database, "enqueue-test-claim", _WORKER_KINDS)
     assert len(claimed) == 1 and str(claimed[0]["id"]) == str(job_id)
-    claimed_again = await _enqueue_accept(database, workspace_id, actor)
+    claimed_again = await _enqueue_accept(
+        database,
+        workspace_id,
+        actor,
+        snapshot_id=snapshot_id,
+        snapshot_digest=snapshot_digest,
+        manifest_digest=manifest_digest,
+    )
     assert str(claimed_again[0]["job_id"]) == str(job_id)
 
     # WORKSPACE_NOT_IN_REVIEW for every non-REVIEW status (P0002 = the
@@ -895,13 +1234,27 @@ async def test_accept_enqueue_idempotency_and_stable_codes(
                 workspace_id,
             )
         with pytest.raises(asyncpg.PostgresError) as excinfo:
-            await _enqueue_accept(database, workspace_id, actor)
+            await _enqueue_accept(
+                database,
+                workspace_id,
+                actor,
+                snapshot_id=snapshot_id,
+                snapshot_digest=snapshot_digest,
+                manifest_digest=manifest_digest,
+            )
         assert excinfo.value.sqlstate == "P0002"
         assert "WORKSPACE_NOT_IN_REVIEW" in str(excinfo.value)
 
     # WORKSPACE_NOT_FOUND for an unknown workspace.
     with pytest.raises(asyncpg.PostgresError) as excinfo:
-        await _enqueue_accept(database, uuid4(), actor)
+        await _enqueue_accept(
+            database,
+            uuid4(),
+            actor,
+            snapshot_id=snapshot_id,
+            snapshot_digest=snapshot_digest,
+            manifest_digest=manifest_digest,
+        )
     assert excinfo.value.sqlstate == "P0002"
     assert "WORKSPACE_NOT_FOUND" in str(excinfo.value)
 
@@ -915,7 +1268,14 @@ async def test_accept_enqueue_idempotency_and_stable_codes(
             workspace_id,
         )
     with pytest.raises(asyncpg.PostgresError) as excinfo:
-        await _enqueue_accept(database, workspace_id, actor)
+        await _enqueue_accept(
+            database,
+            workspace_id,
+            actor,
+            snapshot_id=snapshot_id,
+            snapshot_digest=snapshot_digest,
+            manifest_digest=manifest_digest,
+        )
     assert excinfo.value.sqlstate == "P0002"
     assert "REVIEW_SNAPSHOT_NOT_FOUND" in str(excinfo.value)
 
@@ -929,7 +1289,14 @@ async def test_accept_enqueue_idempotency_and_stable_codes(
             workspace_id,
         )
     with pytest.raises(asyncpg.PostgresError) as excinfo:
-        await _enqueue_accept(database, workspace_id, actor)
+        await _enqueue_accept(
+            database,
+            workspace_id,
+            actor,
+            snapshot_id=snapshot_id,
+            snapshot_digest=snapshot_digest,
+            manifest_digest=manifest_digest,
+        )
     assert "REVIEW_SNAPSHOT_NOT_FOUND" in str(excinfo.value)
 
 
@@ -971,6 +1338,9 @@ async def test_control_accept_route_authority_matrix(
     workspace_id = ids["workspace_id"]
     digest = "ef" * 32
     snapshot_id = await _seed_review_state(database, ids, snapshot_digest=digest)
+    binding_manifest = await _read_manifest(database, snapshot_id)
+    assert binding_manifest is not None
+    manifest_digest = str(binding_manifest["manifest_digest"])
 
     # A second site (wrong-binding case) and an ACTIVE workspace (409 case).
     async with owner_connection(
@@ -1023,6 +1393,20 @@ async def test_control_accept_route_authority_matrix(
             " review_snapshot_id = $1 WHERE id = $2",
             conflict_snapshot,
             conflict_ws,
+        )
+        # 083/12: the 409 case must pass the companion gate to reach
+        # the inner status gate: seed the companion a real freeze would
+        # have created (the conflict workspace has no pending session
+        # state: an empty approval is its honest shape).
+        _conflict_manifest_id, conflict_manifest_digest = await _seed_companion(
+            owner,
+            workspace_id=conflict_ws,
+            site_id=site_id,
+            snapshot_id=conflict_snapshot,
+            digest=digest,
+            operations=[],
+            dependencies=[],
+            identities=[],
         )
 
     users: dict[str, UUID] = {}
@@ -1092,6 +1476,7 @@ async def test_control_accept_route_authority_matrix(
         valid_body = {
             "snapshot_id": str(snapshot_id),
             "digest": digest,
+            "manifest_digest": manifest_digest,
             "acknowledge_summary": True,
         }
         async with control_app.router.lifespan_context(control_app):
@@ -1113,10 +1498,31 @@ async def test_control_accept_route_authority_matrix(
                 assert duplicate.status_code == 202, duplicate.text
                 assert duplicate.json() == first_body
 
-                # The platform administrator path reaches the same job.
+                # 083/12: the platform administrator's identical body
+                # carries a DIFFERENT actor in the exact approval, so
+                # the live-job gate refuses the replay (typed P0003,
+                # mapped to the safe 503 class): the original owner job
+                # is untouched (no second job, no actor substitution).
                 admin_post = await post(sessions["admin"], valid_body)
-                assert admin_post.status_code == 202, admin_post.text
-                assert admin_post.json()["job_id"] == job_id
+                assert admin_post.status_code == 503, admin_post.text
+                async with owner_connection(
+                    database.settings.resolved_owner_dsn(),
+                    expected_database=database.name,
+                ) as owner:
+                    admin_jobs = await owner.fetch(
+                        "SELECT id, status, payload->>"
+                        "'actor_user_account_id' AS actor"
+                        " FROM control.review_job"
+                        " WHERE workspace_id = $1 AND job_kind = 'ACCEPT'"
+                        " ORDER BY id",
+                        workspace_id,
+                    )
+                assert len(admin_jobs) == 1
+                assert admin_jobs[0]["id"] == UUID(str(job_id))
+                assert admin_jobs[0]["status"] == "QUEUED"
+                assert admin_jobs[0]["actor"] == str(users["owner"])
+                status, bound = await _workspace_state(database, workspace_id)
+                assert (status, bound) == ("ACCEPT_QUEUED", snapshot_id)
 
                 # Each permission individually missing -> uniform 404.
                 for key in ("deny_accept", "deny_publish", "outsider"):
@@ -1168,12 +1574,21 @@ async def test_control_accept_route_authority_matrix(
                     sessions["owner"],
                     {**valid_body, "digest": "00" * 32},
                 )
+                bad_manifest = await post(
+                    sessions["owner"],
+                    {**valid_body, "manifest_digest": "00" * 32},
+                )
                 assert bad_snapshot.status_code == 404, bad_snapshot.text
                 assert bad_digest.status_code == 404, bad_digest.text
+                # 083/12: a valid snapshot + digest with a WRONG manifest
+                # digest is a companion mismatch: the same uniform 404
+                # class, no manifest oracle at the route.
+                assert bad_manifest.status_code == 404, bad_manifest.text
                 # Indistinguishable apart from the per-request id: the
                 # stable envelope (code/message/details) is byte-identical.
                 assert _error_envelope(bad_snapshot) == _error_envelope(bad_digest)
                 assert _error_envelope(bad_snapshot) == _error_envelope(binding)
+                assert _error_envelope(bad_manifest) == _error_envelope(bad_digest)
 
                 # Strict body: 422 for every malformed acknowledgement.
                 for bad_body in (
@@ -1182,6 +1597,11 @@ async def test_control_accept_route_authority_matrix(
                     {
                         "snapshot_id": str(snapshot_id),
                         "digest": digest,
+                    },
+                    {
+                        "snapshot_id": str(snapshot_id),
+                        "digest": digest,
+                        "acknowledge_summary": True,
                     },
                     {**valid_body, "extra": True},
                 ):
@@ -1206,6 +1626,7 @@ async def test_control_accept_route_authority_matrix(
                     {
                         "snapshot_id": str(conflict_snapshot),
                         "digest": digest,
+                        "manifest_digest": conflict_manifest_digest,
                         "acknowledge_summary": True,
                     },
                     workspace=UUID(str(conflict_ws)),
@@ -1285,7 +1706,9 @@ async def test_accept_worker_success_path(
         media_references = json.loads(snapshot["media_references"])
         assert [ref["id"] for ref in media_references] == [str(ids["media_id"])]
 
-        rows = await _enqueue_accept(database, ids["workspace_id"], ids["delegator_id"])
+        rows = await _enqueue_bound_accept(
+            database, ids["workspace_id"], ids["delegator_id"]
+        )
         job_id = UUID(str(rows[0]["job_id"]))
         job = await _claim_accept(database, "accept-success-1")
         assert str(job["id"]) == str(job_id)
@@ -1354,6 +1777,16 @@ async def test_accept_worker_success_path(
         assert json.loads(audit["versions"]) == stored_versions
         assert str(audit["actor_user_account_id"]) == str(ids["delegator_id"])
         assert audit["created_at"] is not None
+        # 083/12 R5: the promotion receipt names the exact approved
+        # binding: the companion a real freeze created and the applied
+        # operation ids, equal to the frozen U.
+        binding_manifest = await _read_manifest(database, snapshot_id)
+        assert binding_manifest is not None
+        assert str(audit["manifest_id"]) == str(binding_manifest["manifest_id"])
+        assert str(audit["manifest_digest"]) == str(binding_manifest["manifest_digest"])
+        assert [
+            str(operation) for operation in audit["applied_operation_ids"]
+        ] == sorted(str(operation) for operation in binding_manifest["operation_ids"])
 
         # Exactly one unconsumed cache-outbox row with the exact payload.
         assert len(outbox_rows) == 1
@@ -1570,7 +2003,7 @@ async def test_accept_worker_field_referenced_media_publishes_atomically(
 
         ids_one = {**ids, "workspace_id": entry["workspace_id"]}
         await _freeze_workspace(database, ids_one, pool)
-        rows = await _enqueue_accept(
+        rows = await _enqueue_bound_accept(
             database, entry["workspace_id"], ids["delegator_id"]
         )
         job_id = UUID(str(rows[0]["job_id"]))
@@ -1672,7 +2105,7 @@ async def test_accept_worker_typed_media_closure_all_reference_modes_publish(
 
         ids_one = {**ids, "workspace_id": entry["workspace_id"]}
         await _freeze_workspace(database, ids_one, pool)
-        rows = await _enqueue_accept(
+        rows = await _enqueue_bound_accept(
             database, entry["workspace_id"], ids["delegator_id"]
         )
         job_id = UUID(str(rows[0]["job_id"]))
@@ -1859,10 +2292,14 @@ async def _seed_pending_media_site(
                 json.dumps(scopes),
             )
             token, public_id, secret_digest = generate_capability_token()
+            # The product issues capabilities with explicit quotas
+            # (039 create surface); the raw fixture mirrors it for the
+            # upload quota (column default 0 would exhaust at once).
             capability_id = await owner.fetchval(
                 "INSERT INTO control.capability (workspace_id, public_id,"
-                " secret_digest, scopes, expires_at) VALUES ($1,$2,$3,$4::jsonb,"
-                " now()+interval '30 minutes') RETURNING id",
+                " secret_digest, scopes, upload_quota, expires_at)"
+                " VALUES ($1,$2,$3,$4::jsonb, 16, now()+interval '30 minutes')"
+                " RETURNING id",
                 workspace_id,
                 public_id,
                 secret_digest,
@@ -1874,45 +2311,95 @@ async def _seed_pending_media_site(
                     "capability_id": UUID(str(capability_id)),
                 }
             )
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        capability_rows = await owner.fetch(
+            "SELECT workspace_id, id, created_at, expires_at"
+            " FROM control.capability WHERE id = ANY($1::uuid[])",
+            [str(w["capability_id"]) for w in workspaces],
+        )
+    contexts: dict[UUID, AgentCapabilityContext] = {
+        UUID(str(row["workspace_id"])): AgentCapabilityContext(
+            capability_id=UUID(str(row["id"])),
+            site_id=UUID(str(site_id)),
+            workspace_id=UUID(str(row["workspace_id"])),
+            delegator_id=UUID(str(delegator_id)),
+            scopes=frozenset(scopes),
+            created_at=row["created_at"],
+            expires_at=row["expires_at"],
+        )
+        for row in capability_rows
+    }
+    assert len(contexts) == len(workspaces)
     agent_pool = await database.role_pool("slaif_agent_runtime")
     try:
         payload_index = 0
         for entry in workspaces:
+            context = contexts[entry["workspace_id"]]
             media_ids: list[UUID] = []
             media_digests: list[str] = []
             storage_keys: list[str] = []
-            for _media_slot in range(media_per_workspace):
+            for media_slot in range(media_per_workspace):
                 digest, storage_key = published[payload_index]
                 payload = payloads[payload_index]
                 payload_index += 1
-                # Real product registration SQL in a genuine COW session.
-                operation_id = uuid4()
-                async with asyncpg_cow_session(
-                    agent_pool,
-                    session_id=entry["workspace_id"],
-                    operation_id=operation_id,
-                ) as cow:
-                    await cow.native.execute(
-                        "SELECT set_config('app.capability_id', $1, true)",
-                        str(entry["capability_id"]),
+                # Real product upload mutation (genuine COW session with
+                # the real reservation, registration SQL, audit and 078
+                # completion journal).
+                key = f"083-12-pending-media-{entry['workspace_id']}-m{media_slot}"
+                upload_digest = hashlib.sha256(
+                    json.dumps(
+                        {
+                            "method": "POST",
+                            "path": "/api/agent/v1/media/assets",
+                            "key": key,
+                            "digest": digest,
+                            "filename": "pending.png",
+                            "mime_type": "image/png",
+                            "size_bytes": len(payload),
+                            "alt_text": f"Pending media {entry['workspace_id']}",
+                            "metadata": {},
+                        },
+                        sort_keys=True,
+                    ).encode()
+                ).hexdigest()
+
+                async def register_media(
+                    service: AgentCowContentModelService,
+                    digest: str = digest,
+                    storage_key: str = storage_key,
+                    payload: bytes = payload,
+                    workspace_id: UUID = entry["workspace_id"],
+                ) -> Any:
+                    return await service.create_media_asset(
+                        site_id=UUID(str(site_id)),
+                        uploaded_by=UUID(str(delegator_id)),
+                        filename="pending.png",
+                        mime_type="image/png",
+                        size_bytes=len(payload),
+                        content_hash=digest,
+                        storage_key=storage_key,
+                        alt_text=f"Pending media {workspace_id}",
+                        metadata={},
                     )
-                    registered = await cow.native.fetchrow(
-                        "SELECT * FROM content.slaif_agent_media_register("
-                        " $1, $2, 'pending.png', 'image/png', $3, $4, $5, $6,"
-                        " '{}'::jsonb, $7, $8)",
-                        site_id,
-                        delegator_id,
-                        len(payload),
-                        digest,
-                        storage_key,
-                        f"Pending media {entry['workspace_id']}",
-                        entry["workspace_id"],
-                        operation_id,
-                    )
-                    assert registered is not None
-                    media_ids.append(UUID(str(registered["id"])))
-                    media_digests.append(digest)
-                    storage_keys.append(storage_key)
+
+                registered = await execute_agent_mutation(
+                    database=_CowPoolAdapter(agent_pool),
+                    context=context,
+                    key=key,
+                    digest=upload_digest,
+                    mutate=register_media,
+                    resource_type="media_asset",
+                    status_code=201,
+                    quota_kind="upload",
+                    action="MEDIA_UPLOADED",
+                    method="POST",
+                )
+                assert registered.operation_id is not None
+                media_ids.append(UUID(str(registered.record["id"])))
+                media_digests.append(digest)
+                storage_keys.append(storage_key)
             entry["media_ids"] = media_ids
             entry["media_id"] = media_ids[0]
             entry["media_digests"] = media_digests
@@ -1922,32 +2409,50 @@ async def _seed_pending_media_site(
             if with_composition:
                 # A composition node that references exactly the first
                 # pending asset, so the frozen media closure is exactly
-                # that asset.
-                operation_id = uuid4()
-                async with asyncpg_cow_session(
-                    agent_pool,
-                    session_id=entry["workspace_id"],
-                    operation_id=operation_id,
-                ) as cow:
-                    await cow.native.execute(
-                        "SELECT set_config('app.capability_id', $1, true)",
-                        str(entry["capability_id"]),
-                    )
-                    created = await cow.native.fetchrow(
-                        "SELECT * FROM content.slaif_agent_component_create("
-                        " $1, $2, 'Image', $3, 'default', NULL, NULL, $4::jsonb)",
-                        site_id,
-                        page_id,
-                        section_id,
-                        json.dumps(
-                            {
-                                "mediaId": str(media_ids[0]),
-                                "alt": f"Pending image {entry['workspace_id']}",
-                            }
+                # that asset (real product create mutation).
+                image_props = {
+                    "mediaId": str(media_ids[0]),
+                    "alt": f"Pending image {entry['workspace_id']}",
+                }
+
+                async def create_image(
+                    service: AgentCowContentModelService,
+                    props: dict[str, Any] = image_props,
+                ) -> Any:
+                    return await service.add_component_for_site(
+                        UUID(str(site_id)),
+                        UUID(str(page_id)),
+                        AgentCreateCompositionNodeRequest(
+                            component_type="Image",
+                            parent_id=str(section_id),
+                            slot_key="default",
+                            props=props,
                         ),
                     )
-                    assert created is not None
-                    entry["image_id"] = UUID(str(created["id"]))
+
+                created = await execute_agent_mutation(
+                    database=_CowPoolAdapter(agent_pool),
+                    context=context,
+                    key=f"083-12-pending-media-{entry['workspace_id']}-image",
+                    digest=mutation_digest(
+                        method="POST",
+                        path=f"/sites/{site_id}/pages/{page_id}/components",
+                        body={
+                            "component_type": "Image",
+                            "parent_id": str(section_id),
+                            "slot_key": "default",
+                            "props": image_props,
+                        },
+                    ),
+                    mutate=create_image,
+                    resource_type="composition_node",
+                    status_code=201,
+                    quota_kind="mutation",
+                    action="COMPONENT_CREATED",
+                    method="POST",
+                )
+                assert created.operation_id is not None
+                entry["image_id"] = UUID(str(created.record["id"]))
             else:
                 entry["image_id"] = None
     finally:
@@ -1996,7 +2501,7 @@ async def test_accept_worker_new_pending_same_hash_conflict(
         # publishes its own asset inside the single reviewer transaction.
         ids_a = {**ids, "workspace_id": first["workspace_id"]}
         await _freeze_workspace(database, ids_a, pool)
-        rows = await _enqueue_accept(
+        rows = await _enqueue_bound_accept(
             database, first["workspace_id"], ids["delegator_id"]
         )
         job_a = UUID(str(rows[0]["job_id"]))
@@ -2043,7 +2548,7 @@ async def test_accept_worker_new_pending_same_hash_conflict(
         # promotion must reach that unique key deterministically.
         ids_b = {**ids, "workspace_id": second["workspace_id"]}
         await _freeze_workspace(database, ids_b, pool)
-        rows = await _enqueue_accept(
+        rows = await _enqueue_bound_accept(
             database, second["workspace_id"], ids["delegator_id"]
         )
         job_b = UUID(str(rows[0]["job_id"]))
@@ -2155,7 +2660,12 @@ _A6_WITNESS_SQL = (
         INSERT INTO a6witness.a6_reached
             (site_id, workspace_id, media_id, observed_public_status)
         VALUES (NEW.site_id, NEW.workspace_id, media_id, observed_status);
-        RAISE EXCEPTION 'A6_FORCED_FAILURE' USING ERRCODE = 'P0001';
+        -- The forced failure is a retry-eligible class 40 SQLSTATE
+        -- (serialization failure): a deterministic P0001 would be
+        -- terminal under the c2 reviewer fault contract, but this
+        -- trusted disposable fault must roll back AND keep the job
+        -- eligible for the bounded re-claim/recovery below.
+        RAISE EXCEPTION 'A6_FORCED_FAILURE' USING ERRCODE = '40001';
     END
     $fn$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog;
     """,
@@ -2286,7 +2796,7 @@ async def test_accept_worker_after_both_effects_rollback_and_recovery(
             )
         ids_one = {**ids, "workspace_id": entry["workspace_id"]}
         await _freeze_workspace(database, ids_one, pool)
-        rows = await _enqueue_accept(
+        rows = await _enqueue_bound_accept(
             database, entry["workspace_id"], ids["delegator_id"]
         )
         job_id = UUID(str(rows[0]["job_id"]))
@@ -2468,7 +2978,9 @@ async def test_accept_worker_drift_zero_mutation(
                 ids["site_id"],
             )
 
-        rows = await _enqueue_accept(database, ids["workspace_id"], ids["delegator_id"])
+        rows = await _enqueue_bound_accept(
+            database, ids["workspace_id"], ids["delegator_id"]
+        )
         job_id = UUID(str(rows[0]["job_id"]))
         job = await _claim_accept(database, "accept-drift-1")
         assert str(job["id"]) == str(job_id)
@@ -2535,7 +3047,9 @@ async def test_accept_worker_conflict_full_rollback(
     boundary = MediaBoundary(settings=_media_settings(database, media_root))
     try:
         await _freeze_workspace(database, ids, pool)
-        rows = await _enqueue_accept(database, ids["workspace_id"], ids["delegator_id"])
+        rows = await _enqueue_bound_accept(
+            database, ids["workspace_id"], ids["delegator_id"]
+        )
         job_id = UUID(str(rows[0]["job_id"]))
         job = await _claim_accept(database, "accept-conflict-1")
         assert str(job["id"]) == str(job_id)
@@ -2643,7 +3157,9 @@ async def test_accept_worker_retryable_rollback_and_budget(
     boundary = MediaBoundary(settings=_media_settings(database, media_root))
     try:
         await _freeze_workspace(database, ids, pool)
-        rows = await _enqueue_accept(database, ids["workspace_id"], ids["delegator_id"])
+        rows = await _enqueue_bound_accept(
+            database, ids["workspace_id"], ids["delegator_id"]
+        )
         job_id = UUID(str(rows[0]["job_id"]))
         digest = ids["media_digest"]
 
@@ -2739,7 +3255,9 @@ async def test_accept_worker_crash_replay_idempotent(
     boundary = MediaBoundary(settings=_media_settings(database, media_root))
     try:
         await _freeze_workspace(database, ids, pool)
-        rows = await _enqueue_accept(database, ids["workspace_id"], ids["delegator_id"])
+        rows = await _enqueue_bound_accept(
+            database, ids["workspace_id"], ids["delegator_id"]
+        )
         job_id = UUID(str(rows[0]["job_id"]))
         digest = ids["media_digest"]
 
@@ -2866,7 +3384,9 @@ async def test_accept_worker_crash_replay_legacy_persisted_mark(
     boundary = MediaBoundary(settings=_media_settings(database, media_root))
     try:
         await _freeze_workspace(database, ids, pool)
-        rows = await _enqueue_accept(database, ids["workspace_id"], ids["delegator_id"])
+        rows = await _enqueue_bound_accept(
+            database, ids["workspace_id"], ids["delegator_id"]
+        )
         job_id = UUID(str(rows[0]["job_id"]))
         digest = ids["media_digest"]
 
@@ -2996,19 +3516,24 @@ async def test_promote_workspace_retired(
 async def test_accept_worker_stored_digest_cotamper_refused(
     agent_site_database: AgentSiteDatabase, tmp_path: Path
 ) -> None:
-    """G13/E-D1: a co-tampered STORED snapshot digest is refused by the
-    real accept worker with its actual stable code BEFORE media
-    finalization/canonical/revision/promotion-audit/cache/accepted
-    effects, with full no-effects.
+    """G13/E-D1: a co-tampered STORED snapshot digest is refused at
+    ENQUEUE time (the immutable companion binding) BEFORE any ACCEPT
+    job exists, with full no-effects.
 
     Co-tamper: the digest column becomes the TRUSTED recomputed digest
     of a coordinated altered document (a well-formed sha256 of a
     well-formed canonical document), while the stored payload is left
-    untouched; every identity/revision binding stays valid so the
-    actual stored-payload digest guard is the one reached.  The target
-    is proven by independent digest recomputation.  Owner tampering is
-    a test threat fixture only.  The untampered twin digest then
-    accepts the SAME snapshot through the same qualified path.
+    untouched; the target is proven by independent digest
+    recomputation.  Owner tampering is a test threat fixture only.
+
+    083/12: the companion froze the ORIGINAL digest at freeze time, so
+    an approval naming the tampered stored digest cannot satisfy both
+    the stored-row and the immutable-companion gates: the enqueue
+    raises REVIEW_MANIFEST_NOT_FOUND (the uniform 404 class), no job
+    is created, and the worker never runs.  The untampered twin
+    digest then accepts the SAME snapshot through the same qualified
+    path (the worker-level stored-payload digest guard remains as
+    defense in depth; the enqueue gate is the one reached here).
 
     The negative proves full no-effects including the canonical
     promotion facts (heading props, created-node absence, pending COW
@@ -3131,13 +3656,27 @@ async def test_accept_worker_stored_digest_cotamper_refused(
         ).hexdigest()
         assert pre_private_sha == ids["media_digest"]
 
-        rows = await _enqueue_accept(database, ids["workspace_id"], ids["delegator_id"])
-        job_id = UUID(str(rows[0]["job_id"]))
-        job = await _claim_accept(database, "accept-cotamper-1")
-        assert str(job["id"]) == str(job_id)
-        result = await run_accept_job(pool, settings, job, media=counting)
-        assert result.status == "FAILED"
-        assert result.error == "SNAPSHOT_VALIDATION_FAILED"
+        # 083/12: the co-tamper is caught at ENQUEUE, not in the
+        # worker.  The companion froze the ORIGINAL digest at freeze
+        # time, so an approval naming the tampered stored digest (with
+        # the real manifest digest, the only one a genuine approval
+        # could carry) cannot satisfy both the stored-row and the
+        # immutable-companion gates: a typed refusal, no job.
+        binding_manifest = await _read_manifest(database, snapshot_id)
+        assert binding_manifest is not None
+        assert str(binding_manifest["snapshot_digest"]) == original_digest
+        binding_manifest_digest = str(binding_manifest["manifest_digest"])
+        with pytest.raises(asyncpg.PostgresError) as cotamper_refusal:
+            await _enqueue_accept(
+                database,
+                ids["workspace_id"],
+                ids["delegator_id"],
+                snapshot_id=snapshot_id,
+                snapshot_digest=tampered_digest,
+                manifest_digest=binding_manifest_digest,
+            )
+        assert cotamper_refusal.value.sqlstate == "P0002"
+        assert "REVIEW_MANIFEST_NOT_FOUND" in str(cotamper_refusal.value)
 
         async with owner_connection(
             database.settings.resolved_owner_dsn(),
@@ -3156,9 +3695,10 @@ async def test_accept_worker_stored_digest_cotamper_refused(
                 "SELECT status, accepted_at FROM control.workspace WHERE id = $1",
                 ids["workspace_id"],
             )
-            job_row = await owner.fetchrow(
-                "SELECT status, error FROM control.review_job WHERE id = $1",
-                job_id,
+            accept_job_count = await owner.fetchval(
+                "SELECT count(*) FROM control.review_job"
+                " WHERE workspace_id = $1 AND job_kind = 'ACCEPT'",
+                ids["workspace_id"],
             )
             audit_count = await owner.fetchval("SELECT count(*) FROM audit.promotion")
             outbox_count = await owner.fetchval(
@@ -3187,19 +3727,17 @@ async def test_accept_worker_stored_digest_cotamper_refused(
                     ids["workspace_id"],
                 )
             )
-        # Full actual no-effects: the refusal hit the stored-payload
-        # digest guard BEFORE media finalization/canonical/revision/
-        # promotion-audit/cache/accepted; nothing moved.  The co-tamper
-        # stands untouched (the job neither repaired nor consumed it),
-        # and the media never flipped (no finalizer call: status,
-        # published_at, digest and private bytes all stand, and no
-        # public artifact exists).
+        # Full actual no-effects: the refusal hit the companion
+        # binding at ENQUEUE, before any ACCEPT job existed; nothing
+        # ran and nothing moved.  The co-tamper stands untouched (no
+        # path repaired or consumed it), and the media never flipped
+        # (no finalizer call: status, published_at, digest and private
+        # bytes all stand, and no public artifact exists).
         assert after_rowbytes == pre_rowbytes
         assert revision == base_revision
         assert str(workspace["status"]) == "REVIEW"
         assert workspace["accepted_at"] is None
-        assert job_row["status"] == "FAILED"
-        assert job_row["error"] == "SNAPSHOT_VALIDATION_FAILED"
+        assert accept_job_count == 0
         assert audit_count == 0
         assert outbox_count == 0
         assert json.loads(heading_props_after) == json.loads(pre_heading_props)
@@ -3229,7 +3767,9 @@ async def test_accept_worker_stored_digest_cotamper_refused(
                 original_digest,
                 snapshot_id,
             )
-        rows = await _enqueue_accept(database, ids["workspace_id"], ids["delegator_id"])
+        rows = await _enqueue_bound_accept(
+            database, ids["workspace_id"], ids["delegator_id"]
+        )
         job_id = UUID(str(rows[0]["job_id"]))
         job = await _claim_accept(database, "accept-cotamper-2")
         assert str(job["id"]) == str(job_id)
@@ -3297,6 +3837,12 @@ async def test_accept_worker_stored_digest_cotamper_refused(
         assert audit["committed_operations"] == 2
         assert json.loads(audit["versions"]) == stored_versions
         assert str(audit["actor_user_account_id"]) == str(ids["delegator_id"])
+        # 083/12 R5: the receipt names the exact approved binding.
+        assert str(audit["manifest_id"]) == str(binding_manifest["manifest_id"])
+        assert str(audit["manifest_digest"]) == binding_manifest_digest
+        assert [
+            str(operation) for operation in audit["applied_operation_ids"]
+        ] == sorted(str(operation) for operation in binding_manifest["operation_ids"])
         assert len(outbox_rows) == 1
         outbox = outbox_rows[0]
         assert str(outbox["site_id"]) == str(ids["site_id"])
@@ -3514,7 +4060,7 @@ async def test_accept_worker_human_page_edit_mixed_composite_fk(
                     )
                 assert stored_digest is not None
 
-                rows = await _enqueue_accept(database, workspace_id, creator_id)
+                rows = await _enqueue_bound_accept(database, workspace_id, creator_id)
                 job_id = UUID(str(rows[0]["job_id"]))
                 job = await _claim_accept(database, "accept-human-page-fk-1")
                 assert str(job["id"]) == str(job_id)
@@ -3610,3 +4156,1507 @@ async def test_accept_worker_human_page_edit_mixed_composite_fk(
             await database.administrator.execute(
                 f"DROP ROLE IF EXISTS {quote_identifier(login)}"
             )
+
+
+# ---------------------------------------------------------------------------
+# 083/12-c: c1/c2 reviewer-transaction regressions
+# ---------------------------------------------------------------------------
+
+
+class _worker_log_scope:
+    """Re-arm worker log capture around one real worker run.
+
+    The alembic upgrade's fileConfig (default
+    disable_existing_loggers=True) disables the already-imported
+    worker loggers and reconfigures root AFTER the caplog setup; this
+    scope restores the disabled flags for the EXACT loggers and
+    attaches the caplog handler directly, returning both exactly
+    afterwards.
+    """
+
+    def __init__(self, caplog: pytest.LogCaptureFixture) -> None:
+        self._caplog = caplog
+        self._saved: list[tuple[logging.Logger, bool]] = []
+
+    def __enter__(self) -> _worker_log_scope:
+        for name in (
+            "slaif_agent_site.review_worker.accept_job",
+            "slaif_agent_site.media_service.finalize",
+        ):
+            logger = logging.getLogger(name)
+            self._saved.append((logger, logger.disabled))
+            logger.disabled = False
+            logger.addHandler(self._caplog.handler)
+        return self
+
+    def __exit__(self, *exc_info: Any) -> None:
+        for logger, was_disabled in reversed(self._saved):
+            logger.removeHandler(self._caplog.handler)
+            logger.disabled = was_disabled
+
+
+def _decode_claimed_payload(value: Any) -> Any:
+    """Decode the claimed job payload JSONB to a typed object.
+
+    The claim function's jsonb payload is returned by asyncpg as the
+    raw JSON text; the typed jsonb binding re-serializes it.
+    Double-encoding the raw string (json.dumps of a str) would break
+    both the initial absence check and the final restore.
+    """
+    if isinstance(value, (bytes, bytearray)):
+        value = value.decode("utf-8")
+    if isinstance(value, str):
+        value = json.loads(value)
+    return value
+
+
+async def _accept_publication_facts(
+    database: AgentSiteDatabase,
+    pool: asyncpg.Pool[Any],
+    ids: dict[str, Any],
+    claimant: str,
+    media_root: Path,
+) -> dict[str, Any]:
+    """The exact durable publication fingerprint the promotion
+    transaction WILL commit for the bound approval (c2)."""
+    workspace_id = ids["workspace_id"]
+    snapshot_id, snapshot_digest, manifest_digest = await _accept_approval(
+        database, workspace_id
+    )
+    facts = await accept_job_module._verify_snapshot(
+        pool,
+        workspace_id=workspace_id,
+        site_id=ids["site_id"],
+        snapshot_id=snapshot_id,
+        claimant=claimant,
+        lock_timeout_seconds=30.0,
+        snapshot_digest=snapshot_digest,
+        manifest_digest=manifest_digest,
+    )
+    return {
+        "site_id": ids["site_id"],
+        "workspace_id": workspace_id,
+        "snapshot_id": facts["snapshot_id"],
+        "digest": snapshot_digest,
+        "manifest_digest": manifest_digest,
+        "manifest_id": facts["manifest_id"],
+        "base_site_revision": facts["base_site_revision"],
+        "committed_operations": len(facts["approved_operations"]),
+        "actor_user_account_id": ids["delegator_id"],
+        "versions": facts["versions"],
+        "applied_operation_ids": [
+            str(operation) for operation in sorted(facts["approved_operations"])
+        ],
+        "media_manifest": await _manual_finalize(database, media_root, ids),
+    }
+
+
+async def _publication_counts(
+    database: AgentSiteDatabase,
+    ids: dict[str, Any],
+) -> tuple[int, int, str, int]:
+    """(audit rows, WORKSPACE_ACCEPTED outbox rows, workspace status,
+    site canonical revision)."""
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        audit = await owner.fetchval("SELECT count(*) FROM audit.promotion")
+        outbox = await owner.fetchval(
+            "SELECT count(*) FROM control.cache_outbox "
+            "WHERE event_kind = 'WORKSPACE_ACCEPTED'"
+        )
+        ws_status = await owner.fetchval(
+            "SELECT status FROM control.workspace WHERE id = $1",
+            ids["workspace_id"],
+        )
+        revision = await owner.fetchval(
+            "SELECT canonical_revision FROM control.site WHERE id = $1",
+            ids["site_id"],
+        )
+    return int(audit), int(outbox), str(ws_status), int(revision)
+
+
+@pytest.mark.asyncio
+async def test_accept_worker_post_commit_reset_error_recovers_success(
+    agent_site_database: AgentSiteDatabase, tmp_path: Path
+) -> None:
+    """c2: a REAL post-COMMIT SQL error (the public asyncpg pool
+    ``reset`` seam) must recover success from the exact durable
+    publication fingerprint - never assumed, never a proven rollback.
+    """
+    database = agent_site_database
+    media_root = tmp_path / "media"
+    ids = await _seed_site(database, media_root=media_root, with_ops=True)
+    settings = _worker_settings(database)
+    boundary = MediaBoundary(settings=_media_settings(database, media_root))
+    freeze_pool = await _worker_pool(database)
+    try:
+        await _freeze_workspace(database, ids, freeze_pool)
+        rows = await _enqueue_bound_accept(
+            database, ids["workspace_id"], ids["delegator_id"]
+        )
+        job_id = UUID(str(rows[0]["job_id"]))
+
+        # Public seam: arm the pool's connection reset to verify the
+        # exact promotion receipt for THIS job is visible (the native
+        # commit landed) and then run one real SQL error on the
+        # connection - a genuine after-COMMIT driver failure through
+        # the actual worker and the same pool.  Fires exactly once;
+        # the normal (absent) reset behavior is preserved thereafter.
+        fired = False
+
+        async def _armed_reset(conn: Any) -> None:
+            nonlocal fired
+            if fired:
+                # This callback replaces the pool's default reset SQL,
+                # so restore the initial state ourselves on every
+                # non-faulting release.
+                await conn.reset()
+                return
+            receipt = await conn.fetchval(
+                "SELECT control.slaif_review_promotion_receipt_read($1)",
+                job_id,
+            )
+            if receipt is None:
+                await conn.reset()
+                return
+            fired = True
+            # The native commit landed (the exact receipt for this job
+            # is visible): run one real SQL error on the released
+            # connection - a genuine after-COMMIT driver failure.
+            await conn.reset()
+            await conn.execute("SELECT 1 / 0")
+
+        login, password = database.credentials["slaif_review_worker"]
+        pool = await asyncpg.create_pool(
+            dsn=_dsn(database, login, password),
+            min_size=1,
+            max_size=2,
+            reset=_armed_reset,
+        )
+        try:
+            async with owner_connection(
+                database.settings.resolved_owner_dsn(),
+                expected_database=database.name,
+            ) as owner:
+                base_revision = await owner.fetchval(
+                    "SELECT canonical_revision FROM control.site WHERE id = $1",
+                    ids["site_id"],
+                )
+            job = await _claim_accept(database, "accept-c2-postcommit")
+            assert str(job["id"]) == str(job_id)
+            result = await run_accept_job(pool, settings, job, media=boundary)
+        finally:
+            await pool.close()
+        assert fired, "the armed reset must have run after the commit"
+        # The commit landed: the exact receipt recovers SUCCEEDED.
+        assert result.status == "SUCCEEDED", result.error
+        audit, outbox, ws_status, revision = await _publication_counts(database, ids)
+        assert audit == 1
+        assert outbox == 1
+        assert ws_status == "ACCEPTED"
+        assert revision == int(base_revision) + 1
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(),
+            expected_database=database.name,
+        ) as owner:
+            job_row = await owner.fetchrow(
+                "SELECT status, error FROM control.review_job WHERE id = $1",
+                job_id,
+            )
+        assert job_row["status"] == "SUCCEEDED"
+        assert job_row["error"] is None
+        # No re-claim possible: the job is terminally SUCCEEDED.
+        assert await _claim(database, "accept-c2-postcommit", _WORKER_KINDS) == []
+    finally:
+        await freeze_pool.close()
+        await boundary.stop()
+
+
+@pytest.mark.asyncio
+async def test_accept_worker_deferred_commit_rejection_terminal_no_retry(
+    agent_site_database: AgentSiteDatabase,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """c2: a DEFINITIVE native COMMIT rejection (a test-owned
+    DEFERRABLE INITIALLY DEFERRED UNIQUE constraint violated inside
+    the real promotion transaction) must terminal-mark the job with
+    NO retry: the worker entered the real promotion and the server
+    rolled back the entire atomic bundle (revision, workspace, job,
+    audit, outbox).  The durable absence is proven, so no ordinary
+    requeue.
+    """
+    database = agent_site_database
+    caplog.set_level(
+        logging.WARNING, logger="slaif_agent_site.review_worker.accept_job"
+    )
+    media_root = tmp_path / "media"
+    ids = await _seed_site(database, media_root=media_root, with_ops=True)
+    settings = _worker_settings(database)
+    pool = await _worker_pool(database)
+    boundary = MediaBoundary(settings=_media_settings(database, media_root))
+    try:
+        await _freeze_workspace(database, ids, pool)
+        rows = await _enqueue_bound_accept(
+            database, ids["workspace_id"], ids["delegator_id"]
+        )
+        job_id = UUID(str(rows[0]["job_id"]))
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(),
+            expected_database=database.name,
+        ) as owner:
+            base_revision = await owner.fetchval(
+                "SELECT canonical_revision FROM control.site WHERE id = $1",
+                ids["site_id"],
+            )
+            # Test-owned deferred UNIQUE: the promotion's receipt
+            # INSERT (through the owner-DEFINER trigger scoped to
+            # this exact job) re-inserts the seeded baseline id.
+            # The SDK's deferred_fk_constraints block has already
+            # run SET CONSTRAINTS ALL IMMEDIATE before this audit
+            # INSERT, so the trigger re-defers ONLY the probe
+            # constraint; the duplicate is then caught AT the native
+            # COMMIT and the server rolls back the whole promotion
+            # bundle.
+            await owner.execute(
+                "CREATE SCHEMA c2defer; "
+                "CREATE TABLE c2defer.violation_probe (id int NOT NULL); "
+                "ALTER TABLE c2defer.violation_probe ADD CONSTRAINT "
+                "c2defer_defer_unique UNIQUE (id) "
+                "DEFERRABLE INITIALLY DEFERRED; "
+                "INSERT INTO c2defer.violation_probe (id) VALUES (1); "
+                "CREATE FUNCTION c2defer.promotion_defer_violation() "
+                "RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER "
+                "SET search_path = pg_catalog AS $fn$ "
+                f"BEGIN IF NEW.job_id = '{job_id}'::uuid THEN "
+                "SET CONSTRAINTS c2defer.c2defer_defer_unique DEFERRED; "
+                "INSERT INTO c2defer.violation_probe (id) VALUES (1); "
+                "END IF; RETURN NEW; END $fn$; "
+                "CREATE TRIGGER c2_defer_probe AFTER INSERT ON "
+                "audit.promotion FOR EACH ROW EXECUTE FUNCTION "
+                "c2defer.promotion_defer_violation();"
+            )
+        # The alembic upgrade's fileConfig (default
+        # disable_existing_loggers=True) disabled the already-imported
+        # worker logger and reconfigured root AFTER the caplog setup;
+        # restore the capture scope for the worker run itself and
+        # return both exactly afterwards.
+        worker_logger = accept_job_module.LOGGER
+        was_logger_disabled = worker_logger.disabled
+        worker_logger.disabled = False
+        worker_logger.addHandler(caplog.handler)
+        try:
+            job = await _claim_accept(database, "accept-c2-deferred")
+            assert str(job["id"]) == str(job_id)
+            result = await run_accept_job(pool, settings, job, media=boundary)
+            # The deferred violation rolled back with the bundle: the
+            # owner-committed baseline row is the only probe row left.
+            async with owner_connection(
+                database.settings.resolved_owner_dsn(),
+                expected_database=database.name,
+            ) as owner:
+                probe_rows = await owner.fetch(
+                    "SELECT id FROM c2defer.violation_probe ORDER BY id"
+                )
+            assert [row["id"] for row in probe_rows] == [1]
+        finally:
+            worker_logger.removeHandler(caplog.handler)
+            worker_logger.disabled = was_logger_disabled
+            async with owner_connection(
+                database.settings.resolved_owner_dsn(),
+                expected_database=database.name,
+            ) as owner:
+                await owner.execute(
+                    "DROP TRIGGER IF EXISTS c2_defer_probe ON "
+                    "audit.promotion; "
+                    "DROP SCHEMA IF EXISTS c2defer CASCADE;"
+                )
+        # Definite rejection: terminal, no ordinary retry.
+        assert result.status == "FAILED", (result.status, result.error)
+        assert result.error == "REVIEWER_TX_PROGRAMMING_FAILURE"
+        audit, outbox, ws_status, revision = await _publication_counts(database, ids)
+        assert audit == 0
+        assert outbox == 0
+        assert ws_status == "REVIEW"
+        assert revision == int(base_revision)
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(),
+            expected_database=database.name,
+        ) as owner:
+            job_row = await owner.fetchrow(
+                "SELECT status, error FROM control.review_job WHERE id = $1",
+                job_id,
+            )
+        assert job_row["status"] == "FAILED"
+        assert job_row["error"] == "REVIEWER_TX_PROGRAMMING_FAILURE"
+        # No re-queue possible: the job is terminally FAILED.
+        assert await _claim(database, "accept-c2-deferred", _WORKER_KINDS) == []
+        # The worker must have reached the commit boundary (NOT an
+        # early body-stage rejection) and settled the durable absence
+        # terminally.
+        messages = [record.getMessage() for record in caplog.records]
+        commit_boundary_line = (
+            "phase=reviewer-step step=transaction-exit "
+            "failure-class=programming outcome=failed job=" + str(job_id)
+        )
+        settlement_line = (
+            "phase=reviewer-step step=transaction-exit "
+            "outcome=programming-terminal-after-settlement job=" + str(job_id)
+        )
+        assert any(commit_boundary_line in message for message in messages), (
+            "worker did not reach the commit boundary; captured=" + json.dumps(messages)
+        )
+        assert any(settlement_line in message for message in messages), (
+            "worker did not settle the durable absence terminally; captured="
+            + json.dumps(messages)
+        )
+    finally:
+        await pool.close()
+        await boundary.stop()
+
+
+@pytest.mark.asyncio
+async def test_accept_worker_body_deterministic_fault_terminal_no_retry(
+    agent_site_database: AgentSiteDatabase,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """c2: a DEFINITIVE body-stage server fault (P0001 from a
+    test-owned guard on the site revision UPDATE) is terminal with
+    the whole body rolled back: no retry, the workspace returns to
+    REVIEW, and nothing published.
+    """
+    database = agent_site_database
+    caplog.set_level(
+        logging.WARNING, logger="slaif_agent_site.review_worker.accept_job"
+    )
+    media_root = tmp_path / "media"
+    ids = await _seed_site(database, media_root=media_root, with_ops=True)
+    settings = _worker_settings(database)
+    pool = await _worker_pool(database)
+    boundary = MediaBoundary(settings=_media_settings(database, media_root))
+    site_uuid = str(ids["site_id"])
+    try:
+        await _freeze_workspace(database, ids, pool)
+        rows = await _enqueue_bound_accept(
+            database, ids["workspace_id"], ids["delegator_id"]
+        )
+        job_id = UUID(str(rows[0]["job_id"]))
+        job = await _claim_accept(database, "accept-c2-bodyguard")
+        assert str(job["id"]) == str(job_id)
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            base_revision = await owner.fetchval(
+                "SELECT canonical_revision FROM control.site WHERE id = $1",
+                ids["site_id"],
+            )
+            # Test-owned guard: the reviewer body's site revision
+            # increment (the exact row) raises a deterministic P0001
+            # inside the body, BEFORE the commit.
+            await owner.execute(
+                "CREATE SCHEMA c2body; "
+                "CREATE FUNCTION c2body.site_revision_guard() "
+                "RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER "
+                "SET search_path = pg_catalog AS $fn$ "
+                f"BEGIN IF NEW.id = '{site_uuid}'::uuid "
+                "AND NEW.canonical_revision > OLD.canonical_revision "
+                "THEN RAISE EXCEPTION 'c2 body revision guard'; "
+                "END IF; RETURN NEW; END $fn$; "
+                "CREATE TRIGGER c2_body_revision_guard BEFORE UPDATE "
+                "ON control.site FOR EACH ROW EXECUTE FUNCTION "
+                "c2body.site_revision_guard();"
+            )
+        with _worker_log_scope(caplog):
+            result = await run_accept_job(pool, settings, job, media=boundary)
+        # Definite body-stage rejection: terminal, no ordinary retry.
+        assert result.status == "FAILED", (result.status, result.error)
+        assert result.error == "REVIEWER_TX_PROGRAMMING_FAILURE"
+        audit, outbox, ws_status, revision = await _publication_counts(database, ids)
+        assert audit == 0
+        assert outbox == 0
+        assert ws_status == "REVIEW"
+        assert revision == int(base_revision)
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            job_row = await owner.fetchrow(
+                "SELECT status, error FROM control.review_job WHERE id = $1",
+                job_id,
+            )
+        assert job_row["status"] == "FAILED"
+        assert job_row["error"] == "REVIEWER_TX_PROGRAMMING_FAILURE"
+        # Body-stage deterministic: the failure surfaced at the
+        # revision step (NOT the commit boundary) with the direct
+        # terminal classification.
+        messages = [record.getMessage() for record in caplog.records]
+        assert any(
+            "phase=reviewer-step step=revision "
+            "failure-class=programming outcome=failed job=" + str(job_id) in message
+            for message in messages
+        ), "captured=" + json.dumps(messages)
+        # No re-queue possible: the job is terminally FAILED.
+        assert await _claim(database, "accept-c2-bodyguard", _WORKER_KINDS) == []
+    finally:
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            await owner.execute(
+                "DROP TRIGGER IF EXISTS c2_body_revision_guard ON control.site; "
+                "DROP SCHEMA IF EXISTS c2body CASCADE;"
+            )
+        await pool.close()
+        await boundary.stop()
+
+
+@pytest.mark.asyncio
+async def test_accept_worker_lock_timeout_requeues_then_succeeds(
+    agent_site_database: AgentSiteDatabase,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """c2: the transient SQL fault 55P03 raised by the worker's OWN
+    SET LOCAL lock_timeout (the reviewer TX's lifecycle-lock wait
+    blocked by the exact owned lock) keeps the bounded requeue, and
+    the re-claimed attempt publishes normally.
+    """
+    database = agent_site_database
+    caplog.set_level(
+        logging.WARNING, logger="slaif_agent_site.review_worker.accept_job"
+    )
+    caplog.set_level(logging.WARNING, logger="slaif_agent_site.media_service.finalize")
+    media_root = tmp_path / "media"
+    ids = await _seed_site(database, media_root=media_root, with_ops=True)
+    # 5s (the field floor) bounds the worker's own lock-timeout wait.
+    settings = _worker_settings(database).model_copy(
+        update={"drain_lock_timeout_seconds": 5.0}
+    )
+    pool = await _worker_pool(database)
+    boundary = MediaBoundary(settings=_media_settings(database, media_root))
+    lock_holder: list[tuple[Any, Any]] = []
+    try:
+        await _freeze_workspace(database, ids, pool)
+        rows = await _enqueue_bound_accept(
+            database, ids["workspace_id"], ids["delegator_id"]
+        )
+        job_id = UUID(str(rows[0]["job_id"]))
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            base_revision = await owner.fetchval(
+                "SELECT canonical_revision FROM control.site WHERE id = $1",
+                ids["site_id"],
+            )
+
+        real_finalize = boundary.finalize
+
+        async def _finalize_then_hold(
+            site_id: UUID, workspace_id: UUID, media_ids: list[UUID]
+        ) -> Any:
+            # The REAL preflight (step 3) and materialization
+            # (step 4) complete first; only THEN does the owned
+            # backend take the same workspace lifecycle advisory
+            # lock, so the reviewer TX's own first statement - not
+            # the preflight - hits the worker's lock timeout.
+            manifest = await real_finalize(site_id, workspace_id, media_ids)
+            holder_ctx = owner_connection(
+                database.settings.resolved_owner_dsn(),
+                expected_database=database.name,
+            )
+            holder = await holder_ctx.__aenter__()
+            await holder.execute("BEGIN")
+            await holder.execute(
+                "SELECT pg_advisory_xact_lock(hashtextextended($1, 280))",
+                str(workspace_id),
+            )
+            lock_holder.append((holder, holder_ctx))
+            return manifest
+
+        monkeypatch.setattr(boundary, "finalize", _finalize_then_hold)
+        job = await _claim_accept(database, "accept-c2-locktime-a")
+        assert str(job["id"]) == str(job_id)
+        with _worker_log_scope(caplog):
+            result = await run_accept_job(pool, settings, job, media=boundary)
+        # Transient: bounded requeue, nothing terminal, nothing
+        # published; the workspace returns to the queue state and the
+        # job stays CLAIMED for stale-claim recovery.
+        assert result.status == "ROLLED_BACK", (result.status, result.error)
+        assert result.error is None
+        audit, outbox, ws_status, revision = await _publication_counts(database, ids)
+        assert audit == 0
+        assert outbox == 0
+        assert ws_status == "ACCEPT_QUEUED"
+        assert revision == int(base_revision)
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            job_row = await owner.fetchrow(
+                "SELECT status, claimed_by, attempt_count "
+                "FROM control.review_job WHERE id = $1",
+                job_id,
+            )
+        assert job_row["status"] == "CLAIMED"
+        assert str(job_row["claimed_by"]) == "accept-c2-locktime-a"
+        assert int(job_row["attempt_count"]) == 1
+        # The real reviewer phase logged the 55P03 lock timeout and
+        # the bounded requeue.
+        messages = [record.getMessage() for record in caplog.records]
+        assert any(
+            "phase=reviewer-tx outcome=failed "
+            "class=LockNotAvailableError sqlstate=55P03" in message
+            for message in messages
+        ), "captured=" + json.dumps(messages)
+        assert any(
+            "phase=reviewer-step step=entry "
+            "failure-class=retry outcome=failed job=" + str(job_id) in message
+            for message in messages
+        ), "captured=" + json.dumps(messages)
+        assert any(
+            "phase=retry outcome=requeue reason=postgres_transient attempt=1" in message
+            for message in messages
+        ), "captured=" + json.dumps(messages)
+        # Release the owned lock, restore the real finalizer, let
+        # the claim age past staleness, and re-claim: the bounded
+        # retry path must publish.
+        for holder, holder_ctx in lock_holder:
+            await holder.execute("COMMIT")
+            await holder_ctx.__aexit__(None, None, None)
+        lock_holder.clear()
+        monkeypatch.setattr(boundary, "finalize", real_finalize)
+        await _age_heartbeat(database, job_id)
+        job2 = await _claim_accept(database, "accept-c2-locktime-b")
+        assert str(job2["id"]) == str(job_id)
+        assert str(job2["claimed_by"]) == "accept-c2-locktime-b"
+        assert int(job2["attempt_count"]) == 2
+        result2 = await run_accept_job(pool, settings, job2, media=boundary)
+        assert result2.status == "SUCCEEDED", result2.error
+        audit, outbox, ws_status, revision = await _publication_counts(database, ids)
+        assert audit == 1
+        assert outbox == 1
+        assert ws_status == "ACCEPTED"
+        assert revision == int(base_revision) + 1
+    finally:
+        for holder, holder_ctx in lock_holder:
+            try:
+                await holder.execute("ROLLBACK")
+            except Exception:
+                pass
+            await holder_ctx.__aexit__(None, None, None)
+        lock_holder.clear()
+        await pool.close()
+        await boundary.stop()
+
+
+@pytest.mark.asyncio
+async def test_accept_worker_state_error_proven_absence_terminal_no_retry(
+    agent_site_database: AgentSiteDatabase,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """c2: a completed-body CowPromotionStateError at the SDK's
+    PRE-commit invariant (the owned transaction ended unexpectedly -
+    the real rollback path runs) must terminal-mark the job with NO
+    retry: the durable absence is proven, the workspace returns to
+    REVIEW, nothing is published, and a fresh attempt publishes
+    normally.
+    """
+    database = agent_site_database
+    caplog.set_level(
+        logging.WARNING, logger="slaif_agent_site.review_worker.accept_job"
+    )
+    media_root = tmp_path / "media"
+    ids = await _seed_site(database, media_root=media_root, with_ops=True)
+    settings = _worker_settings(database)
+    pool = await _worker_pool(database)
+    boundary = MediaBoundary(settings=_media_settings(database, media_root))
+    # The same object the worker module imported from the foundation
+    # shim; patching the module attribute redirects the worker's
+    # promotion scope without touching the SDK.
+    real_reviewer = asyncpg_cow_reviewer
+
+    @asynccontextmanager
+    async def _state_error_before_commit(connection: Any) -> AsyncIterator[Any]:
+        async with real_reviewer(connection) as reviewer:
+            yield reviewer
+            # The worker body completed (its flag was set inside the
+            # body); raising here runs the SDK's REAL exit path with
+            # a clean body: the owned transaction is still open, so
+            # the SDK rolls it back (the publication is proven
+            # absent) and re-raises the exact public invariant error
+            # at the commit boundary.
+            raise CowPromotionStateError(
+                "the owned reviewer transaction ended unexpectedly"
+            )
+
+    monkeypatch.setattr(
+        accept_job_module, "asyncpg_cow_reviewer", _state_error_before_commit
+    )
+    try:
+        await _freeze_workspace(database, ids, pool)
+        rows = await _enqueue_bound_accept(
+            database, ids["workspace_id"], ids["delegator_id"]
+        )
+        job_id = UUID(str(rows[0]["job_id"]))
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            base_revision = await owner.fetchval(
+                "SELECT canonical_revision FROM control.site WHERE id = $1",
+                ids["site_id"],
+            )
+        job = await _claim_accept(database, "accept-c2-statepre-a")
+        assert str(job["id"]) == str(job_id)
+        with _worker_log_scope(caplog):
+            result = await run_accept_job(pool, settings, job, media=boundary)
+        # Deterministic invariant + proven durable absence:
+        # terminal, NO ordinary requeue.
+        assert result.status == "FAILED", (result.status, result.error)
+        assert result.error == "REVIEWER_TX_PROGRAMMING_FAILURE"
+        audit, outbox, ws_status, revision = await _publication_counts(database, ids)
+        assert audit == 0
+        assert outbox == 0
+        assert ws_status == "REVIEW"
+        assert revision == int(base_revision)
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            job_row = await owner.fetchrow(
+                "SELECT status, error FROM control.review_job WHERE id = $1",
+                job_id,
+            )
+        assert job_row["status"] == "FAILED"
+        assert job_row["error"] == "REVIEWER_TX_PROGRAMMING_FAILURE"
+        # The worker reached the commit boundary (not an early body-
+        # stage refusal) and settled the proven absence terminally.
+        messages = [record.getMessage() for record in caplog.records]
+        assert any(
+            "phase=reviewer-step step=transaction-exit "
+            "failure-class=state-error outcome=failed job=" + str(job_id) in message
+            for message in messages
+        ), "captured=" + json.dumps(messages)
+        assert any(
+            "phase=reviewer-step step=transaction-exit "
+            "outcome=programming-terminal-after-settlement job="
+            + str(job_id)
+            in message
+            for message in messages
+        ), "captured=" + json.dumps(messages)
+        # No re-queue of a deterministic invariant: the job is
+        # terminally FAILED.
+        assert await _claim(database, "accept-c2-statepre-a", _WORKER_KINDS) == []
+        # The fault is not a property of the durable state: a fresh
+        # attempt publishes normally.
+        rows2 = await _enqueue_bound_accept(
+            database, ids["workspace_id"], ids["delegator_id"]
+        )
+        job2_id = UUID(str(rows2[0]["job_id"]))
+        assert job2_id != job_id
+        monkeypatch.setattr(accept_job_module, "asyncpg_cow_reviewer", real_reviewer)
+        job2 = await _claim_accept(database, "accept-c2-statepre-b")
+        assert str(job2["id"]) == str(job2_id)
+        result2 = await run_accept_job(pool, settings, job2, media=boundary)
+        assert result2.status == "SUCCEEDED", result2.error
+        audit, outbox, ws_status, revision = await _publication_counts(database, ids)
+        assert audit == 1
+        assert outbox == 1
+        assert ws_status == "ACCEPTED"
+        assert revision == int(base_revision) + 1
+    finally:
+        monkeypatch.setattr(accept_job_module, "asyncpg_cow_reviewer", real_reviewer)
+        await pool.close()
+        await boundary.stop()
+
+
+@pytest.mark.asyncio
+async def test_accept_worker_state_error_after_landed_commit_recovers_success(
+    agent_site_database: AgentSiteDatabase,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """c2: a completed-body CowPromotionStateError AFTER the native
+    COMMIT landed (the SDK's post-commit cleanup invariant boundary)
+    must recover success from the EXACT durable publication
+    fingerprint - never assumed, never a proven rollback, and no
+    second publication.
+    """
+    database = agent_site_database
+    caplog.set_level(
+        logging.WARNING, logger="slaif_agent_site.review_worker.accept_job"
+    )
+    media_root = tmp_path / "media"
+    ids = await _seed_site(database, media_root=media_root, with_ops=True)
+    settings = _worker_settings(database)
+    pool = await _worker_pool(database)
+    boundary = MediaBoundary(settings=_media_settings(database, media_root))
+    # The same object the worker module imported from the foundation
+    # shim; patching the module attribute redirects the worker's
+    # promotion scope without touching the SDK.
+    real_reviewer = asyncpg_cow_reviewer
+
+    @asynccontextmanager
+    async def _state_error_after_landed_commit(connection: Any) -> AsyncIterator[Any]:
+        async with real_reviewer(connection) as reviewer:
+            yield reviewer
+        # The real scope exit ran the SDK's own validate_context +
+        # native COMMIT: the entire publication bundle (receipt,
+        # workspace, job, audit, outbox) is durable.  Now raise the
+        # SDK's post-commit cleanup invariant - the same public type
+        # the SDK raises when a COW context survives the post-commit
+        # cleanup - at the genuine post-COMMIT boundary.
+        raise CowPromotionStateError(
+            "COW context survived reviewer transaction cleanup and was "
+            "reset: c2 post-commit boundary"
+        )
+
+    monkeypatch.setattr(
+        accept_job_module, "asyncpg_cow_reviewer", _state_error_after_landed_commit
+    )
+    try:
+        await _freeze_workspace(database, ids, pool)
+        rows = await _enqueue_bound_accept(
+            database, ids["workspace_id"], ids["delegator_id"]
+        )
+        job_id = UUID(str(rows[0]["job_id"]))
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            base_revision = await owner.fetchval(
+                "SELECT canonical_revision FROM control.site WHERE id = $1",
+                ids["site_id"],
+            )
+        job = await _claim_accept(database, "accept-c2-statepost")
+        assert str(job["id"]) == str(job_id)
+        with _worker_log_scope(caplog):
+            result = await run_accept_job(pool, settings, job, media=boundary)
+        # The commit landed: the exact receipt fingerprint recovers
+        # SUCCEEDED - no re-run, no requeue, no proven-rollback
+        # label.
+        assert result.status == "SUCCEEDED", (result.status, result.error)
+        audit, outbox, ws_status, revision = await _publication_counts(database, ids)
+        assert audit == 1
+        assert outbox == 1
+        assert ws_status == "ACCEPTED"
+        assert revision == int(base_revision) + 1
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            job_row = await owner.fetchrow(
+                "SELECT status, error FROM control.review_job WHERE id = $1",
+                job_id,
+            )
+        assert job_row["status"] == "SUCCEEDED"
+        assert job_row["error"] is None
+        # The worker reached the commit boundary and recovered the
+        # committed publication durably.
+        messages = [record.getMessage() for record in caplog.records]
+        assert any(
+            "phase=reviewer-step step=transaction-exit "
+            "failure-class=state-error outcome=failed job=" + str(job_id) in message
+            for message in messages
+        ), "captured=" + json.dumps(messages)
+        assert any(
+            "phase=reviewer-step step=transaction-exit "
+            "outcome=committed-durable job=" + str(job_id) in message
+            for message in messages
+        ), "captured=" + json.dumps(messages)
+        # No re-claim possible: the job is terminally SUCCEEDED.
+        assert await _claim(database, "accept-c2-statepost", _WORKER_KINDS) == []
+    finally:
+        monkeypatch.setattr(accept_job_module, "asyncpg_cow_reviewer", real_reviewer)
+        await pool.close()
+        await boundary.stop()
+
+
+@pytest.mark.asyncio
+async def test_accept_worker_stale_attempt_leaves_moved_claim_untouched(
+    agent_site_database: AgentSiteDatabase, tmp_path: Path
+) -> None:
+    """c1: a stale invocation A after B re-claimed the same job must
+    leave B's EXACT workspace and job state untouched (the initial
+    PROMOTING transition is claim-gated), and B then publishes.
+    """
+    database = agent_site_database
+    media_root = tmp_path / "media"
+    ids = await _seed_site(database, media_root=media_root, with_ops=True)
+    settings = _worker_settings(database)
+    pool = await _worker_pool(database)
+    boundary = MediaBoundary(settings=_media_settings(database, media_root))
+    try:
+        await _freeze_workspace(database, ids, pool)
+        rows = await _enqueue_bound_accept(
+            database, ids["workspace_id"], ids["delegator_id"]
+        )
+        job_id = UUID(str(rows[0]["job_id"]))
+        job_a = await _claim_accept(database, "accept-c2-stale-a")
+        assert str(job_a["id"]) == str(job_id)
+        await _age_heartbeat(database, job_id)
+        job_b = await _claim_accept(database, "accept-c2-stale-b")
+        assert str(job_b["id"]) == str(job_id)
+        assert str(job_b["claimed_by"]) == "accept-c2-stale-b"
+        assert int(job_b["attempt_count"]) == 2
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            base_revision = await owner.fetchval(
+                "SELECT canonical_revision FROM control.site WHERE id = $1",
+                ids["site_id"],
+            )
+        # The stale A invocation defers with NO write at all.
+        result_a = await run_accept_job(pool, settings, job_a, media=boundary)
+        assert result_a.status == "ROLLED_BACK", (result_a.status, result_a.error)
+        assert result_a.error is None
+        # B's exact state is untouched: the workspace never moved,
+        # the job is still B's claim with the exact same payload.
+        audit, outbox, ws_status, revision = await _publication_counts(database, ids)
+        assert audit == 0
+        assert outbox == 0
+        assert ws_status == "ACCEPT_QUEUED"
+        assert revision == int(base_revision)
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            job_row = await owner.fetchrow(
+                "SELECT status, claimed_by, attempt_count, error, payload "
+                "FROM control.review_job WHERE id = $1",
+                job_id,
+            )
+        assert job_row["status"] == "CLAIMED"
+        assert str(job_row["claimed_by"]) == "accept-c2-stale-b"
+        assert int(job_row["attempt_count"]) == 2
+        assert job_row["error"] is None
+        assert json.dumps(
+            _decode_claimed_payload(job_row["payload"]),
+            sort_keys=True,
+            separators=(",", ":"),
+        ) == json.dumps(
+            _decode_claimed_payload(job_b["payload"]),
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        # B now publishes normally.
+        result_b = await run_accept_job(pool, settings, job_b, media=boundary)
+        assert result_b.status == "SUCCEEDED", result_b.error
+        audit, outbox, ws_status, revision = await _publication_counts(database, ids)
+        assert audit == 1
+        assert outbox == 1
+        assert ws_status == "ACCEPTED"
+        assert revision == int(base_revision) + 1
+    finally:
+        await pool.close()
+        await boundary.stop()
+
+
+@pytest.mark.asyncio
+async def test_accept_worker_between_phase_drift_terminal_no_clobber(
+    agent_site_database: AgentSiteDatabase,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """c1: the workspace leaving the promotion pipeline between the
+    step-3 verification and the reviewer transaction is a typed
+    state refusal: the job terminal-marks with NO workspace
+    transition (the drifted state is never clobbered).
+    """
+    database = agent_site_database
+    media_root = tmp_path / "media"
+    ids = await _seed_site(database, media_root=media_root, with_ops=True)
+    settings = _worker_settings(database)
+    pool = await _worker_pool(database)
+    boundary = MediaBoundary(settings=_media_settings(database, media_root))
+    try:
+        await _freeze_workspace(database, ids, pool)
+        rows = await _enqueue_bound_accept(
+            database, ids["workspace_id"], ids["delegator_id"]
+        )
+        job_id = UUID(str(rows[0]["job_id"]))
+        job = await _claim_accept(database, "accept-c2-drift")
+        assert str(job["id"]) == str(job_id)
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            base_revision = await owner.fetchval(
+                "SELECT canonical_revision FROM control.site WHERE id = $1",
+                ids["site_id"],
+            )
+
+        real_verify = accept_job_module._verify_snapshot
+
+        async def _verify_then_drift(*args: Any, **kwargs: Any) -> Any:
+            facts = await real_verify(*args, **kwargs)
+            # Between-phase state mutation: the workspace leaves the
+            # promotion pipeline after the real verification.
+            async with owner_connection(
+                database.settings.resolved_owner_dsn(),
+                expected_database=database.name,
+            ) as owner:
+                await owner.execute(
+                    "UPDATE control.workspace SET status = 'REVIEW' WHERE id = $1",
+                    ids["workspace_id"],
+                )
+            return facts
+
+        monkeypatch.setattr(accept_job_module, "_verify_snapshot", _verify_then_drift)
+        result = await run_accept_job(pool, settings, job, media=boundary)
+        assert result.status == "FAILED", (result.status, result.error)
+        assert result.error == "STATE_DRIFT"
+        audit, outbox, ws_status, revision = await _publication_counts(database, ids)
+        assert audit == 0
+        assert outbox == 0
+        # NO clobber: the drifted state is left exactly as found.
+        assert ws_status == "REVIEW"
+        assert revision == int(base_revision)
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            job_row = await owner.fetchrow(
+                "SELECT status, error FROM control.review_job WHERE id = $1",
+                job_id,
+            )
+        assert job_row["status"] == "FAILED"
+        assert job_row["error"] == "STATE_DRIFT"
+        # No re-queue possible: the job is terminally FAILED.
+        assert await _claim(database, "accept-c2-drift", _WORKER_KINDS) == []
+    finally:
+        await pool.close()
+        await boundary.stop()
+
+
+@pytest.mark.asyncio
+async def test_accept_worker_stored_payload_tamper_refused(
+    agent_site_database: AgentSiteDatabase,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """c1: a BETWEEN-PHASE mutation of the stored approval payload
+    (content that no longer matches its own trusted digest) reaches
+    the actual reviewer approval gate: the real preflight and media
+    finalization complete first, the workspace returns to REVIEW,
+    and no canonical promotion result publishes.
+    """
+    database = agent_site_database
+    media_root = tmp_path / "media"
+    ids = await _seed_site(database, media_root=media_root, with_ops=True)
+    settings = _worker_settings(database)
+    pool = await _worker_pool(database)
+    boundary = MediaBoundary(settings=_media_settings(database, media_root))
+    try:
+        await _freeze_workspace(database, ids, pool)
+        rows = await _enqueue_bound_accept(
+            database, ids["workspace_id"], ids["delegator_id"]
+        )
+        job_id = UUID(str(rows[0]["job_id"]))
+        job = await _claim_accept(database, "accept-c2-tamper")
+        assert str(job["id"]) == str(job_id)
+        snapshot_id, _snapshot_digest, _manifest_digest = await _accept_approval(
+            database, ids["workspace_id"]
+        )
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            base_revision = await owner.fetchval(
+                "SELECT canonical_revision FROM control.site WHERE id = $1",
+                ids["site_id"],
+            )
+
+        real_finalize = boundary.finalize
+
+        async def _finalize_then_tamper(
+            site_id: UUID, workspace_id: UUID, media_ids: list[UUID]
+        ) -> Any:
+            # Between phases: after the real preflight (step 3) and
+            # media finalization (step 4), the stored approval
+            # payload is mutated - a valid JSONB object that no
+            # longer matches its own trusted digest.
+            manifest = await real_finalize(site_id, workspace_id, media_ids)
+            async with owner_connection(
+                database.settings.resolved_owner_dsn(),
+                expected_database=database.name,
+            ) as owner:
+                await owner.execute(
+                    "UPDATE control.review_snapshot "
+                    "SET payload = payload || $1::jsonb WHERE id = $2",
+                    '{"c2tamper": true}',
+                    snapshot_id,
+                )
+            return manifest
+
+        monkeypatch.setattr(boundary, "finalize", _finalize_then_tamper)
+        result = await run_accept_job(pool, settings, job, media=boundary)
+        assert result.status == "FAILED", (result.status, result.error)
+        assert result.error == "SNAPSHOT_VALIDATION_FAILED"
+        audit, outbox, ws_status, revision = await _publication_counts(database, ids)
+        assert audit == 0
+        assert outbox == 0
+        assert ws_status == "REVIEW"
+        assert revision == int(base_revision)
+        # The finalization really happened (the preflight completed
+        # BEFORE the refusal), yet the canonical media state is
+        # unchanged: the refusal is the reviewer approval gate, and
+        # no canonical/pending promotion result was published.
+        assert _public_path(media_root, ids["media_digest"]).is_file()
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            job_row = await owner.fetchrow(
+                "SELECT status, error FROM control.review_job WHERE id = $1",
+                job_id,
+            )
+            public_status = await owner.fetchval(
+                "SELECT public_status FROM content.media_asset_base WHERE id = $1",
+                ids["media_id"],
+            )
+        assert job_row["status"] == "FAILED"
+        assert job_row["error"] == "SNAPSHOT_VALIDATION_FAILED"
+        assert str(public_status) == "private"
+        # No re-queue possible: the job is terminally FAILED.
+        assert await _claim(database, "accept-c2-tamper", _WORKER_KINDS) == []
+    finally:
+        await pool.close()
+        await boundary.stop()
+
+
+@pytest.mark.asyncio
+async def test_accept_worker_numeric_digest_refused(
+    agent_site_database: AgentSiteDatabase, tmp_path: Path
+) -> None:
+    """c1: a 64-digit JSON NUMBER in the durable approval (every
+    decimal digit is a valid hex character, so only the raw string
+    type guard refuses it) is a typed validation refusal of its own
+    unchanged claim: terminal, no re-queue.
+    """
+    database = agent_site_database
+    media_root = tmp_path / "media"
+    ids = await _seed_site(database, media_root=media_root, with_ops=True)
+    settings = _worker_settings(database)
+    pool = await _worker_pool(database)
+    boundary = MediaBoundary(settings=_media_settings(database, media_root))
+    try:
+        await _freeze_workspace(database, ids, pool)
+        rows = await _enqueue_bound_accept(
+            database, ids["workspace_id"], ids["delegator_id"]
+        )
+        job_id = UUID(str(rows[0]["job_id"]))
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            base_revision = await owner.fetchval(
+                "SELECT canonical_revision FROM control.site WHERE id = $1",
+                ids["site_id"],
+            )
+            # A 64-digit JSON number: str() coercion AND the hex
+            # shape check would both pass; the raw string type guard
+            # must refuse before any transition.
+            await owner.execute(
+                "UPDATE control.review_job SET payload = jsonb_set(payload, "
+                "'{snapshot_digest}', to_jsonb(1234567890123456789012345678901234567890"
+                "123456789012345678901234::numeric)) WHERE id = $1",
+                job_id,
+            )
+        job = await _claim_accept(database, "accept-c2-numeric")
+        assert str(job["id"]) == str(job_id)
+        result = await run_accept_job(pool, settings, job, media=boundary)
+        assert result.status == "FAILED", (result.status, result.error)
+        assert result.error == "SNAPSHOT_VALIDATION_FAILED"
+        # The refusal terminals its own unchanged claim: the
+        # workspace returns to REVIEW, nothing publishes.
+        audit, outbox, ws_status, revision = await _publication_counts(database, ids)
+        assert audit == 0
+        assert outbox == 0
+        assert ws_status == "REVIEW"
+        assert revision == int(base_revision)
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            job_row = await owner.fetchrow(
+                "SELECT status, error FROM control.review_job WHERE id = $1",
+                job_id,
+            )
+        assert job_row["status"] == "FAILED"
+        assert job_row["error"] == "SNAPSHOT_VALIDATION_FAILED"
+        # No re-queue possible: the job is terminally FAILED.
+        assert await _claim(database, "accept-c2-numeric", _WORKER_KINDS) == []
+    finally:
+        await pool.close()
+        await boundary.stop()
+
+
+@pytest.mark.asyncio
+async def test_reconcile_uncertain_outcome_matrix(
+    agent_site_database: AgentSiteDatabase, tmp_path: Path
+) -> None:
+    """c2: direct uncertain-outcome reconciliation against the EXACT
+    durable publication fingerprint: success ONLY on the full
+    fingerprint, a proven absence ONLY on the clean claimed state,
+    and every contradiction fails closed.
+    """
+    database = agent_site_database
+    media_root = tmp_path / "media"
+    ids = await _seed_site(database, media_root=media_root, with_ops=True)
+    settings = _worker_settings(database)
+    pool = await _worker_pool(database)
+    boundary = MediaBoundary(settings=_media_settings(database, media_root))
+    try:
+        await _freeze_workspace(database, ids, pool)
+        rows = await _enqueue_bound_accept(
+            database, ids["workspace_id"], ids["delegator_id"]
+        )
+        job_id = UUID(str(rows[0]["job_id"]))
+        job = await _claim_accept(database, "accept-c2-reconcile")
+        assert str(job["id"]) == str(job_id)
+        claimant = str(job["claimed_by"])
+        attempt_count = int(job["attempt_count"])
+        claimed_payload = _decode_claimed_payload(job["payload"])
+        ws_id = UUID(str(ids["workspace_id"]))
+        site_id = UUID(str(ids["site_id"]))
+        # _accept_publication_facts runs the production
+        # _verify_snapshot preflight, which requires the promotion
+        # pipeline state: enter it through the EXISTING claim-gated
+        # step-2 transition for this exact owned claim (not a raw
+        # owner write).
+        applied = await accept_job_module._claim_gated_state_change(
+            pool,
+            job_id=job_id,
+            workspace_id=ws_id,
+            site_id=site_id,
+            claimant=claimant,
+            attempt_count=attempt_count,
+            claimed_payload=claimed_payload,
+            workspace_from="ACCEPT_QUEUED",
+            workspace_target="PROMOTING",
+            job_failed_code=None,
+        )
+        assert applied == "applied"
+        expected = await _accept_publication_facts(
+            database, pool, ids, claimant, media_root
+        )
+
+        async def _reconcile() -> str:
+            return await accept_job_module._reconcile_uncertain_outcome(
+                pool,
+                job_id=job_id,
+                workspace_id=ws_id,
+                site_id=site_id,
+                claimant=claimant,
+                attempt_count=attempt_count,
+                claimed_payload=claimed_payload,
+                expected_receipt=expected,
+            )
+
+        # (a) fresh claimed, nothing durable: proven absence.
+        assert await _reconcile() == "rolled_back"
+
+        # (k) a pool-level read failure: the REAL asyncpg
+        # InterfaceError (a SIBLING of PostgresError) raised by a
+        # closed pool's acquire is an unreadable durable state -
+        # unknown, never a verdict (the caller maps it to the
+        # nonterminal DEFERRED result, UNCERTAIN_OUTCOME, with no
+        # durable write), and NO state change.  A second fixture-
+        # owned pool is closed for this probe; the live worker pool
+        # is untouched for the remaining matrix cases.
+        dead_pool = await _worker_pool(database)
+        await dead_pool.close()
+
+        async def _ws_job_state() -> tuple[str, str]:
+            async with owner_connection(
+                database.settings.resolved_owner_dsn(),
+                expected_database=database.name,
+            ) as owner:
+                ws_row = await owner.fetchrow(
+                    "SELECT status FROM control.workspace WHERE id = $1", ws_id
+                )
+                job_row = await owner.fetchrow(
+                    "SELECT status FROM control.review_job WHERE id = $1", job_id
+                )
+            return str(ws_row["status"]), str(job_row["status"])
+
+        state_before = await _ws_job_state()
+        assert (
+            await accept_job_module._reconcile_uncertain_outcome(
+                dead_pool,
+                job_id=job_id,
+                workspace_id=ws_id,
+                site_id=site_id,
+                claimant=claimant,
+                attempt_count=attempt_count,
+                claimed_payload=claimed_payload,
+                expected_receipt=expected,
+            )
+            == "unknown"
+        )
+        assert await _ws_job_state() == state_before
+
+        # (b) the real publication lands: the exact fingerprint.
+        result = await run_accept_job(pool, settings, job, media=boundary)
+        assert result.status == "SUCCEEDED", result.error
+        assert await _reconcile() == "committed"
+
+        # (c) tampered receipt digest: a mismatching fact.
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(),
+            expected_database=database.name,
+        ) as owner:
+            original_digest = await owner.fetchval(
+                "SELECT digest FROM audit.promotion WHERE job_id = $1", job_id
+            )
+            await owner.execute(
+                "UPDATE audit.promotion SET digest = md5('x' || digest) || "
+                "md5('y' || digest) WHERE job_id = $1",
+                job_id,
+            )
+        assert await _reconcile() == "unknown"
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(),
+            expected_database=database.name,
+        ) as owner:
+            await owner.execute(
+                "UPDATE audit.promotion SET digest = $1 WHERE job_id = $2",
+                original_digest,
+                job_id,
+            )
+
+        # (d) a duplicate receipt row: an ambiguous marker.
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(),
+            expected_database=database.name,
+        ) as owner:
+            duplicate_id = await owner.fetchval(
+                "INSERT INTO audit.promotion (site_id, workspace_id, "
+                "snapshot_id, job_id, digest, base_site_revision, "
+                "new_canonical_revision, committed_operations, versions, "
+                "actor_user_account_id) "
+                "SELECT site_id, workspace_id, snapshot_id, job_id, digest, "
+                "base_site_revision, new_canonical_revision, "
+                "committed_operations, versions, actor_user_account_id "
+                "FROM audit.promotion WHERE job_id = $1 RETURNING id",
+                job_id,
+            )
+        assert await _reconcile() == "unknown"
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(),
+            expected_database=database.name,
+        ) as owner:
+            await owner.execute(
+                "DELETE FROM audit.promotion WHERE id = $1", duplicate_id
+            )
+
+        # (g) a wrong-payload outbox row alongside the exact one.
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(),
+            expected_database=database.name,
+        ) as owner:
+            wrong_row_id = await owner.fetchval(
+                "INSERT INTO control.cache_outbox (site_id, workspace_id, "
+                "event_kind, payload) SELECT site_id, workspace_id, "
+                "'WORKSPACE_ACCEPTED', payload || $3::jsonb "
+                "FROM control.cache_outbox WHERE site_id = $1 AND "
+                "workspace_id = $2 AND event_kind = 'WORKSPACE_ACCEPTED' "
+                "RETURNING id",
+                site_id,
+                ws_id,
+                '{"c2wrong": true}',
+            )
+        assert await _reconcile() == "unknown"
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(),
+            expected_database=database.name,
+        ) as owner:
+            await owner.execute(
+                "DELETE FROM control.cache_outbox WHERE id = $1", wrong_row_id
+            )
+
+        # (h) a duplicate of the exact outbox row.
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(),
+            expected_database=database.name,
+        ) as owner:
+            dup_row_id = await owner.fetchval(
+                "INSERT INTO control.cache_outbox (site_id, workspace_id, "
+                "event_kind, payload) SELECT site_id, workspace_id, "
+                "event_kind, payload FROM control.cache_outbox WHERE "
+                "site_id = $1 AND workspace_id = $2 AND "
+                "event_kind = 'WORKSPACE_ACCEPTED' RETURNING id",
+                site_id,
+                ws_id,
+            )
+        assert await _reconcile() == "unknown"
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(),
+            expected_database=database.name,
+        ) as owner:
+            await owner.execute(
+                "DELETE FROM control.cache_outbox WHERE id = $1", dup_row_id
+            )
+
+        # (f) the exact outbox row missing under a committed job.
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(),
+            expected_database=database.name,
+        ) as owner:
+            outbox_row = await owner.fetchrow(
+                "SELECT id, payload FROM control.cache_outbox WHERE "
+                "site_id = $1 AND workspace_id = $2 AND "
+                "event_kind = 'WORKSPACE_ACCEPTED'",
+                site_id,
+                ws_id,
+            )
+            await owner.execute(
+                "DELETE FROM control.cache_outbox WHERE id = $1", outbox_row["id"]
+            )
+        assert await _reconcile() == "unknown"
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(),
+            expected_database=database.name,
+        ) as owner:
+            await owner.execute(
+                "INSERT INTO control.cache_outbox (id, site_id, workspace_id, "
+                "event_kind, payload) VALUES ($1, $2, $3, "
+                "'WORKSPACE_ACCEPTED', $4)",
+                outbox_row["id"],
+                site_id,
+                ws_id,
+                # The stored JSONB text is re-inserted verbatim (the
+                # safe str->jsonb boundary): decoding it to a dict
+                # first would both fail the asyncpg jsonb codec and
+                # risk a re-encoded payload that is no longer the
+                # exact stored bytes.
+                outbox_row["payload"],
+            )
+
+        # (i) the durable claim payload mutated: not this claim.
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(),
+            expected_database=database.name,
+        ) as owner:
+            await owner.execute(
+                "UPDATE control.review_job SET payload = payload || "
+                "$1::jsonb WHERE id = $2",
+                '{"c2extra": true}',
+                job_id,
+            )
+        assert await _reconcile() == "unknown"
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(),
+            expected_database=database.name,
+        ) as owner:
+            await owner.execute(
+                "UPDATE control.review_job SET payload = $1 WHERE id = $2",
+                json.dumps(claimed_payload, sort_keys=True, separators=(",", ":")),
+                job_id,
+            )
+
+        # (e) a nonterminal claim with the outbox fact present: a
+        # contradictory publication history.
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(),
+            expected_database=database.name,
+        ) as owner:
+            await owner.execute(
+                "UPDATE control.workspace SET status = 'PROMOTING' WHERE id = $1",
+                ws_id,
+            )
+            await owner.execute(
+                "UPDATE control.review_job SET status = 'CLAIMED', "
+                "error = NULL, last_heartbeat = now() WHERE id = $1",
+                job_id,
+            )
+            await owner.execute("DELETE FROM audit.promotion WHERE job_id = $1", job_id)
+        assert await _reconcile() == "unknown"
+
+        # (j) the clean claimed state again: proven absence.
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(),
+            expected_database=database.name,
+        ) as owner:
+            await owner.execute(
+                "DELETE FROM control.cache_outbox WHERE site_id = $1 AND "
+                "workspace_id = $2 AND event_kind = 'WORKSPACE_ACCEPTED'",
+                site_id,
+                ws_id,
+            )
+        assert await _reconcile() == "rolled_back"
+    finally:
+        await pool.close()
+        await boundary.stop()
+
+
+@pytest.mark.asyncio
+async def test_accept_worker_existing_receipt_preflight_refused(
+    agent_site_database: AgentSiteDatabase, tmp_path: Path
+) -> None:
+    """c2: a durable promotion receipt already existing for the job
+    while it is still CLAIMED is refused BEFORE publication: the
+    job terminal-marks (ending the requeue loop) with no second
+    publication, and the workspace is left where the legitimate
+    step-2 transition placed it.
+    """
+    database = agent_site_database
+    media_root = tmp_path / "media"
+    ids = await _seed_site(database, media_root=media_root, with_ops=True)
+    settings = _worker_settings(database)
+    pool = await _worker_pool(database)
+    boundary = MediaBoundary(settings=_media_settings(database, media_root))
+    try:
+        await _freeze_workspace(database, ids, pool)
+        rows = await _enqueue_bound_accept(
+            database, ids["workspace_id"], ids["delegator_id"]
+        )
+        job_id = UUID(str(rows[0]["job_id"]))
+        job = await _claim_accept(database, "accept-c2-preflight")
+        assert str(job["id"]) == str(job_id)
+        snapshot_id, _snapshot_digest, _manifest_digest = await _accept_approval(
+            database, ids["workspace_id"]
+        )
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            base_revision = await owner.fetchval(
+                "SELECT canonical_revision FROM control.site WHERE id = $1",
+                ids["site_id"],
+            )
+            # A durable receipt for this job while the job is still
+            # CLAIMED: a previous attempt's commit can only leave the
+            # job SUCCEEDED in the SAME transaction, never CLAIMED.
+            await owner.execute(
+                "INSERT INTO audit.promotion (site_id, workspace_id, "
+                "snapshot_id, job_id, digest, base_site_revision, "
+                "new_canonical_revision, committed_operations, versions, "
+                "actor_user_account_id) "
+                "VALUES ($1, $2, $3, $4, $5, $6, $7, 0, $8, $9)",
+                ids["site_id"],
+                ids["workspace_id"],
+                snapshot_id,
+                job_id,
+                "ab" * 32,
+                1,
+                2,
+                "{}",
+                ids["delegator_id"],
+            )
+        result = await run_accept_job(pool, settings, job, media=boundary)
+        assert result.status == "FAILED", (result.status, result.error)
+        assert result.error == "STATE_DRIFT"
+        audit, outbox, ws_status, revision = await _publication_counts(database, ids)
+        assert audit == 1  # only the pre-existing receipt
+        assert outbox == 0
+        # NO transition by the refusal path: the workspace stays
+        # exactly where the legitimate step-2 transition placed it.
+        assert ws_status == "PROMOTING"
+        assert revision == int(base_revision)
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            job_row = await owner.fetchrow(
+                "SELECT status, error FROM control.review_job WHERE id = $1",
+                job_id,
+            )
+        assert job_row["status"] == "FAILED"
+        assert job_row["error"] == "STATE_DRIFT"
+        # No re-queue possible: the job is terminally FAILED.
+        assert await _claim(database, "accept-c2-preflight", _WORKER_KINDS) == []
+    finally:
+        await pool.close()
+        await boundary.stop()

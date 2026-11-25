@@ -946,7 +946,11 @@ async def test_browser_leases_artifacts_terminal_state_and_exact_privileges(
             for function in (
                 "control.slaif_setup_status()",
                 "control.slaif_workspace_get(NULL::uuid)",
-                "control.slaif_workspace_accept(NULL::uuid, NULL::uuid)",
+                # 083/12: the accept entry point is the 6-argument human
+                # binding (the 2-argument inner enqueue was dropped).
+                "control.slaif_human_agent_workspace_accept("
+                "NULL::uuid, NULL::uuid, NULL::uuid, NULL, NULL, "
+                "NULL::uuid)",
             ):
                 with pytest.raises(asyncpg.InsufficientPrivilegeError):
                     await agent.fetchval(f"SELECT {function}")

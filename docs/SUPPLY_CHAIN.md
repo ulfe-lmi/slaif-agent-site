@@ -90,7 +90,7 @@ The gate proves the following bounded contracts:
   identical distributed path, mode, size, link-target, and content digests.
 - The browser worker compiles its frozen TypeScript source and declares exact
   `playwright-core==1.62.1`. Its normalized source/security-profile manifest,
-  deployed production package closure, and retained Chromium revision-1717349
+  deployed production package closure, and retained Chromium revision-1727472
   runtime tree must reproduce exactly.
 - Every project image is built twice with the same exact inputs and without a
   Docker build cache. Normalized package inventories and application runtime
@@ -131,7 +131,7 @@ Grype scans that checksummed document; the index links both forms.
 
 The browser worker uses the digest-pinned official Playwright 1.62.1 Noble
 image, exact `playwright-core==1.62.1`, and Chrome for Testing
-`157.0.8103.78` at CfT revision `1717349`. The exact linux/amd64 archive is
+`158.0.8127.88` at CfT revision `1727472`. The exact linux/amd64 archive is
 SHA-256 verified before extraction by the bounded source-controlled parser.
 The base image's NodeSource nodejs 24.18.1 is purged and replaced with the
 SHA-256-verified, MIT-licensed official Node.js 24.22.1 archive, and its
@@ -147,7 +147,7 @@ Corepack including its library tree, pnpm, and pnpx from both /usr/bin and
 from both stages under a fail-closed simulated operation check, pre-removal
 version checks, and a post-removal dpkg record-state and path-absence check. Evidence requires the worker package and `playwright-core`,
 rejects Firefox/WebKit inventory, and hashes the retained
-`/ms-playwright/chromium-1717349` tree during both clean image builds.
+`/ms-playwright/chromium-1727472` tree during both clean image builds.
 The supply-chain policy binds the exact Node archive URL, SHA-256 and version
 literals in the worker Dockerfile and the exact Ubuntu override (fixed
 apt/libapt-pkg bootstrap installs, libbrotli1 install, nodejs and python3
@@ -192,7 +192,7 @@ The Apache adapter uses the official
 multi-platform image. Its deterministic Debian Trixie package overlay pins
 `libaprutil1-ldap`/`libaprutil1t64` 1.6.3-3+deb13u1 and OpenSSL
 3.5.7-1~deb13u2. The NGINX edge base moves to Alpine 3.24
-(`nginx:1.30.6-alpine3.24`), whose overlay pins `brotli-libs=1.2.1-r0` and
+(`nginx:1.30.8-alpine3.24`), whose overlay pins `brotli-libs=1.2.1-r0` and
 `libexpat=2.10.0-r0` beside the exact OpenSSL fix packages from the base's
 own v3.24 repositories; the backend, PostgreSQL, and Web overlays retain
 their independently qualified
@@ -244,7 +244,7 @@ findings in that older payload. The 152.0.7977.82 qualification and finding set
 remain historical evidence in
 [`supply-chain/browser-worker-critical-matrix.json`](../supply-chain/browser-worker-critical-matrix.json)
 while the active maintenance pin is Chrome for Testing
-`157.0.8103.78` at CfT revision `1717349` (083-10-a security refresh of the 083-8-v pin).
+`158.0.8127.88` at CfT revision `1727472` (083-12-c security refresh of the 083-10-a pin).
 The prior pin `156.0.8078.80` at CfT revision `1706539` (083-9-b source
 update, its intermediate P1 six-image CI qualification recorded as
 candidate-10 at 2026-10-30; the final F/SELF gates require fresh required
@@ -339,8 +339,8 @@ component or finding from evidence. Coding agents must not author an exception
 merely to make a gate green. The owner removed this exception after the official
 stable Chrome 152.0.7977.82 qualification; the later `153.0.8010.36`
 (078-u) and `155.0.8059.84` (083-3) maintenance qualifications remain
-historical evidence; the current pin is `157.0.8103.78` at CfT revision
-`1717349` (083-10-a security refresh of the 083-8-v pin). The prior pin `156.0.8078.80`
+historical evidence; the current pin is `158.0.8127.88` at CfT revision
+`1727472` (083-12-c security refresh of the 083-10-a pin). The prior pin `156.0.8078.80`
 (083-9-b source update, its intermediate P1 six-image CI qualification
 recorded as candidate-10 at 2026-10-30; the final F/SELF gates require
 fresh required checks and six-image CI re-qualification) is dated

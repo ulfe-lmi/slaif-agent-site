@@ -4058,12 +4058,31 @@ async def test_sibling_mismatch_recomputed_digest_admission_refusal(
         assert str(claimed[0]["status"]) == "CLAIMED"
         assert str(claimed[0]["claimed_by"]) == "g11-sql-worker"
 
+        # 083/12: the trusted completion is the companion-bound form.
+        # This workspace carries no pending COW operations, so the
+        # exact prospective universe is EMPTY (the real public session
+        # state); the manifest envelope is the real product builder
+        # output over that empty U.
+        from slaif_agent_site.review_worker.operation_manifest import (
+            build_operation_manifest,
+        )
+
+        empty_u_manifest = build_operation_manifest(
+            workspace_id=ws_id,
+            site_id=site_id,
+            operations=[],
+            dependencies=[],
+            completion_identities=[],
+        )
+
         async def worker_complete(sealed_row: dict[str, Any]) -> Any:
             async with worker_pool.acquire() as worker_conn:
                 return await worker_conn.fetchval(
-                    "SELECT control.slaif_review_snapshot_complete($1, $2)",
+                    "SELECT control.slaif_review_snapshot_complete_with_manifest("
+                    "$1, $2, $3)",
                     ws_id,
                     canonical_json(sealed_row),
+                    empty_u_manifest,
                 )
 
         async def stored_snapshot_count() -> int:

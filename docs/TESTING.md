@@ -565,3 +565,148 @@ Playwright 1.62.1) is unchanged. Full PostgreSQL 14..18 matrix
 qualification is required and is reported as the repository CI executes
 the full children; acceptance state is tracked in the OAP ledgers, and
 nothing here claims D5, MVP, or product completion.
+
+## Reviewed whole-session operation binding (083/12)
+
+The reviewed-operation binding increment (083/12, revision `079_001`)
+adds bounded regression coverage for the reviewed-operations/v1
+companion manifest: a real freeze atomically stores the manifest with
+the snapshot (the exact public operation IDs, the actual foundation
+dependency pairs, and one verified provenance record per pending set
+U member — the trusted 078 completion identity for journaled
+mutation operations (Agent, HUMAN Editor, Media), or the versioned
+`proposed-effect/v1` trusted producer record for the Control-only
+proposed-side-effect producer — written by the real trusted
+constructor in the same transaction as its COW insert into the
+product-owned `control.proposed_effect_completion` row and never
+inferred from private COW change rows — proven by a real freeze/
+accept whose public U mixes both forms and four typed refusals of
+forged provenance: a producer record relabeling a mutation-table
+operation, a forged service principal on the real producer
+operation, an extra resource id with no prospective row, and
+owner-forged producer rows on a journaled operation as conflicting
+provenance), and the real accept requires the explicit
+dual-digest approval (snapshot digest plus manifest digest bound to the
+snapshot ID) that the reviewer transaction re-verifies against the live
+companion, the durable journal, and the workspace before publication.
+The focused PostgreSQL proofs use the real HTTP, runtime pool, and
+worker paths on the disposable cluster: freeze and accept for the Agent,
+HUMAN Editor, HUMAN-on-AGENT, and human Media families; a
+mixed-family same-resource superseding chain ending net-zero; an actual
+multirow navigation move with one completion; dedupe,
+explicit-no-effect, and empty-U behavior; replay and
+repeated/superseding writes; two same-site workspaces with isolated
+pending sets; and digest determinism for the same format and inputs.
+The negative proofs cover wrong, stale, and missing digest denials;
+malformed, over-budget, and legacy-ineligible manifest rejections;
+whole-workspace orphan and conflicting prospective provenance
+detection with legitimate outside-U dedupe staying legal; direct role
+denials of manifest DML, reads, and helper EXECUTE for unentitled
+roles; and the non-bypassability of the old 072 accept signatures
+(owner-internal inner enqueue with no role EXECUTE, typed legacy
+refusals, and the real worker payload defense).
+
+The write-time collision regression covers both insertion orders
+against the real paths. The ordinary-first constructor refusal
+precedes its own COW and producer writes. The journal guard of
+the trusted-first order can run after the ordinary COW rows of
+that write, and the whole ordinary transaction rolls back. The
+freeze-drain regression holds a real open Control COW session
+through the freeze, drains it into U, pairs the real worker's
+exclusive workspace-lock wait to the exact holding backend, and
+requires a typed denial for a new proposal after the
+transition. The stored distinct-binding regression calls the
+trusted completion definer as the real review-worker login
+against owner-forged stored rows. The four refusals are a
+local-workspace row bound to a second real site, the real
+producer operation bound to a real sibling workspace of the
+same site, a distinct shape-compliant service principal on the
+real operation, and one 078-journaled operation with a trusted
+row only in the sibling workspace. A labeled owner insert also
+proves the producer-constant CHECK refusal with its exact
+constraint and no row. After each refusal the test asserts the
+exact claimed job state, the unchanged public U, and no
+partial publication state, and it recovers through the
+legitimate real freeze job.
+
+Inside the still-open reviewer transaction, the SDK promotion
+runs first and the exact pending check follows the SDK call,
+before the native commit. The SDK result must show the exact
+applied IDs, and the following public pending read must be
+empty. Separately, the existing
+unreviewed-pending refusal proves the approved universe against
+the live U. It shows that the approved set cannot be widened
+inside the reviewer transaction. The new-pending same-hash
+conflict refuses the deterministic collision. The durable
+approval replay gate is proven by the enqueue idempotency,
+tampered-approval, and re-review stale-approval cases. A stale,
+different, or legacy-shape approval is a typed refusal that
+never fills in from current state. The promotion receipt
+carries the exact applied IDs and both approval digests, and
+legacy rows keep the new fields NULL.
+
+The receipt-read proof covers the absent, exactly-one, and
+bounded-ambiguity projection. The worker keeps its existing
+promotion INSERT, and direct audit-promotion SELECT is denied.
+The uncertain-outcome reconciliation proves success only on the
+full fingerprint. That fingerprint is the matching single
+receipt, the exact terminal workspace and job, and the one
+exact published outbox event. A proven durable rollback rests
+on the durable absence of both the receipt and the publication
+outbox together with the same job still claimed by its
+claimant. Retry then follows the fault's eligibility and
+attempt budget, and a contradictory result defers to
+stale-claim handling. The completed-body cleanup and the
+deferred COMMIT rejection are distinct proofs. The cleanup case
+runs a real post-commit pool reset after a completed body and
+recovers success from the exact durable fingerprint. The
+deferred COMMIT rejection is definitive and terminal, with no
+retry and the whole atomic bundle rolled back.
+
+Fresh install at 079, the QUIESCENT 078-to-079 operator upgrade (the
+078-era journal, family, snapshot, and canonical history preserved
+byte-for-byte, with the companion-less historical snapshot still
+readable through a NULL manifest projection), the pending-work
+refusals from real 078 and 077 heads, and both the operator and
+direct-Alembic 079 downgrade refusals are proven before any effect.
+The historical 077-to-078 upgrade proof keeps its retained review
+history genuine (a v2 built by the real trusted materializer and the
+released 077-era completion definer under the real freeze job
+lifecycle, plus the faithful 075-contract v1 document), because the
+current freeze worker carries the 079 companion step and cannot run at
+the released 077 head. The new modules (the reviewed operation
+binding proofs and its role-authority proofs) run unfiltered in the
+existing PostgreSQL 14..18 Group B children
+alongside the existing selections. The write-time collision,
+freeze-drain, stored distinct-binding, replay-gate, and
+uncertain-outcome regressions extend those existing increment
+modules (the reviewed operation binding module, the real human
+accept module, and the role-authority module) and add no new
+modules, so no existing selection, budget,
+matrix, aggregator, or required check identity changes, and the policy
+suite pins the exact module lists with omission negatives. The
+increment adds no row-history API, all-semantic causal graph,
+dependency, or lifecycle change; the only review-surface change is
+the companion-less accept ineligibility presentation (the historical
+companion-less snapshot renders an explicit explanation with the
+existing discard / fresh-workspace guidance and no accept control,
+proven end to end, while the companion-bearing snapshot keeps the
+real accept flow). The Compose e2e media-publication cycles seed
+their preview workspace with genuine editorial operations through
+the real editor session and trusted definer envelope, each carrying
+real completion provenance (the earlier seed wrote COW rows with no
+reservation or completion, which the whole-workspace provenance
+check refuses); the canonical-versus-overlay differences, redirects,
+filtering, and all three real media cycles are preserved. The
+forward-only repair of the historical 017 content-type update
+function is proven by a real HUMAN-on-AGENT model PATCH through the
+repaired function with its COW, provenance, and authorization
+behavior intact. The qualified baseline (PyPI `agent-cow-postgresql` 0.2.1,
+Playwright 1.62.1) is unchanged; the round c security refresh
+re-pins the browser payload to Chrome for Testing `158.0.8127.88`
+(CfT revision `1727472`) through the coordinated SHA-256-verified
+source, policy, and guard refresh documented in the supply-chain
+docs, replacing `157.0.8103.78` (CfT revision `1717349`). Full PostgreSQL 14..18 matrix
+qualification is required and is reported as the repository CI
+executes the full children; acceptance state is tracked in the OAP
+ledgers, and nothing here claims D5, MVP, or product completion.

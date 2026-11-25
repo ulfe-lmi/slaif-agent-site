@@ -85,8 +85,6 @@ docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif \
            'HUMAN', 'Compose preview fixture', 'L4_SITE_ARCHITECT',
            '{\"catalog\":\"catalog-v1\",\"composition_schema\":\"site-composition/v1\",\"content_model\":\"content-model/v1\",\"design_system\":\"design-system/v1\",\"puck\":\"0.20.2\",\"renderer\":\"renderer-v1\"}'::jsonb,
            'ACTIVE', CURRENT_TIMESTAMP + interval '1 hour');
-   SET LOCAL app.session_id = '$workspace_id';
-   SET LOCAL app.operation_id = '12000000-0000-4000-8000-000000000302';
    INSERT INTO content.site_locale_base
      (id,site_id,tag,enabled,is_default,position,metadata)
    VALUES
@@ -110,15 +108,6 @@ docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif \
      ('12000000-0000-4000-8000-000000000333'::uuid,'$site_id'::uuid,
       '12000000-0000-4000-8000-000000000330'::uuid,'RichText','1',NULL,'default',1,
       '{\"content\":{\"type\":\"paragraph\",\"children\":[{\"text\":\"Parity canonical text.\"}]}}'::jsonb);
-   UPDATE content.page
-   SET title = 'Compose preview overlay'
-   WHERE site_id = '$site_id'::uuid AND slug = 'home' AND locale = 'en';
-   UPDATE content.page_composition
-   SET props = '{\"text\":\"Compose overlay heading\",\"level\":2}'::jsonb
-   WHERE site_id = '$site_id'::uuid
-     AND page_id = (SELECT id FROM content.page_base
-                    WHERE site_id = '$site_id'::uuid AND slug = 'home' AND locale = 'en')
-     AND component_type = 'Heading' AND order_key = 0;
    INSERT INTO content.content_type_base
      (id,site_id,key,labels,slug_pattern,status,definition_version,settings)
    VALUES
@@ -229,17 +218,541 @@ docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif \
      ('$site_id'::uuid,'/compose-canonical-308','/',308,NULL),
      ('$site_id'::uuid,'/compose-canonical-external',
       'https://example.test/compose-target',301,NULL);
-   INSERT INTO content.redirect(site_id,source_route,target,status_code,locale)
-   VALUES
-     ('$site_id'::uuid,'/compose-redirect','/',301,NULL),
-     ('$site_id'::uuid,'/compose-redirect-301','/',301,NULL),
-     ('$site_id'::uuid,'/compose-redirect-302','/',302,NULL),
-     ('$site_id'::uuid,'/compose-redirect-303','/',303,NULL),
-     ('$site_id'::uuid,'/compose-redirect-307','/',307,NULL),
-     ('$site_id'::uuid,'/compose-redirect-308','/',308,NULL),
-     ('$site_id'::uuid,'/compose-redirect-external',
-      'https://example.test/compose-target',301,NULL);
-   COMMIT;" >/dev/null
+    COMMIT;" >/dev/null
+
+# ---------------------------------------------------------------------------
+# Preview overlay as genuine trusted human-editor completion operations.
+# The overlay (page title, heading props, seven redirects) is written
+# through the same trusted definer envelope the editor HTTP path executes
+# per request, under the SAME role topology as that path:
+#   - the CONTROL login (slaif_control_login) creates the human session
+#     (control.slaif_create_human_session is granted to slaif_control
+#     only), and the editor runtime (slaif_editor_runtime, login
+#     slaif_editor_login) executes the envelope through the product
+#     EditorDatabase: its pool initialization verifies the actual
+#     session_user/current_user login and runtime-role membership, then
+#     each envelope is one COW transaction - trusted workspace assert,
+#     idempotency reservation, the supported mutation function, and
+#     idempotency completion writing the 078 trusted journal + family
+#     audit row;
+#   - the owner performs only baseline setup (the canonical seed above,
+#     before any overlay operation) and the post-commit durable
+#     assertions: the editor runtime holds no SELECT on the audit or
+#     idempotency tables, so a committed envelope implies the rows and
+#     the owner checks prove durability.
+# Both helpers run inside the authorized editor-api container: each
+# reads its own mounted login DSN in-process (the editor helper through
+# EditorDatabaseSettings, which requires the fixed 0400 file owned by
+# the worker uid), proves its actual login, and prints only bounded
+# sanitized JSON.  No DSN, password, or raw database error text ever
+# reaches host process metadata.  The host independently computes the
+# request digest sha256(method NUL path NUL body) over the exact body
+# bytes it passes, and the owner assertions require the journal,
+# reservation, and family rows to carry exactly that digest.
+preview_control_session() {
+  # $1 admin account id; prints bounded JSON only.
+  docker exec -i "${PROJECT}-editor-api-1" python - "$1" <<'PREVIEW_SESSION_PY'
+import asyncio
+import hashlib
+import json
+import sys
+import uuid
+
+import asyncpg
+
+
+def emit(ok, reason=None, session_id=None):
+    payload = {"ok": ok}
+    if reason is not None:
+        payload["reason"] = reason
+    if session_id is not None:
+        payload["session_id"] = session_id
+    print(json.dumps(payload))
+
+
+async def main():
+    try:
+        admin_id = uuid.UUID(sys.argv[1])
+    except (IndexError, ValueError):
+        emit(False, reason="argv")
+        return 0
+    try:
+        with open("/run/slaif-control/control-dsn", encoding="ascii") as stream:
+            dsn = stream.read().strip()
+        connection = await asyncpg.connect(dsn, timeout=30)
+    except Exception:
+        emit(False, reason="control-unavailable")
+        return 0
+    try:
+        login = await connection.fetchval("SELECT session_user::text")
+        if login != "slaif_control_login":
+            emit(False, reason="control-login")
+            return 0
+        session_id = uuid.uuid4()
+        row = await connection.fetchrow(
+            "SELECT * FROM control.slaif_create_human_session("
+            "$1, $2, $3, $4, $5, $6, $7, $8)",
+            session_id,
+            "sas2_" + hashlib.md5(b"compose-e2e-preview-editor").hexdigest()[:32],
+            hashlib.sha256(b"compose-e2e-preview-editor-secret").digest(),
+            hashlib.sha256(b"compose-e2e-preview-editor-csrf").digest(),
+            admin_id,
+            3600,
+            14400,
+            3600,
+        )
+        if row is None or row["session_id"] is None:
+            emit(False, reason="session-empty")
+            return 0
+        emit(True, session_id=str(row["session_id"]))
+    except Exception:
+        emit(False, reason="session-error")
+    finally:
+        await connection.close()
+
+
+asyncio.run(main())
+PREVIEW_SESSION_PY
+}
+
+preview_editor_session_json=$(preview_control_session "$admin_id") \
+  || fail preview-fixture-session
+case "$preview_editor_session_json" in
+  '{"ok": true'*) ;;
+  *)
+    echo "compose-e2e: preview session: $preview_editor_session_json" >&2
+    fail preview-fixture-session
+    ;;
+esac
+preview_editor_session_id=$(printf '%s\n' "$preview_editor_session_json" \
+  | sed -n 's/^{"ok": true, "session_id": "\([0-9a-f-]*\)"}$/\1/p')
+test -n "$preview_editor_session_id" || fail preview-fixture-session
+
+preview_overlay_op() {
+  # $1 idempotency key; $2 HTTP method; $3 real editor API path;
+  # $4 request body JSON (the exact bytes the editor digest covers);
+  # $5 permission key; $6 mutation selector (page|composition|redirect);
+  # $7..$9 mutation arguments (cross-checked against the body inside the
+  # container - the body bytes are what the digest and journal cover).
+  case "$6" in
+    redirect) preview_expected_status=201 ;;
+    *) preview_expected_status=200 ;;
+  esac
+  preview_expected_digest=$(printf '%s\0%s\0%s' "$2" "$3" "$4" \
+    | sha256sum | cut -d' ' -f1)
+  preview_op_json=$(docker exec -i "${PROJECT}-editor-api-1" python - \
+    "$workspace_id" "$admin_id" "$site_id" "$preview_editor_session_id" \
+    "$2" "$3" "$4" "$1" "$5" "$6" "${7:-}" "${8:-}" "${9:-}" <<'PREVIEW_ENVELOPE_PY'
+import asyncio
+import hashlib
+import json
+import re
+import sys
+import uuid
+
+from slaif_agent_site.content_model.service import ContentModelServiceError
+from slaif_agent_site.content_model.site_data_models import CreateRedirectRequest
+from slaif_agent_site.editor_api.config import EditorDatabaseSettings
+from slaif_agent_site.editor_api.database import (
+    EditorIdempotencyMismatchError,
+    EditorIdempotencyReplayError,
+    EditorDatabase,
+)
+
+KEY = re.compile(r"^[A-Za-z0-9._~-]{1,128}$")
+PERMISSIONS = frozenset(
+    {"page:write", "component-content-props:write", "redirect:create"}
+)
+
+
+def emit(ok, reason=None, operation_id=None, resource_id=None):
+    payload = {"ok": ok}
+    if reason is not None:
+        payload["reason"] = reason
+    if operation_id is not None:
+        payload["operation_id"] = operation_id
+    if resource_id is not None:
+        payload["resource_id"] = resource_id
+    print(json.dumps(payload))
+
+
+async def main():
+    args = sys.argv[1:]
+    if len(args) != 13:
+        emit(False, reason="argv")
+        return 0
+    try:
+        workspace_id = uuid.UUID(args[0])
+        admin_id = uuid.UUID(args[1])
+        site_id = uuid.UUID(args[2])
+        session_id = uuid.UUID(args[3])
+    except ValueError:
+        emit(False, reason="argv")
+        return 0
+    method, path, body, key, permission, selector = args[4:10]
+    sel_args = args[10:]
+    if method not in ("PATCH", "POST"):
+        emit(False, reason="method")
+        return 0
+    if not path.startswith("/api/editor/v1/"):
+        emit(False, reason="path")
+        return 0
+    if not KEY.fullmatch(key):
+        emit(False, reason="key")
+        return 0
+    if permission not in PERMISSIONS:
+        emit(False, reason="permission")
+        return 0
+    if selector not in ("page", "composition", "redirect"):
+        emit(False, reason="selector")
+        return 0
+    try:
+        request_body = json.loads(body)
+    except ValueError:
+        emit(False, reason="body")
+        return 0
+    if not isinstance(request_body, dict):
+        emit(False, reason="body")
+        return 0
+
+    # The mutation inputs are bound to the parsed body (the exact bytes
+    # the digest covers); the path-derived ids and the host-passed
+    # selector arguments are cross-checked against it so the fixture
+    # cannot journal one body while applying another.
+    parts = [part for part in path.split("/") if part]
+    if (
+        len(parts) < 5
+        or parts[0] != "api"
+        or parts[1] != "editor"
+        or parts[2] != "v1"
+        or parts[3] != "sites"
+        or parts[4] != str(site_id)
+    ):
+        emit(False, reason="path")
+        return 0
+
+    if selector == "page":
+        if len(parts) != 7 or parts[5] != "pages":
+            emit(False, reason="path")
+            return 0
+        try:
+            page_id = uuid.UUID(parts[6])
+        except ValueError:
+            emit(False, reason="path")
+            return 0
+        # Fixed 13-argument transport: the unused third slot must be
+        # empty for page mutations.
+        if len(sel_args) != 3 or sel_args[2] != "" or str(page_id) != sel_args[0]:
+            emit(False, reason="selector-args")
+            return 0
+        if set(request_body) != {
+            "slug", "title", "status", "expected_row_version"
+        }:
+            emit(False, reason="body-shape")
+            return 0
+        slug = request_body["slug"]
+        title = request_body["title"]
+        status = request_body["status"]
+        expected_row_version = request_body["expected_row_version"]
+        if slug is not None and (
+            not isinstance(slug, str) or not 1 <= len(slug) <= 63
+        ):
+            emit(False, reason="body-shape")
+            return 0
+        if title is None or not isinstance(title, str) or not (
+            1 <= len(title) <= 256
+        ):
+            emit(False, reason="body-shape")
+            return 0
+        if title != sel_args[1]:
+            emit(False, reason="selector-args")
+            return 0
+        if status is not None and status not in (
+            "DRAFT", "PUBLISHED", "ARCHIVED"
+        ):
+            emit(False, reason="body-shape")
+            return 0
+        if expected_row_version is not None and (
+            not isinstance(expected_row_version, int)
+            or isinstance(expected_row_version, bool)
+        ):
+            emit(False, reason="body-shape")
+            return 0
+    elif selector == "composition":
+        if (
+            len(parts) != 10
+            or parts[5] != "pages"
+            or parts[7] != "composition"
+            or parts[8] != "components"
+        ):
+            emit(False, reason="path")
+            return 0
+        try:
+            node_id = uuid.UUID(parts[9])
+        except ValueError:
+            emit(False, reason="path")
+            return 0
+        # Fixed 13-argument transport: the unused third slot must be
+        # empty for composition mutations.
+        if len(sel_args) != 3 or sel_args[2] != "" or str(node_id) != sel_args[0]:
+            emit(False, reason="selector-args")
+            return 0
+        if set(request_body) != {"props", "slot_key", "order_key"}:
+            emit(False, reason="body-shape")
+            return 0
+        props = request_body["props"]
+        slot_key = request_body["slot_key"]
+        order_key = request_body["order_key"]
+        if not isinstance(props, dict):
+            emit(False, reason="body-shape")
+            return 0
+        try:
+            args_props = json.loads(sel_args[1])
+        except ValueError:
+            emit(False, reason="selector-args")
+            return 0
+        if args_props != props:
+            emit(False, reason="selector-args")
+            return 0
+        if slot_key is not None and not isinstance(slot_key, str):
+            emit(False, reason="body-shape")
+            return 0
+        if order_key is not None and (
+            not isinstance(order_key, int) or isinstance(order_key, bool)
+        ):
+            emit(False, reason="body-shape")
+            return 0
+    else:
+        if len(parts) != 6 or parts[5] != "redirects":
+            emit(False, reason="path")
+            return 0
+        if len(sel_args) != 3:
+            emit(False, reason="selector-args")
+            return 0
+        if set(request_body) != {
+            "source_route", "target", "status_code", "locale"
+        }:
+            emit(False, reason="body-shape")
+            return 0
+        source_route = request_body["source_route"]
+        target = request_body["target"]
+        status_code = request_body["status_code"]
+        locale = request_body["locale"]
+        if (
+            not isinstance(source_route, str)
+            or not source_route.startswith("/")
+            or not 1 <= len(source_route) <= 1024
+        ):
+            emit(False, reason="body-shape")
+            return 0
+        if not isinstance(target, str) or not 1 <= len(target) <= 2048:
+            emit(False, reason="body-shape")
+            return 0
+        if (
+            not isinstance(status_code, int)
+            or isinstance(status_code, bool)
+            or status_code not in (301, 302, 303, 307, 308)
+        ):
+            emit(False, reason="body-shape")
+            return 0
+        if locale is not None and not isinstance(locale, str):
+            emit(False, reason="body-shape")
+            return 0
+        if (
+            source_route != sel_args[0]
+            or target != sel_args[1]
+            or str(status_code) != sel_args[2]
+        ):
+            emit(False, reason="selector-args")
+            return 0
+
+    # The digest the editor HTTP layer computes: sha256 over the exact
+    # method NUL path NUL body bytes.
+    digest = hashlib.sha256(
+        method.encode("ascii")
+        + b"\x00"
+        + path.encode("utf-8")
+        + b"\x00"
+        + body.encode("utf-8")
+    ).hexdigest()
+
+    try:
+        settings = EditorDatabaseSettings.load()
+    except Exception:
+        emit(False, reason="editor-config")
+        return 0
+    database = EditorDatabase(settings)
+    try:
+        await database.start()
+    except Exception:
+        emit(False, reason="editor-start")
+        return 0
+    try:
+        async with database.request_content_service(
+            workspace_id=workspace_id,
+            human_user_id=admin_id,
+            site_id=site_id,
+            human_session_id=session_id,
+            permission_key=permission,
+            state_changing=True,
+            idempotency_key=key,
+            request_digest=digest,
+        ) as context:
+            if selector == "page":
+                record = await context.service.update_page(
+                    page_id=page_id,
+                    slug=slug,
+                    title=title,
+                    status=status,
+                    expected_row_version=expected_row_version,
+                )
+            elif selector == "composition":
+                record = await context.service.update_composition_node(
+                    node_id=node_id,
+                    props=props,
+                    slot_key=slot_key,
+                    order_key=order_key,
+                )
+            else:
+                record = await context.service.create_redirect(
+                    site_id,
+                    CreateRedirectRequest(
+                        source_route=source_route,
+                        target=target,
+                        status_code=status_code,
+                        locale=locale,
+                    ),
+                )
+            response_status = 201 if selector == "redirect" else 200
+            await database.complete_request(
+                context,
+                response_status=response_status,
+                response_body=record.model_dump(mode="json"),
+                action=f"{method} {path}",
+                resource_type="editor.sites",
+                resource_id=record.id,
+            )
+        emit(
+            True,
+            operation_id=str(context.operation_id),
+            resource_id=str(record.id),
+        )
+    except (EditorIdempotencyMismatchError, EditorIdempotencyReplayError):
+        emit(False, reason="envelope-idempotency")
+    except ContentModelServiceError:
+        emit(False, reason="service-error")
+    except RuntimeError:
+        emit(False, reason="editor-unavailable")
+    except Exception:
+        emit(False, reason="envelope-error")
+    finally:
+        try:
+            await database.stop()
+        except Exception:
+            pass
+
+
+asyncio.run(main())
+PREVIEW_ENVELOPE_PY
+  ) || fail preview-overlay-envelope "$1"
+  case "$preview_op_json" in
+    '{"ok": true'*) ;;
+    *)
+      echo "compose-e2e: overlay-op $1: $preview_op_json" >&2
+      fail preview-overlay-envelope "$1"
+      ;;
+  esac
+  preview_op_id=$(printf '%s\n' "$preview_op_json" \
+    | sed -n 's/^{"ok": true, "operation_id": "\([0-9a-f-]*\)", "resource_id": "[0-9a-f-]*"}$/\1/p')
+  preview_resource_id=$(printf '%s\n' "$preview_op_json" \
+    | sed -n 's/^{"ok": true, "operation_id": "[0-9a-f-]*", "resource_id": "\([0-9a-f-]*\)"}$/\1/p')
+  test -n "$preview_op_id" || fail preview-overlay-envelope "$1"
+  test -n "$preview_resource_id" || fail preview-overlay-envelope "$1"
+  # Durable post-commit assertions, owner-only (the editor runtime holds
+  # no SELECT on the audit or idempotency tables): the real session is
+  # unrevoked, the idempotency reservation completed, and the 078
+  # trusted journal + family audit row exist - all bound to the exact
+  # server-generated operation and to the digest the host computed over
+  # the exact request bytes.
+  preview_durable_state=$(docker exec "${PROJECT}-postgres-1" psql -U postgres -d slaif \
+    -Atc "
+      SELECT
+        (SELECT count(*) FROM control.user_session s
+           WHERE s.id = '$preview_editor_session_id'
+             AND s.user_account_id = '$admin_id'
+             AND s.revoked_at IS NULL) || '|' ||
+        (SELECT count(*) FROM control.human_editor_idempotency i
+           WHERE i.workspace_id = '$workspace_id'
+             AND i.idempotency_key = '$1'
+             AND i.operation_id = '$preview_op_id'
+             AND i.request_digest = '$preview_expected_digest'
+             AND i.status_code = $preview_expected_status
+             AND i.response_body IS NOT NULL) || '|' ||
+        (SELECT count(*) FROM audit.mutation_completion mc
+           WHERE mc.operation_id = '$preview_op_id'
+             AND mc.family = 'human_editor'
+             AND mc.disposition = 'completed'
+             AND mc.workspace_id = '$workspace_id'
+             AND mc.site_id = '$site_id'
+             AND mc.human_user_id = '$admin_id'
+             AND mc.request_digest = '$preview_expected_digest') || '|' ||
+        (SELECT count(*) FROM audit.human_editor_mutation m
+           WHERE m.operation_id = '$preview_op_id'
+             AND m.workspace_id = '$workspace_id'
+             AND m.site_id = '$site_id'
+             AND m.human_user_id = '$admin_id'
+             AND m.action = '$2 $3'
+             AND m.resource_type = 'editor.sites'
+             AND m.resource_id = '$preview_resource_id'
+             AND m.request_digest = '$preview_expected_digest'
+             AND m.response_status = $preview_expected_status)")
+  test "$preview_durable_state" = "1|1|1|1" \
+    || fail preview-overlay-envelope "$1"
+}
+
+preview_overlay_op \
+  compose-page-overlay \
+  PATCH \
+  "/api/editor/v1/sites/$site_id/pages/12000000-0000-4000-8000-000000000330" \
+  "{\"slug\":null,\"title\":\"Compose preview overlay\",\"status\":null,\"expected_row_version\":null}" \
+  page:write \
+  page \
+  12000000-0000-4000-8000-000000000330 \
+  "Compose preview overlay"
+preview_overlay_op \
+  compose-props-overlay \
+  PATCH \
+  "/api/editor/v1/sites/$site_id/pages/12000000-0000-4000-8000-000000000330/composition/components/12000000-0000-4000-8000-000000000331" \
+  "{\"props\":{\"text\":\"Compose overlay heading\",\"level\":2},\"slot_key\":null,\"order_key\":null}" \
+  component-content-props:write \
+  composition \
+  12000000-0000-4000-8000-000000000331 \
+  "{\"text\":\"Compose overlay heading\",\"level\":2}"
+preview_overlay_redirect_n=1
+while read -r preview_redirect_source preview_redirect_target preview_redirect_status
+do
+  [ -n "$preview_redirect_source" ] || continue
+  preview_overlay_op \
+    "compose-redirect-$preview_overlay_redirect_n" \
+    POST \
+    "/api/editor/v1/sites/$site_id/redirects" \
+    "{\"source_route\":\"$preview_redirect_source\",\"target\":\"$preview_redirect_target\",\"status_code\":$preview_redirect_status,\"locale\":null}" \
+    redirect:create \
+    redirect \
+    "$preview_redirect_source" \
+    "$preview_redirect_target" \
+    "$preview_redirect_status"
+  preview_overlay_redirect_n=$((preview_overlay_redirect_n + 1))
+done <<'PREVIEW_OVERLAY_REDIRECTS'
+/compose-redirect / 301
+/compose-redirect-301 / 301
+/compose-redirect-302 / 302
+/compose-redirect-303 / 303
+/compose-redirect-307 / 307
+/compose-redirect-308 / 308
+/compose-redirect-external https://example.test/compose-target 301
+PREVIEW_OVERLAY_REDIRECTS
+test "$preview_overlay_redirect_n" = 8 || fail preview-overlay-redirect-count
 
 if ! SLAIF_E2E_SECRET_FILE="$SECRET_FILE" \
   SLAIF_E2E_PREVIEW_WORKSPACE_ID="$workspace_id" \

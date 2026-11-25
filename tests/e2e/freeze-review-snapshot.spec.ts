@@ -769,6 +769,7 @@ async function reviewSnapshot(
   baseSiteRevision: number;
   driftEqual: boolean;
   driftCurrent: number;
+  manifestDigest: string;
 }> {
   const response = await page.request.get(
     `/api/control/v1/sites/${siteId}/workspaces/${workspaceId}/review/`,
@@ -781,6 +782,7 @@ async function reviewSnapshot(
       base_site_revision: number;
     };
     drift: { current_site_revision: number; equal: boolean };
+    manifest: { manifest_digest: string };
   };
   return {
     id: body.snapshot.id,
@@ -788,6 +790,7 @@ async function reviewSnapshot(
     baseSiteRevision: body.snapshot.base_site_revision,
     driftEqual: body.drift.equal,
     driftCurrent: body.drift.current_site_revision,
+    manifestDigest: body.manifest.manifest_digest,
   };
 }
 
@@ -808,6 +811,7 @@ async function acceptWorkspace(
       data: {
         snapshot_id: review.id,
         digest: review.digest,
+        manifest_digest: review.manifestDigest,
         acknowledge_summary: true,
       },
     },

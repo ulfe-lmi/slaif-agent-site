@@ -2848,6 +2848,14 @@ test("frozen-review-parity-six-stable-pairings", async () => {
     const w2SnapshotId = w2Split[0]!;
     const w2Digest = w2Split[1]!;
     expect(w2SnapshotId, "W2 snapshot id").toMatch(/^[0-9a-f-]{36}$/i);
+    // The immutable companion of the W2 snapshot (083/12): the approval
+    // names BOTH digests, read from the real review document surface
+    // (no owner-created manifest).
+    const w2ManifestDigest = psql(
+      project,
+      `SELECT manifest_digest FROM control.review_operation_manifest WHERE snapshot_id = '${w2SnapshotId}'`,
+    ).trim();
+    expect(w2ManifestDigest, "W2 manifest digest").toMatch(/^[0-9a-f]{64}$/);
     // Re-authenticate immediately before the two recent-auth-gated
     // transitions (the existing 900s window, same authority).
     stage("w2", { action: "reauth" });
@@ -2864,6 +2872,7 @@ test("frozen-review-parity-six-stable-pairings", async () => {
         data: {
           snapshot_id: w2SnapshotId,
           digest: w2Digest,
+          manifest_digest: w2ManifestDigest,
           acknowledge_summary: true,
         },
       },

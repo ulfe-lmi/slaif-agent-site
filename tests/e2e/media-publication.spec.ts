@@ -265,17 +265,24 @@ async function reviewAcceptBody(
   page: import("@playwright/test").Page,
   siteId: string,
   workspaceId: string,
-): Promise<{ snapshot_id: string; digest: string; acknowledge_summary: true }> {
+): Promise<{
+  snapshot_id: string;
+  digest: string;
+  manifest_digest: string;
+  acknowledge_summary: true;
+}> {
   const response = await page.request.get(
     `/api/control/v1/sites/${siteId}/workspaces/${workspaceId}/review/`,
   );
   expect(response.status()).toBe(200);
   const document = (await response.json()) as {
     snapshot: { id: string; digest: string };
+    manifest: { manifest_digest: string };
   };
   return {
     snapshot_id: document.snapshot.id,
     digest: document.snapshot.digest,
+    manifest_digest: document.manifest.manifest_digest,
     acknowledge_summary: true,
   };
 }
