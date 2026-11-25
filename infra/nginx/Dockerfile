@@ -17,14 +17,14 @@ LABEL org.opencontainers.image.title="SLAIF Agent-Site NGINX edge" \
 ENV SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH}
 RUN apk --timeout 30 add --no-cache \
       'brotli-libs=1.2.1-r0' \
-      'libcrypto3=3.5.9-r0' \
+      'libcrypto3=3.5.9-r1' \
       'libexpat=2.10.0-r0' \
-      'libssl3=3.5.9-r0' \
+      'libssl3=3.5.9-r1' \
       'zlib=1.4-r0' \
     && test "$(awk '/^P:brotli-libs$/{found=1} found && /^V:/{print substr($0,3); exit}' /lib/apk/db/installed)" = "1.2.1-r0" \
-    && test "$(awk '/^P:libcrypto3$/{found=1} found && /^V:/{print substr($0,3); exit}' /lib/apk/db/installed)" = "3.5.9-r0" \
+    && test "$(awk '/^P:libcrypto3$/{found=1} found && /^V:/{print substr($0,3); exit}' /lib/apk/db/installed)" = "3.5.9-r1" \
     && test "$(awk '/^P:libexpat$/{found=1} found && /^V:/{print substr($0,3); exit}' /lib/apk/db/installed)" = "2.10.0-r0" \
-    && test "$(awk '/^P:libssl3$/{found=1} found && /^V:/{print substr($0,3); exit}' /lib/apk/db/installed)" = "3.5.9-r0" \
+    && test "$(awk '/^P:libssl3$/{found=1} found && /^V:/{print substr($0,3); exit}' /lib/apk/db/installed)" = "3.5.9-r1" \
     && test "$(awk '/^P:zlib$/{found=1} found && /^V:/{print substr($0,3); exit}' /lib/apk/db/installed)" = "1.4-r0" \
     && apk del curl
 COPY infra/nginx/nginx.conf /etc/nginx/nginx.conf

@@ -90,9 +90,9 @@ class OciContractTests(unittest.TestCase):
             "697c180dbf244d3ce4a8f4cbc0156cde840af055c1bf8b76aebe422a4822086f",
             content,
         )
-        self.assertIn("libcrypto3=3.5.9-r0", content)
+        self.assertIn("libcrypto3=3.5.9-r1", content)
         self.assertIn("libcurl=8.23.0-r0", content)
-        self.assertIn("libssl3=3.5.9-r0", content)
+        self.assertIn("libssl3=3.5.9-r1", content)
         self.assertIn("musl-utils=1.2.5-r24", content)
         self.assertIn("musl=1.2.5-r24", content)
         self.assertIn("zlib=1.4-r0", content)
