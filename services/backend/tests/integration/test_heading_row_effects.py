@@ -1444,7 +1444,7 @@ async def test_facts_authority_boundaries_and_downgrade_ratchet(
     _m080 = importlib.import_module(
         "slaif_agent_site.db.alembic.versions.080_001_heading_row_effect"
     )
-    editor_block = str(_m080._M060._legacy_composition_sql())
+    editor_block = str(_m080._M063._legacy_composition_sql())
     _e_idx = editor_block.index(_m080._EDITOR_UPDATE_MARKER)
     _e_end = editor_block.find(_m080._EDITOR_UPDATE_END, _e_idx)
     editor_stmt = editor_block[_e_idx : _e_end + len(_m080._EDITOR_UPDATE_END)]

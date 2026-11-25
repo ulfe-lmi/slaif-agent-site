@@ -77,11 +77,11 @@ down_revision: str | Sequence[str] | None = "079_001"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
-_M060: Any = import_module(
-    "slaif_agent_site.db.alembic.versions.060_001_agent_component_semantics"
-)
 _M062: Any = import_module(
     "slaif_agent_site.db.alembic.versions.062_001_component_authority_repairs"
+)
+_M063: Any = import_module(
+    "slaif_agent_site.db.alembic.versions.063_001_component_audit_repairs"
 )
 
 _FACTS_TABLE = "audit.heading_row_effect"
@@ -379,11 +379,15 @@ def _agent_update_body() -> str:
 
 
 def _editor_update_body() -> str:
-    block = str(_M060._legacy_composition_sql())
+    # The final deployed Editor composition bodies are the 060_001
+    # source repaired by 063_001 (design-aware validator calls);
+    # re-emit from that live final source so the non-heading write
+    # stays byte-identical to the pre-080 runtime definer.
+    block = str(_M063._legacy_composition_sql())
     count = block.count(_EDITOR_UPDATE_MARKER)
     if count != 1:
         raise RuntimeError(
-            f"080_001: editor node_update marker count={count} in 060_001"
+            f"080_001: editor node_update marker count={count} in 063_001"
         )
     idx = block.index(_EDITOR_UPDATE_MARKER)
     end = block.find(_EDITOR_UPDATE_END, idx)
@@ -427,8 +431,9 @@ def upgrade() -> None:
     _execute_block(_agent_update_body())
     _secure_function(_AGENT_UPDATE, ("slaif_agent_runtime",))
 
-    # Editor 060 update definer: the currently deployed 060_001 body with
-    # the bounded Heading same-statement capture and trusted record.
+    # Editor update definer: the currently deployed body (060_001 source
+    # repaired by 063_001) with the bounded Heading same-statement
+    # capture and trusted record.
     _execute_block(_editor_update_body())
     _secure_function(_EDITOR_UPDATE, ("slaif_editor_runtime", "slaif_control"))
 
