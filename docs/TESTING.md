@@ -639,9 +639,12 @@ filtering, and all three real media cycles are preserved. The
 forward-only repair of the historical 017 content-type update
 function is proven by a real HUMAN-on-AGENT model PATCH through the
 repaired function with its COW, provenance, and authorization
-behavior intact. The qualified baseline
-(PyPI `agent-cow-postgresql` 0.2.1, Chrome for Testing 157.0.8103.78,
-Playwright 1.62.1) is unchanged. Full PostgreSQL 14..18 matrix
+behavior intact. The qualified baseline (PyPI `agent-cow-postgresql` 0.2.1,
+Playwright 1.62.1) is unchanged; the round c security refresh
+re-pins the browser payload to Chrome for Testing `158.0.8127.88`
+(CfT revision `1727472`) through the coordinated SHA-256-verified
+source, policy, and guard refresh documented in the supply-chain
+docs, replacing `157.0.8103.78` (CfT revision `1717349`). Full PostgreSQL 14..18 matrix
 qualification is required and is reported as the repository CI
 executes the full children; acceptance state is tracked in the OAP
 ledgers, and nothing here claims D5, MVP, or product completion.

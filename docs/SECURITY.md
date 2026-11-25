@@ -211,8 +211,8 @@ credential is attached only to the first exact document request and stripped
 from assets, redirects, results, logs, and artifacts.
 
 The current maintenance pin is the official Chrome for Testing
-`157.0.8103.78` archive at CfT revision `1717349`, verified by SHA-256
-`9223832977a13db3646201b1341c1f9cf08afa3ceae92540116d7b0c062364fb` and kept
+`158.0.8127.88` archive at CfT revision `1727472`, verified by SHA-256
+`59e3b43f8b3aaa292238fbdcfb36a93127debd53e212510dcdc2cc8812b4b57e` and kept
 separate from the Playwright bundle-directory label. The Playwright package and
 base image remain at the exact qualified `1.62.1` versions.
 The 083-9-c round remediates CVE-2026-115557: the backend base moves to the

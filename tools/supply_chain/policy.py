@@ -384,12 +384,12 @@ def validate_policy(policy: dict[str, Any]) -> None:
     if (
         browser_runtime["base_image"] != "playwright"
         or browser_runtime["playwright_core_version"] != "1.62.1"
-        or browser_runtime["chromium_revision"] != "1717349"
-        or browser_runtime["chromium_version"] != "157.0.8103.78"
+        or browser_runtime["chromium_revision"] != "1727472"
+        or browser_runtime["chromium_version"] != "158.0.8127.88"
         or browser_runtime["chromium_archive_url"]
-        != "https://storage.googleapis.com/chrome-for-testing-public/157.0.8103.78/linux64/chrome-linux64.zip"
+        != "https://storage.googleapis.com/chrome-for-testing-public/158.0.8127.88/linux64/chrome-linux64.zip"
         or browser_runtime["chromium_archive_sha256"]
-        != "9223832977a13db3646201b1341c1f9cf08afa3ceae92540116d7b0c062364fb"
+        != "59e3b43f8b3aaa292238fbdcfb36a93127debd53e212510dcdc2cc8812b4b57e"
         or browser_runtime["platform"] != "linux/amd64"
         or browser_runtime["node_version"] != "24.22.1"
         or browser_runtime["node_archive_url"]
@@ -397,7 +397,7 @@ def validate_policy(policy: dict[str, Any]) -> None:
         or browser_runtime["node_archive_sha256"]
         != "eb6728e77c576a35162c122c45ccadf224d89ff00abc8dae46cc2897c6002d7c"
         or browser_runtime["chromium_executable"]
-        != "/ms-playwright/chromium-1717349/chrome-linux64/chrome"
+        != "/ms-playwright/chromium-1727472/chrome-linux64/chrome"
         or browser_runtime["allowed_capabilities"] != ["SYS_CHROOT"]
         or browser_runtime["forbidden_product_browsers"] != ["firefox", "webkit"]
         or not SHA256.fullmatch(str(browser_runtime["seccomp_profile_sha256"]))
