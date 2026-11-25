@@ -1,8 +1,8 @@
-# NGINX Open Source 1.30.6; two-clause BSD license; official multi-platform
+# NGINX Open Source 1.30.8; two-clause BSD license; official multi-platform
 # image (Alpine 3.24). The overlay pins the exact OpenSSL fix versions and
 # the brotli-libs and libexpat security fix versions from the base image's
 # own v3.24 repositories.
-FROM nginx:1.30.6-alpine3.24@sha256:47928bf67eb62a1863cb08d9ecb52d3e704304ba614eaee17884204677702951
+FROM nginx:1.30.8-alpine3.24@sha256:6437a63b5c529f0e06162b3f593c0154cff6fa2ea0f94fd7c27928cb399e022d
 ARG SOURCE_DATE_EPOCH=1704067200
 ARG SLAIF_IMAGE_CREATED=2024-01-01T00:00:00Z
 ARG SLAIF_IMAGE_REVISION=local

@@ -144,7 +144,7 @@ The reviewed OCI inputs are:
 | `node:24.22.1-alpine3.23` | `sha256:0468540aa58203ff9e40c2aab3907c52644ab818af6176b1c70a026137dc92a2` | MIT | official multi-platform index |
 | `mcr.microsoft.com/playwright:v1.62.1-noble` | `sha256:dcc5531e97840b9b5e794f2814476b21571c5124a3fca2267d73041f56e7580e` | Apache-2.0 application package plus inventoried Ubuntu/runtime aggregation | amd64, arm64 |
 | `postgres:18.6-alpine3.23` base | `sha256:697c180dbf244d3ce4a8f4cbc0156cde840af055c1bf8b76aebe422a4822086f` | PostgreSQL | official multi-platform index; derived by `infra/postgres/Dockerfile` |
-| `nginx:1.30.6-alpine3.24` | `sha256:47928bf67eb62a1863cb08d9ecb52d3e704304ba614eaee17884204677702951` | two-clause BSD | official multi-platform index |
+| `nginx:1.30.8-alpine3.24` | `sha256:6437a63b5c529f0e06162b3f593c0154cff6fa2ea0f94fd7c27928cb399e022d` | two-clause BSD | official multi-platform index |
 | `httpd:2.4.68-alpine3.23` | `sha256:4a15e9c73f25334bc03cfb3c692c9adfc103bb46ca89cee1f0b9a5fcbc7b21f6` | Apache-2.0 | official multi-platform index |
 
 Project images apply exact Alpine security package revisions recorded in the

@@ -576,7 +576,7 @@ class DependencySourceNegativeTests(unittest.TestCase):
         )
         self.replace(
             "infra/nginx/Dockerfile",
-            "nginx:1.30.6-alpine3.24@sha256:",
+            "nginx:1.30.8-alpine3.24@sha256:",
             "nginx:latest # removed-digest-",
         )
         self.assert_source_error("mutable image")

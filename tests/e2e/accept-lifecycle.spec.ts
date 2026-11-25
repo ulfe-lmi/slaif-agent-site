@@ -403,7 +403,7 @@ test.describe("accept lifecycle (083/1)", () => {
          FROM control.review_operation_manifest
         WHERE workspace_id = '${workspaceId}'`,
     );
-    const manifestFields = manifestRow.split("\t");
+    const manifestFields = manifestRow.split("|");
     expect(manifestFields.length).toBe(11);
     const [
       companionId,

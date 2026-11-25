@@ -262,7 +262,7 @@ def validate_policy(policy: dict[str, Any]) -> None:
     if overrides["registry"] != global_registry:
         raise PolicyError("policy: Alpine package registry is not exact and approved")
     # Exact effective registry per image.  NGINX is the only overlay that
-    # moves to Alpine 3.24 (its 1.30.6 base ships the v3.24 repositories);
+    # moves to Alpine 3.24 (its 1.30.8 base ships the v3.24 repositories);
     # every other overlay stays on the global v3.23 registry.  nginx must
     # state its v3.24 registry explicitly; any other value, on any image,
     # is a foreign registry and fails closed.

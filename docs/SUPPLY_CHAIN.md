@@ -192,7 +192,7 @@ The Apache adapter uses the official
 multi-platform image. Its deterministic Debian Trixie package overlay pins
 `libaprutil1-ldap`/`libaprutil1t64` 1.6.3-3+deb13u1 and OpenSSL
 3.5.7-1~deb13u2. The NGINX edge base moves to Alpine 3.24
-(`nginx:1.30.6-alpine3.24`), whose overlay pins `brotli-libs=1.2.1-r0` and
+(`nginx:1.30.8-alpine3.24`), whose overlay pins `brotli-libs=1.2.1-r0` and
 `libexpat=2.10.0-r0` beside the exact OpenSSL fix packages from the base's
 own v3.24 repositories; the backend, PostgreSQL, and Web overlays retain
 their independently qualified
