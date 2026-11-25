@@ -22,6 +22,8 @@ import hashlib
 import json
 import logging
 import re
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -37,6 +39,7 @@ from slaif_agent_site.agent_api.models import AgentCapabilityContext
 from slaif_agent_site.agent_state import promotion as promotion_module
 from slaif_agent_site.agent_state.capability import generate_capability_token
 from slaif_agent_site.agent_state.foundation import (
+    CowPromotionStateError,
     asyncpg_cow_reviewer,
     get_operation_dependencies,
     get_session_operations,
@@ -4747,6 +4750,228 @@ async def test_accept_worker_lock_timeout_requeues_then_succeeds(
 
 
 @pytest.mark.asyncio
+async def test_accept_worker_state_error_proven_absence_terminal_no_retry(
+    agent_site_database: AgentSiteDatabase,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """c2: a completed-body CowPromotionStateError at the SDK's
+    PRE-commit invariant (the owned transaction ended unexpectedly -
+    the real rollback path runs) must terminal-mark the job with NO
+    retry: the durable absence is proven, the workspace returns to
+    REVIEW, nothing is published, and a fresh attempt publishes
+    normally.
+    """
+    database = agent_site_database
+    caplog.set_level(
+        logging.WARNING, logger="slaif_agent_site.review_worker.accept_job"
+    )
+    media_root = tmp_path / "media"
+    ids = await _seed_site(database, media_root=media_root, with_ops=True)
+    settings = _worker_settings(database)
+    pool = await _worker_pool(database)
+    boundary = MediaBoundary(settings=_media_settings(database, media_root))
+    # The same object the worker module imported from the foundation
+    # shim; patching the module attribute redirects the worker's
+    # promotion scope without touching the SDK.
+    real_reviewer = asyncpg_cow_reviewer
+
+    @asynccontextmanager
+    async def _state_error_before_commit(connection: Any) -> AsyncIterator[Any]:
+        async with real_reviewer(connection) as reviewer:
+            yield reviewer
+            # The worker body completed (its flag was set inside the
+            # body); raising here runs the SDK's REAL exit path with
+            # a clean body: the owned transaction is still open, so
+            # the SDK rolls it back (the publication is proven
+            # absent) and re-raises the exact public invariant error
+            # at the commit boundary.
+            raise CowPromotionStateError(
+                "the owned reviewer transaction ended unexpectedly"
+            )
+
+    monkeypatch.setattr(
+        accept_job_module, "asyncpg_cow_reviewer", _state_error_before_commit
+    )
+    try:
+        await _freeze_workspace(database, ids, pool)
+        rows = await _enqueue_bound_accept(
+            database, ids["workspace_id"], ids["delegator_id"]
+        )
+        job_id = UUID(str(rows[0]["job_id"]))
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            base_revision = await owner.fetchval(
+                "SELECT canonical_revision FROM control.site WHERE id = $1",
+                ids["site_id"],
+            )
+        job = await _claim_accept(database, "accept-c2-statepre-a")
+        assert str(job["id"]) == str(job_id)
+        with _worker_log_scope(caplog):
+            result = await run_accept_job(pool, settings, job, media=boundary)
+        # Deterministic invariant + proven durable absence:
+        # terminal, NO ordinary requeue.
+        assert result.status == "FAILED", (result.status, result.error)
+        assert result.error == "REVIEWER_TX_PROGRAMMING_FAILURE"
+        audit, outbox, ws_status, revision = await _publication_counts(database, ids)
+        assert audit == 0
+        assert outbox == 0
+        assert ws_status == "REVIEW"
+        assert revision == int(base_revision)
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            job_row = await owner.fetchrow(
+                "SELECT status, error FROM control.review_job WHERE id = $1",
+                job_id,
+            )
+        assert job_row["status"] == "FAILED"
+        assert job_row["error"] == "REVIEWER_TX_PROGRAMMING_FAILURE"
+        # The worker reached the commit boundary (not an early body-
+        # stage refusal) and settled the proven absence terminally.
+        messages = [record.getMessage() for record in caplog.records]
+        assert any(
+            "phase=reviewer-step step=transaction-exit "
+            "failure-class=state-error outcome=failed job=" + str(job_id) in message
+            for message in messages
+        ), "captured=" + json.dumps(messages)
+        assert any(
+            "phase=reviewer-step step=transaction-exit "
+            "outcome=programming-terminal-after-settlement job="
+            + str(job_id)
+            in message
+            for message in messages
+        ), "captured=" + json.dumps(messages)
+        # No re-queue of a deterministic invariant: the job is
+        # terminally FAILED.
+        assert await _claim(database, "accept-c2-statepre-a", _WORKER_KINDS) == []
+        # The fault is not a property of the durable state: a fresh
+        # attempt publishes normally.
+        rows2 = await _enqueue_bound_accept(
+            database, ids["workspace_id"], ids["delegator_id"]
+        )
+        job2_id = UUID(str(rows2[0]["job_id"]))
+        assert job2_id != job_id
+        monkeypatch.setattr(accept_job_module, "asyncpg_cow_reviewer", real_reviewer)
+        job2 = await _claim_accept(database, "accept-c2-statepre-b")
+        assert str(job2["id"]) == str(job2_id)
+        result2 = await run_accept_job(pool, settings, job2, media=boundary)
+        assert result2.status == "SUCCEEDED", result2.error
+        audit, outbox, ws_status, revision = await _publication_counts(database, ids)
+        assert audit == 1
+        assert outbox == 1
+        assert ws_status == "ACCEPTED"
+        assert revision == int(base_revision) + 1
+    finally:
+        monkeypatch.setattr(accept_job_module, "asyncpg_cow_reviewer", real_reviewer)
+        await pool.close()
+        await boundary.stop()
+
+
+@pytest.mark.asyncio
+async def test_accept_worker_state_error_after_landed_commit_recovers_success(
+    agent_site_database: AgentSiteDatabase,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """c2: a completed-body CowPromotionStateError AFTER the native
+    COMMIT landed (the SDK's post-commit cleanup invariant boundary)
+    must recover success from the EXACT durable publication
+    fingerprint - never assumed, never a proven rollback, and no
+    second publication.
+    """
+    database = agent_site_database
+    caplog.set_level(
+        logging.WARNING, logger="slaif_agent_site.review_worker.accept_job"
+    )
+    media_root = tmp_path / "media"
+    ids = await _seed_site(database, media_root=media_root, with_ops=True)
+    settings = _worker_settings(database)
+    pool = await _worker_pool(database)
+    boundary = MediaBoundary(settings=_media_settings(database, media_root))
+    # The same object the worker module imported from the foundation
+    # shim; patching the module attribute redirects the worker's
+    # promotion scope without touching the SDK.
+    real_reviewer = asyncpg_cow_reviewer
+
+    @asynccontextmanager
+    async def _state_error_after_landed_commit(connection: Any) -> AsyncIterator[Any]:
+        async with real_reviewer(connection) as reviewer:
+            yield reviewer
+        # The real scope exit ran the SDK's own validate_context +
+        # native COMMIT: the entire publication bundle (receipt,
+        # workspace, job, audit, outbox) is durable.  Now raise the
+        # SDK's post-commit cleanup invariant - the same public type
+        # the SDK raises when a COW context survives the post-commit
+        # cleanup - at the genuine post-COMMIT boundary.
+        raise CowPromotionStateError(
+            "COW context survived reviewer transaction cleanup and was "
+            "reset: c2 post-commit boundary"
+        )
+
+    monkeypatch.setattr(
+        accept_job_module, "asyncpg_cow_reviewer", _state_error_after_landed_commit
+    )
+    try:
+        await _freeze_workspace(database, ids, pool)
+        rows = await _enqueue_bound_accept(
+            database, ids["workspace_id"], ids["delegator_id"]
+        )
+        job_id = UUID(str(rows[0]["job_id"]))
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            base_revision = await owner.fetchval(
+                "SELECT canonical_revision FROM control.site WHERE id = $1",
+                ids["site_id"],
+            )
+        job = await _claim_accept(database, "accept-c2-statepost")
+        assert str(job["id"]) == str(job_id)
+        with _worker_log_scope(caplog):
+            result = await run_accept_job(pool, settings, job, media=boundary)
+        # The commit landed: the exact receipt fingerprint recovers
+        # SUCCEEDED - no re-run, no requeue, no proven-rollback
+        # label.
+        assert result.status == "SUCCEEDED", (result.status, result.error)
+        audit, outbox, ws_status, revision = await _publication_counts(database, ids)
+        assert audit == 1
+        assert outbox == 1
+        assert ws_status == "ACCEPTED"
+        assert revision == int(base_revision) + 1
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            job_row = await owner.fetchrow(
+                "SELECT status, error FROM control.review_job WHERE id = $1",
+                job_id,
+            )
+        assert job_row["status"] == "SUCCEEDED"
+        assert job_row["error"] is None
+        # The worker reached the commit boundary and recovered the
+        # committed publication durably.
+        messages = [record.getMessage() for record in caplog.records]
+        assert any(
+            "phase=reviewer-step step=transaction-exit "
+            "failure-class=state-error outcome=failed job=" + str(job_id) in message
+            for message in messages
+        ), "captured=" + json.dumps(messages)
+        assert any(
+            "phase=reviewer-step step=transaction-exit "
+            "outcome=committed-durable job=" + str(job_id) in message
+            for message in messages
+        ), "captured=" + json.dumps(messages)
+        # No re-claim possible: the job is terminally SUCCEEDED.
+        assert await _claim(database, "accept-c2-statepost", _WORKER_KINDS) == []
+    finally:
+        monkeypatch.setattr(accept_job_module, "asyncpg_cow_reviewer", real_reviewer)
+        await pool.close()
+        await boundary.stop()
+
+
+@pytest.mark.asyncio
 async def test_accept_worker_stale_attempt_leaves_moved_claim_untouched(
     agent_site_database: AgentSiteDatabase, tmp_path: Path
 ) -> None:
@@ -5123,6 +5348,46 @@ async def test_reconcile_uncertain_outcome_matrix(
 
         # (a) fresh claimed, nothing durable: proven absence.
         assert await _reconcile() == "rolled_back"
+
+        # (k) a pool-level read failure: the REAL asyncpg
+        # InterfaceError (a SIBLING of PostgresError) raised by a
+        # closed pool's acquire is an unreadable durable state -
+        # unknown, never a verdict (the caller maps it to the
+        # nonterminal DEFERRED result, UNCERTAIN_OUTCOME, with no
+        # durable write), and NO state change.  A second fixture-
+        # owned pool is closed for this probe; the live worker pool
+        # is untouched for the remaining matrix cases.
+        dead_pool = await _worker_pool(database)
+        await dead_pool.close()
+
+        async def _ws_job_state() -> tuple[str, str]:
+            async with owner_connection(
+                database.settings.resolved_owner_dsn(),
+                expected_database=database.name,
+            ) as owner:
+                ws_row = await owner.fetchrow(
+                    "SELECT status FROM control.workspace WHERE id = $1", ws_id
+                )
+                job_row = await owner.fetchrow(
+                    "SELECT status FROM control.review_job WHERE id = $1", job_id
+                )
+            return str(ws_row["status"]), str(job_row["status"])
+
+        state_before = await _ws_job_state()
+        assert (
+            await accept_job_module._reconcile_uncertain_outcome(
+                dead_pool,
+                job_id=job_id,
+                workspace_id=ws_id,
+                site_id=site_id,
+                claimant=claimant,
+                attempt_count=attempt_count,
+                claimed_payload=claimed_payload,
+                expected_receipt=expected,
+            )
+            == "unknown"
+        )
+        assert await _ws_job_state() == state_before
 
         # (b) the real publication lands: the exact fingerprint.
         result = await run_accept_job(pool, settings, job, media=boundary)

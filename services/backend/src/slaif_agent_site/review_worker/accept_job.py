@@ -636,7 +636,16 @@ async def _reconcile_uncertain_outcome(
                 ):
                     return "rolled_back"
                 return "unknown"
-    except (asyncpg.PostgresError, TimeoutError, OSError):
+    # The pool can fail the reconciliation read itself (an
+    # asyncpg.InterfaceError, e.g. pool close during acquire, is a
+    # sibling of PostgresError): an unreadable durable state is
+    # unknown, never a verdict.
+    except (
+        asyncpg.PostgresError,
+        asyncpg.InterfaceError,
+        TimeoutError,
+        OSError,
+    ):
         return "unknown"
 
 
@@ -690,13 +699,16 @@ def _reviewer_failure_class(
     runs at scope exit and a body exception rolls the transaction
     back - so the commit state is provable from the exception point:
 
-      uncertain   - the body COMPLETED and the failure arose at the
-                    commit/cleanup boundary (a commit-statement
-                    transport loss, or the post-commit scope/pool
-                    channel): the native commit MAY have landed, so
+      uncertain   - the body COMPLETED with real transport-grade
+                    evidence in the exception chain (a commit-
+                    statement transport loss, or the post-commit
+                    scope/pool channel, including a client-
+                    mechanism fault whose chain keeps a transport
+                    fault): the native commit MAY have landed, so
                     the outcome is reconciled against the exact
                     durable receipt - success ONLY on that
-                    fingerprint, never assumed;
+                    fingerprint, never assumed - and a proven
+                    durable absence keeps the bounded retry;
       retry       - the body raised a transport/transport failure
                     (a lost backend, a native cancellation, a
                     timeout), possibly masked by the SDK's
@@ -705,23 +717,42 @@ def _reviewer_failure_class(
                     transport-grade, so the ordinary requeue under
                     budget applies with no receipt read (the commit
                     is proven absent, not merely unknown);
-      programming - a deterministic SQL/programming fault (e.g.
-                    42P01, 42501, P0001) or a generic
-                    client-mechanism InterfaceError raised inside
-                    the body: the transaction is aborted and can
-                    NEVER commit; retrying can only re-fire the same
+      programming - a deterministic fault: a server-declared
+                    SQL/programming fault (e.g. 42P01, 42501,
+                    P0001), the SDK's public state invariant
+                    (CowPromotionStateError), or a generic
+                    client-mechanism InterfaceError with NO
+                    transport evidence in its chain: the
+                    transaction is aborted (or the fault can only
+                    re-fire) and retrying can only re-fire the same
                     fault, so this must NOT enter the ordinary
                     retry/recovery mutation.
 
-    A DETERMINISTIC server-declared fault observed with the body
-    COMPLETED (e.g. a deferred integrity rejection at COMMIT, or
-    the native-SQL cleanup after a successful native commit) also
-    returns ``programming``: the handler then settles the possible
+    Every completed body - of ANY class - settles the possible
     publication durably FIRST (success on the exact receipt
-    fingerprint, deferral on contradiction) and terminals ONLY on a
-    proven durable absence - never assuming the exit SQLSTATE
-    originated at COMMIT.
+    fingerprint, deferral on contradiction): the class selects
+    only the PROVEN-absence policy (the bounded retry for
+    transport evidence, the terminal mark for a deterministic
+    fault), never whether the receipt is read - a state error
+    raised before the SDK's own COMMIT is settled because the type
+    exists at BOTH boundaries, and no exit fault is assumed to
+    have originated at COMMIT.
     """
+    if isinstance(error, CowPromotionStateError):
+        # The SDK's public state invariant (safe_promotion): raised
+        # BOTH before the native COMMIT (the owned transaction
+        # ended unexpectedly after a clean body - the commit cannot
+        # have landed) and AFTER a possibly successful native
+        # COMMIT (a COW context survived the post-commit cleanup).
+        # The type alone cannot tell the two boundaries apart, so
+        # the class is the deterministic one: with the body
+        # completed the handler settles the possible publication
+        # durably first (the exact receipt fingerprint proves a
+        # landed commit; a proven durable absence terminals), and
+        # a body-stage invariant violation is terminal outright -
+        # the invariant failure is deterministic and retrying can
+        # only re-fire it.
+        return "programming"
     if isinstance(error, _TRANSPORT_REVIEWER_ERRORS):
         # Transport-grade: at the commit/cleanup boundary the commit
         # MAY have landed (uncertain - the receipt decides); mid-body
@@ -746,13 +777,20 @@ def _reviewer_failure_class(
         # publication durably first and terminals ONLY on a proven
         # durable absence.  Either way: never an ordinary retry.
         return "programming"
-    # InterfaceError or other client-mechanism fault: a completed
-    # body means the post-commit scope/pool channel (the commit MAY
-    # have landed - the receipt decides); a body-stage fault is a
-    # transport-grade loss only when the exception chain keeps one,
+    # InterfaceError or other client-mechanism fault: the exception
+    # chain decides in both stages.  A completed body ALWAYS
+    # settles durably first; the chain keeps a bounded retry for a
+    # PROVEN durable absence only when it has real transport-grade
+    # evidence (the post-commit scope/pool channel, or a masked
+    # transport loss) - otherwise the fault is deterministic and a
+    # proven absence terminals.  A body-stage fault is a
+    # transport-grade loss only when the chain keeps one,
     # otherwise it is a programming fault inside the body.
     if body_completed:
-        return "uncertain"
+        # A generic client-mechanism fault at the boundary is
+        # deterministic: settled first, terminal on a proven
+        # durable absence.
+        return "uncertain" if _error_chain_has_transport(error) else "programming"
     return "retry" if _error_chain_has_transport(error) else "programming"
 
 
@@ -2208,11 +2246,14 @@ async def run_accept_job(
     except asyncpg.InterfaceError as error:
         # A client-mechanism InterfaceError (c2): the SDK's
         # post-COMMIT scope/pool cleanup re-raises ONLY when the body
-        # and the native commit succeeded, so a completed body means
-        # the commit state is uncertain and the outcome is reconciled
-        # against the durable publication state exactly like the
-        # driver-error path above - never assumed to be success,
-        # never assumed to be a proven rollback.  A body-stage
+        # and the native commit succeeded, so a completed body
+        # ALWAYS reconciles against the durable publication state
+        # exactly like the driver-error path above - never assumed
+        # to be success, never assumed to be a proven rollback -
+        # with the absence policy controlled by the chain: real
+        # transport-grade evidence keeps the bounded retry on a
+        # proven absence, a deterministic fault terminals it.  A
+        # body-stage
         # InterfaceError (possibly the SDK's post-failure rollback
         # masking a transport loss, which the chain keeps
         # transport-class) can NEVER have committed: transport-grade
@@ -2243,19 +2284,28 @@ async def run_accept_job(
                 attempt_count=attempt_count,
                 claimed_payload=payload,
             )
-        # Post-commit scope/pool channel: the durable outcome
-        # decides, exactly like the driver-error path.
-        return await _settle_uncertain(error, "retryable")
+        # The durable outcome decides, exactly like the driver-
+        # error path: a proven absence terminals a deterministic
+        # fault, and keeps the bounded retry for transport evidence.
+        return await _settle_uncertain(
+            error, "terminal" if failure_class == "programming" else "retryable"
+        )
     except CowPromotionStateError as error:
         # The SDK's own public state invariant (c2): safe_promotion
-        # commits and THEN runs the native-SQL cleanup, and raises
-        # this both when the owned transaction ended unexpectedly
-        # (before the body) and when a COW context survives cleanup
-        # (AFTER a possibly successful native commit).  With the
-        # body completed, reconcile the possible publication first,
-        # exactly like the driver-error path; before the body the
-        # commit cannot have landed and the invariant violation is
-        # deterministic - terminal, no retry.
+        # raises this at TWO distinct boundaries - (1) after a clean
+        # body, BEFORE the native commit, when the owned transaction
+        # ended unexpectedly (the commit cannot have landed), and
+        # (2) in the post-commit cleanup, AFTER a possibly
+        # successful native commit, when a COW context survives.
+        # The type alone cannot tell the boundaries apart, so with
+        # the body completed the durable outcome decides first:
+        # success on the exact receipt fingerprint, deferral on
+        # contradiction, and terminal ONLY on a proven durable
+        # absence - the invariant violation is deterministic, so a
+        # proven absence must NOT requeue (retrying can only re-fire
+        # it).  Before the body the commit cannot have landed and
+        # the invariant violation is deterministic - terminal, no
+        # retry.
         log_bounded_db_failure("reviewer-tx", error)
         LOGGER.warning(
             "slaif-diag: review-job phase=reviewer-step step=%s "
@@ -2264,7 +2314,7 @@ async def run_accept_job(
             job_id,
         )
         if reviewer_body_completed:
-            return await _settle_uncertain(error, "retryable")
+            return await _settle_uncertain(error, "terminal")
         return await _programming_terminal(
             pool,
             job_id=job_id,

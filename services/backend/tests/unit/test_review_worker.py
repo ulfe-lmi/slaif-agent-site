@@ -1218,6 +1218,7 @@ def test_reviewer_failure_class_matrix() -> None:
     including the native-SQL cleanup after a successful native commit)
     must settle the durable state first.
     """
+    from slaif_agent_site.agent_state.foundation import CowPromotionStateError
     from slaif_agent_site.review_worker.accept_job import _reviewer_failure_class
 
     E = asyncpg.exceptions
@@ -1244,6 +1245,9 @@ def test_reviewer_failure_class_matrix() -> None:
         == "programming"
     )  # 42501
     assert _reviewer_failure_class(E.UniqueViolationError("x"), False) == "programming"
+    # The SDK's public state invariant at the body stage: the commit
+    # cannot have landed - terminal, no retry.
+    assert _reviewer_failure_class(CowPromotionStateError("x"), False) == "programming"
     # A generic client-mechanism fault raised in the body is programming.
     assert _reviewer_failure_class(asyncpg.InterfaceError("x"), False) == "programming"
 
@@ -1262,9 +1266,18 @@ def test_reviewer_failure_class_matrix() -> None:
     # and terminals only on a proven durable absence.
     assert _reviewer_failure_class(E.UndefinedTableError("x"), True) == "programming"
     assert _reviewer_failure_class(E.UniqueViolationError("x"), True) == "programming"
-    # The post-commit scope/pool channel (cleanup re-raises ONLY when
-    # the body and commit succeeded).
-    assert _reviewer_failure_class(asyncpg.InterfaceError("x"), True) == "uncertain"
+    # The post-commit scope/pool channel (cleanup re-raises ONLY
+    # when the body and commit succeeded): only real transport-grade
+    # evidence in the chain keeps the commit state uncertain.
+    assert _reviewer_failure_class(asyncpg.InterfaceError("x"), True) == "programming"
+    masked_boundary = asyncpg.InterfaceError("cleanup failed")
+    masked_boundary.__context__ = E.ConnectionFailureError("backend lost")
+    assert _reviewer_failure_class(masked_boundary, True) == "uncertain"
+    # The SDK's public state invariant is deterministic at EITHER
+    # boundary (the pre-commit owned-transaction check, or the
+    # post-commit cleanup): the durable receipt decides, and a
+    # proven durable absence terminals.
+    assert _reviewer_failure_class(CowPromotionStateError("x"), True) == "programming"
 
 
 def test_reviewer_failure_class_masked_transport_chain() -> None:

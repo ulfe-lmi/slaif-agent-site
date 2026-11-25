@@ -1656,6 +1656,18 @@ def _accept_site_lock(query: str) -> bool:
     return "canonical_revision FROM control.site" in query and "FOR UPDATE" in query
 
 
+def _accept_final_site_lock(query: str) -> bool:
+    """The final reviewer transaction's exact site lock: the
+    canonical revision and status are read together under the row
+    lock (the same-transaction recheck). Distinct from the preflight
+    SELECT above, which reads the revision alone."""
+
+    return (
+        "canonical_revision, status FROM control.site" in query
+        and "FOR UPDATE" in query
+    )
+
+
 def _freeze_materializer_wait(query: str) -> bool:
     """The freeze transaction inside the trusted materializer call."""
 
@@ -4042,9 +4054,12 @@ async def test_same_site_accept_freeze_serialization_both_orderings(
             pausing_boundary.release()
             # The ACTUAL final promotion transaction is queued on the
             # blocked row; its real blocker is the fixture holder PID.
+            # The final reviewer reads revision and status together,
+            # so the precise final-lock matcher (not the preflight
+            # matcher) identifies this waiter.
             promotion_pid = await _wait_for_blocked_waiter(
                 database,
-                query_predicate=_accept_site_lock,
+                query_predicate=_accept_final_site_lock,
                 expected_blockers={blocker_pid},
                 label="ordering-2 final promotion transaction",
                 timeout=30.0,
@@ -4450,7 +4465,9 @@ async def test_freeze_site_lock_failure_rollback_no_leaked_lock(
         # the row immediately.
         active = await _active_queries(database)
         assert not any(
-            _freeze_materializer_wait(query) or _accept_site_lock(query)
+            _freeze_materializer_wait(query)
+            or _accept_site_lock(query)
+            or _accept_final_site_lock(query)
             for _pid, query in active
         ), active
         releaser = await asyncpg.connect(
