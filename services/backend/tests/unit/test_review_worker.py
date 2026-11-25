@@ -1192,3 +1192,235 @@ async def test_verify_snapshot_binding_mismatch_is_validation() -> None:
     assert pool.materializer_calls == 0
     # The stored-binding refusal precedes the companion read.
     assert "manifest-read" not in pool.calls
+
+
+# ---------------------------------------------------------------------------
+# 083/12-c: reviewer-transaction failure classification (c2)
+# ---------------------------------------------------------------------------
+
+
+def _op_a() -> uuid.UUID:
+    # Lettered hex: the canonical-form check needs a non-digit
+    # character to observe the case mismatch.
+    return uuid.UUID("a1a1a1a1-b2b2-4c3c-8d4d-e5e5e5e5e5e5")
+
+
+def _op_b() -> uuid.UUID:
+    return uuid.UUID("b1b1b1b1-c2c2-4d3d-8e4e-f5f5f5f5f5f5")
+
+
+def test_reviewer_failure_class_matrix() -> None:
+    """c2: transport vs transient-SQL vs deterministic vs client-mechanism.
+
+    The SDK commits ONLY when the body returns cleanly, so the
+    exception point decides what is provable: body-stage faults prove
+    the commit absent; completed-body faults (commit/cleanup boundary,
+    including the native-SQL cleanup after a successful native commit)
+    must settle the durable state first.
+    """
+    from slaif_agent_site.review_worker.accept_job import _reviewer_failure_class
+
+    E = asyncpg.exceptions
+
+    # Body stage: the SDK rolled the transaction back.
+    assert _reviewer_failure_class(E.ConnectionDoesNotExistError("x"), False) == "retry"
+    assert _reviewer_failure_class(E.ConnectionFailureError("x"), False) == "retry"
+    assert _reviewer_failure_class(E.QueryCanceledError("x"), False) == "retry"
+    assert _reviewer_failure_class(TimeoutError(), False) == "retry"
+    assert _reviewer_failure_class(OSError(), False) == "retry"
+    # Transient SQL faults stay retryable (bounded by the attempt budget).
+    assert (
+        _reviewer_failure_class(E.LockNotAvailableError("x"), False) == "retry"
+    )  # 55P03
+    assert (
+        _reviewer_failure_class(E.DeadlockDetectedError("x"), False) == "retry"
+    )  # 40P01
+    # Deterministic SQL/programming faults must never requeue.
+    assert (
+        _reviewer_failure_class(E.UndefinedTableError("x"), False) == "programming"
+    )  # 42P01
+    assert (
+        _reviewer_failure_class(E.InsufficientPrivilegeError("x"), False)
+        == "programming"
+    )  # 42501
+    assert _reviewer_failure_class(E.UniqueViolationError("x"), False) == "programming"
+    # A generic client-mechanism fault raised in the body is programming.
+    assert _reviewer_failure_class(asyncpg.InterfaceError("x"), False) == "programming"
+
+    # Completed body: the commit MAY have landed - reconcile first.
+    assert (
+        _reviewer_failure_class(E.ConnectionDoesNotExistError("x"), True) == "uncertain"
+    )
+    assert _reviewer_failure_class(E.QueryCanceledError("x"), True) == "uncertain"
+    assert _reviewer_failure_class(TimeoutError(), True) == "uncertain"
+    assert _reviewer_failure_class(OSError(), True) == "uncertain"
+    assert _reviewer_failure_class(E.LockNotAvailableError("x"), True) == "uncertain"
+    assert _reviewer_failure_class(E.DeadlockDetectedError("x"), True) == "uncertain"
+    # A deterministic server-declared fault at the boundary (e.g. a
+    # deferred integrity rejection at COMMIT, or the native-SQL
+    # cleanup AFTER a successful native commit) settles durably first
+    # and terminals only on a proven durable absence.
+    assert _reviewer_failure_class(E.UndefinedTableError("x"), True) == "programming"
+    assert _reviewer_failure_class(E.UniqueViolationError("x"), True) == "programming"
+    # The post-commit scope/pool channel (cleanup re-raises ONLY when
+    # the body and commit succeeded).
+    assert _reviewer_failure_class(asyncpg.InterfaceError("x"), True) == "uncertain"
+
+
+def test_reviewer_failure_class_masked_transport_chain() -> None:
+    """The SDK's post-failure rollback can raise OVER the body's
+    primary error; the chain keeps the transport class."""
+    from slaif_agent_site.review_worker.accept_job import (
+        _error_chain_has_transport,
+        _reviewer_failure_class,
+    )
+
+    E = asyncpg.exceptions
+
+    masked = asyncpg.InterfaceError("rollback failed")
+    masked.__context__ = E.ConnectionFailureError("backend lost")
+    assert _error_chain_has_transport(masked)
+    assert _reviewer_failure_class(masked, False) == "retry"
+
+    masked_cause = asyncpg.InterfaceError("rollback failed")
+    masked_cause.__cause__ = TimeoutError()
+    masked_cause.__suppress_context__ = True
+    assert _reviewer_failure_class(masked_cause, False) == "retry"
+
+    # A non-transport chain stays a programming fault.
+    nontransport = asyncpg.InterfaceError("pure client fault")
+    nontransport.__context__ = ValueError("body bug")
+    assert _reviewer_failure_class(nontransport, False) == "programming"
+
+    # A cycle in the exception chain must not hang.
+    a = asyncpg.InterfaceError("a")
+    b = asyncpg.InterfaceError("b")
+    a.__context__ = b
+    b.__context__ = a
+    assert _reviewer_failure_class(a, False) == "programming"
+
+
+def test_strict_manifest_identities_shapes() -> None:
+    """c1: fail-closed staged identity derivation (no repair of
+    corrupted stored arrays)."""
+    from slaif_agent_site.review_worker.accept_job import _strict_manifest_identities
+
+    op_a, op_b = _op_a(), _op_b()
+    expected_ops = frozenset({op_a, op_b})
+    expected_pairs = {(op_a, op_b)}
+    good: dict[str, object] = {
+        "operation_ids": [str(op_a), str(op_b)],
+        "dependency_pairs": [[str(op_a), str(op_b)]],
+    }
+    assert _strict_manifest_identities(good, expected_ops, expected_pairs) == (
+        expected_ops,
+        expected_pairs,
+    )
+
+    # Missing/None sections.
+    broken_cases: list[dict[str, object]] = [
+        {},
+        {"operation_ids": None, "dependency_pairs": []},
+    ]
+    for broken in broken_cases:
+        with pytest.raises(ValueError):
+            _strict_manifest_identities(broken, expected_ops, expected_pairs)
+    # Non-string / non-UUID / non-canonical operation ids.
+    for bad_ops in (
+        [1, str(op_b)],
+        ["not-a-uuid", str(op_b)],
+        [str(op_a).upper(), str(op_b)],
+        [str(op_a), str(op_a)],
+    ):
+        broken = dict(good, operation_ids=bad_ops)
+        with pytest.raises(ValueError):
+            _strict_manifest_identities(broken, expected_ops, expected_pairs)
+    # Coverage mismatch.
+    with pytest.raises(ValueError):
+        _strict_manifest_identities(
+            dict(good, operation_ids=[str(op_a)]), expected_ops, expected_pairs
+        )
+    # Pair shape: wrong arity, non-string, non-canonical, duplicate.
+    for bad_pairs in (
+        [[str(op_a)]],
+        [[str(op_a), 1]],
+        [[str(op_a).upper(), str(op_b)]],
+        [[str(op_a), str(op_b)], [str(op_a), str(op_b)]],
+    ):
+        broken = dict(good, dependency_pairs=bad_pairs)
+        with pytest.raises(ValueError):
+            _strict_manifest_identities(broken, expected_ops, expected_pairs)
+    # Pair coverage mismatch.
+    with pytest.raises(ValueError):
+        _strict_manifest_identities(
+            dict(good, dependency_pairs=[]), expected_ops, expected_pairs
+        )
+
+
+def test_receipt_matches_exact_fingerprint() -> None:
+    """c2: the promotion receipt must match EVERY approval fact and
+    the retained result; anything else is uncertain, never success."""
+    from slaif_agent_site.review_worker.accept_job import _receipt_matches
+
+    site = uuid.uuid4()
+    workspace = uuid.uuid4()
+    snapshot = uuid.uuid4()
+    manifest_id = uuid.uuid4()
+    actor = uuid.uuid4()
+    digest = "ab" * 32
+    manifest_digest = "cd" * 32
+    applied = [str(_op_a()), str(_op_b())]
+    expected = {
+        "site_id": site,
+        "workspace_id": workspace,
+        "snapshot_id": snapshot,
+        "digest": digest,
+        "manifest_digest": manifest_digest,
+        "manifest_id": manifest_id,
+        "base_site_revision": 7,
+        "committed_operations": 2,
+        "actor_user_account_id": actor,
+        "versions": {str(_op_a()): 3, str(_op_b()): 1},
+        "applied_operation_ids": applied,
+        "media_manifest": [],
+    }
+    exact = {
+        "receipt_rows": 1,
+        "site_id": str(site),
+        "workspace_id": str(workspace),
+        "snapshot_id": str(snapshot),
+        "digest": digest,
+        "manifest_digest": manifest_digest,
+        "manifest_id": str(manifest_id),
+        "base_site_revision": 7,
+        "new_canonical_revision": 8,
+        "committed_operations": 2,
+        "actor_user_account_id": str(actor),
+        "versions": json.dumps(expected["versions"]),
+        "applied_operation_ids": applied,
+    }
+    assert _receipt_matches(exact, expected)
+
+    # Absent / ambiguous / malformed shapes.
+    assert not _receipt_matches(None, expected)
+    assert not _receipt_matches({"receipt_rows": 3}, expected)
+    assert not _receipt_matches({"receipt_rows": 0}, expected)
+    # Every field must agree.
+    for key, value in (
+        ("site_id", str(uuid.uuid4())),
+        ("workspace_id", str(uuid.uuid4())),
+        ("snapshot_id", str(uuid.uuid4())),
+        ("digest", "00" * 32),
+        ("manifest_digest", "00" * 32),
+        ("manifest_id", str(uuid.uuid4())),
+        ("base_site_revision", 6),
+        ("new_canonical_revision", 9),
+        ("committed_operations", 1),
+        ("actor_user_account_id", str(uuid.uuid4())),
+        ("applied_operation_ids", list(reversed(applied))),
+        ("versions", json.dumps({str(_op_a()): 4, str(_op_b()): 1})),
+    ):
+        broken = dict(exact, **{key: value})
+        assert not _receipt_matches(broken, expected), key
+    # versions may arrive pre-decoded.
+    assert _receipt_matches(dict(exact, versions=expected["versions"]), expected)

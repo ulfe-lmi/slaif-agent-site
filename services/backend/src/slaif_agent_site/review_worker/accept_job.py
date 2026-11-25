@@ -27,8 +27,10 @@ The accept job is the only promotion path in the product.  Its sequence:
    reference is a validation failure);
 5. ONE ``asyncpg_cow_reviewer`` transaction, all-or-nothing: advisory
    lock, ``PROMOTING`` re-check, the authoritative drift gate on the
-   locked site row, the operation-watermark closure check through the
-   foundation, ``commit_session(conflict_policy='error')``, the
+   locked site row, the stored domain approval re-verification on the
+   locked connection (exact durable approval tuple, binding, versions
+   and normalized-state shapes), the live manifest/U/dependency/provenance
+   re-checks, ``commit_session(conflict_policy='error')``, the
    in-transaction publication mark (the least-authority
    ``content.slaif_media_publicize_promoted`` helper over exactly the
    promoted, base-referenced media), the canonical revision increment,
@@ -49,6 +51,35 @@ terminal) -> the job stays ``CLAIMED`` and the claim function's
 stale-claim recovery re-queues it under the attempt budget; at budget
 the handler writes ``REVIEW_JOB_STALE_AT_BUDGET`` + ``REVIEW`` so there
 is no dead end.
+
+Every recovery state change (workspace transition and/or job terminal
+mark) is made inside ONE transaction under locked reads: the workspace
+row is locked first, then the job row (the promotion-transaction and
+enqueue lock order), and the job must still be CLAIMED by exactly this
+attempt (claimant, attempt count, site/workspace binding and - whenever
+the payload carries them - the exact dual approval digest).  Verify and
+write are atomic, so a claim that moves in the gap the separate
+verify-then-write sequence used to leave can never be overwritten: it
+blocks on the locked rows and then sees the terminal/transitioned
+state.  A lost or unverifiable claim makes NO write at all and leaves
+recovery to the claim function's stale-claim handling.  The promotion
+transaction itself re-verifies the durable claim under its own locks
+(job payload, snapshot and dual digests, claimant, attempt, binding)
+BEFORE any publication step.
+
+An uncertain reviewer-transaction outcome (a driver or interface
+failure, including scope/pool cleanup AFTER a possible native commit)
+is reconciled against the EXACT durable publication receipt: the job
+must be SUCCEEDED, the workspace ACCEPTED, and the narrow owner-definer
+promotion-receipt read must return exactly ONE audit.promotion row for
+this job matching every approval fact (site/workspace/snapshot, both
+digests, manifest identity, base and incremented revision, actor,
+versions and the applied operation IDs).  Only that fingerprint
+authorizes recovered success (never re-run).  A SUCCEEDED job without
+the exact receipt, an ambiguous multiple-row receipt, or ANY receipt on
+a nonterminal claim is contradictory: uncertain, fail-closed, no state
+change and no re-queue.  Re-queue is authorized only when NO receipt
+exists at all and this attempt still verifiably owns the claim.
 """
 
 from __future__ import annotations
@@ -57,13 +88,21 @@ import asyncio
 import json
 import logging
 import re
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 import asyncpg
 
-from ..agent_state.foundation import CowConflictError, asyncpg_cow_reviewer
-from ..content_model.canonical import parse_snapshot_text
+from ..agent_state.foundation import (
+    CowConflictError,
+    CowPromotionStateError,
+    asyncpg_cow_reviewer,
+)
+from ..content_model.canonical import (
+    canonical_digest,
+    canonical_json,
+    parse_snapshot_text,
+)
 from ..media_service.config import (
     MediaDatabaseConfigurationError,
     MediaSettings,
@@ -82,7 +121,8 @@ from ..media_service.store import MediaStore
 from . import operation_manifest
 from . import snapshot as snapshot_module
 from .config import ReviewWorkerSettings
-from .freeze_job import JobResult, _lock_timeout_literal, _mark_terminal
+from .freeze_job import JobResult, _lock_timeout_literal
+from .operation_manifest import build_operation_manifest
 
 LOGGER = logging.getLogger(__name__)
 
@@ -216,26 +256,546 @@ async def shutdown_media_boundary() -> None:
         await boundary.stop()
 
 
-async def _set_workspace_status(
-    pool: Any, workspace_id: UUID, expected: str, target: str
-) -> bool:
-    """Best-effort guarded workspace transition outside the job tx."""
+def _strict_manifest_identities(
+    manifest_doc: dict[str, Any],
+    expected_operations: frozenset[UUID],
+    expected_pairs: set[tuple[UUID, UUID]],
+) -> tuple[frozenset[UUID], set[tuple[UUID, UUID]]]:
+    """Strict staged derivation of the manifest's approved identities.
 
+    Fail-closed shape checks before any comparison: ``operation_ids``
+    must be a list of unique canonical UUID strings and
+    ``dependency_pairs`` a list of unique two-element UUID-string
+    pairs; the derived sets must equal the previously verified
+    (step-3) identities exactly.  Raises ``ValueError`` on any shape
+    or identity disagreement - the caller maps that to the stable
+    validation refusal.
+    """
+    operation_ids = manifest_doc.get("operation_ids")
+    pairs = manifest_doc.get("dependency_pairs")
+    if not isinstance(operation_ids, list) or not isinstance(pairs, list):
+        raise ValueError("identity shape")
+    operations: set[UUID] = set()
+    for operation in operation_ids:
+        if not isinstance(operation, str):
+            raise ValueError("operation shape")
+        try:
+            parsed = UUID(operation)
+        except ValueError:
+            raise ValueError("operation uuid") from None
+        if str(parsed) != operation:
+            raise ValueError("operation canonical")
+        if parsed in operations:
+            raise ValueError("duplicate operation")
+        operations.add(parsed)
+    if frozenset(operations) != expected_operations:
+        raise ValueError("operation identity")
+    pair_set: set[tuple[UUID, UUID]] = set()
+    for pair in pairs:
+        if (
+            not isinstance(pair, (list, tuple))
+            or len(pair) != 2
+            or not all(isinstance(endpoint, str) for endpoint in pair)
+        ):
+            raise ValueError("pair shape")
+        try:
+            parent = UUID(pair[0])
+            child = UUID(pair[1])
+        except (IndexError, ValueError):
+            raise ValueError("pair uuid") from None
+        if str(parent) != pair[0] or str(child) != pair[1]:
+            raise ValueError("pair canonical")
+        if (parent, child) in pair_set:
+            raise ValueError("duplicate pair")
+        pair_set.add((parent, child))
+    if pair_set != expected_pairs:
+        raise ValueError("pair identity")
+    return frozenset(operations), pair_set
+
+
+async def _claim_gated_state_change(
+    pool: Any,
+    *,
+    job_id: UUID,
+    workspace_id: UUID,
+    site_id: UUID,
+    claimant: str,
+    attempt_count: int,
+    claimed_payload: Any,
+    workspace_from: str | tuple[str, ...] | None,
+    workspace_target: str | None,
+    job_failed_code: str | None,
+) -> str:
+    """One transaction: claim verification + recovery state changes.
+
+    Locked reads in the promotion-transaction lock order - the
+    workspace row FIRST, then the job row - verify that this attempt
+    still owns the durable claim: the job is a CLAIMED ACCEPT job
+    owned by exactly this claimant and attempt for this
+    site/workspace, the workspace is bound to that site, and the job
+    payload is TYPED-EXACTLY the
+    claimed payload (the full decoded JSONB compared with explicit
+    types: a numeric digest never equals its string form, a missing
+    field never equals a present one, and a tampered field defers).
+    Approval SHAPE validation (64-hex, UUIDs) stays with the caller
+    - this gate proves only that the durable approval is unchanged.
+    Only then are the requested writes made in the SAME transaction:
+    the guarded workspace transition (from the locked state) and/or
+    the job FAILED terminal through the definer mark.  Returns:
+      applied   - owned the claim and every requested write landed;
+      deferred  - the claim moved, the payload disagrees, or a
+                 requested transition no longer matches: NO write;
+      unknown   - the locked state was temporarily unreadable: the
+                 transaction rolled back, NO write.
+    In both non-applied cases the caller makes no state change and
+    leaves recovery to the claim function's stale-claim handling, so
+    a stale attempt can never re-queue or terminal-mark a moved
+    claim and a successful terminal record is never touched.
+    """
+    if (workspace_from is None) != (workspace_target is None):
+        raise ValueError("workspace transition requires both states")
     try:
         async with pool.acquire() as connection:
-            executed = await connection.execute(
-                "UPDATE control.workspace SET status=$2 WHERE id=$1 AND status=$3",
-                workspace_id,
-                target,
-                expected,
-            )
-        return str(executed) == "UPDATE 1"
+            async with connection.transaction():
+                ws = await connection.fetchrow(
+                    "SELECT status, site_id FROM control.workspace "
+                    "WHERE id = $1 FOR UPDATE",
+                    workspace_id,
+                )
+                if ws is None or str(ws["site_id"]) != str(site_id):
+                    return "deferred"
+                # The claimed payload is bound as JSONB and compared
+                # with PostgreSQL's TYPE-SENSITIVE jsonb value
+                # equality (a nested true never equals 1, a numeric
+                # digest never equals its string form): a mismatched
+                # row simply is not the claimed job; the job kind
+                # must agree with the recovery binding (an unchanged
+                # payload/claimant on a re-kinded row must never be
+                # terminal-marked).
+                job = await connection.fetchrow(
+                    "SELECT status, job_kind, claimed_by, attempt_count, "
+                    "workspace_id, site_id "
+                    "FROM control.review_job "
+                    "WHERE id = $1 "
+                    "  AND payload IS NOT DISTINCT FROM $2::jsonb "
+                    "FOR UPDATE",
+                    job_id,
+                    json.dumps(claimed_payload, sort_keys=True, separators=(",", ":")),
+                )
+                if job is None:
+                    return "deferred"
+                owned = (
+                    str(job["status"]) == "CLAIMED"
+                    and str(job["job_kind"]) == "ACCEPT"
+                    and str(job["claimed_by"]) == claimant
+                    and int(job["attempt_count"]) == attempt_count
+                    and str(job["workspace_id"]) == str(workspace_id)
+                    and str(job["site_id"]) == str(site_id)
+                )
+                if not owned:
+                    return "deferred"
+                if workspace_target is not None:
+                    if isinstance(workspace_from, tuple):
+                        executed = await connection.execute(
+                            "UPDATE control.workspace SET status = $3 "
+                            "WHERE id = $1 AND status = ANY($2::text[])",
+                            workspace_id,
+                            list(workspace_from),
+                            workspace_target,
+                        )
+                    else:
+                        executed = await connection.execute(
+                            "UPDATE control.workspace SET status = $3 "
+                            "WHERE id = $1 AND status = $2",
+                            workspace_id,
+                            workspace_from,
+                            workspace_target,
+                        )
+                    if executed != "UPDATE 1":
+                        # The locked row is not in the guarded from-
+                        # state: a contradictory intermediate state.
+                        # Make no write at all (nothing was written
+                        # before this in the transaction).
+                        return "deferred"
+                if job_failed_code is not None:
+                    await connection.fetchval(
+                        "SELECT control.slaif_review_job_terminal($1, 'FAILED', $2)",
+                        job_id,
+                        job_failed_code,
+                    )
     except (asyncpg.PostgresError, TimeoutError, OSError):
-        LOGGER.warning(
-            "accept workspace transition deferred",
-            extra={"event_fields": {"workspace_id": str(workspace_id)}},
-        )
+        return "unknown"
+    return "applied"
+
+
+def _receipt_matches(receipt: Any, expected: dict[str, Any]) -> bool:
+    """Exact promotion-receipt validation (c2).
+
+    True only for the single-row projection matching EVERY approval
+    fact and the retained promotion result: site/workspace/snapshot
+    binding, both digests, manifest identity, base revision, the
+    incremented result revision, committed count, actor, exact
+    versions and the exact ordered applied operation IDs.  Anything
+    else - absent (None), the ambiguous multiple-row marker, a
+    malformed shape, or one mismatching field - is False: uncertain,
+    never success.
+    """
+    if not isinstance(receipt, dict) or receipt.get("receipt_rows") != 1:
         return False
+    if (
+        str(receipt.get("site_id")) != str(expected["site_id"])
+        or str(receipt.get("workspace_id")) != str(expected["workspace_id"])
+        or str(receipt.get("snapshot_id")) != str(expected["snapshot_id"])
+        or receipt.get("digest") != expected["digest"]
+        or receipt.get("manifest_digest") != expected["manifest_digest"]
+        or str(receipt.get("manifest_id")) != str(expected["manifest_id"])
+        or receipt.get("base_site_revision") != expected["base_site_revision"]
+        or receipt.get("new_canonical_revision") != expected["base_site_revision"] + 1
+        or receipt.get("committed_operations") != expected["committed_operations"]
+        or str(receipt.get("actor_user_account_id"))
+        != str(expected["actor_user_account_id"])
+        or receipt.get("applied_operation_ids") != expected["applied_operation_ids"]
+    ):
+        return False
+    versions = _decode_jsonb(receipt.get("versions"))
+    return isinstance(versions, dict) and versions == expected["versions"]
+
+
+async def _reconcile_uncertain_outcome(
+    pool: Any,
+    *,
+    job_id: UUID,
+    workspace_id: UUID,
+    site_id: UUID,
+    claimant: str,
+    attempt_count: int,
+    claimed_payload: Any,
+    expected_receipt: dict[str, Any],
+) -> str:
+    """Reconcile an uncertain reviewer-transaction outcome against the
+    EXACT durable publication receipt (c2).
+
+    The promotion transaction commits as one: the promotion receipt,
+    the workspace ACCEPTED transition, the job SUCCEEDED terminal and
+    the outbox row.  A driver or interface failure inside the reviewer
+    scope or its cleanup does not by itself prove rollback - the
+    failure can occur AFTER the native commit - nor success.  The
+    receipt read is the narrow owner-definer projection (the worker
+    holds no SELECT on audit.promotion) and distinguishes absent /
+    exactly-one / ambiguous-multiple.  Locked reads use the
+    workspace-then-job order.  The locked job read additionally binds
+    the EXACT claimed payload (type-sensitive jsonb equality, as the
+    claim gate), and the durable outbox row for this publication is
+    checked for existence/absence consistency (072 grants the worker
+    SELECT on control.cache_outbox; 074 consumes rows by UPDATE, so a
+    consumed row still counts as present).  Returns:
+      committed   - the job is SUCCEEDED, the workspace ACCEPTED, the
+                    receipt exists exactly once matching every
+                    approval fact, the exact claim payload is intact,
+                    and the durable outbox holds exactly the one
+                    EXACT row for this publication (type-sensitive
+                    payload equality, and NO other WORKSPACE_ACCEPTED
+                    row for the site/workspace): recover success,
+                    never re-run;
+      rolled_back - NO receipt exists at all, NO WORKSPACE_ACCEPTED
+                    outbox row exists for the site/workspace, the
+                    workspace is still in
+                    the promotion pipeline, and this attempt still
+                    verifiably owns the EXACT claimed job: safe to
+                    re-queue under budget;
+      unknown     - everything else: unreadable, a payload that no
+                    longer matches the claim, a SUCCEEDED job without
+                    the exact receipt, an ambiguous receipt, a
+                    mismatching or duplicate outbox fact, or ANY
+                    receipt on a nonterminal claim: a contradictory
+                    publication state that must fail closed and
+                    authorize NO
+                    re-queue): make NO state change and leave the job
+                    to the claim function's stale-claim handling.
+    """
+    try:
+        async with pool.acquire() as connection:
+            async with connection.transaction():
+                # Two locked reads, one row each: the workspace row
+                # FIRST, then the job row - the planner is never given
+                # a lock-order choice (promotion-TX/enqueue order).
+                ws = await connection.fetchrow(
+                    "SELECT status, site_id FROM control.workspace "
+                    "WHERE id = $1 FOR UPDATE",
+                    workspace_id,
+                )
+                if ws is None or str(ws["site_id"]) != str(site_id):
+                    return "unknown"
+                # The EXACT claimed payload is part of the claim
+                # identity (type-sensitive jsonb equality): a mutated
+                # or re-kinded row is not this claim's job (the job
+                # kind must agree with the recovery binding).
+                job = await connection.fetchrow(
+                    "SELECT status, job_kind, claimed_by, attempt_count, "
+                    "workspace_id, site_id "
+                    "FROM control.review_job "
+                    "WHERE id = $1 "
+                    "  AND payload IS NOT DISTINCT FROM $2::jsonb "
+                    "FOR UPDATE",
+                    job_id,
+                    json.dumps(claimed_payload, sort_keys=True, separators=(",", ":")),
+                )
+                if (
+                    job is None
+                    or str(job["job_kind"]) != "ACCEPT"
+                    or str(job["workspace_id"]) != str(workspace_id)
+                    or str(job["site_id"]) != str(site_id)
+                ):
+                    return "unknown"
+                receipt = await connection.fetchval(
+                    "SELECT control.slaif_review_promotion_receipt_read($1)",
+                    job_id,
+                )
+                if isinstance(receipt, (bytes, bytearray, str)):
+                    receipt = _decode_jsonb(receipt)
+                # Durable outbox consistency for THIS publication:
+                # the promotion transaction inserts exactly one
+                # WORKSPACE_ACCEPTED row whose payload is the exact
+                # retained result (snapshot, digest, base/incremented
+                # revision, media manifest).  ACCEPTED is terminal,
+                # so a workspace can re-freeze before first
+                # acceptance but can never publish a second snapshot
+                # afterward: ANY WORKSPACE_ACCEPTED row bound to this
+                # site/workspace (right snapshot or not, well-formed
+                # or not) is part of the publication history, and
+                # only the single EXACT row (type-sensitive jsonb
+                # equality - a row with the right snapshot id but a
+                # wrong digest/revision/media projection, a wrong-
+                # snapshot row, or a duplicate) can confirm success.
+                # A proven rollback requires NO row at all (074
+                # consumes rows by UPDATE, so a consumed row still
+                # counts as present).  Missing vs mismatching vs
+                # duplicate facts are all distinguished: anything
+                # other than the single exact row (or, for a proven
+                # absence, nothing) is a contradictory state - never
+                # a rollback proof and never a success proof.
+                expected_outbox_payload = json.dumps(
+                    {
+                        "snapshot_id": str(expected_receipt["snapshot_id"]),
+                        "digest": expected_receipt["digest"],
+                        "base_site_revision": expected_receipt["base_site_revision"],
+                        "new_canonical_revision": (
+                            expected_receipt["base_site_revision"] + 1
+                        ),
+                        "media_manifest": expected_receipt["media_manifest"],
+                    },
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+                outbox_stats = await connection.fetchrow(
+                    "SELECT count(*) AS total, "
+                    "  count(*) FILTER (WHERE payload IS NOT DISTINCT FROM $3::jsonb) "
+                    "  AS exact "
+                    "FROM control.cache_outbox "
+                    "WHERE site_id = $1 AND workspace_id = $2 "
+                    "  AND event_kind = 'WORKSPACE_ACCEPTED'",
+                    site_id,
+                    workspace_id,
+                    expected_outbox_payload,
+                )
+                outbox_total = int(outbox_stats["total"])
+                outbox_exact = int(outbox_stats["exact"])
+                workspace_status = str(ws["status"])
+                job_status = str(job["status"])
+                if job_status == "SUCCEEDED":
+                    if (
+                        workspace_status == "ACCEPTED"
+                        and _receipt_matches(receipt, expected_receipt)
+                        and outbox_exact == 1
+                        and outbox_total == 1
+                    ):
+                        return "committed"
+                    return "unknown"
+                if job_status == "FAILED":
+                    return "unknown"
+                if receipt is not None:
+                    # ANY non-NULL receipt value (the single-row
+                    # projection, the ambiguous multiple-row marker,
+                    # or any unexpected shape) on a nonterminal claim
+                    # is a contradictory durable state: fail closed -
+                    # no re-queue, no terminal write, no rollback
+                    # assumption.
+                    return "unknown"
+                if outbox_total != 0:
+                    # ANY WORKSPACE_ACCEPTED row bound to this
+                    # site/workspace (the exact one, a wrong-snapshot
+                    # one, a mismatching one, or a duplicate) without
+                    # the exact receipt on a nonterminal claim is a
+                    # contradictory publication history: fail closed.
+                    return "unknown"
+                if (
+                    workspace_status in ("PROMOTING", "ACCEPT_QUEUED")
+                    and job_status == "CLAIMED"
+                    and str(job["claimed_by"]) == claimant
+                    and int(job["attempt_count"]) == attempt_count
+                ):
+                    return "rolled_back"
+                return "unknown"
+    except (asyncpg.PostgresError, TimeoutError, OSError):
+        return "unknown"
+
+
+_TRANSPORT_REVIEWER_ERRORS: tuple[type[BaseException], ...] = (
+    asyncpg.PostgresConnectionError,
+    asyncpg.QueryCanceledError,
+    TimeoutError,
+    OSError,
+)
+
+
+# Transient SQL faults that are safe to retry (bounded by the attempt
+# budget): the lock timeout our own SET LOCAL lock_timeout raises
+# (55P03), a detected deadlock (40P01), and a serialization failure
+# (40001) - PostgreSQL's retry-eligible class 40 faults.  Every other
+# server-declared fault is deterministic: retrying re-fires the same fault.
+_TRANSIENT_REVIEWER_SQL: tuple[type[asyncpg.PostgresError], ...] = (
+    asyncpg.LockNotAvailableError,
+    asyncpg.DeadlockDetectedError,
+    asyncpg.SerializationError,
+)
+
+
+def _error_chain_has_transport(error: BaseException) -> bool:
+    """True when the error or its implicit/explicit chain carries a
+    transport-grade fault (a lost backend, a native cancellation, a
+    timeout, an OS fault).
+
+    The SDK's post-failure rollback can RAISE OVER the body's primary
+    error; the driver links the two in the exception chain, so the
+    transport class survives even when the observed exception is the
+    rollback's client-mechanism error.
+    """
+    seen: set[int] = set()
+    current: BaseException | None = error
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, _TRANSPORT_REVIEWER_ERRORS):
+            return True
+        current = current.__context__ or current.__cause__
+    return False
+
+
+def _reviewer_failure_class(
+    error: BaseException, body_completed: bool
+) -> Literal["uncertain", "retry", "programming"]:
+    """Classify a reviewer-scope failure (c2) BEFORE any recovery
+    mutation.
+
+    The SDK commits ONLY when the body returns cleanly - the commit
+    runs at scope exit and a body exception rolls the transaction
+    back - so the commit state is provable from the exception point:
+
+      uncertain   - the body COMPLETED and the failure arose at the
+                    commit/cleanup boundary (a commit-statement
+                    transport loss, or the post-commit scope/pool
+                    channel): the native commit MAY have landed, so
+                    the outcome is reconciled against the exact
+                    durable receipt - success ONLY on that
+                    fingerprint, never assumed;
+      retry       - the body raised a transport/transport failure
+                    (a lost backend, a native cancellation, a
+                    timeout), possibly masked by the SDK's
+                    post-failure rollback error: the transaction
+                    cannot have committed, and the failure is
+                    transport-grade, so the ordinary requeue under
+                    budget applies with no receipt read (the commit
+                    is proven absent, not merely unknown);
+      programming - a deterministic SQL/programming fault (e.g.
+                    42P01, 42501, P0001) or a generic
+                    client-mechanism InterfaceError raised inside
+                    the body: the transaction is aborted and can
+                    NEVER commit; retrying can only re-fire the same
+                    fault, so this must NOT enter the ordinary
+                    retry/recovery mutation.
+
+    A DETERMINISTIC server-declared fault observed with the body
+    COMPLETED (e.g. a deferred integrity rejection at COMMIT, or
+    the native-SQL cleanup after a successful native commit) also
+    returns ``programming``: the handler then settles the possible
+    publication durably FIRST (success on the exact receipt
+    fingerprint, deferral on contradiction) and terminals ONLY on a
+    proven durable absence - never assuming the exit SQLSTATE
+    originated at COMMIT.
+    """
+    if isinstance(error, _TRANSPORT_REVIEWER_ERRORS):
+        # Transport-grade: at the commit/cleanup boundary the commit
+        # MAY have landed (uncertain - the receipt decides); mid-body
+        # the SDK rolled the transaction back, so the commit is
+        # proven absent (ordinary requeue, no receipt read).
+        return "uncertain" if body_completed else "retry"
+    if isinstance(error, asyncpg.PostgresError):
+        if isinstance(error, _TRANSIENT_REVIEWER_SQL):
+            # A transient SQL fault: mid-body the transaction aborted
+            # (retry under budget); at the boundary the commit state
+            # is reconciled and a proven rollback keeps the bounded
+            # retry.
+            return "uncertain" if body_completed else "retry"
+        # A server-declared DETERMINISTIC fault (e.g. 42P01, 42501,
+        # P0001, a deferred integrity rejection at COMMIT, or the
+        # SDK's post-commit cleanup SQL after a SUCCESSFUL native
+        # commit): mid-body the transaction is aborted and can never
+        # commit; at the boundary the fault is NOT by itself proof
+        # that the commit was rejected (the post-commit cleanup can
+        # raise after the commit landed - the real boundary negative
+        # proves it), so the handler settles the possible
+        # publication durably first and terminals ONLY on a proven
+        # durable absence.  Either way: never an ordinary retry.
+        return "programming"
+    # InterfaceError or other client-mechanism fault: a completed
+    # body means the post-commit scope/pool channel (the commit MAY
+    # have landed - the receipt decides); a body-stage fault is a
+    # transport-grade loss only when the exception chain keeps one,
+    # otherwise it is a programming fault inside the body.
+    if body_completed:
+        return "uncertain"
+    return "retry" if _error_chain_has_transport(error) else "programming"
+
+
+async def _programming_terminal(
+    pool: Any,
+    *,
+    job_id: UUID,
+    workspace_id: UUID,
+    site_id: UUID,
+    claimant: str,
+    attempt_count: int,
+    claimed_payload: Any,
+) -> JobResult:
+    """Terminal the claim for a deterministic reviewer-TX fault (c2).
+
+    The publication is provenly absent (the SDK never commits on a
+    raised body), so the terminal record is written through the SAME
+    locked claim-gated transaction as every other recovery: the
+    workspace moves PROMOTING -> REVIEW (human attention) and the job
+    becomes terminally FAILED in one atomic state change.  A moved or
+    mutated claim defers with NO write and leaves recovery to the
+    claim function's stale-claim handling.
+    """
+    applied = await _claim_gated_state_change(
+        pool,
+        job_id=job_id,
+        workspace_id=workspace_id,
+        site_id=site_id,
+        claimant=claimant,
+        attempt_count=attempt_count,
+        claimed_payload=claimed_payload,
+        workspace_from="PROMOTING",
+        workspace_target="REVIEW",
+        job_failed_code="REVIEWER_TX_PROGRAMMING_FAILURE",
+    )
+    if applied != "applied":
+        LOGGER.warning(
+            "slaif-diag: review-job phase=programming-terminal outcome=%s job=%s",
+            applied,
+            job_id,
+        )
+        return JobResult("ROLLED_BACK")
+    return JobResult("FAILED", "REVIEWER_TX_PROGRAMMING_FAILURE")
 
 
 def _payload_uuid(payload: Any, key: str) -> UUID:
@@ -621,27 +1181,47 @@ async def _verify_snapshot(
     }
 
 
-async def _restore_workspace_from_refusal(pool: Any, workspace_id: UUID) -> None:
-    """A pre-pipeline refusal leaves the pipeline state behind.
-
-    The durable approval is checked before the step-1/step-2
-    transitions, so a refused job must not leave the workspace stuck
-    in ACCEPT_QUEUED/PROMOTING: return it to the human-actionable
-    REVIEW exactly like the later validation-refusal paths (a no-op
-    when the workspace is already elsewhere).
+async def _malformed_approval_refusal(
+    pool: Any,
+    *,
+    job_id: UUID,
+    workspace_id: UUID,
+    site_id: UUID,
+    claimant: str,
+    attempt_count: int,
+    claimed_payload: Any,
+) -> JobResult:
+    """A malformed durable approval is a validation refusal, not a
+    transient: in ONE locked claim-gated transaction the workspace
+    returns to the human-actionable REVIEW (from the promotion
+    pipeline states) and the job terminal-marks, never left stuck in
+    ACCEPT_QUEUED.  The raw (possibly malformed) claimed payload is
+    the typed claim-ownership proof against the locked job row - a
+    numeric or object digest still matches exactly the unchanged row
+    it came from, so the refusal terminals its own claim.  A lost or
+    unverifiable claim makes no write at all (the claim function's
+    stale-claim recovery owns the job) and the handler reports
+    ROLLED_BACK.
     """
-    try:
-        async with pool.acquire() as connection:
-            await connection.execute(
-                "UPDATE control.workspace SET status = 'REVIEW' "
-                "WHERE id = $1 AND status IN ('ACCEPT_QUEUED', 'PROMOTING')",
-                workspace_id,
-            )
-    except (asyncpg.PostgresError, TimeoutError, OSError):
+    applied = await _claim_gated_state_change(
+        pool,
+        job_id=job_id,
+        workspace_id=workspace_id,
+        site_id=site_id,
+        claimant=claimant,
+        attempt_count=attempt_count,
+        claimed_payload=claimed_payload,
+        workspace_from=("ACCEPT_QUEUED", "PROMOTING"),
+        workspace_target="REVIEW",
+        job_failed_code="SNAPSHOT_VALIDATION_FAILED",
+    )
+    if applied != "applied":
         LOGGER.warning(
-            "accept workspace refusal restoration deferred",
-            extra={"event_fields": {"workspace_id": str(workspace_id)}},
+            "slaif-diag: review-job phase=malformed-approval outcome=no-action job=%s",
+            job_id,
         )
+        return JobResult("ROLLED_BACK")
+    return JobResult("FAILED", "SNAPSHOT_VALIDATION_FAILED")
 
 
 async def run_accept_job(
@@ -665,9 +1245,15 @@ async def run_accept_job(
     elif isinstance(payload, str):
         payload = json.loads(payload)
     if not isinstance(payload, dict):
-        await _restore_workspace_from_refusal(pool, workspace_id)
-        await _mark_terminal(pool, job_id, "FAILED", "SNAPSHOT_VALIDATION_FAILED")
-        return JobResult("FAILED", "SNAPSHOT_VALIDATION_FAILED")
+        return await _malformed_approval_refusal(
+            pool,
+            job_id=job_id,
+            workspace_id=workspace_id,
+            site_id=site_id,
+            claimant=claimant,
+            attempt_count=attempt_count,
+            claimed_payload=payload,
+        )
     try:
         snapshot_id = _payload_uuid(payload, "snapshot_id")
         actor_user_account_id = _payload_uuid(payload, "actor_user_account_id")
@@ -675,8 +1261,16 @@ async def run_accept_job(
         # the domain snapshot digest PLUS the companion manifest
         # digest (both 64-hex).  A pre-079 payload (digest-less
         # approval) fails closed: it can never name the companion.
-        snapshot_digest = str(payload["snapshot_digest"])
-        manifest_digest = str(payload["manifest_digest"])
+        # 083/12-c: both digests must be JSON STRINGS in the durable
+        # payload.  A str() coercion would let a 64-digit JSON NUMBER
+        # through the hex shape check (every decimal digit is a valid
+        # hex character) and into the typed claim binding, where it
+        # can no longer terminally refuse its own unchanged numeric
+        # claim.
+        snapshot_digest = payload["snapshot_digest"]
+        manifest_digest = payload["manifest_digest"]
+        if not isinstance(snapshot_digest, str) or not isinstance(manifest_digest, str):
+            raise ValueError("digest type")
         if not _DIGEST_64_RE.fullmatch(snapshot_digest) or not _DIGEST_64_RE.fullmatch(
             manifest_digest
         ):
@@ -686,31 +1280,65 @@ async def run_accept_job(
         # non-64-hex digest) is a validation refusal, not a transient:
         # the workspace returns to REVIEW before the terminal mark,
         # never left stuck in ACCEPT_QUEUED.
-        await _restore_workspace_from_refusal(pool, workspace_id)
-        await _mark_terminal(pool, job_id, "FAILED", "SNAPSHOT_VALIDATION_FAILED")
-        return JobResult("FAILED", "SNAPSHOT_VALIDATION_FAILED")
+        # 083/12-c: the claimed payload (raw, possibly malformed) is
+        # the typed claim-ownership proof against the locked job row.
+        return await _malformed_approval_refusal(
+            pool,
+            job_id=job_id,
+            workspace_id=workspace_id,
+            site_id=site_id,
+            claimant=claimant,
+            attempt_count=attempt_count,
+            claimed_payload=payload,
+        )
 
     def _at_budget() -> bool:
         return attempt_count >= max_attempts
 
     async def _retryable_or_budget(reason: str) -> JobResult:
-        """Retryable failure: re-queue under budget, terminate at budget."""
+        """Retryable failure: re-queue under budget, terminate at budget.
 
+        The recovery state change (workspace transition and, at
+        budget, the job terminal) is made in ONE locked claim-gated
+        transaction; a lost or unverifiable claim leaves the durable
+        state untouched for the claim function's stale-claim recovery
+        (no state write, no terminal claim).
+        """
+        at_budget = _at_budget()
+        applied = await _claim_gated_state_change(
+            pool,
+            job_id=job_id,
+            workspace_id=workspace_id,
+            site_id=site_id,
+            claimant=claimant,
+            attempt_count=attempt_count,
+            claimed_payload=payload,
+            workspace_from="PROMOTING",
+            workspace_target="REVIEW" if at_budget else "ACCEPT_QUEUED",
+            job_failed_code="REVIEW_JOB_STALE_AT_BUDGET" if at_budget else None,
+        )
+        if applied != "applied":
+            LOGGER.warning(
+                "slaif-diag: review-job phase=retry outcome=no-action "
+                "reason=%s outcome=%s attempt=%s job=%s",
+                reason,
+                applied,
+                attempt_count,
+                job_id,
+            )
+            return JobResult("ROLLED_BACK")
         LOGGER.warning(
             "slaif-diag: review-job phase=retry outcome=%s reason=%s "
             "attempt=%s max_attempts=%s",
-            "budget" if _at_budget() else "requeue",
+            "budget" if at_budget else "requeue",
             reason,
             attempt_count,
             max_attempts,
         )
-        if _at_budget():
-            budget_code = "REVIEW_JOB_STALE_AT_BUDGET"
-            await _set_workspace_status(pool, workspace_id, "PROMOTING", "REVIEW")
-            await _mark_terminal(pool, job_id, "FAILED", budget_code)
-            return JobResult("FAILED", budget_code)
-        await _set_workspace_status(pool, workspace_id, "PROMOTING", "ACCEPT_QUEUED")
-        # No terminal: the job stays CLAIMED and the claim function's
+        if at_budget:
+            return JobResult("FAILED", "REVIEW_JOB_STALE_AT_BUDGET")
+        # No terminal: the job stays CLAIMED (the gated transition
+        # only moved the workspace) and the claim function's
         # stale-claim recovery re-queues it while the budget remains.
         return JobResult("ROLLED_BACK")
 
@@ -723,26 +1351,70 @@ async def run_accept_job(
         workspace_status not in ("ACCEPT_QUEUED", "PROMOTING")
         or site_status != "ACTIVE"
     ):
-        if workspace_status in ("ACCEPT_QUEUED", "PROMOTING"):
-            await _set_workspace_status(pool, workspace_id, workspace_status, "REVIEW")
-        await _mark_terminal(pool, job_id, "FAILED", "STATE_DRIFT")
+        transition_from = (
+            workspace_status
+            if workspace_status in ("ACCEPT_QUEUED", "PROMOTING")
+            else None
+        )
+        applied = await _claim_gated_state_change(
+            pool,
+            job_id=job_id,
+            workspace_id=workspace_id,
+            site_id=site_id,
+            claimant=claimant,
+            attempt_count=attempt_count,
+            claimed_payload=payload,
+            workspace_from=transition_from,
+            workspace_target="REVIEW" if transition_from is not None else None,
+            job_failed_code="STATE_DRIFT",
+        )
+        if applied != "applied":
+            return JobResult("ROLLED_BACK")
         return JobResult("FAILED", "STATE_DRIFT")
 
     # Step 2: fresh claims mark PROMOTING (replays already are).
+    # 083/12-c: the initial transition is claim-gated in the SAME
+    # locked transaction as the ownership proof (job kind + claimant
+    # + attempt + typed-exact payload): a stale invocation against a
+    # moved claim must never move the new owner's workspace before
+    # the reviewer refuses it.
     if workspace_status == "ACCEPT_QUEUED":
-        try:
-            async with pool.acquire() as connection:
-                result = await connection.execute(
-                    "UPDATE control.workspace SET status = 'PROMOTING' "
-                    "WHERE id = $1 AND status = 'ACCEPT_QUEUED'",
-                    workspace_id,
-                )
-        except (asyncpg.PostgresError, TimeoutError, OSError) as error:
-            log_bounded_db_failure("status-promoting", error)
+        applied = await _claim_gated_state_change(
+            pool,
+            job_id=job_id,
+            workspace_id=workspace_id,
+            site_id=site_id,
+            claimant=claimant,
+            attempt_count=attempt_count,
+            claimed_payload=payload,
+            workspace_from="ACCEPT_QUEUED",
+            workspace_target="PROMOTING",
+            job_failed_code=None,
+        )
+        if applied == "unknown":
             return JobResult("ROLLED_BACK")
-        if result != "UPDATE 1":
-            await _mark_terminal(pool, job_id, "FAILED", "STATE_DRIFT")
-            return JobResult("FAILED", "STATE_DRIFT")
+        if applied != "applied":
+            # Either the claim moved (the new owner's state stays
+            # untouched) or the locked workspace left the guarded
+            # state while this attempt still owns the claim (drift):
+            # the second locked check distinguishes the two - the
+            # terminal mark lands only while the exact claim is
+            # still owned.
+            drift = await _claim_gated_state_change(
+                pool,
+                job_id=job_id,
+                workspace_id=workspace_id,
+                site_id=site_id,
+                claimant=claimant,
+                attempt_count=attempt_count,
+                claimed_payload=payload,
+                workspace_from=None,
+                workspace_target=None,
+                job_failed_code="STATE_DRIFT",
+            )
+            if drift == "applied":
+                return JobResult("FAILED", "STATE_DRIFT")
+            return JobResult("ROLLED_BACK")
 
     # Step 3: locked verification (drift gate + re-validation).
     try:
@@ -757,11 +1429,22 @@ async def run_accept_job(
             manifest_digest=manifest_digest,
         )
     except AcceptJobError as error:
-        if error.kind == "drift":
-            await _set_workspace_status(pool, workspace_id, "PROMOTING", "REVIEW")
-        elif error.kind == "validation":
-            await _set_workspace_status(pool, workspace_id, "PROMOTING", "REVIEW")
-        await _mark_terminal(pool, job_id, "FAILED", error.code)
+        applied = await _claim_gated_state_change(
+            pool,
+            job_id=job_id,
+            workspace_id=workspace_id,
+            site_id=site_id,
+            claimant=claimant,
+            attempt_count=attempt_count,
+            claimed_payload=payload,
+            workspace_from="PROMOTING",
+            workspace_target="REVIEW"
+            if error.kind in ("drift", "validation")
+            else None,
+            job_failed_code=error.code,
+        )
+        if applied != "applied":
+            return JobResult("ROLLED_BACK")
         return JobResult("FAILED", error.code)
     except (asyncpg.PostgresError, TimeoutError, OSError):
         return JobResult("ROLLED_BACK")
@@ -778,8 +1461,20 @@ async def run_accept_job(
                 error.reason,
             )
             return await _retryable_or_budget(error.reason)
-        await _set_workspace_status(pool, workspace_id, "PROMOTING", "REVIEW")
-        await _mark_terminal(pool, job_id, "FAILED", "SNAPSHOT_VALIDATION_FAILED")
+        applied = await _claim_gated_state_change(
+            pool,
+            job_id=job_id,
+            workspace_id=workspace_id,
+            site_id=site_id,
+            claimant=claimant,
+            attempt_count=attempt_count,
+            claimed_payload=payload,
+            workspace_from="PROMOTING",
+            workspace_target="REVIEW",
+            job_failed_code="SNAPSHOT_VALIDATION_FAILED",
+        )
+        if applied != "applied":
+            return JobResult("ROLLED_BACK")
         return JobResult("FAILED", "SNAPSHOT_VALIDATION_FAILED")
     except MediaDatabaseConfigurationError:
         LOGGER.warning(
@@ -793,8 +1488,118 @@ async def run_accept_job(
         return JobResult("ROLLED_BACK")
     facts["media_manifest"] = manifest.to_list()
 
+    # The exact durable publication receipt the promotion transaction
+    # WILL commit for this job: the full approval tuple (site,
+    # workspace, snapshot, actor, both digests, manifest identity,
+    # base revision) plus the retained result (incremented revision,
+    # committed count, exact versions, exact ordered applied IDs).
+    # Uncertain-outcome reconciliation accepts success ONLY on this
+    # fingerprint (read through the narrow worker-only definer).
+    expected_receipt: dict[str, Any] = {
+        "site_id": site_id,
+        "workspace_id": workspace_id,
+        "snapshot_id": facts["snapshot_id"],
+        "digest": snapshot_digest,
+        "manifest_digest": manifest_digest,
+        "manifest_id": facts["manifest_id"],
+        "base_site_revision": facts["base_site_revision"],
+        "committed_operations": len(facts["approved_operations"]),
+        "actor_user_account_id": actor_user_account_id,
+        "versions": facts["versions"],
+        "applied_operation_ids": [
+            str(operation) for operation in sorted(facts["approved_operations"])
+        ],
+        # The exact media manifest the promotion transaction WILL
+        # journal into the durable outbox row (the outbox payload is
+        # part of the recovery fingerprint: the receipt alone cannot
+        # distinguish a media projection).
+        "media_manifest": facts["media_manifest"],
+    }
+
+    async def _settle_uncertain(
+        error: BaseException, absence_policy: Literal["retryable", "terminal"]
+    ) -> JobResult:
+        """Settle an uncertain commit-boundary outcome (c2).
+
+        The native commit MAY have landed, so the durable publication
+        state decides: success ONLY on the exact terminal receipt
+        fingerprint (exact receipt + workspace + job + outbox); a
+        PROVEN durable absence (no receipt at all, no outbox row for
+        this publication, the pipeline still open, this attempt still
+        owning the exact claim) then follows the absence policy -
+        ``retryable`` keeps the ordinary requeue under budget for a
+        transport/transient fault, while ``terminal`` applies to a
+        deterministic server-declared fault (e.g. a deferred
+        integrity rejection at COMMIT): the absence is proven, and
+        retrying can only re-fire the same fault; anything
+        contradictory makes NO state change and defers to the claim
+        function's stale-claim recovery (the heartbeat stopped with
+        this attempt, so there is no dead end).
+        """
+        outcome = await _reconcile_uncertain_outcome(
+            pool,
+            job_id=job_id,
+            workspace_id=workspace_id,
+            site_id=site_id,
+            claimant=claimant,
+            attempt_count=attempt_count,
+            claimed_payload=payload,
+            expected_receipt=expected_receipt,
+        )
+        if outcome == "committed":
+            LOGGER.warning(
+                "slaif-diag: review-job phase=reviewer-step step=%s "
+                "outcome=committed-durable job=%s",
+                reviewer_step,
+                job_id,
+            )
+            return JobResult("SUCCEEDED")
+        if outcome == "unknown":
+            # Not a proven rollback: the commit state is uncertain
+            # and NO state write was made.  The explicit nonterminal
+            # DEFERRED result status (no public job state, no
+            # durable transition - the job simply stays CLAIMED for
+            # stale-claim recovery) keeps the structured finish log
+            # from labelling an unproven transaction outcome as a
+            # rollback; the UNCERTAIN_OUTCOME diagnostic carries the
+            # uncertainty.
+            LOGGER.warning(
+                "slaif-diag: review-job phase=reviewer-step step=%s "
+                "outcome=uncertain-deferred job=%s",
+                reviewer_step,
+                job_id,
+            )
+            return JobResult("DEFERRED", "UNCERTAIN_OUTCOME")
+        if absence_policy == "terminal":
+            LOGGER.warning(
+                "slaif-diag: review-job phase=reviewer-step step=%s "
+                "outcome=programming-terminal-after-settlement job=%s",
+                reviewer_step,
+                job_id,
+            )
+            return await _programming_terminal(
+                pool,
+                job_id=job_id,
+                workspace_id=workspace_id,
+                site_id=site_id,
+                claimant=claimant,
+                attempt_count=attempt_count,
+                claimed_payload=payload,
+            )
+        return await _retryable_or_budget(
+            "postgres_transient"
+            if isinstance(error, asyncpg.PostgresError)
+            else "io_transient"
+        )
+
     # Step 5: the promotion transaction (one reviewer scope, all-or-nothing).
     reviewer_step = "entry"
+    # The SDK commits ONLY when the body returns cleanly (the commit
+    # runs at scope exit, after a clean body).  This flag separates
+    # the commit/cleanup boundary (commit state genuinely uncertain)
+    # from body-stage faults (the SDK rolls back; a commit is
+    # impossible), which drives the c2 failure classification.
+    reviewer_body_completed = False
     try:
         async with pool.acquire() as connection:
             async with asyncpg_cow_reviewer(connection) as reviewer:
@@ -807,19 +1612,97 @@ async def run_accept_job(
                     "SELECT pg_advisory_xact_lock(hashtextextended($1, 280))",
                     str(workspace_id),
                 )
-                status = await reviewer.native.fetchval(
-                    "SELECT status FROM control.workspace WHERE id = $1 FOR UPDATE",
+                # 083/12-c c1: the active-site preflight can become
+                # stale before this transaction (a site archive holds
+                # the row lock but does NOT advance the revision), so
+                # the locked reads recheck the full binding, not only
+                # the revision: the workspace row must still bind
+                # exactly this site and be PROMOTING, and the site row
+                # must still be ACTIVE at the approved base revision.
+                ws_live = await reviewer.native.fetchrow(
+                    "SELECT status, site_id FROM control.workspace "
+                    "WHERE id = $1 FOR UPDATE",
                     workspace_id,
                 )
-                if status != "PROMOTING":
+                if (
+                    ws_live is None
+                    or str(ws_live["status"]) != "PROMOTING"
+                    or str(ws_live["site_id"]) != str(site_id)
+                ):
                     raise AcceptJobError("STATE_DRIFT", kind="state")
-                revision = await reviewer.native.fetchval(
-                    "SELECT canonical_revision FROM control.site "
+                site_live = await reviewer.native.fetchrow(
+                    "SELECT canonical_revision, status FROM control.site "
                     "WHERE id = $1 FOR UPDATE",
                     site_id,
                 )
-                if int(revision) != facts["base_site_revision"]:
+                if (
+                    site_live is None
+                    or int(site_live["canonical_revision"])
+                    != facts["base_site_revision"]
+                ):
                     raise AcceptJobError("SITE_REVISION_CHANGED", kind="drift")
+                if str(site_live["status"]) != "ACTIVE":
+                    raise AcceptJobError("STATE_DRIFT", kind="state")
+                # 083/12-c: the durable claim re-verified under this
+                # transaction's own locks BEFORE any publication step:
+                # the job must still be a CLAIMED ACCEPT job owned by
+                # exactly this attempt (claimant, attempt count,
+                # site/workspace binding) and its payload - decoded
+                # with explicit JSONB types, never text-coerced -
+                # must still carry exactly this snapshot, the actor,
+                # the exact dual approval digest, and the site bound
+                # in the JSON approval, all as typed strings (a
+                # numeric or object digest is NOT its string form and
+                # cannot publish).  A moved, mutated, or re-kinded
+                # claim aborts the transaction before ANY effect
+                # (kind "state": no workspace transition, no terminal
+                # write by a stale attempt - the gated recovery
+                # defers to the new owner).
+                reviewer_step = "claim"
+                job_live = await reviewer.native.fetchrow(
+                    "SELECT status, job_kind, claimed_by, attempt_count, "
+                    "workspace_id, site_id, payload "
+                    "FROM control.review_job WHERE id = $1 FOR UPDATE",
+                    job_id,
+                )
+                job_payload = (
+                    _decode_jsonb(job_live["payload"]) if job_live is not None else None
+                )
+                if (
+                    job_live is None
+                    or str(job_live["status"]) != "CLAIMED"
+                    or str(job_live["job_kind"]) != "ACCEPT"
+                    or str(job_live["claimed_by"]) != claimant
+                    or int(job_live["attempt_count"]) != attempt_count
+                    or str(job_live["workspace_id"]) != str(workspace_id)
+                    or str(job_live["site_id"]) != str(site_id)
+                    or not isinstance(job_payload, dict)
+                    or job_payload.get("snapshot_id") != str(facts["snapshot_id"])
+                    or job_payload.get("site_id") != str(site_id)
+                    or job_payload.get("actor_user_account_id")
+                    != str(actor_user_account_id)
+                    or job_payload.get("snapshot_digest") != snapshot_digest
+                    or job_payload.get("manifest_digest") != manifest_digest
+                ):
+                    raise AcceptJobError("STATE_DRIFT", kind="state")
+                # 083/12-c c2: pre-publication exact receipt check.
+                # A durable promotion receipt already exists for this
+                # job while the job is still CLAIMED: a contradictory
+                # publication state (a previous attempt's commit can
+                # only leave the job SUCCEEDED in the SAME
+                # transaction, never CLAIMED).  This attempt must
+                # NEVER publish the same job again (double
+                # publication); the typed refusal defers to the gated
+                # terminal, which ends the requeue loop when this
+                # attempt still owns the claim.  The queue contract
+                # (the stale-claim function) is unchanged.
+                reviewer_step = "receipt-preflight"
+                existing_receipt = await reviewer.native.fetchval(
+                    "SELECT control.slaif_review_promotion_receipt_read($1)",
+                    job_id,
+                )
+                if existing_receipt is not None:
+                    raise AcceptJobError("STATE_DRIFT", kind="state")
                 # 083/12 binding step: the workspace must still point
                 # at exactly the approved snapshot, and the companion
                 # re-read under the locked workspace must carry exactly
@@ -850,20 +1733,186 @@ async def run_accept_job(
                     != operation_manifest.MANIFEST_SCHEMA_VERSION
                     or manifest_live.get("manifest_digest") != facts["manifest_digest"]
                     or manifest_live.get("snapshot_digest") != facts["digest"]
+                    or manifest_live.get("manifest_id") != facts["manifest_id"]
                     or manifest_live.get("site_id") != str(site_id)
                     or manifest_live.get("workspace_id") != str(workspace_id)
                 ):
                     raise AcceptJobError(
                         "SNAPSHOT_VALIDATION_FAILED", kind="validation"
                     )
-                approved_operations = facts["approved_operations"]
+                # 083/12-c: the approved identities (operation set and
+                # dependency pairs) are derived STRICTLY from THIS live
+                # read - staged shape checks (unique canonical UUID
+                # strings, unique two-endpoint pairs) plus exact
+                # equality with the step-3 verified facts - and those
+                # derived sets drive the live U/dependency/provenance
+                # comparisons below.  The manifest is immutable per
+                # snapshot, so any disagreement is corruption.
+                reviewer_step = "identities"
+                try:
+                    live_operations, live_pairs = _strict_manifest_identities(
+                        manifest_live,
+                        facts["approved_operations"],
+                        facts["approved_pairs"],
+                    )
+                    # 083/12-c: the companion envelope re-validated
+                    # from THIS live read with the SAME fail-closed
+                    # builder the freeze worker uses (strict identity
+                    # forms, one per U member, exact U coverage).
+                    # Sorting/deduplication NEVER repairs a corrupted
+                    # stored array: the stored arrays must already be
+                    # in the exact canonical order, enforced by the
+                    # order-sensitive equality below BEFORE the digest
+                    # re-derivation.
+                    raw_identities = manifest_live.get("completion_identities")
+                    if not isinstance(raw_identities, list):
+                        raise ValueError("identity list shape")
+                    envelope = json.loads(
+                        build_operation_manifest(
+                            workspace_id=workspace_id,
+                            site_id=site_id,
+                            operations=sorted(live_operations),
+                            dependencies=sorted(live_pairs),
+                            completion_identities=raw_identities,
+                        )
+                    )
+                    if (
+                        manifest_live.get("operation_ids") != envelope["operation_ids"]
+                        or manifest_live.get("dependency_pairs")
+                        != envelope["dependency_pairs"]
+                        or manifest_live.get("completion_identities")
+                        != envelope["completion_identities"]
+                    ):
+                        raise ValueError("stored array not canonical")
+                    # The companion manifest digest re-derived over
+                    # the exact 079 canonical input (schema_version,
+                    # snapshot/site/workspace binding, the validated
+                    # canonical arrays - manifest_id/manifest_digest
+                    # are bindings OUTSIDE the hashed input): the
+                    # stored digest field is never trusted alone.
+                    if (
+                        canonical_digest(
+                            {
+                                "schema_version": manifest_live.get("schema_version"),
+                                "snapshot_id": str(facts["snapshot_id"]),
+                                "snapshot_digest": facts["digest"],
+                                "site_id": str(site_id),
+                                "workspace_id": str(workspace_id),
+                                "operation_ids": envelope["operation_ids"],
+                                "dependency_pairs": envelope["dependency_pairs"],
+                                "completion_identities": envelope[
+                                    "completion_identities"
+                                ],
+                            }
+                        )
+                        != facts["manifest_digest"]
+                    ):
+                        raise ValueError("manifest digest")
+                except ValueError:
+                    raise AcceptJobError(
+                        "SNAPSHOT_VALIDATION_FAILED", kind="validation"
+                    ) from None
+                # 083/12-c: re-verify the stored domain approval on
+                # the locked reviewer connection - the exact durable
+                # approval tuple (both payload digests), the stored
+                # snapshot's workspace/site binding, versions and
+                # normalized-state strict shapes, and the 076 v2
+                # invariants re-derived from the ACTUAL stored
+                # content: normalized_state IS NOT DISTINCT FROM
+                # payload (PG jsonb value equality, type-sensitive -
+                # checked in SQL so a nested true/1 pair can never
+                # pass) plus the trusted digest recomputed over the
+                # stored payload with the 070 canonical form (the
+                # Decimal-aware parser + the byte-identical Python
+                # canonical serializer need no materializer and no
+                # new SQL grant).  So a between-phase mutation of the
+                # stored approval cannot reach publication.  The full
+                # re-materialization stays in the step-3 transaction:
+                # the 076 materializer owns a transaction-local COW
+                # context and never runs inside the reviewer scope.
+                reviewer_step = "stored-approval"
+                stored_live = await reviewer.native.fetchrow(
+                    "SELECT workspace_id, site_id, digest, versions, "
+                    "normalized_state, payload "
+                    "FROM control.review_snapshot "
+                    "WHERE id = $1 "
+                    "  AND normalized_state IS NOT DISTINCT FROM payload",
+                    facts["snapshot_id"],
+                )
+                if (
+                    stored_live is None
+                    or str(stored_live["workspace_id"]) != str(workspace_id)
+                    or str(stored_live["site_id"]) != str(site_id)
+                    or not isinstance(stored_live["digest"], str)
+                    or not _DIGEST_64_RE.fullmatch(stored_live["digest"])
+                    or str(stored_live["digest"]) != snapshot_digest
+                ):
+                    raise AcceptJobError(
+                        "SNAPSHOT_VALIDATION_FAILED", kind="validation"
+                    )
+                # Trusted digest re-derivation over the actual stored
+                # content (076 invariant recomputed here, in-
+                # transaction): a stored digest that no longer matches
+                # its own payload is approval corruption.
+                stored_payload_text = stored_live["payload"]
+                if isinstance(stored_payload_text, (bytes, bytearray)):
+                    stored_payload_text = stored_payload_text.decode("utf-8")
+                if not isinstance(stored_payload_text, str):
+                    raise AcceptJobError(
+                        "SNAPSHOT_VALIDATION_FAILED", kind="validation"
+                    )
+                try:
+                    stored_payload = parse_snapshot_text(stored_payload_text)
+                except ValueError:
+                    raise AcceptJobError(
+                        "SNAPSHOT_VALIDATION_FAILED", kind="validation"
+                    ) from None
+                if not isinstance(stored_payload, dict) or canonical_digest(
+                    stored_payload
+                ) != str(stored_live["digest"]):
+                    raise AcceptJobError(
+                        "SNAPSHOT_VALIDATION_FAILED", kind="validation"
+                    )
+                versions_live = stored_live["versions"]
+                if isinstance(versions_live, (bytes, bytearray)):
+                    versions_live = versions_live.decode("utf-8")
+                if isinstance(versions_live, str):
+                    try:
+                        versions_live = json.loads(versions_live)
+                    except ValueError:
+                        versions_live = None
+                if (
+                    not isinstance(versions_live, dict)
+                    or versions_live != facts["versions"]
+                ):
+                    raise AcceptJobError(
+                        "SNAPSHOT_VALIDATION_FAILED", kind="validation"
+                    )
+                normalized_live = stored_live["normalized_state"]
+                if isinstance(normalized_live, (bytes, bytearray)):
+                    normalized_live = normalized_live.decode("utf-8")
+                if isinstance(normalized_live, str):
+                    try:
+                        normalized_live = json.loads(normalized_live)
+                    except ValueError:
+                        normalized_live = None
+                if (
+                    not isinstance(normalized_live, dict)
+                    or not isinstance(normalized_live.get("base_site_revision"), int)
+                    or isinstance(normalized_live.get("base_site_revision"), bool)
+                    or normalized_live.get("base_site_revision")
+                    != facts["base_site_revision"]
+                ):
+                    raise AcceptJobError(
+                        "SNAPSHOT_VALIDATION_FAILED", kind="validation"
+                    )
                 reviewer_step = "operations"
                 operations = await reviewer.operations(workspace_id, schema="content")
                 if len(operations) != len(set(operations)):
                     raise AcceptJobError(
                         "SNAPSHOT_VALIDATION_FAILED", kind="validation"
                     )
-                if set(operations) != approved_operations:
+                if set(operations) != live_operations:
                     raise AcceptJobError(
                         "SNAPSHOT_VALIDATION_FAILED", kind="validation"
                     )
@@ -872,29 +1921,36 @@ async def run_accept_job(
                     workspace_id, schema="content"
                 )
                 if len(dependencies) != len(set(dependencies)) or any(
-                    parent not in approved_operations
-                    or child not in approved_operations
+                    parent not in live_operations or child not in live_operations
                     for parent, child in dependencies
                 ):
                     raise AcceptJobError(
                         "SNAPSHOT_VALIDATION_FAILED", kind="validation"
                     )
-                if set(dependencies) != facts["approved_pairs"]:
+                if set(dependencies) != live_pairs:
                     raise AcceptJobError(
                         "SNAPSHOT_VALIDATION_FAILED", kind="validation"
                     )
+                # 083/12-c: the CURRENT trusted completion records of
+                # exactly live U - the 078 journal projection or the
                 # 083/12 provenance step: the trusted whole-workspace
                 # check (every U member's 078 journal binding, the
                 # family reservation and event relation, and no
                 # conflicting prospective facts) must pass in this
-                # same transaction before any publication.
+                # same transaction before any publication - and
+                # BEFORE the selected-U identity projection is used:
+                # the projection omits a member whose 078 journal
+                # identity is missing, so a missing-journal refusal
+                # must surface as the typed provenance refusal (with
+                # its own stable code), not be masked into a generic
+                # validation failure by the projection comparison.
                 reviewer_step = "provenance"
                 try:
                     await reviewer.native.fetchval(
                         "SELECT control.slaif_review_operation_provenance($1, $2, $3)",
                         workspace_id,
                         site_id,
-                        sorted(approved_operations, key=str),
+                        sorted(live_operations, key=str),
                     )
                 except asyncpg.PostgresError as error:
                     message = (error.message or "").strip()
@@ -903,6 +1959,30 @@ async def run_accept_job(
                             "PROVENANCE_VERIFICATION_FAILED", kind="validation"
                         ) from None
                     raise
+                # Trusted producer records as of THIS transaction -
+                # must equal the frozen companion identities.  The
+                # provenance predicate alone does not compare the
+                # current exact completion record of each U member to
+                # the previously approved one, so the direct worker
+                # identity projection (the same call the freeze
+                # worker uses) is re-run here - after the whole-
+                # workspace provenance check has already passed - and
+                # compared with the type-sensitive canonical bytes of
+                # the stored identities.
+                reviewer_step = "identity-projection"
+                projection = await reviewer.native.fetchval(
+                    "SELECT control.slaif_review_operation_identities($1, $2, $3)",
+                    workspace_id,
+                    site_id,
+                    [str(operation) for operation in sorted(live_operations)],
+                )
+                projected = _decode_jsonb(projection)
+                if not isinstance(projected, list) or canonical_json(
+                    projected
+                ) != canonical_json(envelope["completion_identities"]):
+                    raise AcceptJobError(
+                        "SNAPSHOT_VALIDATION_FAILED", kind="validation"
+                    )
                 try:
                     reviewer_step = "commit-session"
                     result = await reviewer.commit_session(
@@ -936,10 +2016,10 @@ async def run_accept_job(
                 committed_operations = tuple(result.committed_operations)
                 if (
                     len(committed_operations) != len(set(committed_operations))
-                    or set(committed_operations) != approved_operations
+                    or set(committed_operations) != live_operations
                     or result.session_id != workspace_id
                     or result.schema != "content"
-                    or result.has_pending_operations
+                    or result.has_pending_operations is not False
                 ):
                     raise AcceptJobError(
                         "SNAPSHOT_VALIDATION_FAILED", kind="validation"
@@ -988,7 +2068,7 @@ async def run_accept_job(
                         facts["versions"], sort_keys=True, separators=(",", ":")
                     ),
                     actor_user_account_id,
-                    [str(operation) for operation in sorted(approved_operations)],
+                    [str(operation) for operation in sorted(live_operations)],
                     UUID(facts["manifest_id"]),
                     facts["manifest_digest"],
                 )
@@ -1025,49 +2105,175 @@ async def run_accept_job(
                     ),
                 )
                 reviewer_step = "transaction-exit"
+                reviewer_body_completed = True
         return JobResult("SUCCEEDED")
     except AcceptJobError as error:
-        if error.kind == "drift" or error.kind == "validation":
-            await _set_workspace_status(pool, workspace_id, "PROMOTING", "REVIEW")
+        # The terminal state change (workspace transition + job
+        # terminal mark) is made in ONE locked claim-gated
+        # transaction: a stale attempt must never re-queue or
+        # terminal-mark a moved claim (the claim function's
+        # stale-claim recovery owns the moved job, and the next claim
+        # re-verifies the same durable facts).  Kind "state" (a
+        # moved/corrupted durable claim or pipeline state) makes NO
+        # workspace transition at all: the durable state is left
+        # exactly as found for the new owner or the human, and the
+        # from/to pair must stay consistent (a from without a target
+        # would raise before the fail-closed gate ran).  A still-
+        # owned valid refusal terminal-marks the job with NO
+        # transition; a stale/mutated claim defers with no write.
+        if error.kind in ("drift", "validation"):
+            workspace_from: str | None = "PROMOTING"
+            workspace_target: str | None = "REVIEW"
         elif error.kind == "conflict":
-            await _set_workspace_status(pool, workspace_id, "PROMOTING", "CONFLICTED")
-        await _mark_terminal(pool, job_id, "FAILED", error.code)
+            workspace_from, workspace_target = "PROMOTING", "CONFLICTED"
+        else:
+            workspace_from, workspace_target = None, None
+        applied = await _claim_gated_state_change(
+            pool,
+            job_id=job_id,
+            workspace_id=workspace_id,
+            site_id=site_id,
+            claimant=claimant,
+            attempt_count=attempt_count,
+            claimed_payload=payload,
+            workspace_from=workspace_from,
+            workspace_target=workspace_target,
+            job_failed_code=error.code,
+        )
+        if applied != "applied":
+            LOGGER.warning(
+                "slaif-diag: review-job phase=terminal-deferral code=%s "
+                "outcome=%s attempt=%s job=%s",
+                error.code,
+                applied,
+                attempt_count,
+                job_id,
+            )
+            return JobResult("ROLLED_BACK")
         return JobResult("FAILED", error.code)
     except (asyncpg.PostgresError, TimeoutError, OSError) as error:
-        # Transient failure inside the reviewer transaction: the scope
-        # rolled back everything; the job stays CLAIMED for recovery.
-        # Bounded diagnostic: closed step state + class + SQLSTATE only,
-        # never the message.
+        # Reviewer-scope driver failure (c2): classify BEFORE any
+        # recovery mutation.  The SDK commits and THEN runs native
+        # SQL cleanup (safe_session.clean_after_transaction), so a
+        # PostgresError can arrive AFTER a successful native commit:
+        # whenever the body completed, reconcile the possible
+        # publication first (bounded diagnostic: closed step state +
+        # class + SQLSTATE only, never the message).  With the body
+        # still running, the SDK rolled the transaction back, so the
+        # commit is proven absent: a transport/transient fault (a
+        # lost backend, a native cancellation, the lock timeout our
+        # own SET LOCAL raises) keeps the ordinary requeue under
+        # budget with no receipt read, and a deterministic SQL/
+        # programming fault (e.g. 42P01, 42501, P0001) is terminal -
+        # it must not enter the ordinary retry/requeue path.
+        failure_class = _reviewer_failure_class(error, reviewer_body_completed)
         log_bounded_db_failure("reviewer-tx", error)
         LOGGER.warning(
-            "slaif-diag: review-job phase=reviewer-step step=%s outcome=failed job=%s",
+            "slaif-diag: review-job phase=reviewer-step step=%s "
+            "failure-class=%s outcome=failed job=%s",
             reviewer_step,
+            failure_class,
             job_id,
         )
-        return await _retryable_or_budget(
-            "postgres_transient"
-            if isinstance(error, asyncpg.PostgresError)
-            else "io_transient"
+        if failure_class == "retry":
+            # Proven absent (the SDK rolled the transaction back):
+            # no receipt read, the ordinary requeue under budget.
+            return await _retryable_or_budget(
+                "postgres_transient"
+                if isinstance(error, asyncpg.PostgresError)
+                else "io_transient"
+            )
+        if failure_class == "programming" and not reviewer_body_completed:
+            # Proven absent and deterministic: terminal, no retry.
+            return await _programming_terminal(
+                pool,
+                job_id=job_id,
+                workspace_id=workspace_id,
+                site_id=site_id,
+                claimant=claimant,
+                attempt_count=attempt_count,
+                claimed_payload=payload,
+            )
+        # "uncertain", or a DETERMINISTIC server-declared fault at
+        # the commit/cleanup boundary (it may have arrived after a
+        # successful native commit): the durable outcome decides -
+        # success on the exact fingerprint, deferral on
+        # contradiction, and on a proven absence the policy above
+        # keeps a bounded retry for a transient fault and terminals
+        # a definite rejection (e.g. a deferred constraint at
+        # COMMIT).
+        return await _settle_uncertain(
+            error, "terminal" if failure_class == "programming" else "retryable"
         )
     except asyncpg.InterfaceError as error:
-        # The pool has already auto-released the owned holder: the
-        # public foundation's dead-connection cleanup raised an
-        # interface error while EXITING the reviewer scope (the body's
-        # original driver connection failure is preserved in the
-        # exception context).  A live pooled connection never raises
-        # here - the scope never releases the holder itself, so an
-        # interface error at scope exit proves the backend is gone and
-        # PostgreSQL rolled that backend's uncommitted promotion at
-        # backend shutdown.  The outcome is exactly the transient
-        # rollback + re-queue; the original failure is not turned
-        # into a success or a terminal code.
+        # A client-mechanism InterfaceError (c2): the SDK's
+        # post-COMMIT scope/pool cleanup re-raises ONLY when the body
+        # and the native commit succeeded, so a completed body means
+        # the commit state is uncertain and the outcome is reconciled
+        # against the durable publication state exactly like the
+        # driver-error path above - never assumed to be success,
+        # never assumed to be a proven rollback.  A body-stage
+        # InterfaceError (possibly the SDK's post-failure rollback
+        # masking a transport loss, which the chain keeps
+        # transport-class) can NEVER have committed: transport-grade
+        # faults in the chain keep the ordinary requeue; a generic
+        # client-mechanism fault is a programming failure -
+        # terminal, no retry.
+        failure_class = _reviewer_failure_class(error, reviewer_body_completed)
         log_bounded_db_failure("reviewer-tx", error)
         LOGGER.warning(
-            "slaif-diag: review-job phase=reviewer-step step=%s outcome=failed job=%s",
+            "slaif-diag: review-job phase=reviewer-step step=%s "
+            "failure-class=%s outcome=failed job=%s",
+            reviewer_step,
+            failure_class,
+            job_id,
+        )
+        if failure_class == "retry":
+            # Proven absent (the SDK rolled the transaction back):
+            # no receipt read, the ordinary requeue under budget.
+            return await _retryable_or_budget("io_transient")
+        if failure_class == "programming" and not reviewer_body_completed:
+            # Proven absent and deterministic: terminal, no retry.
+            return await _programming_terminal(
+                pool,
+                job_id=job_id,
+                workspace_id=workspace_id,
+                site_id=site_id,
+                claimant=claimant,
+                attempt_count=attempt_count,
+                claimed_payload=payload,
+            )
+        # Post-commit scope/pool channel: the durable outcome
+        # decides, exactly like the driver-error path.
+        return await _settle_uncertain(error, "retryable")
+    except CowPromotionStateError as error:
+        # The SDK's own public state invariant (c2): safe_promotion
+        # commits and THEN runs the native-SQL cleanup, and raises
+        # this both when the owned transaction ended unexpectedly
+        # (before the body) and when a COW context survives cleanup
+        # (AFTER a possibly successful native commit).  With the
+        # body completed, reconcile the possible publication first,
+        # exactly like the driver-error path; before the body the
+        # commit cannot have landed and the invariant violation is
+        # deterministic - terminal, no retry.
+        log_bounded_db_failure("reviewer-tx", error)
+        LOGGER.warning(
+            "slaif-diag: review-job phase=reviewer-step step=%s "
+            "failure-class=state-error outcome=failed job=%s",
             reviewer_step,
             job_id,
         )
-        return await _retryable_or_budget("io_transient")
+        if reviewer_body_completed:
+            return await _settle_uncertain(error, "retryable")
+        return await _programming_terminal(
+            pool,
+            job_id=job_id,
+            workspace_id=workspace_id,
+            site_id=site_id,
+            claimant=claimant,
+            attempt_count=attempt_count,
+            claimed_payload=payload,
+        )
 
 
 __all__ = [

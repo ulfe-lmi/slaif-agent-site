@@ -811,6 +811,13 @@ REVIEWED_OPERATION_BINDING_WORKER_FUNCTIONS = {
         "slaif_review_operation_manifest_read",
         "p_snapshot_id uuid",
     ): "uuid",
+    # 083/12-c (c2): the worker's exact durable promotion receipt
+    # read (uncertain reviewer-transaction outcome reconciliation).
+    # Worker-only EXECUTE; no table grant on audit.promotion.
+    (
+        "slaif_review_promotion_receipt_read",
+        "p_job_id uuid",
+    ): "uuid",
 }
 # 077_001 dropped the pre-transaction finalization marker.  At or below
 # the pre-077 head it remains the 068-era media content surface (EXECUTE

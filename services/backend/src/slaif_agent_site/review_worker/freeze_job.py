@@ -108,8 +108,20 @@ class JobResult:
     """The terminal outcome of one claimed job.
 
     ``status`` is ``SUCCEEDED`` or ``FAILED`` when a terminal row was
-    written, or ``ROLLED_BACK`` when the job stays CLAIMED for
-    stale-claim recovery (database failure before a reliable terminal).
+    written, ``ROLLED_BACK`` when the job stays CLAIMED for
+    stale-claim recovery (database failure before a reliable terminal,
+    or a bounded transient requeue), or ``DEFERRED`` when the native
+    commit state is genuinely uncertain and durable reconciliation
+    could not prove either outcome.  ``DEFERRED`` is a nonterminal
+    result status only: it maps to NO public job state and makes NO
+    durable write - the job simply stays CLAIMED for stale-claim
+    recovery - so the structured finish log (which emits ``status``
+    and ``error`` verbatim) never labels an unproven transaction
+    outcome as a rollback.  ``ROLLED_BACK`` is likewise never proof
+    of a proven rollback by itself.  ``error`` carries the diagnostic
+    (``None`` for the transient requeue/crash paths;
+    ``"UNCERTAIN_OUTCOME"`` with ``DEFERRED`` when the commit state
+    is genuinely uncertain).
     """
 
     status: str
@@ -286,9 +298,31 @@ async def run_freeze_job(
                     operations = await get_session_operations(
                         executor, workspace_id, schema="content"
                     )
+                    # Finite U budget immediately after the public
+                    # U read (the companion envelope's exact
+                    # operation limit, mirrored from the 079 DDL
+                    # literals): an over-limit universe fails
+                    # closed as a stable terminal refusal BEFORE
+                    # any provenance/identity projection or build.
+                    if len(operations) > operation_manifest.MAX_MANIFEST_OPERATIONS:
+                        raise operation_manifest.SnapshotManifestError(
+                            "MANIFEST_OVER_BUDGET", reason="operations"
+                        )
                     dependencies = await get_operation_dependencies(
                         executor, workspace_id, schema="content"
                     )
+                    # The exact pair limit, immediately after the
+                    # public dependency result and still BEFORE
+                    # identity projection/build (the SDK API is
+                    # unchanged; this only bounds the worker's own
+                    # work).
+                    if (
+                        len(dependencies)
+                        > operation_manifest.MAX_MANIFEST_DEPENDENCY_PAIRS
+                    ):
+                        raise operation_manifest.SnapshotManifestError(
+                            "MANIFEST_OVER_BUDGET", reason="dependencies"
+                        )
                     # 083/12-b: the COMPLETE whole-workspace provenance
                     # check in this SAME locked freeze transaction,
                     # under the lock, BEFORE any U identity is used

@@ -48,7 +48,7 @@ from slaif_agent_site.agent_state.foundation import (
 from slaif_agent_site.bootstrap.service import reconcile, upgrade
 from slaif_agent_site.db.connections import owner_connection
 from slaif_agent_site.db.executor import AsyncpgExecutor
-from slaif_agent_site.review_worker import freeze_job, snapshot
+from slaif_agent_site.review_worker import freeze_job, operation_manifest, snapshot
 from test_agent_mutations import _seed
 from test_agent_theme_boundaries import _agent_client
 from test_mutation_completion_authority import (
@@ -92,6 +92,7 @@ _OLD_HUMAN_ACCEPT_FUNCTION = _M079._OLD_HUMAN_ACCEPT_FUNCTION
 _OLD_INNER_ACCEPT_FUNCTION = _M079._OLD_INNER_ACCEPT_FUNCTION
 _NEW_INNER_ACCEPT_FUNCTION = _M079._INNER_ACCEPT_FUNCTION
 _NEW_HUMAN_ACCEPT_FUNCTION = _M079._HUMAN_ACCEPT_FUNCTION
+_PROMOTION_RECEIPT_FUNCTION = _M079._PROMOTION_RECEIPT_FUNCTION
 
 
 def _jsonb(value: Any) -> Any:
@@ -109,6 +110,19 @@ _PROVENANCE_CALL = "control.slaif_review_operation_provenance"
 _COMPLETE_WITH_MANIFEST_CALL = "control.slaif_review_snapshot_complete_with_manifest"
 _MANIFEST_READ_CALL = "control.slaif_review_operation_manifest_read"
 _STANDALONE_COMPLETE_CALL = "control.slaif_review_snapshot_complete"
+# Cheap canonical-byte LOWER BOUND expression: native jsonb text
+# minus the separator space after each structural ':' and ','.
+# Kept byte-in-sync with the 079 gate (see the budget-literal sync
+# test); the exact 070 canonical check remains authoritative.
+_CANONICAL_LOWER_BOUND_SQL = (
+    "octet_length(convert_to("
+    "replace(replace($1::jsonb::text, ': ', ':'), ', ', ','), 'UTF8'))"
+)
+_BOUND_AND_EXACT_SQL = (
+    f"SELECT {_CANONICAL_LOWER_BOUND_SQL},"
+    " length(convert_to(control.slaif_canonical_jsonb_text($1::jsonb), 'UTF8'))"
+)
+_RECEIPT_READ_CALL = "control.slaif_review_promotion_receipt_read"
 
 # The exact 079 EXECUTE allow matrix (bound to the migration's GRANT
 # statements and the 079 phase in db.privileges): which long-lived role
@@ -126,6 +140,10 @@ _EXPECTED_EXECUTE: dict[str, frozenset[str]] = {
     # The new human entry point: control only (the definer inner is
     # reached by it as owner).
     _NEW_HUMAN_ACCEPT_FUNCTION: frozenset({"slaif_control"}),
+    # The narrow worker-only durable receipt projection (c2 recovery
+    # fingerprint): worker EXECUTE only, no direct audit.promotion
+    # SELECT for any role.
+    _PROMOTION_RECEIPT_FUNCTION: frozenset({"slaif_review_worker"}),
 }
 
 # The real 072-era ACCEPT job payload shape (3 keys, no digests) - the
@@ -412,6 +430,29 @@ async def _workspace_scoped_token(
 
 
 # ----------------------------------------------------------------------
+# 0. Budget literal sync: 079 DDL authority vs runtime mirror
+# ----------------------------------------------------------------------
+
+
+def test_079_budget_literals_match_runtime() -> None:
+    """The 079 SQL surface keeps its own LITERAL budget values (a
+    worker change must never silently alter the historical
+    migration); the runtime module mirrors the exact same values
+    for the locked freeze flow and the projections.  This boundary
+    test keeps the two in sync for the current manifest format.
+    """
+    assert _M079._MAX_MANIFEST_OPERATIONS == (
+        operation_manifest.MAX_MANIFEST_OPERATIONS
+    )
+    assert _M079._MAX_MANIFEST_DEPENDENCY_PAIRS == (
+        operation_manifest.MAX_MANIFEST_DEPENDENCY_PAIRS
+    )
+    assert _M079._MAX_MANIFEST_CANONICAL_BYTES == (
+        operation_manifest.MAX_MANIFEST_CANONICAL_BYTES
+    )
+
+
+# ----------------------------------------------------------------------
 # 1. Companion table + journal boundary at the 079 head
 # ----------------------------------------------------------------------
 
@@ -614,6 +655,12 @@ async def test_reviewed_operation_surface_allow_matrix(
             f"SELECT {_MANIFEST_READ_CALL}(gen_random_uuid())"
         )
         assert control_read[0] is None
+        # Allowed: the worker durable receipt projection (no receipt
+        # row for an unbound job UUID -> NULL, not an error).
+        receipt_row = await worker.fetchrow(
+            f"SELECT {_RECEIPT_READ_CALL}(gen_random_uuid())"
+        )
+        assert receipt_row[0] is None
         # Denied at runtime (not only in the ACL): control on the
         # worker-only surface.
         for sql, args in (
@@ -630,10 +677,19 @@ async def test_reviewed_operation_surface_allow_matrix(
                 "($1, '{}'::jsonb, '{}'::jsonb)",
                 (workspace_id,),
             ),
+            (
+                f"SELECT {_RECEIPT_READ_CALL}(gen_random_uuid())",
+                (),
+            ),
         ):
             with pytest.raises(asyncpg.InsufficientPrivilegeError) as err:
                 await control.execute(sql, *args)
             assert err.value.sqlstate == "42501"
+        # Denied at runtime: the worker keeps NO direct audit.promotion
+        # read - the receipt projection is its only audit surface.
+        with pytest.raises(asyncpg.InsufficientPrivilegeError) as err:
+            await worker.execute("SELECT count(*) FROM audit.promotion")
+        assert err.value.sqlstate == "42501"
         # Denied at runtime: reviewer on the control-read projection
         # (fixture role pool).
         reviewer_pool = await database.role_pool("slaif_reviewer")
@@ -642,6 +698,11 @@ async def test_reviewed_operation_surface_allow_matrix(
                 with pytest.raises(asyncpg.InsufficientPrivilegeError) as err:
                     await connection.execute(
                         f"SELECT {_MANIFEST_READ_CALL}($1)", uuid4()
+                    )
+                assert err.value.sqlstate == "42501"
+                with pytest.raises(asyncpg.InsufficientPrivilegeError) as err:
+                    await connection.execute(
+                        f"SELECT {_RECEIPT_READ_CALL}(gen_random_uuid())"
                     )
                 assert err.value.sqlstate == "42501"
         finally:
@@ -1179,6 +1240,18 @@ async def test_completion_with_manifest_envelope_refusals(
                     envelope[key] = value
             return json.dumps(envelope)
 
+        def _trusted_record(resource_ids: Any) -> dict[str, Any]:
+            """A six-field trusted-internal record for the real op_x,
+            with the claimed resource_ids malformed per probe."""
+            return {
+                "operation_id": str(op_x),
+                "record_version": "proposed-effect/v1",
+                "producer": "slaif_proposed_side_effect_create",
+                "principal_type": "service",
+                "principal_id": "slaif_control",
+                "resource_ids": resource_ids,
+            }
+
         probes = (
             (
                 "non-object manifest",
@@ -1209,6 +1282,37 @@ async def test_completion_with_manifest_envelope_refusals(
                 "tampered completion identity",
                 _with(completion_identities=_tampered_identity()),
                 "MANIFEST_IDENTITY_MISMATCH",
+            ),
+            (
+                "non-array dependency pair member",
+                _with(dependency_pairs=["not-a-pair"]),
+                "MANIFEST_DEPENDENCY_INVALID",
+            ),
+            (
+                "scalar resource_ids in trusted identity",
+                _with(
+                    completion_identities=[
+                        _trusted_record("0f8fad5b-1f2e-4d3c-9a8b-7c6d5e4f3a2b")
+                    ]
+                ),
+                "MANIFEST_IDENTITY_INVALID",
+            ),
+            (
+                "null resource_ids in trusted identity",
+                _with(completion_identities=[_trusted_record(None)]),
+                "MANIFEST_IDENTITY_INVALID",
+            ),
+            (
+                "scalar resource_ids in unexpected key count",
+                _with(
+                    completion_identities=[
+                        {
+                            **_trusted_record("0f8fad5b-1f2e-4d3c-9a8b-7c6d5e4f3a2b"),
+                            "extra_field": "not-in-any-form",
+                        }
+                    ]
+                ),
+                "MANIFEST_IDENTITY_INVALID",
             ),
         )
         for label, manifest_json, expected_message in probes:
@@ -1258,6 +1362,215 @@ async def test_completion_with_manifest_envelope_refusals(
     assert set(operations) == {op_x}, (
         "envelope refusals must not touch the pending universe"
     )
+
+
+# ----------------------------------------------------------------------
+# 5b. Finite budget probes: named over-limit cases fail closed
+# ----------------------------------------------------------------------
+
+
+def _budget_manifest(
+    workspace_id: UUID,
+    site_id: UUID,
+    operation_ids: list[str],
+    pairs: list[list[str]],
+) -> str:
+    """A staged-shape-complete envelope with oversized array content
+    bound to the REAL seeded site (the per-entry guards run AFTER the
+    element/byte budgets, so the probe values are stage-valid junk).
+    ensure_ascii=False: the byte probe relies on raw UTF-8 bytes in
+    the exact JSON the server canonicalizes."""
+    return json.dumps(
+        {
+            "schema_version": "reviewed-operations/v1",
+            "site_id": str(site_id),
+            "workspace_id": str(workspace_id),
+            "operation_ids": operation_ids,
+            "dependency_pairs": pairs,
+            "completion_identities": [],
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    )
+
+
+@pytest.mark.asyncio
+async def test_manifest_budget_probes_fail_closed(
+    agent_site_database: AgentSiteDatabase,
+) -> None:
+    """Named finite-budget probes against the REAL 079 surface:
+    over-limit U (identity projection + provenance), the over-element
+    envelope, and the over-UTF8-byte envelope (a character count that
+    stays under the same numeric ceiling) all refuse with typed
+    stable errors and no state.  The byte probe is refused by the
+    cheap lower-bound gate before the O(n^2) 070 canonical
+    serializer can run, and the bound/exact shape probes prove the
+    cheap gate can never reject an in-budget manifest."""
+    database = agent_site_database
+    await _assert_079_head(database)
+    seeded, _token, workspace_id, _capability_id = await _seed_r2_site(
+        database, "binding budget ws"
+    )
+    site_id = seeded["site_id"]
+    worker = await _real_login(database, "slaif_review_worker")
+    try:
+        # (a) oversized operation_ids: the element budget (16,385).
+        big_ops = _budget_manifest(
+            workspace_id,
+            site_id,
+            ["00000000-0000-4000-8000-000000000000"] * 16385,
+            [],
+        )
+        async with worker.transaction():
+            with pytest.raises(asyncpg.PostgresError) as err:
+                await worker.fetchval(
+                    f"SELECT {_COMPLETE_WITH_MANIFEST_CALL}($1, $2::jsonb, $3::jsonb)",
+                    workspace_id,
+                    json.dumps({"schema_version": "review-snapshot/v2"}),
+                    big_ops,
+                )
+        assert "MANIFEST_OVER_BUDGET" in err.value.message, err.value.message
+        assert err.value.sqlstate == "P0001"
+        # (b) over-UTF8-byte envelope: 3-byte UTF-8 text in a
+        # structurally present field.  The BYTE guard must refuse
+        # while the CHARACTER count stays under the same numeric
+        # ceiling (the byte guard runs before the per-entry checks).
+        # U+754C is verified 3 bytes in UTF-8 (2 bytes, like Latin
+        # é, could never cross the ceiling at this length).
+        assert len("界".encode()) == 3
+        big_bytes = _budget_manifest(workspace_id, site_id, ["界" * 2_800_000], [])
+        assert len(big_bytes) < 8 * 1024 * 1024 < len(big_bytes.encode("utf-8")), (
+            "probe must be char-below / byte-above the ceiling"
+        )
+        async with worker.transaction():
+            with pytest.raises(asyncpg.PostgresError) as err:
+                await worker.fetchval(
+                    f"SELECT {_COMPLETE_WITH_MANIFEST_CALL}($1, $2::jsonb, $3::jsonb)",
+                    workspace_id,
+                    json.dumps({"schema_version": "review-snapshot/v2"}),
+                    big_bytes,
+                )
+        assert "MANIFEST_OVER_BUDGET" in err.value.message, err.value.message
+        assert err.value.sqlstate == "P0001"
+        # (e) oversized dependency_pairs: the pair element budget
+        # (65,537).
+        big_pairs = _budget_manifest(
+            workspace_id,
+            site_id,
+            ["00000000-0000-4000-8000-000000000000"],
+            [["00000000-0000-4000-8000-000000000000"] * 2 for _ in range(65537)],
+        )
+        async with worker.transaction():
+            with pytest.raises(asyncpg.PostgresError) as err:
+                await worker.fetchval(
+                    f"SELECT {_COMPLETE_WITH_MANIFEST_CALL}($1, $2::jsonb, $3::jsonb)",
+                    workspace_id,
+                    json.dumps({"schema_version": "review-snapshot/v2"}),
+                    big_pairs,
+                )
+        assert "MANIFEST_OVER_BUDGET" in err.value.message, err.value.message
+        assert err.value.sqlstate == "P0001"
+        # (c) the worker-only identity projection: over-limit U
+        # (16,385) refused before any expansion (real UUID values
+        # through the asyncpg array codec, not an array-literal
+        # string).
+        over_u = [uuid4() for _ in range(16385)]
+        with pytest.raises(asyncpg.PostgresError) as err:
+            await worker.execute(
+                f"SELECT {_IDENTITIES_CALL}($1, $2, $3)",
+                workspace_id,
+                site_id,
+                over_u,
+            )
+        assert "MANIFEST_OVER_BUDGET" in err.value.message, err.value.message
+        assert err.value.sqlstate == "P0001"
+        # (d) the whole-workspace provenance check: over-limit U
+        # refused before any fact scan.
+        with pytest.raises(asyncpg.PostgresError) as err:
+            await worker.execute(
+                f"SELECT {_PROVENANCE_CALL}($1, $2, $3)",
+                workspace_id,
+                site_id,
+                over_u,
+            )
+        assert "PROVENANCE_INPUT_INVALID" in err.value.message, err.value.message
+        assert err.value.sqlstate == "P0001"
+    finally:
+        await _close(worker)
+    # (lb) The cheap LOWER-BOUND gate (079; same expression, kept in
+    # sync by the budget-literal sync test) measures native jsonb
+    # text minus the separator space after each structural ':' and
+    # ','.  The exact 070 canonical form measures the actual
+    # canonical encoding (070 ASCII-escapes Unicode) and can never
+    # be shorter than the bound, so the cheap gate can never refuse
+    # an in-budget manifest:
+    #   1. pure ASCII: bound == exact (every inserted separator
+    #      space removed, nothing else);
+    #   2. one U+754C (3 UTF-8 bytes) -> 6-byte ASCII escape
+    #      \u754c: exact == bound + 3;
+    #   3. ': ' / ', ' inside string values: the literal
+    #      replacement removes those spaces too, only tightening
+    #      the bound (bound < exact).
+    # Probe (b) witness: its bound alone already exceeds the cap,
+    # so the cheap gate refuses before the O(n^2) per-codepoint
+    # 070 serializer can run on the multi-megabyte string.
+    async with await _owner(database) as owner:
+        bound, exact = await owner.fetchrow(
+            _BOUND_AND_EXACT_SQL,
+            _budget_manifest(workspace_id, site_id, [str(uuid4())], []),
+        )
+        assert bound == exact, (
+            f"pure-ASCII bound {bound} must equal exact canonical "
+            f"{exact} (operator shape: separator spaces only)"
+        )
+        bound, exact = await owner.fetchrow(
+            _BOUND_AND_EXACT_SQL,
+            _budget_manifest(workspace_id, site_id, ["界"], []),
+        )
+        assert exact == bound + 3, (
+            f"one U+754C: exact {exact} must be bound {bound} + 3 "
+            "(3-byte UTF-8 becomes the 6-byte ASCII escape)"
+        )
+        bound, exact = await owner.fetchrow(
+            _BOUND_AND_EXACT_SQL,
+            _budget_manifest(workspace_id, site_id, ['x", y', "a: b"], []),
+        )
+        assert bound < exact, (
+            f"interior ': ' / ', ' patterns must only tighten the "
+            f"bound (bound {bound}, exact {exact})"
+        )
+        bound = await owner.fetchrow(f"SELECT {_CANONICAL_LOWER_BOUND_SQL}", big_bytes)
+        assert bound[0] > operation_manifest.MAX_MANIFEST_CANONICAL_BYTES, (
+            "over-UTF8-byte probe must trip the cheap gate before "
+            "the exact 070 canonical serialization"
+        )
+    # Every refusal rolled back: no companion row, no snapshot, the
+    # workspace untouched and the pending universe empty.
+    async with await _owner(database) as owner:
+        assert (
+            await owner.fetchval(
+                "SELECT status FROM control.workspace WHERE id = $1",
+                workspace_id,
+            )
+            == "ACTIVE"
+        )
+        assert (
+            await owner.fetchval(
+                f"SELECT count(*) FROM {_MANIFEST_TABLE} WHERE workspace_id = $1",
+                workspace_id,
+            )
+            == 0
+        )
+        assert (
+            await owner.fetchval(
+                "SELECT count(*) FROM control.review_snapshot WHERE workspace_id = $1",
+                workspace_id,
+            )
+            == 0
+        )
+    operations, _dependencies = await _public_universe(database, workspace_id)
+    assert operations == [], "budget refusals must not touch the pending universe"
 
 
 # ----------------------------------------------------------------------

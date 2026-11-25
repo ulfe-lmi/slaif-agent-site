@@ -152,6 +152,7 @@ _COMPLETE_WITH_MANIFEST_FUNCTION = (
     "control.slaif_review_snapshot_complete_with_manifest(uuid, jsonb, jsonb)"
 )
 _MANIFEST_READ_FUNCTION = "control.slaif_review_operation_manifest_read(uuid)"
+_PROMOTION_RECEIPT_FUNCTION = "control.slaif_review_promotion_receipt_read(uuid)"
 _PRODUCER_TABLE = "control.proposed_effect_completion"
 _OLD_HUMAN_ACCEPT_FUNCTION = (
     "control.slaif_human_agent_workspace_accept(uuid, uuid, uuid, text, uuid)"
@@ -232,9 +233,23 @@ _LONG_LIVED_ROLES = (
 # Finite manifest budgets (R1): fail closed, no truncation.  Generous
 # against every write-reachable workspace (bounded quotas, per-type
 # family caps) while keeping the serialized companion finite.
+# These LITERALS are the DDL authority for the 079 SQL surface: a
+# future worker change must never silently alter this historical
+# migration, so the values are mirrored (not imported) in the
+# runtime module slaif_agent_site.review_worker.operation_manifest
+# (MAX_MANIFEST_OPERATIONS / MAX_MANIFEST_DEPENDENCY_PAIRS /
+# MAX_MANIFEST_CANONICAL_BYTES), and the 083/12 boundary test
+# test_079_budget_literals_match_runtime keeps the two in sync.
 _MAX_MANIFEST_OPERATIONS = 16384
 _MAX_MANIFEST_DEPENDENCY_PAIRS = 65536
 _MAX_MANIFEST_CANONICAL_BYTES = 8 * 1024 * 1024
+
+# Finite whole-workspace prospective-fact budget for the provenance
+# definer (R1/R2): far above every realistic workspace, a
+# finite-work guard only - the per-source scans below stop at
+# budget+1 rows, and the sum is carried in a non-overflowing
+# bigint.
+_MAX_PROVENANCE_FACTS = 1048576
 
 _UUID_RE = "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
 _HEX64_RE = "^[0-9a-f]{64}$"
@@ -286,7 +301,15 @@ _PRODUCER_TABLE_SQL = f"""
 # bounds, workspace+site ACTIVE + expiry, the server COW session
 # context); the COW write trigger already requires app.operation_id
 # whenever app.session_id is set, so the record insert reads a
-# context the successful COW insert above guarantees.
+# context the successful COW insert above guarantees.  079 adds the
+# shared workspace lifecycle lock (namespace 280, the same
+# transaction-scoped key and ordering as the normal online writes
+# and freeze) after the cheap context guards and before the first
+# ACTIVE/expiry read: it drains admitted writes before the freeze
+# snapshot (the freeze's exclusive lock on the same key waits for
+# in-flight shared holders; the transition itself may overlap an
+# admitted write) and, via the ACTIVE/expiry guard, refuses new
+# writes once the workspace has left ACTIVE.
 _CONSTRUCTOR_SQL = f"""
         CREATE OR REPLACE FUNCTION content.{_PRODUCER_CONST}(
             p_site_id uuid, p_workspace_id uuid, p_kind text, p_payload jsonb
@@ -297,7 +320,7 @@ _CONSTRUCTOR_SQL = f"""
             created content.proposed_side_effect;
             created_id uuid;
             session_id uuid;
-            operation_id uuid;
+            v_operation_id uuid;
         BEGIN
             BEGIN
                 session_id := NULLIF(current_setting('app.session_id', true), '')::uuid;
@@ -309,7 +332,26 @@ _CONSTRUCTOR_SQL = f"""
                OR p_kind NOT IN ('analytics_event', 'cache_purge')
                OR jsonb_typeof(p_payload) <> 'object'
                OR octet_length(p_payload::text) > 16384
-               OR NOT EXISTS (
+            THEN
+                RAISE EXCEPTION 'SIDE_EFFECT_INVALID' USING ERRCODE = 'P0003';
+            END IF;
+            -- Shared workspace lifecycle lock: the same
+            -- transaction-scoped key (workspace, namespace 280) and
+            -- ordering as the normal online writes and freeze.
+            -- Taken after the cheap context guards above and
+            -- before the first ACTIVE/expiry read and any COW or
+            -- prospective-record write.  It drains admitted writes
+            -- before the snapshot: the freeze takes the EXCLUSIVE
+            -- lock on this same key, so it waits for in-flight
+            -- shared holders (the state transition itself may
+            -- overlap an admitted write until that write commits);
+            -- a write that starts after the transition instead
+            -- fails the ACTIVE/expiry read below, so new writes
+            -- are refused once the workspace has left ACTIVE.
+            PERFORM pg_advisory_xact_lock_shared(
+                hashtextextended(p_workspace_id::text, 280)
+            );
+            IF NOT EXISTS (
                    SELECT 1 FROM control.workspace AS w
                    JOIN control.site AS s ON s.id = w.site_id
                    WHERE w.id = p_workspace_id
@@ -320,6 +362,57 @@ _CONSTRUCTOR_SQL = f"""
                )
             THEN
                 RAISE EXCEPTION 'SIDE_EFFECT_INVALID' USING ERRCODE = 'P0003';
+            END IF;
+            BEGIN
+                v_operation_id := NULLIF(current_setting('app.operation_id', true), '')::uuid;
+            EXCEPTION WHEN invalid_text_representation THEN
+                RAISE EXCEPTION 'SIDE_EFFECT_INVALID' USING ERRCODE = 'P0003';
+            END;
+            IF v_operation_id IS NULL THEN
+                RAISE EXCEPTION 'SIDE_EFFECT_INVALID' USING ERRCODE = 'P0003';
+            END IF;
+            -- Per-operation provenance barrier (B2/c3 write-time):
+            -- the SAME transaction-scoped key as the 078 journal
+            -- helper (operation id, namespace 280), taken after the
+            -- ACTIVE/expiry and operation-context validation and
+            -- BEFORE any COW or prospective-record write.  Both
+            -- writers hold this lock for their whole transaction
+            -- (the check and the insert both run inside it), so the
+            -- two insertion orders are fully serialized and a
+            -- committed contradictory record is always visible to
+            -- the later check.
+            PERFORM pg_advisory_xact_lock(
+                hashtextextended(v_operation_id::text, 280)
+            );
+            -- One operation id carries exactly ONE provenance form:
+            -- a 078-journaled operation (the journal primary key is
+            -- global) is never a trusted producer operation.
+            IF EXISTS (
+                   SELECT 1 FROM audit.mutation_completion AS j
+                   WHERE j.operation_id = v_operation_id
+               )
+            THEN
+                RAISE EXCEPTION 'SIDE_EFFECT_OPERATION_CONFLICT'
+                    USING ERRCODE = 'P0003';
+            END IF;
+            -- A stored row of the same operation must carry the
+            -- identical trusted binding tuple (the writer's own
+            -- per-field comparison style): a same-binding
+            -- multi-resource call is legal, while any differing
+            -- site/workspace/producer/principal field is a
+            -- contradictory record and is refused.
+            IF EXISTS (
+                   SELECT 1 FROM {_PRODUCER_TABLE} AS p
+                   WHERE p.operation_id = v_operation_id
+                     AND (p.site_id IS DISTINCT FROM p_site_id
+                          OR p.workspace_id IS DISTINCT FROM p_workspace_id
+                          OR p.producer IS DISTINCT FROM '{_PRODUCER_CONST}'
+                          OR p.principal_type IS DISTINCT FROM 'service'
+                          OR p.principal_id IS DISTINCT FROM session_user::text)
+               )
+            THEN
+                RAISE EXCEPTION 'SIDE_EFFECT_OPERATION_CONFLICT'
+                    USING ERRCODE = 'P0003';
             END IF;
             -- The COW write path does not apply the base table's
             -- id default to the returned NEW record (a pending
@@ -343,22 +436,46 @@ _CONSTRUCTOR_SQL = f"""
                 RAISE EXCEPTION 'SIDE_EFFECT_INVALID'
                     USING ERRCODE = 'P0003';
             END IF;
-            BEGIN
-                operation_id := NULLIF(current_setting('app.operation_id', true), '')::uuid;
-            EXCEPTION WHEN invalid_text_representation THEN
-                RAISE EXCEPTION 'SIDE_EFFECT_INVALID' USING ERRCODE = 'P0003';
-            END;
-            IF operation_id IS NULL THEN
-                RAISE EXCEPTION 'SIDE_EFFECT_INVALID' USING ERRCODE = 'P0003';
-            END IF;
             INSERT INTO {_PRODUCER_TABLE}
                 (operation_id, site_id, workspace_id, resource_id,
                  producer, principal_type, principal_id)
             VALUES (
-                operation_id, p_site_id, p_workspace_id, created.id,
+                v_operation_id, p_site_id, p_workspace_id, created.id,
                 '{_PRODUCER_CONST}', 'service', session_user::text
             );
             RETURN NEXT created;
+        END;
+        $fn$
+"""
+_JOURNAL_GUARD_FUNCTION = "control.slaif_journal_operation_conflict_guard()"
+_JOURNAL_GUARD_TRIGGER = "slaif_journal_operation_conflict_guard_trg"
+_JOURNAL_GUARD_SQL = f"""
+        CREATE OR REPLACE FUNCTION control.slaif_journal_operation_conflict_guard()
+        RETURNS trigger
+        LANGUAGE plpgsql SECURITY INVOKER
+        SET search_path = pg_catalog AS $fn$
+        BEGIN
+            -- The opposite insertion order of the constructor's
+            -- per-operation barrier above: a 078 journal row whose
+            -- operation already carries a trusted prospective
+            -- completion record is contradictory provenance.  The
+            -- regular product path reaches this insert only through
+            -- the 078 journal definer, which holds the SAME
+            -- per-operation transaction lock (operation id,
+            -- namespace 280) for its whole transaction, so a
+            -- committed prospective record is always visible here
+            -- and the guard needs no lock of its own.  SECURITY
+            -- INVOKER: it runs in the existing owner definer
+            -- context, with no grants and no raw table access.
+            IF EXISTS (
+                   SELECT 1 FROM {_PRODUCER_TABLE} AS p
+                   WHERE p.operation_id = NEW.operation_id
+               )
+            THEN
+                RAISE EXCEPTION 'JOURNAL_OPERATION_CONFLICT'
+                    USING ERRCODE = 'P0003';
+            END IF;
+            RETURN NEW;
         END;
         $fn$
 """
@@ -378,16 +495,40 @@ _IDENTITIES_SQL = f"""
             producer_principal_id text;
             producer_resource_ids uuid[];
             result jsonb := '[]'::jsonb;
+            -- Running canonical UTF-8 byte count of the projected
+            -- array under construction: 2 for the array brackets,
+            -- ZERO comma bytes for the first record, one comma
+            -- byte per later record, plus the exact canonical
+            -- bytes of each record - the exact canonical
+            -- serialization size, checked BEFORE each append in
+            -- the single shared check below the two branches.
+            result_bytes bigint := 2;
+            first_record boolean := true;
         BEGIN
             IF p_workspace_id IS NULL OR p_site_id IS NULL
                OR p_operation_ids IS NULL
             THEN
                 RETURN '[]'::jsonb;
             END IF;
+            -- Finite U budget before any expansion (the companion
+            -- envelope's exact operation limit, shared with the
+            -- locked freeze flow and the completion definer): an
+            -- over-limit U fails closed before the projection loop
+            -- can walk and concatenate it.
+            IF cardinality(p_operation_ids)
+                   > {_MAX_MANIFEST_OPERATIONS}
+            THEN
+                RAISE EXCEPTION 'MANIFEST_OVER_BUDGET'
+                    USING ERRCODE = 'P0001';
+            END IF;
             FOR op IN
                 SELECT u.op FROM unnest(p_operation_ids) AS u(op)
-                ORDER BY u.op::text
+                -- Native UUID order (locale-independent; agrees
+                -- with the Python lowercase-UUID sort and the
+                -- writer's canonical ordering).
+                ORDER BY u.op
             LOOP
+                rec := NULL;
                 SELECT count(*) INTO n
                 FROM audit.mutation_completion AS j
                 WHERE j.operation_id = op
@@ -414,7 +555,6 @@ _IDENTITIES_SQL = f"""
                     WHERE j.operation_id = op
                       AND j.site_id = p_site_id
                       AND j.workspace_id = p_workspace_id;
-                    result := result || jsonb_build_array(rec);
                 ELSIF n = 0 AND EXISTS (
                       SELECT 1 FROM {_PRODUCER_TABLE} AS p
                       WHERE p.operation_id = op
@@ -430,12 +570,19 @@ _IDENTITIES_SQL = f"""
                     -- (emit no record; the writer and provenance
                     -- checks then refuse) when the prospective rows
                     -- are corrupted or over the finite bound.
+                    -- Preliminary per-operation producer count
+                    -- capped at its existing bound+1 BEFORE any
+                    -- resource materialization (the scans below
+                    -- only run within the bound).
                     SELECT count(*)
                     INTO producer_binding_count
-                    FROM {_PRODUCER_TABLE} AS p
-                    WHERE p.operation_id = op
-                      AND p.site_id = p_site_id
-                      AND p.workspace_id = p_workspace_id;
+                    FROM (
+                        SELECT 1 FROM {_PRODUCER_TABLE} AS p
+                        WHERE p.operation_id = op
+                          AND p.site_id = p_site_id
+                          AND p.workspace_id = p_workspace_id
+                        LIMIT {_MAX_PRODUCER_RESOURCES + 1}
+                    ) AS probe;
                     IF producer_binding_count < 1
                        OR producer_binding_count > {_MAX_PRODUCER_RESOURCES}
                     THEN
@@ -465,14 +612,33 @@ _IDENTITIES_SQL = f"""
                       AND p.site_id = p_site_id
                       AND p.workspace_id = p_workspace_id
                     GROUP BY p.producer, p.principal_type, p.principal_id;
-                    result := result || jsonb_build_array(jsonb_build_object(
+                    rec := jsonb_build_object(
                         'operation_id', op::text,
                         'record_version', '{_PRODUCER_RECORD_VERSION}',
                         'producer', producer_producer,
                         'principal_type', producer_principal_type,
                         'principal_id', producer_principal_id,
                         'resource_ids', to_jsonb(producer_resource_ids)
-                    ));
+                    );
+                END IF;
+                -- ONE shared pre-append check after the two
+                -- branches have produced rec (when NO record
+                -- exists, rec stays NULL and nothing is appended):
+                -- the FULL manifest's canonical UTF-8 ceiling, the
+                -- same boundary the final envelope gate applies.
+                IF rec IS NOT NULL THEN
+                    result_bytes := result_bytes
+                        + CASE WHEN first_record THEN 0 ELSE 1 END
+                        + length(convert_to(
+                              control.slaif_canonical_jsonb_text(rec),
+                              'UTF8'));
+                    IF result_bytes > {_MAX_MANIFEST_CANONICAL_BYTES}
+                    THEN
+                        RAISE EXCEPTION 'MANIFEST_OVER_BUDGET'
+                            USING ERRCODE = 'P0001';
+                    END IF;
+                    result := result || jsonb_build_array(rec);
+                    first_record := false;
                 END IF;
                 -- No journal row and no verified-internal membership:
                 -- no record is emitted; the companion writer and the
@@ -490,7 +656,7 @@ _PROVENANCE_SQL = f"""
         ) RETURNS void LANGUAGE plpgsql SECURITY DEFINER
         SET search_path = pg_catalog AS $fn$
         DECLARE
-            n integer;
+            n bigint;
         BEGIN
             IF p_workspace_id IS NULL OR p_site_id IS NULL
                OR p_operation_ids IS NULL
@@ -501,35 +667,66 @@ _PROVENANCE_SQL = f"""
                 RAISE EXCEPTION 'PROVENANCE_INPUT_INVALID'
                     USING ERRCODE = 'P0001';
             END IF;
+            -- Finite U budget before any expansion (the companion
+            -- envelope's exact operation limit, shared with the
+            -- locked freeze flow and the completion definer): an
+            -- over-limit U fails closed before the duplicate/group
+            -- work below can expand it.
+            IF cardinality(p_operation_ids)
+                   > {_MAX_MANIFEST_OPERATIONS}
+            THEN
+                RAISE EXCEPTION 'PROVENANCE_INPUT_INVALID'
+                    USING ERRCODE = 'P0001';
+            END IF;
             -- Finite whole-workspace fact budget (R1/R2): the
             -- prospective scan covers every journal/reservation/
             -- audit fact of this workspace and must be bounded,
             -- failing closed without truncation.  The bound is a
             -- finite-work guard far above every realistic
-            -- workspace (it is not a semantic limit).
+            -- workspace (it is not a semantic limit).  Each
+            -- per-source scan STOPS at bound+1 rows, and the
+            -- capped counts are summed in a non-overflowing
+            -- bigint: the capped sum exceeds the bound if and
+            -- only if the true total does.
             SELECT
-                (SELECT count(*) FROM audit.mutation_completion j
-                 WHERE j.site_id = p_site_id
-                   AND j.workspace_id = p_workspace_id)
-              + (SELECT count(*) FROM control.agent_idempotency r
-                 WHERE r.workspace_id = p_workspace_id
-                   AND r.status_code IS NOT NULL)
-              + (SELECT count(*) FROM control.human_editor_idempotency r
-                 WHERE r.workspace_id = p_workspace_id
-                   AND r.status_code IS NOT NULL)
-              + (SELECT count(*) FROM control.media_idempotency r
-                 WHERE r.workspace_id = p_workspace_id
-                   AND r.status_code IS NOT NULL)
-              + (SELECT count(*) FROM audit.agent_mutation t
-                 WHERE t.workspace_id = p_workspace_id)
-              + (SELECT count(*) FROM audit.human_editor_mutation t
-                 WHERE t.workspace_id = p_workspace_id)
-              + (SELECT count(*) FROM audit.media_mutation t
-                 WHERE t.workspace_id = p_workspace_id)
-              + (SELECT count(*) FROM {_PRODUCER_TABLE} AS p
-                 WHERE p.workspace_id = p_workspace_id)
+                (SELECT count(*) FROM (SELECT 1
+                  FROM audit.mutation_completion j
+                  WHERE j.site_id = p_site_id
+                    AND j.workspace_id = p_workspace_id
+                  LIMIT {_MAX_PROVENANCE_FACTS + 1}) AS probe)
+              + (SELECT count(*) FROM (SELECT 1
+                  FROM control.agent_idempotency r
+                  WHERE r.workspace_id = p_workspace_id
+                    AND r.status_code IS NOT NULL
+                  LIMIT {_MAX_PROVENANCE_FACTS + 1}) AS probe)
+              + (SELECT count(*) FROM (SELECT 1
+                  FROM control.human_editor_idempotency r
+                  WHERE r.workspace_id = p_workspace_id
+                    AND r.status_code IS NOT NULL
+                  LIMIT {_MAX_PROVENANCE_FACTS + 1}) AS probe)
+              + (SELECT count(*) FROM (SELECT 1
+                  FROM control.media_idempotency r
+                  WHERE r.workspace_id = p_workspace_id
+                    AND r.status_code IS NOT NULL
+                  LIMIT {_MAX_PROVENANCE_FACTS + 1}) AS probe)
+              + (SELECT count(*) FROM (SELECT 1
+                  FROM audit.agent_mutation t
+                  WHERE t.workspace_id = p_workspace_id
+                  LIMIT {_MAX_PROVENANCE_FACTS + 1}) AS probe)
+              + (SELECT count(*) FROM (SELECT 1
+                  FROM audit.human_editor_mutation t
+                  WHERE t.workspace_id = p_workspace_id
+                  LIMIT {_MAX_PROVENANCE_FACTS + 1}) AS probe)
+              + (SELECT count(*) FROM (SELECT 1
+                  FROM audit.media_mutation t
+                  WHERE t.workspace_id = p_workspace_id
+                  LIMIT {_MAX_PROVENANCE_FACTS + 1}) AS probe)
+              + (SELECT count(*) FROM (SELECT 1
+                  FROM {_PRODUCER_TABLE} AS p
+                  WHERE p.workspace_id = p_workspace_id
+                  LIMIT {_MAX_PROVENANCE_FACTS + 1}) AS probe)
             INTO n;
-            IF n > 1048576 THEN
+            IF n > {_MAX_PROVENANCE_FACTS} THEN
                 RAISE EXCEPTION 'PROVENANCE_INPUT_INVALID'
                     USING ERRCODE = 'P0001';
             END IF;
@@ -1007,38 +1204,73 @@ _PROVENANCE_SQL = f"""
             IF n <> 0 THEN
                 RAISE EXCEPTION 'PROVENANCE_CONFLICT' USING ERRCODE = 'P0003';
             END IF;
-            -- Trusted producer facts (product-owned, prospective): a
-            -- producer row of this workspace whose operation is
-            -- journaled in ANOTHER workspace of the same site is a
-            -- conflicting cross-workspace fact (operation IDs are
-            -- per-workspace by the 078 contract).
+            -- Whole-workspace trusted collision tail (c3): driving
+            -- rows are restricted to THIS workspace (independent of
+            -- U); the 078 journal primary key is global and the
+            -- trusted primary key is (operation_id, resource_id), so
+            -- an operation id that appears in local stored facts is
+            -- matched against the other side by operation_id alone -
+            -- a matching record from another site or workspace is
+            -- still relevant, while unrelated workspaces are never
+            -- scanned.  No legacy identity is guessed: each check
+            -- fires only on exact stored facts.
+            -- (1) A local proposed record of this workspace bound to
+            -- a different site is a mismatched binding: a workspace
+            -- belongs to exactly one site.
+            SELECT count(*) INTO n
+            FROM {_PRODUCER_TABLE} AS p
+            WHERE p.workspace_id = p_workspace_id
+              AND p.site_id IS DISTINCT FROM p_site_id;
+            IF n <> 0 THEN
+                RAISE EXCEPTION 'PROVENANCE_CONFLICT' USING ERRCODE = 'P0003';
+            END IF;
+            -- (2) trusted<->trusted: the same operation id with a
+            -- different full site/workspace/producer/principal tuple
+            -- is corruption; more than one resource row under the
+            -- same trusted operation with an EXACT matching binding
+            -- is legal and never conflicts.
+            SELECT count(*) INTO n
+            FROM {_PRODUCER_TABLE} AS p
+            WHERE p.workspace_id = p_workspace_id
+              AND EXISTS (
+                  SELECT 1 FROM {_PRODUCER_TABLE} AS q
+                  WHERE q.operation_id = p.operation_id
+                    AND (q.site_id, q.workspace_id, q.producer,
+                         q.principal_type, q.principal_id)
+                        IS DISTINCT FROM
+                        (p.site_id, p.workspace_id, p.producer,
+                         p.principal_type, p.principal_id)
+              );
+            IF n <> 0 THEN
+                RAISE EXCEPTION 'PROVENANCE_CONFLICT' USING ERRCODE = 'P0003';
+            END IF;
+            -- (3) trusted<->ordinary overlap, both directions: no
+            -- product path writes both provenance forms for one
+            -- operation, so a local trusted fact whose operation is
+            -- journaled (journal primary key global: any
+            -- site/workspace) and a local journal row whose
+            -- operation has a trusted record are corrupted
+            -- provenance.  Subsumes the former same-site
+            -- cross-workspace producer check and the workspace-local
+            -- mixed binding check, both removed.
             SELECT count(*) INTO n
             FROM {_PRODUCER_TABLE} AS p
             WHERE p.workspace_id = p_workspace_id
               AND EXISTS (
                   SELECT 1 FROM audit.mutation_completion AS j
                   WHERE j.operation_id = p.operation_id
-                    AND j.site_id = p_site_id
-                    AND j.workspace_id <> p_workspace_id
               );
             IF n <> 0 THEN
                 RAISE EXCEPTION 'PROVENANCE_CONFLICT' USING ERRCODE = 'P0003';
             END IF;
-            -- Trusted producer facts (product-owned, prospective):
-            -- one real COW operation belongs to one session and one
-            -- login, so mixed producer/principal bindings within a
-            -- single operation of this workspace are corruption.
             SELECT count(*) INTO n
-            FROM (
-                SELECT p.operation_id
-                FROM {_PRODUCER_TABLE} AS p
-                WHERE p.workspace_id = p_workspace_id
-                GROUP BY p.operation_id
-                HAVING count(DISTINCT (
-                    p.producer || '|' || p.principal_type || '|'
-                    || p.principal_id
-                )) <> 1
-            ) AS mixed;
+            FROM audit.mutation_completion AS j
+            WHERE j.site_id = p_site_id
+              AND j.workspace_id = p_workspace_id
+              AND EXISTS (
+                  SELECT 1 FROM {_PRODUCER_TABLE} AS p
+                  WHERE p.operation_id = j.operation_id
+              );
             IF n <> 0 THEN
                 RAISE EXCEPTION 'PROVENANCE_CONFLICT' USING ERRCODE = 'P0003';
             END IF;
@@ -1118,6 +1350,25 @@ _COMPLETE_WITH_MANIFEST_SQL = f"""
             THEN
                 RAISE EXCEPTION 'MANIFEST_OVER_BUDGET' USING ERRCODE = 'P0001';
             END IF;
+            -- Cheap conservative canonical-byte LOWER BOUND before
+            -- the expensive serialization: native jsonb text minus
+            -- the separator space after each structural ':' and
+            -- ','.  Literal replacement; identical patterns inside
+            -- string values only make the bound tighter.  The
+            -- exact 070 canonical check below measures the actual
+            -- canonical encoding (070 ASCII-escapes Unicode) and
+            -- can never be shorter than this bound, so an
+            -- in-budget manifest can never be refused here.  If
+            -- the bound alone is over budget, refuse before the
+            -- O(n^2) per-codepoint serializer runs on a
+            -- multi-megabyte string.
+            IF octet_length(convert_to(
+                   replace(replace(p_manifest::text, ': ', ':'), ', ', ','),
+                   'UTF8'))
+                   > {_MAX_MANIFEST_CANONICAL_BYTES}
+            THEN
+                RAISE EXCEPTION 'MANIFEST_OVER_BUDGET' USING ERRCODE = 'P0001';
+            END IF;
             -- Serialized byte budget: real UTF8 bytes, not
             -- characters (length(text) undercounts non-ASCII).
             IF length(convert_to(
@@ -1150,6 +1401,19 @@ _COMPLETE_WITH_MANIFEST_SQL = f"""
             ) AS dups;
             IF n <> 0 THEN
                 RAISE EXCEPTION 'MANIFEST_DUPLICATE_OPERATION' USING ERRCODE = 'P0001';
+            END IF;
+            -- Real preceding stage: non-array pair elements are
+            -- refused before the shape guard below can reach them -
+            -- its jsonb_array_length term would be a raw datatype
+            -- error on a scalar, never a typed refusal, and OR
+            -- terms in one predicate give no evaluation-order
+            -- guarantee.
+            SELECT count(*) INTO n
+            FROM jsonb_array_elements(p_manifest->'dependency_pairs') AS pair(value)
+            WHERE jsonb_typeof(pair.value) IS DISTINCT FROM 'array';
+            IF n <> 0 THEN
+                RAISE EXCEPTION 'MANIFEST_DEPENDENCY_INVALID'
+                    USING ERRCODE = 'P0001';
             END IF;
             -- Dependency pairs: [depends_on, operation_id] UUID-string
             -- pairs (staged shape guard first), both endpoints in U
@@ -1194,6 +1458,30 @@ _COMPLETE_WITH_MANIFEST_SQL = f"""
             WHERE jsonb_typeof(ci.value) <> 'object';
             IF n <> 0 THEN
                 RAISE EXCEPTION 'MANIFEST_IDENTITY_INVALID' USING ERRCODE = 'P0001';
+            END IF;
+            -- Real preceding stage making every resource_ids shape
+            -- operation total: any record carrying a resource_ids
+            -- key whose value is not an array (non-null scalar or
+            -- JSON null) is refused here - irrespective of the
+            -- record's key count - before the form check below can
+            -- reach it.  The form arm's array-specific functions
+            -- (jsonb_array_length / jsonb_array_elements) would be
+            -- a raw datatype error on a non-null scalar, never a
+            -- typed refusal, and AND terms in one predicate give no
+            -- evaluation-order guarantee.  A record without the key
+            -- is untouched here: the array functions are strict, so
+            -- SQL NULL yields SQL NULL/empty (never an error), and
+            -- the arm's exact key-set guard still refuses a missing
+            -- key with the same typed failure.  The nine-field 078
+            -- form has no resource_ids key, so it is never affected.
+            SELECT count(*) INTO n
+            FROM jsonb_array_elements(p_manifest->'completion_identities')
+            AS ci(value)
+            WHERE ci.value ? 'resource_ids'
+              AND jsonb_typeof(ci.value->'resource_ids') <> 'array';
+            IF n <> 0 THEN
+                RAISE EXCEPTION 'MANIFEST_IDENTITY_INVALID'
+                    USING ERRCODE = 'P0001';
             END IF;
             -- Each record is EXACTLY one of the two verified
             -- provenance forms: the nine-field 078 completion
@@ -1351,40 +1639,43 @@ _COMPLETE_WITH_MANIFEST_SQL = f"""
                         AND p.principal_type = ci.value->>'principal_type'
                         AND p.principal_id = ci.value->>'principal_id'
                   )
-                  OR jsonb_array_length(ci.value->'resource_ids')
-                       <> (
-                           SELECT count(*) FROM {_PRODUCER_TABLE} AS p
+                  OR (
+                      -- direct canonical equality: the ORIGINAL
+                      -- claimed JSON array, in the submitted order
+                      -- with any duplicates, must be exactly the
+                      -- canonical ordered JSON array of the actual
+                      -- stored resource IDs of this same
+                      -- site/workspace/operation.  jsonb array
+                      -- equality is order- and multiplicity-
+                      -- sensitive, so this binds order, uniqueness,
+                      -- count and membership in one comparison
+                      -- without re-sorting the claim (sorting it
+                      -- would accept out-of-order input that
+                      -- violates the canonical requirement).  This
+                      -- single comparison subsumes the
+                      -- claimed-length/actual-row-count equality and
+                      -- the per-resource membership scan (dropped
+                      -- above; same typed outcome, fewer scans).
+                      -- The
+                      -- claimed side is safe: the real preceding
+                      -- stage above already refused every
+                      -- non-array resource_ids, so no array
+                      -- function can ever run on a scalar here.
+                      -- (No rows -> NULL -> IS DISTINCT FROM keeps
+                      -- the refusal; the count check above already
+                      -- covers the empty case with the same typed
+                      -- failure.)
+                      (ci.value->'resource_ids')
+                      IS DISTINCT FROM
+                      to_jsonb(
+                          (SELECT array_agg(p.resource_id
+                                           ORDER BY p.resource_id)
+                           FROM {_PRODUCER_TABLE} AS p
                            WHERE p.operation_id
                                  = (ci.value->>'operation_id')::uuid
                              AND p.site_id = (p_manifest->>'site_id')::uuid
-                             AND p.workspace_id = p_workspace_id
-                       )
-                  OR EXISTS (
-                      -- a claimed resource with no prospective row
-                      SELECT 1
-                      FROM jsonb_array_elements_text(
-                          ci.value->'resource_ids') AS r(t)
-                      WHERE NOT EXISTS (
-                          SELECT 1 FROM {_PRODUCER_TABLE} AS p
-                          WHERE p.operation_id
-                                = (ci.value->>'operation_id')::uuid
-                            AND p.site_id = (p_manifest->>'site_id')::uuid
-                            AND p.workspace_id = p_workspace_id
-                            AND p.resource_id = r.t::uuid
+                             AND p.workspace_id = p_workspace_id)
                       )
-                  )
-                  OR NOT (
-                      -- canonical stored form: the claimed resource
-                      -- array is exactly its own sorted form (the
-                      -- prospective rows are unique per resource, so
-                      -- the count equality above plus this order
-                      -- equality is the exact multiset equality)
-                      (SELECT array_agg(r.t ORDER BY r.t)
-                       FROM jsonb_array_elements_text(
-                           ci.value->'resource_ids') AS r(t))
-                      = (SELECT array_agg(r.t)
-                         FROM jsonb_array_elements_text(
-                             ci.value->'resource_ids') AS r(t))
                   )
               );
             IF n <> 0 THEN
@@ -1475,14 +1766,19 @@ _COMPLETE_WITH_MANIFEST_SQL = f"""
             -- dependency pairs unique + sorted, identities sorted by
             -- operation.  The digest below covers the identical stored
             -- arrays (never unsorted caller input).
+            -- Native UUID order (locale-independent; agrees with
+            -- the Python lowercase-UUID sort).
             sorted_ops := coalesce(
-                (SELECT array_agg(u.t::uuid ORDER BY u.t)
+                (SELECT array_agg(u.t::uuid ORDER BY u.t::uuid)
                  FROM jsonb_array_elements_text(
                      p_manifest->'operation_ids') AS u(t)),
                 '{{}}'::uuid[]
             );
             canonical_pairs := coalesce(
-                (SELECT jsonb_agg(v.value ORDER BY v.value->>0, v.value->>1)
+                (SELECT jsonb_agg(
+                    v.value
+                    ORDER BY (v.value->>0)::uuid, (v.value->>1)::uuid
+                 )
                  FROM (
                      SELECT DISTINCT pair.value
                      FROM jsonb_array_elements(
@@ -1492,7 +1788,10 @@ _COMPLETE_WITH_MANIFEST_SQL = f"""
                 '[]'::jsonb
             );
             canonical_identities := coalesce(
-                (SELECT jsonb_agg(v.value ORDER BY v.value->>'operation_id')
+                (SELECT jsonb_agg(
+                    v.value
+                    ORDER BY (v.value->>'operation_id')::uuid
+                 )
                  FROM (
                      SELECT DISTINCT ci.value
                      FROM jsonb_array_elements(
@@ -1552,6 +1851,57 @@ _MANIFEST_READ_SQL = """
         FROM control.review_operation_manifest AS m
         WHERE m.snapshot_id = p_snapshot_id
         $fn$
+"""
+
+# 083/12-c: the narrow durable promotion receipt read (c2).  The
+# accept worker can INSERT the promotion receipt but holds NO SELECT
+# on audit.promotion (every product role is NOINHERIT and the
+# reviewer role is unreachable from the worker), so uncertain
+# reviewer-transaction outcomes are reconciled through this
+# owner-SECURITY-DEFINER projection.  The result distinguishes the
+# three bounded cases (072 added no job_id uniqueness constraint, so
+# the reader must not assume it): SQL NULL when NO receipt exists;
+# the full row projection (with 'receipt_rows' = 1) for exactly ONE;
+# and a bounded {'receipt_rows': N} marker - no row data - when
+# MULTIPLE receipts exist.  Ambiguity and a receipt on a nonterminal
+# claim are corruption the caller must treat as uncertain/fail-
+# closed, never as proof of rollback.  No table grants are added;
+# the function carries EXECUTE for the worker only.
+_PROMOTION_RECEIPT_SQL = """
+CREATE FUNCTION control.slaif_review_promotion_receipt_read(
+    p_job_id uuid
+) RETURNS jsonb LANGUAGE sql STABLE SECURITY DEFINER
+SET search_path = pg_catalog AS $fn$
+WITH matched AS (
+    SELECT p.*, count(*) OVER () AS receipt_rows
+    FROM audit.promotion AS p
+    WHERE p.job_id = p_job_id
+),
+bounded AS (
+    SELECT * FROM matched LIMIT 1
+)
+SELECT CASE
+    WHEN b.receipt_rows = 1 THEN
+        jsonb_build_object(
+            'receipt_rows', 1,
+            'site_id', b.site_id::text,
+            'workspace_id', b.workspace_id::text,
+            'snapshot_id', b.snapshot_id::text,
+            'digest', b.digest,
+            'base_site_revision', b.base_site_revision,
+            'new_canonical_revision', b.new_canonical_revision,
+            'committed_operations', b.committed_operations,
+            'versions', b.versions,
+            'actor_user_account_id', b.actor_user_account_id::text,
+            'applied_operation_ids', to_jsonb(b.applied_operation_ids),
+            'manifest_id', b.manifest_id::text,
+            'manifest_digest', b.manifest_digest
+        )
+    ELSE
+        jsonb_build_object('receipt_rows', b.receipt_rows)
+END
+FROM bounded AS b
+$fn$
 """
 
 # The new 5-argument inner enqueue (072 body re-emitted + the exact
@@ -1890,15 +2240,42 @@ def upgrade() -> None:
     #     every reconcile at or after this head.
     op.execute("GRANT USAGE ON SCHEMA content TO slaif_control")
 
+    # 2d. Write-time provenance guard (B2/c3), the OPPOSITE
+    #     insertion order of the constructor's per-operation barrier:
+    #     refuse a 078 journal row whose operation already carries a
+    #     trusted prospective completion record.  Owner-internal and
+    #     deliberately UNCLASSIFIED for the privilege validator:
+    #     SECURITY INVOKER (it executes inside the existing owner
+    #     definer journal helper under the same per-operation
+    #     transaction lock), fixed pg_catalog search_path, explicit
+    #     PUBLIC and long-lived-role revocations, and NO new
+    #     application grants and NO raw table access.
+    op.execute(_JOURNAL_GUARD_SQL)
+    op.execute(f"ALTER FUNCTION {_JOURNAL_GUARD_FUNCTION} OWNER TO slaif_owner")
+    op.execute(f"REVOKE ALL ON FUNCTION {_JOURNAL_GUARD_FUNCTION} FROM PUBLIC")
+    for role in _LONG_LIVED_ROLES:
+        op.execute(f"REVOKE ALL ON FUNCTION {_JOURNAL_GUARD_FUNCTION} FROM {role}")
+    op.execute(
+        f"DROP TRIGGER IF EXISTS {_JOURNAL_GUARD_TRIGGER} ON audit.mutation_completion"
+    )
+    op.execute(
+        f"CREATE TRIGGER {_JOURNAL_GUARD_TRIGGER}"
+        " BEFORE INSERT ON audit.mutation_completion"
+        f" FOR EACH ROW EXECUTE FUNCTION {_JOURNAL_GUARD_FUNCTION}"
+    )
+
     # 3. The companion surface: create, owner, revoke sweep.  All
     # surface functions are owner-internal (called only by the
     # definer companion functions) and keep NO role EXECUTE grants
-    # beyond the exact worker/control set below.
+    # beyond the exact worker/control set below; the promotion
+    # receipt read is the worker's ONLY audit.promotion reachability
+    # (the durable uncertain-outcome reconciliation projection).
     for sql in (
         _IDENTITIES_SQL,
         _PROVENANCE_SQL,
         _COMPLETE_WITH_MANIFEST_SQL,
         _MANIFEST_READ_SQL,
+        _PROMOTION_RECEIPT_SQL,
     ):
         op.execute(sql)
     for function in (
@@ -1906,6 +2283,7 @@ def upgrade() -> None:
         _PROVENANCE_FUNCTION,
         _COMPLETE_WITH_MANIFEST_FUNCTION,
         _MANIFEST_READ_FUNCTION,
+        _PROMOTION_RECEIPT_FUNCTION,
     ):
         op.execute(f"ALTER FUNCTION {function} OWNER TO slaif_owner")
         op.execute(f"REVOKE ALL ON FUNCTION {function} FROM PUBLIC")
@@ -1929,6 +2307,10 @@ def upgrade() -> None:
     op.execute(
         f"GRANT EXECUTE ON FUNCTION {_MANIFEST_READ_FUNCTION} "
         "TO slaif_control, slaif_review_worker"
+    )
+    op.execute(
+        f"GRANT EXECUTE ON FUNCTION {_PROMOTION_RECEIPT_FUNCTION} "
+        "TO slaif_review_worker"
     )
 
     # 4. The standalone completion loses its last online EXECUTE (it

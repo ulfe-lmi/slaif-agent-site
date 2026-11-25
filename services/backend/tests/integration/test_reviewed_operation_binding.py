@@ -2488,6 +2488,105 @@ async def _seed_proposal_cow_operation(
     return operation_id, matching, login
 
 
+async def _wait_for_workspace_drain_waiter(
+    database: AgentSiteDatabase,
+    *,
+    lock_key: int,
+    holder_pid: int,
+    waiter_login: str,
+    task: asyncio.Task[Any],
+) -> int:
+    """Bounded real-lock-table rendezvous for the freeze drain.
+
+    Wait until the actual freeze worker backend (``waiter_login``)
+    holds an UNGRANTED exclusive advisory request on the product's
+    workspace lifecycle key (the one-argument bigint advisory
+    form: unsigned 32-bit classid / objid halves of the 64-bit
+    ``lock_key``, objsubid 1 - the same encoding family as the
+    C12 barrier's (0, key, 1) rows), paired to the granted shared
+    form of
+    the same key tuple held by the exact Control backend
+    (``holder_pid``), in the fixture database.  Deterministic
+    positioning through real lock state - no blind sleep, and no
+    test-owned lock: only the constructor's own transaction-scoped
+    product lock may satisfy the holder side.  A freeze task that
+    finishes or dies before the rendezvous proves the product lock
+    did not hold the worker: fail promptly with its actual outcome,
+    never a timeout-as-proof."""
+    deadline = time.monotonic() + _BARRIER_RENDEZVOUS_TIMEOUT_S
+    while True:
+        if task.done():
+            if task.cancelled():
+                raise AssertionError(
+                    "the freeze task was cancelled before the "
+                    "workspace advisory rendezvous"
+                ) from None
+            exc = task.exception()
+            if exc is not None:
+                raise AssertionError(
+                    "the freeze task failed before reaching the "
+                    f"workspace advisory rendezvous (exception: {exc!r})"
+                ) from exc
+            raise AssertionError(
+                "the freeze task finished before reaching the workspace"
+                " advisory rendezvous: the product workspace lifecycle"
+                f" lock did not hold the worker (result: {task.result()!r})"
+            ) from None
+        async with _owner(database) as owner:
+            waiter_pid = await owner.fetchval(
+                "SELECT l.pid FROM pg_catalog.pg_locks l"
+                " JOIN pg_catalog.pg_stat_activity a ON a.pid = l.pid"
+                " WHERE l.locktype = 'advisory'"
+                " AND NOT l.granted"
+                " AND l.mode = 'ExclusiveLock'"
+                " AND l.objsubid = 1"
+                " AND l.classid::bigint = (($1::bigint >> 32) & 4294967295)"
+                " AND l.objid::bigint = ($1::bigint & 4294967295)"
+                " AND a.usename = $2"
+                " AND a.datname = current_database()"
+                " ORDER BY l.pid LIMIT 1",
+                lock_key,
+                waiter_login,
+            )
+            if waiter_pid is not None:
+                holder_count = await owner.fetchval(
+                    "SELECT count(*) FROM pg_catalog.pg_locks"
+                    " WHERE locktype = 'advisory'"
+                    " AND granted"
+                    " AND mode = 'ShareLock'"
+                    " AND objsubid = 1"
+                    " AND pid = $1"
+                    " AND classid::bigint = (($2::bigint >> 32) & 4294967295)"
+                    " AND objid::bigint = ($2::bigint & 4294967295)",
+                    holder_pid,
+                    lock_key,
+                )
+                if int(holder_count) >= 1:
+                    return int(waiter_pid)
+        if time.monotonic() >= deadline:
+            # Still no parked waiter (and the task is still alive):
+            # capture where its real backend is executing for the
+            # assertion (bounded: state + left of the current
+            # statement only).
+            async with _owner(database) as owner:
+                act = await owner.fetch(
+                    "SELECT pid, state, LEFT(query, 120) FROM"
+                    " pg_catalog.pg_stat_activity"
+                    " WHERE usename = $1 AND datname = current_database()"
+                    " AND pid <> pg_backend_pid() ORDER BY pid",
+                    waiter_login,
+                )
+            detail = (
+                "; ".join(f"pid={r['pid']} state={r['state']} q={r[1]!r}" for r in act)
+                or "no backend"
+            )
+            raise AssertionError(
+                "the freeze worker backend was never observed waiting on "
+                f"the product workspace advisory lock | runtime backends: {detail}"
+            ) from None
+        await asyncio.sleep(_BARRIER_POLL_S)
+
+
 @pytest.mark.asyncio
 async def test_freeze_accept_with_trusted_internal_proposal_operation(
     agent_site_database: AgentSiteDatabase, tmp_path: Path
@@ -2976,6 +3075,858 @@ async def test_writer_refuses_forged_internal_record_for_mutation_operation(
             "principal_id": principal,
             "resource_ids": sorted(str(r["id"]) for r in producer_rows),
         }
+        canonical = {
+            "schema_version": "reviewed-operations/v1",
+            "snapshot_id": str(bound),
+            "snapshot_digest": stored_digest,
+            "site_id": str(site),
+            "workspace_id": str(ws),
+            "operation_ids": [str(o) for o in row["operation_ids"]],
+            "dependency_pairs": _jsonb(row["dependency_pairs"]),
+            "completion_identities": stored_identities,
+        }
+        recomputed = await _owner_digest_recompute(database, canonical)
+        assert recomputed == str(row["manifest_digest"])
+    finally:
+        await boundary.stop()
+        await pool.close()
+
+
+@pytest.mark.asyncio
+async def test_freeze_drains_open_control_proposal_and_denies_late_write(
+    agent_site_database: AgentSiteDatabase, tmp_path: Path
+) -> None:
+    """C3 drain regression: a REAL Control-login COW session keeps an
+    uncommitted proposed side effect open across the trusted
+    constructor, whose own transaction-scoped product lock (the
+    079 admitted-write workspace lifecycle lock) is the ONLY grant
+    the drain may observe - this test adds no locks of its own.
+    The real freeze is enqueued through Control and claimed/run by
+    the real worker; the exact owned worker backend is observed
+    parked on the product's EXCLUSIVE workspace advisory lock (key
+    280) paired to the exact Control backend holding the shared
+    form of the same key.  Consuming the session context commits
+    the Control COW transaction, releases that product lock, and
+    drains the proposal coherently: the frozen U is exactly the
+    drained operation, bound to its exact stored producer record,
+    with the canonical result unchanged (no promotion).  A late
+    Control proposal after REVIEW is a typed refusal that changes
+    nothing.
+
+    On a head whose constructor lacks the product lock, the worker
+    finishes before the rendezvous and the test fails promptly with
+    that actual outcome - never a timeout-as-proof."""
+    database = agent_site_database
+    media_root = tmp_path / "media"
+    ids = await _seed_site(database, media_root=media_root, with_ops=False)
+    ws, site = ids["workspace_id"], ids["site_id"]
+    pool = await _worker_pool(database)
+    boundary = MediaBoundary(settings=_media_settings(database, media_root))
+    control_login, control_password = database.credentials["slaif_control"]
+    worker_login, _worker_password = database.credentials["slaif_review_worker"]
+    connection: asyncpg.Connection[Any] | None = None
+    freeze_task: asyncio.Task[Any] | None = None
+    try:
+        connection = await asyncpg.connect(
+            **{
+                key: value
+                for key, value in database.connection_parameters.items()
+                if key != "database"
+            },
+            database=database.name,
+            user=control_login,
+            password=control_password,
+        )
+        control_pid = connection.get_server_pid()
+        lock_key = int(
+            await connection.fetchval("SELECT hashtextextended($1::text, 280)", str(ws))
+        )
+        async with asyncpg_cow_session(connection, session_id=ws) as session:
+            operation_id = session.operation_id
+            created = await session.native.fetch(
+                "SELECT * FROM content.slaif_proposed_side_effect_create"
+                "($1, $2, 'cache_purge', $3::jsonb)",
+                site,
+                ws,
+                json.dumps({"scope": "binding-freeze-drain"}),
+            )
+            created_id = created[0]["id"]
+            # Real uncommitted COW: the committed (owner) view sees
+            # neither the public U member nor the prospective row.
+            assert await _public_u(database, ws) == []
+            async with _owner(database) as owner:
+                prospective = await owner.fetchval(
+                    "SELECT count(*) FROM control.proposed_effect_completion"
+                    " WHERE operation_id = $1",
+                    operation_id,
+                )
+            assert prospective == 0, "the prospective row must stay uncommitted"
+
+            # The real freeze is enqueued through Control while the
+            # proposal transaction is still open.
+            rows = await _control_call(
+                database,
+                "SELECT * FROM control.slaif_human_agent_workspace_freeze($1,$2,$3)",
+                ws,
+                site,
+                ids["delegator_id"],
+            )
+            assert len(rows) == 1
+            job_id = UUID(str(rows[0]["job_id"]))
+            claimed = await _worker_call(
+                database,
+                "SELECT * FROM control.slaif_review_job_claim($1, $2)",
+                "binding-freeze-drain",
+                _WORKER_KINDS,
+            )
+            assert len(claimed) == 1
+            assert str(claimed[0]["id"]) == str(job_id)
+            freeze_task = asyncio.create_task(
+                run_freeze_job(pool, _worker_settings(database), dict(claimed[0]))
+            )
+            # Deterministic rendezvous: the exact owned worker backend
+            # waits on the product's exclusive workspace advisory lock
+            # while the exact Control backend holds the shared form of
+            # the same key (the constructor's own product lock).
+            waiter_pid = await _wait_for_workspace_drain_waiter(
+                database,
+                lock_key=lock_key,
+                holder_pid=control_pid,
+                waiter_login=worker_login,
+                task=freeze_task,
+            )
+            identity = await _backend_identity(database, waiter_pid)
+            assert identity == (database.name, worker_login), identity
+            # While the worker is parked, the proposal is still
+            # uncommitted: the drain really waited for it.
+            assert await _public_u(database, ws) == []
+            # Release: consuming the context commits the Control COW
+            # transaction; the constructor's transaction-scoped
+            # product lock releases with it, the worker's exclusive
+            # lock acquires, and the freeze completes the drained
+            # workspace.
+        result = await freeze_task
+        assert result.status == "SUCCEEDED", (result.status, result.error)
+
+        status, snapshot_id = await _workspace_state(database, ws)
+        assert status == "REVIEW"
+        assert snapshot_id is not None
+        # The drained operation is the workspace's whole public U and
+        # still its pending member after the REVIEW transition (no
+        # promotion happened).
+        assert await _public_u(database, ws) == [operation_id]
+        async with _owner(database) as owner:
+            producer_rows = list(
+                await owner.fetch(
+                    "SELECT * FROM control.proposed_effect_completion"
+                    " WHERE operation_id = $1",
+                    operation_id,
+                )
+            )
+            manifest_row = await owner.fetchrow(
+                "SELECT * FROM control.review_operation_manifest"
+                " WHERE snapshot_id = $1",
+                snapshot_id,
+            )
+            promotion_count = await owner.fetchval(
+                "SELECT count(*) FROM audit.promotion WHERE workspace_id = $1",
+                ws,
+            )
+            heading = await owner.fetchrow(
+                "SELECT props FROM content.page_composition_base WHERE id = $1",
+                ids["heading_id"],
+            )
+        # The exact stored resource/producer binding.
+        assert len(producer_rows) == 1
+        producer_row = producer_rows[0]
+        assert str(producer_row["site_id"]) == str(site)
+        assert str(producer_row["workspace_id"]) == str(ws)
+        assert str(producer_row["resource_id"]) == str(created_id)
+        assert producer_row["producer"] == "slaif_proposed_side_effect_create"
+        assert producer_row["principal_type"] == "service"
+        assert producer_row["principal_id"] == control_login
+        # The frozen manifest carries exactly the drained operation
+        # with its versioned trusted producer identity.
+        assert manifest_row is not None
+        assert [str(o) for o in manifest_row["operation_ids"]] == [str(operation_id)]
+        assert _jsonb(manifest_row["completion_identities"]) == [
+            {
+                "operation_id": str(operation_id),
+                "record_version": "proposed-effect/v1",
+                "producer": "slaif_proposed_side_effect_create",
+                "principal_type": "service",
+                "principal_id": control_login,
+                "resource_ids": [str(created_id)],
+            }
+        ]
+        # Unchanged canonical result: no promotion, the seeded
+        # canonical content is untouched, and the exact proposed
+        # resource remains canonically absent - the public list
+        # contract on a FRESH context-free Control login reads the
+        # canonical projection only (a COW commit makes the
+        # workspace change durable-pending, it never promotes it),
+        # so no proposed side effect of the drained operation is
+        # committed.
+        assert promotion_count == 0
+        assert _jsonb(heading["props"]) == {"level": 1, "text": "Accept"}
+        canonical_connection = await asyncpg.connect(
+            **{
+                key: value
+                for key, value in database.connection_parameters.items()
+                if key != "database"
+            },
+            database=database.name,
+            user=control_login,
+            password=control_password,
+        )
+        try:
+            listed_canonical = await canonical_connection.fetch(
+                "SELECT * FROM content.slaif_proposed_side_effect_list($1,$2)",
+                site,
+                ws,
+            )
+        finally:
+            await canonical_connection.close()
+        assert [str(r["id"]) for r in listed_canonical] == [], [
+            dict(r) for r in listed_canonical
+        ]
+
+        # A late Control proposal after the REVIEW transition is a
+        # typed refusal: the trusted guard re-checks the workspace
+        # state, so no new COW write, producer row, or U member can
+        # enter a frozen/reviewing workspace.
+        late_connection = await asyncpg.connect(
+            **{
+                key: value
+                for key, value in database.connection_parameters.items()
+                if key != "database"
+            },
+            database=database.name,
+            user=control_login,
+            password=control_password,
+        )
+        late_operation_ids: list[UUID] = []
+        try:
+            with pytest.raises(asyncpg.PostgresError) as excinfo:
+                async with asyncpg_cow_session(
+                    late_connection, session_id=ws
+                ) as late_session:
+                    late_operation_ids.append(late_session.operation_id)
+                    await late_session.native.fetch(
+                        "SELECT * FROM content.slaif_proposed_side_effect_create"
+                        "($1, $2, 'cache_purge', $3::jsonb)",
+                        site,
+                        ws,
+                        json.dumps({"scope": "binding-freeze-drain-late"}),
+                    )
+        finally:
+            await late_connection.close()
+        assert late_operation_ids, "the late session must be real"
+        assert excinfo.value.sqlstate == "P0003"
+        assert "SIDE_EFFECT_INVALID" in str(excinfo.value)
+        assert await _public_u(database, ws) == [operation_id]
+        async with _owner(database) as owner:
+            late_producer = await owner.fetchval(
+                "SELECT count(*) FROM control.proposed_effect_completion"
+                " WHERE operation_id = $1",
+                late_operation_ids[0],
+            )
+            ws_producer_total = await owner.fetchval(
+                "SELECT count(*) FROM control.proposed_effect_completion"
+                " WHERE workspace_id = $1",
+                ws,
+            )
+        assert late_producer == 0
+        assert ws_producer_total == 1
+    finally:
+        if freeze_task is not None and not freeze_task.done():
+            freeze_task.cancel()
+            try:
+                await freeze_task
+            except BaseException:
+                # Bounded drain: the cancelled in-flight freeze task is
+                # a cleanup artifact of the failure above, never the
+                # failure itself (the scratch-database teardown
+                # terminates its backends regardless).
+                pass
+        if connection is not None:
+            await connection.close()
+        await boundary.stop()
+        await pool.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("direction", ("ordinary_first", "trusted_first"))
+async def test_write_time_operation_conflict_refused_in_both_orders(
+    agent_site_database: AgentSiteDatabase,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    direction: str,
+) -> None:
+    """B2/c3 write-time provenance: one operation id can carry exactly
+    ONE provenance form, refused at the write in either insertion
+    order.  Ordinary first: a genuine 078-journaled operation is
+    re-selected (disposable fixture via the public COW session
+    operation_id parameter on the real Control login) by the real
+    trusted constructor, which must refuse
+    SIDE_EFFECT_OPERATION_CONFLICT before any producer write.  Trusted
+    first: the real producer operation is re-used by one ordinary
+    fixture call that temporarily selects that same UUID at the
+    existing server generation seam, and the true 078 completion
+    helper must refuse JOURNAL_OPERATION_CONFLICT with the whole
+    ordinary write rolled back.  Test-owned fixture UUID selection
+    only: no client-controlled IDs, no forged success journal, no raw
+    positive records, no SDK modification."""
+    database = agent_site_database
+    media_root = tmp_path / "media"
+    ids = await _seed_site(database, media_root=media_root, with_ops=False)
+    ws, site = ids["workspace_id"], ids["site_id"]
+    if direction == "ordinary_first":
+        # Genuine ordinary completion first: real 078 journal row plus
+        # exactly one pending COW operation.
+        ordinary_op = await _apply_one_heading_update(
+            database,
+            ids,
+            level=2,
+            text="Conflict ordinary",
+            key="write-conflict-ordinary-first",
+        )
+        assert await _public_u(database, ws) == [ordinary_op]
+        # Disposable trusted fixture: the REAL Control login and the
+        # public COW session re-select that same operation UUID, and
+        # the real constructor must refuse before any COW or producer
+        # write.
+        login, password = database.credentials["slaif_control"]
+        connection = await asyncpg.connect(
+            **{
+                key: value
+                for key, value in database.connection_parameters.items()
+                if key != "database"
+            },
+            database=database.name,
+            user=login,
+            password=password,
+        )
+        try:
+            with pytest.raises(asyncpg.PostgresError) as excinfo:
+                async with asyncpg_cow_session(
+                    connection, session_id=ws, operation_id=ordinary_op
+                ) as session:
+                    assert session.operation_id == ordinary_op
+                    await session.native.fetch(
+                        "SELECT * FROM content.slaif_proposed_side_effect_create"
+                        "($1, $2, 'cache_purge', $3::jsonb)",
+                        site,
+                        ws,
+                        json.dumps({"scope": "write-conflict-ordinary-first"}),
+                    )
+            assert excinfo.value.sqlstate == "P0003"
+            assert "SIDE_EFFECT_OPERATION_CONFLICT" in str(excinfo.value)
+        finally:
+            await connection.close()
+        # No producer write happened: the refusal precedes every
+        # write; the genuine completion, exact U and canonical are
+        # unchanged.
+        assert await _public_u(database, ws) == [ordinary_op]
+        journal = await _journal_rows(database, ws)
+        assert len(journal) == 1
+        assert str(journal[0]["operation_id"]) == str(ordinary_op)
+        assert journal[0]["disposition"] == "completed"
+        async with _owner(database) as owner:
+            producer_rows = await owner.fetch(
+                "SELECT * FROM control.proposed_effect_completion"
+                " WHERE operation_id = $1",
+                ordinary_op,
+            )
+            heading = await owner.fetchrow(
+                "SELECT props FROM content.page_composition_base WHERE id = $1",
+                ids["heading_id"],
+            )
+        assert producer_rows == []
+        assert _jsonb(heading["props"]) == {"level": 1, "text": "Accept"}
+    else:
+        # Trusted first: the real producer operation (real Control
+        # login + public COW session, server-selected UUID).  The
+        # fixture makes TWO constructor calls in that one operation
+        # (one per resource), so exactly two prospective rows bind
+        # it and both must survive.
+        producer_op, listed_rows, _principal = await _seed_proposal_cow_operation(
+            database, site, ws
+        )
+        assert await _public_u(database, ws) == [producer_op]
+        # One ordinary fixture call temporarily selects that same UUID
+        # at the existing server generation seam (test-owned fixture
+        # selection; the patch is scoped to this single call and
+        # restores the product module on exit).
+        with monkeypatch.context() as patched:
+            patched.setattr(
+                "slaif_agent_site.agent_state.mutations.uuid4",
+                lambda: producer_op,
+            )
+            with pytest.raises(AgentMutationUnavailableError) as excinfo:
+                await _apply_one_heading_update(
+                    database,
+                    ids,
+                    level=2,
+                    text="Conflict trusted",
+                    key="write-conflict-trusted-first",
+                )
+        # The typed product error carries the NATIVE refusal from the
+        # true 078 completion helper (trigger on the journal write).
+        cause = excinfo.value.__cause__
+        assert isinstance(cause, asyncpg.PostgresError)
+        assert cause.sqlstate == "P0003"
+        assert "JOURNAL_OPERATION_CONFLICT" in str(cause)
+        # The producer positive facts survive intact: exactly the two
+        # fixture resource rows the real operation created.  The whole
+        # ordinary write (reservation, COW row, journal attempt)
+        # rolled back: no journal row, no reservation, canonical and
+        # the workspace-projected heading unchanged (the projection
+        # check matters because U still contains that same operation
+        # UUID even if a leaked pending row would hide in it).
+        assert await _public_u(database, ws) == [producer_op]
+        assert await _journal_rows(database, ws) == []
+        async with _owner(database) as owner:
+            reserved = await owner.fetchval(
+                "SELECT count(*) FROM control.agent_idempotency"
+                " WHERE operation_id = $1 AND workspace_id = $2",
+                producer_op,
+                ws,
+            )
+            producer_rows = list(
+                await owner.fetch(
+                    "SELECT * FROM control.proposed_effect_completion"
+                    " WHERE operation_id = $1",
+                    producer_op,
+                )
+            )
+            heading = await owner.fetchrow(
+                "SELECT props FROM content.page_composition_base WHERE id = $1",
+                ids["heading_id"],
+            )
+            # Workspace-projected read through the ACTUAL product COW
+            # view content.page_composition (the _base relation above
+            # is the canonical table the view overlays, so only the
+            # view reflects the session layer): the same trusted
+            # fixture pattern the producer seed helper uses for its
+            # read-back; the failed ordinary write must have left NO
+            # pending composition row under the same operation.
+            await owner.execute(
+                "SELECT set_config('app.session_id', $1::text, false)",
+                str(ws),
+            )
+            try:
+                projected = await owner.fetchrow(
+                    "SELECT props FROM content.page_composition WHERE id = $1",
+                    ids["heading_id"],
+                )
+            finally:
+                await owner.execute("SELECT set_config('app.session_id', '', false)")
+        assert reserved == 0
+        assert len(producer_rows) == len(listed_rows) == 2
+        assert sorted(str(r["resource_id"]) for r in producer_rows) == sorted(
+            str(row["id"]) for row in listed_rows
+        )
+        assert _jsonb(heading["props"]) == {"level": 1, "text": "Accept"}
+        assert _jsonb(projected["props"]) == {"level": 1, "text": "Accept"}
+
+
+@pytest.mark.asyncio
+async def test_freeze_refuses_stored_distinct_binding_trusted_rows(
+    agent_site_database: AgentSiteDatabase, tmp_path: Path
+) -> None:
+    """C4/c3: stored trusted rows with a DISTINCT binding are refused
+    at the real worker-role completion definer before any
+    publication state exists.  The real freeze is enqueued and
+    claimed first (the workspace is genuinely FREEZING, no live
+    run), the public U mixes both verified provenance forms (two
+    078-journaled mutation operations plus the REAL producer
+    operation from the Control login / public COW session), and the
+    worker-shaped row + manifest are captured on the REAL dedicated
+    review-worker login (the same definer and Python builder path
+    the freeze worker uses in its locked transaction) BEFORE any
+    forgery, so every refusal below is caused by stored facts,
+    never by manifest claims.  Each refusal is a DIRECT call of the
+    trusted definer as the review-worker login (NOINHERIT role,
+    direct EXECUTE grants): a worker-role negative proof, distinct
+    from the final real worker-loop proof (the legitimate
+    run_freeze_job success at the end).  Owner is used only for
+    the labeled bad-fact setup/cleanup and side-effect-free
+    observations (counts, job/workspace status, canonical, digest
+    recompute).  Four labeled trusted-negative fixtures
+    (owner-inserted rows no product path can produce; each deleted
+    in cleanup; after EACH refusal the exact claimed job state -
+    status CLAIMED, the exact claimant, workspace FREEZING, no
+    snapshot/companion - and the unchanged public U are checked):
+    (1) a local-workspace row of the real producer operation bound
+        to a SECOND real site - the whole-workspace tail (1)
+        mismatched-site refusal, PROVENANCE_CONFLICT;
+    (2) the real producer operation bound to a real SIBLING
+        workspace of the same site - the tail (2) trusted<->trusted
+        distinct-binding refusal, PROVENANCE_CONFLICT;
+    (3) the real producer operation in this workspace under a
+        distinct shape-compliant service principal - the
+        trusted-producer binding stage refuses the stored distinct
+        binding tuple count with MANIFEST_IDENTITY_MISMATCH,
+        BEFORE the whole-workspace provenance scan (the
+        stored-fact complement of the manifest-side principal
+        forgery (b) in the sibling case);
+    (4) one 078-journaled operation with a trusted row ONLY in the
+        sibling workspace - the tail (3) direction-B local-journal
+        versus trusted-record overlap, the sole firing branch,
+        PROVENANCE_CONFLICT.
+    A stored row with a distinct PRODUCER constant is proven
+    un-storable: a labeled disposable owner insert is refused by
+    the product table CHECK with the exact constraint name
+    (SQLSTATE 23514) and leaves no row, so no writer branch over
+    an invalidly stored producer is claimed to have run - the
+    tail (2) producer element is defense in depth over already
+    fail-closed storage.  No partial publication state survives
+    any refusal; the legitimate real freeze job then completes to
+    REVIEW with the exact un-forged companion and the canonical
+    heading unchanged."""
+    database = agent_site_database
+    media_root = tmp_path / "media"
+    ids = await _seed_site(database, media_root=media_root, with_ops=True)
+    ws, site = ids["workspace_id"], ids["site_id"]
+    pool = await _worker_pool(database)
+    boundary = MediaBoundary(settings=_media_settings(database, media_root))
+    try:
+        producer_op, producer_rows, principal = await _seed_proposal_cow_operation(
+            database, site, ws
+        )
+        # Real second site (owner fixture row, no membership): the
+        # producer table's site FK is separate from its workspace
+        # FK, so a local workspace row bound to another real site
+        # is the reachable mismatched-site corruption.
+        async with _owner(database) as owner:
+            site_b = UUID(
+                str(
+                    await owner.fetchval(
+                        "INSERT INTO control.site (site_key, display_name,"
+                        " default_locale, component_catalog_version)"
+                        " VALUES ('binding-int-b', 'Binding Int B', 'en-US',"
+                        " 'catalog-v1') RETURNING id"
+                    )
+                )
+            )
+        # Real sibling workspace on the SAME site (same delegator).
+        sibling = await _seed_sibling_agent_workspace(
+            database, ids, title="Binding Sibling"
+        )
+        ws_sib = sibling["workspace_id"]
+        pending = await _public_u(database, ws)
+        assert len(pending) == 3
+        assert str(producer_op) in {str(o) for o in pending}
+        rows = await _control_call(
+            database,
+            "SELECT * FROM control.slaif_human_agent_workspace_freeze($1,$2,$3)",
+            ws,
+            site,
+            ids["delegator_id"],
+        )
+        assert len(rows) == 1
+        job_id = UUID(str(rows[0]["job_id"]))
+        claimed = await _worker_call(
+            database,
+            "SELECT * FROM control.slaif_review_job_claim($1, $2)",
+            "binding-distinct-binding",
+            _WORKER_KINDS,
+        )
+        assert len(claimed) == 1 and str(claimed[0]["id"]) == str(job_id)
+
+        # Worker-shaped row + the real capture on the REAL dedicated
+        # review-worker login (the same definer and Python builder
+        # path the freeze worker uses in its locked transaction),
+        # taken BEFORE any forgery: the manifest claims only
+        # genuine identities.
+        async with pool.acquire() as worker_conn:
+            executor = AsyncpgExecutor(worker_conn)
+            operations = list(
+                await get_session_operations(executor, ws, schema="content")
+            )
+            dependencies = list(
+                await get_operation_dependencies(executor, ws, schema="content")
+            )
+            doc = await worker_conn.fetchval(
+                "SELECT control.slaif_review_workspace_state($1)", ws
+            )
+            row_doc = build_snapshot_document(
+                doc,
+                created_by="binding-distinct-binding",
+                browser_evidence=[],
+                cancelled_runs=[],
+            )
+            identities_doc = await worker_conn.fetchval(
+                "SELECT control.slaif_review_operation_identities($1,$2,$3)",
+                ws,
+                site,
+                operations,
+            )
+        if isinstance(identities_doc, (bytes, bytearray)):
+            identities_doc = identities_doc.decode("utf-8")
+        if isinstance(identities_doc, str):
+            identities_doc = json.loads(identities_doc)
+        identities = list(identities_doc)
+        assert len(identities) == 3
+        by_op = {identity["operation_id"]: identity for identity in identities}
+        producer_identity = by_op[str(producer_op)]
+        assert set(producer_identity) == {
+            "operation_id",
+            "record_version",
+            "producer",
+            "principal_type",
+            "principal_id",
+            "resource_ids",
+        }
+        # The captured trusted record carries the genuine login
+        # principal: every refusal below is measured against this
+        # genuine claim.
+        assert producer_identity["principal_id"] == principal
+        journaled_ops = [str(op) for op in operations if str(op) != str(producer_op)]
+        assert len(journaled_ops) == 2
+
+        def _manifest_with(
+            completion_identities: list[dict[str, Any]],
+        ) -> str:
+            return build_operation_manifest(
+                workspace_id=ws,
+                site_id=site,
+                operations=list(operations),
+                dependencies=list(dependencies),
+                completion_identities=completion_identities,
+            )
+
+        async def _refuse_stored_forge(
+            *,
+            operation_id: UUID,
+            site_id: UUID,
+            workspace_id: UUID,
+            principal_id: str,
+            expected_message: str,
+            expected_sqlstate: str,
+        ) -> None:
+            # Labeled trusted-negative fixture: one owner-inserted
+            # prospective row with the given binding (resource is
+            # the real seeded heading; the
+            # (operation_id, resource_id) primary key never
+            # collides with the genuine rows).  The refusal itself
+            # is a DIRECT call of the trusted definer as the real
+            # review-worker login: a worker-role negative proof,
+            # not the worker loop.
+            async with _owner(database) as owner:
+                await owner.execute(
+                    "INSERT INTO control.proposed_effect_completion"
+                    " (operation_id, site_id, workspace_id, resource_id,"
+                    " producer, principal_type, principal_id) VALUES"
+                    " ($1, $2, $3, $4, 'slaif_proposed_side_effect_create',"
+                    " 'service', $5)",
+                    operation_id,
+                    site_id,
+                    workspace_id,
+                    ids["heading_id"],
+                    principal_id,
+                )
+            try:
+                with pytest.raises(asyncpg.PostgresError) as refusal:
+                    await _worker_call(
+                        database,
+                        "SELECT"
+                        " control.slaif_review_snapshot_complete_with_manifest"
+                        "($1, $2, $3)",
+                        ws,
+                        canonical_json(row_doc),
+                        _manifest_with(identities),
+                    )
+                assert refusal.value.sqlstate == expected_sqlstate, (
+                    expected_message,
+                    refusal.value.sqlstate,
+                )
+                assert expected_message in refusal.value.message, (
+                    expected_message,
+                    refusal.value.message,
+                )
+                # Owner-side side-effect-free observation: no
+                # partial review state from the refused worker-role
+                # call - no snapshot, no companion, the exact
+                # claimed job state, the workspace still FREEZING,
+                # and the public U unchanged.
+                async with _owner(database) as owner:
+                    job_row = await owner.fetchrow(
+                        "SELECT status, claimed_by FROM control.review_job"
+                        " WHERE id = $1",
+                        job_id,
+                    )
+                    snapshot_rows = await owner.fetchval(
+                        "SELECT count(*) FROM control.review_snapshot"
+                        " WHERE workspace_id = $1",
+                        ws,
+                    )
+                    manifest_rows = await owner.fetchval(
+                        "SELECT count(*) FROM control.review_operation_manifest"
+                        " WHERE workspace_id = $1",
+                        ws,
+                    )
+                    workspace_row = await owner.fetchrow(
+                        "SELECT status, review_snapshot_id"
+                        " FROM control.workspace WHERE id = $1",
+                        ws,
+                    )
+                assert job_row["status"] == "CLAIMED"
+                assert job_row["claimed_by"] == "binding-distinct-binding"
+                assert snapshot_rows == 0
+                assert manifest_rows == 0
+                assert workspace_row["review_snapshot_id"] is None
+                assert str(workspace_row["status"]) == "FREEZING"
+                assert await _public_u(database, ws) == pending
+            finally:
+                async with _owner(database) as owner:
+                    await owner.execute(
+                        "DELETE FROM control.proposed_effect_completion"
+                        " WHERE operation_id = $1 AND resource_id = $2",
+                        operation_id,
+                        ids["heading_id"],
+                    )
+
+        # (1) MISMATCHED SITE: a local-workspace row of the real
+        # producer operation bound to the second real site.
+        await _refuse_stored_forge(
+            operation_id=producer_op,
+            site_id=site_b,
+            workspace_id=ws,
+            principal_id=principal,
+            expected_message="PROVENANCE_CONFLICT",
+            expected_sqlstate="P0003",
+        )
+        # (2) MISMATCHED WORKSPACE: the real producer operation bound
+        # to the real sibling workspace of the same site.
+        await _refuse_stored_forge(
+            operation_id=producer_op,
+            site_id=site,
+            workspace_id=ws_sib,
+            principal_id=principal,
+            expected_message="PROVENANCE_CONFLICT",
+            expected_sqlstate="P0003",
+        )
+        # (3) DISTINCT STORED PRINCIPAL: a local-workspace row of the
+        # real producer operation under a shape-compliant forged
+        # service principal.  The manifest still claims the genuine
+        # principal; the stored distinct binding tuple count refuses
+        # in the trusted-producer binding stage, before the
+        # whole-workspace provenance scan.
+        await _refuse_stored_forge(
+            operation_id=producer_op,
+            site_id=site,
+            workspace_id=ws,
+            principal_id="forged_principal_c",
+            expected_message="MANIFEST_IDENTITY_MISMATCH",
+            expected_sqlstate="P0001",
+        )
+        # (4) SIBLING-WORKSPACE ORDINARY OPERATION: one
+        # 078-journaled operation with a trusted row ONLY in the
+        # sibling workspace; the tail (3) direction-B local-journal
+        # versus trusted-record overlap is the sole firing branch.
+        await _refuse_stored_forge(
+            operation_id=UUID(journaled_ops[0]),
+            site_id=site,
+            workspace_id=ws_sib,
+            principal_id=principal,
+            expected_message="PROVENANCE_CONFLICT",
+            expected_sqlstate="P0003",
+        )
+        # (5) DISTINCT PRODUCER CONSTANT: the product table CHECK
+        # makes a distinct producer family un-storable even for the
+        # owner.  Labeled disposable owner insert: the actual CHECK
+        # refusal (SQLSTATE 23514, the exact constraint name) with
+        # no row; the two genuine resource rows of the real
+        # operation are intact.  No writer branch over an invalidly
+        # stored producer is claimed to have run.
+        with pytest.raises(asyncpg.PostgresError) as check_refusal:
+            async with _owner(database) as owner:
+                await owner.execute(
+                    "INSERT INTO control.proposed_effect_completion"
+                    " (operation_id, site_id, workspace_id, resource_id,"
+                    " producer, principal_type, principal_id) VALUES"
+                    " ($1, $2, $3, $4, 'slaif_forged_producer_family',"
+                    " 'service', $5)",
+                    producer_op,
+                    site,
+                    ws,
+                    ids["heading_id"],
+                    principal,
+                )
+        assert check_refusal.value.sqlstate == "23514", (
+            "check_violation",
+            check_refusal.value.sqlstate,
+        )
+        assert "proposed_effect_completion_producer" in check_refusal.value.message, (
+            "proposed_effect_completion_producer",
+            check_refusal.value.message,
+        )
+        async with _owner(database) as owner:
+            producer_rows_after = await owner.fetch(
+                "SELECT * FROM control.proposed_effect_completion"
+                " WHERE operation_id = $1 ORDER BY resource_id",
+                producer_op,
+            )
+        assert [str(r["resource_id"]) for r in producer_rows_after] == sorted(
+            str(r["id"]) for r in producer_rows
+        )
+
+        # The pending session is untouched by every refusal.
+        assert await _public_u(database, ws) == pending
+        # Legitimate recovery: the real claimed freeze job completes
+        # to REVIEW with the exact un-forged companion (both
+        # provenance forms genuine).
+        result = await run_freeze_job(
+            pool, _worker_settings(database), dict(claimed[0])
+        )
+        assert result.status == "SUCCEEDED", (result.status, result.error)
+        status, bound = await _workspace_state(database, ws)
+        assert status == "REVIEW" and bound is not None
+        async with _owner(database) as owner:
+            row = await owner.fetchrow(
+                "SELECT * FROM control.review_operation_manifest"
+                " WHERE workspace_id = $1",
+                ws,
+            )
+            stored_digest = await owner.fetchval(
+                "SELECT digest::text FROM control.review_snapshot WHERE id = $1",
+                bound,
+            )
+            heading = await owner.fetchrow(
+                "SELECT props FROM content.page_composition_base WHERE id = $1",
+                ids["heading_id"],
+            )
+        assert row is not None
+        assert [str(o) for o in row["operation_ids"]] == sorted(str(o) for o in pending)
+        stored_identities = _jsonb(row["completion_identities"])
+        assert len(stored_identities) == 3
+        stored_by_op = {rec["operation_id"]: rec for rec in stored_identities}
+        for op_text in journaled_ops:
+            rec = stored_by_op[op_text]
+            assert set(rec) == {
+                "operation_id",
+                "family",
+                "principal_type",
+                "principal_id",
+                "request_identity",
+                "request_digest",
+                "resource_type",
+                "resource_id",
+                "disposition",
+            }, rec
+        assert stored_by_op[str(producer_op)] == {
+            "operation_id": str(producer_op),
+            "record_version": "proposed-effect/v1",
+            "producer": "slaif_proposed_side_effect_create",
+            "principal_type": "service",
+            "principal_id": principal,
+            "resource_ids": sorted(str(r["id"]) for r in producer_rows),
+        }
+        # The refused worker-role writer calls left the canonical
+        # untouched.
+        assert _jsonb(heading["props"]) == {"level": 1, "text": "Accept"}
         canonical = {
             "schema_version": "reviewed-operations/v1",
             "snapshot_id": str(bound),

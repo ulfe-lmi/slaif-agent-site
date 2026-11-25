@@ -606,6 +606,63 @@ roles; and the non-bypassability of the old 072 accept signatures
 (owner-internal inner enqueue with no role EXECUTE, typed legacy
 refusals, and the real worker payload defense).
 
+The write-time collision regression covers both insertion orders
+against the real paths. The ordinary-first constructor refusal
+precedes its own COW and producer writes. The journal guard of
+the trusted-first order can run after the ordinary COW rows of
+that write, and the whole ordinary transaction rolls back. The
+freeze-drain regression holds a real open Control COW session
+through the freeze, drains it into U, pairs the real worker's
+exclusive workspace-lock wait to the exact holding backend, and
+requires a typed denial for a new proposal after the
+transition. The stored distinct-binding regression calls the
+trusted completion definer as the real review-worker login
+against owner-forged stored rows. The four refusals are a
+local-workspace row bound to a second real site, the real
+producer operation bound to a real sibling workspace of the
+same site, a distinct shape-compliant service principal on the
+real operation, and one 078-journaled operation with a trusted
+row only in the sibling workspace. A labeled owner insert also
+proves the producer-constant CHECK refusal with its exact
+constraint and no row. After each refusal the test asserts the
+exact claimed job state, the unchanged public U, and no
+partial publication state, and it recovers through the
+legitimate real freeze job.
+
+Inside the still-open reviewer transaction, the SDK promotion
+runs first and the exact pending check follows the SDK call,
+before the native commit. The SDK result must show the exact
+applied IDs, and the following public pending read must be
+empty. Separately, the existing
+unreviewed-pending refusal proves the approved universe against
+the live U. It shows that the approved set cannot be widened
+inside the reviewer transaction. The new-pending same-hash
+conflict refuses the deterministic collision. The durable
+approval replay gate is proven by the enqueue idempotency,
+tampered-approval, and re-review stale-approval cases. A stale,
+different, or legacy-shape approval is a typed refusal that
+never fills in from current state. The promotion receipt
+carries the exact applied IDs and both approval digests, and
+legacy rows keep the new fields NULL.
+
+The receipt-read proof covers the absent, exactly-one, and
+bounded-ambiguity projection. The worker keeps its existing
+promotion INSERT, and direct audit-promotion SELECT is denied.
+The uncertain-outcome reconciliation proves success only on the
+full fingerprint. That fingerprint is the matching single
+receipt, the exact terminal workspace and job, and the one
+exact published outbox event. A proven durable rollback rests
+on the durable absence of both the receipt and the publication
+outbox together with the same job still claimed by its
+claimant. Retry then follows the fault's eligibility and
+attempt budget, and a contradictory result defers to
+stale-claim handling. The completed-body cleanup and the
+deferred COMMIT rejection are distinct proofs. The cleanup case
+runs a real post-commit pool reset after a completed body and
+recovers success from the exact durable fingerprint. The
+deferred COMMIT rejection is definitive and terminal, with no
+retry and the whole atomic bundle rolled back.
+
 Fresh install at 079, the QUIESCENT 078-to-079 operator upgrade (the
 078-era journal, family, snapshot, and canonical history preserved
 byte-for-byte, with the companion-less historical snapshot still
@@ -620,7 +677,12 @@ current freeze worker carries the 079 companion step and cannot run at
 the released 077 head. The new modules (the reviewed operation
 binding proofs and its role-authority proofs) run unfiltered in the
 existing PostgreSQL 14..18 Group B children
-alongside the existing selections; no existing selection, budget,
+alongside the existing selections. The write-time collision,
+freeze-drain, stored distinct-binding, replay-gate, and
+uncertain-outcome regressions extend those existing increment
+modules (the reviewed operation binding module, the real human
+accept module, and the role-authority module) and add no new
+modules, so no existing selection, budget,
 matrix, aggregator, or required check identity changes, and the policy
 suite pins the exact module lists with omission negatives. The
 increment adds no row-history API, all-semantic causal graph,

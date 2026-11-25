@@ -279,7 +279,27 @@ completion row (`control.proposed_effect_completion`) that the real
 trusted producer writes in the same transaction as its COW insert,
 binding the server COW operation, the stored site/workspace, the
 constant producer name, the service principal (a fact the caller
-cannot select), and the exact created resource ids; the record is
+cannot select), and the exact created resource IDs. The
+producer table CHECK keeps the producer and principal-type
+columns fail-closed to the single product constant, so no
+stored row can carry a distinct producer family. The
+producer constructor takes the shared workspace lifecycle
+lock before its first state read and any write. That lock
+uses the same transaction-scoped key and ordering as the
+normal online writes and the freeze. The freeze's
+exclusive lock on the same key waits for the in-flight
+shared holders, and a write that starts after the
+transition is refused. The same-operation collision is
+refused at the write in both orders. In the ordinary-first
+order, the constructor refuses an operation id already
+carried by the durable 078 journal, or by a trusted record
+with a different site, workspace, producer, or principal
+binding, before its own COW, journal, and producer writes.
+In the trusted-first order, the mirrored owner-internal
+guard (SECURITY INVOKER, no grants, no raw table access)
+refuses the same collision on the 078 journal write. That
+guard can run after the ordinary COW rows of the write and
+rolls the whole ordinary transaction back. The record is
 derived field-for-field from that row and is never inferred from
 private COW change-row membership — stored atomically with the
 snapshot by the trusted completion function, and
@@ -291,18 +311,54 @@ publication: wrong, stale, or missing digests are typed refusals, the
 old 072 accept signatures cannot enqueue (the inner transport is
 owner-internal with no role EXECUTE, and the legacy call paths are
 dropped or typed refusals), and the real worker payload is defended in
-depth. The companion table is owner-only, and the narrow projections
+depth. The accept approval is durable and typed. The
+enqueued job payload carries the exact snapshot ID, stored
+snapshot digest, manifest digest, actor, and site. An
+idempotent replay returns a live job only on an exact
+full-tuple match, so a stale, different, or legacy-shape
+approval is a typed refusal that never fills in from
+current mutable state. Inside the still-open reviewer
+transaction, the SDK promotion runs first and the exact
+pending check follows the SDK call, both before the native
+COMMIT and before any revision or audit effect. The result
+must show exactly the approved operation universe applied
+to exactly that session, with the pending remainder
+explicitly empty. The promotion receipt gains the new
+applied-identity fields (``applied_operation_ids``,
+``manifest_id``, ``manifest_digest``). Only those fields on
+legacy receipts stay NULL, and they are never backfilled.
+The companion table is owner-only, and the narrow projections
 grant EXECUTE only to the roles that need them (the read projection to
 control and review-worker, the identity, provenance, and
-companion-completion functions to review-worker); no runtime role
+companion-completion functions to review-worker); the
+promotion-receipt read definer, granted to the worker only,
+is the worker's receipt read path, and the worker retains
+its existing promotion INSERT authority while direct
+audit.promotion SELECT is denied. No runtime role
 gains companion or journal table SELECT or DML, and the standalone
 companion-less completion loses its last online EXECUTE so no online
-role can create a companion-less snapshot again. At and after this
+role can create a companion-less snapshot again. The receipt
+read returns only SQL absent, exactly one stored row, or a
+bounded no-data ambiguity marker. At a commit-boundary
+error, the exact single receipt, the accepted workspace, the
+succeeded job, and the matching single outbox event prove
+success. A proven durable rollback rests on the durable
+absence of both the receipt and the publication outbox
+together with the same job still claimed by its claimant.
+Retry then follows the fault's eligibility and attempt
+budget, and a contradictory result defers to the claim
+function's stale-claim handling. No new public job state
+and no raw audit grant are added. At and after this
 head the control role additionally holds direct content-schema USAGE
 for resolution only, so the Control process can resolve the public
 COW session's qualified trusted producer call; the privilege
 reconciliation demands that usage only at or after the 079 head, and
-no content table, sequence, or CREATE grant is added. The manifest is a
+no content table, sequence, or CREATE grant is added. The
+final canonical byte budget, the manifest element budgets,
+and the whole-workspace fact ceiling keep their existing
+values. The staged type and shape guards refuse malformed
+input at an earlier typed stage, before any array-specific
+operation can see it. The manifest is a
 bounded approval receipt, not a full semantic graph, row history, or
 causal record; a companion-less historical snapshot remains readable
 but can no longer be accepted at this head (discard and re-freeze is

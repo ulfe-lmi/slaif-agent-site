@@ -74,6 +74,19 @@ _PRODUCER_RECORD_KEYS = frozenset(
     }
 )
 
+# Finite companion-manifest budgets (R1): the exact limits the
+# trusted completion definer, the worker-only identity projection,
+# the whole-workspace provenance definer, and the locked freeze
+# flow all enforce fail-closed before any expansion or
+# serialization.  The 079 migration keeps its own LITERAL values
+# (the DDL authority - a worker change must never silently alter
+# the historical migration); these runtime constants MIRROR those
+# exact values for the Python layer, and the 083/12 boundary test
+# test_079_budget_literals_match_runtime keeps the two in sync.
+MAX_MANIFEST_OPERATIONS = 16384
+MAX_MANIFEST_DEPENDENCY_PAIRS = 65536
+MAX_MANIFEST_CANONICAL_BYTES = 8 * 1024 * 1024
+
 
 class SnapshotManifestError(ValueError):
     """A bounded companion-manifest build failure with a stable code."""
@@ -253,6 +266,9 @@ def build_operation_manifest(
 
 
 __all__ = [
+    "MAX_MANIFEST_CANONICAL_BYTES",
+    "MAX_MANIFEST_DEPENDENCY_PAIRS",
+    "MAX_MANIFEST_OPERATIONS",
     "MANIFEST_SCHEMA_VERSION",
     "SnapshotManifestError",
     "build_operation_manifest",

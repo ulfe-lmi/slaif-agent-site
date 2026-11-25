@@ -47,6 +47,7 @@ EXPECTED_PUBLIC_API = {
     "CowConflictError",
     "CowPostgresConfig",
     "CowPrivilegeValidation",
+    "CowPromotionStateError",
     "CowReviewer",
     "CowSession",
     "DiscardResult",
