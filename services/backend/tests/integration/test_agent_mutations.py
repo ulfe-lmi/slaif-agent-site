@@ -10003,12 +10003,26 @@ async def test_agent_component_runtime_helper_enforces_design_authority(
                 == before_operations
             )
 
+        # 080: the Heading write completes in the same transaction as
+        # its idempotency reservation (the trusted record is bound to
+        # the in-progress same-operation row), so the direct definer
+        # call mirrors the real flow: begin first, then update.
+        update_operation = uuid4()
         async with asyncpg_cow_session(
-            agent_pool, session_id=workspace_id, operation_id=uuid4()
+            agent_pool, session_id=workspace_id, operation_id=update_operation
         ) as cow:
             await cow.native.execute(
                 "SELECT set_config('app.capability_id',$1,true)", str(capability_id)
             )
+            begun = await cow.native.fetchrow(
+                "SELECT * FROM control.slaif_agent_idempotency_begin($1,$2,$3,$4,$5)",
+                capability_id,
+                workspace_id,
+                "runtime-direct-update",
+                "0" * 64,
+                update_operation,
+            )
+            assert begun["state"] == "STARTED"
             row = await cow.native.fetchrow(
                 "SELECT * FROM content.slaif_agent_component_update("
                 "$1,$2,$3::jsonb,$4)",

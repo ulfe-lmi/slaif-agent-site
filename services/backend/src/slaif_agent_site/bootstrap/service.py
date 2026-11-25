@@ -82,6 +82,12 @@ _DOWNGRADE_REVIEWED_OPERATION_BINDING = (
     "the pre-079 accept entry points and the companion-less completion "
     "would leave 079-era manifest and receipt history uninterpretable"
 )
+_DOWNGRADE_HEADING_ROW_EFFECT = (
+    "bootstrap downgrade refused: the heading row effect provenance "
+    "(migration 080_001) has no supported downgrade below it; restoring "
+    "the unrecording definer bodies would leave 080-era heading row "
+    "effects uninterpretable and their DML images unrecoverable"
+)
 
 
 class BootstrapStateError(RuntimeError):
@@ -594,6 +600,33 @@ async def _assert_no_completion_provenance_downgrade(
     raise BootstrapStateError(_DOWNGRADE_COMPLETION_PROVENANCE)
 
 
+async def _assert_no_heading_row_effect_downgrade(
+    connection: Any,
+) -> None:
+    """Operator-path preflight for the heading row effect refusal.
+
+    The operator always downgrades to base, so ANY head retaining the
+    080_001 heading row effect pilot - the current head or a later one -
+    must refuse before effects: restoring the unrecording 060/062
+    definer bodies would leave the 080-era ``audit.heading_row_effect``
+    rows (exact DML image pairs bound to operation identity)
+    uninterpretable against the restored bodies.  The check reads
+    product catalog metadata only (facts table presence, like the
+    retained-v2 and reviewed-operation-binding prefights); the refusal
+    happens before the readiness PENDING marker is committed, before
+    the content COW disable, and before any migration step, so
+    readiness, COW state, grants, canonical and pending rows and the
+    fact history are left exactly as found.  The 080_001 Alembic
+    downgrade body is the second line of defense for direct migration
+    invocations.
+    """
+    if await connection.fetchval(
+        "SELECT to_regclass('audit.heading_row_effect') IS NULL"
+    ):
+        return
+    raise BootstrapStateError(_DOWNGRADE_HEADING_ROW_EFFECT)
+
+
 async def _assert_no_reviewed_operation_binding_downgrade(
     connection: Any,
 ) -> None:
@@ -632,6 +665,7 @@ async def downgrade(settings: BootstrapSettings) -> None:
         revision = await connection.fetchval(
             "SELECT version_num::text FROM control.alembic_version"
         )
+        await _assert_no_heading_row_effect_downgrade(connection)
         await _assert_no_reviewed_operation_binding_downgrade(connection)
         await _assert_no_completion_provenance_downgrade(connection)
         await _assert_no_media_isolation_downgrade(revision)

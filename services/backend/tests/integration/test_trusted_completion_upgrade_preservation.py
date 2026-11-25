@@ -26,16 +26,18 @@ C6 qualification for the 078_001 trusted mutation completion journal:
   journal rows, keeps old idempotency replays working, and records new
   (078-era) completions forward;
 - the normal pending-COW upgrade refusal (from a real 077 head toward
-  the current head, 079_001 at this source) preserves the complete
+  the current head, 080_001 at this source) preserves the complete
   preexisting state before any migration step.
 - 083/12: the quiescent 078 -> 079 upgrade preserves the 078-era
   journal/family/snapshot/canonical history byte-exact, leaves the
   companion-less historical snapshot readable with a NULL manifest
   projection, works forward (real 079 freeze stores the companion,
-  real dual-digest accept promotes exactly), and both the operator
-  downgrade and the direct 079_001 Alembic body refuse before any
-  effect; the pending-COW refusal fires from a real 078 head toward
-  the 079 target head.
+  real dual-digest accept promotes exactly to the current 080_001
+  head), and both the operator downgrade and the direct Alembic
+  downgrade refuse before any effect (the 080_001 heading row effect
+  refusal fires first; the 079_001 reviewed operation binding refusal
+  is retained behind it); the pending-COW refusal fires from a real
+  078 head toward the current target head.
 
 Direct owner-level completion-definer exercise is the bounded evidence
 here; it is not a full HTTP+COW lifecycle proof (the existing C2 media/
@@ -688,7 +690,7 @@ async def test_fresh_078_head_install_journal_contract(
 ) -> None:
     """Fresh install at the released 078 head: real ready phase, owner-only journal.
 
-    The 078 head is historical at this source (current head 079_001), so
+    The 078 head is historical at this source (current head 080_001), so
     the fresh install is staged to the released 078_001 revision and the
     real reconcile runs under the narrow expected-head seam.
     """
@@ -1594,7 +1596,7 @@ async def test_upgrade_refuses_with_pending_cow_toward_078(
     """Pending-COW refusal from a real 077 head toward the current head.
 
     The fixture stays at the 077 stage: the operator upgrade's target is
-    the current head (079_001 at this source), and the normal
+    the current head (080_001 at this source), and the normal
     pending-work refusal fires before ANY migration step, so neither
     the 078 journal nor the 079 companion surface is created and the
     complete preexisting state is preserved.
@@ -1702,8 +1704,9 @@ async def test_quiescent_078_to_079_upgrade_preserves_history(
     invents no journal rows, leaves the companion-less snapshot readable
     with a NULL manifest projection, and the product works forward: a
     real 079 freeze stores the companion and the real dual-digest
-    accept promotes exactly.  The operator downgrade and the direct
-    079_001 Alembic body both refuse before any effect.
+    accept promotes exactly to the current 080_001 head.  The operator
+    downgrade and the direct Alembic downgrade (080_001 heading row
+    effect first) both refuse before any effect.
 
     Bounded evidence: the 078-era freeze/accept workers predate this
     source (their completion call changed at 079), so the retained
@@ -1831,11 +1834,11 @@ async def test_quiescent_078_to_079_upgrade_preserves_history(
         )
     assert manifest_absent is True
 
-    # Normal quiescent operator upgrade to the 079 head.
+    # Normal quiescent operator upgrade to the current head.
     await upgrade(database.settings)
     result = await reconcile(database.settings)
     assert result.safe
-    assert result.revision == "079_001"
+    assert result.revision == "080_001"
 
     # ALL pre-079 history preserved byte-exact; no synthetic journal.
     assert await _family_history(database) == history_before
@@ -1951,13 +1954,14 @@ async def test_quiescent_078_to_079_upgrade_preserves_history(
 
     # Operator downgrade: refused BEFORE any effect.
     before_refusal = await _full_state(database)
-    with pytest.raises(BootstrapStateError, match="reviewed operation binding"):
+    with pytest.raises(BootstrapStateError, match="heading row effect"):
         await downgrade(database.settings)
     after_refusal = await _full_state(database)
     _assert_state_equal(before_refusal, after_refusal)
-    assert after_refusal["revision"] == "079_001"
+    assert after_refusal["revision"] == "080_001"
 
-    # Direct 079_001 Alembic body: the second line of defense.
+    # Direct 080_001 Alembic body: the second line of defense (the
+    # first step of any direct downgrade from the current head).
     with pytest.raises(sqlalchemy_exc.DBAPIError) as exc_info:
         await run_migration(
             database.settings.resolved_owner_dsn(),
@@ -1966,7 +1970,7 @@ async def test_quiescent_078_to_079_upgrade_preserves_history(
             revision="078_001",
         )
     underlying = exc_info.value.orig
-    assert "REVIEWED_OPERATION_BINDING_DOWNGRADE_REFUSED" in str(underlying)
+    assert "HEADING_ROW_EFFECT_DOWNGRADE_UNSUPPORTED" in str(underlying)
     assert getattr(underlying, "sqlstate", None) == "P0001"
     after_direct = await _full_state(database)
     _assert_state_equal(before_refusal, after_direct)

@@ -169,8 +169,8 @@ async def _assert_079_head(database: AgentSiteDatabase) -> None:
     async with await _owner(database) as owner:
         head = await owner.fetch("SELECT version_num FROM control.alembic_version")
     assert len(head) == 1, "single alembic chain expected"
-    assert head[0]["version_num"] == "079_001", (
-        f"this module binds to the 079 head, observed {head[0]['version_num']}"
+    assert head[0]["version_num"] == "080_001", (
+        f"this module binds to the current head, observed {head[0]['version_num']}"
     )
 
 

@@ -998,7 +998,7 @@ async def test_clean_migration_current_repeat_downgrade_and_rebuild(
     database = agent_site_database
     await upgrade(database.settings)
     first = await status(database.settings)
-    assert first.revision == "079_001"
+    assert first.revision == "080_001"
     _assert_pending(first, deployed=False)
 
     async with owner_connection(
@@ -1103,11 +1103,12 @@ async def test_clean_migration_current_repeat_downgrade_and_rebuild(
         )
     assert repeated_foundation_inventory == foundation_inventory
 
-    # 083-12-a: the current 079_001 head has no supported downgrade:
-    # the operator reviewed-operation-binding preflight refuses before
-    # any base-state teardown (the 078_001 completion-provenance and the
-    # 077_001 media refusals are proven from their released stages
-    # above), and the clean-migration state is left exactly as found.
+    # 083-13-a: the current 080_001 head has no supported downgrade:
+    # the operator heading-row-effect preflight refuses before
+    # any base-state teardown (the 079_001 reviewed-operation-binding,
+    # 078_001 completion-provenance and 077_001 media refusals are
+    # proven from their released stages above), and the
+    # clean-migration state is left exactly as found.
     async with owner_connection(
         database.settings.resolved_owner_dsn(), expected_database=database.name
     ) as connection:
@@ -1119,7 +1120,7 @@ async def test_clean_migration_current_repeat_downgrade_and_rebuild(
             "foundation_privileges_validated, product_privileges_validated, "
             "safe, updated_at FROM control.bootstrap_readiness WHERE singleton"
         )
-    with pytest.raises(BootstrapStateError, match="reviewed operation binding"):
+    with pytest.raises(BootstrapStateError, match="heading row effect"):
         await downgrade(database.settings)
     async with owner_connection(
         database.settings.resolved_owner_dsn(), expected_database=database.name
@@ -1128,7 +1129,7 @@ async def test_clean_migration_current_repeat_downgrade_and_rebuild(
             await connection.fetchval(
                 "SELECT version_num::text FROM control.alembic_version"
             )
-            == "079_001"
+            == "080_001"
         )
         assert await connection.fetchval(
             "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_namespace "
@@ -1148,7 +1149,7 @@ async def test_clean_migration_current_repeat_downgrade_and_rebuild(
 
     await upgrade(database.settings)
     rebuilt = await status(database.settings)
-    assert rebuilt.revision == "079_001"
+    assert rebuilt.revision == "080_001"
     rebuilt_empty = await reconcile(database.settings)
     _assert_empty_safe(rebuilt_empty)
 
@@ -1208,7 +1209,7 @@ async def test_bootstrap_076_clean_downgrade_to_base_and_current_rebuild(
 
     await upgrade(database.settings)
     rebuilt = await status(database.settings)
-    assert rebuilt.revision == "079_001"
+    assert rebuilt.revision == "080_001"
     _assert_pending(rebuilt, deployed=False)
     rebuilt_empty = await reconcile(database.settings)
     _assert_empty_safe(rebuilt_empty)
@@ -1573,20 +1574,20 @@ async def test_cli_secret_file_empty_bootstrap_current_and_validate(
     assert upgraded.stdout == "upgrade: OK\n"
     current = invoke("current")
     assert current.returncode == 0
-    assert current.stdout == ("current: revision=079_001 state=PENDING safe=false\n")
+    assert current.stdout == ("current: revision=080_001 state=PENDING safe=false\n")
     bootstrapped = invoke("bootstrap")
     assert bootstrapped.returncode == 0
     assert bootstrapped.stdout == (
-        "bootstrap: OK revision=079_001 state=HARDENED safe=true\n"
+        "bootstrap: OK revision=080_001 state=HARDENED safe=true\n"
     )
     validated = invoke("validate")
     assert validated.returncode == 0
     assert validated.stdout == (
-        "validate: OK revision=079_001 state=HARDENED safe=true\n"
+        "validate: OK revision=080_001 state=HARDENED safe=true\n"
     )
     ready = invoke("current")
     assert ready.returncode == 0
-    assert ready.stdout == ("current: revision=079_001 state=HARDENED safe=true\n")
+    assert ready.stdout == ("current: revision=080_001 state=HARDENED safe=true\n")
     output = "".join(
         process.stdout + process.stderr
         for process in (upgraded, current, bootstrapped, validated, ready)

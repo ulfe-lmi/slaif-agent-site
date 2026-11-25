@@ -906,7 +906,7 @@ async def test_discard_migration_round_trip(
         )
 
     # Final one-way re-upgrade to the head: lands the real current head
-    # (079) with the normal reconcile.
+    # (080) with the normal reconcile.
     await run_migration(
         dsn, expected_database=database.name, operation="upgrade", revision="head"
     )
@@ -914,7 +914,7 @@ async def test_discard_migration_round_trip(
     async with owner_connection(dsn, expected_database=database.name) as owner:
         assert (
             await owner.fetchval("SELECT version_num FROM control.alembic_version")
-            == "079_001"
+            == "080_001"
         )
         assert (
             await owner.fetchval(

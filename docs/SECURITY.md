@@ -370,3 +370,59 @@ Alembic downgrade body is an unconditional explicit refusal for direct
 migration invocations. The 078 and 077 downgrade guards remain earlier
 lines of defense, and downgrade never deletes durable completion,
 manifest, audit, or idempotency history.
+
+The heading row effect boundary (revision `080_001`, increment
+083/13) is the bounded same-transaction row-effect pilot for the
+single existing heading-props edit case. A successful changed
+heading-props write through either trusted editorial boundary — the
+062 Agent component update definer or the 060 Editor composition
+node update definer — records exactly one durable product-owned row
+effect in `audit.heading_row_effect` in the SAME transaction as the
+COW write, the family audit row, and the idempotency completion. The
+images are captured by the definer itself inside one statement: a
+`prior` CTE holds the pre-write row and the data-modifying `post`
+CTE performs the byte-identical original write with `RETURNING`, so
+the recorded before image is the exact DML pre-image, not a service
+read or a response value. The evidence is versioned
+(`heading-row-effect/v1`) and bound to the server operation id
+(primary key), the actual mutation family, the site/workspace/
+component, the exact `+1` version pair, and the object-typed props
+images bounded by the existing composition 16384-octet ceiling. An
+Agent fact is bound to the capability; a Human-on-Agent Editor fact
+is bound to the human principal RESOLVED FROM the actual in-progress
+human-editor idempotency reservation row, never from caller-supplied
+values. The table is owner-owned with no PUBLIC or role access:
+every runtime role is denied SELECT, INSERT, UPDATE and DELETE, and
+the owner-only recorder
+`control.slaif_heading_row_effect_record` has no role EXECUTE at
+all. Before any effect the recorder requires the exact COW session
+context (the `app.session_id` / `app.operation_id` GUCs naming the
+same workspace and operation), the claimed after image matching the
+current session view of the row, and an in-progress same-operation
+family-ledger reservation; a genuine no-effect completion records
+no row, a replay returns the stored body before completion without
+re-running the definer, and a rolled-back request leaves no row.
+The Heading case therefore completes only inside a COW session that
+holds its in-progress same-operation idempotency reservation: both
+production HTTP paths always begin their reservation before the
+definer call, so no supported flow is affected, while a direct
+definer invocation without that reservation fails closed for the
+Heading case. Non-heading writes keep the pre-080 definer bodies
+byte-for-byte (the pilot observes and records; it does not harden
+the Editor's historical no-version-predicate body or change the
+Agent's existing version guard), and the re-emitted writer
+definers keep the exact existing ownership and EXECUTE grant
+surface. This is a bounded pilot: there is no public history
+endpoint, no retroactive backfill (pre-080 heading writes are
+unknown, not proof of no effect), no global lock or isolation
+change, no new dependency, and no foundation change. While the
+durable table exists, downgrade is refused before effects for any
+head retaining the 080 surface (current or later): the operator
+path refuses before the readiness PENDING marker, before the
+content COW disable, and before any migration step, and the
+080_001 Alembic downgrade body
+(`HEADING_ROW_EFFECT_DOWNGRADE_UNSUPPORTED`, P0001) is an
+unconditional explicit refusal for direct migration invocations.
+The 079, 078 and 077 downgrade guards remain earlier lines of
+defense, and downgrade never deletes durable row-effect,
+completion, manifest, audit, or idempotency history.

@@ -710,3 +710,69 @@ docs, replacing `157.0.8103.78` (CfT revision `1717349`). Full PostgreSQL 14..18
 qualification is required and is reported as the repository CI
 executes the full children; acceptance state is tracked in the OAP
 ledgers, and nothing here claims D5, MVP, or product completion.
+
+## Exact heading-props row effects (083/13)
+
+The heading row effect pilot (083/13, revision `080_001`) adds the
+focused `test_heading_row_effects.py` module with seven real native
+tests on the disposable cluster, both HTTP paths at real login
+boundaries and the real freeze/accept/discard lifecycles:
+
+- Agent path (062): two same-resource writes under different
+  operations retain both transitions with exact chaining (the first
+  write's before image is the canonical row at first touch, the
+  second's before image is the first's after image and version). The
+  HTTP-level no-effect completion (identical props) records the
+  trusted `no_effect` disposition and no fact. A real first write
+  followed by a late request at the stale version is refused, rolls
+  back, and leaves no fact and no completion; the corrected retry
+  records exactly one fact.
+- Editor path (060, Human-on-Agent): the real logged-in PATCH
+  records a fact whose human principal is resolved from the
+  in-progress human-editor reservation; the wire keeps the
+  historical constant `row_version=1`; a replay returns the stored
+  body before completion and never re-runs the definer, so it adds
+  no second fact.
+- First-touch control (item 3): two same-site workspaces both commit
+  first touches before the winner is accepted; the winner publishes
+  through REAL freeze + human accept; the four distinct sources
+  (canonical at first touch, W1's earlier value, W2's published
+  value, W1's actual new value) are each observed through a
+  supported read path; the typed public conflict is exactly one
+  `BASE_ROW_CHANGED` on the component; and both W1 transitions keep
+  their exact facts. The second write's DML pre-image is proven to
+  be the workspace's own effective COW row at write time — neither
+  the concurrently published canonical row nor the session's
+  first-touch baseline (the pilot's recorded observation limit).
+- First-write race (item 3): the loser is paused exactly between the
+  deployed definer's pre-read and its UPDATE by faithfully replaying
+  the definer's own statements (the exact structural lock
+  statements, the pre-read, the exact version-guarded UPDATE) as the
+  real agent role in a real COW session; the sibling's real HTTP
+  first touch plus REAL freeze + human acceptance publishes; the
+  loser's stale-version UPDATE affects zero rows, the real definer
+  call is refused, no fact and no completion exist for the refused
+  attempts, and the corrected fresh write's before image is the
+  published row.
+- Attribution and isolation (item 4): same-resource sequential edits
+  chain exactly across families (Agent then Human-on-Agent);
+  cross-site denial is proven at BOTH real login boundaries (an
+  Agent capability bound to another site, and an Editor session
+  enrolled on another site) with no recorded effects; a Section
+  props write through the same Agent path completes normally and
+  records no fact (heading-props family only); the real freeze +
+  human discard lifecycle removes the pending COW rows (public
+  operations empty) while the committed facts remain; an old
+  workspace without facts is unknown (no synthetic history).
+- Authority and bounded format: every runtime role is denied the
+  facts table and the owner-only recorder at real logins (no role
+  EXECUTE at all); an owner call outside the trusted COW session
+  context is refused before any effect (no general-purpose fact
+  insert); a 16385-octet props image is refused by the table's own
+  CHECK (23514); and the downgrade ratchet refuses at the operator
+  level and at the direct-Alembic level, with the staged 079 head
+  proving the 079 body's own refusal still intact behind it.
+
+The module runs unfiltered as the eighth exact module path of the
+trusted mutation-completion (TC) command in the existing PostgreSQL
+14..18 Group B children, with no `-k` selection.
