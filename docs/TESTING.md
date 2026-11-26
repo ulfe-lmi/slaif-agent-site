@@ -714,7 +714,7 @@ ledgers, and nothing here claims D5, MVP, or product completion.
 ## Exact heading-props row effects (083/13)
 
 The heading row effect pilot (083/13, revision `080_001`) adds the
-focused `test_heading_row_effects.py` module with seven real native
+focused `test_heading_row_effects.py` module with twelve real native
 tests on the disposable cluster, both HTTP paths at real login
 boundaries and the real freeze/accept/discard lifecycles:
 
@@ -745,15 +745,78 @@ boundaries and the real freeze/accept/discard lifecycles:
   the concurrently published canonical row nor the session's
   first-touch baseline (the pilot's recorded observation limit).
 - First-write race (item 3): the loser is paused exactly between the
-  deployed definer's pre-read and its UPDATE by faithfully replaying
-  the definer's own statements (the exact structural lock
-  statements, the pre-read, the exact version-guarded UPDATE) as the
-  real agent role in a real COW session; the sibling's real HTTP
-  first touch plus REAL freeze + human acceptance publishes; the
-  loser's stale-version UPDATE affects zero rows, the real definer
-  call is refused, no fact and no completion exist for the refused
-  attempts, and the corrected fresh write's before image is the
-  published row.
+  deployed definer's in-command read and its UPDATE by a
+  fixture-only wrapper parked INSIDE the real
+  `slaif_agent_component_validate_design` call (the wrapper is
+  reinstalled from the live catalog and the original definition is
+  restored on every exit, so the real command runs unchanged apart
+  from the rendezvous). For the Agent path the observed parked
+  backend is the request's own runtime login in the fixture
+  database, with the definer's workspace structural locks (shared
+  workspace key + exclusive page-structure key) already granted
+  before the in-command read while the rendezvous request is
+  pending. The Human-on-Agent Editor path takes no page-structure
+  lock, but its request's state-changing workspace assert holds
+  the workspace advisory key exclusively and its idempotency
+  INSERT holds FOR KEY SHARE on the shared site row through the
+  `control.human_editor_idempotency.site_id` reference to
+  `control.site`. In the interval the sibling workspace's real
+  HTTP first touch plus a REAL freeze are started, and the test
+  observes the RESOLVED order instead of any fixture deadline: the
+  parked command's transaction-scoped site-row lock (the Agent's
+  pre-park FOR SHARE from the 039 require-cow-site recheck inside
+  the pre-validator authorize; the Editor's FK row lock) blocks
+  the freeze's real materializer at its site-row FOR UPDATE, so
+  the test observes the exact native blocking edge (the freeze's
+  reviewer backend waiting on the parked transaction id), proves
+  the canonical row is still the pre-publication row, releases
+  the real command and observes its ACTUAL outcome: the Agent's
+  version-guarded UPDATE SUCCEEDS (200) against the
+  pre-publication row - the "stale" expectation succeeds because
+  the DML is deterministically ordered before the sibling
+  publication - and the Editor's unversioned write lands with
+  the constant wire `row_version=1`. Only then do the unblocked
+  freeze and the real acceptance publish B, and each workspace's
+  typed public surface records exactly one `BASE_ROW_CHANGED`
+  conflict against the parked operation; the Agent's single fact
+  keeps the pre-publication image pair (before = A at version 1,
+  after = its merged value at version 2) and the Editor's single
+  fact keeps the actual same-statement pre-publication image
+  pair, while the effective COW view keeps the workspace's own
+  merged value at its own version although the base moved to the
+  published B. The ten-second product lock budget is not the
+  oracle: only the observed native lock edge or the completed
+  real job decides.
+- Commit-time completion binding (item 1): a direct real-role
+  definer invocation that records a Heading fact without a genuine
+  completed 078 completion is refused at the actual COMMIT by the
+  deferred constraint check (P0001) and the bounded observation
+  verifies no residue — no fact, no staged COW change, no
+  completion, no reservation — while the amended authority test's
+  positive path performs the real 13-argument completion in the
+  same COW session and commits.
+- Rollback after a real write and evidence insertion (item 2):
+  through each actual HTTP mutation envelope a fixture-only
+  AFTER INSERT journal barrier witnesses, in the SAME transaction
+  and before a bounded rendezvous, that the heading fact is
+  staged and its after image matches the staged COW row; it then
+  forces a real late completion failure (Agent envelope, HTTP
+  503) or a real task cancellation (Editor envelope). The exact
+  durable state (view row, pending operations, facts, family
+  audit, completion journal, reservation) is compared before and
+  after and is byte-for-byte unchanged, an independent
+  connection proves the staged rows invisible before the
+  transaction ends, and the same body + idempotency key retry
+  succeeds with exactly one completed fact and one family event;
+  an ordinary retry of the successful result remains inert.
+- Pilot scope boundaries (item 4): an unchanged-props Editor
+  write and a structural-only Editor write (the order key — the
+  seeded heading sits in its Section's only allowed slot, so a
+  slot change is outside the supported domain here) keep their
+  legacy behavior and record no fact; a mixed props+structural
+  change records the exact props pair (and claims nothing about
+  the structural history); and the ordinary Human workspace path
+  keeps its existing behavior byte-for-byte and records nothing.
 - Attribution and isolation (item 4): same-resource sequential edits
   chain exactly across families (Agent then Human-on-Agent);
   cross-site denial is proven at BOTH real login boundaries (an

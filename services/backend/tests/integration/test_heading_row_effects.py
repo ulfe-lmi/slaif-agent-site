@@ -1,4 +1,4 @@
-"""083-13-a: bounded heading-props row effect pilot (migration 080_001).
+"""083-13-a/b: bounded heading-props row effect pilot (migration 080_001).
 
 Real runtime evidence for the actual mutation boundary of a successful
 changed heading-props write through both trusted editorial surfaces:
@@ -14,29 +14,51 @@ surfaces only: the canonical content projection (view read without a
 COW session GUC), the real HTTP records, the typed public conflict and
 operation inspection (``CowReviewer``) and the product-owned
 journals/control state.  No private foundation storage reads and no
-owner writes to canonical rows anywhere in this module.
+owner writes to canonical rows anywhere in this module.  The 083-13-b
+additions instrument the real boundary with fixture-only trusted test
+objects (an AFTER INSERT journal barrier with a same-transaction
+staged-effect witness, and a design-validator wrapper that parks the
+named request at its real call) that are installed and removed inside
+each test; they add no product surface, no grant and no production
+test interface.
 
 Pilot boundary (explicit, preserved by test):
-- only ``Heading`` ``props`` writes through the two definers record a
-  fact; every other component type and mutation family keeps the
-  pre-080 behavior and records nothing;
+- only ``Heading`` writes whose props actually changed in the write
+  record a fact, decided on the actual same-statement image pair (the
+  Agent definer's own no-effect short-circuit; the Editor's captured
+  ``prior``/``post`` pair, scoped to the session's own
+  ``actor_type = 'AGENT'`` workspace); unchanged-props and
+  structural-only Editor writes, every other component type, every
+  other mutation family and the ordinary Human workspace path keep
+  their legacy behavior and record nothing;
+- no fact commits unbound: the deferred constraint trigger refuses a
+  missing or mismatched 078 completion at the real commit boundary
+  and rolls back the staged COW change and the fact together (proved
+  by a real runtime-role transaction and by the late-failure and
+  cancellation rollbacks of the real HTTP envelopes);
 - the Editor write contract is observed, not hardened (no version
   predicate): a stale Editor write is NOT refused by the boundary, and
-  its fact still captures the exact same-statement DML image;
+  its fact still captures the exact DML image in the real COW view,
+  even when the earlier in-command read saw another version;
 - the Agent row-version guard is not by itself proof of all old-row
   bytes (a concurrent committed change between the pre-read and the
   UPDATE is rejected, but the guard proves the version, not the full
   pre-image); the exact pre-image comes from the same-statement
-  ``prior`` capture;
+  ``prior``/``post`` capture under the statement's shared snapshot;
 - historical heading writes (pre-080) are unknown, never backfilled:
   an old workspace without facts proves nothing about its history.
 """
 
 from __future__ import annotations
 
+import asyncio
 import importlib
 import json
+import re
+import time
 import uuid
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -116,6 +138,494 @@ _DENY_ROLES = (
     "slaif_media",
     "slaif_gc",
 )
+# ---------------------------------------------------------------------------
+# 083-13-b fixture-only instrumentation (trusted test objects, installed
+# and removed inside each test; no product surface, no grant change, no
+# production test interface)
+# ---------------------------------------------------------------------------
+
+_BARRIER_LOCK_KEY = 8313105
+_RACE_LOCK_KEY = 8313106
+_RENDEZVOUS_TIMEOUT_S = 30.0
+_POLL_S = 0.05
+
+_BARRIER_TABLE_SQL = """
+CREATE TABLE control.h13b_completion_barrier (
+    workspace_id uuid PRIMARY KEY,
+    mode text NOT NULL CHECK (mode IN ('fail', 'cancel'))
+)
+"""
+
+_BARRIER_FUNCTION_SQL = (
+    """
+CREATE FUNCTION control.slaif_h13b_completion_barrier()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog AS $fn$
+DECLARE
+    h13b_mode text;
+    staged_props jsonb;
+    staged_rv integer;
+    fact_after jsonb;
+BEGIN
+    SELECT b.mode INTO h13b_mode
+    FROM control.h13b_completion_barrier b
+    WHERE b.workspace_id = NEW.workspace_id;
+    IF h13b_mode IS NULL THEN
+        RETURN NEW;
+    END IF;
+    -- Same-transaction witness, before the rendezvous: the heading fact
+    -- for this operation is staged, and its after image matches the
+    -- staged COW row this transaction itself sees.
+    SELECT f.props_after INTO fact_after
+    FROM audit.heading_row_effect f
+    WHERE f.operation_id = NEW.operation_id;
+    IF fact_after IS NULL THEN
+        RAISE EXCEPTION 'H13B_BARRIER_NO_STAGED_FACT'
+            USING ERRCODE = 'P0001';
+    END IF;
+    SELECT c.props, c.row_version INTO staged_props, staged_rv
+    FROM content.page_composition c
+    WHERE c.id = NEW.resource_id;
+    IF staged_rv IS NULL OR staged_props IS DISTINCT FROM fact_after THEN
+        RAISE EXCEPTION 'H13B_BARRIER_NO_STAGED_ROW'
+            USING ERRCODE = 'P0001';
+    END IF;
+    PERFORM pg_advisory_xact_lock("""
+    + str(_BARRIER_LOCK_KEY)
+    + """);
+    IF h13b_mode = 'fail' THEN
+        RAISE EXCEPTION 'H13B_COMPLETION_LATE_FAILURE'
+            USING ERRCODE = 'P0001';
+    END IF;
+    RETURN NEW;
+END
+$fn$
+"""
+)
+
+_BARRIER_TRIGGER_SQL = """
+CREATE TRIGGER h13b_completion_barrier_trg
+AFTER INSERT ON audit.mutation_completion
+FOR EACH ROW EXECUTE FUNCTION control.slaif_h13b_completion_barrier()
+"""
+
+_BARRIER_DROP_SQL = (
+    "DROP TRIGGER h13b_completion_barrier_trg ON audit.mutation_completion",
+    "DROP FUNCTION control.slaif_h13b_completion_barrier()",
+    "DROP TABLE control.h13b_completion_barrier",
+)
+
+
+@asynccontextmanager
+async def _h13b_completion_barrier(
+    database: AgentSiteDatabase, workspace_id: UUID, mode: str
+) -> AsyncIterator[None]:
+    """Install the trusted test-only AFTER INSERT journal barrier.
+
+    Owner objects only, committed before the request, removed in
+    ``finally`` even on test failure.  With no barrier row for the
+    workspace the trigger is a no-op, so the SAME app can serve the
+    exactly-once retry.
+    """
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        async with owner.transaction():
+            await owner.execute(_BARRIER_TABLE_SQL)
+            await owner.execute(_BARRIER_FUNCTION_SQL)
+            await owner.execute(_BARRIER_TRIGGER_SQL)
+            await owner.execute(
+                "INSERT INTO control.h13b_completion_barrier"
+                " (workspace_id, mode) VALUES ($1, $2)",
+                workspace_id,
+                mode,
+            )
+    try:
+        yield
+    finally:
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            async with owner.transaction():
+                for statement in _BARRIER_DROP_SQL:
+                    await owner.execute(statement)
+
+
+@asynccontextmanager
+async def _h13b_lock_owner(database: AgentSiteDatabase, key: int) -> AsyncIterator[Any]:
+    """Hold the rendezvous session lock on an owner connection.
+
+    Yields the holding connection; the test releases the lock explicitly
+    at the failure point.  The final unlock is idempotent cleanup for
+    leak paths (a session lock also dies with the connection).
+    """
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        await owner.fetchval("SELECT pg_advisory_lock($1)", key)
+        try:
+            yield owner
+        finally:
+            await owner.fetchval("SELECT pg_advisory_unlock($1)", key)
+
+
+async def _h13b_wait_parked(database: AgentSiteDatabase, key: int, login: str) -> int:
+    """Bounded, real-state wait for the named runtime backend to park at
+    the rendezvous.  The pending lock request can only appear AFTER the
+    instrumented statement has executed, so this is deterministic
+    positioning, not a sleep oracle.  A single-bigint advisory key maps
+    in ``pg_locks`` to ``classid`` = high 32 bits, ``objid`` = low 32
+    bits, ``objsubid`` = 1, and advisory locks are local per database.
+    """
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        deadline = time.monotonic() + _RENDEZVOUS_TIMEOUT_S
+        while True:
+            pid = await owner.fetchval(
+                "SELECT l.pid"
+                " FROM pg_catalog.pg_locks l"
+                " JOIN pg_catalog.pg_stat_activity a ON a.pid = l.pid"
+                " WHERE l.classid = 0"
+                " AND l.objid = $1"
+                " AND l.objsubid = 1"
+                " AND NOT l.granted"
+                " AND l.database = ("
+                "   SELECT oid FROM pg_catalog.pg_database"
+                "   WHERE datname = current_database()"
+                " )"
+                " AND a.usename = $2"
+                " ORDER BY l.pid LIMIT 1",
+                key,
+                login,
+            )
+            if pid is not None:
+                return int(pid)
+            if time.monotonic() >= deadline:
+                raise AssertionError(
+                    f"h13b: the runtime backend for login {login!r} never "
+                    "parked at the rendezvous"
+                )
+            await asyncio.sleep(_POLL_S)
+
+
+async def _h13b_parked_lock_order(
+    database: AgentSiteDatabase,
+    pid: int,
+    *,
+    workspace_id: UUID,
+    site_id: UUID,
+    park_key: int,
+) -> tuple[int, str | None, int, int]:
+    """Granted workspace locks + pending rendezvous request of the parked
+    backend (owner view; advisory keys are database-local).
+
+    Returns (workspace_granted, workspace_mode, page_granted,
+    park_pending).  The Agent definer's structural lock (the 050 body's
+    exact statements) takes the workspace key in shared mode plus the
+    page-structure key in exclusive mode before the in-command read.  The
+    Editor definer itself takes no structural lock, but the Human-on-Agent
+    request's workspace assert (state-changing) holds the same workspace
+    key in exclusive mode, so the parked Editor backend shows a workspace
+    lock but no page-structure lock.
+    """
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        sql = (
+            """
+            WITH k AS (
+                SELECT hashtextextended($2::text, 280) AS shared_key,
+                       hashtextextended($2::text || chr(58) || $3::text
+                           || chr(58) || 'page-structure', 994) AS page_key,
+                       """
+            + str(park_key)
+            + """::bigint AS park_key
+            )
+            SELECT
+                count(*) FILTER (
+                    WHERE l.granted AND l.objsubid = 1
+                      AND l.classid = ((k.shared_key >> 32) & 4294967295)::oid
+                      AND l.objid = (k.shared_key & 4294967295)::oid
+                ) AS workspace_granted,
+                max(l.mode) FILTER (
+                    WHERE l.granted AND l.objsubid = 1
+                      AND l.classid = ((k.shared_key >> 32) & 4294967295)::oid
+                      AND l.objid = (k.shared_key & 4294967295)::oid
+                ) AS workspace_mode,
+                count(*) FILTER (
+                    WHERE l.granted AND l.objsubid = 1
+                      AND l.classid = ((k.page_key >> 32) & 4294967295)::oid
+                      AND l.objid = (k.page_key & 4294967295)::oid
+                ) AS page_granted,
+                count(*) FILTER (
+                    WHERE NOT l.granted AND l.objsubid = 1
+                      AND l.classid = ((k.park_key >> 32) & 4294967295)::oid
+                      AND l.objid = (k.park_key & 4294967295)::oid
+                ) AS park_pending
+            FROM pg_locks l, k
+            WHERE l.pid = $1
+              AND l.database = (
+                  SELECT oid FROM pg_catalog.pg_database
+                  WHERE datname = current_database()
+              )
+            """
+        )
+        row = await owner.fetchrow(sql, pid, str(workspace_id), str(site_id))
+    return (
+        int(row["workspace_granted"]),
+        str(row["workspace_mode"]) if row["workspace_mode"] is not None else None,
+        int(row["page_granted"]),
+        int(row["park_pending"]),
+    )
+
+
+async def _h13b_parked_xid(database: AgentSiteDatabase, pid: int) -> int:
+    """The parked backend's own open transaction id (owner view of its
+    granted ``transactionid`` ExclusiveLock row)."""
+
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        xid = await owner.fetchval(
+            "SELECT l.transactionid"
+            " FROM pg_catalog.pg_locks l"
+            " WHERE l.pid = $1"
+            " AND l.locktype = 'transactionid'"
+            " AND l.granted"
+            " AND l.mode = 'ExclusiveLock'",
+            pid,
+        )
+    assert xid is not None, "parked backend has no open transaction"
+    return int(xid)
+
+
+async def _h13b_resolved_order(
+    database: AgentSiteDatabase,
+    parked_pid: int,
+    sibling_task: asyncio.Task[tuple[Any, UUID]],
+    *,
+    reviewer_login: str,
+) -> tuple[str, int | None]:
+    """Bounded real-state observation of the RESOLVED order between the
+    parked command and the sibling's real freeze job (the materializer
+    blocking statement is the same on both routes).
+
+    Returns exactly one of:
+    - ``("reviewer-waiting", reviewer_pid)``: the review job's real
+      reviewer backend shows the exact native blocking edge on the
+      parked backend's open transaction (a non-granted
+      ``transactionid`` ShareLock on the parked xid, the native display
+      of the reviewer's blocked site-row ``FOR UPDATE`` in the 076
+      workspace-state materializer).  The reviewer can only proceed
+      once the parked command's transaction ends, so the command's
+      DML + commit is deterministically ordered BEFORE the blocked
+      statement and every publication after it.
+    - ``("published-first", None)``: the review job's task completed
+      while the command was still parked: no wait edge exists on that
+      route, so the job's effect is ordered BEFORE the released
+      command's DML.
+
+    The ten-second product lock budget is deliberately NOT the oracle:
+    only the observed lock edge or the completed real job decides.
+    """
+
+    parked_xid = await _h13b_parked_xid(database, parked_pid)
+    deadline = time.monotonic() + _RENDEZVOUS_TIMEOUT_S
+    while True:
+        if sibling_task.done():
+            return "published-first", None
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            reviewer_pid = await owner.fetchval(
+                # transactionid lock rows carry database = 0 in
+                # pg_locks, so the database must not be filtered.
+                "SELECT l.pid"
+                " FROM pg_catalog.pg_locks l"
+                " JOIN pg_catalog.pg_stat_activity a ON a.pid = l.pid"
+                " WHERE l.locktype = 'transactionid'"
+                " AND l.mode = 'ShareLock'"
+                " AND NOT l.granted"
+                " AND l.transactionid = $1"
+                " AND a.usename = $2"
+                " ORDER BY l.pid LIMIT 1",
+                parked_xid,
+                reviewer_login,
+            )
+        if reviewer_pid is not None:
+            return "reviewer-waiting", int(reviewer_pid)
+        if time.monotonic() >= deadline:
+            raise AssertionError(
+                "h13b: neither the exact reviewer blocking edge on the "
+                f"parked xid {parked_xid} nor the real acceptance "
+                "completion became observable within the bounded wait"
+            )
+        await asyncio.sleep(_POLL_S)
+
+
+async def _h13b_durable_state(
+    database: AgentSiteDatabase,
+    *,
+    workspace_id: UUID,
+    heading: UUID,
+    family: str,
+) -> dict[str, Any]:
+    """Owner snapshot of the exact durable states a rollback must
+    restore: the view row, the public pending operations, the heading
+    facts, the family reservation, the family audit and the completion
+    journal."""
+    if family == "agent":
+        reservation_sql = (
+            "SELECT row_to_json(t)::text FROM control.agent_idempotency t"
+            " WHERE t.workspace_id = $1 ORDER BY 1"
+        )
+        audit_sql = (
+            "SELECT row_to_json(t)::text FROM audit.agent_mutation t"
+            " WHERE t.workspace_id = $1 ORDER BY 1"
+        )
+    else:
+        reservation_sql = (
+            "SELECT row_to_json(t)::text"
+            " FROM control.human_editor_idempotency t"
+            " WHERE t.workspace_id = $1 ORDER BY 1"
+        )
+        audit_sql = (
+            "SELECT row_to_json(t)::text FROM audit.human_editor_mutation t"
+            " WHERE t.workspace_id = $1 ORDER BY 1"
+        )
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        view = await owner.fetchrow(
+            "SELECT props::text, row_version FROM content.page_composition"
+            " WHERE id = $1",
+            heading,
+        )
+        reservations = tuple(
+            str(r[0]) for r in await owner.fetch(reservation_sql, workspace_id)
+        )
+        audit = tuple(str(r[0]) for r in await owner.fetch(audit_sql, workspace_id))
+        journal = tuple(
+            str(r[0])
+            for r in await owner.fetch(
+                "SELECT row_to_json(t)::text FROM audit.mutation_completion t"
+                " WHERE t.workspace_id = $1 ORDER BY 1",
+                workspace_id,
+            )
+        )
+        facts = tuple(
+            str(r[0])
+            for r in await owner.fetch(
+                "SELECT row_to_json(t)::text FROM audit.heading_row_effect t"
+                " WHERE t.component_id = $1 ORDER BY 1",
+                heading,
+            )
+        )
+    operations = await _public_operations(database, workspace_id)
+    return {
+        "view": (view["props"], view["row_version"]),
+        "reservations": reservations,
+        "audit": audit,
+        "journal": journal,
+        "facts": facts,
+        "operations": tuple(sorted(str(op) for op in operations)),
+    }
+
+
+_VALIDATOR_REGPROC = (
+    "content.slaif_agent_component_validate_design"
+    "(uuid,uuid,uuid,text,text,uuid,text,jsonb,jsonb,boolean)"
+)
+
+
+def _race_park_block(workspace_id: UUID, heading: UUID) -> str:
+    """The fixture-only park inserted after the real validator's BEGIN:
+    it preserves the real call and parks the named workspace's exact
+    request at the design-validator boundary (after the in-command read,
+    before the view update) until the test releases the rendezvous."""
+    return f"""
+    IF current_setting('app.session_id', true) = '{workspace_id}'
+       AND p_node_id = '{heading}' THEN
+        PERFORM pg_advisory_xact_lock({_RACE_LOCK_KEY});
+    END IF;
+"""
+
+
+@asynccontextmanager
+async def _h13b_race_park(
+    database: AgentSiteDatabase, *, workspace_id: UUID, heading: UUID
+) -> AsyncIterator[None]:
+    """Install the fixture-only wrapper around the REAL design validator.
+
+    The original definition is fetched from the live catalog, the park
+    block is inserted immediately after its BEGIN, and the original
+    bytes are re-installed in ``finally`` (ownership and grants are
+    unchanged: the owner re-emits its own function).
+    """
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        original_ddl = await owner.fetchval(
+            "SELECT pg_get_functiondef($1::regprocedure)", _VALIDATOR_REGPROC
+        )
+        original_body = await owner.fetchval(
+            "SELECT p.prosrc"
+            " FROM pg_proc p"
+            " JOIN pg_namespace n ON n.oid = p.pronamespace"
+            " WHERE n.nspname = 'content'"
+            " AND p.proname = 'slaif_agent_component_validate_design'"
+        )
+        assert original_ddl is not None, "validator definition missing"
+        assert original_body is not None, "validator body missing"
+        # The stored body keeps its original indentation, so anchor on a
+        # line that is exactly BEGIN (allowing leading/trailing blanks)
+        # and insert the park after that line's newline.
+        match = re.search(r"^[ \t]*BEGIN[ \t]*\r?\n", original_body, re.MULTILINE)
+        assert match is not None, "validator body BEGIN anchor not found"
+        insert_at = match.end()
+        parked_body = (
+            original_body[:insert_at]
+            + _race_park_block(workspace_id, heading)
+            + original_body[insert_at:]
+        )
+        # pg_get_functiondef re-quotes the body with its own tag, so the
+        # stored prosrc is a verbatim substring of the DDL; swap the body
+        # in place (independent of whatever quote tag is emitted).
+        if original_ddl.count(original_body) != 1:
+            raise AssertionError(
+                "validator body not found exactly once in function DDL"
+            )
+        await owner.execute(original_ddl.replace(original_body, parked_body, 1) + ";")
+    try:
+        yield
+    finally:
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            await owner.execute(
+                original_ddl.replace(
+                    "CREATE FUNCTION ", "CREATE OR REPLACE FUNCTION ", 1
+                )
+            )
+
+
+async def _backend_info(
+    database: AgentSiteDatabase, pid: int
+) -> tuple[str, str] | None:
+    """Owner-visible identity of one backend (state/query are redacted
+    for foreign backends, so the identity proof uses the fixture
+    administrator's owner connection)."""
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        row = await owner.fetchrow(
+            "SELECT datname, usename FROM pg_catalog.pg_stat_activity WHERE pid = $1",
+            pid,
+        )
+    if row is None:
+        return None
+    return str(row["datname"]), str(row["usename"])
 
 
 # ---------------------------------------------------------------------------
@@ -208,12 +718,31 @@ async def _journal_rows(
     return [dict(row) for row in rows]
 
 
-def _agent_settings(database: AgentSiteDatabase) -> AgentDatabaseSettings:
+# The real-command race tests hold one live request at its real design
+# validator across the sibling REAL freeze and the real acceptance up
+# to the resolved-order observation point (the exact native blocking
+# edge, or the acceptance completion on routes without that edge).
+# The race test apps are given the maximum product-allowed command and
+# lock budgets (product defaults unchanged) so the fixture pause
+# cannot cancel the command before its UPDATE runs after release; the
+# park window is additionally guarded by a wall-clock assertion.
+_RACE_PARK_BUDGET = {
+    "command_timeout_seconds": 30,
+    "statement_timeout_ms": 30000,
+    "lock_timeout_ms": 10000,
+    "idle_transaction_timeout_ms": 30000,
+}
+_RACE_PARK_BUDGET_SECONDS = 8.0
+
+
+def _agent_settings(
+    database: AgentSiteDatabase, *, race_park: bool = False
+) -> AgentDatabaseSettings:
     login, password = database.credentials["slaif_agent_runtime"]
     host = quote(str(database.connection_parameters["host"]), safe="[]:.")
     if ":" in host and not host.startswith("["):
         host = f"[{host}]"
-    return AgentDatabaseSettings(
+    settings = AgentDatabaseSettings(
         mode=AgentDatabaseMode.TEST,
         dsn=SecretStr(
             f"postgresql://{quote(login, safe='')}:{quote(password, safe='')}@"
@@ -226,6 +755,9 @@ def _agent_settings(database: AgentSiteDatabase) -> AgentDatabaseSettings:
         pool_max_size=2,
         application_name="slaif-083-13a-heading-agent",
     )
+    if race_park:
+        settings = settings.model_copy(update=dict(_RACE_PARK_BUDGET))
+    return settings
 
 
 def _control_settings(database: AgentSiteDatabase) -> ControlDatabaseSettings:
@@ -248,12 +780,14 @@ def _control_settings(database: AgentSiteDatabase) -> ControlDatabaseSettings:
     )
 
 
-def _editor_db_settings(database: AgentSiteDatabase) -> EditorDatabaseSettings:
+def _editor_db_settings(
+    database: AgentSiteDatabase, *, race_park: bool = False
+) -> EditorDatabaseSettings:
     login, password = database.credentials["slaif_editor_runtime"]
     host = quote(str(database.connection_parameters["host"]), safe="[]:.")
     if ":" in host and not host.startswith("["):
         host = f"[{host}]"
-    return EditorDatabaseSettings(
+    settings = EditorDatabaseSettings(
         mode=EditorDatabaseMode.TEST,
         dsn=SecretStr(
             f"postgresql://{quote(login, safe='')}:{quote(password, safe='')}@"
@@ -266,6 +800,9 @@ def _editor_db_settings(database: AgentSiteDatabase) -> EditorDatabaseSettings:
         pool_max_size=2,
         application_name="slaif-083-13a-heading-editor",
     )
+    if race_park:
+        settings = settings.model_copy(update=dict(_RACE_PARK_BUDGET))
+    return settings
 
 
 async def _agent_patch(
@@ -772,22 +1309,22 @@ async def _structural_locks(cow: Any, workspace_id: UUID, site_id: UUID) -> None
 
 
 @pytest.mark.asyncio
-async def test_first_write_race_at_statement_boundary(
+async def test_agent_first_write_race_real_command(
     agent_site_database: AgentSiteDatabase, tmp_path: Path
 ) -> None:
-    """Item 3 separate race: the loser is paused exactly between the
-    definer's pre-read and its UPDATE.  A live HTTP request cannot
-    pause inside its definer, so the loser is reproduced by faithfully
-    replaying the deployed definer's own statements (062
-    ``slaif_agent_component_update``) as the real ``slaif_agent_runtime``
-    role in real COW sessions: the exact structural lock statements,
-    the exact pre-read, then the exact version-guarded UPDATE - with
-    the sibling's real first touch plus REAL freeze + human acceptance
-    interleaved in between.  The refused attempts prove no effect and
-    no false facts; the corrected fresh write records exactly once,
-    with its pre-image at the post-publish base; a third real publish
-    then yields the typed conflict attributed to that fresh operation.
-    """
+    """Item 3 (Agent): the ACTUAL supported Agent command is paused by a
+    fixture barrier exactly at its real design-validator call - after
+    the in-command read and before the view update - while the sibling
+    workspace's REAL freeze is started.  The parked command's
+    pre-park FOR SHARE on the shared site row (the 039 require-cow-site
+    recheck inside the pre-validator authorize) blocks the freeze's
+    real reviewer materialization at its site-row FOR UPDATE: the test
+    observes that EXACT native blocking edge, proves the canonical is
+    still the pre-publication row, releases the real command and
+    observes its ACTUAL outcome (200 on the pre-publication row), then
+    lets the unblocked freeze and the real acceptance publish the
+    sibling value in the resolved order, with the typed public
+    conflict and the retained before/after facts asserted exactly."""
 
     database = agent_site_database
     media_root = tmp_path / "media"
@@ -804,199 +1341,561 @@ async def test_first_write_race_at_statement_boundary(
         assert A["row_version"] == 1
 
         async with owner_connection(
-            database.settings.resolved_owner_dsn(), expected_database=database.name
+            database.settings.resolved_owner_dsn(),
+            expected_database=database.name,
         ) as owner:
             token1 = await _new_capability(owner, ws1)
+            capability_id = await owner.fetchval(
+                "SELECT id FROM control.capability WHERE workspace_id = $1"
+                " ORDER BY created_at DESC LIMIT 1",
+                ws1,
+            )
             ws2, _cap2 = await _create_workspace(
-                owner, site_id, delegator_id, "13a race W2"
+                owner, site_id, delegator_id, "13b race W2"
             )
             token2 = await _new_capability(owner, ws2)
-            ws3, _cap3 = await _create_workspace(
-                owner, site_id, delegator_id, "13a race W3"
-            )
-            token3 = await _new_capability(owner, ws3)
 
-        # --- PAUSE POINT: W1's pre-read image at the definer boundary.
-        op_pre = uuid.uuid4()
+        app = create_agent_app(
+            settings=ServiceSettings.for_test(),
+            database_settings=_agent_settings(database, race_park=True),
+        )
+        async with app.router.lifespan_context(app):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app),
+                base_url="http://agent.test",
+                timeout=120,
+            ) as client:
+                async with _h13b_race_park(database, workspace_id=ws1, heading=heading):
+                    async with _h13b_lock_owner(database, _RACE_LOCK_KEY) as lock_owner:
+                        task = asyncio.create_task(
+                            client.patch(
+                                f"/api/agent/v1/components/{heading}",
+                                json={
+                                    "props": {"level": 2, "text": "W1stale"},
+                                    "expected_row_version": 1,
+                                },
+                                headers={
+                                    "Authorization": f"Bearer {token1}",
+                                    "Idempotency-Key": "13b-race-w1",
+                                },
+                            )
+                        )
+                        # The parked command's lock wait starts at its
+                        # validator arrival; the whole park-to-release
+                        # window must stay inside the park budget.
+                        park_clock = time.monotonic()
+                        login = database.credentials["slaif_agent_runtime"][0]
+                        parked_pid = await _h13b_wait_parked(
+                            database, _RACE_LOCK_KEY, login
+                        )
+                        # Observed ownership: the parked backend is the
+                        # request's own runtime connection in this
+                        # fixture database.
+                        info = await _backend_info(database, parked_pid)
+                        assert info is not None
+                        assert info == (database.name, login), info
+                        # Observed lock order: the definer's workspace
+                        # structural locks are already granted (taken
+                        # before the in-command read) while the request
+                        # waits at the validator rendezvous.
+                        (
+                            workspace,
+                            workspace_mode,
+                            page,
+                            pending,
+                        ) = await _h13b_parked_lock_order(
+                            database,
+                            parked_pid,
+                            workspace_id=ws1,
+                            site_id=site_id,
+                            park_key=_RACE_LOCK_KEY,
+                        )
+                        assert (workspace, workspace_mode, page, pending) == (
+                            1,
+                            "ShareLock",
+                            1,
+                            1,
+                        )
+                        # The in-command read is done (the validator
+                        # call ran on the rv-1 row) and the view update
+                        # has NOT run: the canonical row is still A.
+                        view_parked = await _canonical_projection(database, heading)
+                        assert (
+                            view_parked["props"],
+                            view_parked["row_version"],
+                        ) == (A["props"], 1)
+
+                        # The sibling's real first touch, then the
+                        # REAL freeze STARTED, not awaited: the
+                        # freeze's real reviewer materialization (the
+                        # 076 workspace-state SQL) takes the shared
+                        # site row FOR UPDATE, which the parked
+                        # command's pre-park FOR SHARE (the 039
+                        # slaif_agent_require_cow_site recheck, called
+                        # through the pre-validator authorize) holds
+                        # until the command's own transaction ends.
+                        r2 = await _agent_patch(
+                            database,
+                            token2,
+                            heading,
+                            {"level": 1, "text": "W2v2"},
+                            expected_row_version=1,
+                            idempotency_key="13b-race-w2",
+                        )
+                        assert r2.status_code == 200, r2.text
+                        t_freeze = time.monotonic()
+                        freeze_task = asyncio.create_task(
+                            _freeze_claim_run(
+                                database,
+                                workspace_id=ws2,
+                                site_id=site_id,
+                                delegator_id=delegator_id,
+                                pool=pool,
+                                claimant="13b-race-w2f",
+                            )
+                        )
+                        # Observe the RESOLVED order through the exact
+                        # native blocking edge: the parked command's
+                        # pre-park site-row FOR SHARE is held until
+                        # its own commit, so the freeze's blocked
+                        # reviewer statement (and every publication
+                        # after it) cannot precede the command's DML
+                        # on this route.
+                        (resolved_order, reviewer_pid) = await _h13b_resolved_order(
+                            database,
+                            parked_pid,
+                            freeze_task,
+                            reviewer_login=database.credentials["slaif_review_worker"][
+                                0
+                            ],
+                        )
+                        assert resolved_order == "reviewer-waiting", (
+                            resolved_order,
+                            reviewer_pid,
+                        )
+                        assert reviewer_pid is not None
+                        # The waiting backend is the freeze job's
+                        # real reviewer connection in this fixture
+                        # database.
+                        reviewer_info = await _backend_info(database, reviewer_pid)
+                        assert reviewer_info == (
+                            database.name,
+                            database.credentials["slaif_review_worker"][0],
+                        ), reviewer_info
+                        # The publication is still pending while the
+                        # freeze waits: the canonical row is A.
+                        view_blocked = await _canonical_projection(database, heading)
+                        assert (
+                            view_blocked["props"],
+                            view_blocked["row_version"],
+                        ) == (A["props"], 1)
+                        t_edge = time.monotonic()
+                        assert time.monotonic() - park_clock < (
+                            _RACE_PARK_BUDGET_SECONDS
+                        ), (
+                            "the fixture pause outlived the parked command "
+                            f"budget (r2={t_freeze - park_clock:.2f}s "
+                            f"freeze-to-edge={t_edge - t_freeze:.2f}s)"
+                        )
+
+                        # Release the park: the real command resumes,
+                        # its version-guarded UPDATE lands on the
+                        # pre-publication row, and only its COMMIT
+                        # unblocks the freeze's pending statement.
+                        assert (
+                            await lock_owner.fetchval(
+                                "SELECT pg_advisory_unlock($1)", _RACE_LOCK_KEY
+                            )
+                            is True
+                        )
+                        response = await task
+        assert response.status_code == 200, response.text
+        rec = response.json()
+        # The "stale" expectation SUCCEEDS: the resolved order proved
+        # above means its DML ran before the sibling publication, so
+        # the version guard matched the pre-publication row.
+        op1 = UUID(str(rec["operation_id"]))
+        assert rec["record"]["row_version"] == 2
+        assert rec["record"]["props"] == {"level": 2, "text": "W1stale"}
+
+        # The unblocked freeze now completes, and only then does the
+        # real acceptance publish B.
+        result2, _job2 = await freeze_task
+        assert result2.status == "SUCCEEDED", result2.error
+        result2a, _job2a = await _accept_claim_run(
+            database,
+            workspace_id=ws2,
+            delegator_id=delegator_id,
+            pool=pool,
+            claimant="13b-race-w2a",
+            boundary=boundary,
+        )
+        assert result2a.status == "SUCCEEDED", result2a.error
+        B = await _canonical_projection(database, heading)
+        assert B["props"] == {"level": 1, "text": "W2v2"}
+        assert B["row_version"] == 2
+
+        # The released command's exact durable evidence: one fact
+        # with the pre-publication image pair, one completed journal
+        # row, the committed reservation, exactly one public
+        # operation and the typed public conflict against the
+        # published base.
+        facts = await _heading_facts(database, heading, ws1)
+        assert len(facts) == 1
+        fact = facts[0]
+        assert fact["schema_version"] == _SCHEMA_VERSION
+        assert fact["family"] == "agent"
+        assert fact["mutation_kind"] == "heading_props"
+        assert fact["site_id"] == site_id
+        assert fact["workspace_id"] == ws1
+        assert fact["component_id"] == heading
+        assert fact["capability_id"] == capability_id
+        assert fact["human_user_id"] is None
+        assert fact["operation_id"] == op1
+        assert (fact["row_version_before"], fact["row_version_after"]) == (1, 2)
+        assert fact["props_before"] == A["props"]
+        assert fact["props_after"] == {"level": 2, "text": "W1stale"}
+        journal = await _journal_rows(database, op1)
+        assert len(journal) == 1
+        assert journal[0]["family"] == "agent"
+        assert journal[0]["resource_type"] == "composition_node"
+        assert journal[0]["resource_id"] == heading
+        assert journal[0]["disposition"] == "completed"
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(),
+            expected_database=database.name,
+        ) as owner:
+            reservations = await owner.fetchval(
+                "SELECT count(*) FROM control.agent_idempotency"
+                " WHERE workspace_id = $1",
+                ws1,
+            )
+        assert reservations == 1
+        # The COW view keeps the workspace's own value at its own
+        # version even though the base moved to the published B.
         agent_pool = await database.role_pool("slaif_agent_runtime")
         try:
             async with asyncpg_cow_session(
-                agent_pool, session_id=ws1, operation_id=op_pre
+                agent_pool,
+                session_id=ws1,
+                operation_id=uuid.uuid4(),
             ) as cow:
-                await _structural_locks(cow, ws1, site_id)
-                pre_row = dict(
-                    await cow.native.fetchrow(
-                        "SELECT c.* FROM content.page_composition c"
-                        " WHERE c.id = $1 AND c.site_id = $2",
-                        heading,
-                        site_id,
-                    )
+                row = await cow.native.fetchrow(
+                    "SELECT props, row_version"
+                    " FROM content.page_composition WHERE id = $1",
+                    heading,
                 )
-            assert pre_row is not None
-            if isinstance(pre_row.get("props"), str):
-                pre_row["props"] = json.loads(pre_row["props"])
-            assert pre_row["props"] == A["props"]
-            assert pre_row["row_version"] == 1
+        finally:
+            await agent_pool.close()
+        effective_props = row["props"]
+        if isinstance(effective_props, str):
+            effective_props = json.loads(effective_props)
+        assert effective_props == {"level": 2, "text": "W1stale"}
+        assert int(row["row_version"]) == 2
+        assert await _public_operations(database, ws1) == [op1]
+        conflicts = await _public_conflicts(database, ws1)
+        assert len(conflicts) == 1
+        assert conflicts[0]["conflict_kind"] == "BASE_ROW_CHANGED"
+        assert conflicts[0]["table_name"] == "page_composition"
+        assert conflicts[0]["primary_key"] == {"id": str(heading)}
+        assert UUID(str(conflicts[0]["operation_id"])) == op1
+    finally:
+        await pool.close()
 
-            # --- PAUSE: the sibling's real first touch, then a REAL
-            # freeze + human acceptance moves the canonical row.
-            r2 = await _agent_patch(
-                database,
-                token2,
-                heading,
-                {"level": 1, "text": "W2v2"},
-                expected_row_version=1,
-                idempotency_key="13a-race-w2",
-            )
-            assert r2.status_code == 200, r2.text
-            result2, _ = await _freeze_claim_run(
-                database,
-                workspace_id=ws2,
+
+@pytest.mark.asyncio
+async def test_editor_first_write_race_real_command(
+    agent_site_database: AgentSiteDatabase, tmp_path: Path
+) -> None:
+    """Item 3 (Human-on-Agent Editor): the ACTUAL supported Editor
+    command is paused by a fixture barrier exactly at its real
+    design-validator call - after the in-command read and before the
+    view update - while the sibling workspace's REAL freeze is
+    started.  The parked command's idempotency INSERT holds FOR KEY
+    SHARE on the shared site row (the 028
+    human_editor_idempotency.site_id reference to control.site), so
+    the freeze's real reviewer materialization is blocked at its
+    site-row FOR UPDATE: the test observes that EXACT native blocking
+    edge, proves the canonical is still the pre-publication row,
+    releases the real command and observes its ACTUAL outcome (200
+    with the unversioned wire contract on the pre-publication row),
+    then lets the unblocked freeze and the real acceptance publish
+    the sibling value in the resolved order, with the typed public
+    conflict and the retained pre-publication before/after facts
+    asserted exactly."""
+
+    database = agent_site_database
+    media_root = tmp_path / "media"
+    ids = await _seed_site(database, media_root=media_root, with_ops=False)
+    site_id: UUID = ids["site_id"]
+    delegator_id: UUID = ids["delegator_id"]
+    heading: UUID = ids["heading_id"]
+    page_id: UUID = ids["page_id"]
+    pool = await _worker_pool(database)
+    boundary = MediaBoundary(settings=_media_settings(database, media_root))
+    try:
+        A = await _canonical_projection(database, heading)
+        assert A["props"] == {"level": 1, "text": "Accept"}
+        assert A["row_version"] == 1
+
+        owner_pool = await database.role_pool("slaif_owner")
+        try:
+            ws_agent = await _create_agent_workspace(
+                owner_pool,
                 site_id=site_id,
                 delegator_id=delegator_id,
-                pool=pool,
-                claimant="13a-race-w2f",
+                title="13b race agent workspace",
             )
+            ws2, _cap2 = await _create_workspace(
+                owner_pool, site_id, delegator_id, "13b race W2"
+            )
+            token2 = await _new_capability(owner_pool, ws2)
+        finally:
+            await owner_pool.close()
+
+        merged_props = {"level": 3, "text": "ERace"}
+        control = ControlDatabase(_control_settings(database))
+        editor = EditorDatabase(_editor_db_settings(database, race_park=True))
+        app = create_editor_app(
+            settings=ServiceSettings(mode=EnvironmentMode.TEST),
+            database=control,
+            editor_database=editor,
+        )
+        try:
+            await control.start()
+            await editor.start()
+            session = await control.human_session_service().create(delegator_id)
+            token = session.token.get_secret_value()
+            csrf = session.csrf_token.get_secret_value()
+            headers = {
+                "cookie": f"slaif_session={token}; slaif_csrf={csrf}",
+                "x-csrf-token": csrf,
+                "x-editor-workspace": str(ws_agent),
+                "Idempotency-Key": "13b-race-editor",
+            }
+            comp_path = f"/api/editor/v1/sites/{site_id}/pages/{page_id}/composition"
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app),
+                base_url="http://editor.test",
+                timeout=120,
+            ) as client:
+                async with _h13b_race_park(
+                    database, workspace_id=ws_agent, heading=heading
+                ):
+                    async with _h13b_lock_owner(database, _RACE_LOCK_KEY) as lock_owner:
+                        task = asyncio.create_task(
+                            client.patch(
+                                f"{comp_path}/components/{heading}",
+                                json={"props": merged_props},
+                                headers=headers,
+                            )
+                        )
+                        # The parked command's lock wait starts at its
+                        # validator arrival; the whole park-to-release
+                        # window must stay inside the park budget.
+                        park_clock = time.monotonic()
+                        login = database.credentials["slaif_editor_runtime"][0]
+                        parked_pid = await _h13b_wait_parked(
+                            database, _RACE_LOCK_KEY, login
+                        )
+                        info = await _backend_info(database, parked_pid)
+                        assert info is not None
+                        assert info == (database.name, login), info
+                        # Observed lock order: the Editor definer itself
+                        # takes no structural lock (no page-structure
+                        # lock), but the Human-on-Agent request's
+                        # state-changing workspace assert holds the
+                        # workspace key in exclusive mode; the only
+                        # pending request is the rendezvous itself.
+                        (
+                            workspace,
+                            workspace_mode,
+                            page,
+                            pending,
+                        ) = await _h13b_parked_lock_order(
+                            database,
+                            parked_pid,
+                            workspace_id=ws_agent,
+                            site_id=site_id,
+                            park_key=_RACE_LOCK_KEY,
+                        )
+                        assert (workspace, workspace_mode, page, pending) == (
+                            1,
+                            "ExclusiveLock",
+                            0,
+                            1,
+                        )
+                        # The earlier in-command read (and its
+                        # validation) saw the pre-publish version; the
+                        # view update has NOT run.
+                        view_parked = await _canonical_projection(database, heading)
+                        assert (
+                            view_parked["props"],
+                            view_parked["row_version"],
+                        ) == (A["props"], 1)
+
+                        # The sibling's real first touch, then the
+                        # REAL freeze STARTED, not awaited: the
+                        # parked command's idempotency INSERT holds
+                        # FOR KEY SHARE on the shared site row (the
+                        # 028 human_editor_idempotency.site_id
+                        # reference to control.site), and the
+                        # freeze's real reviewer materialization
+                        # takes that site row FOR UPDATE.
+                        r2 = await _agent_patch(
+                            database,
+                            token2,
+                            heading,
+                            {"level": 1, "text": "W2v2"},
+                            expected_row_version=1,
+                            idempotency_key="13b-race-w2",
+                        )
+                        assert r2.status_code == 200, r2.text
+                        t_freeze = time.monotonic()
+                        freeze_task = asyncio.create_task(
+                            _freeze_claim_run(
+                                database,
+                                workspace_id=ws2,
+                                site_id=site_id,
+                                delegator_id=delegator_id,
+                                pool=pool,
+                                claimant="13b-race-w2f",
+                            )
+                        )
+                        # Observe the RESOLVED order through the exact
+                        # native blocking edge: the parked command's
+                        # FK referential-integrity site-row lock is
+                        # held until its own commit, so the freeze's
+                        # blocked reviewer statement (and every
+                        # publication after it) cannot precede the
+                        # command's DML on this route.
+                        (resolved_order, reviewer_pid) = await _h13b_resolved_order(
+                            database,
+                            parked_pid,
+                            freeze_task,
+                            reviewer_login=database.credentials["slaif_review_worker"][
+                                0
+                            ],
+                        )
+                        assert resolved_order == "reviewer-waiting", (
+                            resolved_order,
+                            reviewer_pid,
+                        )
+                        assert reviewer_pid is not None
+                        # The waiting backend is the freeze job's
+                        # real reviewer connection in this fixture
+                        # database.
+                        reviewer_info = await _backend_info(database, reviewer_pid)
+                        assert reviewer_info == (
+                            database.name,
+                            database.credentials["slaif_review_worker"][0],
+                        ), reviewer_info
+                        # The publication is still pending while the
+                        # freeze waits: the canonical row is A.
+                        view_blocked = await _canonical_projection(database, heading)
+                        assert (
+                            view_blocked["props"],
+                            view_blocked["row_version"],
+                        ) == (A["props"], 1)
+                        t_edge = time.monotonic()
+                        assert time.monotonic() - park_clock < (
+                            _RACE_PARK_BUDGET_SECONDS
+                        ), (
+                            "the fixture pause outlived the parked command "
+                            f"budget (r2={t_freeze - park_clock:.2f}s "
+                            f"freeze-to-edge={t_edge - t_freeze:.2f}s)"
+                        )
+
+                        # Release the park: the real unversioned write
+                        # proceeds against the PRE-pUBLICATION row, and
+                        # only its COMMIT unblocks the freeze's
+                        # pending statement.
+                        assert (
+                            await lock_owner.fetchval(
+                                "SELECT pg_advisory_unlock($1)", _RACE_LOCK_KEY
+                            )
+                            is True
+                        )
+                        response = await task
+            assert response.status_code == 200, response.text
+            rec = response.json()
+            # The unversioned wire contract is intact (constant
+            # row_version 1, actual props); the resolved order proved
+            # the DML ran before the sibling publication.
+            assert rec["row_version"] == 1
+            assert rec["props"] == merged_props
+
+            # The unblocked freeze now completes, and only then does
+            # the real acceptance publish B.
+            result2, _job2 = await freeze_task
             assert result2.status == "SUCCEEDED", result2.error
-            result2a, _ = await _accept_claim_run(
+            result2a, _job2a = await _accept_claim_run(
                 database,
                 workspace_id=ws2,
                 delegator_id=delegator_id,
                 pool=pool,
-                claimant="13a-race-w2a",
+                claimant="13b-race-w2a",
                 boundary=boundary,
             )
             assert result2a.status == "SUCCEEDED", result2a.error
-
             B = await _canonical_projection(database, heading)
             assert B["props"] == {"level": 1, "text": "W2v2"}
             assert B["row_version"] == 2
 
-            # --- RESUME: W1's exact UPDATE statement with the STALE
-            # version (1) from its pre-pause pre-read matches no row.
-            stale_props = json.dumps({"level": 2, "text": "W1stale"}, sort_keys=True)
-            op_stale = uuid.uuid4()
-            async with asyncpg_cow_session(
-                agent_pool, session_id=ws1, operation_id=op_stale
-            ) as cow:
-                await _structural_locks(cow, ws1, site_id)
-                rc = await cow.native.execute(
-                    "UPDATE content.page_composition c"
-                    " SET props = $3::jsonb, row_version = c.row_version + 1,"
-                    " updated_at = now()"
-                    " WHERE c.id = $1 AND c.site_id = $2 AND c.row_version = 1",
-                    heading,
-                    site_id,
-                    stale_props,
-                )
-            assert rc == "UPDATE 0", rc
+            # The released write's exact durable evidence: one fact
+            # with the PRE-publication image pair (both the earlier
+            # validation read and the actual DML saw A at version
+            # 1), one completed journal row, and - because the sibling
+            # publication moved the base row after the write - the
+            # typed public conflict against that operation.
+            facts = await _heading_facts(database, heading, ws_agent)
+            assert len(facts) == 1
+            fact = facts[0]
+            assert fact["family"] == "human_editor"
+            assert fact["human_user_id"] == delegator_id
+            assert fact["props_before"] == A["props"]
+            assert fact["props_after"] == merged_props
+            assert (
+                fact["row_version_before"],
+                fact["row_version_after"],
+            ) == (1, 2)
+            op = fact["operation_id"]
+            journal = await _journal_rows(database, op)
+            assert len(journal) == 1
+            assert journal[0]["disposition"] == "completed"
 
-            # The actual deployed definer refuses the same stale
-            # expectation.
-            op_def = uuid.uuid4()
-            with pytest.raises(asyncpg.PostgresError) as stale_exc:
+            # The effective COW view keeps the workspace's own merged
+            # value at its own version even though the base moved to
+            # the published B.
+            agent_pool = await database.role_pool("slaif_agent_runtime")
+            try:
                 async with asyncpg_cow_session(
-                    agent_pool, session_id=ws1, operation_id=op_def
+                    agent_pool,
+                    session_id=ws_agent,
+                    operation_id=uuid.uuid4(),
                 ) as cow:
-                    await cow.native.fetchrow(
-                        "SELECT * FROM content.slaif_agent_component_update"
-                        "($1, $2, $3::jsonb, 1)",
-                        site_id,
-                        heading,
-                        stale_props,
-                    )
-            assert getattr(stale_exc.value, "sqlstate", None) == "P0004"
-            assert "ROW_VERSION_MISMATCH" in str(
-                getattr(stale_exc.value, "message", "")
-            )
-
-            # No effect, no false facts: W1's public view is the
-            # canonical B (no overlay row), the public conflict set is
-            # empty, neither refused operation journaled anything, and
-            # no effect fact exists for them.
-            async with asyncpg_cow_session(
-                agent_pool, session_id=ws1, operation_id=uuid.uuid4()
-            ) as cow:
-                view = dict(
-                    await cow.native.fetchrow(
+                    row = await cow.native.fetchrow(
                         "SELECT props, row_version"
                         " FROM content.page_composition WHERE id = $1",
                         heading,
                     )
-                )
-            if isinstance(view.get("props"), str):
-                view["props"] = json.loads(view["props"])
-            assert view["props"] == B["props"]
-            assert view["row_version"] == 2
-            assert await _public_conflicts(database, ws1) == []
-            assert await _journal_rows(database, op_stale, op_def) == []
-            assert await _heading_facts(database, heading, ws1) == []
+            finally:
+                await agent_pool.close()
+            effective_props = row["props"]
+            if isinstance(effective_props, str):
+                effective_props = json.loads(effective_props)
+            assert effective_props == merged_props
+            assert int(row["row_version"]) == 2
+            assert await _public_operations(database, ws_agent) == [op]
+            conflicts = await _public_conflicts(database, ws_agent)
+            assert len(conflicts) == 1
+            assert conflicts[0]["conflict_kind"] == "BASE_ROW_CHANGED"
+            assert conflicts[0]["table_name"] == "page_composition"
+            assert conflicts[0]["primary_key"] == {"id": str(heading)}
+            assert UUID(str(conflicts[0]["operation_id"])) == op
         finally:
-            await agent_pool.close()
-
-        # The corrected fresh first write lands (expected version 2).
-        r1 = await _agent_patch(
-            database,
-            token1,
-            heading,
-            {"level": 2, "text": "W1v2"},
-            expected_row_version=2,
-            idempotency_key="13a-race-w1",
-        )
-        assert r1.status_code == 200, r1.text
-        op_fresh = UUID(str(r1.json()["operation_id"]))
-        assert await _public_conflicts(database, ws1) == []
-        facts = await _heading_facts(database, heading, ws1)
-        assert len(facts) == 1
-        # Its pre-image is the post-publish base B: the baseline the
-        # session first touches now is B, and the exact DML pre-image
-        # is B as well.
-        assert facts[0]["props_before"] == B["props"]
-        assert facts[0]["props_after"] == {"level": 2, "text": "W1v2"}
-
-        # A third real publish moves the base past W1's first-touch
-        # baseline: the typed conflict names the FRESH write's
-        # operation, proving the refused attempts captured nothing.
-        r3 = await _agent_patch(
-            database,
-            token3,
-            heading,
-            {"level": 1, "text": "W3v3"},
-            expected_row_version=2,
-            idempotency_key="13a-race-w3",
-        )
-        assert r3.status_code == 200, r3.text
-        result3, _ = await _freeze_claim_run(
-            database,
-            workspace_id=ws3,
-            site_id=site_id,
-            delegator_id=delegator_id,
-            pool=pool,
-            claimant="13a-race-w3f",
-        )
-        assert result3.status == "SUCCEEDED", result3.error
-        result3a, _ = await _accept_claim_run(
-            database,
-            workspace_id=ws3,
-            delegator_id=delegator_id,
-            pool=pool,
-            claimant="13a-race-w3a",
-            boundary=boundary,
-        )
-        assert result3a.status == "SUCCEEDED", result3a.error
-
-        C = await _canonical_projection(database, heading)
-        assert C["props"] == {"level": 1, "text": "W3v3"}
-        assert C["row_version"] == 3
-        conflicts_final = await _public_conflicts(database, ws1)
-        assert len(conflicts_final) == 1
-        assert conflicts_final[0]["conflict_kind"] == "BASE_ROW_CHANGED"
-        assert conflicts_final[0]["table_name"] == "page_composition"
-        assert conflicts_final[0]["primary_key"] == {"id": str(heading)}
-        assert UUID(str(conflicts_final[0]["operation_id"])) == op_fresh
-        # The committed fact survives the later publish unchanged.
-        facts = await _heading_facts(database, heading, ws1)
-        assert [f["operation_id"] for f in facts] == [op_fresh]
+            await editor.stop()
+            await control.stop()
     finally:
         await pool.close()
 
@@ -1262,6 +2161,573 @@ async def test_attribution_isolation_and_legal_discard(
             other_ws,
         )
     assert no_fact_count == 0
+
+
+@pytest.mark.asyncio
+async def test_missing_completion_refuses_commit_and_leaves_no_residue(
+    agent_site_database: AgentSiteDatabase, tmp_path: Path
+) -> None:
+    """Item 1 negative path (real runtime role): a heading fact whose
+    transaction has no genuine completed 078 operation is refused at the
+    real commit boundary; the whole staged transaction rolls back and
+    leaves no residue anywhere."""
+
+    database = agent_site_database
+    media_root = tmp_path / "media"
+    ids = await _seed_site(database, media_root=media_root, with_ops=False)
+    site_id: UUID = ids["site_id"]
+    ws1: UUID = ids["workspace_id"]
+    heading: UUID = ids["heading_id"]
+
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        await _new_capability(owner, ws1)
+        capability_id = await owner.fetchval(
+            "SELECT id FROM control.capability WHERE workspace_id = $1"
+            " ORDER BY created_at DESC LIMIT 1",
+            ws1,
+        )
+
+    A = await _canonical_projection(database, heading)
+    assert A["row_version"] == 1
+    before = await _h13b_durable_state(
+        database, workspace_id=ws1, heading=heading, family="agent"
+    )
+
+    agent_pool = await database.role_pool("slaif_agent_runtime")
+    unbound_operation = uuid.uuid4()
+    try:
+        with pytest.raises(asyncpg.PostgresError) as exc:
+            async with asyncpg_cow_session(
+                agent_pool, session_id=ws1, operation_id=unbound_operation
+            ) as cow:
+                await cow.native.execute(
+                    "SELECT set_config('app.capability_id',$1,true)",
+                    str(capability_id),
+                )
+                begun = await cow.native.fetchrow(
+                    "SELECT * FROM control.slaif_agent_idempotency_begin"
+                    "($1,$2,$3,$4,$5)",
+                    capability_id,
+                    ws1,
+                    "13b-no-completion",
+                    "0" * 64,
+                    unbound_operation,
+                )
+                assert begun["state"] == "STARTED"
+                row = await cow.native.fetchrow(
+                    "SELECT * FROM content.slaif_agent_component_update"
+                    "($1,$2,$3::jsonb,$4)",
+                    site_id,
+                    heading,
+                    json.dumps({"level": 2, "text": "Unbound"}),
+                    1,
+                )
+                assert row is not None
+    finally:
+        await agent_pool.close()
+
+    # The refusal is the deferred completion binding at COMMIT, not an
+    # earlier input check: the reservation and the staged write were
+    # accepted, and the commit itself is what was refused.
+    assert getattr(exc.value, "sqlstate", None) == "P0001"
+    assert "HEADING_EFFECT_COMPLETION_UNBOUND" in str(getattr(exc.value, "message", ""))
+
+    # Exact no-residue: the durable state is byte-for-byte the pre-state.
+    after = await _h13b_durable_state(
+        database, workspace_id=ws1, heading=heading, family="agent"
+    )
+    assert before == after
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        assert (
+            await owner.fetchval(
+                "SELECT count(*) FROM audit.heading_row_effect WHERE operation_id = $1",
+                unbound_operation,
+            )
+            == 0
+        )
+        assert (
+            await owner.fetchval(
+                "SELECT count(*) FROM control.agent_idempotency"
+                " WHERE operation_id = $1",
+                unbound_operation,
+            )
+            == 0
+        )
+        assert (
+            await owner.fetchval(
+                "SELECT count(*) FROM audit.agent_mutation WHERE operation_id = $1",
+                unbound_operation,
+            )
+            == 0
+        )
+        assert (
+            await owner.fetchval(
+                "SELECT count(*) FROM audit.mutation_completion"
+                " WHERE operation_id = $1",
+                unbound_operation,
+            )
+            == 0
+        )
+    view = await _canonical_projection(database, heading)
+    assert (view["props"], view["row_version"]) == (A["props"], A["row_version"])
+    assert await _public_operations(database, ws1) == []
+
+
+@pytest.mark.asyncio
+async def test_agent_late_failure_rolls_back_staged_write_and_fact(
+    agent_site_database: AgentSiteDatabase, tmp_path: Path
+) -> None:
+    """Item 2 (Agent envelope): after a REAL staged COW write and heading
+    fact inside the uncommitted transaction, a real late completion
+    failure refuses the commit; every durable state is byte-for-byte the
+    pre-state, the same body and key retried completes exactly once, and
+    an ordinary replay stays inert."""
+
+    database = agent_site_database
+    media_root = tmp_path / "media"
+    ids = await _seed_site(database, media_root=media_root, with_ops=False)
+    ws1: UUID = ids["workspace_id"]
+    heading: UUID = ids["heading_id"]
+
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        token = await _new_capability(owner, ws1)
+        capability_id = await owner.fetchval(
+            "SELECT id FROM control.capability WHERE workspace_id = $1"
+            " ORDER BY created_at DESC LIMIT 1",
+            ws1,
+        )
+
+    A = await _canonical_projection(database, heading)
+    assert A["row_version"] == 1
+    key = "13b-agent-late"
+    props = {"level": 2, "text": "LateFailure"}
+    before = await _h13b_durable_state(
+        database, workspace_id=ws1, heading=heading, family="agent"
+    )
+
+    app = create_agent_app(
+        settings=ServiceSettings.for_test(),
+        database_settings=_agent_settings(database),
+    )
+    async with app.router.lifespan_context(app):
+        async with _h13b_completion_barrier(database, ws1, "fail"):
+            async with _h13b_lock_owner(database, _BARRIER_LOCK_KEY) as lock_owner:
+                async with httpx.AsyncClient(
+                    transport=httpx.ASGITransport(app=app),
+                    base_url="http://agent.test",
+                    timeout=60,
+                ) as client:
+                    task = asyncio.create_task(
+                        client.patch(
+                            f"/api/agent/v1/components/{heading}",
+                            json={
+                                "props": props,
+                                "expected_row_version": 1,
+                            },
+                            headers={
+                                "Authorization": f"Bearer {token}",
+                                "Idempotency-Key": key,
+                            },
+                        )
+                    )
+                    login = database.credentials["slaif_agent_runtime"][0]
+                    parked_pid = await _h13b_wait_parked(
+                        database, _BARRIER_LOCK_KEY, login
+                    )
+                    # The parked backend is the request's own runtime
+                    # connection in this fixture database.
+                    info = await _backend_info(database, parked_pid)
+                    assert info is not None
+                    assert info == (database.name, login), info
+                    # Independent connection: the staged effect is NOT
+                    # visible before commit (another connection cannot
+                    # attest the staged values pre-commit).
+                    assert await _heading_facts(database, heading, ws1) == []
+                    view_parked = await _canonical_projection(database, heading)
+                    assert (view_parked["props"], view_parked["row_version"]) == (
+                        A["props"],
+                        A["row_version"],
+                    )
+                    # Release: the trigger raises the late failure inside
+                    # the still-uncommitted mutation transaction.
+                    assert (
+                        await lock_owner.fetchval(
+                            "SELECT pg_advisory_unlock($1)", _BARRIER_LOCK_KEY
+                        )
+                        is True
+                    )
+                    response = await task
+        assert response.status_code == 503, response.text
+
+    after = await _h13b_durable_state(
+        database, workspace_id=ws1, heading=heading, family="agent"
+    )
+    assert before == after
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        stale_reservation = await owner.fetchval(
+            "SELECT count(*) FROM control.agent_idempotency WHERE idempotency_key = $1",
+            key,
+        )
+    assert stale_reservation == 0
+
+    # The SAME body and idempotency key retried completes exactly once.
+    r2 = await _agent_patch(
+        database,
+        token,
+        heading,
+        props,
+        expected_row_version=1,
+        idempotency_key=key,
+    )
+    assert r2.status_code == 200, r2.text
+    op2 = UUID(str(r2.json()["operation_id"]))
+    facts = await _heading_facts(database, heading, ws1)
+    assert len(facts) == 1
+    assert facts[0]["operation_id"] == op2
+    assert facts[0]["family"] == "agent"
+    assert facts[0]["capability_id"] == capability_id
+    assert (facts[0]["row_version_before"], facts[0]["row_version_after"]) == (1, 2)
+    assert facts[0]["props_before"] == A["props"]
+    assert facts[0]["props_after"] == props
+    journal = await _journal_rows(database, op2)
+    assert len(journal) == 1
+    assert journal[0]["family"] == "agent"
+    assert journal[0]["resource_type"] == "composition_node"
+    assert journal[0]["resource_id"] == heading
+    assert journal[0]["disposition"] == "completed"
+    after_retry = await _h13b_durable_state(
+        database, workspace_id=ws1, heading=heading, family="agent"
+    )
+    assert len(after_retry["facts"]) == len(before["facts"]) + 1
+    assert len(after_retry["audit"]) == len(before["audit"]) + 1
+    assert len(after_retry["journal"]) == len(before["journal"]) + 1
+    assert len(after_retry["reservations"]) == len(before["reservations"]) + 1
+
+    # An ordinary retry of the successful result stays inert (stored
+    # body; the definer never re-runs).
+    r3 = await _agent_patch(
+        database,
+        token,
+        heading,
+        props,
+        expected_row_version=1,
+        idempotency_key=key,
+    )
+    assert r3.status_code == 200
+    assert r3.json() == r2.json()
+    assert len(await _heading_facts(database, heading, ws1)) == 1
+    assert UUID(str(r3.json()["operation_id"])) == op2
+
+
+@pytest.mark.asyncio
+async def test_editor_late_cancellation_rolls_back_staged_write_and_fact(
+    agent_site_database: AgentSiteDatabase,
+) -> None:
+    """Item 2 (Human-on-Agent Editor envelope): after a REAL staged COW
+    write and heading fact inside the uncommitted transaction, a real
+    cancellation of the in-flight request aborts the same transaction;
+    every durable state is byte-for-byte the pre-state, the same body
+    and key retried completes exactly once, and the replay stays inert."""
+
+    database = agent_site_database
+    ids = await _seed_site(database, media_root=None, with_ops=False)
+    site_id: UUID = ids["site_id"]
+    delegator_id: UUID = ids["delegator_id"]
+    heading: UUID = ids["heading_id"]
+    page_id: UUID = ids["page_id"]
+
+    owner_pool = await database.role_pool("slaif_owner")
+    ws_agent = await _create_agent_workspace(
+        owner_pool,
+        site_id=site_id,
+        delegator_id=delegator_id,
+        title="13b editor late-cancellation workspace",
+    )
+    await owner_pool.close()
+
+    A = await _canonical_projection(database, heading)
+    assert A["row_version"] == 1
+    key = "13b-editor-late"
+    props = {"level": 3, "text": "LateCancel"}
+    before = await _h13b_durable_state(
+        database, workspace_id=ws_agent, heading=heading, family="human_editor"
+    )
+
+    control = ControlDatabase(_control_settings(database))
+    editor = EditorDatabase(_editor_db_settings(database))
+    app = create_editor_app(
+        settings=ServiceSettings(mode=EnvironmentMode.TEST),
+        database=control,
+        editor_database=editor,
+    )
+    try:
+        await control.start()
+        await editor.start()
+        session = await control.human_session_service().create(delegator_id)
+        token = session.token.get_secret_value()
+        csrf = session.csrf_token.get_secret_value()
+        headers = {
+            "cookie": f"slaif_session={token}; slaif_csrf={csrf}",
+            "x-csrf-token": csrf,
+            "x-editor-workspace": str(ws_agent),
+            "Idempotency-Key": key,
+        }
+        comp_path = f"/api/editor/v1/sites/{site_id}/pages/{page_id}/composition"
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://editor.test",
+            timeout=60,
+        ) as client:
+            async with _h13b_completion_barrier(database, ws_agent, "cancel"):
+                async with _h13b_lock_owner(database, _BARRIER_LOCK_KEY) as lock_owner:
+                    task = asyncio.create_task(
+                        client.patch(
+                            f"{comp_path}/components/{heading}",
+                            json={"props": props},
+                            headers=headers,
+                        )
+                    )
+                    login = database.credentials["slaif_editor_runtime"][0]
+                    parked_pid = await _h13b_wait_parked(
+                        database, _BARRIER_LOCK_KEY, login
+                    )
+                    info = await _backend_info(database, parked_pid)
+                    assert info is not None
+                    assert info == (database.name, login), info
+                    # Independent connection: the staged effect is NOT
+                    # visible before commit.
+                    assert await _heading_facts(database, heading, ws_agent) == []
+                    view_parked = await _canonical_projection(database, heading)
+                    assert (view_parked["props"], view_parked["row_version"]) == (
+                        A["props"],
+                        A["row_version"],
+                    )
+                    # The real cancellation aborts the still-uncommitted
+                    # transaction at the rendezvous.
+                    task.cancel()
+                    outcome = await asyncio.gather(task, return_exceptions=True)
+                    assert isinstance(outcome[0], asyncio.CancelledError), outcome
+                    assert (
+                        await lock_owner.fetchval(
+                            "SELECT pg_advisory_unlock($1)", _BARRIER_LOCK_KEY
+                        )
+                        is True
+                    )
+            after = await _h13b_durable_state(
+                database,
+                workspace_id=ws_agent,
+                heading=heading,
+                family="human_editor",
+            )
+            assert before == after
+
+            # The SAME body and idempotency key retried completes exactly
+            # once.
+            r2 = await client.patch(
+                f"{comp_path}/components/{heading}",
+                json={"props": props},
+                headers=headers,
+            )
+            assert r2.status_code == 200, r2.text
+            rec2 = r2.json()
+            assert rec2["row_version"] == 1
+            assert rec2["props"] == props
+            facts = await _heading_facts(database, heading, ws_agent)
+            assert len(facts) == 1
+            fact = facts[0]
+            assert fact["family"] == "human_editor"
+            assert fact["human_user_id"] == delegator_id
+            assert fact["capability_id"] is None
+            assert (fact["row_version_before"], fact["row_version_after"]) == (1, 2)
+            assert fact["props_before"] == A["props"]
+            assert fact["props_after"] == props
+            op2 = fact["operation_id"]
+            journal = await _journal_rows(database, op2)
+            assert len(journal) == 1
+            assert journal[0]["family"] == "human_editor"
+            assert journal[0]["resource_type"] == "editor.sites"
+            assert journal[0]["resource_id"] == heading
+            assert journal[0]["disposition"] == "completed"
+            after_retry = await _h13b_durable_state(
+                database,
+                workspace_id=ws_agent,
+                heading=heading,
+                family="human_editor",
+            )
+            assert len(after_retry["facts"]) == len(before["facts"]) + 1
+            assert len(after_retry["audit"]) == len(before["audit"]) + 1
+            assert len(after_retry["journal"]) == len(before["journal"]) + 1
+            assert len(after_retry["reservations"]) == len(before["reservations"]) + 1
+
+            # An ordinary replay of the successful result stays inert
+            # (the stored body is returned; no second fact).
+            r3 = await client.patch(
+                f"{comp_path}/components/{heading}",
+                json={"props": props},
+                headers=headers,
+            )
+            assert r3.status_code == 200
+            assert r3.json() == rec2
+            assert len(await _heading_facts(database, heading, ws_agent)) == 1
+    finally:
+        await editor.stop()
+        await control.stop()
+
+
+@pytest.mark.asyncio
+async def test_editor_unchanged_props_and_structural_only_record_no_fact(
+    agent_site_database: AgentSiteDatabase,
+) -> None:
+    """Item 4: an unchanged-props Editor write and a structural-only
+    Editor write on a Heading keep their legacy behavior byte-for-byte
+    and record NO heading-props fact; a mixed props+structural change
+    records the exact props pair (and claims nothing about the
+    structural history); the ordinary Human workspace path keeps its
+    existing behavior and records nothing."""
+
+    database = agent_site_database
+    ids = await _seed_site(database, media_root=None, with_ops=False)
+    site_id: UUID = ids["site_id"]
+    delegator_id: UUID = ids["delegator_id"]
+    heading: UUID = ids["heading_id"]
+    page_id: UUID = ids["page_id"]
+
+    owner_pool = await database.role_pool("slaif_owner")
+    ws_agent = await _create_agent_workspace(
+        owner_pool,
+        site_id=site_id,
+        delegator_id=delegator_id,
+        title="13b editor pilot scope workspace",
+    )
+    await owner_pool.close()
+
+    ws_human: UUID = ids["workspace_id"]
+
+    A = await _canonical_projection(database, heading)
+    assert A["props"] == {"level": 1, "text": "Accept"}
+    assert A["row_version"] == 1
+
+    control = ControlDatabase(_control_settings(database))
+    editor = EditorDatabase(_editor_db_settings(database))
+    app = create_editor_app(
+        settings=ServiceSettings(mode=EnvironmentMode.TEST),
+        database=control,
+        editor_database=editor,
+    )
+    try:
+        await control.start()
+        await editor.start()
+        session = await control.human_session_service().create(delegator_id)
+        token = session.token.get_secret_value()
+        csrf = session.csrf_token.get_secret_value()
+        headers = {
+            "cookie": f"slaif_session={token}; slaif_csrf={csrf}",
+            "x-csrf-token": csrf,
+            "x-editor-workspace": str(ws_agent),
+        }
+        comp_path = f"/api/editor/v1/sites/{site_id}/pages/{page_id}/composition"
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://editor.test",
+            timeout=60,
+        ) as client:
+            # 1. Unchanged props: the legacy write still runs (the wire
+            #    row_version stays the constant 1), but no fact.
+            r1 = await client.patch(
+                f"{comp_path}/components/{heading}",
+                json={"props": dict(A["props"])},
+                headers={**headers, "Idempotency-Key": "13b-editor-same"},
+            )
+            assert r1.status_code == 200, r1.text
+            assert r1.json()["props"] == A["props"]
+            assert await _heading_facts(database, heading, ws_agent) == []
+            # 2. Structural-only (order_key, no props): the seeded
+            #    heading sits in its Section's only allowed slot
+            #    ("default"), so the structural field a supported
+            #    update may change here is the order key. Legacy
+            #    behavior, no fact.
+            r2 = await client.patch(
+                f"{comp_path}/components/{heading}",
+                json={"order_key": 2},
+                headers={**headers, "Idempotency-Key": "13b-editor-order"},
+            )
+            assert r2.status_code == 200, r2.text
+            assert r2.json()["order_key"] == 2
+            assert r2.json()["props"] == A["props"]
+            assert await _heading_facts(database, heading, ws_agent) == []
+            # 3. Mixed change (props + order_key): the accurate props
+            #    pair is recorded; the structural part claims nothing.
+            mixed_props = {"level": 4, "text": "Mixed"}
+            r3 = await client.patch(
+                f"{comp_path}/components/{heading}",
+                json={"props": mixed_props, "order_key": 3},
+                headers={**headers, "Idempotency-Key": "13b-editor-mixed"},
+            )
+            assert r3.status_code == 200, r3.text
+            assert r3.json()["props"] == mixed_props
+            assert r3.json()["order_key"] == 3
+            # 4. Ordinary Human workspace (the seeded workspace): the
+            #    existing behavior is intact - the legacy write runs
+            #    and no fact is recorded.  Ordinary human editing does
+            #    not send the workspace header; the server resolves
+            #    the session's own HUMAN workspace.
+            human_headers = {
+                k: v for k, v in headers.items() if k != "x-editor-workspace"
+            }
+            r4 = await client.patch(
+                f"{comp_path}/components/{heading}",
+                json={"props": {"level": 5, "text": "HumanWs"}},
+                headers={
+                    **human_headers,
+                    "Idempotency-Key": "13b-editor-human-ws",
+                },
+            )
+            assert r4.status_code == 200, r4.text
+            assert r4.json()["props"] == {"level": 5, "text": "HumanWs"}
+    finally:
+        await editor.stop()
+        await control.stop()
+
+    # The ordinary Human workspace write is durable in its own COW view.
+    agent_pool = await database.role_pool("slaif_agent_runtime")
+    try:
+        async with asyncpg_cow_session(
+            agent_pool, session_id=ws_human, operation_id=uuid.uuid4()
+        ) as cow:
+            row = await cow.native.fetchrow(
+                "SELECT props, row_version FROM content.page_composition WHERE id = $1",
+                heading,
+            )
+        effective_props = row["props"]
+        if isinstance(effective_props, str):
+            effective_props = json.loads(effective_props)
+        effective = (effective_props, int(row["row_version"]))
+    finally:
+        await agent_pool.close()
+    assert effective == ({"level": 5, "text": "HumanWs"}, 2)
+    assert await _heading_facts(database, heading, ws_human) == []
+
+    facts = await _heading_facts(database, heading, ws_agent)
+    assert len(facts) == 1
+    fact = facts[0]
+    assert fact["family"] == "human_editor"
+    assert fact["human_user_id"] == delegator_id
+    assert fact["props_before"] == A["props"]
+    assert fact["props_after"] == mixed_props
+    # Three legacy writes happened (1->2 unchanged, 2->3 structural,
+    # 3->4 mixed); the single fact covers the mixed write's exact
+    # transition.
+    assert (fact["row_version_before"], fact["row_version_after"]) == (3, 4)
+    view = await _canonical_projection(database, heading)
+    assert view["props"] == A["props"]
 
 
 async def _heading_facts_for_component(

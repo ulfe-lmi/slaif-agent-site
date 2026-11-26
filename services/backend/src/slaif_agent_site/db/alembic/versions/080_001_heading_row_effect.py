@@ -21,17 +21,37 @@ COW write, the family audit row and the idempotency completion:
 - ``schema_version`` ``heading-row-effect/v1`` and a trusted
   ``occurred_at``.
 
-The images are captured by the DEFINER itself, inside one statement: a
-``prior`` CTE (a simple SELECT, fully read before the data-modifying
-``post`` CTE executes per the documented WITH execution order) holds the
-pre-write image and the ``post`` CTE performs the byte-identical original
-write with ``RETURNING``.  A later re-read of the row is NOT the
-pre-write image (under READ COMMITTED a concurrent committed change can
-land between statements); this capture is what makes the recorded before
-image exact.  Non-heading component types keep the pre-080 write
-byte-for-byte (explicit pilot boundary: the pilot observes and records,
-it does not harden the Editor version contract or change any other
-mutation family).
+The images are captured by the DEFINER itself, inside one statement: the
+``prior``/``post`` CTE pair holds the pre-write image and the
+data-modifying ``post`` CTE performs the byte-identical original write
+with ``RETURNING``.  The pair is read under the statement's shared
+snapshot of the real COW view, so the recorded pair is the exact DML
+image in that view; a shared statement snapshot does not promise a
+general CTE evaluation order and the view does not expose the
+foundation's first-touch baseline bytes, so nothing beyond the recorded
+pair is claimed.  A later re-read of the row is NOT the pre-write image
+(under READ COMMITTED a concurrent committed change can land between
+statements), which is what makes the same-statement capture the
+recorded before image.  Non-heading component types keep the pre-080
+write byte-for-byte (explicit pilot boundary: the pilot observes and
+records, it does not harden the Editor version contract or change any
+other mutation family).
+
+A heading-props fact requires actually distinct before and after props
+in the write, decided on the ACTUAL same-statement image pair: the
+Agent definer only reaches the recorded write after its own no-effect
+short-circuit (identical props return without any DML), and the Editor
+branch records only when the captured ``prior``/``post`` props are
+``IS DISTINCT FROM`` each other - the earlier validation snapshot can
+diverge from the statement's view (for example a sibling publication
+between the pre-read and the write), so it is never the decision
+input.  The Editor capture is scoped to the intended Human-on-Agent
+surface: only the session's own ``actor_type = 'AGENT'`` COW
+workspace records; an ordinary Human workspace keeps its legacy write
+byte-for-byte and records nothing.  An unchanged-props or
+structural-only change in the actual DML keeps the legacy behavior and
+records nothing; a mixed props+structural change records the exact
+props pair and makes no claim about the structural history.
 
 The record helper is owner-only (no PUBLIC, no role EXECUTE).  Inside the
 real mutation transaction it:
@@ -52,6 +72,21 @@ real mutation transaction it:
 - takes the transaction-scoped advisory lock on the operation id (same
   key as the 078 completion journal, so both locks compose);
 - inserts the fact; the primary key is the final transactional guard.
+
+No fact can commit unbound: a DEFERRABLE INITIALLY DEFERRED constraint
+trigger re-checks at COMMIT time, for every fact inserted by the
+transaction, that the same operation has a genuine completed 078
+completion - the exact ``audit.mutation_completion`` row (operation,
+family, site, workspace, actual principal, resource type and id,
+disposition ``completed``; the resource type is the existing wire
+value: ``composition_node`` for the Agent boundary, ``editor.sites``
+for the Editor composition route), the matching family audit row
+(``audit.agent_mutation`` / ``audit.human_editor_mutation``), and the
+family ledger reservation in completed state (status_code NOT NULL).
+A missing or mismatched completion refuses the commit
+(``HEADING_EFFECT_COMPLETION_UNBOUND``, P0001) and rolls back the
+staged COW change and the fact together; the check function is
+owner-only with no role EXECUTE and no new grant surface.
 
 Downgrade is an explicit fail-closed refusal (no conditional path):
 rolling back below 080 would restore the unrecording definer bodies while
@@ -221,6 +256,84 @@ _RECORDER_SQL = f"""
         $fn$
 """
 
+_COMPLETION_CHECK_SQL = """
+        CREATE FUNCTION control.slaif_heading_row_effect_completion_check()
+        RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER
+        SET search_path = pg_catalog AS $fn$
+        BEGIN
+            IF NEW.family = 'agent' THEN
+                IF NOT EXISTS (
+                    SELECT 1 FROM audit.mutation_completion AS j
+                    WHERE j.operation_id = NEW.operation_id
+                      AND j.family = 'agent'
+                      AND j.site_id = NEW.site_id
+                      AND j.workspace_id = NEW.workspace_id
+                      AND j.capability_id = NEW.capability_id
+                      AND j.human_user_id IS NULL
+                      AND j.resource_type = 'composition_node'
+                      AND j.resource_id = NEW.component_id
+                      AND j.disposition = 'completed'
+                ) OR NOT EXISTS (
+                    SELECT 1 FROM audit.agent_mutation AS t
+                    WHERE t.operation_id = NEW.operation_id
+                      AND t.capability_id = NEW.capability_id
+                      AND t.workspace_id = NEW.workspace_id
+                      AND t.site_id = NEW.site_id
+                      AND t.resource_type = 'composition_node'
+                      AND t.resource_id = NEW.component_id
+                ) OR NOT EXISTS (
+                    SELECT 1 FROM control.agent_idempotency AS r
+                    WHERE r.operation_id = NEW.operation_id
+                      AND r.capability_id = NEW.capability_id
+                      AND r.workspace_id = NEW.workspace_id
+                      AND r.status_code IS NOT NULL
+                ) THEN RAISE EXCEPTION 'HEADING_EFFECT_COMPLETION_UNBOUND'
+                    USING ERRCODE = 'P0001';
+                END IF;
+            ELSE
+                IF NOT EXISTS (
+                    SELECT 1 FROM audit.mutation_completion AS j
+                    WHERE j.operation_id = NEW.operation_id
+                      AND j.family = 'human_editor'
+                      AND j.site_id = NEW.site_id
+                      AND j.workspace_id = NEW.workspace_id
+                      AND j.capability_id IS NULL
+                      AND j.human_user_id = NEW.human_user_id
+                      AND j.resource_type = 'editor.sites'
+                      AND j.resource_id = NEW.component_id
+                      AND j.disposition = 'completed'
+                ) OR NOT EXISTS (
+                    SELECT 1 FROM audit.human_editor_mutation AS t
+                    WHERE t.operation_id = NEW.operation_id
+                      AND t.human_user_id = NEW.human_user_id
+                      AND t.workspace_id = NEW.workspace_id
+                      AND t.site_id = NEW.site_id
+                      AND t.resource_type = 'editor.sites'
+                      AND t.resource_id = NEW.component_id
+                ) OR NOT EXISTS (
+                    SELECT 1 FROM control.human_editor_idempotency AS r
+                    WHERE r.operation_id = NEW.operation_id
+                      AND r.human_user_id = NEW.human_user_id
+                      AND r.workspace_id = NEW.workspace_id
+                      AND r.site_id = NEW.site_id
+                      AND r.status_code IS NOT NULL
+                ) THEN RAISE EXCEPTION 'HEADING_EFFECT_COMPLETION_UNBOUND'
+                    USING ERRCODE = 'P0001';
+                END IF;
+            END IF;
+            RETURN NEW;
+        END;
+        $fn$
+"""
+
+_COMPLETION_TRIGGER_SQL = f"""
+        CREATE CONSTRAINT TRIGGER heading_row_effect_completion_binding
+        AFTER INSERT ON {_FACTS_TABLE}
+        DEFERRABLE INITIALLY DEFERRED
+        FOR EACH ROW
+        EXECUTE FUNCTION control.slaif_heading_row_effect_completion_check()
+"""
+
 _IMAGE_DECLARE = (
     "            props_before jsonb; props_after jsonb;\n"
     "            rv_before integer; rv_after integer;\n"
@@ -241,12 +354,14 @@ _AGENT_WRITE_ANCHOR = (
 )
 _AGENT_WRITE_REPLACEMENT = """\
             IF old.component_type = 'Heading' THEN
-                -- 083-13-a pilot: capture the same-statement DML image of
-                -- the actual heading write, then record it trusted.  The
-                -- prior CTE (a simple SELECT) is fully read before the
-                -- data-modifying post CTE executes; FROM prior preserves
-                -- the original write byte-for-byte.  Non-heading types
-                -- keep the pre-080 write unchanged.
+                -- 083-13-a pilot: capture the exact DML images of the
+                -- actual heading write in the real COW view, then record
+                -- them trusted.  The prior/post pair is read under the
+                -- statement's shared snapshot of the view; FROM prior
+                -- preserves the original write byte-for-byte.  The
+                -- definer's own no-effect short-circuit above means the
+                -- props actually changed here.  Non-heading types keep
+                -- the pre-080 write unchanged.
                 WITH prior AS (
                     SELECT c.id,c.props,c.row_version
                     FROM content.page_composition c
@@ -292,14 +407,26 @@ _EDITOR_WRITE_ANCHOR = (
     "            WHERE composition.id=p_node_id;\n"
 )
 _EDITOR_WRITE_REPLACEMENT = """\
-            IF old.component_type = 'Heading' THEN
-                -- 083-13-a pilot: capture the same-statement DML image of
-                -- the actual heading write, then record it trusted.  The
-                -- prior CTE (a simple SELECT) is fully read before the
-                -- data-modifying post CTE executes.  The write keeps the
-                -- pre-080 Editor contract byte-for-byte (no version
-                -- predicate, no site filter): the pilot observes and
-                -- records; it does not harden the Editor boundary.
+            IF old.component_type = 'Heading' AND EXISTS (
+                SELECT 1 FROM control.workspace AS w
+                WHERE w.id = NULLIF(current_setting('app.session_id',true),'')::uuid
+                  AND w.actor_type = 'AGENT'
+            ) THEN
+                -- 083-13-a/b pilot (Human-on-Agent only): the write
+                -- keeps the pre-080 Editor contract byte-for-byte (no
+                -- version predicate, no site filter) and the prior/post
+                -- pair captures the exact DML images in the real COW
+                -- view under the statement's shared snapshot.  The
+                -- record/no-record decision is based on the ACTUAL
+                -- same-statement image pair, never the earlier
+                -- validation snapshot: a sibling publication between
+                -- the pre-read and this write can make the two
+                -- diverge.  A props fact is recorded only when the
+                -- captured before/after props are actually distinct; a
+                -- mixed change records the exact props pair and claims
+                -- nothing about the structural history.  Ordinary Human
+                -- workspaces keep the legacy write below byte-for-byte
+                -- and record nothing.
                 WITH prior AS (
                     SELECT c.id,c.props,c.row_version
                     FROM content.page_composition c
@@ -320,12 +447,14 @@ _EDITOR_WRITE_REPLACEMENT = """\
                 IF NOT FOUND THEN RAISE EXCEPTION
                     'HEADING_EFFECT_IMAGE_MISSING'
                     USING ERRCODE='P0001'; END IF;
-                PERFORM control.slaif_heading_row_effect_record(
-                    NULLIF(current_setting('app.operation_id',true),'')::uuid,
-                    'human_editor',old.site_id,
-                    NULLIF(current_setting('app.session_id',true),'')::uuid,
-                    NULL,p_node_id, rv_before,rv_after,
-                    props_before,props_after);
+                IF props_before IS DISTINCT FROM props_after THEN
+                    PERFORM control.slaif_heading_row_effect_record(
+                        NULLIF(current_setting('app.operation_id',true),'')::uuid,
+                        'human_editor',old.site_id,
+                        NULLIF(current_setting('app.session_id',true),'')::uuid,
+                        NULL,p_node_id, rv_before,rv_after,
+                        props_before,props_after);
+                END IF;
             ELSE
                 UPDATE content.page_composition AS composition
                 SET props=merged,slot_key=coalesce(p_slot_key,composition.slot_key),
@@ -425,6 +554,27 @@ def upgrade() -> None:
     op.execute(f"REVOKE ALL ON FUNCTION {_RECORDER} FROM PUBLIC")
     for role in _ROLES_WITHOUT_FACTS_ACCESS:
         op.execute(f"REVOKE ALL ON FUNCTION {_RECORDER} FROM {role}")
+
+    # Commit-time completion binding: the deferred constraint trigger
+    # refuses any heading fact that is not bound to a genuine completed
+    # 078 operation and family audit, rolling back the staged COW
+    # change and the fact together.
+    op.execute(_COMPLETION_CHECK_SQL)
+    op.execute(
+        "ALTER FUNCTION control.slaif_heading_row_effect_completion_check()"
+        " OWNER TO slaif_owner"
+    )
+    op.execute(
+        "REVOKE ALL ON FUNCTION"
+        " control.slaif_heading_row_effect_completion_check() FROM PUBLIC"
+    )
+    for role in _ROLES_WITHOUT_FACTS_ACCESS:
+        op.execute(
+            f"REVOKE ALL ON FUNCTION"
+            f" control.slaif_heading_row_effect_completion_check()"
+            f" FROM {role}"
+        )
+    op.execute(_COMPLETION_TRIGGER_SQL)
 
     # Agent 062 update definer: the currently deployed 062_001 body with
     # the bounded Heading same-statement capture and trusted record.

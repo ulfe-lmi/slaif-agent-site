@@ -10003,10 +10003,11 @@ async def test_agent_component_runtime_helper_enforces_design_authority(
                 == before_operations
             )
 
-        # 080: the Heading write completes in the same transaction as
-        # its idempotency reservation (the trusted record is bound to
-        # the in-progress same-operation row), so the direct definer
-        # call mirrors the real flow: begin first, then update.
+        # 080: the direct definer call mirrors the real flow: begin,
+        # update, and the REAL trusted completion in one transaction.
+        # 083-13-b: the commit is only allowed because the heading fact
+        # is bound to that exact completed 078 operation (the deferred
+        # completion-binding check refuses an unbound fact at commit).
         update_operation = uuid4()
         async with asyncpg_cow_session(
             agent_pool, session_id=workspace_id, operation_id=update_operation
@@ -10032,10 +10033,87 @@ async def test_agent_component_runtime_helper_enforces_design_authority(
                 before_version,
             )
             assert row is not None
+            await cow.native.execute(
+                "SELECT control.slaif_agent_idempotency_complete("
+                "$1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,$10,$11,$12,$13)",
+                capability_id,
+                workspace_id,
+                "runtime-direct-update",
+                "0" * 64,
+                update_operation,
+                200,
+                json.dumps(
+                    {
+                        "record": {"id": str(component_id)},
+                        "operation_id": str(update_operation),
+                        "action": "COMPONENT_UPDATED",
+                    }
+                ),
+                "composition_node",
+                UUID(component_id),
+                seeded["site_id"],
+                "COMPONENT_UPDATED",
+                "PATCH",
+                "mutation",
+            )
         assert await cow_record(component_id) == (
             {"text": "after", "level": 2},
             before_version + 1,
         )
+        # The committed fact is durably bound to the real completion:
+        # exact journal row, family audit row and completed reservation.
+        async with owner_connection(
+            database.settings.resolved_owner_dsn(), expected_database=database.name
+        ) as owner:
+            fact = await owner.fetchrow(
+                "SELECT family, component_id, row_version_before,"
+                " row_version_after, props_before, props_after,"
+                " capability_id, human_user_id"
+                " FROM audit.heading_row_effect WHERE operation_id = $1",
+                update_operation,
+            )
+            assert fact is not None
+            assert fact["family"] == "agent"
+            assert fact["component_id"] == UUID(component_id)
+            assert (fact["row_version_before"], fact["row_version_after"]) == (
+                before_version,
+                before_version + 1,
+            )
+            assert json.loads(str(fact["props_before"])) == before_props
+            assert json.loads(str(fact["props_after"])) == {"text": "after", "level": 2}
+            assert fact["capability_id"] == capability_id
+            assert fact["human_user_id"] is None
+            journal = await owner.fetchrow(
+                "SELECT family, site_id, workspace_id, capability_id,"
+                " resource_type, resource_id, disposition"
+                " FROM audit.mutation_completion WHERE operation_id = $1",
+                update_operation,
+            )
+            assert journal is not None
+            assert journal["family"] == "agent"
+            assert journal["site_id"] == seeded["site_id"]
+            assert journal["workspace_id"] == workspace_id
+            assert journal["capability_id"] == capability_id
+            assert journal["resource_type"] == "composition_node"
+            assert journal["resource_id"] == UUID(component_id)
+            assert journal["disposition"] == "completed"
+            family_audit = await owner.fetchrow(
+                "SELECT capability_id, workspace_id, site_id, resource_type,"
+                " resource_id, response_status, action, http_method"
+                " FROM audit.agent_mutation WHERE operation_id = $1",
+                update_operation,
+            )
+            assert family_audit is not None
+            assert family_audit["capability_id"] == capability_id
+            assert family_audit["resource_type"] == "composition_node"
+            assert family_audit["resource_id"] == UUID(component_id)
+            assert family_audit["action"] == "COMPONENT_UPDATED"
+            status = await owner.fetchval(
+                "SELECT status_code FROM control.agent_idempotency"
+                " WHERE operation_id = $1",
+                update_operation,
+            )
+        assert status == 200
     finally:
         await agent_pool.close()
         await reviewer_pool.close()
