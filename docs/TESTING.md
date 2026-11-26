@@ -710,3 +710,132 @@ docs, replacing `157.0.8103.78` (CfT revision `1717349`). Full PostgreSQL 14..18
 qualification is required and is reported as the repository CI
 executes the full children; acceptance state is tracked in the OAP
 ledgers, and nothing here claims D5, MVP, or product completion.
+
+## Exact heading-props row effects (083/13)
+
+The heading row effect pilot (083/13, revision `080_001`) adds the
+focused `test_heading_row_effects.py` module with twelve real native
+tests on the disposable cluster, both HTTP paths at real login
+boundaries and the real freeze/accept/discard lifecycles:
+
+- Agent path (062): two same-resource writes under different
+  operations retain both transitions with exact chaining (the first
+  write's before image is the canonical row at first touch, the
+  second's before image is the first's after image and version). The
+  HTTP-level no-effect completion (identical props) records the
+  trusted `no_effect` disposition and no fact. A real first write
+  followed by a late request at the stale version is refused, rolls
+  back, and leaves no fact and no completion; the corrected retry
+  records exactly one fact.
+- Editor path (060, Human-on-Agent): the real logged-in PATCH
+  records a fact whose human principal is resolved from the
+  in-progress human-editor reservation; the wire keeps the
+  historical constant `row_version=1`; a replay returns the stored
+  body before completion and never re-runs the definer, so it adds
+  no second fact.
+- First-touch control (item 3): two same-site workspaces both commit
+  first touches before the winner is accepted; the winner publishes
+  through REAL freeze + human accept; the four distinct sources
+  (canonical at first touch, W1's earlier value, W2's published
+  value, W1's actual new value) are each observed through a
+  supported read path; the typed public conflict is exactly one
+  `BASE_ROW_CHANGED` on the component; and both W1 transitions keep
+  their exact facts. The second write's DML pre-image is proven to
+  be the workspace's own effective COW row at write time — neither
+  the concurrently published canonical row nor the session's
+  first-touch baseline (the pilot's recorded observation limit).
+- First-write race (item 3): the loser is paused exactly between the
+  deployed definer's in-command read and its UPDATE by a
+  fixture-only wrapper parked INSIDE the real
+  `slaif_agent_component_validate_design` call (the wrapper is
+  reinstalled from the live catalog and the original definition is
+  restored on every exit, so the real command runs unchanged apart
+  from the rendezvous). For the Agent path the observed parked
+  backend is the request's own runtime login in the fixture
+  database, with the definer's workspace structural locks (shared
+  workspace key + exclusive page-structure key) already granted
+  before the in-command read while the rendezvous request is
+  pending. The Human-on-Agent Editor path takes no page-structure
+  lock, but its request's state-changing workspace assert holds
+  the workspace advisory key exclusively and its idempotency
+  INSERT holds FOR KEY SHARE on the shared site row through the
+  `control.human_editor_idempotency.site_id` reference to
+  `control.site`. In the interval the sibling workspace's real
+  HTTP first touch plus a REAL freeze are started, and the test
+  observes the RESOLVED order instead of any fixture deadline: the
+  parked command's transaction-scoped site-row lock (the Agent's
+  pre-park FOR SHARE from the 039 require-cow-site recheck inside
+  the pre-validator authorize; the Editor's FK row lock) blocks
+  the freeze's real materializer at its site-row FOR UPDATE, so
+  the test observes the exact native blocking edge (the freeze's
+  reviewer backend waiting on the parked transaction id), proves
+  the canonical row is still the pre-publication row, releases
+  the real command and observes its ACTUAL outcome: the Agent's
+  version-guarded UPDATE SUCCEEDS (200) against the
+  pre-publication row - the "stale" expectation succeeds because
+  the DML is deterministically ordered before the sibling
+  publication - and the Editor's unversioned write lands with
+  the constant wire `row_version=1`. Only then do the unblocked
+  freeze and the real acceptance publish B, and each workspace's
+  typed public surface records exactly one `BASE_ROW_CHANGED`
+  conflict against the parked operation; the Agent's single fact
+  keeps the pre-publication image pair (before = A at version 1,
+  after = its merged value at version 2) and the Editor's single
+  fact keeps the actual same-statement pre-publication image
+  pair, while the effective COW view keeps the workspace's own
+  merged value at its own version although the base moved to the
+  published B. The ten-second product lock budget is not the
+  oracle: only the observed native lock edge or the completed
+  real job decides.
+- Commit-time completion binding (item 1): a direct real-role
+  definer invocation that records a Heading fact without a genuine
+  completed 078 completion is refused at the actual COMMIT by the
+  deferred constraint check (P0001) and the bounded observation
+  verifies no residue — no fact, no staged COW change, no
+  completion, no reservation — while the amended authority test's
+  positive path performs the real 13-argument completion in the
+  same COW session and commits.
+- Rollback after a real write and evidence insertion (item 2):
+  through each actual HTTP mutation envelope a fixture-only
+  AFTER INSERT journal barrier witnesses, in the SAME transaction
+  and before a bounded rendezvous, that the heading fact is
+  staged and its after image matches the staged COW row; it then
+  forces a real late completion failure (Agent envelope, HTTP
+  503) or a real task cancellation (Editor envelope). The exact
+  durable state (view row, pending operations, facts, family
+  audit, completion journal, reservation) is compared before and
+  after and is byte-for-byte unchanged, an independent
+  connection proves the staged rows invisible before the
+  transaction ends, and the same body + idempotency key retry
+  succeeds with exactly one completed fact and one family event;
+  an ordinary retry of the successful result remains inert.
+- Pilot scope boundaries (item 4): an unchanged-props Editor
+  write and a structural-only Editor write (the order key — the
+  seeded heading sits in its Section's only allowed slot, so a
+  slot change is outside the supported domain here) keep their
+  legacy behavior and record no fact; a mixed props+structural
+  change records the exact props pair (and claims nothing about
+  the structural history); and the ordinary Human workspace path
+  keeps its existing behavior byte-for-byte and records nothing.
+- Attribution and isolation (item 4): same-resource sequential edits
+  chain exactly across families (Agent then Human-on-Agent);
+  cross-site denial is proven at BOTH real login boundaries (an
+  Agent capability bound to another site, and an Editor session
+  enrolled on another site) with no recorded effects; a Section
+  props write through the same Agent path completes normally and
+  records no fact (heading-props family only); the real freeze +
+  human discard lifecycle removes the pending COW rows (public
+  operations empty) while the committed facts remain; an old
+  workspace without facts is unknown (no synthetic history).
+- Authority and bounded format: every runtime role is denied the
+  facts table and the owner-only recorder at real logins (no role
+  EXECUTE at all); an owner call outside the trusted COW session
+  context is refused before any effect (no general-purpose fact
+  insert); a 16385-octet props image is refused by the table's own
+  CHECK (23514); and the downgrade ratchet refuses at the operator
+  level and at the direct-Alembic level, with the staged 079 head
+  proving the 079 body's own refusal still intact behind it.
+
+The module runs unfiltered as the eighth exact module path of the
+trusted mutation-completion (TC) command in the existing PostgreSQL
+14..18 Group B children, with no `-k` selection.

@@ -257,6 +257,24 @@ completion provenance, and downgrade never deletes durable completion,
 family audit, or idempotency history. The operator upgrade path keeps its
 existing no-pending COW precondition.
 
+The `080_001` downgrade (heading row effect provenance) is an
+unconditional fail-closed refusal: the bootstrap operator path refuses it
+BEFORE the readiness PENDING marker, BEFORE the content COW disable, and
+before any migration step, as long as the durable
+`audit.heading_row_effect` table exists (the current head or any later
+head retaining the 080 row-effect pilot, table empty or not) — restoring
+the unrecording 060/062 definer bodies would leave 080-era heading row
+effects (exact DML image pairs bound to operation identity)
+uninterpretable against the restored bodies. The `080_001` Alembic
+downgrade body (`HEADING_ROW_EFFECT_DOWNGRADE_UNSUPPORTED`, P0001) is the
+second line of defense for direct migration invocations. The 079, 078,
+077 and 076 downgrade guards above are the historical lines of defense
+for databases operating at their respective heads; they do not qualify
+the 080 refusal. No database at this head or above has a supported
+downgrade that removes the heading row effect surface, and downgrade
+never deletes durable row-effect, completion, manifest, audit, or
+idempotency history.
+
 ### Upstream health
 
 Use `docker compose ps` to identify an unhealthy process, then inspect that

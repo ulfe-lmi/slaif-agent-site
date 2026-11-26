@@ -900,7 +900,7 @@ async def test_page_style_fresh_065_baseline_restores_exactly_through_066(
             await owner.fetchval(
                 "SELECT version_num::text FROM control.alembic_version"
             )
-            == "079_001"
+            == "080_001"
         )
         round_trip = await owner.fetchrow(
             "SELECT slug,title,status,locale,row_version,style_overrides::text "
