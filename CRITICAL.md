@@ -31,3 +31,16 @@ Focus: security boundaries, authorization logic, data integrity, trust model.
 | [#47](https://github.com/ulfe-lmi/slaif-agent-site/pull/47) | 034 COW promotion service | **HIGH**: Wraps asyncpg_cow_reviewer for workspace promotion. Uses conflict_policy="error" (no overwrite). Verify that: 1) CowConflictError properly rolls back all changes, 2) the reviewer connection uses the slaif_reviewer role, 3) discard also revokes capability tokens. | Chose to wrap the foundation's reviewer directly rather than building a custom promotion path. This ensures we use the tested COW primitives. Conflict handling raises PromotionError which callers must handle — no silent overwrite is possible. | P1 - Review before production |
 | [#53](https://github.com/ulfe-lmi/slaif-agent-site/pull/53) | 040 SBOM + hardening | **LOW**: SBOM generator with license compliance check, concurrency tests. The SBOM is generated from dependency metadata only — actual binary hashes require the full Compose build. License check uses name-based matching (not metadata-based) which may have false negatives. | Chose to generate a minimal CycloneDX-compatible format rather than adding a heavy SBOM tool dependency. Concurrency tests verify idempotency under parallel load, audit chain integrity under interleaving, and token uniqueness. | P3 - Review before release |
 | [#54](https://github.com/ulfe-lmi/slaif-agent-site/pull/54) | 041 Recovery tests + MVP completion | **LOW**: Recovery tests verify error containment, digest determinism, store clear/rebuild, audit tamper detection, and workspace status bounds. MVP declared complete. | Recovery tests are pattern-based (mock-driven) rather than chaos-engineering (real failure injection). Real recovery testing requires the full Compose stack running. Architecture completeness is verified by interface presence tests, not behavioral integration. | P3 - Informational. Superseded — “MVP declared complete” contradicts the contract audit; the contractual MVP is not complete (see `oap/MVP-CONTRACT-AUDIT.md`). |
+
+---
+
+> **CLOSED — external review 2026-11-26.** Every item above was reviewed
+> against verified `main` `0731cb46f3f5328e1837954849d66874a8fae38e` by the
+> human-designated external reviewer after the 2026-11-25 development pause.
+> Eleven of twelve concerns are CLOSED with evidence; the MCP adapter SSRF
+> (#45) is RESIDUAL only as dead scaffold — `POST /mcp/v1/call` fails closed
+> on an undefined settings attribute today and must be replaced, not
+> repaired, under objective 080. Full per-PR verdicts and evidence:
+> `workorders/CRITICAL-REVIEW-2026-11-26.md` in the supervision record
+> (external to this repository per the pause protocol). This was a
+> human-authorized documentation-only commit; no product code changed.
