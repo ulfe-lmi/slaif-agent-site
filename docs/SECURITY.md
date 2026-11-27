@@ -491,13 +491,15 @@ set of the exact site/workspace before selection and
 materialization, each selected props image at most 16384 octets
 re-asserted on the trusted path, the EXACT canonical UTF-8 byte
 size of the selected record array enforced as the first byte gate
-— the selected record shape is written once as a single shared
-projection consumed by both the byte measurement and the
-aggregation so the two measures cannot drift, and the exact
-canonical per-record bytes plus the two array brackets and one
-comma between every pair of adjacent records is the exact
-pre-assembly encoded size, so no in-budget set is ever refused by
-the measurement - with the whole
+— the selected record shape is written once as a
+migration-local shared projection consumed by two separate
+statements (first the exact byte total - the canonical per-record
+bytes plus the two array brackets and one comma between every pair
+of adjacent records, the exact pre-assembly encoded size, so no
+in-budget set is ever refused by the measurement - and only after
+it passes, the aggregation of the same projection, so the two
+measures cannot drift and an over-ceiling set is refused before
+the array is built), with the whole
 ordered facts array at most 1048576 exact canonical UTF-8 bytes,
 whose post-assembly measurement must equal that pre-assembly total
 exactly, alongside the same cheap conservative lower-bound

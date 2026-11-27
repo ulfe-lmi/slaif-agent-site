@@ -89,19 +89,22 @@ Two functions and one table, nothing else:
      octets (re-asserted on the trusted path; the 080 table
      constraint already bounds the source);
    - the EXACT canonical UTF-8 byte size of the selected record
-     array enforced as the first byte gate: the selected record
-     shape is written ONCE as a single shared projection consumed
-     by BOTH the byte total and the aggregation, so the two
-     measures cannot drift; the 070 canonical array encoding is
-     exactly the two brackets, one comma between every pair of
-     adjacent records, and each record's own canonical
-     serialization (the recursive serializer renders a value
-     identically at any depth), so summing the exact canonical
-     bytes of the shared records, plus the delimiters, is the
-     exact pre-assembly encoded size - no estimate.  An
-     over-ceiling set is refused on that exact total before any
-     write; an in-budget set is never refused by the measurement;
-     and the definitive post-assembly measurement must equal that
+     array enforced as the first byte gate, in its own statement,
+     BEFORE the aggregation is even computed: the selected record
+     shape is written ONCE as the migration-local
+     ``_RECORD_PROJECTION_SQL`` constant and consumed by TWO
+     separate
+     statements - first the exact byte total (the 070 canonical
+     array encoding is exactly the two brackets, one comma
+     between every pair of adjacent records, and each record's own
+     canonical serialization, the recursive serializer rendering a
+     value identically at any depth: the exact pre-assembly
+     encoded size, no estimate), refused when it alone exceeds the
+     ceiling, and only then the aggregation of the SAME projection
+     (one record shape, so the two measures cannot drift); an
+     over-ceiling set is refused before the array is ever built;
+     an in-budget set is never refused by the measurement; and the
+     definitive post-assembly measurement must equal that
      pre-assembly total exactly (a broken measurement invariant
      refuses under the same stable code);
    - the whole ordered facts array at most 1048576 exact canonical
@@ -179,6 +182,43 @@ _HEX64_RE = "^[0-9a-f]{64}$"
 _RETENTION_TABLE = "control.heading_review_retention"
 _CAPTURE_FUNCTION = "control.slaif_review_retain_heading_facts(uuid, uuid)"
 _READ_FUNCTION = "control.slaif_review_heading_effects_read(uuid, uuid, uuid, uuid)"
+# The retained record shape, written EXACTLY ONCE and consumed by
+# BOTH capture statements: first the exact pre-aggregation byte
+# measurement, then (only after it has passed) the aggregation.
+# Keeping the shape in one migration-local constant interpolated
+# into both statements is what keeps the two measures from drifting
+# apart (no temporary table, no new grant, no runtime API).  It is
+# raw PL/pgSQL text whose identifiers resolve in the definer's
+# scope; it interpolates into the capture body below as a
+# subquery producing exactly these four columns.
+_RECORD_PROJECTION_SQL = """
+    SELECT jsonb_build_object(
+        'operation_id', f.operation_id::text,
+        'family', f.family,
+        'component_id', f.component_id::text,
+        'row_version_before', f.row_version_before,
+        'row_version_after', f.row_version_after,
+        'props_before', f.props_before,
+        'props_after', f.props_after,
+        'principal_type',
+            CASE WHEN f.family = 'agent'
+                 THEN 'capability'
+                 ELSE 'human_user' END,
+        'principal_id',
+            CASE WHEN f.family = 'agent'
+                 THEN f.capability_id::text
+                 ELSE f.human_user_id::text
+            END
+    ) AS rec,
+       f.component_id,
+       f.row_version_before,
+       f.operation_id
+    FROM audit.heading_row_effect AS f
+    WHERE f.site_id = p_site_id
+      AND f.workspace_id = p_workspace_id
+      AND f.operation_id = ANY(man_ops)
+"""
+
 _ROLES_WITHOUT_RETENTION_ACCESS = (
     "slaif_control",
     "slaif_editor_runtime",
@@ -372,22 +412,26 @@ _CAPTURE_SQL = f"""
                 RAISE EXCEPTION 'HEADING_RETENTION_OVER_BUDGET'
                     USING ERRCODE = 'P0001';
             END IF;
-            -- Single SHARED selected-record projection: the exact
-            -- record shape is written ONCE, and BOTH the exact
-            -- pre-aggregation byte total and the aggregation below
-            -- consume that same rec value, so the two measures
-            -- cannot drift apart (no temporary table, no new
-            -- grant, no runtime API).  The total is the exact
-            -- pre-assembly encoded size: the 070 canonical array
-            -- encoding is exactly the two brackets, one comma
-            -- between every pair of adjacent records, and each
-            -- record's own canonical serialization (the recursive
-            -- serializer renders a value identically at any
-            -- depth), summed per record and plus the delimiters -
-            -- no estimate, and no loose bound that could reject an
-            -- in-budget set.  The deterministic ordering without a
-            -- causal claim: the known per-row transition orders
-            -- each component's facts by row_version_before; the
+            -- Exact pre-aggregation byte total over the SHARED
+            -- selected-record projection: the record shape is the
+            -- migration-local _RECORD_PROJECTION_SQL constant,
+            -- written ONCE and consumed by BOTH statements below,
+            -- so the two measures cannot drift (no temporary
+            -- table, no new grant, no runtime API).  The total is
+            -- the exact pre-assembly encoded size: the 070
+            -- canonical array encoding is exactly the two
+            -- brackets, one comma between every pair of adjacent
+            -- records, and each record's own canonical
+            -- serialization (the recursive serializer renders a
+            -- value identically at any depth), summed per record
+            -- and plus the delimiters - no estimate, and no loose
+            -- bound that could reject an in-budget set.  The total
+            -- is measured and refused in its OWN statement BEFORE
+            -- the aggregation below is computed at all, so an
+            -- over-ceiling set is refused before the array is ever
+            -- built.  The deterministic ordering without a causal
+            -- claim: the known per-row transition orders each
+            -- component's facts by row_version_before; the
             -- tie-break across unrelated components is the native
             -- UUID order of component_id, then operation_id.  The
             -- complete checked image pair, versions and exact
@@ -396,47 +440,29 @@ _CAPTURE_SQL = f"""
             -- their original value.  The definitive post-assembly
             -- invariants below are preserved.
             SELECT coalesce(sum(octet_length(convert_to(
-                       control.slaif_canonical_jsonb_text(rows.rec), 'UTF8'))),
-                            0) + 2 + GREATEST(coalesce(count(*), 0) - 1, 0),
-                   coalesce(
-                       jsonb_agg(rows.rec ORDER BY rows.component_id,
-                                 rows.row_version_before,
-                                 rows.operation_id),
-                       '[]'::jsonb
-                   )
-              INTO n, facts
-            FROM (
-                SELECT jsonb_build_object(
-                    'operation_id', f.operation_id::text,
-                    'family', f.family,
-                    'component_id', f.component_id::text,
-                    'row_version_before', f.row_version_before,
-                    'row_version_after', f.row_version_after,
-                    'props_before', f.props_before,
-                    'props_after', f.props_after,
-                    'principal_type',
-                        CASE WHEN f.family = 'agent'
-                             THEN 'capability'
-                             ELSE 'human_user' END,
-                    'principal_id',
-                        CASE WHEN f.family = 'agent'
-                             THEN f.capability_id::text
-                             ELSE f.human_user_id::text
-                        END
-                ) AS rec,
-                   f.component_id,
-                   f.row_version_before,
-                   f.operation_id
-                FROM audit.heading_row_effect AS f
-                WHERE f.site_id = p_site_id
-                  AND f.workspace_id = p_workspace_id
-                  AND f.operation_id = ANY(man_ops)
-            ) AS rows(rec, component_id, row_version_before,
-                      operation_id);
+                       control.slaif_canonical_jsonb_text(rows.rec),
+                       'UTF8'))), 0)
+                   + 2 + GREATEST(coalesce(count(*), 0) - 1, 0)
+              INTO n
+            FROM ({_RECORD_PROJECTION_SQL})
+                 AS rows(rec, component_id, row_version_before,
+                         operation_id);
             IF n > {_MAX_RETAINED_FACTS_BYTES} THEN
                 RAISE EXCEPTION 'HEADING_RETENTION_OVER_BUDGET'
                     USING ERRCODE = 'P0001';
             END IF;
+            -- The aggregation runs ONLY after the exact total has
+            -- passed, over the SAME shared projection (the
+            -- identical record shape and ordering inputs).
+            SELECT coalesce(
+                jsonb_agg(rows.rec ORDER BY rows.component_id,
+                          rows.row_version_before,
+                          rows.operation_id),
+                '[]'::jsonb
+            ) INTO facts
+            FROM ({_RECORD_PROJECTION_SQL})
+                 AS rows(rec, component_id, row_version_before,
+                         operation_id);
             -- Cheap conservative canonical-byte LOWER BOUND before
             -- the expensive serialization (the 079 companion
             -- pattern): native jsonb text minus the separator space
