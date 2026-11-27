@@ -499,10 +499,22 @@ CONFLICT_MARKER = re.compile(r"^(?:<<<<<<<(?: |$)|=======$|>>>>>>>)(?: |$)")
 USES_LINE = re.compile(r"^\s*-?\s*uses:\s*([^\s#]+)(?:\s+#\s*(\S.*))?\s*$")
 FULL_SHA = re.compile(r"[0-9a-f]{40}")
 OAP_IDENTIFIER = re.compile(r"\d{3}-(?:[1-9]\d*-)?[a-z]")
-OAP_ARTIFACT = re.compile(r"^(\d{3}-(?:[1-9]\d*-)?[a-z])(?:-.+)?\.md$")
-OAP_ACTIVE = re.compile(r"\d{3}-(?:[1-9]\d*-)?[a-z]\n?")
+# Single source for the maintenance identifier shared by the active
+# file, the artifact filenames, and the active identifier check.  The
+# year must be a nonzero four-digit ASCII calendar year, so year 0000
+# and Unicode lookalike digits are rejected by the explicit [0-9]
+# character classes.
+MAINTENANCE_ID = (
+    r"maint-(?:[1-9][0-9]{3}|0[1-9][0-9]{2}|00[1-9][0-9]|000[1-9])"
+    r"-(?:0[1-9]|1[0-2])"
+)
+OAP_ARTIFACT = re.compile(
+    r"^((?:\d{3}-(?:[1-9]\d*-)?[a-z])|(?:" + MAINTENANCE_ID + r"))(?:-.+)?\.md$"
+)
+OAP_ACTIVE = re.compile(r"(?:\d{3}-(?:[1-9]\d*-)?[a-z]|(?:" + MAINTENANCE_ID + r"))\n?")
 OAP_LEGACY = re.compile(r"^(\d{3})-([a-z])$")
 OAP_QUALIFIED = re.compile(r"^(\d{3})-([1-9]\d*)-([a-z])$")
+OAP_MAINTENANCE = re.compile(r"^(?:" + MAINTENANCE_ID + r")$")
 INERT_PLANNED_OAP_IDENTIFIERS = {f"{number:03d}-a" for number in range(74, 92)}
 MERGE_FACT_LEDGER_FILE = "oap/INCREMENTS.md"
 MERGE_FACT_SCAN_FILES = (
@@ -853,11 +865,13 @@ class RepositoryPolicy:
                 if (
                     OAP_ACTIVE.fullmatch(text) is None
                     or parse_oap_identifier(stripped) is None
+                    and OAP_MAINTENANCE.fullmatch(stripped) is None
                 ):
                     self.error(
                         active_path,
-                        "must contain one NNN-L or NNN-I-L identifier and "
-                        "optional final newline",
+                        "must contain one NNN-L or NNN-I-L identifier, the "
+                        "maintenance form maint-YYYY-MM, and an optional "
+                        "final newline",
                     )
                 else:
                     active = stripped
@@ -908,7 +922,8 @@ class RepositoryPolicy:
                 self.error(
                     path,
                     f"OAP {label} filename does not start with a valid"
-                    " NNN-L or NNN-I-L identifier",
+                    " NNN-L or NNN-I-L identifier or the maintenance form"
+                    " maint-YYYY-MM",
                 )
                 continue
             grouped[match.group(1)].append(path)
