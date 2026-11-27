@@ -459,3 +459,98 @@ unconditional explicit refusal for direct migration invocations.
 The 079, 078 and 077 downgrade guards remain earlier lines of
 defense, and downgrade never deletes durable row-effect,
 completion, manifest, audit, or idempotency history.
+
+The retained heading review facts (revision `081_001`, increment
+083/14) bind the already-recorded `heading-row-effect/v1` facts of
+reviewed operations to the immutable review created by the actual
+freeze worker. Capture happens INSIDE the one locked freeze
+transaction, after the snapshot, the companion reviewed-operations
+manifest and the REVIEW transition, and before the job's SUCCEEDED
+terminal, so the retained set is atomic with the review it
+describes: the owner-only definer
+`control.slaif_review_retain_heading_facts` (EXECUTE for
+`slaif_review_worker` only) re-resolves the snapshot from the
+workspace's trusted pointer — never a caller-selected id — re-binds
+its exact digest, and re-resolves the companion manifest of that
+exact snapshot, so the stored row is bound to the exact site,
+workspace, snapshot id and digest and the reviewed-operation
+manifest digest. Every candidate fact (the product-owned
+`audit.heading_row_effect` rows of the same site and workspace)
+is selected from the actual reviewed operation set — the exact
+companion's stored `operation_ids` — so the retained set is that
+reviewed selection only, never "every prior workspace fact".
+Every selected fact must carry the manifest's completion identity
+of its operation — family, principal (capability for `agent`,
+human user for `human_editor`) and resource (the component)
+field-for-field the identity's — or the capture refuses
+(`HEADING_RETENTION_BINDING_MISMATCH`) before any write; a fact
+whose operation is outside the reviewed set is not retained and not
+claimed as reviewed. A known inconsistent binding or a budget
+violation (at most 256 records, checked on the whole genuine fact
+set of the exact site/workspace before selection and
+materialization, each selected props image at most 16384 octets
+re-asserted on the trusted path, the whole ordered facts array at
+most 1048576 exact canonical UTF-8 bytes with the same cheap
+conservative lower-bound pre-check the 079 companion uses) refuses
+the entire
+locked freeze transaction (`HEADING_RETENTION_OVER_BUDGET`), leaving
+no snapshot, no companion, no retention row and no REVIEW state
+while the earlier committed mutation facts stay intact. Stored bytes
+are derived entirely on the trusted path from the stored rows; the
+worker supplies only the workspace and site. Every record preserves
+the full checked image pair, the row versions and the exact
+operation identity — including intermediate facts for reviewed
+operations when the final props return to their original value.
+Ordering is deterministic without a causal claim: the known per-row
+transition orders each component's facts by `row_version_before`
+with a native-UUID `component_id`/`operation_id` tie-break. The
+stored row carries an explicit `retained-heading-facts/v1` version,
+the ordered facts array, its count, its exact canonical byte count
+and a SHA-256 digest over the 070 canonical serialization for
+deterministic exact read and replay. The retained facts are review
+evidence attached to the immutable review: they are never an input
+to the existing accept approval (snapshot id + domain digest +
+manifest digest), which is preserved byte-for-byte.
+
+The single table `control.heading_review_retention` is owner-owned
+with no PUBLIC or role grants; the two definers are the only
+exposure. The human read
+`control.slaif_review_heading_effects_read` (EXECUTE for
+`slaif_control` only) reuses the existing authorized review
+boundary — the same uniform gate class as the 071 review read
+model, behind the Control process's human membership check — so
+current human membership (or platform administration) and the named
+snapshot's site/workspace association are re-checked against the
+resolved snapshot row's own site and workspace, and a different
+site, an unauthorized caller, an unknown id or a missing review
+all take the existing uniform 404 behavior with no oracle. The
+current review follows the trusted pointer; the optional named
+snapshot argument makes the retained lookup bind the EXACT
+requested snapshot, whose site/workspace association is checked
+against the snapshot row itself, so a retained review can be
+reopened independently of the pointer. The served row is bound to
+its exact companion (manifest digest, site, workspace) and every
+served record is re-checked at read time against the companion's
+completion identities (operation, family, principal, resource), so
+the served set is exactly the retained reviewed-operation subset;
+a pre-feature snapshot
+(frozen before this revision) is represented as `status:
+unavailable` with the reason `pre_feature_snapshot`, while a
+genuinely captured empty set is `status: captured` with an empty
+facts array — the two stay distinguished in the response. The
+document is narrow (binding, digest, count and the retained facts)
+and is never echoed into error responses: every refusal is the one
+stable class the HTTP layer maps to the uniform 404. No new actor
+authority is added; the accept inputs, approval API, eligibility
+and worker gates are unchanged.
+
+While the durable table exists, downgrade is refused before effects
+for any head retaining the 081 surface (current or later): the
+operator path refuses before the readiness PENDING marker, before
+the content COW disable, and before any migration step, and the
+081_001 Alembic downgrade body
+(`HEADING_RETENTION_DOWNGRADE_UNSUPPORTED`, P0001) is an
+unconditional explicit refusal for direct migration invocations.
+The 080, 079, 078 and 077 downgrade guards remain earlier lines of
+defense, and downgrade never deletes durable retention, row-effect,
+completion, manifest, audit, or idempotency history.

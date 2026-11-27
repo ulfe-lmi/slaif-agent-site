@@ -98,6 +98,9 @@ HUMAN_AGENT_WORKSPACE_DISCARD_SQL = (
 HUMAN_AGENT_WORKSPACE_REVIEW_READ_SQL = (
     "SELECT * FROM control.slaif_review_read_model($1,$2,$3)"
 )
+HUMAN_AGENT_WORKSPACE_HEADING_EFFECTS_READ_SQL = (
+    "SELECT * FROM control.slaif_review_heading_effects_read($1,$2,$3,$4)"
+)
 HUMAN_AGENT_WORKSPACE_LIST_SQL = (
     "SELECT * FROM control.slaif_human_agent_workspace_list($1,$2)"
 )
@@ -622,6 +625,36 @@ class ControlDatabase:
             document["manifest"] = await self.human_agent_workspace_manifest_read(
                 snapshot_section["id"]
             )
+        return document
+
+    async def human_agent_workspace_review_heading_effects_read(
+        self, *arguments: Any
+    ) -> dict[str, Any] | None:
+        """One narrow retained heading-effects document (083/14).
+
+        Same uniform gate behavior as the review read model: every
+        gate failure is the stable ``REVIEW_READ_UNAVAILABLE`` class
+        the HTTP layer maps to the same uniform 404 (no oracle).  A
+        pre-feature snapshot answers ``status: unavailable``; a
+        captured empty set answers ``status: captured`` with an empty
+        facts array.
+
+        ``arguments`` are (workspace_id, site_id, snapshot_id,
+        user_account_id); a NULL snapshot_id follows the current
+        trusted pointer, a named snapshot_id binds that exact
+        snapshot (its site/workspace association is checked against
+        the snapshot row itself).
+        """
+        rows = await self._human_agent_call(
+            HUMAN_AGENT_WORKSPACE_HEADING_EFFECTS_READ_SQL, *arguments
+        )
+        if not rows:
+            return None
+        document = rows[0][0]
+        if isinstance(document, (str, bytes)):
+            document = cast("dict[str, Any]", json.loads(document))
+        else:
+            document = cast("dict[str, Any]", document)
         return document
 
     async def human_agent_workspace_create_idempotent(self, *arguments: Any) -> Any:

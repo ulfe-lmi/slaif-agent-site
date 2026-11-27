@@ -2782,8 +2782,8 @@ async def test_facts_authority_boundaries_and_downgrade_ratchet(
     """Runtime roles cannot forge/read/update/delete the facts, the
     recorder is owner-only and context-bound (no general fact insert),
     the versioned format is bounded, and the downgrade ratchet refuses
-    at both the operator and the direct Alembic level (080 first, the
-    079 body still intact behind it)."""
+    at both the operator and the direct Alembic level (081 first, the
+    080 and 079 bodies still intact behind it)."""
 
     database = agent_site_database
     media_root = tmp_path / "media"
@@ -2878,18 +2878,52 @@ async def test_facts_authority_boundaries_and_downgrade_ratchet(
             )
     assert getattr(over.value, "sqlstate", None) == "23514"
 
-    # 4. Downgrade ratchet: direct Alembic 080 -> 079 refuses (080 body);
-    # the operator path refuses via the bootstrap preflight; the state
-    # is left exactly as found; and the 079 body still refuses 079 ->
-    # 078 when staged from the released 079 head.
+    # 4. Downgrade ratchet: at the current head the operator path
+    # refuses via the retained-heading-review-facts preflight and the
+    # direct Alembic 081 body refuses the first step; the state is
+    # left exactly as found.  Staged from the released 080 head the
+    # 080 body still refuses 080 -> 079, and the 079 body still
+    # refuses 079 -> 078 when staged from the released 079 head.
     async with owner_connection(
         database.settings.resolved_owner_dsn(), expected_database=database.name
     ) as owner:
         before = await owner.fetchrow("SELECT version_num FROM control.alembic_version")
-        assert before["version_num"] == "080_001"
+        assert before["version_num"] == "081_001"
 
-    with pytest.raises(BootstrapStateError, match="heading row effect"):
+    with pytest.raises(BootstrapStateError, match="retained heading review facts"):
         await downgrade(database.settings)
+    with pytest.raises(DBAPIError) as direct_081_exc:
+        await run_migration(
+            database.settings.resolved_owner_dsn(),
+            expected_database=database.name,
+            operation="downgrade",
+            revision="079_001",
+        )
+    underlying_081 = direct_081_exc.value.orig
+    assert "HEADING_RETENTION_DOWNGRADE_UNSUPPORTED" in str(underlying_081)
+    assert getattr(underlying_081, "sqlstate", None) == "P0001"
+
+    # Stage the released 080 head.  The 081 surface has no supported
+    # downgrade (proved above), so a 080-era release deployment is
+    # simulated at the fixture level: the owner drops the 081
+    # retention table and both definer functions and stages the 080
+    # version row.
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(), expected_database=database.name
+    ) as owner:
+        await owner.execute(
+            "DROP FUNCTION control.slaif_review_heading_effects_read"
+            "(uuid,uuid,uuid,uuid)"
+        )
+        await owner.execute(
+            "DROP FUNCTION control.slaif_review_retain_heading_facts(uuid,uuid)"
+        )
+        await owner.execute("DROP TABLE control.heading_review_retention")
+        await owner.execute(
+            "UPDATE control.alembic_version SET version_num = '080_001'"
+        )
+
+    # The 080 body refuses 080 -> 079 (the released 080-era step).
     with pytest.raises(DBAPIError) as direct_exc:
         await run_migration(
             database.settings.resolved_owner_dsn(),

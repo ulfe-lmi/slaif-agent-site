@@ -8,10 +8,10 @@ import hashlib
 import json
 import re
 from datetime import UTC, datetime
-from typing import Any, Never, cast
+from typing import Annotated, Any, Never, cast
 from uuid import UUID
 
-from fastapi import APIRouter, Header, Request, Response
+from fastapi import APIRouter, Header, Query, Request, Response
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from slaif_agent_site.agent_state.workspace_models import (
@@ -229,6 +229,46 @@ async def get_workspace_review(
     except Exception as exc:
         # The read model fails closed with one stable internal class;
         # every gate failure is the same uniform 404 (no oracle).
+        if "REVIEW_READ_UNAVAILABLE" in str(exc):
+            raise ResourceNotFoundError() from None
+        raise ServiceUnavailableError() from None
+    if document is None:
+        raise ResourceNotFoundError()
+    return cast("dict[str, Any]", document)
+
+
+@router.get("/{workspace_id}/review/heading-effects/")
+async def get_workspace_review_heading_effects(
+    site_id: UUID,
+    workspace_id: UUID,
+    request: Request,
+    snapshot_id: Annotated[UUID | None, Query()] = None,
+) -> dict[str, Any]:
+    """The retained heading row effects of the current review.
+
+    The existing authorized review boundary: same human membership
+    gate and uniform 404 mapping as the review document.  A
+    pre-feature snapshot is ``status: unavailable``; a captured empty
+    set is ``status: captured`` with an empty facts array.
+
+    Without ``snapshot_id`` the CURRENT review follows the trusted
+    pointer; with it, the retained lookup binds that EXACT snapshot
+    (its site/workspace association is checked against the snapshot
+    row itself), so a retained review can be reopened independently
+    of the pointer.
+    """
+    database = _database(request)
+    authority = await _authorize_workspace_read(request, database, site_id)
+    try:
+        document = await database.human_agent_workspace_review_heading_effects_read(
+            workspace_id,
+            site_id,
+            snapshot_id,
+            authority.session.user_account_id,
+        )
+    except Exception as exc:
+        # One stable internal class; every gate failure is the same
+        # uniform 404 (no oracle), matching the review document.
         if "REVIEW_READ_UNAVAILABLE" in str(exc):
             raise ResourceNotFoundError() from None
         raise ServiceUnavailableError() from None

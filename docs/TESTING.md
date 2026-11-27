@@ -839,3 +839,66 @@ boundaries and the real freeze/accept/discard lifecycles:
 The module runs unfiltered as the eighth exact module path of the
 trusted mutation-completion (TC) command in the existing PostgreSQL
 14..18 Group B children, with no `-k` selection.
+
+## Retained heading review facts (083/14)
+
+The retained heading review facts increment (083/14, revision
+`081_001`) binds the already-recorded `heading-row-effect/v1` facts
+of reviewed operations to the immutable review. The focused
+`test_retained_heading_review_facts.py` module adds five real native
+tests on the disposable cluster:
+
+- Real lifecycle (item 3): distinct same-Heading reviewed
+  operations through the real Agent and Human-on-Agent HTTP paths,
+  including an intermediate value that differs from the final value
+  (the final props return to the original). A real freeze retains
+  the exact ordered records (field-for-field the 080 facts, bound to
+  the exact site/workspace/snapshot id and digest and the reviewed
+  operation manifest digest); the trusted 078 completion and the
+  public operation manifest set corroborate the identity. A real
+  human accept in one workspace and a real human discard in a second
+  settle the COW state, and BOTH retained reviews are reopened
+  afterwards through the authorized product read with a fresh
+  service connection — first via the current trusted pointer and
+  then by the exact named snapshot (`?snapshot_id=`), which
+  re-checks the snapshot row's own site/workspace association
+  (a snapshot bound to the other workspace of the same site, and an
+  unknown id, take the uniform 404). The retained bytes, digest and
+  the original snapshot and media identity are unchanged by the
+  publication.
+- Pre-feature vs captured empty (item 2): a real freeze with no
+  heading edits captures an explicitly empty set (`captured`, empty
+  facts array, the exact canonical bytes of `[]`); the same review
+  with no retention row — the shape of a pre-feature snapshot —
+  answers `unavailable` with `pre_feature_snapshot`, and the two
+  stay distinguished while the old review document is preserved.
+- Budget and binding refusals (items 1 and 3): an owner-seeded
+  over-budget coherent fact set (257 records, each with its real
+  078 completion binding in the same transaction) refuses the whole
+  freeze with no snapshot, no companion, no retention row, the
+  workspace still FREEZING and the facts intact; a real 1-fact
+  freeze then succeeds, and making the stored companion identity
+  disagree with the fact's principal refuses the trusted capture
+  (`HEADING_RETENTION_BINDING_MISMATCH`, P0001) before any write,
+  leaving the existing retention row untouched.
+- Atomic rollback after manifest staging (item 3): a fixture-only
+  armed AFTER INSERT trigger on the companion table — installed
+  before the real freeze and restored on every exit — fires
+  inside the freeze transaction when the manifest row is staged
+  (after the snapshot row, before the terminal job success), so
+  the whole locked transaction rolls back: the snapshot,
+  pointer, companion, retention and job state all roll back with
+  the earlier mutation facts intact, and the supported retry
+  path (the FREEZING re-enqueue claim) completes with the exact
+  retained set.
+- Authority and downgrade ratchet (items 1 and 3): the retention
+  table is owner-only across every role (no PUBLIC, no role
+  grants), the capture definer is worker-only and the read definer
+  control-only at real logins, and the downgrade is refused at both
+  the operator preflight and the direct-Alembic level
+  (`HEADING_RETENTION_DOWNGRADE_UNSUPPORTED`, P0001) with the head
+  and every object left exactly as found.
+
+The module runs unfiltered as the ninth exact module path of the
+trusted mutation-completion (TC) command in the existing PostgreSQL
+14..18 Group B children, with no `-k` selection.

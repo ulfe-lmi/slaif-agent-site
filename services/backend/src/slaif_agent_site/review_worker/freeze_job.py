@@ -50,6 +50,7 @@ _PHASE_ERROR_CODES = {
     "operations": "SNAPSHOT_COMPLETE_FAILED",
     "provenance": "SNAPSHOT_COMPLETE_FAILED",
     "complete": "SNAPSHOT_COMPLETE_FAILED",
+    "retention": "HEADING_RETENTION_FAILED",
 }
 _DOMAIN_ERROR_CODES = {
     "REVIEW_WORKSPACE_NOT_FOUND": "STATE_DRIFT",
@@ -100,6 +101,14 @@ _DOMAIN_ERROR_CODES = {
     "MANIFEST_IDENTITY_MISMATCH": "SNAPSHOT_COMPLETE_FAILED",
     "MANIFEST_JOURNAL_MISSING": "SNAPSHOT_COMPLETE_FAILED",
     "MANIFEST_BINDING_MISMATCH": "SNAPSHOT_COMPLETE_FAILED",
+    # 083/14 retained heading-facts capture (trusted definer): a known
+    # inconsistent binding or budget violation refuses the whole
+    # locked freeze transaction - one stable terminal code.
+    "HEADING_RETENTION_INPUT": "HEADING_RETENTION_FAILED",
+    "HEADING_RETENTION_NOT_READY": "HEADING_RETENTION_FAILED",
+    "HEADING_RETENTION_BINDING": "HEADING_RETENTION_FAILED",
+    "HEADING_RETENTION_BINDING_MISMATCH": "HEADING_RETENTION_FAILED",
+    "HEADING_RETENTION_OVER_BUDGET": "HEADING_RETENTION_FAILED",
 }
 
 
@@ -373,6 +382,20 @@ async def run_freeze_job(
                         workspace_id,
                         snapshot.canonical_json(row_doc),
                         manifest,
+                    )
+                    # Step 6b: bind the genuine 080 heading row
+                    # effects of this workspace to the immutable
+                    # review just completed, in this SAME locked
+                    # transaction (atomic with the snapshot row, the
+                    # companion row, the pointer and the job state):
+                    # a known inconsistent binding or budget
+                    # violation refuses the whole freeze with no
+                    # partial state.
+                    phase = "retention"
+                    await connection.fetchval(
+                        "SELECT control.slaif_review_retain_heading_facts($1, $2)",
+                        workspace_id,
+                        site_id,
                     )
                     # Step 7: job SUCCEEDED, same transaction.
                     await connection.fetchval(
