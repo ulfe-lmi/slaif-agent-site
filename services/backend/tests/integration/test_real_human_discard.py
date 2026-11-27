@@ -914,7 +914,7 @@ async def test_discard_migration_round_trip(
     async with owner_connection(dsn, expected_database=database.name) as owner:
         assert (
             await owner.fetchval("SELECT version_num FROM control.alembic_version")
-            == "080_001"
+            == "081_001"
         )
         assert (
             await owner.fetchval(

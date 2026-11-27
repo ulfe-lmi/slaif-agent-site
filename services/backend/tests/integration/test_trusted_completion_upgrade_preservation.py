@@ -1838,7 +1838,7 @@ async def test_quiescent_078_to_079_upgrade_preserves_history(
     await upgrade(database.settings)
     result = await reconcile(database.settings)
     assert result.safe
-    assert result.revision == "080_001"
+    assert result.revision == "081_001"
 
     # ALL pre-079 history preserved byte-exact; no synthetic journal.
     assert await _family_history(database) == history_before
@@ -1952,15 +1952,17 @@ async def test_quiescent_078_to_079_upgrade_preserves_history(
     finally:
         await pool.close()
 
-    # Operator downgrade: refused BEFORE any effect.
+    # Operator downgrade: refused BEFORE any effect.  At the current
+    # head the retained-heading-review-facts preflight is the first
+    # refusal in the chain.
     before_refusal = await _full_state(database)
-    with pytest.raises(BootstrapStateError, match="heading row effect"):
+    with pytest.raises(BootstrapStateError, match="retained heading review facts"):
         await downgrade(database.settings)
     after_refusal = await _full_state(database)
     _assert_state_equal(before_refusal, after_refusal)
-    assert after_refusal["revision"] == "080_001"
+    assert after_refusal["revision"] == "081_001"
 
-    # Direct 080_001 Alembic body: the second line of defense (the
+    # Direct 081_001 Alembic body: the second line of defense (the
     # first step of any direct downgrade from the current head).
     with pytest.raises(sqlalchemy_exc.DBAPIError) as exc_info:
         await run_migration(
@@ -1970,7 +1972,7 @@ async def test_quiescent_078_to_079_upgrade_preserves_history(
             revision="078_001",
         )
     underlying = exc_info.value.orig
-    assert "HEADING_ROW_EFFECT_DOWNGRADE_UNSUPPORTED" in str(underlying)
+    assert "HEADING_RETENTION_DOWNGRADE_UNSUPPORTED" in str(underlying)
     assert getattr(underlying, "sqlstate", None) == "P0001"
     after_direct = await _full_state(database)
     _assert_state_equal(before_refusal, after_direct)

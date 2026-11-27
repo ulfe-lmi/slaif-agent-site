@@ -1373,3 +1373,328 @@ test("review-surface-v2-faithful-read-model-and-render", async ({ page }) => {
 
   expect(failures(), "unexpected browser failure category").toEqual([]);
 });
+
+type RetainedHeadingFact = {
+  operation_id: string;
+  family: string;
+  component_id: string;
+  row_version_before: number;
+  row_version_after: number;
+  props_before: Record<string, unknown>;
+  props_after: Record<string, unknown>;
+  principal_type: string;
+  principal_id: string;
+};
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const RETAINED_FACT_KEYS = [
+  "component_id",
+  "family",
+  "operation_id",
+  "principal_id",
+  "principal_type",
+  "props_after",
+  "props_before",
+  "row_version_after",
+  "row_version_before",
+];
+
+test("review-surface-retained-heading-effects", async ({ page }) => {
+  test.setTimeout(600_000);
+  const credential = secrets();
+  const project = composeProject();
+  const failures = observe(page);
+
+  await login(page, credential);
+  const siteId = await demoSiteId(page);
+  const csrf = await adminCsrf(page);
+
+  const headingPath = (
+    workspaceId: string,
+    site: string = siteId,
+    snapshotId?: string,
+  ): string => {
+    let path = `/api/control/v1/sites/${site}/workspaces/${workspaceId}/review/heading-effects/`;
+    if (snapshotId) path += `?snapshot_id=${snapshotId}`;
+    return path;
+  };
+
+  async function headingRead(
+    workspaceId: string,
+    headers: Record<string, string> = {},
+    site: string = siteId,
+    snapshotId?: string,
+  ): Promise<{
+    status: number;
+    body: { code: string; message: string };
+    document: Record<string, unknown> | null;
+  }> {
+    const response = await page.request.get(
+      headingPath(workspaceId, site, snapshotId),
+      {
+        headers,
+      },
+    );
+    const raw = (await response.json().catch(() => null)) as
+      { error?: { code?: string; message?: string } } | Record<string, unknown> | null;
+    if (raw === null || typeof raw !== "object" || "error" in raw) {
+      const envelope = (raw ?? {}) as {
+        error?: { code?: string; message?: string };
+      };
+      return {
+        status: response.status(),
+        body: {
+          code: envelope.error?.code ?? "",
+          message: envelope.error?.message ?? "",
+        },
+        document: null,
+      };
+    }
+    return {
+      status: response.status(),
+      body: { code: "", message: "" },
+      document: raw,
+    };
+  }
+
+  // ------------------- workspace A: real heading edits, two families
+  // The 080 recorder observes heading ROW transitions (component
+  // updates), so the flow creates one heading row, then edits it once
+  // through the Agent API and once through the Human-on-Agent Editor
+  // API - distinct reviewed operations, intermediate value retained.
+  const marker = `083/14 retained ${randomHex(2)}`;
+  const seedText = `${marker} seed`;
+  const finalText = `${marker} final`;
+  const wsA = await createAgentWorkspace(
+    page,
+    siteId,
+    `083/14 retained ${randomHex(4)}`,
+    "L4_SITE_ARCHITECT",
+  );
+  const tokenA = await createCapability(page, siteId, wsA);
+  const homeIdA = await homePageId(page, tokenA);
+  expect(await agentComponentWrite(page, homeIdA, tokenA, seedText)).toEqual({
+    status: 201,
+    code: "",
+  });
+  const componentList = await page.request.get(
+    `/api/agent/v1/pages/${homeIdA}/components`,
+    { headers: { Authorization: `Bearer ${tokenA}` } },
+  );
+  expect(componentList.status()).toBe(200);
+  const components = (await componentList.json()) as Array<{
+    id: string;
+    component_type: string;
+    props: { text?: string };
+    row_version: number;
+  }>;
+  const created = components.find(
+    (item) => item.component_type === "Heading" && item.props.text === seedText,
+  );
+  expect(created).toBeTruthy();
+  const headingIdA = created!.id;
+  // Agent edit: the intermediate value (distinct operation).
+  const agentEdit = await page.request.patch(`/api/agent/v1/components/${headingIdA}`, {
+    headers: {
+      Authorization: `Bearer ${tokenA}`,
+      "Idempotency-Key": crypto.randomUUID(),
+    },
+    data: { props: { text: marker, level: 3 }, expected_row_version: 1 },
+  });
+  expect(agentEdit.status()).toBe(200);
+  // Human-on-Agent edit: the final value (distinct operation).
+  const editorEdit = await page.request.patch(
+    `/api/editor/v1/sites/${siteId}/pages/${homeIdA}/composition/components/${headingIdA}`,
+    {
+      headers: {
+        "X-CSRF-Token": csrf,
+        "X-Editor-Workspace": wsA,
+        "Idempotency-Key": crypto.randomUUID(),
+      },
+      data: { props: { text: finalText, level: 3 } },
+    },
+  );
+  expect(editorEdit.status()).toBe(200);
+  const frozenA = await freezeWorkspace(page, siteId, wsA);
+  expect(frozenA.status).toBe(202);
+  await waitForReview(page, project, siteId, wsA);
+
+  // Fixture oracles for the immutable review snapshot and the retained
+  // row (same psql style as the snapshot digest probes above).
+  const snapARow = psql(
+    project,
+    `SELECT id || '|' || digest FROM control.review_snapshot
+      WHERE workspace_id = '${wsA}'`,
+  );
+  expect(snapARow.split("|").length).toBe(2);
+  const [snapAId, snapADigest] = snapARow.split("|") as [string, string];
+  expect(snapAId).toMatch(UUID_RE);
+  expect(snapADigest).toMatch(/^[0-9a-f]{64}$/);
+  const retentionARow = psql(
+    project,
+    `SELECT fact_count || '|' || facts_bytes || '|' || facts_digest
+       FROM control.heading_review_retention
+      WHERE snapshot_id = '${snapAId}'`,
+  );
+  expect(retentionARow.split("|").length).toBe(3);
+  const [countA, bytesA, digestA] = retentionARow.split("|") as [
+    string,
+    string,
+    string,
+  ];
+  // Exactly the two reviewed operations that touched the heading row.
+  expect(Number(countA)).toBe(2);
+  expect(Number(bytesA)).toBeGreaterThan(0);
+  expect(digestA).toMatch(/^[0-9a-f]{64}$/);
+
+  // Reference denial: unknown workspace by the authorized caller.
+  const reference = await headingRead(crypto.randomUUID());
+  expect(reference).toEqual({
+    status: 404,
+    body: {
+      code: "RESOURCE_NOT_FOUND",
+      message: "The resource is not available.",
+    },
+    document: null,
+  });
+
+  // ---------------------- current-pointer read (trusted pointer path)
+  const readFingerprint = (): string =>
+    psql(
+      project,
+      `SELECT (SELECT count(*) FROM control.heading_review_retention) || '|' ||
+             (SELECT count(*) FROM control.review_snapshot) || '|' ||
+             (SELECT count(*) FROM control.review_operation_manifest)`,
+    );
+  const current = await headingRead(wsA);
+  expect(current.status).toBe(200);
+  const doc = current.document;
+  expect(doc).toBeTruthy();
+  if (!doc) throw new Error("missing heading effects document");
+  expect(doc["status"]).toBe("captured");
+  expect(doc["schema_version"]).toBe("retained-heading-facts/v1");
+  expect(doc["snapshot_id"]).toBe(snapAId);
+  expect(doc["snapshot_digest"]).toBe(snapADigest);
+  expect(doc["fact_count"]).toBe(Number(countA));
+  expect(doc["facts_bytes"]).toBe(Number(bytesA));
+  expect(doc["facts_digest"]).toBe(digestA);
+  const facts = doc["facts"] as RetainedHeadingFact[];
+  expect(Array.isArray(facts)).toBe(true);
+  expect(facts.length).toBe(Number(countA));
+  for (const fact of facts) {
+    expect(Object.keys(fact).sort()).toEqual([...RETAINED_FACT_KEYS].sort());
+    expect(fact.operation_id).toMatch(UUID_RE);
+    expect(fact.component_id).toMatch(UUID_RE);
+    expect(fact.principal_id).toMatch(UUID_RE);
+    expect(Number.isInteger(fact.row_version_before)).toBe(true);
+    expect(Number.isInteger(fact.row_version_after)).toBe(true);
+  }
+  // Both facts bind the exact heading row, in row-transition order;
+  // the two reviewed operations are distinct.
+  expect(facts.length).toBe(2);
+  const [agentFact, editorFact] = facts;
+  if (!agentFact || !editorFact) throw new Error("missing retained facts");
+  expect(facts.map((fact) => fact.component_id)).toEqual([headingIdA, headingIdA]);
+  expect(new Set(facts.map((fact) => fact.operation_id)).size).toBe(2);
+  expect(
+    facts.map((fact) => [fact.row_version_before, fact.row_version_after]),
+  ).toEqual([
+    [1, 2],
+    [2, 3],
+  ]);
+  // The agent edit carried the intermediate value.
+  expect(agentFact).toMatchObject({
+    family: "agent",
+    principal_type: "capability",
+  });
+  expect((agentFact.props_before as { text?: string }).text).toBe(seedText);
+  expect((agentFact.props_after as { text?: string }).text).toBe(marker);
+  // The human edit set the final value.
+  expect(editorFact).toMatchObject({
+    family: "human_editor",
+    principal_type: "human_user",
+  });
+  expect((editorFact.props_before as { text?: string }).text).toBe(marker);
+  expect((editorFact.props_after as { text?: string }).text).toBe(finalText);
+
+  // ---------------------- named snapshot read (exact binding path)
+  const named = await headingRead(wsA, {}, siteId, snapAId);
+  expect(named.status).toBe(200);
+  expect(named.document).toEqual(doc);
+  expect(named.document).toMatchObject({ snapshot_id: snapAId });
+
+  // ------------------- workspace B: frozen without heading writes
+  const wsB = await createAgentWorkspace(
+    page,
+    siteId,
+    `083/14 retained empty ${randomHex(4)}`,
+    "L2_SITE_EDITOR",
+  );
+  const frozenB = await freezeWorkspace(page, siteId, wsB);
+  expect(frozenB.status).toBe(202);
+  await waitForReview(page, project, siteId, wsB);
+  const snapBId = psql(
+    project,
+    `SELECT id FROM control.review_snapshot
+      WHERE workspace_id = '${wsB}'`,
+  );
+  expect(snapBId).toMatch(UUID_RE);
+  const empty = await headingRead(wsB);
+  expect(empty.status).toBe(200);
+  expect(empty.document).toMatchObject({
+    status: "captured",
+    snapshot_id: snapBId,
+    fact_count: 0,
+    facts: [],
+  });
+
+  // Cross-workspace named lookup: the snapshot row's own
+  // site/workspace binding is checked, so the other workspace's
+  // snapshot is a uniform refusal (no oracle).
+  expect((await headingRead(wsA, {}, siteId, snapBId)).status).toBe(404);
+  expect((await headingRead(wsB, {}, siteId, snapAId)).status).toBe(404);
+  // Unknown snapshot id: same uniform refusal.
+  expect((await headingRead(wsA, {}, siteId, crypto.randomUUID())).status).toBe(404);
+
+  // ------------------------------ uniform denial matrix (no oracle)
+  // Nonmember: real vs random workspace ids are indistinguishable.
+  const nonmember = seedHumanSession(project, credential.fixtureUserOne);
+  expect(await headingRead(wsA, { cookie: nonmember.cookie })).toEqual(reference);
+  expect(await headingRead(crypto.randomUUID(), { cookie: nonmember.cookie })).toEqual(
+    reference,
+  );
+  // Wrong-site binding: real workspace under another site.
+  expect(await headingRead(wsA, {}, PARITY_SITE_ID)).toEqual(reference);
+  // Fresh ACTIVE workspace without a snapshot: indistinguishable.
+  const wsFresh = await createAgentWorkspace(
+    page,
+    siteId,
+    `083/14 retained active ${randomHex(4)}`,
+    "L2_SITE_EDITOR",
+  );
+  expect(await headingRead(wsFresh)).toEqual(reference);
+  // Malformed snapshot id query: framework-layer validation refusal.
+  const crafted = await page.request.get(`${headingPath(wsA)}?snapshot_id=not-a-uuid`);
+  expect(crafted.status()).toBe(422);
+  expect((await crafted.json()) as { error: unknown }).toMatchObject({
+    error: { code: "VALIDATION_ERROR" },
+  });
+
+  // -------------------------------- read is side-effect-free + 405s
+  const before = readFingerprint();
+  for (let index = 0; index < 3; index += 1) {
+    expect((await headingRead(wsA)).status).toBe(200);
+    expect((await headingRead(wsB)).status).toBe(200);
+  }
+  expect(readFingerprint()).toBe(before);
+  for (const method of ["POST", "PATCH", "DELETE"] as const) {
+    const response = await page.request.fetch(headingPath(wsA), {
+      method,
+      headers: { "X-CSRF-Token": csrf },
+      data: {},
+    });
+    expect(response.status(), method).toBe(405);
+  }
+
+  expect(failures(), "unexpected browser failure category").toEqual([]);
+});

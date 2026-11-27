@@ -164,6 +164,7 @@ async def test_each_app_has_only_typed_health_routes(
             "/api/control/v1/sites/{site_id}/workspaces/{workspace_id}/accept/",
             "/api/control/v1/sites/{site_id}/workspaces/{workspace_id}/discard/",
             "/api/control/v1/sites/{site_id}/workspaces/{workspace_id}/review/",
+            "/api/control/v1/sites/{site_id}/workspaces/{workspace_id}/review/heading-effects/",
         }
     if process is ProcessKind.EDITOR_API:
         expected_routes |= {

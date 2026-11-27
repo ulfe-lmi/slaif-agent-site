@@ -743,6 +743,28 @@ MEDIA_PUBLICATION_HEAD = 77
 MEDIA_PUBLICATION_REQUIRED_FUNCTIONS = (
     ("content", "slaif_media_publicize_promoted", "uuid, uuid[]"),
 )
+# 083/14-a: the 081_001 retained heading review facts contract.  The
+# worker capture definer and the human review read definer are
+# REQUIRED exactly when the database head is at or after the
+# introducing revision 081_001: a coherent historical head
+# legitimately lacks them, while a current head missing either must
+# never validate as ready (the freeze capture has no durable
+# fallback, and the review read is the only authorized exposure of
+# the owner-restricted retention table).
+RETAINED_HEADING_REVIEW_FACTS_HEAD = 81
+RETAINED_HEADING_REVIEW_FACTS_CONTROL_FUNCTIONS = {
+    (
+        "slaif_review_heading_effects_read",
+        "p_workspace_id uuid, p_site_id uuid, p_snapshot_id uuid,"
+        " p_user_account_id uuid",
+    ): "uuid, uuid, uuid, uuid",
+}
+RETAINED_HEADING_REVIEW_FACTS_WORKER_FUNCTIONS = {
+    (
+        "slaif_review_retain_heading_facts",
+        "p_workspace_id uuid, p_site_id uuid",
+    ): "uuid, uuid",
+}
 # 083/12-a: the 079_001 reviewed-operation binding surface.
 # The old accept entry points exist exactly in the 072..078 phase
 # (digest-less approval, inner enqueue grantable to slaif_control);
@@ -1573,6 +1595,30 @@ async def apply_product_privileges(
             f'"control".{quote_identifier(_MANIFEST_READ_IDENTITY[0])}(uuid) '
             f"TO {quote_identifier(CONTROL_ROLE)}"
         )
+    # 083/14-a phase handling: the 081_001 retained heading review
+    # facts surface exists only from that head forward, so the
+    # grants are phase-guarded and a historical-phase database is
+    # not an error.  The verifier, not the grant, enforces the
+    # current-head requirement.
+    if apply_head is None or apply_head >= RETAINED_HEADING_REVIEW_FACTS_HEAD:
+        for (
+            name,
+            _identity,
+        ), signature in RETAINED_HEADING_REVIEW_FACTS_CONTROL_FUNCTIONS.items():
+            await connection.execute(
+                "GRANT EXECUTE ON FUNCTION "
+                f'"control".{quote_identifier(name)}({signature}) '
+                f"TO {quote_identifier(CONTROL_ROLE)}"
+            )
+        for (
+            name,
+            _identity,
+        ), signature in RETAINED_HEADING_REVIEW_FACTS_WORKER_FUNCTIONS.items():
+            await connection.execute(
+                "GRANT EXECUTE ON FUNCTION "
+                f'"control".{quote_identifier(name)}({signature}) '
+                'TO "slaif_review_worker"'
+            )
     await connection.execute('GRANT USAGE ON SCHEMA "control" TO "slaif_public_reader"')
     for (name, _identity), signature in PUBLIC_RESOLVER_FUNCTIONS.items():
         await connection.execute(
@@ -2081,6 +2127,12 @@ async def _function_violations(
     reviewed_binding_old_phase = (
         head_number is not None and head_number < REVIEWED_OPERATION_BINDING_HEAD
     )
+    # 083/14-a: the retained heading review facts surface is
+    # phase-bound the same way: valid at or after 081, and an
+    # unknown head validates the current surface only.
+    retained_facts_old_phase = (
+        head_number is not None and head_number < RETAINED_HEADING_REVIEW_FACTS_HEAD
+    )
     old_accept_counts = {
         _OLD_INNER_ACCEPT: 0,
         _OLD_HUMAN_ACCEPT: 0,
@@ -2143,6 +2195,16 @@ async def _function_violations(
             and control_identity in REVIEWED_OPERATION_BINDING_WORKER_FUNCTIONS
             and not reviewed_binding_old_phase
         )
+        is_retained_facts_control_function = (
+            schema == "control"
+            and control_identity in RETAINED_HEADING_REVIEW_FACTS_CONTROL_FUNCTIONS
+            and not retained_facts_old_phase
+        )
+        is_retained_facts_worker_function = (
+            schema == "control"
+            and control_identity in RETAINED_HEADING_REVIEW_FACTS_WORKER_FUNCTIONS
+            and not retained_facts_old_phase
+        )
         if schema == FOUNDATION_SCHEMA:
             foundation_functions += 1
         elif is_old_accept_function:
@@ -2178,6 +2240,8 @@ async def _function_violations(
             (is_old_accept_function and reviewed_binding_old_phase)
             or (is_new_accept_function and not reviewed_binding_old_phase)
             or is_new_review_worker_function
+            or is_retained_facts_control_function
+            or is_retained_facts_worker_function
         ) and (not security_definer or "search_path=pg_catalog" not in config):
             violations.append(f"function/{schema}.{name}/unsafe-security-definer")
         elif (
@@ -2301,6 +2365,8 @@ async def _function_violations(
                     and control_identity == _MANIFEST_READ_IDENTITY
                     and role == CONTROL_ROLE
                 )
+                or (is_retained_facts_control_function and role == CONTROL_ROLE)
+                or (is_retained_facts_worker_function and role == "slaif_review_worker")
             )
             if can_execute and not allowed:
                 violations.append(f"function/{schema}.{name}/{role}/execute")
@@ -2375,6 +2441,18 @@ async def _function_violations(
                 and not can_execute
             ):
                 violations.append(f"function/{schema}.{name}/{role}/missing-execute")
+            if (
+                is_retained_facts_control_function
+                and role == CONTROL_ROLE
+                and not can_execute
+            ):
+                violations.append(f"function/{schema}.{name}/{role}/missing-execute")
+            if (
+                is_retained_facts_worker_function
+                and role == "slaif_review_worker"
+                and not can_execute
+            ):
+                violations.append(f"function/{schema}.{name}/{role}/missing-execute")
             if can_execute and allowed and schema == FOUNDATION_SCHEMA:
                 reviewer_exec += 1
             if (
@@ -2427,6 +2505,36 @@ async def _function_violations(
             )
             if exists is None:
                 violations.append(f"function/{schema}.{name}/missing-required-object")
+    if head_number is None or head_number >= RETAINED_HEADING_REVIEW_FACTS_HEAD:
+        for (
+            name,
+            _identity,
+        ), signature in (
+            *RETAINED_HEADING_REVIEW_FACTS_CONTROL_FUNCTIONS.items(),
+            *RETAINED_HEADING_REVIEW_FACTS_WORKER_FUNCTIONS.items(),
+        ):
+            exists = await connection.fetchval(
+                "SELECT to_regprocedure($1)",
+                f"control.{quote_identifier(name)}({signature})",
+            )
+            if exists is None:
+                violations.append(f"function/control/{name}/missing-required-object")
+    else:
+        for (
+            name,
+            _identity,
+        ), signature in (
+            *RETAINED_HEADING_REVIEW_FACTS_CONTROL_FUNCTIONS.items(),
+            *RETAINED_HEADING_REVIEW_FACTS_WORKER_FUNCTIONS.items(),
+        ):
+            exists = await connection.fetchval(
+                "SELECT to_regprocedure($1)",
+                f"control.{quote_identifier(name)}({signature})",
+            )
+            if exists is not None:
+                violations.append(
+                    f"function/control/{name}/unexpected-retained-facts-object"
+                )
     # 083/12-a: the phase-bound accept surface counts exactly once in
     # its own phase; a foreign-phase object is an unexpected-object
     # violation in both directions.
@@ -2527,6 +2635,9 @@ __all__ = [
     "MEDIA_CONTENT_FUNCTIONS",
     "MEDIA_CONTROL_FUNCTIONS",
     "MEDIA_PUBLICATION_HEAD",
+    "RETAINED_HEADING_REVIEW_FACTS_HEAD",
+    "RETAINED_HEADING_REVIEW_FACTS_CONTROL_FUNCTIONS",
+    "RETAINED_HEADING_REVIEW_FACTS_WORKER_FUNCTIONS",
     "MEDIA_PUBLICATION_REQUIRED_FUNCTIONS",
     "REVIEWED_OPERATION_BINDING_CONTROL_FUNCTIONS",
     "REVIEWED_OPERATION_BINDING_HEAD",

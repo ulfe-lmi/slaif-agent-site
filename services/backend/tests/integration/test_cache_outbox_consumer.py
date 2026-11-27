@@ -390,7 +390,7 @@ async def test_074_001_round_trip_proves_073_001_state(
     async with owner_connection(dsn, expected_database=database.name) as owner:
         assert (
             await owner.fetchval("SELECT version_num FROM control.alembic_version")
-            == "080_001"
+            == "081_001"
         )
         restored = await _cache_outbox_surface(owner)
     assert restored == upgraded

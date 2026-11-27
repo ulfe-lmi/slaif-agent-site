@@ -275,6 +275,26 @@ downgrade that removes the heading row effect surface, and downgrade
 never deletes durable row-effect, completion, manifest, audit, or
 idempotency history.
 
+The `081_001` downgrade (retained heading review facts) is an
+unconditional fail-closed refusal: the bootstrap operator path
+refuses it BEFORE the readiness PENDING marker, BEFORE the content
+COW disable, and before any migration step, as long as the durable
+`control.heading_review_retention` table exists (the current head or
+any later head retaining the 081 retained-facts surface, table
+empty or not) — the retained rows reference snapshot rows and
+re-derive from 080 facts that the restored earlier definer bodies
+no longer interpret, and no supported path can re-derive which
+historical reviews carried retained facts. The `081_001` Alembic
+downgrade body (`HEADING_RETENTION_DOWNGRADE_UNSUPPORTED`, P0001)
+is the second line of defense for direct migration invocations. The
+080, 079, 078, 077 and 076 downgrade guards above are the historical
+lines of defense for databases operating at their respective heads;
+they do not qualify the 081 refusal. No database at this head or
+above has a supported downgrade that removes the retained heading
+review facts surface, and downgrade never deletes durable
+retention, row-effect, completion, manifest, audit, or idempotency
+history.
+
 ### Upstream health
 
 Use `docker compose ps` to identify an unhealthy process, then inspect that

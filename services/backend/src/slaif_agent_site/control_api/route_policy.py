@@ -443,6 +443,12 @@ ROUTE_POLICIES: Final[tuple[RoutePolicy, ...]] = (
                 "workspace:read-all",
             ),
             (
+                "GET",
+                "/api/control/v1/sites/{site_id}/workspaces/{workspace_id}/review/heading-effects/",
+                _R,
+                "workspace:read-all",
+            ),
+            (
                 "POST",
                 "/api/control/v1/sites/{site_id}/workspaces/{workspace_id}/freeze/",
                 _M,

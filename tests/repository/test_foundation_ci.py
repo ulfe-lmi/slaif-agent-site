@@ -9,7 +9,7 @@ Proves, from the workflow source without any YAML parser dependency:
   pytest command (Q; no -k selection), making B 45+Q, and then the
   workspace media/role/freeze/promotion/rollback command (M; ten exact
   module paths, no -k selection), making B 45+Q+M, and then the
-  trusted mutation-completion command (TC; eight exact module paths,
+  trusted mutation-completion command (TC; nine exact module paths,
   no -k selection), making B 45+Q+M+TC;
 - the five exact required names are supplied by an aggregator that
   depends on BOTH child job IDs with JOB-level always();
@@ -105,6 +105,7 @@ _COMPLETION = [
     "test_reviewed_operation_binding.py",
     "test_reviewed_operation_binding_authority.py",
     "test_heading_row_effects.py",
+    "test_retained_heading_review_facts.py",
 ]
 COMPLETION = "uv run --frozen pytest " + " ".join(
     f"services/backend/tests/integration/{name}" for name in _COMPLETION
