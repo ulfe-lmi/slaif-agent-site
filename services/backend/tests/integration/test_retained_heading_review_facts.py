@@ -19,10 +19,16 @@ Real runtime evidence for the retained Heading review facts:
   and a genuinely captured empty set answers ``captured`` with an
   empty facts array; the two stay distinct;
 - a known inconsistent binding and an over-budget set are refused
-  without partial freeze or review state; a fixture-only fault after
-  snapshot/manifest staging rolls the whole locked transaction back
-  with the earlier mutation facts intact and a coherent supported
-  retry;
+  without partial freeze or review state; the exact pre-aggregation
+  canonical byte budget (shared record projection) refuses a
+  selected set that is below the record and per-value caps but over
+  the 1 MiB encoded ceiling, and captures a legal under-ceiling set
+  whose stored facts_bytes equals the pre-assembly total; the
+  diverged companion identity makes the authorized read uniformly
+  unavailable and the exact restore serves the unchanged captured
+  set; a fixture-only fault after snapshot/manifest staging rolls
+  the whole locked transaction back with the earlier mutation facts
+  intact and a coherent supported retry;
 - the owner-restricted table and the two narrow definers keep their
   exact grant surface, and the downgrade ratchet refuses at both the
   operator and the direct Alembic level.
@@ -95,6 +101,24 @@ _SCHEMA_VERSION = "retained-heading-facts/v1"
 _FACTS_VERSION = "heading-row-effect/v1"
 # Mirrors the 081_001 historical literals exactly.
 _MAX_RETAINED_RECORDS = 256
+_MAX_RETAINED_VALUE_BYTES = 16384
+_MAX_RETAINED_FACTS_BYTES = 1048576
+# 083-14-b exact pre-aggregation byte budget fixture shape: the
+# binding per-prop bound is the Agent API's 16384-byte
+# ensure_ascii JSON props cap, so 2726 repetitions of U+754C (6
+# escaped bytes each) plus a distinct decimal suffix per edit stay
+# under that cap, the 4096-codepoint schema max_length and the 080
+# 16384-octet native props image, while the 070 canonical
+# serializer ASCII-escapes each U+754C to a 6-byte \u sequence.
+#  34 such same-heading records push the EXACT canonical encoded
+# array total over the 1 MiB ceiling while 24 stay well under it;
+# the a-round codepoint estimate of the two props texts passes in
+# both cases, so only the exact pre-aggregation check can refuse
+# the over-ceiling set.
+_BUDGET_CHAR = "\u754c"
+_BUDGET_CHAR_REPEATS = 2726
+_OVER_CEILING_EDITS = 34
+_UNDER_CEILING_EDITS = 24
 
 
 # ----------------------------------------------------------------------
@@ -954,7 +978,10 @@ async def test_budget_and_binding_refusals_leave_no_partial_state(
     """An over-budget set refuses the whole freeze (no snapshot, no
     companion, no retention, workspace still FREEZING, facts intact);
     a known inconsistent binding refuses the capture before any write
-    and leaves the existing retention row untouched."""
+    and leaves the existing retention row untouched, makes the
+    authorized human read uniformly unavailable (read-time identity
+    recheck), and serves the unchanged captured set again once the
+    exact stored identity is restored."""
 
     database = agent_site_database
     ids = await _seed_site(database, media_root=None, with_ops=False)
@@ -1085,6 +1112,9 @@ async def test_budget_and_binding_refusals_leave_no_partial_state(
         # operation UUID returned by the real agent edit.
         records = {record["operation_id"]: record for record in identities}
         assert records[str(op)]["principal_id"] is not None
+        # The exact stored identity, saved BEFORE the fixture-only
+        # corruption so the read-time restore is byte-exact.
+        original_identities = json.dumps(list(records.values()))
         records[str(op)] = dict(records[str(op)])
         records[str(op)]["principal_id"] = str(uuid4())
         await owner.execute(
@@ -1105,6 +1135,322 @@ async def test_budget_and_binding_refusals_leave_no_partial_state(
     # No partial write: the existing retention row is untouched.
     after = await _retention_row(database, snapshot["id"])
     assert after == before
+    # --- (c) Read-time negative evidence on the same bounded
+    # fixture: the diverged persisted identity makes the authorized
+    # human read uniformly unavailable (the served set is re-checked
+    # against the companion at read time), and restoring the exact
+    # stored identity serves the unchanged captured set.
+    response = await _heading_effects_http(
+        database,
+        site_id,
+        ws_mismatch,
+        delegator_id,
+        snapshot_id=snapshot["id"],
+    )
+    assert response.status_code == 404, response.text
+    async with _owner(database) as owner:
+        await owner.execute(
+            "UPDATE control.review_operation_manifest SET"
+            " completion_identities = $2 WHERE snapshot_id = $1",
+            snapshot["id"],
+            original_identities,
+        )
+    response = await _heading_effects_http(
+        database,
+        site_id,
+        ws_mismatch,
+        delegator_id,
+        snapshot_id=snapshot["id"],
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["status"] == "captured"
+    assert body["snapshot_id"] == str(snapshot["id"])
+    assert body["fact_count"] == after["fact_count"]
+    assert body["facts_bytes"] == after["facts_bytes"]
+    assert body["facts_digest"] == after["facts_digest"]
+    assert body["facts"] == after["facts"]
+
+
+async def _preassembly_budget_case(
+    database: AgentSiteDatabase,
+    *,
+    site_id: UUID,
+    delegator_id: UUID,
+    heading: UUID,
+    edits: int,
+    title: str,
+    claimant: str,
+) -> tuple[UUID, list[UUID]]:
+    """``edits`` real Agent edits of the same heading, each with a
+    distinct near-maximum props value (under the Agent API props
+    byte cap, the schema max_length and the 080 per-value octet
+    cap); returns the workspace and the
+    real operation UUIDs in edit order."""
+
+    ws = await _agent_workspace(
+        database,
+        site_id=site_id,
+        delegator_id=delegator_id,
+        title=title,
+    )
+    async with _owner(database) as owner:
+        token = await _new_capability(owner, ws)
+    operations: list[UUID] = []
+    for index in range(1, edits + 1):
+        operations.append(
+            await _agent_edit(
+                database,
+                token,
+                heading,
+                {
+                    "level": 2,
+                    "text": _BUDGET_CHAR * _BUDGET_CHAR_REPEATS + str(index - 1),
+                },
+                index,
+                f"14b-byte-{claimant}-{index}",
+            )
+        )
+    return ws, operations
+
+
+async def _preassembly_oracle(
+    database: AgentSiteDatabase,
+    *,
+    site_id: UUID,
+    workspace_id: UUID,
+    operations: list[UUID],
+) -> dict[str, int]:
+    """Owner-side measurement of the persisted 080 facts of exactly
+    these operations (fixture verification only): the EXACT
+    pre-assembly canonical encoded total the 081 capture enforces
+    before aggregation - the same 9-field record shape, each
+    record's exact 070 canonical UTF-8 bytes, the two array
+    brackets, one comma between every pair of adjacent records -
+    alongside the a-round codepoint estimate of the two props JSON
+    texts and the native per-value octet maximum, so the test can
+    prove the case sits under the count and value caps while only
+    the exact encoded total crosses the ceiling."""
+
+    operations_arg = [str(operation) for operation in operations]
+    async with _owner(database) as owner:
+        return {
+            "records": await owner.fetchval(
+                "SELECT count(*) FROM audit.heading_row_effect"
+                " WHERE site_id = $1 AND workspace_id = $2"
+                " AND operation_id = ANY($3::uuid[])",
+                site_id,
+                workspace_id,
+                operations_arg,
+            ),
+            "pre_total": await owner.fetchval(
+                "SELECT coalesce(sum(octet_length(convert_to("
+                " control.slaif_canonical_jsonb_text(rec), 'UTF8'))), 0)"
+                " + 2 + GREATEST(coalesce(count(*), 0) - 1, 0)"
+                " FROM ("
+                " SELECT jsonb_build_object("
+                "   'operation_id', f.operation_id::text,"
+                "   'family', f.family,"
+                "   'component_id', f.component_id::text,"
+                "   'row_version_before', f.row_version_before,"
+                "   'row_version_after', f.row_version_after,"
+                "   'props_before', f.props_before,"
+                "   'props_after', f.props_after,"
+                "   'principal_type',"
+                "     CASE WHEN f.family = 'agent' THEN 'capability'"
+                "          ELSE 'human_user' END,"
+                "   'principal_id',"
+                "     CASE WHEN f.family = 'agent'"
+                "          THEN f.capability_id::text"
+                "          ELSE f.human_user_id::text END"
+                " ) AS rec"
+                " FROM audit.heading_row_effect AS f"
+                " WHERE f.site_id = $1 AND f.workspace_id = $2"
+                " AND f.operation_id = ANY($3::uuid[])"
+                ") AS rows(rec)",
+                site_id,
+                workspace_id,
+                operations_arg,
+            ),
+            "codepoint_estimate": await owner.fetchval(
+                "SELECT coalesce(sum(length(f.props_before::text)"
+                " + length(f.props_after::text)), 0)"
+                " FROM audit.heading_row_effect AS f"
+                " WHERE f.site_id = $1 AND f.workspace_id = $2"
+                " AND f.operation_id = ANY($3::uuid[])",
+                site_id,
+                workspace_id,
+                operations_arg,
+            ),
+            "value_octets_max": await owner.fetchval(
+                "SELECT coalesce(max(greatest("
+                " octet_length(f.props_before::text),"
+                " octet_length(f.props_after::text))), 0)"
+                " FROM audit.heading_row_effect AS f"
+                " WHERE f.site_id = $1 AND f.workspace_id = $2"
+                " AND f.operation_id = ANY($3::uuid[])",
+                site_id,
+                workspace_id,
+                operations_arg,
+            ),
+        }
+
+
+@pytest.mark.asyncio
+async def test_preassembly_canonical_byte_budget_enforced_before_aggregation(
+    agent_site_database: AgentSiteDatabase,
+) -> None:
+    """The exact pre-aggregation canonical byte budget on the shared
+    record projection (083-14-b finding 1):
+
+    - 34 real same-heading Agent edits sit below the record cap
+      (256) and the per-value cap (16384 octets per props image),
+      but their EXACT canonical encoded array total (070
+      ASCII-escapes each 3-byte U+754C to a 6-byte escape) crosses
+      the 1 MiB ceiling while the a-round codepoint estimate of the
+      two props texts still passes - every other gate is provably
+      unable to fire, so the real freeze is refused AT the
+      pre-aggregation check, with no partial freeze or review state;
+    - 24 such edits form the legal under-ceiling set: the real
+      freeze captures it, and the stored facts_bytes equals the
+      exact pre-assembly total (the post-assembly equality
+      invariant the definer enforces on the shared projection).
+    """
+
+    database = agent_site_database
+    ids = await _seed_site(database, media_root=None, with_ops=False)
+    site_id: UUID = ids["site_id"]
+    delegator_id: UUID = ids["delegator_id"]
+    heading: UUID = ids["heading_id"]
+
+    # --- (a) Over the exact encoded ceiling, under both other caps:
+    # the real freeze refuses, with no partial freeze or review
+    # state; only the pre-aggregation byte check can fire.
+    ws_over, over_ops = await _preassembly_budget_case(
+        database,
+        site_id=site_id,
+        delegator_id=delegator_id,
+        heading=heading,
+        edits=_OVER_CEILING_EDITS,
+        title="14b byte-over workspace",
+        claimant="over",
+    )
+    over = await _preassembly_oracle(
+        database,
+        site_id=site_id,
+        workspace_id=ws_over,
+        operations=over_ops,
+    )
+    assert over["records"] == _OVER_CEILING_EDITS
+    assert over["records"] < _MAX_RETAINED_RECORDS
+    assert over["value_octets_max"] <= _MAX_RETAINED_VALUE_BYTES
+    assert over["pre_total"] > _MAX_RETAINED_FACTS_BYTES
+    assert over["codepoint_estimate"] < _MAX_RETAINED_FACTS_BYTES
+
+    pool = await _worker_pool(database)
+    try:
+        result, job_id = await _freeze_claim_run(
+            database,
+            workspace_id=ws_over,
+            site_id=site_id,
+            delegator_id=delegator_id,
+            pool=pool,
+            claimant="retained-freeze-byte-over",
+        )
+    finally:
+        await pool.close()
+    assert result.status == "FAILED"
+    assert result.error == "HEADING_RETENTION_FAILED"
+
+    async with _owner(database) as owner:
+        snapshot_count = await owner.fetchval(
+            "SELECT count(*) FROM control.review_snapshot WHERE workspace_id = $1",
+            ws_over,
+        )
+        retention_count = await owner.fetchval(
+            "SELECT count(*) FROM control.heading_review_retention"
+        )
+        workspace_status = await owner.fetchval(
+            "SELECT status FROM control.workspace WHERE id = $1",
+            ws_over,
+        )
+        fact_count = await owner.fetchval(
+            "SELECT count(*) FROM audit.heading_row_effect WHERE workspace_id = $1",
+            ws_over,
+        )
+        job = await owner.fetchrow(
+            "SELECT status, error FROM control.review_job WHERE id = $1",
+            job_id,
+        )
+    # No partial freeze or review state: the whole locked
+    # transaction rolled back; the earlier mutation facts are intact.
+    assert snapshot_count == 0
+    assert retention_count == 0
+    assert workspace_status == "FREEZING"
+    assert fact_count == _OVER_CEILING_EDITS
+    assert job["status"] == "FAILED"
+    assert job["error"] == "HEADING_RETENTION_FAILED"
+
+    # --- (b) Legal under-ceiling set: captured, with the stored
+    # byte count exactly equal to the pre-assembly total.
+    ws_under, under_ops = await _preassembly_budget_case(
+        database,
+        site_id=site_id,
+        delegator_id=delegator_id,
+        heading=heading,
+        edits=_UNDER_CEILING_EDITS,
+        title="14b byte-under workspace",
+        claimant="under",
+    )
+    under = await _preassembly_oracle(
+        database,
+        site_id=site_id,
+        workspace_id=ws_under,
+        operations=under_ops,
+    )
+    assert under["records"] == _UNDER_CEILING_EDITS
+    assert under["records"] < _MAX_RETAINED_RECORDS
+    assert under["value_octets_max"] <= _MAX_RETAINED_VALUE_BYTES
+    assert under["pre_total"] < _MAX_RETAINED_FACTS_BYTES
+
+    pool = await _worker_pool(database)
+    try:
+        result, _ = await _freeze_claim_run(
+            database,
+            workspace_id=ws_under,
+            site_id=site_id,
+            delegator_id=delegator_id,
+            pool=pool,
+            claimant="retained-freeze-byte-under",
+        )
+        assert result.status == "SUCCEEDED", result.error
+    finally:
+        await pool.close()
+
+    async with _owner(database) as owner:
+        snapshot = await owner.fetchrow(
+            "SELECT id FROM control.review_snapshot WHERE workspace_id = $1",
+            ws_under,
+        )
+    assert snapshot is not None
+    retention = await _retention_row(database, snapshot["id"])
+    assert retention is not None
+    assert retention["fact_count"] == _UNDER_CEILING_EDITS
+    assert retention["facts_bytes"] <= _MAX_RETAINED_FACTS_BYTES
+    # Post-assembly exact equality with the shared pre-assembly
+    # total (the definer's new invariant, independently measured).
+    assert retention["facts_bytes"] == under["pre_total"]
+    assert await _facts_digest_ok(database, retention)
+    # Exact durable bytes, field-for-field the product owned 080
+    # facts, in the deterministic per-row transition order.
+    facts = await _heading_facts(database, heading, ws_under)
+    stored = retention["facts"]
+    assert len(stored) == len(facts) == _UNDER_CEILING_EDITS
+    for record, fact in zip(stored, facts, strict=True):
+        assert record == _expected_record(fact)
+    assert [record["operation_id"] for record in stored] == [
+        str(operation) for operation in under_ops
+    ]
 
 
 # ----------------------------------------------------------------------

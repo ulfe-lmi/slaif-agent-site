@@ -845,7 +845,7 @@ trusted mutation-completion (TC) command in the existing PostgreSQL
 The retained heading review facts increment (083/14, revision
 `081_001`) binds the already-recorded `heading-row-effect/v1` facts
 of reviewed operations to the immutable review. The focused
-`test_retained_heading_review_facts.py` module adds five real native
+`test_retained_heading_review_facts.py` module adds six real native
 tests on the disposable cluster:
 
 - Real lifecycle (item 3): distinct same-Heading reviewed
@@ -880,7 +880,23 @@ tests on the disposable cluster:
   freeze then succeeds, and making the stored companion identity
   disagree with the fact's principal refuses the trusted capture
   (`HEADING_RETENTION_BINDING_MISMATCH`, P0001) before any write,
-  leaving the existing retention row untouched.
+  leaves the existing retention row untouched, makes the authorized
+  human read uniformly unavailable through the same bounded fixture
+  (the read-time identity recheck), and serves the unchanged
+  captured set again once the exact stored identity is restored.
+- Exact pre-aggregation byte budget: 34 real same-heading Agent
+  edits (each a distinct near-maximum props value under the Agent
+  API props byte cap, the schema max_length and the 16384-octet
+  per-value cap) sit below the 256-record cap while their EXACT
+  canonical encoded array total (the 070 serializer ASCII-escapes
+  each 3-byte test character to a 6-byte sequence) crosses the
+  1 MiB ceiling - the a-round codepoint estimate of the two props
+  texts still passes, so the refusal is established at the
+  pre-aggregation check on the shared record projection, with no
+  partial freeze or review state; a 24-edit legal set well under
+  the ceiling is captured, and its stored facts_bytes equals the
+  independently measured pre-assembly total (the post-assembly
+  equality invariant the definer enforces).
 - Atomic rollback after manifest staging (item 3): a fixture-only
   armed AFTER INSERT trigger on the companion table — installed
   before the real freeze and restored on every exit — fires

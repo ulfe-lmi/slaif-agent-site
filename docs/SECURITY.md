@@ -489,10 +489,19 @@ claimed as reviewed. A known inconsistent binding or a budget
 violation (at most 256 records, checked on the whole genuine fact
 set of the exact site/workspace before selection and
 materialization, each selected props image at most 16384 octets
-re-asserted on the trusted path, the whole ordered facts array at
-most 1048576 exact canonical UTF-8 bytes with the same cheap
-conservative lower-bound pre-check the 079 companion uses) refuses
-the entire
+re-asserted on the trusted path, the EXACT canonical UTF-8 byte
+size of the selected record array enforced as the first byte gate
+— the selected record shape is written once as a single shared
+projection consumed by both the byte measurement and the
+aggregation so the two measures cannot drift, and the exact
+canonical per-record bytes plus the two array brackets and one
+comma between every pair of adjacent records is the exact
+pre-assembly encoded size, so no in-budget set is ever refused by
+the measurement - with the whole
+ordered facts array at most 1048576 exact canonical UTF-8 bytes,
+whose post-assembly measurement must equal that pre-assembly total
+exactly, alongside the same cheap conservative lower-bound
+pre-check the 079 companion uses) refuses the entire
 locked freeze transaction (`HEADING_RETENTION_OVER_BUDGET`), leaving
 no snapshot, no companion, no retention row and no REVIEW state
 while the earlier committed mutation facts stay intact. Stored bytes

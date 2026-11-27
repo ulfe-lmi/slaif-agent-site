@@ -88,18 +88,27 @@ Two functions and one table, nothing else:
    - each stored props image of a selected record at most 16384
      octets (re-asserted on the trusted path; the 080 table
      constraint already bounds the source);
-   - a total-byte bound on the EXACT selected records measured BEFORE
-     materialization or aggregation: the UTF-8 codepoint count of the
-     two variable-size props images of each selected fact (every
-     canonical byte of a props value costs at least one canonical
-     byte per codepoint, since 070 ASCII-escapes non-ASCII, so the
-     codepoint sum can never overstate the canonical size), refused
-     when it alone exceeds the ceiling;
+   - the EXACT canonical UTF-8 byte size of the selected record
+     array enforced as the first byte gate: the selected record
+     shape is written ONCE as a single shared projection consumed
+     by BOTH the byte total and the aggregation, so the two
+     measures cannot drift; the 070 canonical array encoding is
+     exactly the two brackets, one comma between every pair of
+     adjacent records, and each record's own canonical
+     serialization (the recursive serializer renders a value
+     identically at any depth), so summing the exact canonical
+     bytes of the shared records, plus the delimiters, is the
+     exact pre-assembly encoded size - no estimate.  An
+     over-ceiling set is refused on that exact total before any
+     write; an in-budget set is never refused by the measurement;
+     and the definitive post-assembly measurement must equal that
+     pre-assembly total exactly (a broken measurement invariant
+     refuses under the same stable code);
    - the whole ordered facts array at most 1048576 exact canonical
      UTF-8 bytes (070 canonical serialization), with the same cheap
-     conservative lower-bound pre-check the 079 companion uses so an
-     over-budget set is refused before the per-codepoint canonical
-     serializer runs (the authoritative exact measurement).
+     conservative lower-bound pre-check the 079 companion uses, and
+     the definitive exact post-assembly measurement retained as the
+     final invariant.
 
    A budget violation is a stable terminal refusal
    (``HEADING_RETENTION_OVER_BUDGET``) that rolls back the entire
@@ -363,39 +372,39 @@ _CAPTURE_SQL = f"""
                 RAISE EXCEPTION 'HEADING_RETENTION_OVER_BUDGET'
                     USING ERRCODE = 'P0001';
             END IF;
-            -- Total-byte bound on the EXACT selected records BEFORE
-            -- materialization or aggregation: every UTF-8 codepoint
-            -- of a props value costs at least one canonical byte
-            -- (070 ASCII-escapes non-ASCII, so the codepoint count
-            -- can never overstate the canonical size), and the
-            -- remaining record fields are non-negative, so this
-            -- sum is a conservative total-byte lower bound.  It can
-            -- only refuse a set whose canonical serialization must
-            -- exceed the ceiling - never an in-budget one.
-            SELECT coalesce(sum(length(f.props_before::text)
-                                + length(f.props_after::text)), 0)
-              INTO n
-            FROM audit.heading_row_effect AS f
-            WHERE f.site_id = p_site_id
-              AND f.workspace_id = p_workspace_id
-              AND f.operation_id = ANY(man_ops);
-            IF n > {_MAX_RETAINED_FACTS_BYTES} THEN
-                RAISE EXCEPTION 'HEADING_RETENTION_OVER_BUDGET'
-                    USING ERRCODE = 'P0001';
-            END IF;
-            -- Deterministic ordering without a causal claim: the
-            -- known per-row transition orders each component's
-            -- facts by row_version_before; the tie-break across
-            -- unrelated components is the native UUID order of
-            -- component_id, then operation_id.  The complete checked
-            -- image pair, versions and exact operation identity are
-            -- preserved, including intermediate facts when the final
-            -- props return to their original value.
-            SELECT coalesce(
-                jsonb_agg(rec ORDER BY component_id,
-                          row_version_before, operation_id),
-                '[]'::jsonb
-            ) INTO facts
+            -- Single SHARED selected-record projection: the exact
+            -- record shape is written ONCE, and BOTH the exact
+            -- pre-aggregation byte total and the aggregation below
+            -- consume that same rec value, so the two measures
+            -- cannot drift apart (no temporary table, no new
+            -- grant, no runtime API).  The total is the exact
+            -- pre-assembly encoded size: the 070 canonical array
+            -- encoding is exactly the two brackets, one comma
+            -- between every pair of adjacent records, and each
+            -- record's own canonical serialization (the recursive
+            -- serializer renders a value identically at any
+            -- depth), summed per record and plus the delimiters -
+            -- no estimate, and no loose bound that could reject an
+            -- in-budget set.  The deterministic ordering without a
+            -- causal claim: the known per-row transition orders
+            -- each component's facts by row_version_before; the
+            -- tie-break across unrelated components is the native
+            -- UUID order of component_id, then operation_id.  The
+            -- complete checked image pair, versions and exact
+            -- operation identity are preserved, including
+            -- intermediate facts when the final props return to
+            -- their original value.  The definitive post-assembly
+            -- invariants below are preserved.
+            SELECT coalesce(sum(octet_length(convert_to(
+                       control.slaif_canonical_jsonb_text(rows.rec), 'UTF8'))),
+                            0) + 2 + GREATEST(coalesce(count(*), 0) - 1, 0),
+                   coalesce(
+                       jsonb_agg(rows.rec ORDER BY rows.component_id,
+                                 rows.row_version_before,
+                                 rows.operation_id),
+                       '[]'::jsonb
+                   )
+              INTO n, facts
             FROM (
                 SELECT jsonb_build_object(
                     'operation_id', f.operation_id::text,
@@ -412,17 +421,22 @@ _CAPTURE_SQL = f"""
                     'principal_id',
                         CASE WHEN f.family = 'agent'
                              THEN f.capability_id::text
-                             ELSE f.human_user_id::text END
+                             ELSE f.human_user_id::text
+                        END
                 ) AS rec,
-                f.component_id,
-                f.row_version_before,
-                f.operation_id
+                   f.component_id,
+                   f.row_version_before,
+                   f.operation_id
                 FROM audit.heading_row_effect AS f
                 WHERE f.site_id = p_site_id
                   AND f.workspace_id = p_workspace_id
                   AND f.operation_id = ANY(man_ops)
             ) AS rows(rec, component_id, row_version_before,
                       operation_id);
+            IF n > {_MAX_RETAINED_FACTS_BYTES} THEN
+                RAISE EXCEPTION 'HEADING_RETENTION_OVER_BUDGET'
+                    USING ERRCODE = 'P0001';
+            END IF;
             -- Cheap conservative canonical-byte LOWER BOUND before
             -- the expensive serialization (the 079 companion
             -- pattern): native jsonb text minus the separator space
@@ -442,6 +456,16 @@ _CAPTURE_SQL = f"""
             END IF;
             facts_bytes := length(convert_to(
                 control.slaif_canonical_jsonb_text(facts), 'UTF8'));
+            -- Post-assembly EXACT equality: the assembled array's
+            -- canonical size must equal the shared pre-assembly
+            -- total (same record set, same 070 canonical
+            -- contract).  A divergence is a broken measurement
+            -- invariant, refused under the same stable budget code
+            -- (one terminal refusal, whole transaction rolled back).
+            IF facts_bytes <> n THEN
+                RAISE EXCEPTION 'HEADING_RETENTION_OVER_BUDGET'
+                    USING ERRCODE = 'P0001';
+            END IF;
             IF facts_bytes > {_MAX_RETAINED_FACTS_BYTES} THEN
                 RAISE EXCEPTION 'HEADING_RETENTION_OVER_BUDGET'
                     USING ERRCODE = 'P0001';
