@@ -19,7 +19,11 @@ from tools.check_repository import (
     FOUNDATION_VERSION,
     FOUNDATION_WHEEL,
     FOUNDATION_WHEEL_SHA256,
+    MAINTENANCE_ID,
     NODE_SCRIPTS,
+    OAP_ACTIVE,
+    OAP_ARTIFACT,
+    OAP_MAINTENANCE,
     PACKAGE_MANAGER,
     PACKAGE_SCRIPTS,
     PYTHON_DEPENDENCY_GROUPS,
@@ -399,6 +403,107 @@ class RepositoryPolicyTestCase(unittest.TestCase):
         errors = self.errors_from("check_oap")
         self.assertTrue(
             any("078-5-a must have exactly one report" in error for error in errors)
+        )
+
+    def test_oap_maintenance_pattern_is_single_source(self) -> None:
+        self.assertIn(MAINTENANCE_ID, OAP_ACTIVE.pattern)
+        self.assertIn(MAINTENANCE_ID, OAP_ARTIFACT.pattern)
+        self.assertIn(MAINTENANCE_ID, OAP_MAINTENANCE.pattern)
+
+    def test_oap_accepts_maintenance_active_without_report(self) -> None:
+        self.write("oap/active", "maint-2026-11\n")
+        self.write("oap/orders/000-a-history.md")
+        self.write("oap/reports/000-a-history.md")
+        self.write("oap/orders/maint-2026-11-restore-apache-pins.md")
+
+        self.assertEqual(self.errors_from("check_oap"), [])
+
+    def test_oap_accepts_maintenance_historical_pair(self) -> None:
+        self.write("oap/active", "001-a\n")
+        self.write("oap/orders/001-a-active.md")
+        self.write("oap/orders/maint-2026-10-pin-refresh.md")
+        self.write("oap/reports/maint-2026-10-pin-refresh.md")
+
+        self.assertEqual(self.errors_from("check_oap"), [])
+
+    def test_oap_accepts_nonzero_four_digit_maintenance_years(self) -> None:
+        for year in ("0001", "0010", "0100", "0999", "1000", "2026"):
+            with tempfile.TemporaryDirectory() as name:
+                root = Path(name)
+                (root / "oap/orders").mkdir(parents=True)
+                (root / "oap/reports").mkdir()
+                (root / "oap/active").write_text(f"maint-{year}-06\n", encoding="utf-8")
+                (root / f"oap/orders/maint-{year}-06-check.md").write_text(
+                    "", encoding="utf-8"
+                )
+                policy = RepositoryPolicy(root)
+                policy.check_oap()
+                self.assertEqual(policy.errors, [], year)
+
+    def test_oap_rejects_malformed_maintenance_active_identifiers(self) -> None:
+        for content in (
+            "maint-26-11\n",
+            "maint-0000-11\n",
+            "maint-20261-11\n",
+            "maint-2026-0\n",
+            "maint-2026-00\n",
+            "maint-2026-13\n",
+            "maint-2026-111\n",
+            "maint-2026-11 \n",
+            "MAINT-2026-11\n",
+            "maint-2026-11-x\n",
+            "maint-2026-11\n\n",
+            "maint-\u0662\u0660\u0662\u0666-11\n",
+            "maint-\uff12\uff10\uff12\uff16-11\n",
+        ):
+            self.write("oap/active", content)
+
+            errors = self.errors_from("check_oap")
+            self.assertTrue(any("maint-YYYY-MM" in error for error in errors), content)
+
+    def test_oap_rejects_malformed_maintenance_artifact_filenames(self) -> None:
+        self.write("oap/active", "001-a\n")
+        self.write("oap/orders/001-a-active.md")
+        for name in (
+            "maint-26-11-x.md",
+            "maint-0000-11-x.md",
+            "maint-20261-11-x.md",
+            "maint-2026-0-x.md",
+            "maint-2026-00-x.md",
+            "maint-2026-13-x.md",
+            "maint-2026-111-x.md",
+            "MAINT-2026-11-x.md",
+            "maint-\u0662\u0660\u0662\u0666-11-x.md",
+            "maint-\uff12\uff10\uff12\uff16-11-x.md",
+        ):
+            self.write(f"oap/orders/{name}")
+
+        errors = self.errors_from("check_oap")
+        self.assertEqual(sum("valid NNN-L or NNN-I-L" in error for error in errors), 10)
+
+    def test_oap_rejects_duplicate_maintenance_identities(self) -> None:
+        self.write("oap/active", "maint-2026-11\n")
+        self.write("oap/orders/maint-2026-11-one.md")
+        self.write("oap/orders/maint-2026-11-two.md")
+        self.write("oap/reports/maint-2026-11-one.md")
+        self.write("oap/reports/maint-2026-11-two.md")
+
+        errors = self.errors_from("check_oap")
+        self.assertTrue(any("must have exactly one order" in error for error in errors))
+        self.assertTrue(any("2 order files" in error for error in errors))
+        self.assertTrue(any("more than one report" in error for error in errors))
+
+    def test_oap_rejects_missing_maintenance_historical_report(self) -> None:
+        self.write("oap/active", "001-a\n")
+        self.write("oap/orders/001-a-active.md")
+        self.write("oap/orders/maint-2026-10-pin-refresh.md")
+
+        errors = self.errors_from("check_oap")
+        self.assertTrue(
+            any(
+                "maint-2026-10 must have exactly one report" in error
+                for error in errors
+            )
         )
 
     def test_oap_legacy_and_qualified_same_objective_coexist(self) -> None:
