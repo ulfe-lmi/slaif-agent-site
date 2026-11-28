@@ -7,8 +7,8 @@ Proves, from the workflow source without any YAML parser dependency:
   theme + page-style) per version; group B additionally appends the
   public whole-session promotion qualification module as a fourth exact
   pytest command (Q; no -k selection), making B 45+Q, and then the
-  workspace media/role/freeze/promotion/rollback command (M; ten exact
-  module paths, no -k selection), making B 45+Q+M, and then the
+  workspace media/role/freeze/promotion/rollback command (M; eleven
+  exact module paths, no -k selection), making B 45+Q+M, and then the
   trusted mutation-completion command (TC; nine exact module paths,
   no -k selection), making B 45+Q+M+TC;
 - the five exact required names are supplied by an aggregator that
@@ -90,6 +90,7 @@ _MEDIA = [
     "test_real_human_accept.py",
     "test_real_human_discard.py",
     "test_freeze_review_snapshot.py",
+    "test_same_workspace_re_review.py",
     "test_human_agent_editor_workspace.py",
     "test_media_workspace_migration_preservation.py",
 ]
@@ -278,7 +279,7 @@ class FoundationCiSplitTestCase(unittest.TestCase):
 
     def test_child_isolation_setup_and_unchanged_toolchain(self) -> None:
         # 083-10-a bounded budget correction: Group B additionally runs the
-        # ten unfiltered workspace media regression modules (M) on top of
+        # eleven unfiltered workspace media regression modules (M) on top of
         # its unchanged 45+Q selection, so its child budget is 30 minutes;
         # Group A keeps the original 15.
         self.assertIn("timeout-minutes: 15", self.job_a)

@@ -543,6 +543,26 @@ new idempotency reservation, so retries do not double-charge. Exhausted
 budgets return `429` without exposing secrets. Human Agent create/issue/revoke
 actions append secret-free rows to the append-only audit stream.
 
+### Same-workspace re-review (084/1)
+
+`POST /api/control/v1/sites/{site_id}/workspaces/{workspace_id}/re-review/`
+re-freezes the workspace's CURRENT trusted review snapshot after its real
+approval failed with the durable `SITE_REVISION_CHANGED` drift code. The body
+is exactly one field, `snapshot_id` (the current trusted snapshot; `extra`
+fields are a 422), and the route takes the same `workspace:freeze` site
+authority and CSRF proof as the original freeze. Success is `202` with
+`{"job_id", "status": "FREEZING"}`; after the existing durable freeze
+completion the current review pointer atomically moves to the new immutable
+snapshot and the workspace returns to `REVIEW` (the prior snapshot and its
+evidence stay retained). A named snapshot the trusted pointer no longer
+selects, an unverified stale revision (no matching failed accept), or a
+workspace not in review is `409`; a different site, an unknown workspace, or
+missing authority is the uniform `404`; missing session proof is `401` and a
+state-changing request without the matching CSRF token is `403`. Infrastructure
+faults are `503`. No new permission, role, job kind, or worker path is
+introduced, and approval (accept) of any snapshot still requires its current
+trusted pointer and both digests.
+
 ## Internal Render projection API
 
 Render exposes typed, private projection routes on its internal listener:

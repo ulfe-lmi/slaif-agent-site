@@ -158,7 +158,7 @@ async def test_077_fresh_hardened_reviewer_only_publicize(
     database = agent_site_database
     await upgrade(database.settings)
     await reconcile(database.settings)  # harden + apply + verify (ready at 079 head)
-    assert await _head(database) == "081_001"
+    assert await _head(database) == "082_001"
 
     # the legacy creator/mark were dropped by 077 (exact identities)
     assert await _function_shape(database, _CREATOR_IDENTITY) is None
@@ -294,10 +294,10 @@ async def test_076_historical_phase_coherent_then_upgrades_to_078(
     assert not [v for v in violations if "slaif_media" in v]
     assert not [v for v in violations if "publicize" in v]
 
-    # the real upgrade path then reaches the ready current head (080_001)
+    # the real upgrade path then reaches the ready current head (082_001)
     await upgrade(database.settings)
     await reconcile(database.settings)
-    assert await _head(database) == "081_001"
+    assert await _head(database) == "082_001"
     assert await _function_shape(database, _PUBLICIZE_IDENTITY) is not None
     assert await _function_shape(database, _LEGACY_MARK_IDENTITY) is None
     assert await _function_shape(database, _CREATOR_IDENTITY) is None

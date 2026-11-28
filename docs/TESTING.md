@@ -918,3 +918,101 @@ tests on the disposable cluster:
 The module runs unfiltered as the ninth exact module path of the
 trusted mutation-completion (TC) command in the existing PostgreSQL
 14..18 Group B children, with no `-k` selection.
+
+## Same-workspace human re-review (084/1)
+
+The same-workspace human re-review increment (084/1, revision
+`082_001`) joins the stale-site-revision refusal, the
+`BASE_ROW_CHANGED` boundary and the retained per-snapshot heading
+facts through one same-workspace human re-review with both snapshots
+retained. The focused `test_same_workspace_re_review.py` module adds
+four real native tests on the disposable cluster:
+
+- Whole-session lifecycle (criteria 1-4): W and X edit the SAME
+  Heading differently at revision A through actual Agent mutation
+  contexts (distinct capabilities, distinct operation IDs) and both
+  freeze against A through the real human definer and the real
+  worker. Approving X publishes canonical B reflecting only X's
+  edit (exact canonical row and revision, zero W publication).
+  W's A-snapshot approval through the same real path fails durably
+  with `SITE_REVISION_CHANGED` (job terminal FAILED, workspace back
+  in read-only review, edit and original snapshot intact, no
+  canonical write, no new publication audit or cache outbox). The
+  real human re-review of W (verified stale: the durable failed
+  ACCEPT job for the exact snapshot with its payload site and both
+  digests matching the stored snapshot digest and the companion
+  manifest digest, whose own `snapshot_digest` must match) atomically
+  advances the trusted pointer to a new immutable W snapshot at B
+  with a valid digest and W's pending edit as the review content,
+  while the A snapshot, stored payload, digest and per-snapshot
+  companion evidence are retained byte-for-byte; the same W
+  first-touch baseline, operation identity and heading row effects
+  persist, the capabilities stay revoked, the regular review read
+  and the unqualified heading-facts read follow the trusted pointer,
+  and the exact prior snapshot still renders with its ORIGINAL
+  retention evidence (both snapshots reviewed the same operation, so
+  the served facts agree). A broken base node (labeled fixture
+  corruption, removed before the retry) refuses the whole locked
+  finalization and rolls it back atomically (no snapshot, pointer
+  unchanged, job terminal FAILED), and the operational retry
+  succeeds with exactly one new job. The old identity is then
+  refused WITHOUT a new approval job, and approving W's B snapshot
+  with both current digests reaches the existing whole-session
+  `conflict_policy="error"` boundary: the durable
+  `BASE_ROW_CHANGED` outcome, workspace CONFLICTED, exact canonical
+  B row and revision unchanged, and still no W publication audit or
+  outbox.
+- Endpoint gate matrix (criterion 5): the real HTTP surface of the
+  new route — unauthenticated/invalid session uniform 401,
+  state-changing without (or with the wrong) CSRF 403, the strict
+  one-field body (extra or missing field 422), a human without the
+  required `workspace:freeze` authority uniformly 404 (stable code,
+  indistinguishable from a foreign workspace), the exact
+  site/workspace binding (another site, unknown workspace, crafted
+  ids), the NULL pointer shape (the strict body rejects a NULL
+  snapshot with 422 and the inner transition returns the typed
+  `RE_REVIEW_SNAPSHOT_NULL`, P0002 refusal before any state read),
+  and the stale matrix (a named snapshot the pointer no longer
+  selects is 409 in every state, the fresh-workspace
+  never-failed-accept shape is the typed unverified refusal, and a
+  repeat during FREEZING returns the SAME live job while a stale
+  name still refuses).
+- Guarded downgrade refusal (safe compatibility guard): the direct
+  Alembic downgrade is refused BEFORE any effect, atomically, for
+  both shapes — a re-review retained multiple snapshots
+  (`RE_REVIEW_DOWNGRADE_RETAINED_MULTI_SNAPSHOT`) and a re-review
+  still in flight (`RE_REVIEW_DOWNGRADE_IN_FLIGHT`) — with the head,
+  every function, the retained snapshots, job, capability and
+  workspace state left exactly as found (byte-for-byte snapshot
+  comparison), and the refusal proven on the real reached
+  two-snapshot state (a real re-review completed, then a rolled-back
+  second finalization for the in-flight shape).
+- Safe rollback in the single-snapshot state: with no re-review ever
+  run the downgrade restores the exact 071_001 read model and the
+  exact 070_001 freeze body (the restored prosrc carries no 082
+  bytes and the original plain post-branch read is restored), drops
+  the two 082 functions, and the 081
+  downgrade ratchet remains the next line of defense.
+
+The module runs unfiltered as the ninth exact module path of the
+workspace media, role, freeze, promotion and rollback command (M)
+in the existing PostgreSQL 14..18 Group B children, with no `-k`
+selection. The real same-workspace case is also in the public NGINX
+E2E suite (`freeze-review-snapshot` spec): W and X edit the same
+seeded Heading through real Agent HTTP PATCH, X is approved through
+the real human endpoint, W's A approval fails durably, the new
+re-review route is exercised through the authenticated browser
+session (CSRF, nonmember, wrong-site, stale-name and strict-body
+gates), the re-review points the current review to the B snapshot
+with both snapshots retained, the retained heading-facts read is
+proven through the authorized endpoint, the old identity is refused
+without a job, the B approval reaches the CONFLICTED boundary with
+the structured `BASE_ROW_CHANGED` job outcome, and the public site
+through the NGINX origin still shows X's edit only. The
+authenticated NGINX review renderer is exercised for the A review
+and, after the re-review, for the B review (exact banner digest,
+coherent drift, the rendered Heading), and the exact-id internal
+Render review path is exercised for the earlier frozen A review
+after the trusted pointer moved to B (and for the B review): the
+earlier frozen page remains available through the existing
+authorized route, with no new public history UI.

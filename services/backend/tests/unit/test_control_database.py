@@ -57,8 +57,8 @@ class FakeConnection:
         login: str = "slaif_control_login",
         roles: tuple[str, ...] = ("slaif_control",),
         readiness_row: tuple[object, ...] | None = (
-            "081_001",
-            "081_001",
+            "082_001",
+            "082_001",
             "EMPTY_SAFE",
             True,
             "agent-cow-postgresql",
@@ -351,15 +351,15 @@ async def test_new_connection_identity_and_exact_role_are_fail_closed(
             ControlDatabaseReason.MIGRATION_MISMATCH,
         ),
         (
-            ("081_001", "081_001", "PENDING", False, "agent-cow-postgresql", "0.2.1"),
+            ("082_001", "082_001", "PENDING", False, "agent-cow-postgresql", "0.2.1"),
             ControlDatabaseReason.UNSAFE_MARKER,
         ),
         (
-            ("081_001", "081_001", "EMPTY_SAFE", True, "other", "0.2.1"),
+            ("082_001", "082_001", "EMPTY_SAFE", True, "other", "0.2.1"),
             ControlDatabaseReason.FOUNDATION_MISMATCH,
         ),
         (
-            ("081_001", "081_001", "HARDENED", True, "agent-cow-postgresql", "0.1.0"),
+            ("082_001", "082_001", "HARDENED", True, "agent-cow-postgresql", "0.1.0"),
             ControlDatabaseReason.FOUNDATION_MISMATCH,
         ),
     ),
@@ -434,6 +434,7 @@ def test_adapter_exposes_no_native_pool_or_sql_locator() -> None:
         "human_agent_workspace_freeze",
         "human_agent_workspace_accept",
         "human_agent_workspace_discard",
+        "human_agent_workspace_re_review",
         "human_agent_capability_create",
         "human_agent_capability_revoke",
         "human_agent_capability_list",
