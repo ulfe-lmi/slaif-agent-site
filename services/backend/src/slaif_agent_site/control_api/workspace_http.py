@@ -277,6 +277,19 @@ async def get_workspace_review_heading_effects(
     return cast("dict[str, Any]", document)
 
 
+class ReReviewWorkspaceRequest(BaseModel):
+    """Strict re-review body: the exact one field, nothing else.
+
+    084/1: the re-review transition is only legal for the trusted
+    CURRENT snapshot; naming any other snapshot is a typed refusal,
+    never a transition to a different (older) review.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    snapshot_id: UUID
+
+
 @router.post("/{workspace_id}/freeze/", status_code=202)
 async def freeze_workspace(
     site_id: UUID, workspace_id: UUID, request: Request
@@ -300,6 +313,52 @@ async def freeze_workspace(
         if "WORKSPACE_NOT_FOUND" in message:
             raise ResourceNotFoundError() from None
         if "WORKSPACE_NOT_ACTIVE" in message:
+            raise ResourceConflictError() from None
+        raise ServiceUnavailableError() from None
+    if row is None:
+        raise ResourceNotFoundError()
+    return {"job_id": str(row["job_id"]), "status": row["status"]}
+
+
+@router.post("/{workspace_id}/re-review/", status_code=202)
+async def re_review_workspace(
+    site_id: UUID,
+    workspace_id: UUID,
+    request: Request,
+    body: ReReviewWorkspaceRequest,
+) -> dict[str, Any]:
+    """Human re-review of the CURRENT trusted snapshot (084/1).
+
+    The same ``workspace:freeze`` site authority as the original
+    freeze, CSRF-protected like every state-changing route.  The
+    body names exactly one snapshot: the trusted current snapshot
+    (a named stale snapshot is a typed 409, not a transition).
+    """
+    database = _database(request)
+    authority = await authorize_site_request(
+        request,
+        database,
+        request.app.state.settings,
+        site_id,
+        "workspace:freeze",
+        state_changing=True,
+    )
+    try:
+        row = await database.human_agent_workspace_re_review(
+            workspace_id,
+            site_id,
+            body.snapshot_id,
+            authority.session.user_account_id,
+        )
+    except Exception as exc:
+        message = str(exc)
+        if "WORKSPACE_NOT_FOUND" in message:
+            raise ResourceNotFoundError() from None
+        if "REVIEW_REVIEW_SNAPSHOT_STALE" in message:
+            raise ResourceConflictError() from None
+        if "RE_REVIEW_STALE_REVISION_UNVERIFIED" in message:
+            raise ResourceConflictError() from None
+        if "WORKSPACE_NOT_IN_REVIEW" in message:
             raise ResourceConflictError() from None
         raise ServiceUnavailableError() from None
     if row is None:

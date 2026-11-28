@@ -105,9 +105,9 @@ async def test_readiness_function_owner_security_grants_and_denial_matrix(
                 "SELECT * FROM control.slaif_control_readiness()"
             )
             # Current-head test: after upgrade to the real head the
-            # schema and marker are at the current 081 revision.
-            assert row["schema_revision"] == "081_001"
-            assert row["marker_revision"] == "081_001"
+            # schema and marker are at the current 082 revision.
+            assert row["schema_revision"] == "082_001"
+            assert row["marker_revision"] == "082_001"
             assert row["readiness_state"] in ("HARDENED", "HARDENED")
             assert row["safe"] is True
             assert row["foundation_distribution"] == "agent-cow-postgresql"
@@ -158,12 +158,12 @@ async def test_control_pool_reports_exact_marker_migration_and_foundation_state(
         async with owner_connection(
             database.settings.resolved_owner_dsn(), expected_database=database.name
         ) as connection:
-            # Restore the CURRENT head marker (081) before injecting the
+            # Restore the CURRENT head marker (082) before injecting the
             # foundation fault so the migration check passes and only
             # FOUNDATION_MISMATCH is isolated.
             await connection.execute(
                 "UPDATE control.bootstrap_readiness "
-                "SET migration_revision = '081_001', "
+                "SET migration_revision = '082_001', "
                 "foundation_version = '0.0.0' WHERE singleton"
             )
         assert (await adapter.readiness()).reason == (

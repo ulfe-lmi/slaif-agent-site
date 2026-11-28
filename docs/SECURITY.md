@@ -565,3 +565,100 @@ unconditional explicit refusal for direct migration invocations.
 The 080, 079, 078 and 077 downgrade guards remain earlier lines of
 defense, and downgrade never deletes durable retention, row-effect,
 completion, manifest, audit, or idempotency history.
+
+The same-workspace human re-review (revision `082_001`, increment
+084/1) adds one narrowly scoped durable transition: a workspace in
+`REVIEW` whose real approval of its current snapshot failed with the
+stable `SITE_REVISION_CHANGED` drift code can be re-reviewed by the
+same human authority, and the existing exclusive workspace lock,
+claim, verified freeze materialization and snapshot-completion path
+run unchanged to point the current review at a new immutable snapshot
+of the same workspace at the current canonical revision, while the
+prior snapshot, stored payload, digests and per-snapshot companion
+evidence are retained byte-for-byte. No new role, scope, job kind or
+worker path is introduced, and the accept approval inputs (snapshot
+id + domain digest + manifest digest) and every existing gate are
+unchanged.
+
+The transition is owner-definer and serialized on the workspace row
+(`FOR UPDATE`) for its whole duration, so it cannot race the snapshot
+completion transition or any other state change. Before any state
+change it enforces the verified stale-revision gate: the named
+snapshot must be the trusted CURRENT pointer
+(`control.workspace.review_snapshot_id`), the current COMPLETE
+snapshot must be bound to that exact site and workspace with its
+stored digest, the companion manifest of that exact snapshot must
+match that digest with its own `snapshot_digest`, and a FAILED real
+ACCEPT job for that exact site/workspace/snapshot must carry the
+stable `SITE_REVISION_CHANGED` code whose durable approval (the job
+payload's site and both digests) matches the stored snapshot digest
+and the companion manifest digest. A current pointer alone proves
+eligibility, never that the review is stale: a workspace that froze
+but never had a failed accept is refused
+(`RE_REVIEW_STALE_REVISION_UNVERIFIED`, P0003), and a named snapshot
+the pointer no longer selects is refused in every state
+(`REVIEW_REVIEW_SNAPSHOT_STALE`, P0003), so a re-review can never
+select a different (older) review. The enqueued FREEZE job carries
+the re-review marker and the previous snapshot id in its payload; the
+partial unique index keeps at most one live FREEZE job per workspace,
+so a concurrent repeat of the same request returns the same live job
+instead of creating a second, and an operational retry after a
+rolled-back finalization (a FREEZING workspace still pointing at the
+named snapshot, the gate having been verified on entry to FREEZING)
+accepts exactly one new job.
+
+The grant surface is exactly the existing freeze surface. The human
+entry `control.slaif_human_agent_workspace_re_review` is
+owner-definer with EXECUTE for `slaif_control` only and re-checks the
+exact site binding (a different site or an unknown workspace yields
+no row — uniform 404) and the SAME `workspace:freeze` site authority
+as the original freeze (no new scope, no widening); a missing
+authority yields no row. The inner
+`control.slaif_workspace_re_review` is owner-internal — NO role
+EXECUTE grants, mirroring the 079 inner accept — and is reachable
+only through the human entry; a NULL snapshot input is a typed
+refusal (`RE_REVIEW_SNAPSHOT_NULL`, P0002) before any state read or
+row lock, so a legacy null-pointer freeze is never selected for
+same-workspace re-review.
+
+Two existing objects are re-emitted with the documented 075/076
+convention (the merged historical bytes are hash-pinned at the
+verified base, and any drift of the historical source fails closed;
+each re-emitted statement differs from the pinned historical bytes
+only by the header keyword `CREATE OR REPLACE FUNCTION` plus the
+changes described below). The legacy `control.slaif_workspace_freeze`
+retry path gains one guard: a workspace with a current snapshot
+pointer is not a legacy-freeze target — its FREEZING state is a
+re-review in flight, and the unbound legacy retry can no longer queue
+a replacement FREEZE job the re-review transition does not authorize
+(`WORKSPACE_NOT_ACTIVE`, P0002); only a pre-snapshot freeze (NULL
+pointer) keeps the legacy retry. The post-branch read now takes the
+workspace row with `FOR NO KEY UPDATE`, which serializes the retry
+and its live-job check against the snapshot completion transition on
+the same row while still coexisting with the foreign-key key share an
+in-flight COW proposal writer holds on that row (a full `FOR UPDATE`
+would wait on it). The successful ACTIVE branch additionally ends
+with an explicit `RETURN`: the unmodified legacy body would fall
+through (`RETURN QUERY` does not terminate a PL/pgSQL function) into
+the guarded post-branch and its re-read of that row. The
+`control.slaif_review_read_model`
+revision selects the snapshot through the trusted current pointer
+(scoped by site and workspace) instead of any COMPLETE snapshot: with
+two retained snapshots the 071 selection is ambiguous — PL/pgSQL
+`SELECT ... INTO` without `STRICT` silently assigns the FIRST row —
+while the pointer selection is the same fail-closed uniform-404 gate
+on a missing or mismatched pointer. The 081 exact-snapshot read is
+unchanged and keeps rendering any retained snapshot independently of
+the pointer.
+
+The downgrade is function-only and never touches snapshot, retention,
+job, capability or workspace state (retained rows survive
+byte-for-byte). It refuses before any effect, atomically, when a
+re-review retained multiple snapshots for a workspace
+(`RE_REVIEW_DOWNGRADE_RETAINED_MULTI_SNAPSHOT`) or a re-review is
+still in flight (FREEZING with a current pointer,
+`RE_REVIEW_DOWNGRADE_IN_FLIGHT`), because the restored 071
+selection would silently render the first retained snapshot; in a
+single-snapshot-only state the rollback to 071 semantics is exact,
+and the 081 downgrade ratchet refuses any further step before the
+earlier downgrades can see the retained snapshots.

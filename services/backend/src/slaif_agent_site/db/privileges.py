@@ -765,6 +765,26 @@ RETAINED_HEADING_REVIEW_FACTS_WORKER_FUNCTIONS = {
         "p_workspace_id uuid, p_site_id uuid",
     ): "uuid, uuid",
 }
+# 084/1-a: the 082_001 same-workspace re-review contract.  The human
+# re-review entry point (CONTROL EXECUTE) and its owner-internal
+# transition helper (no role EXECUTE at any head) are REQUIRED
+# exactly when the database head is at or after the introducing
+# revision 082_001: a coherent historical head legitimately lacks
+# them, while a current head missing either must never validate as
+# ready.
+SAME_WORKSPACE_RE_REVIEW_HEAD = 82
+_RE_REVIEW_INNER = (
+    "slaif_workspace_re_review",
+    "p_workspace_id uuid, p_current_snapshot_id uuid",
+)
+_RE_REVIEW_HUMAN = (
+    "slaif_human_agent_workspace_re_review",
+    "p_workspace_id uuid, p_site_id uuid, p_snapshot_id uuid, p_user_id uuid",
+)
+SAME_WORKSPACE_RE_REVIEW_FUNCTIONS = {
+    _RE_REVIEW_INNER: "uuid, uuid",
+    _RE_REVIEW_HUMAN: "uuid, uuid, uuid, uuid",
+}
 # 083/12-a: the 079_001 reviewed-operation binding surface.
 # The old accept entry points exist exactly in the 072..078 phase
 # (digest-less approval, inner enqueue grantable to slaif_control);
@@ -1619,6 +1639,18 @@ async def apply_product_privileges(
                 f'"control".{quote_identifier(name)}({signature}) '
                 'TO "slaif_review_worker"'
             )
+    # 084/1-a phase handling: the 082_001 same-workspace re-review
+    # surface exists only from that head forward, so the grant is
+    # phase-guarded and a historical-phase database is not an error.
+    # Only the human entry point is grantable; the owner-internal
+    # transition helper keeps every role denied.
+    if apply_head is None or apply_head >= SAME_WORKSPACE_RE_REVIEW_HEAD:
+        await connection.execute(
+            "GRANT EXECUTE ON FUNCTION "
+            f'"control".{quote_identifier(_RE_REVIEW_HUMAN[0])}'
+            f"({SAME_WORKSPACE_RE_REVIEW_FUNCTIONS[_RE_REVIEW_HUMAN]}) "
+            f"TO {quote_identifier(CONTROL_ROLE)}"
+        )
     await connection.execute('GRANT USAGE ON SCHEMA "control" TO "slaif_public_reader"')
     for (name, _identity), signature in PUBLIC_RESOLVER_FUNCTIONS.items():
         await connection.execute(
@@ -2133,6 +2165,12 @@ async def _function_violations(
     retained_facts_old_phase = (
         head_number is not None and head_number < RETAINED_HEADING_REVIEW_FACTS_HEAD
     )
+    # 084/1-a: the same-workspace re-review surface is phase-bound the
+    # same way: valid at or after 082, and an unknown head validates
+    # the current surface only.
+    re_review_old_phase = (
+        head_number is not None and head_number < SAME_WORKSPACE_RE_REVIEW_HEAD
+    )
     old_accept_counts = {
         _OLD_INNER_ACCEPT: 0,
         _OLD_HUMAN_ACCEPT: 0,
@@ -2205,6 +2243,11 @@ async def _function_violations(
             and control_identity in RETAINED_HEADING_REVIEW_FACTS_WORKER_FUNCTIONS
             and not retained_facts_old_phase
         )
+        is_re_review_function = (
+            schema == "control"
+            and control_identity in SAME_WORKSPACE_RE_REVIEW_FUNCTIONS
+            and not re_review_old_phase
+        )
         if schema == FOUNDATION_SCHEMA:
             foundation_functions += 1
         elif is_old_accept_function:
@@ -2242,6 +2285,7 @@ async def _function_violations(
             or is_new_review_worker_function
             or is_retained_facts_control_function
             or is_retained_facts_worker_function
+            or is_re_review_function
         ) and (not security_definer or "search_path=pg_catalog" not in config):
             violations.append(f"function/{schema}.{name}/unsafe-security-definer")
         elif (
@@ -2367,6 +2411,11 @@ async def _function_violations(
                 )
                 or (is_retained_facts_control_function and role == CONTROL_ROLE)
                 or (is_retained_facts_worker_function and role == "slaif_review_worker")
+                or (
+                    is_re_review_function
+                    and control_identity == _RE_REVIEW_HUMAN
+                    and role == CONTROL_ROLE
+                )
             )
             if can_execute and not allowed:
                 violations.append(f"function/{schema}.{name}/{role}/execute")
@@ -2453,6 +2502,13 @@ async def _function_violations(
                 and not can_execute
             ):
                 violations.append(f"function/{schema}.{name}/{role}/missing-execute")
+            if (
+                is_re_review_function
+                and control_identity == _RE_REVIEW_HUMAN
+                and role == CONTROL_ROLE
+                and not can_execute
+            ):
+                violations.append(f"function/{schema}.{name}/{role}/missing-execute")
             if can_execute and allowed and schema == FOUNDATION_SCHEMA:
                 reviewer_exec += 1
             if (
@@ -2534,6 +2590,34 @@ async def _function_violations(
             if exists is not None:
                 violations.append(
                     f"function/control/{name}/unexpected-retained-facts-object"
+                )
+    # 084/1-a: the same-workspace re-review surface exists exactly in
+    # its own phase.  The owner-internal helper carries no role
+    # EXECUTE at any head, so the grant loop above already refuses a
+    # granted copy in every phase.
+    if head_number is None or head_number >= SAME_WORKSPACE_RE_REVIEW_HEAD:
+        for (
+            name,
+            _identity,
+        ), signature in SAME_WORKSPACE_RE_REVIEW_FUNCTIONS.items():
+            exists = await connection.fetchval(
+                "SELECT to_regprocedure($1)",
+                f"control.{quote_identifier(name)}({signature})",
+            )
+            if exists is None:
+                violations.append(f"function/control/{name}/missing-required-object")
+    else:
+        for (
+            name,
+            _identity,
+        ), signature in SAME_WORKSPACE_RE_REVIEW_FUNCTIONS.items():
+            exists = await connection.fetchval(
+                "SELECT to_regprocedure($1)",
+                f"control.{quote_identifier(name)}({signature})",
+            )
+            if exists is not None:
+                violations.append(
+                    f"function/control/{name}/unexpected-re-review-object"
                 )
     # 083/12-a: the phase-bound accept surface counts exactly once in
     # its own phase; a foreign-phase object is an unexpected-object
@@ -2638,6 +2722,8 @@ __all__ = [
     "RETAINED_HEADING_REVIEW_FACTS_HEAD",
     "RETAINED_HEADING_REVIEW_FACTS_CONTROL_FUNCTIONS",
     "RETAINED_HEADING_REVIEW_FACTS_WORKER_FUNCTIONS",
+    "SAME_WORKSPACE_RE_REVIEW_FUNCTIONS",
+    "SAME_WORKSPACE_RE_REVIEW_HEAD",
     "MEDIA_PUBLICATION_REQUIRED_FUNCTIONS",
     "REVIEWED_OPERATION_BINDING_CONTROL_FUNCTIONS",
     "REVIEWED_OPERATION_BINDING_HEAD",
