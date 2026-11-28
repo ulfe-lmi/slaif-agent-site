@@ -349,7 +349,7 @@ only its deployment-, site-, and workspace-bound state. It cannot:
 | Control API | `/api/control/v1/` | Session cookie |
 | Editor API | `/api/editor/v1/` | Session cookie |
 | Agent API | `/api/agent/v1/` | Capability bearer token |
-| MCP | `/mcp/v1/` | Capability bearer token |
+| MCP | `/mcp/` (single POST endpoint) | Capability bearer token |
 
 ---
 

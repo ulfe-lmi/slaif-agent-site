@@ -79,7 +79,9 @@ export default defineConfig({
     {
       name: "agent-desktop-chromium",
       dependencies: ["governance"],
-      testMatch: /agent-sessions\.spec\.ts/,
+      // 080/1: the capability-bound MCP discovery spec rides this
+      // existing project (no new runner wiring; e2e.sh is unchanged).
+      testMatch: /(agent-sessions|mcp-discovery)\.spec\.ts/,
       use: { ...devices["Desktop Chrome"] },
     },
     {

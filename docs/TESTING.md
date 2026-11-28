@@ -1016,3 +1016,41 @@ Render review path is exercised for the earlier frozen A review
 after the trusted pointer moved to B (and for the B review): the
 earlier frozen page remains available through the existing
 authorized route, with no new public history UI.
+## Capability-bound MCP discovery (080/1)
+
+The capability-bound MCP discovery increment (080/1) replaces the dead
+`/mcp/v1` scaffold with the single `POST /mcp/` endpoint on the MCP
+2026-07-28 Streamable HTTP (JSON mode) wire contract, exposing exactly one
+read-only tool, `site.describe`.
+
+`services/backend/tests/unit/test_mcp_discovery.py` proves the wire
+contract against the real application with a bounded local stdlib HTTP
+emulation of the one fixed upstream: discover/list/call result shapes and
+`no-store` headers, exactly one fixed dispatch per request with its own
+bearer, `401`/`429` preservation with the Bearer challenge and no upstream
+text, fail-closed `503` on upstream error/invalid/oversized/timeout,
+Origin refusal before dispatch, non-POST `405`, retired-route `404`s,
+bearer structure and product `sas2_` format refusals without dispatch,
+metadata validation (`-32020`, `-32022`, `-32602`), unknown method `404`
+`-32601`, unknown top-level field refusal, strict UTF-8/JSON bounded parse
+failures (including deep-nesting overflow), forbidden/extra arguments and
+unknown-tool refusal without dispatch, the structurally fixed upstream
+base, the fixed audit fields (operation, statuses, duration, validated
+site/workspace) with an ordinary caller marker used as the JSON-RPC id
+proven absent from the log, and the concurrency slot held until a
+cancelled transport actually ends (including repeated cancellation) and
+free again after completion.
+
+`tests/e2e/mcp-discovery.spec.ts` runs through public NGINX on the
+disposable Compose deployment with real capabilities minted in the UI:
+the discover/list/call flow under an exact finite budget counting every
+valid request (REST comparator plus MCP) before the first `429`, with the
+configured cap unchanged across responses; per-request authority between
+two independently minted capabilities with revocation isolation; real UI
+revocation turning subsequent MCP and REST calls `401` (challenge
+present, credential absent from the response); and the quota-one proof
+where the first legitimate MCP call succeeds and both the next MCP call
+and the REST comparator return `429`. A disposable official-client
+interchange smoke (`mcp==2.3.0` in an isolated venv, the credential only
+in that process environment) verifies discovery, `tools/list`, and
+`site.describe` against the owned deployment.
