@@ -1838,7 +1838,7 @@ async def test_quiescent_078_to_079_upgrade_preserves_history(
     await upgrade(database.settings)
     result = await reconcile(database.settings)
     assert result.safe
-    assert result.revision == "081_001"
+    assert result.revision == "082_001"
 
     # ALL pre-079 history preserved byte-exact; no synthetic journal.
     assert await _family_history(database) == history_before
@@ -1960,10 +1960,13 @@ async def test_quiescent_078_to_079_upgrade_preserves_history(
         await downgrade(database.settings)
     after_refusal = await _full_state(database)
     _assert_state_equal(before_refusal, after_refusal)
-    assert after_refusal["revision"] == "081_001"
+    assert after_refusal["revision"] == "082_001"
 
-    # Direct 081_001 Alembic body: the second line of defense (the
-    # first step of any direct downgrade from the current head).
+    # Direct downgrade from the current head: the whole chain runs in
+    # one transaction, so the 081_001 body's refusal of the 081 -> 080
+    # step (the second line of defense) rolls the chain back including
+    # the function-only 082 step; every state dimension, including the
+    # function definitions and the grant surface, is left as found.
     with pytest.raises(sqlalchemy_exc.DBAPIError) as exc_info:
         await run_migration(
             database.settings.resolved_owner_dsn(),
@@ -1975,7 +1978,21 @@ async def test_quiescent_078_to_079_upgrade_preserves_history(
     assert "HEADING_RETENTION_DOWNGRADE_UNSUPPORTED" in str(underlying)
     assert getattr(underlying, "sqlstate", None) == "P0001"
     after_direct = await _full_state(database)
+    assert after_direct["revision"] == "082_001"
     _assert_state_equal(before_refusal, after_direct)
+    async with owner_connection(
+        database.settings.resolved_owner_dsn(),
+        expected_database=database.name,
+    ) as connection:
+        ratchet_intact = await connection.fetchval(
+            "SELECT to_regclass('control.heading_review_retention')"
+            " IS NOT NULL"
+            " AND to_regprocedure('control.slaif_review_retain_heading_facts"
+            "(uuid,uuid)') IS NOT NULL"
+            " AND to_regprocedure('control.slaif_review_heading_effects_read"
+            "(uuid,uuid,uuid,uuid)') IS NOT NULL"
+        )
+    assert ratchet_intact is True
     assert await _journal_rows(database) == journal_after
 
 

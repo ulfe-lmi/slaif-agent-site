@@ -2879,16 +2879,19 @@ async def test_facts_authority_boundaries_and_downgrade_ratchet(
     assert getattr(over.value, "sqlstate", None) == "23514"
 
     # 4. Downgrade ratchet: at the current head the operator path
-    # refuses via the retained-heading-review-facts preflight and the
-    # direct Alembic 081 body refuses the first step; the state is
-    # left exactly as found.  Staged from the released 080 head the
-    # 080 body still refuses 080 -> 079, and the 079 body still
-    # refuses 079 -> 078 when staged from the released 079 head.
+    # refuses via the retained-heading-review-facts preflight; the
+    # direct downgrade commits the function-only 082 step (the guarded
+    # rollback to 071 semantics restores the 071 read model and the
+    # 070 freeze body and drops the two 082 functions) and then the
+    # 081 body refuses 081 -> 080, leaving the 081 surface and all
+    # product state exactly as found.  Staged from the released 080
+    # head the 080 body still refuses 080 -> 079, and the 079 body
+    # still refuses 079 -> 078 when staged from the released 079 head.
     async with owner_connection(
         database.settings.resolved_owner_dsn(), expected_database=database.name
     ) as owner:
         before = await owner.fetchrow("SELECT version_num FROM control.alembic_version")
-        assert before["version_num"] == "081_001"
+        assert before["version_num"] == "082_001"
 
     with pytest.raises(BootstrapStateError, match="retained heading review facts"):
         await downgrade(database.settings)

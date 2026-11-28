@@ -1745,12 +1745,14 @@ async def test_retention_authority_boundaries_and_downgrade_ratchet(
         await control.close()
 
     # 4. Downgrade ratchet: the operator path refuses at the
-    #    bootstrap preflight; the direct Alembic 081 -> 080 step is
-    #    refused by this migration's own body; the state is left
-    #    exactly as found.
+    #    bootstrap preflight; the direct downgrade runs the whole
+    #    chain in one transaction, so the 081 body's refusal of the
+    #    081 -> 080 step rolls the chain back including the
+    #    function-only 082 step; the retention history and both the
+    #    081 and the 082 surfaces are left exactly as found.
     async with _owner(database) as owner:
         before = await owner.fetchrow("SELECT version_num FROM control.alembic_version")
-        assert before["version_num"] == "081_001"
+        assert before["version_num"] == "082_001"
         retention_rows = await owner.fetchval(
             "SELECT count(*) FROM control.heading_review_retention"
         )
@@ -1768,7 +1770,7 @@ async def test_retention_authority_boundaries_and_downgrade_ratchet(
     assert getattr(underlying, "sqlstate", None) == "P0001"
     async with _owner(database) as owner:
         after = await owner.fetchrow("SELECT version_num FROM control.alembic_version")
-        assert after["version_num"] == "081_001"
+        assert after["version_num"] == "082_001"
         assert (
             await owner.fetchval(
                 "SELECT count(*) FROM control.heading_review_retention"
@@ -1783,6 +1785,18 @@ async def test_retention_authority_boundaries_and_downgrade_ratchet(
         assert await owner.fetchval(
             "SELECT to_regprocedure("
             " 'control.slaif_review_heading_effects_read"
+            "(uuid,uuid,uuid,uuid)') IS NOT NULL"
+        )
+        # The whole chain rolled back: the 082 functions are still
+        # present (their drop was part of the refused chain) and the
+        # 081 surface is unchanged.
+        assert await owner.fetchval(
+            "SELECT to_regprocedure("
+            " 'control.slaif_workspace_re_review(uuid,uuid)') IS NOT NULL"
+        )
+        assert await owner.fetchval(
+            "SELECT to_regprocedure("
+            " 'control.slaif_human_agent_workspace_re_review"
             "(uuid,uuid,uuid,uuid)') IS NOT NULL"
         )
 

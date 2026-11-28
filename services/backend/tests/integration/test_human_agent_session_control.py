@@ -528,4 +528,4 @@ async def test_session_migrations_round_trip_through_037(
     )
     await reconcile(database.settings)
     # Final one-way upgrade of this loop: real current head (081).
-    assert (await status(database.settings)).revision == "081_001"
+    assert (await status(database.settings)).revision == "082_001"
