@@ -35,8 +35,11 @@ worker remain database-credential-free.
   public route.
 - Agent API and Editor API use distinct conceptual COW runtime classes. Neither
   receives canonical-write, reviewer, or setup authority.
-- MCP adapter has an internal HTTP/client class and no database class. It must
-  delegate semantic authorization to the Agent API when that behavior exists.
+- MCP adapter has an internal HTTP/client class and no database class. Its
+  dispatch is structurally fixed to one internal
+  `GET /api/agent/v1/session` on the Agent API: requests can never select
+  the host, method, path, query, or headers beyond the validated bearer, so
+  semantic authorization always delegates to the Agent API.
 - Render API is internal-only and its two future database roles are read-only.
 - Control has only readiness-function authority. Scheduler, media-GC, and
   media service retain only their narrow future classes.

@@ -479,6 +479,65 @@ private/no-store/noindex headers. Missing or foreign bindings are 404; worker,
 storage, or digest failures are 503. Range, redirects, public URLs, source
 browsing, GC, review integration, and publication remain absent.
 
+## Capability-bound MCP discovery API
+
+The MCP adapter exposes exactly one public MCP endpoint:
+
+| Route | Method | Notes |
+| --- | --- | --- |
+| `/mcp/` | `POST` | MCP Streamable HTTP (JSON mode), protocol revision `2026-07-28` |
+| `/mcp/health/live`, `/mcp/health/ready` | `GET` | Shared health routes |
+
+Any other HTTP method on `/mcp/` is `405` with `Allow: POST`. The retired
+scaffold routes under `/mcp/v1/` are unavailable both publicly and on the
+service (`404`). Browser requests (any `Origin` header) are refused `403`
+before dispatch; the surface is for native clients only.
+
+The supported authorization strategy is the pre-issued product capability
+bearer presented as a single `Authorization: Bearer <token>` header on
+every request. The adapter validates the token's product `sas2_` format
+before dispatch and never persists, logs, or caches it. `401` refusals
+present a `WWW-Authenticate: Bearer` challenge.
+
+Every accepted request is independently validated through the one
+structurally fixed upstream `GET /api/agent/v1/session` on the internal
+Agent API: requests cannot select the host, method, path, query, or headers
+beyond the validated bearer, and each accepted request consumes that
+resource's request quota exactly once. The `request_quota` field of the
+response is the capability's fixed configured cap; this resource does not
+expose remaining consumption. Upstream `401` and `429` are preserved with
+fixed messages and no upstream body; any other upstream outcome, timeout,
+or malformed response fails closed as `503`.
+
+Request bodies are strictly decoded UTF-8 JSON, bounded to 1 MiB, and must
+use only the top-level fields `jsonrpc`, `method`, `params`, and `id` with
+a string or integer `id` (notifications are refused). The
+`MCP-Protocol-Version` header must equal the body's
+`io.modelcontextprotocol/protocolVersion`, the `Mcp-Method` header must
+equal the body method, and `tools/call` additionally requires a matching
+`Mcp-Name` header (RFC 2047 base64 sentinel decoded). Only `2026-07-28` is
+supported.
+
+| Method | Result |
+| --- | --- |
+| `server/discover` | Supported versions, `{"tools": {}}` capability, fixed instructions, `ttlMs: 0`, `cacheScope: "private"` |
+| `tools/list` | Exactly one tool: `site.describe` (read-only, idempotent, `additionalProperties: false`) |
+| `tools/call` | `site.describe` with no arguments: the validated site/workspace discovery as canonical text content plus typed `structuredContent` |
+
+Unknown tools and non-empty arguments are refused `400` `-32602` without
+dispatch or quota consumption. Unknown methods are `404` `-32601`. Protocol
+metadata mismatches are `400` with `-32020` (header/body mismatch) or
+`-32022` (unsupported version, with the supported list in `error.data`).
+All responses carry `Cache-Control: no-store`.
+
+Structured logging records only fixed fields: the operation class
+(`server/discover`, `tools/list`, `tools/call:site.describe`, or the fixed
+refusal class), the HTTP status, the upstream status, the duration, and -
+after a successful dispatch - the validated site and workspace UUIDs. The
+caller-controlled JSON-RPC id, the bearer, the request payload, and the
+upstream path never enter the log; the shared JSON formatter carries the
+service request id.
+
 ## Site governance API
 
 Every route requires a current server-side human session. Site creation and

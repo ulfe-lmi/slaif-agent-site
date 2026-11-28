@@ -1,11 +1,10 @@
 """Start the MCP adapter process."""
 
-from ..application import run_http_process
-from ..authority import ProcessKind
+from .app import run_mcp_process
 
 
 def main() -> int:
-    return run_http_process(ProcessKind.MCP_ADAPTER)
+    return run_mcp_process()
 
 
 if __name__ == "__main__":

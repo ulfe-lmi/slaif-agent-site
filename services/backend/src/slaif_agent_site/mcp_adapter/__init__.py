@@ -1,5 +1,5 @@
-"""MCP adapter health-only process skeleton with no database authority."""
+"""MCP adapter: one capability-bound read-only discovery tool."""
 
-from .app import create_app
+from .app import create_app, run_mcp_process
 
-__all__ = ["create_app"]
+__all__ = ["create_app", "run_mcp_process"]

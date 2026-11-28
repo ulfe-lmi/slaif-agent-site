@@ -214,11 +214,9 @@ async def test_each_app_has_only_typed_health_routes(
             "/v1/public/sha256/{prefix1}/{prefix2}/{digest}",
         }
     if process is ProcessKind.MCP_ADAPTER:
-        expected_routes |= {
-            "/mcp/v1/health/live",
-            "/mcp/v1/tools",
-            "/mcp/v1/call",
-        }
+        # 080/1: the single Streamable HTTP MCP endpoint lives at the
+        # adapter root path; the retired /mcp/v1 surface is gone.
+        expected_routes |= {"/"}
     if process is ProcessKind.AGENT_API:
         expected_routes |= {
             "/api/agent/v1/session",
