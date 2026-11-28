@@ -590,6 +590,19 @@ async def test_unexpected_arguments_never_dispatch(
         )
         assert not_object.status_code == 400
         assert not_object.json()["error"]["code"] == -32602
+        # An explicit null is outside the declared object schema: it must be
+        # refused, never normalized to the empty object, never dispatched.
+        # (An omitted arguments field remains valid; the positive call test
+        # above omits it and dispatches.)
+        null_arguments = await client.post(
+            "/",
+            headers=_headers("tools/call", name="site.describe"),
+            json=_body(
+                "tools/call", params={"name": "site.describe", "arguments": None}
+            ),
+        )
+        assert null_arguments.status_code == 400
+        assert null_arguments.json()["error"]["code"] == -32602
         unknown_tool = await client.post(
             "/",
             headers=_headers("tools/call", name="site.list"),
@@ -618,6 +631,32 @@ async def test_unexpected_arguments_never_dispatch(
         )
         assert cursor.status_code == 400
         assert cursor.json()["error"]["code"] == -32602
+    assert STATE["count"] == 0
+
+
+@pytest.mark.usefixtures("upstream_state")
+async def test_non_finite_json_constants_are_refused_without_dispatch(
+    upstream_server: ThreadingHTTPServer,
+) -> None:
+    """NaN/Infinity/-Infinity are outside JSON; the stdlib parser accepts
+    them by default, so the bounded request parser must refuse them."""
+    _, client = _build_app(upstream_server.server_address[1])
+    meta = _body("tools/list")["params"]["_meta"]
+    async with client:
+        for literal in (b"NaN", b"Infinity", b"-Infinity"):
+            raw = (
+                b'{"jsonrpc":"2.0","id":7,"method":"tools/list",'
+                b'"params":{"_meta":'
+                + json.dumps(meta).encode("utf-8")
+                + b',"x":'
+                + literal
+                + b"}}"
+            )
+            response = await client.post(
+                "/", headers=_headers("tools/list"), content=raw
+            )
+            assert response.status_code == 400, literal
+            assert response.json()["error"]["code"] == -32700, literal
     assert STATE["count"] == 0
 
 

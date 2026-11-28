@@ -392,6 +392,11 @@ def _log_mcp_event(
     )
 
 
+def _reject_non_finite_constant(name: str) -> float:
+    """``json.loads`` hook: JSON has no NaN/Infinity/-Infinity literals."""
+    raise ValueError(name)
+
+
 async def _handle_mcp(request: Request) -> Response:
     started = time.monotonic()
 
@@ -419,7 +424,10 @@ async def _handle_mcp(request: Request) -> Response:
         )
 
     try:
-        message = json.loads(raw.decode("utf-8"))
+        message = json.loads(
+            raw.decode("utf-8"),
+            parse_constant=_reject_non_finite_constant,
+        )
     except (UnicodeDecodeError, ValueError, RecursionError):
         _log_mcp_event("parse-error", 400)
         return _error_response(400, PARSE_ERROR, "Invalid JSON.")
@@ -594,17 +602,18 @@ async def _handle_mcp(request: Request) -> Response:
                 "tools/call accepts no extra parameters.",
                 rpc_id,
             )
-        arguments = params.get("arguments", {})
-        if arguments is None:
+        if "arguments" in params:
+            arguments = params["arguments"]
+            if not isinstance(arguments, dict):
+                _log_mcp_event("invalid-params", 400)
+                return _error_response(
+                    400,
+                    INVALID_PARAMS,
+                    "Invalid params for tools/call: 'arguments' must be an object.",
+                    rpc_id,
+                )
+        else:
             arguments = {}
-        if not isinstance(arguments, dict):
-            _log_mcp_event("invalid-params", 400)
-            return _error_response(
-                400,
-                INVALID_PARAMS,
-                "Invalid params for tools/call: 'arguments' must be an object.",
-                rpc_id,
-            )
         if tool_name != TOOL_NAME:
             _log_mcp_event("invalid-params", 400)
             return _error_response(
