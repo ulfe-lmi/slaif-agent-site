@@ -784,9 +784,13 @@ async def test_logging_correlates_operation_site_and_workspace_only(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """The fixed audit event carries the fixed RPC/tool operation, the
-    validated site/workspace, the HTTP statuses, and the duration. The
-    caller-controlled JSON-RPC id (here an ordinary caller marker), the
-    bearer, the payload, and the upstream path never enter the log."""
+    validated site/workspace, the HTTP statuses, and the duration. Each
+    successful discover, list, and call emits only its expected fixed
+    server operation literal. The caller-controlled JSON-RPC ids (here
+    synthetic ordinary caller markers), the bearer, the payload, and the
+    upstream path never enter the log."""
+    discover_marker = "DISCOVER-CALLER-MARKER-91"
+    list_marker = "LIST-CALLER-MARKER-17"
     caplog.set_level(logging.INFO, logger="slaif_agent_site.mcp_adapter.mcp_http")
     _, client = _build_app(upstream_server.server_address[1])
     async with client:
@@ -795,31 +799,49 @@ async def test_logging_correlates_operation_site_and_workspace_only(
             headers=_headers("tools/call", name="site.describe"),
             json=_body("tools/call", CALLER_MARKER, params={"name": "site.describe"}),
         )
+        await client.post(
+            "/",
+            headers=_headers("server/discover"),
+            json=_body("server/discover", discover_marker),
+        )
+        await client.post(
+            "/",
+            headers=_headers("tools/list"),
+            json=_body("tools/list", list_marker),
+        )
     records = [
         record
         for record in caplog.records
         if record.name == "slaif_agent_site.mcp_adapter.mcp_http"
     ]
     assert records
-    completed = [
-        record
-        for record in records
-        if record.__dict__.get("event_fields", {}).get("mcp_operation")
-        == "tools/call:site.describe"
-    ]
-    assert completed
-    fields = completed[0].__dict__["event_fields"]
-    assert fields["http_status"] == 200
-    assert fields["upstream_status"] == 200
-    assert fields["site_id"] == SITE_ID
-    assert fields["workspace_id"] == WORKSPACE_ID
-    assert isinstance(fields["duration_ms"], int)
-    for record in records:
-        event_fields = record.__dict__.get("event_fields", {})
-        assert CALLER_MARKER not in json.dumps(event_fields)
+    # Every successful method emits exactly its fixed server operation
+    # literal with the validated site/workspace identities.
+    expected_operations = (
+        "tools/call:site.describe",
+        "server/discover",
+        "tools/list",
+    )
+    for operation in expected_operations:
+        completed = [
+            record
+            for record in records
+            if record.__dict__.get("event_fields", {}).get("mcp_operation") == operation
+        ]
+        assert len(completed) == 1, operation
+        fields = completed[0].__dict__["event_fields"]
+        assert fields["http_status"] == 200
+        assert fields["upstream_status"] == 200
+        assert fields["site_id"] == SITE_ID
+        assert fields["workspace_id"] == WORKSPACE_ID
+        assert isinstance(fields["duration_ms"], int)
+    # No external identifier reaches any audit field or log text.
+    for marker in (CALLER_MARKER, discover_marker, list_marker):
+        for record in records:
+            assert marker not in json.dumps(record.__dict__.get("event_fields", {}))
+        assert marker not in caplog.text
     captured = caplog.text
     assert BEARER not in captured
-    assert CALLER_MARKER not in captured
     assert "/api/agent/v1/session" not in captured
     assert "composition/v1" not in captured
     assert "unit-client" not in captured

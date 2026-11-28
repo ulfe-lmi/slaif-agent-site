@@ -663,14 +663,18 @@ async def _handle_mcp(request: Request) -> Response:
             503, INTERNAL_ERROR, "Invalid upstream response.", rpc_id
         )
 
+    # The audit operation is a fixed server literal chosen in each
+    # recognized result branch, so no caller-derived method text can
+    # reach the log (closes CodeQL py/log-injection alert #13).
     if rpc_method == "server/discover":
         result = _discover_result()
+        operation = "server/discover"
     elif rpc_method == "tools/list":
         result = _list_tools_result()
+        operation = "tools/list"
     else:
         result = _call_tool_result(discovery.model_dump(mode="json"))
-
-    operation = f"tools/call:{TOOL_NAME}" if rpc_method == "tools/call" else rpc_method
+        operation = f"tools/call:{TOOL_NAME}"
     _log_mcp_event(
         operation,
         200,
